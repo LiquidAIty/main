@@ -53,7 +53,6 @@ describe('agentbuilder authoring flow', () => {
       'Magentic-One',
       'Search Agent',
       'Coder',
-      'Hermes',
       'Trading Agent',
       'WorldSignals Agent',
     ]);
@@ -64,7 +63,6 @@ describe('agentbuilder authoring flow', () => {
       null,
       'research_agent',
       'local_coder',
-      'hermes_steward',
       'trading_agent',
       'worldsignals_agent',
     ]);
@@ -73,7 +71,6 @@ describe('agentbuilder authoring flow', () => {
       'template_magentic',
       'template_research_agent',
       'template_local_coder',
-      'template_hermes_steward',
       'template_trading_workbench',
       'template_worldsignals_agent',
     ]);
@@ -83,15 +80,7 @@ describe('agentbuilder authoring flow', () => {
       target: edge.target,
       edgeType: edge.edgeType,
     }))).toEqual([
-      { source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'hermes_observe' },
       { source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' },
-      { source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' },
-      { source: 'card_hermes_steward', target: 'card_worldsignals_agent', edgeType: 'flow' },
-      {
-        source: 'card_main_chat',
-        target: 'card_magentic',
-        edgeType: 'magentic_control',
-      },
       {
         source: 'card_local_coder',
         target: 'card_magentic',
@@ -346,7 +335,6 @@ describe('agentbuilder authoring flow', () => {
       'card_magentic',
       'card_research_agent',
       'card_local_coder',
-      'card_hermes_steward',
       'card_trading_workbench',
       'card_worldsignals_agent',
     ]);

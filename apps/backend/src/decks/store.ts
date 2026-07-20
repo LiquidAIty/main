@@ -8,7 +8,6 @@ import { pool } from '../db/pool';
 import { normalizeLocalCoderControllerCard } from '../cards/localCoderController';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
 import {
-  buildMainChatControlEdge,
   buildMainChatControllerCard,
   MAIN_CHAT_CARD_ID,
   MAIN_CHAT_MODEL_KEY,
@@ -85,7 +84,6 @@ function normalizeEdgeType(value: unknown): DeckEdgeType {
   if (type === 'magentic_option') return 'magentic_option';
   if (type === 'magentic_control') return 'magentic_control';
   if (type === 'flow') return 'flow';
-  if (type === 'hermes_observe') return 'hermes_observe';
   return 'invalid';
 }
 
@@ -340,73 +338,18 @@ function ensureMainChatControllerCard(deck: DeckDocument): DeckDocument {
             parentGraphId: null,
           }) || node;
         });
-  // Main Chat's bus relationship is CONTROL-only (dedicated top input). A
-  // legacy worker-slot edge (magentic_option into a bus-in-* handle) is
-  // retired stale wiring: drop it so Main Chat can never resolve as a worker,
-  // and ensure exactly one control edge exists.
+  // Main Chat is never a Mag One worker. Until the actual planner runtime is
+  // integrated, it also has no execution-control edge: a saved or seeded
+  // Main→Mag One edge would bypass the missing approval/planning authority.
   const edges = deck.edges.filter(
     (edge) =>
       !(
-        edge.edgeType === 'magentic_option' &&
+        (edge.edgeType === 'magentic_option' || edge.edgeType === 'magentic_control') &&
         ((edge.source === MAIN_CHAT_CARD_ID && edge.target === 'card_magentic') ||
           (edge.target === MAIN_CHAT_CARD_ID && edge.source === 'card_magentic'))
       ),
   );
-  const hasControlEdge = edges.some(
-    (edge) =>
-      edge.edgeType === 'magentic_control' &&
-      ((edge.source === MAIN_CHAT_CARD_ID && edge.target === 'card_magentic') ||
-        (edge.target === MAIN_CHAT_CARD_ID && edge.source === 'card_magentic')),
-  );
-  const finalEdges = hasControlEdge ? edges : [buildMainChatControlEdge(), ...edges];
-  return { ...deck, promptTemplates, nodes, edges: finalEdges };
-}
-
-/**
- * One narrow read-compatibility migration for decks saved before
- * hermes_observe existed. Only the historical directed Main -> Hermes flow edge
- * is upgraded. Reversed, missing, invalid, and unrelated edges stay inert and
- * no edge is fabricated.
- */
-function normalizeLegacyHermesObserveEdge(deck: DeckDocument): DeckDocument {
-  const mainChatIds = new Set(
-    deck.nodes
-      .filter(
-        (node) =>
-          resolveRuntimeBinding((node.runtimeOptions as any)?.binding ?? node.runtimeBinding, node.id) ===
-          'main_chat',
-      )
-      .map((node) => node.id),
-  );
-  const hermesIds = new Set(
-    deck.nodes
-      .filter(
-        (node) =>
-          resolveRuntimeBinding((node.runtimeOptions as any)?.binding ?? node.runtimeBinding, node.id) ===
-          'hermes_steward',
-      )
-      .map((node) => node.id),
-  );
-  let changed = false;
-  const edges = deck.edges.map((edge) => {
-    if (
-      edge.edgeType !== 'flow' ||
-      !mainChatIds.has(edge.source) ||
-      !hermesIds.has(edge.target)
-    ) {
-      return edge;
-    }
-    changed = true;
-    return {
-      ...edge,
-      edgeType: 'hermes_observe' as const,
-      metadata: {
-        ...(edge.metadata || {}),
-        legacyCompatibility: true,
-      },
-    };
-  });
-  return changed ? { ...deck, edges } : deck;
+  return { ...deck, promptTemplates, nodes, edges };
 }
 
 function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument | null {
@@ -437,7 +380,7 @@ function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument
           .filter((edge: DeckEdge | null): edge is DeckEdge => Boolean(edge))
       : [],
   };
-  return normalizeLegacyHermesObserveEdge(ensureMainChatControllerCard(deck));
+  return ensureMainChatControllerCard(deck);
 }
 
 function normalizeDeckRuns(value: unknown): DeckRun[] {

@@ -22,7 +22,7 @@ describe('buildEpisodeCloseInput', () => {
         MainReasoning: 'decided to audit the coder runtime',
         SpecialistInvocation: 'invoked Coder in direct_main_audit',
         FilteredCodeGraphView: 'runCoderSubagent branch',
-        HermesResearchResult: 'two sources on PTY runtimes',
+        ResearchResult: 'two sources on PTY runtimes',
         MagOneRun: 'orchestration run run1',
         WorkerResult: 'worker returned a diff',
         TestResult: 'tests passed',

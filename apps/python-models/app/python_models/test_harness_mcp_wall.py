@@ -57,7 +57,7 @@ class TestBackendHarnessMcpClientWall:
             assert forbidden not in source, f"mcp client gained direct capability: {forbidden}"
 
     def test_chat_route_never_reintroduces_the_obsolete_pair_processor(self):
-        # The user/assistant pair architecture was deleted. Hermes performs only
+        # The user/assistant pair architecture was deleted. Main performs only
         # explicit bounded foreground updates through the native MCP surface.
         source = _read("apps/backend/src/routes/coder.routes.ts")
         for forbidden in (

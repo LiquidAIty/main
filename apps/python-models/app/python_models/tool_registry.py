@@ -33,7 +33,6 @@ from autogen_core.tools import FunctionTool
 from app.python_models import job_folder as jf
 from app.python_models.web_search import web_search
 from app.python_models.orchestration_contracts import ContextPack, ToolSpec
-from app.python_models.hermes.review_completed_job import review_completed_job
 from app.python_models.sec_filing_signals import (
     IssuerRef,
     SecFilingQuery,
@@ -217,7 +216,7 @@ async def retrieve_knowgraph_context_tool(
         "goalId": str(goal_id or "").strip() or None,
         "episodeId": str(episode_id or "").strip() or None,
         "jobId": str(job_id or task_id or "").strip() or None,
-        "producingRole": "hermes",
+        "producingRole": "knowgraph",
         "receivingRole": str(requesting_role or "main_chat").strip(),
         "rootCanonicalNodeIds": selected_ids[:3],
         "includedCanonicalNodeIds": selected_ids,
@@ -228,7 +227,7 @@ async def retrieve_knowgraph_context_tool(
         "filter": {"nodeTypes": [module.ASSERTION_LABEL], "trustStates": []},
         "hopDepth": max(0, int(max_hops or 0)),
         "provenanceRefs": list(dict.fromkeys(ref for record in records for ref in record["provenanceRefs"]))[:40],
-        "note": "Filtered KnowGraph evidence returned by Hermes retrieval",
+        "note": "Filtered evidence returned by KnowGraph retrieval",
         "parentViewId": str(parent_view_id or "").strip() or None,
         "records": records,
         "omittedNeighborCount": result.omitted_neighbor_count,
@@ -451,34 +450,6 @@ async def apply_thinkgraph_patch_tool(
 
 
 # ---------------------------------------------------------------------------
-# Hermes completed-job review — the ONE MCP tool over the single review scaffold.
-#
-# Intended invocation boundary: an authorized agent calls this one tool, which
-# dispatches to review_completed_job (the single scaffold). The review runtime is
-# NOT built yet, so it honestly reports not-implemented and never fabricates a
-# review. Takes one trusted opaque job id — never an arbitrary filesystem path;
-# server-owned folder resolution is a TODO for when the review is implemented.
-# There is exactly one review tool (it will later review both Coder and Mag One
-# completed-job folders — never producer-specific tools).
-# ---------------------------------------------------------------------------
-
-
-async def hermes_review_completed_job_tool(job_id: str) -> str:
-    """One MCP entrypoint for the future Hermes completed-job review. Scaffold
-    only: dispatches to review_completed_job, which is not implemented yet."""
-    jid = str(job_id or "").strip()
-    if not jid:
-        return json.dumps({"ok": False, "error": "job_id_required"})
-    try:
-        # No evaluation logic lives here — the scaffold owns the (future) review.
-        review_completed_job(jid)
-    except NotImplementedError as err:
-        return json.dumps({"ok": False, "error": str(err)})
-    # TODO: when review_completed_job returns a ReviewResult, serialize it here.
-    return json.dumps({"ok": False, "error": "review_completed_job_not_implemented"})
-
-
-# ---------------------------------------------------------------------------
 # Job-folder return writer (run-scoped, NOT a card-selectable tool).
 #
 # Available ONLY inside an explicit Coder job-folder handoff run: the single-run
@@ -546,105 +517,6 @@ def build_return_writer_tool(card_id: str) -> FunctionTool:
 # ---------------------------------------------------------------------------
 # Local Coder tool — run a real coding task through the LocalCoder engine.
 # ---------------------------------------------------------------------------
-
-
-async def run_local_coder(
-    objective: str,
-    plan_excerpt: str = "",
-    context_summary: str = "",
-    guardrails: list[str] | None = None,
-    allowed_files: list[str] | None = None,
-    forbidden_work: list[str] | None = None,
-    proof_required: list[str] | None = None,
-    stop_conditions: list[str] | None = None,
-    code_anchors: list[str] | None = None,
-    cbm_queries: list[str] | None = None,
-    report_format: str = "Return a CoderReport JSON: status, filesChanged, proofResults, blockers, nextRecommendedTask.",
-    write_mode: str = "read-only",
-    project_id: str = "default",
-) -> str:
-    """Run a real coding task through the LocalCoder engine; return its CoderReport.
-
-    The model supplies ONLY the logical coding task. The coder's filesystem root is
-    injected server-side by the backend (trusted, never model-chosen) and the run id
-    is server-minted. Returns the authoritative CoderReport JSON verbatim — no
-    fabricated success and no fallback: a blocked/failed run is reported honestly.
-    """
-    packet = {
-        "projectId": str(project_id or "default").strip() or "default",
-        "objective": str(objective or "").strip(),
-        "planExcerpt": str(plan_excerpt or "").strip() or str(objective or "").strip(),
-        "contextSummary": str(context_summary or "").strip() or "Provided by the orchestrator run.",
-        "codeAnchors": [str(x) for x in (code_anchors or []) if str(x).strip()],
-        "cbmQueries": [str(x) for x in (cbm_queries or []) if str(x).strip()],
-        "guardrails": [str(x) for x in (guardrails or []) if str(x).strip()],
-        "allowedFiles": [str(x) for x in (allowed_files or []) if str(x).strip()],
-        "forbiddenWork": [str(x) for x in (forbidden_work or []) if str(x).strip()],
-        "proofRequired": [str(x) for x in (proof_required or []) if str(x).strip()],
-        "reportFormat": str(report_format or "").strip() or "CoderReport JSON",
-        "stopConditions": [str(x) for x in (stop_conditions or []) if str(x).strip()],
-        "writeMode": "edit" if str(write_mode or "").strip().lower() == "edit" else "read-only",
-    }
-    return await asyncio.to_thread(
-        _post_backend_json_sync,
-        "/api/coder/localcoder/run",
-        {"coderPacket": packet},
-    )
-
-
-def build_local_coder_tool(model_provider: str, provider_model_id: str) -> FunctionTool:
-    """Create a run_local_coder tool bound to the trusted participant model.
-
-    Provider/model come from the backend-authored card runtime, not from model
-    arguments, so a tool call can carry the saved card selection without exposing
-    those runtime controls to the assistant.
-    """
-    provider = str(model_provider or "").strip()
-    model_id = str(provider_model_id or "").strip()
-
-    async def _adapter_with_model(
-        objective: str,
-        plan_excerpt: str = "",
-        context_summary: str = "",
-        guardrails: list[str] | None = None,
-        allowed_files: list[str] | None = None,
-        forbidden_work: list[str] | None = None,
-        proof_required: list[str] | None = None,
-        stop_conditions: list[str] | None = None,
-        code_anchors: list[str] | None = None,
-        cbm_queries: list[str] | None = None,
-        report_format: str = "Return a CoderReport JSON: status, filesChanged, proofResults, blockers, nextRecommendedTask.",
-        write_mode: str = "read-only",
-        project_id: str = "default",
-    ) -> str:
-        packet = {
-            "projectId": str(project_id or "default").strip() or "default",
-            "objective": str(objective or "").strip(),
-            "planExcerpt": str(plan_excerpt or "").strip() or str(objective or "").strip(),
-            "contextSummary": str(context_summary or "").strip() or "Provided by the orchestrator run.",
-            "codeAnchors": [str(x) for x in (code_anchors or []) if str(x).strip()],
-            "cbmQueries": [str(x) for x in (cbm_queries or []) if str(x).strip()],
-            "guardrails": [str(x) for x in (guardrails or []) if str(x).strip()],
-            "allowedFiles": [str(x) for x in (allowed_files or []) if str(x).strip()],
-            "forbiddenWork": [str(x) for x in (forbidden_work or []) if str(x).strip()],
-            "proofRequired": [str(x) for x in (proof_required or []) if str(x).strip()],
-            "reportFormat": str(report_format or "").strip() or "CoderReport JSON",
-            "stopConditions": [str(x) for x in (stop_conditions or []) if str(x).strip()],
-            "writeMode": "edit" if str(write_mode or "").strip().lower() == "edit" else "read-only",
-            "modelProvider": provider,
-            "providerModelId": model_id,
-        }
-        return await asyncio.to_thread(
-            _post_backend_json_sync,
-            "/api/coder/localcoder/run",
-            {"coderPacket": packet},
-        )
-
-    return FunctionTool(
-        _adapter_with_model,
-        description=DEFAULT_TOOL_REGISTRY.spec("run_local_coder").description,
-        name="run_local_coder",
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -775,64 +647,6 @@ def build_default_tool_registry() -> ToolRegistry:
             outputSchema={"type": "string", "description": "JSON honest applied/duplicate/empty result"},
         ),
         apply_thinkgraph_patch_tool,
-    )
-    registry.register(
-        ToolSpec(
-            name="hermes_review_completed_job",
-            description=(
-                "Hermes: review ONE completed job folder (Coder or Mag One) and return a "
-                "single ReviewResult. SCAFFOLD ONLY — the review runtime is not built yet, "
-                "so this honestly reports not-implemented and never fabricates a review. "
-                "Input: job_id = one trusted opaque job identifier; the server resolves the "
-                "completed-job folder (never an arbitrary filesystem path)."
-            ),
-            enabled=True,
-            inputSchema={
-                "type": "object",
-                "properties": {"job_id": {"type": "string"}},
-                "required": ["job_id"],
-            },
-            outputSchema={
-                "type": "string",
-                "description": "JSON {ok:false, error} — scaffold reports not-implemented (ReviewResult is a TODO)",
-            },
-        ),
-        hermes_review_completed_job_tool,
-    )
-    registry.register(
-        ToolSpec(
-            name="run_local_coder",
-            description=(
-                "Run a real coding task through the LocalCoder engine and return its "
-                "authoritative CoderReport. Supply ONLY the logical task (objective, "
-                "plan_excerpt, context_summary, guardrails, allowed_files, proof_required, "
-                "stop_conditions, forbidden_work, code_anchors, report_format, write_mode). "
-                "The coder's filesystem root is injected server-side (trusted, never chosen "
-                "by the model). Reports blocked/failed honestly; no fake success."
-            ),
-            enabled=True,
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "objective": {"type": "string"},
-                    "plan_excerpt": {"type": "string"},
-                    "context_summary": {"type": "string"},
-                    "guardrails": {"type": "array", "items": {"type": "string"}},
-                    "allowed_files": {"type": "array", "items": {"type": "string"}},
-                    "forbidden_work": {"type": "array", "items": {"type": "string"}},
-                    "proof_required": {"type": "array", "items": {"type": "string"}},
-                    "stop_conditions": {"type": "array", "items": {"type": "string"}},
-                    "code_anchors": {"type": "array", "items": {"type": "string"}},
-                    "cbm_queries": {"type": "array", "items": {"type": "string"}},
-                    "report_format": {"type": "string"},
-                    "write_mode": {"type": "string", "enum": ["read-only", "edit"]},
-                    "project_id": {"type": "string"},
-                },
-                "required": ["objective"],
-            },
-            outputSchema={"type": "object", "description": "authoritative CoderReport JSON"},
-        ),
-        run_local_coder,
     )
     registry.register(
         ToolSpec(
@@ -1104,14 +918,6 @@ _TOOL_DISPLAY_METADATA: dict[str, dict[str, Any]] = {
     "apply_thinkgraph_patch": {
         "displayName": "ThinkGraph Patch (authorized write)",
         "agentCompatibility": ["assistant_agent"],
-    },
-    "hermes_review_completed_job": {
-        "displayName": "Hermes Completed-Job Review",
-        "agentCompatibility": ["assistant_agent"],
-    },
-    "run_local_coder": {
-        "displayName": "Local Coder",
-        "agentCompatibility": ["magentic_one", "assistant_agent"],
     },
     "retrieve_knowgraph_context": {
         "displayName": "KnowGraph Hybrid Retrieval",

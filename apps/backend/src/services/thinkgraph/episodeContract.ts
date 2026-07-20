@@ -21,7 +21,7 @@ export const EPISODE_NODE_KINDS = [
   'MainReasoning',
   'SpecialistInvocation',
   'FilteredCodeGraphView',
-  'HermesResearchResult',
+  'ResearchResult',
   'UpdatedReasoning',
   'PreparedPrompt',
   'PromptRevision',

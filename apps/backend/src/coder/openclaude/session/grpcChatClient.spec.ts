@@ -18,91 +18,108 @@ import {
 } from './grpcChatClient';
 
 const main = {
-  id: 'card_main_chat', kind: 'agent', runtimeBinding: 'main_chat', runtimeType: 'assistant_agent',
-  prompt: 'Main prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query', 'codegraph.search'], nativeTools: ['Agent'] },
-};
-const hermes = {
-  id: 'card_hermes_steward', kind: 'agent', runtimeBinding: 'hermes_steward', runtimeType: 'assistant_agent',
-  prompt: 'Hermes prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'knowgraph.query', 'knowgraph.ingest', 'codegraph.search', 'hermes.memory_write', 'write_mag_one_instructions', 'card.run_assistant_agent'] },
+  id: 'card_main_chat',
+  kind: 'agent',
+  runtimeBinding: 'main_chat',
+  runtimeType: 'assistant_agent',
+  prompt: 'Main prompt',
+  runtimeOptions: {
+    provider: 'openrouter',
+    modelKey: 'z-ai/glm-5.2',
+    tools: [
+      'thinkgraph.get_graph_slice',
+      'thinkgraph.submit_update',
+      'knowgraph.query',
+      'codegraph.search',
+    ],
+    nativeTools: ['Agent'],
+  },
 };
 const search = {
-  id: 'card_research_agent', kind: 'agent', runtimeBinding: 'research_agent', runtimeType: 'assistant_agent',
-  prompt: 'Search prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'openai/gpt-5.1-chat', tools: ['web_search'] },
+  id: 'card_research_agent',
+  kind: 'agent',
+  runtimeBinding: 'research_agent',
+  runtimeType: 'assistant_agent',
+  prompt: 'Search prompt',
+  runtimeOptions: {
+    provider: 'openrouter',
+    modelKey: 'openai/gpt-5.1-chat',
+    tools: ['web_search'],
+  },
 };
 const coder = {
-  id: 'card_local_coder', kind: 'agent', runtimeBinding: 'local_coder', runtimeType: 'local_coder',
-  prompt: 'Coder prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['run_local_coder'] },
+  id: 'card_local_coder',
+  kind: 'agent',
+  runtimeBinding: 'local_coder',
+  runtimeType: 'local_coder',
+  prompt: 'Coder prompt',
+  runtimeOptions: {
+    provider: 'openrouter',
+    modelKey: 'z-ai/glm-5.2',
+    tools: ['run_local_coder'],
+  },
 };
-const flow = (source: string, target: string) => ({ id: `${source}:${target}`, source, target, edgeType: 'flow' });
-const observe = (source: string, target: string, id = `${source}:${target}:observe`) => ({
-  id,
+const flow = (source: string, target: string) => ({
+  id: `${source}:${target}`,
   source,
   target,
-  edgeType: 'hermes_observe',
+  edgeType: 'flow',
 });
-const doc = (nodes: any[], edges: any[]) => ({ deck: { id: 'deck_builder', nodes, edges }, meta: { deckRevision: 'r1' } });
+const doc = (nodes: any[], edges: any[]) => ({
+  deck: { id: 'deck_builder', nodes, edges },
+  meta: { deckRevision: 'r1' },
+});
 
-describe('native Main / Hermes / Search doorways', () => {
+describe('native saved-card doorways', () => {
   beforeEach(() => {
     deckMocks.getDeckDocument.mockReset();
   });
 
-  it('uses the directed observation edge as the only Hermes authority', () => {
-    expect(selectDoorwayCards([main, hermes, search], [observe(main.id, hermes.id)], 'chat')).toEqual([hermes]);
-    expect(selectDoorwayCards([main, hermes], [], 'chat')).toEqual([]);
-    expect(selectDoorwayCards([main, hermes], [flow(main.id, hermes.id)], 'chat')).toEqual([]);
-    expect(selectDoorwayCards([main, hermes], [observe(hermes.id, main.id)], 'chat')).toEqual([]);
-    expect(selectDoorwayCards(
-      [main, hermes],
-      [{ id: 'invalid', source: main.id, target: hermes.id, edgeType: 'invalid' }],
-      'chat',
-    )).toEqual([]);
-    expect(selectDoorwayCards([main, hermes], [], 'canvas')).toEqual([]);
+  it('uses only directed flow edges from Main in chat mode', () => {
+    expect(selectDoorwayCards([main, search], [flow(main.id, search.id)], 'chat')).toEqual([search]);
+    expect(selectDoorwayCards([main, search], [], 'chat')).toEqual([]);
+    expect(selectDoorwayCards([main, search], [flow(search.id, main.id)], 'chat')).toEqual([]);
+    expect(
+      selectDoorwayCards(
+        [main, search],
+        [{ id: 'invalid', source: main.id, target: search.id, edgeType: 'invalid' }],
+        'chat',
+      ),
+    ).toEqual([]);
   });
 
-  it('deduplicates Hermes and resolves authority by binding, not a hard-coded card id', () => {
-    const customHermes = { ...hermes, id: 'card_custom_observer' };
-    expect(selectDoorwayCards(
-      [main, customHermes],
-      [
-        observe(main.id, customHermes.id, 'observe-1'),
-        observe(main.id, customHermes.id, 'observe-2'),
-      ],
-      'chat',
-    )).toEqual([customHermes]);
-    const arbitrary = { ...search, id: 'card_custom_observer', runtimeBinding: null };
-    expect(selectDoorwayCards([main, arbitrary], [observe(main.id, arbitrary.id)], 'chat')).toEqual([]);
+  it('exposes configured cards, but never Main, for direct canvas testing', () => {
+    expect(selectDoorwayCards([main, search, coder], [], 'canvas')).toEqual([search, coder]);
   });
 
   it('decodes opaque gRPC Agent text progress with its exact parent linkage', () => {
-    expect(decodeGrpcProgressEvent({
-      tool_use_id: 'child-delta-1',
-      parent_tool_use_id: 'hermes-agent-call',
-      data_json: JSON.stringify({
-        type: 'agent_text_delta', agentId: 'agent-42', agentType: 'card_hermes_steward', text: 'live prose',
+    expect(
+      decodeGrpcProgressEvent({
+        tool_use_id: 'child-delta-1',
+        parent_tool_use_id: 'search-agent-call',
+        data_json: JSON.stringify({
+          type: 'agent_text_delta',
+          agentId: 'agent-42',
+          agentType: 'card_research_agent',
+          text: 'live prose',
+        }),
       }),
-    })).toEqual({
-      kind: 'progress', toolUseId: 'child-delta-1', parentToolUseId: 'hermes-agent-call',
-      data: { type: 'agent_text_delta', agentId: 'agent-42', agentType: 'card_hermes_steward', text: 'live prose' },
+    ).toEqual({
+      kind: 'progress',
+      toolUseId: 'child-delta-1',
+      parentToolUseId: 'search-agent-call',
+      data: {
+        type: 'agent_text_delta',
+        agentId: 'agent-42',
+        agentType: 'card_research_agent',
+        text: 'live prose',
+      },
     });
   });
 
   it('an extend-only bounded deadline never shortens its parent deadline', () => {
     expect(resolveHarnessTimeoutDeadline(120_000, 50_000, 30_000, true)).toBe(120_000);
     expect(resolveHarnessTimeoutDeadline(120_000, 110_000, 30_000, true)).toBe(140_000);
-  });
-
-  it('registers Hermes as a native inherited-context agent with exact MCP grants', () => {
-    const definition = buildHarnessAgentDefinition(hermes, null, { allowedCardRunIds: [search.id] }) as any;
-    expect(definition.system_prompt).toBe('Hermes prompt');
-    expect(definition.context_mode_inherit_parent).toBe(true);
-    expect(definition.allowed_tools).not.toContain('mcp__liquidaity__thinkgraph_submit_update');
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__knowgraph_ingest');
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__hermes_memory_write');
-    expect(definition.allowed_tools).not.toContain('mcp__liquidaity__hermes_read_report');
-    expect(definition.allowed_tools).not.toContain('mcp__liquidaity__hermes_write_report');
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__write_mag_one_instructions');
-    expect(definition.allowed_card_run_ids).toEqual([search.id]);
   });
 
   it('registers Search as a native inherited-context agent with web_search only', () => {
@@ -118,8 +135,10 @@ describe('native Main / Hermes / Search doorways', () => {
     expect(definition.system_prompt).toContain('card_local_coder');
   });
 
-  it('resolves Main plus Hermes only when Hermes has observation authority', async () => {
-    deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [observe(main.id, hermes.id), flow(hermes.id, search.id)]));
+  it('resolves Main plus its persisted direct doorway', async () => {
+    deckMocks.getDeckDocument.mockResolvedValue(
+      doc([main, search], [flow(main.id, search.id)]),
+    );
     const config = await resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat');
     expect(config?.cardId).toBe(main.id);
     expect(config?.parentAllowedMcpTools).toEqual([
@@ -128,41 +147,11 @@ describe('native Main / Hermes / Search doorways', () => {
       'mcp__liquidaity__knowgraph_query',
       'mcp__liquidaity__codegraph_search',
     ]);
-    // The card's assigned native tools travel verbatim — the engine filters
-    // the parent's native schemas before serialization.
     expect(config?.parentAllowedNativeTools).toEqual(['Agent']);
-    expect(config?.doorwayDefinitions.map((entry: any) => entry.card_id)).toEqual([hermes.id]);
+    expect(config?.doorwayDefinitions.map((entry: any) => entry.card_id)).toEqual([search.id]);
   });
 
-  it('adds server-minted project context to Hermes without requiring selected nodes', async () => {
-    deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [observe(main.id, hermes.id), flow(hermes.id, search.id)]));
-    const context = {
-      projectId: 'p1',
-      conversationId: 'c1',
-      focusNodeIds: [],
-      requestedOutcome: null,
-    };
-    const config = await resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat', 'req_1234abcd', context);
-    const [definition] = config!.doorwayDefinitions as any[];
-    expect(definition.system_prompt).toContain('[LIQUIDAITY_INVESTIGATION_CONTEXT]');
-    expect(definition.system_prompt).toContain(JSON.stringify(context));
-    expect(buildHarnessRuntimeContext(deriveSessionId('p1', 'c1'), 'req_1234abcd')).not.toContain(
-      '[LIQUIDAITY_INVESTIGATION_CONTEXT]',
-    );
-  });
-
-  it('does not inject the obsolete active-report channel into Main or Hermes', async () => {
-    deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [observe(main.id, hermes.id), flow(hermes.id, search.id)]));
-    const config = await resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat', 'req_new', {
-      projectId: 'p1', conversationId: 'c1', focusNodeIds: [], requestedOutcome: null,
-    });
-    const hermesDefinition = config!.doorwayDefinitions[0] as any;
-    expect(hermesDefinition.system_prompt).not.toContain('[LIQUIDAITY_HERMES_ACTIVE_REPORT]');
-    const mainContext = buildHarnessRuntimeContext(deriveSessionId('p1', 'c1'), 'req_new');
-    expect(mainContext).not.toContain('[LIQUIDAITY_HERMES_ACTIVE_REPORT]');
-  });
-
-  it('renders the compact server graph context into Main context, never view JSON', () => {
+  it('renders compact server graph context into Main context, never view JSON', () => {
     const compact = [
       '[LIQUIDAITY_GRAPH_CONTEXT]',
       'projection: unified:abc123 | project: p1 | conversation: c1 | role: main_chat',
@@ -176,17 +165,22 @@ describe('native Main / Hermes / Search doorways', () => {
     expect(context).toContain('[LIQUIDAITY_GRAPH_CONTEXT]');
     expect(context).toContain('symbol:one');
     expect(context).toContain('does not transfer graph authority');
-    // The old full-JSON block is gone for good.
     expect(context).not.toContain('[LIQUIDAITY_GRAPH_VIEWS]');
     expect(context).not.toContain('"records"');
-    // No graph context → no graph block at all, never an empty header.
-    expect(buildHarnessRuntimeContext(deriveSessionId('p1', 'c1'), 'req_handback')).not.toContain('[LIQUIDAITY_GRAPH_CONTEXT]');
+    expect(buildHarnessRuntimeContext(deriveSessionId('p1', 'c1'), 'req_handback')).not.toContain(
+      '[LIQUIDAITY_GRAPH_CONTEXT]',
+    );
   });
 
-  it('resolves Hermes to Search through its persisted flow edge', async () => {
-    deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [observe(main.id, hermes.id), flow(hermes.id, search.id)]));
-    const [definition] = await resolveCardDoorwayDefinitions(deriveSessionId('p1', 'c1'), 'chat') as any[];
-    expect(definition.card_id).toBe(hermes.id);
-    expect(definition.allowed_card_run_ids).toEqual([search.id]);
+  it('resolves Search with no fabricated child-card authority', async () => {
+    deckMocks.getDeckDocument.mockResolvedValue(
+      doc([main, search], [flow(main.id, search.id)]),
+    );
+    const [definition] = (await resolveCardDoorwayDefinitions(
+      deriveSessionId('p1', 'c1'),
+      'chat',
+    )) as any[];
+    expect(definition.card_id).toBe(search.id);
+    expect(definition.allowed_card_run_ids).toBeUndefined();
   });
 });

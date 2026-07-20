@@ -4,22 +4,22 @@ import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import {
-  LocalCoderAdapter,
-  resolveLocalCoderWorkspaceRoot,
-  type ConsoleRuntimeResolution,
-} from '../../localcoder/adapter';
+  OpenClaudeAdapter,
+  type OpenClaudeConsoleRuntime,
+} from '../adapter';
+import { resolveRepoRoot } from '../../workspaceRoot';
 
 /**
  * OpenClaude Console Bridge — the smallest owned backend that runs the real
- * OpenClaude/LocalCoder CLI as a long-lived, streamed process so a terminal
+ * OpenClaude CLI as a long-lived, streamed process so a terminal
  * view can show what it is doing and (when the transport supports it) feed it
  * input. This is NOT a generic process-manager framework: it only knows how to
  * start, stream, feed, and stop OpenClaude console sessions.
  *
  * Honesty boundaries (see PLAN.md / the SPEC):
  *  - A session is only `running` once the child process actually spawns.
- *  - Terminal output is not a CoderReport. CoderReport validation stays in the
- *    headless adapter; this bridge reports session lifecycle + bounded transcript.
+ *  - Terminal output is not a CoderReport. Structured Coder validation belongs
+ *    to the approved Console subagent path.
  *  - This is not a sandbox: the child runs with the backend's permissions.
  *  - Secrets are redacted from streamed output and diagnostics; the full
  *    environment is never echoed.
@@ -295,8 +295,8 @@ type ManagerOptions = {
    * to force pipe mode.
    */
   ptySpawn?: ConsoleSpawn | null;
-  /** Override runtime resolution (tests). Defaults to the LocalCoder adapter. */
-  resolveRuntime?: (workspaceRoot: string, env: NodeJS.ProcessEnv) => ConsoleRuntimeResolution;
+  /** Override runtime resolution (tests). Defaults to the OpenClaude adapter. */
+  resolveRuntime?: (workspaceRoot: string, env: NodeJS.ProcessEnv) => OpenClaudeConsoleRuntime;
   maxBufferChars?: number;
   now?: () => string;
   idFactory?: () => string;
@@ -481,7 +481,7 @@ export class OpenClaudeConsoleSessionManager {
   private readonly env: NodeJS.ProcessEnv;
   private readonly spawnProcess: ConsoleSpawn;
   private readonly ptySpawn: ConsoleSpawn | null;
-  private readonly resolveRuntime: (workspaceRoot: string, env: NodeJS.ProcessEnv) => ConsoleRuntimeResolution;
+  private readonly resolveRuntime: (workspaceRoot: string, env: NodeJS.ProcessEnv) => OpenClaudeConsoleRuntime;
   private readonly maxBufferChars: number;
   private readonly now: () => string;
   private readonly idFactory: () => string;
@@ -490,7 +490,7 @@ export class OpenClaudeConsoleSessionManager {
   constructor(options: ManagerOptions = {}) {
     this.workspaceRoot = options.workspaceRoot
       ? path.resolve(options.workspaceRoot)
-      : resolveLocalCoderWorkspaceRoot(process.cwd());
+      : path.resolve(resolveRepoRoot());
     this.env = options.env || process.env;
     this.spawnProcess = options.spawnProcess || defaultSpawn;
     // node-pty only when not overridden by an injected pipe spawn.
@@ -503,7 +503,7 @@ export class OpenClaudeConsoleSessionManager {
     this.resolveRuntime =
       options.resolveRuntime ||
       ((workspaceRoot, env) =>
-        new LocalCoderAdapter({ workspaceRoot, env }).resolveConsoleRuntime());
+        new OpenClaudeAdapter(path.join(workspaceRoot, 'localcoder')).resolveConsoleRuntime(env));
     this.maxBufferChars = options.maxBufferChars ?? DEFAULT_MAX_BUFFER_CHARS;
     this.now = options.now || nowIso;
     this.idFactory = options.idFactory || (() => `occ_${Date.now()}_${++this.counter}`);
@@ -525,7 +525,7 @@ export class OpenClaudeConsoleSessionManager {
       // A normal interactive OpenClaude session keeps its full CLI abilities.
       return [...modelFlags];
     }
-    // print / task: one-shot, prompt delivered via argv like the job adapter.
+    // print / task: prompt delivered via argv to the same visible Console session.
     const prompt = String(request.prompt || '').trim();
     return ['--print', prompt, ...modelFlags];
   }
@@ -577,8 +577,7 @@ export class OpenClaudeConsoleSessionManager {
     const args = this.buildArgs(request, mode, requestedProvider, requestedModel);
     const interactive = mode === 'interactive';
     // Interactive sessions use a real PTY when node-pty is available so the
-    // OpenClaude REPL gets a TTY; print/task one-shots use stdio pipes (keeps
-    // stderr separable and matches the proven headless path).
+    // OpenClaude REPL gets a TTY; print/task sessions use separable stdio pipes.
     const usePty = interactive && this.ptySpawn != null;
     const transportMode: ConsoleTransportMode = usePty ? 'pty' : 'pipe';
     const info: ConsoleSessionInfo = {

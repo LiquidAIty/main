@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionStreamError, streamSession } from './openClaudeSessionClient';
-import { EMPTY_HERMES_TERMINAL_STATE, reduceHermesTerminalEvent } from '../../../components/hermes/HermesConsole';
 
 function sseResponse(frames: string[]): Response {
   const encoder = new TextEncoder();
@@ -19,23 +18,29 @@ afterEach(() => {
 });
 
 describe('streamSession', () => {
-  it('routes SSE Agent text progress into the structurally matched hidden Hermes terminal', async () => {
+  it('forwards structured Agent progress without interpreting subagent identity', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
-      `event: tool_start\ndata: ${JSON.stringify({ toolName: 'Agent', toolUseId: 'hermes-agent-call', argsJson: JSON.stringify({ subagent_type: 'card_hermes_steward', prompt: 'Read ThinkGraph only.' }) })}\n\n`,
-      `event: progress\ndata: ${JSON.stringify({ toolUseId: 'child-delta-1', parentToolUseId: 'hermes-agent-call', data: { type: 'agent_text_delta', agentId: 'agent-42', agentType: 'card_hermes_steward', text: 'First live ' } })}\n\n`,
-      `event: progress\ndata: ${JSON.stringify({ toolUseId: 'child-delta-2', parentToolUseId: 'hermes-agent-call', data: { type: 'agent_text_delta', agentId: 'agent-42', agentType: 'card_hermes_steward', text: 'Hermes prose.' } })}\n\n`,
-      `event: tool_result\ndata: ${JSON.stringify({ toolName: 'Agent', toolUseId: 'hermes-agent-call', output: 'First live Hermes prose.', isError: false })}\n\n`,
+      `event: tool_start\ndata: ${JSON.stringify({ toolName: 'Agent', toolUseId: 'search-agent-call', argsJson: JSON.stringify({ subagent_type: 'card_research_agent', prompt: 'Find sources.' }) })}\n\n`,
+      `event: progress\ndata: ${JSON.stringify({ toolUseId: 'child-delta-1', parentToolUseId: 'search-agent-call', data: { type: 'agent_text_delta', agentId: 'agent-42', agentType: 'card_research_agent', text: 'First source.' } })}\n\n`,
+      `event: tool_result\ndata: ${JSON.stringify({ toolName: 'Agent', toolUseId: 'search-agent-call', output: 'First source.', isError: false })}\n\n`,
       'event: done\ndata: {"fullText":"Main final."}\n\nevent: end\ndata: {}\n\n',
     ])));
-    let terminal = EMPTY_HERMES_TERMINAL_STATE;
-    await expect(streamSession({ projectId: 'project-1', conversationId: 'main', message: 'run Hermes', onEvent: (event) => {
-      terminal = reduceHermesTerminalEvent(terminal, event);
-    } })).resolves.toEqual({ finalText: 'Main final.' });
-    expect(terminal).toMatchObject({ invocationId: 'hermes-agent-call', status: 'completed', responseText: 'First live Hermes prose.', error: null });
+    const onEvent = vi.fn();
+    await expect(streamSession({
+      projectId: 'project-1',
+      conversationId: 'main',
+      message: 'Find sources.',
+      onEvent,
+    })).resolves.toEqual({ finalText: 'Main final.' });
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'progress',
+      parentToolUseId: 'search-agent-call',
+      data: expect.objectContaining({ agentType: 'card_research_agent', text: 'First source.' }),
+    }));
   });
 
   it('preserves UTF-8 prompt and response bytes when an em dash is split across stream chunks', async () => {
-    const text = 'Harness — Hermes — café 漢字';
+    const text = 'Harness — Search — café 漢字';
     const encoded = new TextEncoder().encode(
       `event: text\ndata: ${JSON.stringify({ text })}\n\nevent: done\ndata: ${JSON.stringify({ fullText: text })}\n\nevent: end\ndata: {}\n\n`,
     );

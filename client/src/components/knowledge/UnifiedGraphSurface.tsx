@@ -13,7 +13,7 @@ type Layer = 'thinkgraph' | 'knowgraph' | 'codegraph';
 
 export type UnifiedProjectionIdentity = {
   projectionId: string;
-  role: 'main_chat' | 'coder' | 'hermes';
+  role: 'main_chat' | 'coder';
   activeGraphViewId: string | null;
   knowgraphScope: string | null;
 };

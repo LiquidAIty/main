@@ -10,8 +10,7 @@ export type RuntimeBinding =
   | 'research_agent'
   | 'plan_agent'
   | 'worldsignals_agent'
-  | 'trading_agent'
-  | 'hermes_steward';
+  | 'trading_agent';
 
 export type AgentCardRuntimeType =
   | 'assistant_agent'
@@ -25,7 +24,7 @@ export type AgentCardRuntimeType =
 // 'invalid' is a real persisted classification, not an error case: an edge whose
 // type we do not recognise must stay visible and inert. Folding it into 'flow'
 // (the old default) silently handed invocation authority to malformed data.
-export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'hermes_observe' | 'invalid';
+export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'invalid';
 
 export type DeckEdgeRole =
   | 'graph_execution'

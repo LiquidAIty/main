@@ -6,10 +6,9 @@
 // QueryEngine session:
 //   - describe_connected_agents : read the connected, bus-eligible (magentic_option)
 //                                 Mag One Agent Cards + their capabilities for Run Plan review
-//   - run_mag_one               : run regular native Mag One from a Hermes-prepared,
-//                                 Main-presented, user-accepted
-//                                 Markdown orchestration prompt (used verbatim — no
-//                                 plan, no task object, no approval/visible-flow gate)
+//   - run_mag_one               : run regular native Mag One from an authorized,
+//                                 approved Markdown orchestration prompt (used
+//                                 verbatim)
 //
 // All handlers read authoritative current state, never mutate the deck, never
 // write graph memory, and never fabricate agents/tools/outputs.
@@ -104,13 +103,10 @@ export async function describeConnectedAgents(
 }
 
 // ── run_mag_one ───────────────────────────────────────────────────────────────
-// The ONE Mag One entrypoint: a Hermes-prepared, Main-presented, user-accepted Markdown prompt
-// runs regular native Mag One. No structured plan, no plan.objective, no
-// prompt-to-plan adapter, no task ledger gate, no approval gate, no visible-flow
-// task-by-task wrapper. The Markdown string IS Mag One's job; Mag One reasons
-// over it, selects among the connected bus-eligible workers itself, runs them,
-// and returns its own result (its native internal task ledger may exist, but is
-// never forced/exposed/gated here).
+// The one Mag One execution entrypoint. It requires a persisted control edge and
+// exact prompt.md handoff. The current product deliberately has neither a Main
+// grant nor a Main control edge, so execution fails closed until the actual
+// planner and approval boundary is integrated.
 export type RunMagOneInput = {
   // The canonical job-folder contract. Mag One reads the exact bytes of
   // handoff/<jobId>/prompt.md and writes deliverables under returns/<jobId>/.
@@ -118,8 +114,6 @@ export type RunMagOneInput = {
   projectId: string;
   deckId: string;
   conversationId?: string;
-  /** Main Chat context for Hermes post-run review only; never forwarded to Mag One. */
-  parentContext?: { objective?: string; acceptanceCriteria?: string[]; reviewInstruction?: string };
 };
 
 export type RunMagOneResult = {
@@ -250,7 +244,7 @@ export async function runMagOne(
   }
   // The eligible worker roster resolves ONLY from the live blue side
   // connections — the same resolution the runtime uses. The job folder never
-  // carries a roster; Main Chat and Hermes are structurally excluded.
+  // carries a roster; Main Chat is structurally excluded.
   const connectedParticipants = resolvedMagenticOptions(asString(orchestrator.id), nodes, edges).map(
     (card: any) => asString(card?.id),
   );

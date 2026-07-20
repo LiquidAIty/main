@@ -4,41 +4,12 @@ import express from 'express';
 import { describe, expect, it, vi } from 'vitest';
 // Static imports: NodeNext ESM rejects extensionless dynamic import('./coder.routes')
 // after the '.routes' infix strip. vitest hoists vi.mock() above these.
-import router, { resolveHermesProjectId } from './coder.routes';
-
-const planningMocks = vi.hoisted(() => ({
-  packet: {
-    id: 'packet-prepared',
-    projectId: 'project-1',
-    repoPath: 'C:\\Projects\\main',
-    objective: 'Run the localcoder.',
-    planExcerpt: 'Living plan.',
-    contextSummary: 'Real context assembled.',
-    codeAnchors: ['apps/backend/src/routes/coder.routes.ts'],
-    cbmQueries: ['search_graph coder'],
-    guardrails: ['No fake success.'],
-    allowedFiles: ['apps/backend/src/routes/coder.routes.ts'],
-    forbiddenWork: ['No specs/.'],
-    proofRequired: ['Compile.'],
-    reportFormat: 'Make a bounded task list and return a task-by-task CoderReport.',
-    stopConditions: ['Stop after one report.'],
-    writeMode: 'edit',
-  },
-}));
+import router from './coder.routes';
 
 const runtimeMocks = vi.hoisted(() => ({
   runConfiguredCard: vi.fn(async () => ({
     status: 'completed' as const,
     output: 'ok',
-  })),
-}));
-
-const cbmScopeMocks = vi.hoisted(() => ({
-  runLocalCoderCbmScopeGate: vi.fn(async () => ({
-    sourceRoot: 'C:/Projects/main',
-    scopeStatus: 'ok',
-    editAllowed: true,
-    blockedReason: '',
   })),
 }));
 
@@ -103,14 +74,6 @@ const graphViewMocks = vi.hoisted(() => ({
   fetchDoorwayContext: vi.fn(async () => ({ ok: true, views: [], modelContext: '' })),
 }));
 
-const dbMocks = vi.hoisted(() => ({
-  query: vi.fn(),
-}));
-
-vi.mock('../services/graphContext/cbmScopeGate', () => ({
-  runLocalCoderCbmScopeGate: cbmScopeMocks.runLocalCoderCbmScopeGate,
-}));
-
 vi.mock('../cards/runtime', () => ({
   runConfiguredCard: runtimeMocks.runConfiguredCard,
 }));
@@ -131,10 +94,6 @@ vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
 
 vi.mock('../services/autogen/autogenOrchestratorClient', () => graphViewMocks);
 
-vi.mock('../db/pool', () => ({
-  pool: { query: dbMocks.query },
-}));
-
 async function createApiServer(): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
   app.use(express.json());
@@ -153,137 +112,6 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 describe('coder routes', () => {
-  // Force a deterministic blocked state via a broken explicit command so these
-  // route tests never spawn a real coder process, regardless of whether the
-  // vendored runtime is built or API keys are exported on the test machine.
-  const BROKEN_COMMAND = 'node C:/liquidaity/nonexistent/openclaude.mjs';
-
-  async function withBrokenRuntime<T>(fn: () => Promise<T>): Promise<T> {
-    const previous = process.env.LOCALCODER_COMMAND;
-    process.env.LOCALCODER_COMMAND = BROKEN_COMMAND;
-    try {
-      return await fn();
-    } finally {
-      if (previous === undefined) delete process.env.LOCALCODER_COMMAND;
-      else process.env.LOCALCODER_COMMAND = previous;
-    }
-  }
-
-  it('keeps the Hermes report bridge closed outside an active native investigation', async () => {
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/hermes_write_report`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parentRunId: 'req_not_active', reportMarkdown: '# Report', summary: 'No active turn.' }),
-      });
-      await expect(response.json()).resolves.toEqual({
-        ok: false,
-        error: 'hermes_investigation_context_not_active',
-      });
-      expect(response.status).toBe(409);
-      const readResponse = await fetch(`${baseUrl}/mcp-bridge/hermes_read_report`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parentRunId: 'req_not_active' }),
-      });
-      await expect(readResponse.json()).resolves.toEqual({
-        ok: false,
-        error: 'hermes_investigation_context_not_active',
-      });
-      expect(readResponse.status).toBe(409);
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  it('returns 424 with an exact blocker from the LocalCoder status route when nothing runnable', async () => {
-    await withBrokenRuntime(async () => {
-      const { server, baseUrl } = await createApiServer();
-      try {
-        const response = await fetch(`${baseUrl}/localcoder/status`);
-        const payload = await response.json();
-        expect(response.status).toBe(424);
-        expect(payload.ok).toBe(false);
-        expect(payload.inspection.ready).toBe(false);
-        expect(payload.inspection.missing.join(' ')).toContain(
-          'localcoder_explicit_command_script_not_found',
-        );
-      } finally {
-        await closeServer(server);
-      }
-    });
-  });
-
-  it('returns an exact blocked CoderReport from the LocalCoder run route without launching a coder', async () => {
-    await withBrokenRuntime(async () => {
-      const { server, baseUrl } = await createApiServer();
-      try {
-        const response = await fetch(`${baseUrl}/localcoder/run`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: 'packet-route',
-            projectId: 'project-1',
-            repoPath: process.cwd(),
-            objective: 'Run LocalCoder.',
-            planExcerpt: 'First loop.',
-            contextSummary: 'Route proof.',
-            codeAnchors: ['apps/backend/src/coder'],
-            cbmQueries: ['search_graph LocalCoder'],
-            guardrails: ['No fake success.'],
-            allowedFiles: ['apps/backend/src/coder/**'],
-            forbiddenWork: ['No specs/.'],
-            proofRequired: ['Compile.'],
-            reportFormat: 'CoderReport JSON',
-            stopConditions: ['Stop after one job.'],
-          }),
-        });
-        const payload = await response.json();
-        expect(response.status).toBe(424);
-        expect(payload.ok).toBe(false);
-        expect(payload.report.status).toBe('blocked');
-        expect(payload.report.coderPacketId).toBe('packet-route');
-        expect(payload.report.blockers.join(' ')).toContain(
-          'localcoder_explicit_command_script_not_found',
-        );
-        expect(payload.cbmScopeGate.editAllowed).toBe(true);
-      } finally {
-        await closeServer(server);
-      }
-    });
-  });
-
-  it('blocks the LocalCoder route when the structural edit-scope is invalid', async () => {
-    cbmScopeMocks.runLocalCoderCbmScopeGate.mockResolvedValueOnce({
-      sourceRoot: 'C:/Projects/main',
-      scopeStatus: 'blocked',
-      editAllowed: false,
-      blockedReason: 'edit_scope_root_not_found: /nonexistent',
-    });
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/localcoder/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...planningMocks.packet,
-          id: 'packet-scope-blocked',
-          writeMode: 'read-only',
-        }),
-      });
-      const payload = await response.json();
-
-      expect(response.status).toBe(424);
-      expect(payload.ok).toBe(false);
-      expect(payload.report.status).toBe('blocked');
-      expect(payload.report.blockers.join(' ')).toContain('edit_scope_root_not_found');
-      expect(payload.cbmScopeGate.editAllowed).toBe(false);
-    } finally {
-      await closeServer(server);
-    }
-  });
-
   describe('/openclaude/session/chat', () => {
     it('rejects browser-supplied Graph View content — the browser is never the membership authority', async () => {
       const { server, baseUrl } = await createApiServer();
@@ -384,9 +212,7 @@ describe('coder routes', () => {
 
         // Real chat turn still runs and both messages are still persisted.
         expect(chatSessionMocks.startGrpcTurn).toHaveBeenCalledTimes(1);
-        expect((chatSessionMocks.startGrpcTurn.mock.calls[0][0] as any).investigationContext).toEqual({
-          projectId: 'project-1', conversationId: 'main', focusNodeIds: [], requestedOutcome: null,
-        });
+        expect((chatSessionMocks.startGrpcTurn.mock.calls[0][0] as any).investigationContext).toBeUndefined();
         const appendedRoles = chatSessionMocks.appendMessage.mock.calls.map((call) => (call[0] as any).role);
         expect(appendedRoles).toContain('user');
         expect(appendedRoles).toContain('assistant');
@@ -466,44 +292,4 @@ describe('coder routes', () => {
     });
   });
 
-  it('accepts an ordinary Hermes turn with no graph selection and keeps focus optional', async () => {
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: 'project-1',
-          conversationId: 'main',
-          message: 'Investigate.',
-          investigationContext: { focusNodeIds: [], requestedOutcome: 'Investigate.' },
-        }),
-      });
-      expect(response.status).toBe(200);
-      await response.text();
-      expect((chatSessionMocks.startGrpcTurn.mock.calls.at(-1)?.[0] as any).investigationContext).toEqual({
-        projectId: 'project-1', conversationId: 'main', focusNodeIds: [], requestedOutcome: 'Investigate.',
-      });
-    } finally {
-      await closeServer(server);
-    }
-  });
-});
-
-describe('Hermes memory project authority', () => {
-  it('accepts the real ag_catalog project id and returns that exact identity', async () => {
-    const projectId = '20ac92da-01fd-4cf6-97cc-0672421e751a';
-    dbMocks.query.mockResolvedValueOnce({ rows: [{ id: projectId }] });
-    await expect(resolveHermesProjectId(projectId)).resolves.toBe(projectId);
-    expect(dbMocks.query).toHaveBeenLastCalledWith(
-      expect.stringContaining('FROM ag_catalog.projects'),
-      [projectId],
-    );
-  });
-
-  it('fails visibly for an unknown project and never guesses a legacy identity', async () => {
-    const unknown = '00000000-0000-0000-0000-000000000404';
-    dbMocks.query.mockResolvedValueOnce({ rows: [] });
-    await expect(resolveHermesProjectId(unknown)).rejects.toThrow(`hermes_project_not_found: ${unknown}`);
-  });
 });

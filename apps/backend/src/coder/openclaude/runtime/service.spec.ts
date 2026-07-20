@@ -10,7 +10,6 @@ describe('OpenClaude terminal launch metadata', () => {
     getInstallInfo: () => ({
       rootPath: 'localcoder',
       installed: true,
-      headlessEntrypoint: 'headless',
       terminalEntrypoint: 'terminal',
     }),
     isRepoConnected: () => true,

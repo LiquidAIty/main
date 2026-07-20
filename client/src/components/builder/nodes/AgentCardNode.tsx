@@ -35,14 +35,12 @@ export default function AgentCardNode({
   const runtimeBinding = String(data?.runtimeBinding || '').trim();
   const roleBadge = runtimeBinding === 'main_chat'
     ? 'Main'
-    : runtimeBinding === 'hermes_steward'
-      ? 'Hermes'
-      : runtimeType === 'magentic_one'
-        ? 'Mag One'
-        : runtimeType === 'local_coder'
-          ? 'Coder'
-          : 'Worker';
-  const graphToolCount = tools.filter((tool) => /thinkgraph|knowgraph|codegraph|hermes\.memory/.test(tool)).length;
+    : runtimeType === 'magentic_one'
+      ? 'Mag One'
+      : runtimeType === 'local_coder'
+        ? 'Coder'
+        : 'Worker';
+  const graphToolCount = tools.filter((tool) => /thinkgraph|knowgraph|codegraph/.test(tool)).length;
 
   return (
     <div

@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { resolveProductChatWorkingDirectory, resolveRepoRoot } from './workspaceRoot';
 
-// M-1: a product chat session (Main/Hermes) must NOT run with the repo root as
+// M-1: a product Main Chat session must NOT run with the repo root as
 // its working directory, or the engine walks up loading AGENTS.md/CLAUDE.md
 // (~8.4k tokens of developer memory) into a product conversation.
 describe('resolveProductChatWorkingDirectory — no repo-memory walk', () => {

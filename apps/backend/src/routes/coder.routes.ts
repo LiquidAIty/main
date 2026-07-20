@@ -1,9 +1,7 @@
 import { Router } from 'express';
 import { createHash, randomUUID } from 'crypto';
-import { ZodError } from 'zod';
 import type { OpenClaudeRunRequest } from '../coder/openclaude/contracts';
 import { openClaudeRuntimeService } from '../coder/openclaude/runtime/service';
-import { localCoderService } from '../coder/localcoder/service';
 import {
   openClaudeConsoleSessionManager,
   type ConsoleMode,
@@ -20,15 +18,6 @@ import {
   type GrpcTurnHandle,
 } from '../coder/openclaude/session/grpcChatClient';
 import {
-  parseHermesInvestigationContext,
-  beginHermesInvestigation,
-  endHermesInvestigation,
-  readLatestHermesReport,
-  readActiveHermesReport,
-  writeActiveHermesReport,
-  type HermesInvestigationContext,
-} from '../coder/hermes/hermesReportArtifact';
-import {
   appendMessage,
   getConversationMessages,
   listConversations,
@@ -43,7 +32,6 @@ import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/ha
 // The app's one canonical Agent Canvas deck id, defined once on the deck store.
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { createCodebaseMemoryMcpCaller } from '../services/graphContext/cbmMcpCaller';
-import { pool } from '../db/pool';
 import { runCoderSubagent } from '../coder/execution/coderRouter';
 import { setLatestCoderAuditView, getLatestCoderAuditView } from '../coder/execution/coderAuditView';
 import type { CodeGraphViewContractResult } from '../contracts/coderContracts';
@@ -291,90 +279,6 @@ router.post('/mcp-bridge/thinkgraph_submit_update', async (req, res) => {
     return res.status(result.ok ? 200 : 422).json(result);
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_submit_update_failed' });
-  }
-});
-
-// ── Hermes SQL memory (liq_core.memory_space/memory_item, scope 'hermes') ───
-// Project-scoped private steward continuity — separate from ThinkGraph. The
-// runtime project authority is ag_catalog.projects, the same table used by
-// deck/conversation resolution. The old liq_core.project table is legacy data
-// only; never silently mirror or guess an identity from it.
-export async function resolveHermesProjectId(projectId: string): Promise<string> {
-  const normalized = String(projectId || '').trim();
-  if (!normalized) throw new Error('hermes_project_id_required');
-  const { rows } = await pool.query(
-    `SELECT id::text AS id FROM ag_catalog.projects WHERE id::text = $1 LIMIT 1`,
-    [normalized],
-  );
-  if (rows.length === 0) throw new Error(`hermes_project_not_found: ${normalized}`);
-  return String(rows[0].id);
-}
-
-async function resolveHermesMemorySpaceId(projectId: string): Promise<number> {
-  const canonicalProjectId = await resolveHermesProjectId(projectId);
-  const existing = await pool.query(
-    `SELECT memory_space_id FROM liq_core.memory_space
-     WHERE project_id = $1 AND scope = 'hermes' ORDER BY memory_space_id LIMIT 1`,
-    [canonicalProjectId],
-  );
-  if (existing.rows.length > 0) return Number(existing.rows[0].memory_space_id);
-  const created = await pool.query(
-    `INSERT INTO liq_core.memory_space (project_id, scope, label, tags, config)
-     VALUES ($1, 'hermes', 'Hermes Steward Memory', '{}', '{}') RETURNING memory_space_id`,
-    [canonicalProjectId],
-  );
-  return Number(created.rows[0].memory_space_id);
-}
-
-router.post('/mcp-bridge/hermes_memory_read', async (req, res) => {
-  try {
-    const projectId = String(req.body?.projectId || '').trim();
-    if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-    const key = String(req.body?.key || '').trim();
-    const spaceId = await resolveHermesMemorySpaceId(projectId);
-    const { rows } = key
-      ? await pool.query(
-          `SELECT key, value, updated_at FROM liq_core.memory_item
-           WHERE memory_space_id = $1 AND key = $2 ORDER BY updated_at DESC LIMIT 1`,
-          [spaceId, key],
-        )
-      : await pool.query(
-          `SELECT key, value, updated_at FROM liq_core.memory_item
-           WHERE memory_space_id = $1 ORDER BY updated_at DESC LIMIT 50`,
-          [spaceId],
-        );
-    return res.json({
-      ok: true,
-      items: rows.map((row: any) => ({ key: row.key, value: row.value, updatedAt: row.updated_at })),
-    });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'hermes_memory_read_failed' });
-  }
-});
-
-router.post('/mcp-bridge/hermes_memory_write', async (req, res) => {
-  try {
-    const projectId = String(req.body?.projectId || '').trim();
-    const key = String(req.body?.key || '').trim();
-    if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-    if (!key) return res.status(400).json({ ok: false, error: 'key_required' });
-    if (req.body?.value === undefined) return res.status(400).json({ ok: false, error: 'value_required' });
-    const valueJson = JSON.stringify(req.body.value).slice(0, 32_000);
-    const spaceId = await resolveHermesMemorySpaceId(projectId);
-    const updated = await pool.query(
-      `UPDATE liq_core.memory_item SET value = $3::jsonb
-       WHERE memory_space_id = $1 AND key = $2 RETURNING memory_item_id`,
-      [spaceId, key, valueJson],
-    );
-    if (updated.rows.length === 0) {
-      await pool.query(
-        `INSERT INTO liq_core.memory_item (memory_space_id, key, value) VALUES ($1, $2, $3::jsonb)`,
-        [spaceId, key, valueJson],
-      );
-    }
-    return res.json({ ok: true, key, stored: true });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'hermes_memory_write_failed' });
   }
 });
 
@@ -691,35 +595,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
 // id per (projectId, conversationId). The browser never touches gRPC.
 const activeGrpcTurns = new Map<string, GrpcTurnHandle>();
 
-router.post('/mcp-bridge/hermes_write_report', (req, res) => {
-  try {
-    const completion = writeActiveHermesReport(req.body || {});
-    return res.json({ ok: true, ...completion });
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'hermes_report_write_failed';
-    return res.status(reason === 'hermes_investigation_context_not_active' ? 409 : 400).json({
-      ok: false,
-      error: reason,
-    });
-  }
-});
-
-router.post('/mcp-bridge/hermes_read_report', (req, res) => {
-  try {
-    return res.json({ ok: true, report: readActiveHermesReport(String(req.body?.parentRunId || '')) });
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'hermes_report_read_failed';
-    return res.status(reason === 'hermes_investigation_context_not_active' ? 409 : 400).json({ ok: false, error: reason });
-  }
-});
-
-router.get('/hermes/report', (req, res) => {
-  const projectId = String(req.query?.projectId || '').trim();
-  const conversationId = String(req.query?.conversationId || 'main').trim();
-  if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-  return res.json({ ok: true, report: readLatestHermesReport(projectId, conversationId) });
-});
-
 // Latest filtered CodeGraph view from a direct_main_audit run, for the frontend
 // to focus the existing CodeGraphSurface on the audited branch.
 router.get('/coder-audit-view', (req, res) => {
@@ -733,7 +608,7 @@ router.get('/coder-audit-view', (req, res) => {
 // Main Chat owns the approved prompt; an unapproved prompt never reaches the
 // handoff artifact. Prompt BODY stays in the Markdown file; lineage goes to
 // ThinkGraph via the episode contract.
-const PROMPT_SOURCES: readonly PromptSource[] = ['main_chat', 'coder', 'hermes'];
+const PROMPT_SOURCES: readonly PromptSource[] = ['main_chat', 'coder'];
 router.post('/prompt-draft', (req, res) => {
   try {
     const body = req.body || {};
@@ -783,27 +658,14 @@ router.post('/openclaude/session/chat', async (req, res) => {
   const mode = req.body?.mode === 'canvas' ? ('canvas' as const) : ('chat' as const);
   // A PRODUCT chat session's cwd is a neutral out-of-repo directory, NOT the
   // repo root: a repo-root cwd makes the engine walk up and inject the repo's
-  // developer memory (AGENTS.md/CLAUDE.md, ~8.4k tokens — M-1) into Main/Hermes
-  // chat. They use MCP tools, not the filesystem, so the neutral cwd loses no
+  // developer memory (AGENTS.md/CLAUDE.md) into product chat. Main uses MCP
+  // tools, not the filesystem, so the neutral cwd loses no
   // capability. An explicit client-supplied workingDirectory still wins; the
   // Coder keeps the real repo root (spawned separately via resolveRepoRoot).
   const workingDirectory =
     String(req.body?.workingDirectory || '').trim() || resolveProductChatWorkingDirectory();
   if (!projectId || !message) {
     return res.status(400).json({ ok: false, error: 'projectId_and_message_required' });
-  }
-  let investigationContext: HermesInvestigationContext;
-  try {
-    investigationContext = parseHermesInvestigationContext(
-      req.body?.investigationContext,
-      projectId,
-      conversationId,
-    );
-  } catch (error) {
-    return res.status(400).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'turn_context_invalid',
-    });
   }
   // Graph context: the browser is a renderer, never the transport for graph
   // membership. The chat request carries projection IDENTITY only; the server
@@ -895,16 +757,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
       ...(view.parentViewId ? { parentViewId: view.parentViewId } : {}),
     })),
   });
-  // Bind this turn's Hermes report lifecycle to the run (parentRunId = correlationId)
-  // so a mid-turn hermes.write_report attaches to THIS focused branch — the 0-caller
-  // lifecycle is now driven. Best-effort: a lifecycle hiccup never breaks the stream.
-  try {
-    beginHermesInvestigation(correlationId, investigationContext);
-  } catch (error) {
-    logHarnessTrace(
-      `[harness] hermes investigation begin skipped corr=${correlationId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
-    );
-  }
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -947,7 +799,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
       workingDirectory,
       mode,
       traceId: correlationId,
-      investigationContext,
       graphViews,
       graphContext,
     }, async (event) => {
@@ -1027,11 +878,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
   } finally {
     turnFinished = true;
     activeGrpcTurns.delete(sessionId);
-    try {
-      endHermesInvestigation(correlationId);
-    } catch {
-      /* investigation already cleared — never block turn teardown */
-    }
     writeSse('end', {});
     if (!res.destroyed && !res.writableEnded) res.end();
   }
@@ -1211,56 +1057,5 @@ async function resolveMainChatCardId(projectId: string, deckId: string): Promise
   );
   return card ? String(card.id) : null;
 }
-
-router.get('/localcoder/status', async (req, res) => {
-  const repoPath = typeof req.query.repoPath === 'string' ? req.query.repoPath : undefined;
-  const inspection = await localCoderService.inspect(repoPath);
-  return res.status(inspection.ready ? 200 : 424).json({
-    ok: inspection.ready,
-    inspection,
-  });
-});
-
-router.post('/localcoder/run', async (req, res) => {
-  try {
-    // The coder's filesystem root is SERVER-OWNED and trusted — the model/caller
-    // can never choose it. Any supplied repoPath is overridden with the server's
-    // configured project root, and the run id is server-minted. The caller
-    // supplies only the logical coding task (objective, guardrails, proof, ...).
-    const incoming = (req.body?.coderPacket ?? req.body ?? {}) as Record<string, unknown>;
-    const coderPacket = {
-      ...incoming,
-      id:
-        typeof incoming.id === 'string' && incoming.id.trim()
-          ? incoming.id
-          : `coder_${randomUUID()}`,
-      repoPath: process.env.LIQUIDAITY_GRPC_CWD || 'C:/Projects/main',
-    };
-    const result = await localCoderService.run(coderPacket);
-    const reportOk = result.report.status === 'succeeded' || result.report.status === 'partial';
-    const statusCode =
-      result.report.status === 'blocked'
-        ? 424
-        : result.report.status === 'failed'
-          ? 502
-          : 200;
-    return res.status(statusCode).json({
-      ok: reportOk,
-      ...result,
-    });
-  } catch (error) {
-    if (error instanceof ZodError) {
-      return res.status(400).json({
-        ok: false,
-        error: 'invalid_coder_packet',
-        issues: error.issues,
-      });
-    }
-    return res.status(500).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'localcoder_run_failed',
-    });
-  }
-});
 
 export default router;

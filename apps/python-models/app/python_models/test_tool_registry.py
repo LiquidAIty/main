@@ -77,32 +77,6 @@ def test_manifest_exposes_thinkgraph_tools_for_assistant_agent_cards():
         assert entry["description"]
 
 
-def test_hermes_review_completed_job_tool_registered_and_scaffolded():
-    registry = build_default_tool_registry()
-    assert "hermes_review_completed_job" in registry.known_names()
-    tool = registry.resolve_one("hermes_review_completed_job")
-    assert isinstance(tool, FunctionTool)
-
-    from app.python_models.tool_registry import hermes_review_completed_job_tool
-
-    # Scaffold only: the one tool dispatches to review_completed_job, which is not
-    # implemented yet. It must fail honestly — never a fabricated review, never a
-    # ThinkGraph or memory write.
-    result = json.loads(asyncio.run(hermes_review_completed_job_tool(job_id="job_x")))
-    assert result["ok"] is False
-    assert "not yet connected" in result["error"]
-    assert "review" not in result
-    assert "thinkgraphPatch" not in result
-
-
-def test_manifest_exposes_hermes_review_completed_job():
-    manifest = tool_manifest()
-    entry = next((m for m in manifest if m["id"] == "hermes_review_completed_job"), None)
-    assert entry is not None
-    assert entry["displayName"] == "Hermes Completed-Job Review"
-    assert entry["agentCompatibility"] == ["assistant_agent"]
-
-
 def test_manifest_is_registry_backed_no_duplicate_entries():
     manifest = tool_manifest()
     ids = [m["id"] for m in manifest]
