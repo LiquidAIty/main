@@ -47,33 +47,12 @@ node appearing on the canvas in the UI, alongside the real chat answer.
    "TASK LEDGER … Task Ledger Artifact … Real Magentic-One Task Ledger artifact captured."
 4. PASS = that node is present AND the chat answer is still shown. The artifact and the answer coexist.
 
-## PlanFlow Task Objects (Mag One card output contract)
+## Current PlanFlow Boundary
 
-The single honest source of editable PlanFlow task nodes is the explicit
-model-produced structured artifact `taskLedgerArtifact.planFlowTaskObjects`.
-
-* PlanFlow task objects come from an explicit model-produced structured artifact.
-* The Mag One card prompt-chain is the correct place for the task-output
-  instruction — `MAG_ONE_PLANFLOW_TASK_OUTPUT_CONTRACT` in
-  `apps/backend/src/cards/runtime.ts`, transported as
-  `cardRuntime.taskLedgerOutputContract`. Never hide it in Python runtime code.
-* The explicit artifact may be produced by a transparent post-Mag-One structured
-  task pass when the native Mag One system prompt path is not applied to the
-  MagenticOneGroupChat run. `_planflow_task_objects` in `magentic_agentchat.py`
-  makes ONE explicit real `client.create(..., json_output=True)` call grounded in
-  the real task/team/facts/plan/taskLedgerResponse, then `json.loads` the model's
-  JSON and validates the shape. JSON-only; invalid/empty -> attach `[]`.
-* Structured task objects must be model-produced. This is NOT proof metadata — do
-  not collect response IDs, usage, timings, provider metadata; do not wrap or
-  intercept the client; do not call it modelCallProof.
-* Never parse Task Ledger prose (`planResponse`/`taskLedgerResponse`/`factsResponse`),
-  `finalResponseText`, `autogenMessages`, or chat text into task objects.
-* Never rebuild deterministic projection/parsing/sanitizer to fill tasks.
-* Client renders task nodes ONLY from `planFlowTaskObjects` (`buildTaskLedgerArtifactGraph`
-  in `planMissionModel.ts`): face = title only; inspector shows detail/status/
-  stepNumber/dependsOn/approvalRequired/nextNeeded/proofNeeded/raw object/source
-  artifact ref. Missing/empty/invalid -> only the Task Ledger Artifact node renders.
-* Never suppress the chat answer when the artifact or task objects exist.
+`buildTaskLedgerArtifactGraph` renders the real native Task Ledger artifact as one
+honest node. There is no `_planflow_task_objects` post-pass, hidden output contract,
+or deterministic prose-to-task projection. Editable task-node execution remains
+unavailable until a separately reviewed real artifact path is wired.
 
 ## Guardrails
 
@@ -82,15 +61,12 @@ model-produced structured artifact `taskLedgerArtifact.planFlowTaskObjects`.
 @guardrail id=task-ledger-real-autogen.no-prose-parsing
 @guardrail id=task-ledger-real-autogen.none-not-fabrication
 @guardrail id=task-ledger-real-autogen.ui-node-is-the-proof
-@guardrail id=task-ledger-real-autogen.task-objects-model-produced
 
 * Build the artifact only from real orchestrator `_facts`/`_plan`/`_get_task_ledger_full_prompt`.
 * The artifact is a separate surface; it must NEVER suppress or replace the real chat answer.
 * Never parse markdown/prose/finalResponseText/autogenMessages/chat into task steps or node text.
 * If the orchestrator produced no Task Ledger, return None / empty graph — do not invent a node.
 * Proof is the real node on the canvas in the UI, not a compile and not a curl 200.
-* PlanFlow task objects are model-produced via the card output contract only; fail
-  closed to `[]` (no task nodes) when no valid JSON — never fabricate or prose-parse.
 
 ## Known Gap
 

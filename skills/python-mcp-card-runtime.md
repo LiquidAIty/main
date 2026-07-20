@@ -1,5 +1,9 @@
 # Python MCP Card Runtime — the one pattern for card-backed capabilities
 
+@skill id=python-mcp-card-runtime
+@type Skill
+@status active
+
 The canonical way a canvas Agent Card becomes a runnable, tool-authorized capability.
 Established for configured AutoGen cards. Native Harness agents use the separate
 MCP-host manifest and must never select these AutoGen-only tools. Reuse the appropriate pattern; never build a

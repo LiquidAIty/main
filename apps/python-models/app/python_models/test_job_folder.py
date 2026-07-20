@@ -99,7 +99,7 @@ anchors:
   wiki:
     - wiki/coder-to-mag-one-handoff.md
   skills:
-    - skills/cbm-graph-reader-skill.md
+    - skills/codebasedmemory.md
   files:
     - apps/python-models/app/python_models/job_folder.py
   symbols:

@@ -10,8 +10,8 @@
  * fakes success: every check reads live state and reports exactly what came
  * back. This probe is read-only; live model proof belongs to the real Main Chat.
  *
- * Stages (the authority chain: Harness → native inherited-context Hermes →
- * RunPacket → Mag One → returns folder → graph memory):
+ * Stages cover the live Main/Harness session, the separate Mag One card path,
+ * and the graph reads. Actual Hermes integration is not implemented.
  *   1  backend-health        GET  /api/health  (chat entry reachable)
  *   2  services-listening    TCP  5173 (frontend) / 8003 (autogen) / 50051 (gRPC = Harness,
  *                            the principal chat owner)
@@ -19,7 +19,7 @@
  *   4  mag-one-view          POST /api/coder/mcp-bridge/describe_connected_agents
  *                            (blank deckId → canonical-deck default is part of the check;
  *                            disconnected cards must be structurally absent)
- *   5  native-hermes-config  validate the one saved Hermes card used directly by Agent
+ *   5  hermes-boundary       report whether the optional pre-integration Hermes card is saved
  *   6  thinkgraph-read       GET  /api/thinkgraph/projection + POST mcp-bridge/thinkgraph_read_scope
  *   7  knowgraph-read        services/knowgraph/hybrid_retrieval_probe.py (read-only, real Neo4j)
  *   8  runs-and-history      GET  /api/projects/:p/decks (latest run ids) +
@@ -216,7 +216,7 @@ const KNOWGRAPH_PROBE_QUERY = 'knowledge graph organizing principle';
 async function main(): Promise<void> {
   const args = parseProbeArgs(process.argv.slice(2));
   if (!args.project) {
-    console.error('usage: npx tsx scripts/poc-pipeline-probe.ts --project <id> [--deck deck_builder] [--conversation main] [--backend http://localhost:4000] [--live-mag-one]');
+    console.error('usage: npx tsx scripts/poc-pipeline-probe.ts --project <id> [--deck deck_builder] [--conversation main] [--backend http://localhost:4000]');
     process.exit(2);
   }
   console.log(`POC pipeline probe — project=${args.project} deck=${args.deck} conversation=${args.conversation}`);
@@ -358,15 +358,19 @@ async function main(): Promise<void> {
     report('mag-one-view', 'FAIL', String(err?.message || err));
   }
 
-  // 5 — the one saved Hermes card that LocalCoder registers directly as the
-  // native inherited-context Agent (no card-run doorway wrapper).
+  // 5 — Hermes is a pre-integration card boundary only. Its presence proves
+  // saved intent, not an installed Hermes process or a successful Hermes run.
   const hermesCards = deckNodes.filter((node) => node.runtimeBinding === 'hermes_steward');
   const hermes = hermesCards[0];
   const hermesOk = hermesCards.length === 1 && Boolean(String((hermes as any)?.prompt || '').trim());
   report(
-    'native-hermes-config',
-    hermesOk ? 'PASS' : 'FAIL',
-    `matches=${hermesCards.length} model=${String(hermes?.runtimeOptions?.modelKey || 'missing')} prompt=${hermesOk ? 'present' : 'missing'}`,
+    'hermes-boundary',
+    hermesOk ? 'PASS' : hermesCards.length === 0 ? 'SKIP' : 'FAIL',
+    hermesOk
+      ? `pre-integration card present; model=${String(hermes?.runtimeOptions?.modelKey || 'missing')} prompt=present; actual Hermes runtime unimplemented`
+      : hermesCards.length === 0
+        ? 'pre-integration Hermes card absent from this saved deck; actual Hermes runtime unimplemented'
+        : `matches=${hermesCards.length} prompt=${String((hermes as any)?.prompt || '').trim() ? 'present' : 'missing'}`,
   );
 
   // 6 — ThinkGraph read (projection route + scoped read tool bridge)
@@ -501,7 +505,7 @@ async function main(): Promise<void> {
     }
     console.log('');
     console.log(
-      'AUTHORITY CHAIN: principal Harness(gRPC:50051) → native promptless Hermes(inherited context) → one RunPacket → run_mag_one(connected workers only) → returns folder → completed-job review (one MCP tool, scaffold — not yet connected)',
+      'CURRENT PATHS: Main Chat → persistent Harness session; approved Mag One card → Python rails → connected workers → task/result artifacts. Actual Hermes runtime is not integrated.',
     );
   }
   process.exit(failed.length > 0 ? 1 : 0);

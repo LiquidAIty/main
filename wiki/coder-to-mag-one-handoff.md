@@ -179,7 +179,7 @@ contextPointers:
       maxTokens: 1200
 anchors:
   wiki: [wiki/coder-to-mag-one-handoff.md]
-  skills: [skills/codebasedmemoryskill.md]
+  skills: [skills/codebasedmemory.md]
   files: [apps/python-models/app/python_models/job_folder.py]
   symbols: [read_handoff_prompt]
 ---

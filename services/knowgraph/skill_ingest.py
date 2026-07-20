@@ -9,9 +9,10 @@ Two-lane design:
 
 * Canonical lane (this module): ``@``-prefixed graphable lines are parsed
   deterministically into stable Skill / SkillAttempt / FailedAttempt /
-  Guardrail / Decision / QueryPattern / ProofClaim / Validation /
-  CodeGraphReference nodes and relationships. No LLM is involved and the
-  parser never invents IDs, labels, or defaults.
+  Guardrail / Decision / QueryPattern / ProofClaim / ForbiddenPattern /
+  Note / Limitation / Removal / Validation / CodeGraphReference nodes and
+  relationships. No LLM is involved and the parser never invents IDs,
+  labels, or defaults.
 * Semantic retrieval lane (integration point only): prose sections are
   captured as SkillSection nodes linked to the canonical Skill, and
   ``build_semantic_documents`` returns payloads shaped for
@@ -60,6 +61,8 @@ RECORD_OPENERS = {"skill", "attempt", "failed_attempt", "decision", "attempt_res
 ATTRIBUTE_KEYS = {
     "type",
     "status",
+    "graph",
+    "store",
     "requires",
     "related_to",
     "source_prompt",
@@ -75,7 +78,13 @@ ATTRIBUTE_KEYS = {
     "retry_with",
     "validated_by",
     "touches_code",
+    "cbm_before",
     "cbm_after",
+    "proof",
+    "forbidden",
+    "note",
+    "limitation",
+    "removal",
 }
 
 # Known graphable lines outside this importer's scope. They are reported as
@@ -88,7 +97,6 @@ WARN_IGNORED_KEYS = {
     "imports_to",
     "source_task",
     "example",
-    "graph",
 }
 
 _AT_LINE_RE = re.compile(r"^@([a-z_]+)\b\s*(.*)$")
@@ -166,6 +174,11 @@ class ParsedSkill:
     decisions: dict[str, _Record] = field(default_factory=dict)
     guardrails: dict[str, dict[str, Any]] = field(default_factory=dict)
     queries: dict[str, dict[str, Any]] = field(default_factory=dict)
+    proofs: dict[str, dict[str, Any]] = field(default_factory=dict)
+    forbidden_patterns: dict[str, dict[str, Any]] = field(default_factory=dict)
+    notes: dict[str, dict[str, Any]] = field(default_factory=dict)
+    limitations: dict[str, dict[str, Any]] = field(default_factory=dict)
+    removals: dict[str, dict[str, Any]] = field(default_factory=dict)
     sections: list[_Section] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -206,6 +219,11 @@ def parse_skill_markdown(text: str, source_path: str) -> ParsedSkill:
     decisions: dict[str, _Record] = {}
     guardrails: dict[str, dict[str, Any]] = {}
     queries: dict[str, dict[str, Any]] = {}
+    proofs: dict[str, dict[str, Any]] = {}
+    forbidden_patterns: dict[str, dict[str, Any]] = {}
+    notes: dict[str, dict[str, Any]] = {}
+    limitations: dict[str, dict[str, Any]] = {}
+    removals: dict[str, dict[str, Any]] = {}
     sections: list[_Section] = []
     pending_results: list[_Record] = []
     seen_record_ids: set[str] = set()
@@ -322,17 +340,27 @@ def parse_skill_markdown(text: str, source_path: str) -> ParsedSkill:
             if kv.get("id"):
                 gid = kv["id"].strip()
                 gtext = re.sub(r'\bid=(?:"[^"]*"|\S+)', "", rest).strip()
-            elif current is not None and current.kind in ("decision", "failed_attempt") and rest:
+            elif current is not None and current.kind in (
+                "attempt",
+                "attempt_result",
+                "decision",
+                "failed_attempt",
+            ) and rest:
                 gid = f"{current.rid}.guardrail.{_sha8(rest)}"
                 gtext = rest
             else:
                 errors.append(
                     f"line {lineno}: @guardrail needs id=<id>, or free text inside a "
-                    "@decision/@failed_attempt block"
+                    "@attempt/@attempt_result/@decision/@failed_attempt block"
                 )
                 continue
             guardrails.setdefault(gid, {"text": gtext})
-            if current is not None and current.kind in ("decision", "failed_attempt"):
+            if current is not None and current.kind in (
+                "attempt",
+                "attempt_result",
+                "decision",
+                "failed_attempt",
+            ):
                 current.guardrail_ids.append(gid)
             continue
 
@@ -354,6 +382,25 @@ def parse_skill_markdown(text: str, source_path: str) -> ParsedSkill:
             queries.setdefault(qid, {"text": qtext})
             continue
 
+        if key in ("proof", "forbidden", "note", "limitation", "removal"):
+            if skill is None:
+                errors.append(f"line {lineno}: @{key} before @skill")
+                continue
+            record = open_record(key, rest, lineno)
+            if record is None:
+                continue
+            text_value = re.sub(r'\bid=(?:"[^"]*"|\S+)', "", rest, count=1).strip()
+            annotation = {"text": _strip_quotes(text_value)}
+            target = {
+                "proof": proofs,
+                "forbidden": forbidden_patterns,
+                "note": notes,
+                "limitation": limitations,
+                "removal": removals,
+            }[key]
+            target[record.rid] = annotation
+            continue
+
         if current is None:
             errors.append(f"line {lineno}: @{key} outside any @skill/@attempt/@decision record")
             continue
@@ -370,6 +417,11 @@ def parse_skill_markdown(text: str, source_path: str) -> ParsedSkill:
                 current.props["status"] = value
         elif key == "type":
             current.props["type"] = rest
+        elif key in ("graph", "store"):
+            if current.kind != "skill":
+                errors.append(f"line {lineno}: @{key} belongs to @skill, not @{current.kind}")
+            else:
+                current.props[key] = _strip_quotes(rest)
         elif key == "requires":
             current.requires.append(rest)
         elif key == "related_to":
@@ -417,6 +469,24 @@ def parse_skill_markdown(text: str, source_path: str) -> ParsedSkill:
                     errors.append(
                         f"line {lineno}: @cbm_after requires integer nodes=/edges= values"
                     )
+        elif key == "cbm_before":
+            kv = _kv(rest)
+            raw_nodes = kv.get("nodes", "")
+            raw_edges = kv.get("edges", "")
+            if _is_placeholder(raw_nodes) or _is_placeholder(raw_edges):
+                current.placeholder = True
+                warnings.append(
+                    f"line {lineno}: @cbm_before has unfilled template placeholders; "
+                    "attempt result skipped"
+                )
+            else:
+                try:
+                    current.props["cbm_before_nodes"] = int(raw_nodes)
+                    current.props["cbm_before_edges"] = int(raw_edges)
+                except ValueError:
+                    errors.append(
+                        f"line {lineno}: @cbm_before requires integer nodes=/edges= values"
+                    )
 
     flush_section()
     close_current()
@@ -434,12 +504,20 @@ def parse_skill_markdown(text: str, source_path: str) -> ParsedSkill:
         attempt = attempts[result.rid]
         if "status" in result.props:
             attempt.props["result_status"] = result.props["status"]
-        for prop in ("cbm_after_nodes", "cbm_after_edges", "failed_because", "retry_with"):
+        for prop in (
+            "cbm_before_nodes",
+            "cbm_before_edges",
+            "cbm_after_nodes",
+            "cbm_after_edges",
+            "failed_because",
+            "retry_with",
+        ):
             if prop in result.props:
                 attempt.props[prop] = result.props[prop]
         attempt.proofs.extend(result.proofs)
         attempt.validations.extend(result.validations)
         attempt.code_refs.extend(result.code_refs)
+        attempt.guardrail_ids.extend(result.guardrail_ids)
 
     for prop_key, value in frontmatter.items():
         skill.props.setdefault(f"fm_{prop_key}", value)
@@ -452,6 +530,11 @@ def parse_skill_markdown(text: str, source_path: str) -> ParsedSkill:
         decisions=decisions,
         guardrails=guardrails,
         queries=queries,
+        proofs=proofs,
+        forbidden_patterns=forbidden_patterns,
+        notes=notes,
+        limitations=limitations,
+        removals=removals,
         warnings=warnings,
     )
 
@@ -534,6 +617,8 @@ def build_upsert_statements(parsed: ParsedSkill) -> tuple[list[Statement], list[
     for attempt in sorted(parsed.attempts.values(), key=lambda r: r.rid):
         nodes.append(_node_stmt("SkillAttempt", attempt.rid, attempt.props, parsed))
         edges.append(_edge_stmt("Skill", skill_id, "HAS_ATTEMPT", "SkillAttempt", attempt.rid))
+        for gid in attempt.guardrail_ids:
+            edges.append(_edge_stmt("SkillAttempt", attempt.rid, "CREATED_GUARDRAIL", "Guardrail", gid))
         attach_evidence("SkillAttempt", attempt)
 
     for failed in sorted(parsed.failed_attempts.values(), key=lambda r: r.rid):
@@ -559,6 +644,18 @@ def build_upsert_statements(parsed: ParsedSkill) -> tuple[list[Statement], list[
     for qid in sorted(parsed.queries):
         nodes.append(_node_stmt("QueryPattern", qid, parsed.queries[qid], parsed))
         edges.append(_edge_stmt("Skill", skill_id, "HAS_QUERY", "QueryPattern", qid))
+
+    annotations = (
+        (parsed.proofs, "ProofClaim", "PROVED"),
+        (parsed.forbidden_patterns, "ForbiddenPattern", "HAS_FORBIDDEN_PATTERN"),
+        (parsed.notes, "Note", "HAS_NOTE"),
+        (parsed.limitations, "Limitation", "HAS_LIMITATION"),
+        (parsed.removals, "Removal", "HAS_REMOVAL"),
+    )
+    for records, label, relationship in annotations:
+        for record_id in sorted(records):
+            nodes.append(_node_stmt(label, record_id, records[record_id], parsed))
+            edges.append(_edge_stmt("Skill", skill_id, relationship, label, record_id))
 
     for section in parsed.sections:
         nodes.append(

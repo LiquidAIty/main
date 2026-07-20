@@ -34,17 +34,38 @@ try {
     Write-Host "[mcp:check] WARN: --version not supported"
 }
 
-# 4. Verify project registration in .mcp.json
+# 4. Verify the configured server and the canonical indexed project.
 $projectName = "C-Projects-main"
-$found = $false
-foreach ($server in $json.mcpServers.PSObject.Properties.Value) {
-    if ($server.env.PROJECT_NAME -eq $projectName) {
-        $found = $true
-        break
-    }
+$server = $json.mcpServers.'codebase-memory'
+if (-not $server) {
+    Write-Error "[mcp:check] FAIL: .mcp.json has no codebase-memory server"
+    exit 1
 }
-if (-not $found) {
-    Write-Host "[mcp:check] WARN: Project '$projectName' not found in .mcp.json"
+if ([IO.Path]::GetFullPath([string]$server.command) -ne [IO.Path]::GetFullPath($exePath)) {
+    Write-Error "[mcp:check] FAIL: .mcp.json command does not match $exePath"
+    exit 1
+}
+if ([IO.Path]::GetFullPath([string]$server.env.CODEBASE_ROOT) -ne [IO.Path]::GetFullPath($repoPath)) {
+    Write-Error "[mcp:check] FAIL: CODEBASE_ROOT does not match $repoPath"
+    exit 1
+}
+
+try {
+    $statusRaw = & $exePath cli index_status --project $projectName
+    if ($LASTEXITCODE -ne 0) {
+        throw "index_status exited $LASTEXITCODE"
+    }
+    $status = $statusRaw | ConvertFrom-Json
+    if ($status.status -ne "ready") {
+        throw "canonical project status is '$($status.status)'"
+    }
+    if ([IO.Path]::GetFullPath([string]$status.root_path) -ne [IO.Path]::GetFullPath($repoPath)) {
+        throw "canonical project root '$($status.root_path)' does not match '$repoPath'"
+    }
+    Write-Host "[mcp:check] Project: $projectName ready ($($status.nodes) nodes, $($status.edges) edges)"
+} catch {
+    Write-Error "[mcp:check] FAIL: canonical project check failed: $_"
+    exit 1
 }
 
 Write-Host "[mcp:check] PASS"

@@ -29,7 +29,7 @@ Before planning code work, before editing, and before claiming what a file does,
 Do not start with broad grep.
 Do not start with random file opening.
 
-**Skills:** See `skills/codebasedmemoryskill.md` for the canonical CBM tool reference.
+**Skills:** See `skills/codebasedmemory.md` for the canonical CBM tool reference.
 The previously referenced `skills/ai-native-runtime-awareness.md` does not exist and must not be
 treated as an active runtime contract.
 Do not guess from memory.
@@ -86,7 +86,7 @@ index_status
 list_projects
 delete_project
 search_graph
-trace_call_path
+trace_path
 query_graph
 ingest_traces
 detect_changes
@@ -118,14 +118,14 @@ Use `delete_project` only when explicitly requested. Removing an index is destru
 
 ```txt
 search_graph
-trace_call_path
+trace_path
 query_graph
 ingest_traces
 ```
 
 Use `search_graph` to find symbols, functions, classes, files, routes, and graph entities.
 
-Use `trace_call_path` for inbound/outbound call-chain traversal and impact reasoning.
+Use `trace_path` for inbound/outbound call-chain traversal and impact reasoning.
 
 Use `query_graph` for Cypher-like graph queries when the normal search result is not enough.
 
@@ -775,6 +775,7 @@ PLAN.md
 FUTURE.md
 AGENTS.md
 DONT.md
+ARCHITECTURE.md
 skills/*.md
 repo-intake/*.md only when explicitly needed
 ```

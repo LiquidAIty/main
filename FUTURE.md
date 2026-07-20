@@ -7,15 +7,16 @@ capability from here only when the primitive it depends on is proven. Same law a
 [DONT.md](./DONT.md) and [AGENTS.md](./AGENTS.md) govern; no fakes, one writer per graph,
 TS on Python rails with AI brain.
 
-Repo state (2026-07-09): cleaned to Launch core. Non-core experiments removed (~200K lines
+Repo state (2026-07-20): cleaned to Launch core. Non-core experiments removed (~200K lines
 deleted). DONT.md encodes lessons from the purge. The three-graph system (ThinkGraph, KnowGraph,
 CodeGraph) and trading wedge (WorldSignals, Kronos, Alpaca, SEC filings) are wired. Hermes
-integration is the current Fable 5 target — completing the loop with verification, persistence,
-and context compounding.
+integration remains a pre-integration target. The source seed retains its card/topology, while the
+current ADMIN persisted deck lacks the Hermes card/prompt/edges and no actual Hermes process adapter
+exists.
 
 ---
 
-## Work-In-Progress Inventory (2026-07-09 deep clean)
+## Work-In-Progress Inventory (2026-07-20 integrity pass)
 
 Every parked or half-done piece, named so it is documented instead of sprawled. Nothing below is
 part of the active research loop until its own pass wires it in.
@@ -31,8 +32,9 @@ part of the active research loop until its own pass wires it in.
   vendored `localcoder/` supplies the persistent gRPC Harness used by Main Chat; the persistent
   OpenClaude console owns the real PTY/session lifecycle; and `card_local_coder` plus
   `run_local_coder` provide the bounded one-shot coding path. These are separate useful surfaces,
-  not abandoned alternatives. The Code Console still needs to replace the Hermes-labelled
-  under-chat pull-up; Hermes belongs in its own terminal/UI when its real runtime is integrated.
+  not abandoned alternatives. The Code Console is currently a right-side overlay and still needs to
+  occupy the intended under-chat slot; Hermes belongs in its own terminal/UI when its real runtime is
+  integrated.
 - **CodeGraph view (wired but dormant)** — `client/src/components/codegraph/*` renders through the
   vendored `client/src/vendor/codebase-memory-ui` server via the vite `/rpc` + `/api/layout` proxies
   to `127.0.0.1:9749`; that server must be running or the proxies log ECONNREFUSED (harmless).
@@ -45,13 +47,13 @@ part of the active research loop until its own pass wires it in.
   split: Prisma owns auth/session; raw Postgres owns project/deck/conversation app state;
   SQLite/Engraphis owns ThinkGraph; Neo4j owns KnowGraph; and CBM owns CodeGraph. Apache AGE is
   reserved for a future AgentGraph and is not a current graph authority. This split is deliberate.
-- **Hermes runtime/UI (pre-integration)** — preserve the saved Hermes card, Main→Hermes edge,
-  inherited-context selection, prompt/model/tool grants, and report seams. The current generic
-  Harness `Agent` built from that card is not proof that the installed Hermes runtime ran. Integrate
-  one real Hermes process boundary, then give it a separate terminal/UI and choose durability from
-  actual runtime events rather than retaining the Hermes-labelled under-chat development feed.
-- **Card model authority is per-card, by design** — `card_magentic` runs `openai/gpt-5.1-chat-latest`;
-  other cards carry their own saved provider/model (e.g. `openrouter/z-ai/glm-5.2`). Mixed models
+- **Hermes runtime/UI (pre-integration)** — preserve the source seed's Hermes card, Main→Hermes edge,
+  inherited-context selection, prompt/model/tool grants, and report seams. The current ADMIN deck
+  lacks that persisted topology, and no installed Hermes process has been runtime-proven. Restore the
+  saved data only in a separate reviewed database task, then integrate one real Hermes process
+  boundary and give it a separate terminal/UI.
+- **Card model authority is per-card, by design** — current ADMIN readback has Main and Local Coder on
+  `openrouter/z-ai/glm-5.2` and Magentic-One on `openrouter/openai/gpt-5.1-chat`. Mixed models
   across cards are correct when the live card configs say so — never normalize all cards to one
   provider/model, and never let a caller override a card's own config. Service-only model calls
   (embedding/rerank/extraction) are allowed but must never masquerade as a card-agent call.
@@ -60,11 +62,9 @@ part of the active research loop until its own pass wires it in.
   seed template prompt changes and an existing project must pick it up, that requires an explicit live
   deck migration/readback (as done for `card_main_chat` via the deck PUT API) — never assumed. Report
   duplicated prompt sources if found; do not delete card prompts.
-- **Object-aware chat (planned, not residue)** — intended future wire: selected node/card/object →
-  active object context → Main Chat/Harness → Hermes context → Mag One RunPacket. The graph node
-  inspector (`KnowledgeGraphFramework.tsx`) is the first half of this; it does not yet feed chat/agent
-  context. Do not implement this wire or remove inspector/selection code as dead until a SPEC
-  explicitly asks for it.
+- **Object-aware chat (partially wired, not residue)** — graph selection can now attach bounded
+  selected graph-object references to Main Chat/Harness context. Propagation through actual Hermes
+  and approved Mag One execution is not proven. Do not remove inspector/selection code as dead.
 - **Deck/conversation JSONB is app persistence for canvas/card/deck state only** — not AutoGen memory,
   not ThinkGraph, not KnowGraph, not CodeGraph. Not scheduled for replacement in cleanup passes; report
   only if it causes a real bug.

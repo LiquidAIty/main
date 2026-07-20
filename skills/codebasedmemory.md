@@ -1,12 +1,21 @@
 ---
-name: codebasedmemoryskill
-description: Authoritative operating guide for Code Based Memory (CBM) inside LiquidAIty. CBM is mandatory for repository analysis, cleanup, architecture, refactoring, deletion-impact, and code changes.
-version: 2.1.0
+name: codebasedmemory
+description: Canonical operating guide for Code-Based Memory (CBM) inside LiquidAIty. Use it for repository analysis, cleanup, architecture, refactoring, deletion-impact, and code changes.
+version: 3.0.0
 cbm_version: 0.9.0
 project: C-Projects-main
 ---
 
 # Code Based Memory Skill
+
+@skill id=codebasedmemory
+@type Skill
+@status active
+@requires fresh_cbm_index
+
+This is the canonical CBM skill. Do not create a second general CBM manual under another filename.
+`skills/codegraph.md` remains separate because it defines the product's CodeGraph authority and
+boundary rather than this development workflow.
 
 ## What CBM Is
 
@@ -108,7 +117,9 @@ Parameter: `{"project":"C-Projects-main"}`
 Use: early in a serious session, before writing custom Cypher. Record the live node labels and
 edge types instead of relying on counts copied from a previous index.
 
-Key edges: CALLS (3840, with confidence/strategy), IMPORTS (444), HANDLES (53, route→handler), TESTS (533), SEMANTICALLY_RELATED (144, LSH-based), SIMILAR_TO (47, Jaccard), HTTP_CALLS (36), GRPC_CALLS (1), CONFIGURES (38).
+Key edges include CALLS, IMPORTS, HANDLES, TESTS, SEMANTICALLY_RELATED, SIMILAR_TO,
+HTTP_CALLS, GRPC_CALLS, CROSS_HTTP_CALLS, CROSS_ASYNC_CALLS, DATA_FLOWS, and CONFIGURES. Counts
+belong in the live `get_graph_schema` result, not in this skill.
 
 **get_architecture** — Structure overview.
 Parameter: `{"project":"C-Projects-main"}`
@@ -120,9 +131,13 @@ current task.
 Parameters: `{"project":"C-Projects-main","query":"<name>","label":"Function"}`
 Uses BM25 ranking. Returns name, qualified_name, file_path, start_line, end_line, rank. Supports pagination with has_more. Prefer this over rg when the question concerns a symbol or structural entity. Use the `name` field (not qualified_name) for subsequent trace_path calls.
 
-**trace_path** — Inbound callers / outbound callees.
+**trace_path** — Inbound callers / outbound callees. This is the current MCP name.
 Parameters: `{"project":"C-Projects-main","function_name":"<simple-name>","direction":"inbound|outbound","depth":2}`
 Uses simple function names (the `name` field from search_graph), NOT qualified names. Returns caller/callee lists with hop distance. Depth 2 is usually sufficient. Depth 1 = direct, depth 2 = transitive. Known limitation: does not resolve Python functions or TypeScript dotted methods.
+
+Some older documentation and older clients called this operation `trace_call_path`. Treat that as a
+historical alias only. The installed v0.9.0 MCP surface exposed to this repository is `trace_path`;
+do not invent or call an unavailable alias.
 
 **query_graph** — Custom Cypher queries.
 Parameters: `{"project":"C-Projects-main","query":"MATCH ..."}`
@@ -171,7 +186,10 @@ Note: Route nodes have empty `file_path`. Route→handler mapping requires readi
 
 ## Working-Tree Visibility
 
-CBM indexes tracked files. Uncommitted changes to tracked files ARE visible after reindex. Untracked new files are NOT indexed — they must be staged (git add) first. `detect_changes` reports only tracked files with modifications. New untracked files require `git status --short` for discovery.
+`index_repository` walks eligible source files under the repository root; an eligible untracked file
+can therefore appear after a fresh index. `detect_changes` is Git-delta analysis and does not replace
+`git status --short` for untracked files. Never stage a file merely to make CBM see it. Verify
+coverage by searching for the specific file/symbol after indexing, and combine CBM with Git status.
 
 ## Cold Start & Performance
 
@@ -306,3 +324,17 @@ After edit:
 - [ ] detect_changes confirms impact
 - [ ] trace_path re-verified on affected paths
 - [ ] rg confirms old identifiers gone
+
+## Guardrails
+
+@guardrail id=codebasedmemory.fresh-before-edits
+@guardrail id=codebasedmemory.direct-read-before-claim
+@guardrail id=codebasedmemory.no-fake-code-understanding
+@guardrail id=codebasedmemory.source-wins-on-disagreement
+@guardrail id=codebasedmemory.no-reflexive-reindex
+@guardrail id=codebasedmemory.no-destructive-index-delete
+
+## Query Records
+
+@query id=codebasedmemory.current-code "prove project and index freshness, search_graph for relevant symbols, trace_path when needed, then direct-read resolved source"
+@query id=codebasedmemory.skill-match "retrieve skills using user intent, active CoderPacket, fresh CBM files and symbols, subsystem boundaries, and required proof"

@@ -194,6 +194,40 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(len(parsed.warnings), 2)
         self.assertIn("@node", parsed.warnings[0])
 
+    def test_skill_graph_hooks_become_nodes_and_relationships(self):
+        text = (
+            "@skill id=x\n"
+            "@graph skillgraph\n"
+            "@store neo4j\n"
+            "@proof id=x.compile compile command passed\n"
+            "@forbidden id=x.fake fake success\n"
+            "@note id=x.gap live proof is pending\n"
+            "@limitation id=x.network requires network\n"
+            "@removal id=x.old old path removed\n"
+        )
+        parsed = parse_skill_markdown(text, "skills/x.md")
+        self.assertEqual(parsed.skill.props["graph"], "skillgraph")
+        self.assertEqual(parsed.skill.props["store"], "neo4j")
+        self.assertEqual(parsed.proofs["x.compile"]["text"], "compile command passed")
+        self.assertEqual(parsed.forbidden_patterns["x.fake"]["text"], "fake success")
+        self.assertEqual(parsed.notes["x.gap"]["text"], "live proof is pending")
+        self.assertEqual(parsed.limitations["x.network"]["text"], "requires network")
+        self.assertEqual(parsed.removals["x.old"]["text"], "old path removed")
+
+        nodes, edges = build_upsert_statements(parsed)
+        node_labels = {re.search(r"MERGE \(n:(\w+)", cypher).group(1) for cypher, _ in nodes}
+        relationships = {
+            re.search(r"MERGE \(a\)-\[:(\w+)\]", cypher).group(1) for cypher, _ in edges
+        }
+        self.assertLessEqual(
+            {"ProofClaim", "ForbiddenPattern", "Note", "Limitation", "Removal"},
+            node_labels,
+        )
+        self.assertLessEqual(
+            {"PROVED", "HAS_FORBIDDEN_PATTERN", "HAS_NOTE", "HAS_LIMITATION", "HAS_REMOVAL"},
+            relationships,
+        )
+
     def test_placeholder_attempt_result_skipped_with_warning(self):
         text = (
             "@skill id=x\n@attempt id=x.a1\n@status active\n\n"
@@ -208,15 +242,23 @@ class ParserTests(unittest.TestCase):
     def test_filled_attempt_result_merges_into_attempt(self):
         text = (
             "@skill id=x\n@attempt id=x.a1\n@status active\n\n"
-            "@attempt_result id=x.a1\n@status succeeded\n@cbm_after nodes=10 edges=20\n"
+            "@attempt_result id=x.a1\n@status succeeded\n"
+            "@cbm_before nodes=5 edges=8\n@cbm_after nodes=10 edges=20\n"
             "@proved_by unit tests passed\n"
+            "@guardrail preserve graph hooks\n"
         )
         parsed = parse_skill_markdown(text, "skills/x.md")
         attempt = parsed.attempts["x.a1"]
         self.assertEqual(attempt.props["result_status"], "succeeded")
+        self.assertEqual(attempt.props["cbm_before_nodes"], 5)
+        self.assertEqual(attempt.props["cbm_before_edges"], 8)
         self.assertEqual(attempt.props["cbm_after_nodes"], 10)
         self.assertEqual(attempt.props["cbm_after_edges"], 20)
         self.assertIn("unit tests passed", attempt.proofs)
+        self.assertEqual(len(attempt.guardrail_ids), 1)
+        self.assertEqual(
+            parsed.guardrails[attempt.guardrail_ids[0]]["text"], "preserve graph hooks"
+        )
 
     def test_attempt_result_without_matching_attempt_fails(self):
         bad = "@skill id=x\n@attempt_result id=x.missing\n@status succeeded\n"

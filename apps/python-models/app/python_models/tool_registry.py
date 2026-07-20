@@ -33,7 +33,6 @@ from autogen_core.tools import FunctionTool
 from app.python_models import job_folder as jf
 from app.python_models.web_search import web_search
 from app.python_models.orchestration_contracts import ContextPack, ToolSpec
-from app.python_models.hermes.review_completed_job import review_completed_job
 from app.python_models.sec_filing_signals import (
     IssuerRef,
     SecFilingQuery,
@@ -451,34 +450,6 @@ async def apply_thinkgraph_patch_tool(
 
 
 # ---------------------------------------------------------------------------
-# Hermes completed-job review — the ONE MCP tool over the single review scaffold.
-#
-# Intended invocation boundary: an authorized agent calls this one tool, which
-# dispatches to review_completed_job (the single scaffold). The review runtime is
-# NOT built yet, so it honestly reports not-implemented and never fabricates a
-# review. Takes one trusted opaque job id — never an arbitrary filesystem path;
-# server-owned folder resolution is a TODO for when the review is implemented.
-# There is exactly one review tool (it will later review both Coder and Mag One
-# completed-job folders — never producer-specific tools).
-# ---------------------------------------------------------------------------
-
-
-async def hermes_review_completed_job_tool(job_id: str) -> str:
-    """One MCP entrypoint for the future Hermes completed-job review. Scaffold
-    only: dispatches to review_completed_job, which is not implemented yet."""
-    jid = str(job_id or "").strip()
-    if not jid:
-        return json.dumps({"ok": False, "error": "job_id_required"})
-    try:
-        # No evaluation logic lives here — the scaffold owns the (future) review.
-        review_completed_job(jid)
-    except NotImplementedError as err:
-        return json.dumps({"ok": False, "error": str(err)})
-    # TODO: when review_completed_job returns a ReviewResult, serialize it here.
-    return json.dumps({"ok": False, "error": "review_completed_job_not_implemented"})
-
-
-# ---------------------------------------------------------------------------
 # Job-folder return writer (run-scoped, NOT a card-selectable tool).
 #
 # Available ONLY inside an explicit Coder job-folder handoff run: the single-run
@@ -775,29 +746,6 @@ def build_default_tool_registry() -> ToolRegistry:
             outputSchema={"type": "string", "description": "JSON honest applied/duplicate/empty result"},
         ),
         apply_thinkgraph_patch_tool,
-    )
-    registry.register(
-        ToolSpec(
-            name="hermes_review_completed_job",
-            description=(
-                "Hermes: review ONE completed job folder (Coder or Mag One) and return a "
-                "single ReviewResult. SCAFFOLD ONLY — the review runtime is not built yet, "
-                "so this honestly reports not-implemented and never fabricates a review. "
-                "Input: job_id = one trusted opaque job identifier; the server resolves the "
-                "completed-job folder (never an arbitrary filesystem path)."
-            ),
-            enabled=True,
-            inputSchema={
-                "type": "object",
-                "properties": {"job_id": {"type": "string"}},
-                "required": ["job_id"],
-            },
-            outputSchema={
-                "type": "string",
-                "description": "JSON {ok:false, error} — scaffold reports not-implemented (ReviewResult is a TODO)",
-            },
-        ),
-        hermes_review_completed_job_tool,
     )
     registry.register(
         ToolSpec(
@@ -1103,10 +1051,6 @@ _TOOL_DISPLAY_METADATA: dict[str, dict[str, Any]] = {
     },
     "apply_thinkgraph_patch": {
         "displayName": "ThinkGraph Patch (authorized write)",
-        "agentCompatibility": ["assistant_agent"],
-    },
-    "hermes_review_completed_job": {
-        "displayName": "Hermes Completed-Job Review",
         "agentCompatibility": ["assistant_agent"],
     },
     "run_local_coder": {

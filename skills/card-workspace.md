@@ -6,6 +6,10 @@ version: 1.0.0
 
 # Card Workspace Authority
 
+@skill id=card-workspace
+@type Skill
+@status active
+
 ## Rule
 
 A card has a durable workspace. Runs live beneath that card.

@@ -19,13 +19,14 @@ activation signal. No TS brain, no fallbacks, no fake success. Full rules: [AGEN
 
 ### Stack topology
 
-Four services + three storage authorities — `npm run dev:all` plus the required database
+Five runtime processes + three storage authorities — `npm run dev:all` plus the required database
 containers:
 
 ```txt
 frontend      :5173    Vite / React / ReactFlow canvas
 backend       :4000    Express — transport, MCP bridge, deck store
 autogen       :8003    Python AutoGen / MagenticOne
+knowgraph     :8001    Python knowledge/provenance API
 gRPC harness  :50051   localcoder — the chat + coder engine
 Postgres      :5433    sim-pg — projects, decks, conversations
 SQLite                 ThinkGraph — Engraphis project reasoning/state
@@ -41,16 +42,18 @@ The OpenClaude-derived gRPC Harness (`localcoder`) owns the persistent Main Chat
 backend `/api/coder/openclaude/session/{chat,answer,history}` → Harness on :50051. Main remains the
 principal responder.
 
-The saved Hermes card is correctly wired as a Main sub-agent through persisted card/edge authority.
-Keep that topology and its inherited-context/tool-grant boundary. Today, however, the Harness builds a
-generic inherited-context `Agent` from the saved Hermes card; that is useful pre-integration plumbing,
-not proof that the installed Hermes runtime executed. The missing final seam is one real Hermes
-process adapter. It may be launched through the OpenClaude terminal/process boundary if that proves to
-be the correct installed-runtime interface.
+The source deck seed defines the Hermes card as a Main sub-agent with inherited-context/tool-grant
+boundaries. The current ADMIN persisted deck does not contain that card, prompt, or edge, so source
+topology is not runtime proof and database recovery remains a separate reviewed task. When the
+persisted topology exists, the Harness can build a generic inherited-context `Agent` from the saved
+card; that remains pre-integration plumbing, not proof that the installed Hermes runtime executed.
+The missing final seam is one real Hermes process adapter. It may be launched through the OpenClaude
+terminal/process boundary if that proves to be the correct installed-runtime interface.
 
-The under-chat terminal belongs to OpenClaude Code/Coder. Hermes gets its own terminal or UI when the
-actual Hermes runtime is integrated. The currently restored Hermes pull-up panel under chat is a known
-placement bug, not the intended product boundary.
+The under-chat terminal slot belongs to OpenClaude Code/Coder. Hermes gets its own terminal or UI
+when the actual Hermes runtime is integrated. Current source has the OpenClaude Code Console as a
+right-side overlay and the Hermes development child-stream as the under-chat pull-up; that placement
+is a known bounded UI mismatch, not the intended product boundary.
 
 ### 2. The one MCP server — the control surface
 
@@ -78,8 +81,10 @@ source of truth for what a card *is* — never a TS name-match.
 
 ### 5. Coder — two real surfaces, not substitutes
 
-The persistent OpenClaude console/session is the interactive Coder surface and is intended below Main
-Chat. It owns the real PTY, input/output, resize, stop, and session lifecycle.
+The persistent OpenClaude console/session is the interactive Coder surface intended below Main Chat.
+It owns the real PTY, input/output, resize, stop, and session lifecycle. Current UI placement is a
+right-side overlay; moving the already-working surface is a later focused UI repair, not a reason to
+replace its runtime.
 
 The Local Coder card is also working and must remain. `run_local_coder(objective, …)` (Python tool) →
 backend `/api/coder/localcoder/run` — **the server injects the trusted filesystem root + run id; never
@@ -181,12 +186,12 @@ saved Hermes card + prompt + persisted Main→Hermes authority
 → one missing real Hermes process adapter
 ```
 
-Do not delete that chain and do not rename a generic model call into “Hermes.” The current
-`hermes_review_completed_job` implementation is explicitly an unconnected scaffold that returns
-not-implemented; it is not runtime proof and is not the integration target. First prove the installed
-Hermes executable, invocation/session mode, working directory, prompt input, output/stream behavior,
-and tool/MCP surface. Then connect exactly one bounded adapter and give Hermes its own terminal/UI.
-The OpenClaude Coder terminal remains below Main Chat.
+Do not delete that chain and do not rename a generic model call into “Hermes.” The former
+`hermes_review_completed_job` not-implemented tool scaffold has been removed: actual review work
+begins only when a real runtime adapter and completed-job artifact boundary are ready. First prove
+the installed Hermes executable, invocation/session mode, working directory, prompt input,
+output/stream behavior, and tool/MCP surface. Then connect exactly one bounded adapter and give
+Hermes its own terminal/UI. The OpenClaude Coder terminal remains below Main Chat.
 
 The ADMIN database currently lacks the persisted Hermes card, prompt, and edges because prior cleanup
 mutated durable data. Source/seed recovery does not restore PostgreSQL. Restore that data only through
@@ -215,7 +220,8 @@ SPEC, never inferred by the resolver.
 ## Durable docs
 
 ```txt
-PLAN.md      this — real architecture + build route
+PLAN.md      current product route and build order
+ARCHITECTURE.md current system map and operating boundaries
 FUTURE.md    product vision & deferred features
 AGENTS.md    execution law
 DONT.md      what not to write (+ purge log)
@@ -223,5 +229,5 @@ wiki/*.md    feature manifest registry (flat, one file per feature)
 skills/*.md  reusable proven procedures
 ```
 
-Nothing else durable by default. `PLAN.md` is current architecture and route; temporary implementation
-prompts are not permanent specs unless explicitly promoted to a skill.
+Nothing else durable by default. `PLAN.md` is the current route, `ARCHITECTURE.md` is the system map,
+and temporary implementation prompts are not permanent specs unless explicitly promoted to a skill.

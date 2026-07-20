@@ -131,67 +131,36 @@ mode). This is the first green no-edit CoderPacket through the real backend rout
 @guardrail id=magentic-one-runtime.localcoder-no-model-fallback
 @guardrail id=magentic-one-runtime.user-gated-bounded-repeat
 
-## Verified Adapter Audit
+## Current Runtime Boundary
 
 @proof id=magentic-one-runtime.localcoder-vendored-runtime
 `localcoder/` exists without `localcoder/.git`; it includes repository tools, MCP support, and a
 gRPC `AgentService.Chat` implementation.
 
-@proof id=magentic-one-runtime.current-openclaude-facade
-Current backend headless and terminal OpenClaude modes both call `runLLM(request.task)` and return
-plain output; neither invokes the vendored LocalCoder coding runtime.
+@proof id=magentic-one-runtime.current-main-chat
+Main Chat is a persistent Harness session: client session routes call the backend
+`grpcChatClient`, which resolves the saved Main card's provider/model/tool grants and streams through
+the vendored OpenClaude-derived gRPC server.
 
-@proof id=magentic-one-runtime.current-chat-gap
-Current Agent Builder chat starts a Magentic-One deck run directly, while the dedicated OpenClaude
-routes remain isolated and the Local Coder participant is mapped to a generic assistant.
+@proof id=magentic-one-runtime.current-openclaude-console
+The direct OpenClaude Code console is a backend-owned persistent PTY/session with start, stream,
+input, resize, interrupt, and stop behavior. It is a separate interactive product path from the
+Local Coder card.
 
-@proof id=magentic-one-runtime.preferred-adapter-boundary
-`localcoder/src/proto/openclaude.proto` and `localcoder/src/grpc/server.ts` expose bidirectional
-events required for a real backend-owned CoderPacket-to-CoderReport adapter.
+@proof id=magentic-one-runtime.current-localcoder
+`run_local_coder` calls the backend LocalCoder service/adapter, which discovers the configured
+OpenClaude CLI, binds it to the trusted repository/workspace scope, and accepts success only after a
+validated CoderReport. It is not replaced by the persistent terminal.
 
-@proof id=magentic-one-runtime.grpc-hardening-required
-Current LocalCoder gRPC startup is not backend-supervised or passed backend MCP config; its server
-uses no MCP clients, exposes available runtime tools without a CoderPacket access-policy mapping,
-and emits final text rather than a CoderReport.
-
-@proof id=magentic-one-runtime.audit-smoke-blocked
-The workspace has no `localcoder/node_modules`, no `localcoder/dist/cli.mjs`, and no installed Bun
-command, so vendored build/typecheck/runtime smoke is blocked until dependencies/runtime are
-restored.
+@proof id=magentic-one-runtime.current-runtime-availability
+The vendored runtime currently has `node_modules`, `dist/cli.mjs`, `bin/openclaude`, and Bun available.
+Re-prove these facts before a live run rather than copying this statement into a CoderReport.
 
 ## Query Patterns
 
 @query id=magentic-one-runtime.code-evidence "refresh CBM, search_graph for Magentic-One runtime, worker, and tool-registry symbols, then direct-read resolved files"
 @query id=magentic-one-runtime.proof "run focused Python runtime tests, backend runtime tests, compile, and real smoke when execution behavior changes"
 @query id=magentic-one-runtime.localcoder-adapter "trace chat to Magentic-One deck execution, OpenClaude routes to runLLM, and LocalCoder gRPC tool/permission events before changing the adapter"
-
-## First Real LocalCoder Adapter Attempt
-
-@attempt id=magentic-one-runtime.first-localcoder-process-adapter
-@status succeeded
-@source_prompt "implement the first real LiquidAIty chat-to-coder loop by wrapping the existing LocalCoder foundation"
-@requires_fresh_cbm true
-
-@attempt_result id=magentic-one-runtime.first-localcoder-process-adapter
-@status succeeded
-@cbm_before nodes=4650 edges=8255
-@cbm_after nodes=4620 edges=8499
-@proved_by validated CoderPacket and CoderReport contracts with packet/report comparison
-@proved_by authenticated POST /api/coder/localcoder/run invokes the real vendored LocalCoder noninteractive entrypoint or returns exact blocked dependencies
-@proved_by old plain-task OpenClaude run returns 410 and terminal mode never reports used without launch
-@proved_by strict OpenClaude provider/model resolution has no silent fallback
-@validated_by 58 focused backend checks and clean backend TypeScript compile
-@blocked_by live LocalCoder smoke requires Bun, localcoder/node_modules, and localcoder/dist/cli.mjs
-@guardrail localcoder process start and parsed CoderReport are required before success
-@guardrail keep CoderPacket as the only active spec/task and stop after one job
-@touches_code apps/backend/src/contracts/coderContracts.ts
-@touches_code apps/backend/src/coder/localcoder/adapter.ts
-@touches_code apps/backend/src/coder/localcoder/service.ts
-@touches_code apps/backend/src/routes/coder.routes.ts
-@touches_code apps/backend/src/coder/openclaude/provider/openai53.ts
-@touches_code apps/backend/src/coder/openclaude/runtime/headless.ts
-@touches_code apps/backend/src/coder/openclaude/runtime/terminal.ts
-@touches_code apps/backend/scripts/openclaude-terminal-launch.ps1
 
 ## Clean Native Boundary — Outer Runtime Wrappers Removed (2026-06-28)
 
