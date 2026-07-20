@@ -13,7 +13,6 @@ import {
   listAgentCards,
   saveProjectState,
 } from '../services/agentBuilderStore';
-import { getLastTrace } from '../services/ingestTrace';
 import { ensureSystemAgentConfigs } from '../services/agentConfigStore';
 
 const router = Router();
@@ -227,16 +226,6 @@ router.put('/:projectId/state', async (req, res) => {
           ? 404
           : 500;
     return res.status(status).json({ ok: false, error: err?.message || 'failed to save state' });
-  }
-});
-
-router.get('/:projectId/kg/last-trace', async (req, res) => {
-  logProjectRoute(req);
-  try {
-    const trace = getLastTrace(req.params.projectId);
-    return res.json({ ok: true, trace });
-  } catch (err: any) {
-    return res.status(500).json({ ok: false, error: err?.message || 'failed to get last trace' });
   }
 });
 

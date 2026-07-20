@@ -4,7 +4,6 @@ import artifacts from './artifacts.routes';
 import auth from './auth.routes';
 import ragSearch from './ragsearch.routes';
 import { authMiddleware } from '../middleware/auth';
-import { diagnosticRoutes } from './diagnostic.routes';
 import receipts from './receipts.routes';
 import config from './config.routes';
 import coder from './coder.routes';
@@ -24,8 +23,6 @@ router.use('/auth', auth);
 
 // Mount children exactly once. Preserve existing concrete paths.
 router.use('/health', health);
-router.use('/diagnostic', diagnosticRoutes);
-
 router.use('/artifacts', authMiddleware, artifacts);
 router.use('/rag', authMiddleware, ragSearch);
 router.use('/receipts', authMiddleware, receipts);

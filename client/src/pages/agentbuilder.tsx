@@ -332,7 +332,6 @@ function loadProjectState() {
   };
 }
 
-// helper: convert AGE query results to graph nodes/edges for visualization
 /** Mean synodic month in days (NASA/USNO convention). */
 export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
@@ -565,7 +564,6 @@ export default function AgentBuilder(): React.ReactElement {
   const deckSaveAbortRef = useRef<AbortController | null>(null);
   const deckExecutionAbortRef = useRef<AbortController | null>(null);
   const activeProjectLatestRef = useRef('');
-  const loggedProjectRef = useRef<string | null>(null);
   const lastBuilderDeckWriteReasonRef = useRef<string | null>(null);
   const lastBuilderUiOnlyActionRef = useRef<string | null>(null);
   const lastBuilderDeckFingerprintRef = useRef<string | null>(null);
@@ -1435,13 +1433,6 @@ export default function AgentBuilder(): React.ReactElement {
 
   useEffect(() => {
     activeProjectLatestRef.current = activeProject;
-  }, [activeProject]);
-
-  useEffect(() => {
-    if (activeProject && loggedProjectRef.current !== activeProject) {
-      console.log('[AgentBuilder] selected projectId=%s', activeProject);
-      loggedProjectRef.current = activeProject;
-    }
   }, [activeProject]);
 
   const objectDrawerRole = useMemo<'agent' | 'worldsignal' | null>(() => {

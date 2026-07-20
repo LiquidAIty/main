@@ -124,14 +124,14 @@ describe('ClaudeCodeAdapter caller authority (dossier §3.3)', () => {
     return JSON.parse(readFileSync(path.join(root, 'coder-workspace', 'runs', runId, 'mcp.json'), 'utf8'));
   }
 
-  it('with no authority set, produces the exact legacy args + dev-harness-only MCP (behavior-preserving)', () => {
+  it('with no authority set, produces the exact legacy args without an invented MCP host', () => {
     const root = fixture();
     const adapter = prepared(root, {}, 'coder_legacy');
     const args = adapter.inspectLaunch('coder_legacy').args;
     expect(args[args.indexOf('--allowedTools') + 1]).toBe('Bash,PowerShell');
     expect(args[args.indexOf('--disallowedTools') + 1]).toBe('WebFetch,WebSearch,Write,Edit,NotebookEdit');
     expect(args[args.indexOf('--permission-mode') + 1]).toBe('dontAsk');
-    expect(Object.keys(readMcp(root, 'coder_legacy').mcpServers)).toEqual(['liquid_aity_coder']);
+    expect(Object.keys(readMcp(root, 'coder_legacy').mcpServers)).toEqual([]);
     adapter.dispose('coder_legacy');
   });
 
@@ -147,12 +147,12 @@ describe('ClaudeCodeAdapter caller authority (dossier §3.3)', () => {
     expect(allowed).not.toContain('PowerShell');
     expect(args[args.indexOf('--disallowedTools') + 1]).toContain('Edit');
     const mcp = readMcp(root, 'coder_audit');
-    expect(Object.keys(mcp.mcpServers).sort()).toEqual(['liquid_aity_codegraph', 'liquid_aity_coder'].sort());
+    expect(Object.keys(mcp.mcpServers)).toEqual(['liquid_aity_codegraph']);
     expect(String(mcp.mcpServers.liquid_aity_codegraph.args[0]).replace(/\\/g, '/')).toMatch(/codegraph_doorway_mcp\.py$/);
     adapter.dispose('coder_audit');
   });
 
-  it('with mag_one_execution, grants Edit/Write/Bash and keeps dev-harness-only MCP', () => {
+  it('with mag_one_execution, grants Edit/Write/Bash without an invented MCP host', () => {
     const root = fixture();
     const adapter = prepared(root, { authority: 'mag_one_execution' }, 'coder_exec');
     const allowed = adapter.inspectLaunch('coder_exec').args[
@@ -161,7 +161,7 @@ describe('ClaudeCodeAdapter caller authority (dossier §3.3)', () => {
     expect(allowed).toContain('Edit');
     expect(allowed).toContain('Write');
     expect(allowed).toContain('Bash');
-    expect(Object.keys(readMcp(root, 'coder_exec').mcpServers)).toEqual(['liquid_aity_coder']);
+    expect(Object.keys(readMcp(root, 'coder_exec').mcpServers)).toEqual([]);
     adapter.dispose('coder_exec');
   });
 });

@@ -24,7 +24,7 @@ For each assertion this capability:
 It deliberately does NOT:
 * touch the ``:Chunk`` ``chunk_embedding_idx`` vector index in
   ``neo4j_index.py`` or the existing full-text indexes;
-* touch ThinkGraph (Apache AGE / Postgres) or CodeGraph;
+* touch ThinkGraph (SQLite / Engraphis) or CodeGraph;
 * generate Cypher dynamically / run text2cypher; or
 * build a retrieval tool — that is the next SPEC. This module is the
   embedding + backfill + read-back capability only.

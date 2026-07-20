@@ -60,7 +60,7 @@ const knowgraphUploadSingle = (req: any, res: any, next: any) => {
   });
 };
 
-export type UploadedFile = {
+type UploadedFile = {
   buffer: Buffer;
   mimetype?: string;
   originalname?: string;
@@ -211,7 +211,7 @@ function _neoInt(v: any): number {
 // List the distinct KnowGraph scopes (project_id values) present in Neo4j, with a
 // human label + counts, so the UI can open ANY real KnowGraph scope directly — e.g.
 // an imported book under its own canonical scope — without moving or re-keying data.
-export async function listKnowGraphScopes(): Promise<
+async function listKnowGraphScopes(): Promise<
   Array<{ scope: string; label: string; nodes: number; concepts: number; documents: number }>
 > {
   const uri = String(process.env.NEO4J_URI || '').trim();
@@ -249,7 +249,7 @@ export async function listKnowGraphScopes(): Promise<
   }
 }
 
-export async function queryKnowGraphProject(projectId: string): Promise<{
+async function queryKnowGraphProject(projectId: string): Promise<{
   nodes: KnowGraphNodeDto[];
   relationships: KnowGraphRelationshipDto[];
 }> {
@@ -880,7 +880,7 @@ function normalizeKnowgraphIngestError(message: string, provider: string, provid
   return `KnowGraph ingest failed for configured provider/model (${providerLabel} / ${modelLabel}). ${raw}`;
 }
 
-export async function proxyKnowgraphPdfIngest(input: {
+async function proxyKnowgraphPdfIngest(input: {
   projectId: string;
   documentId: string;
   file?: UploadedFile | null;

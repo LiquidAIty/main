@@ -66,7 +66,6 @@ import {
 } from '../services/prompt/promptLifecycle';
 
 const router = Router();
-export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
 
 // ── LiquidAIty MCP bridge (SDK-free) ───────────────────────────────────────
 // Internal JSON endpoints that run the proven MCP handlers server-side, where
