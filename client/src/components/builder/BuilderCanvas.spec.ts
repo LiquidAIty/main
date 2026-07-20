@@ -13,6 +13,8 @@ import {
   isCanvasRectVisible,
   mergeFlowEdgesIntoDeck,
   mergeFlowNodesIntoDeck,
+  reduceCanvasEdgeChanges,
+  reduceCanvasNodeChanges,
   shouldPersistEdgeChanges,
   shouldPersistNodeChanges,
   syncFlowEdgesForRender,
@@ -173,6 +175,32 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     const edgeChanges: EdgeChange[] = [{ id: 'edge_magentic_graph', type: 'select', selected: true }];
     expect(shouldPersistNodeChanges(nodeChanges)).toBe(false);
     expect(shouldPersistEdgeChanges(edgeChanges)).toBe(false);
+  });
+
+  it('reduces persisted canvas changes synchronously before React state callbacks run', () => {
+    const currentNodes: Node[] = [{
+      id: 'card_assist',
+      type: 'agentCard',
+      position: { x: 24, y: 48 },
+      data: {},
+    }];
+    const nodeResult = reduceCanvasNodeChanges(
+      [{ id: 'card_assist', type: 'position', position: { x: 240, y: 120 }, dragging: false }],
+      currentNodes,
+    );
+    expect(nodeResult.nextNodesForPersistence?.[0].position).toEqual({ x: 240, y: 120 });
+
+    const currentEdges: Edge[] = [{
+      id: 'edge_assist_next',
+      source: 'card_assist',
+      target: 'card_next',
+      data: { edgeType: 'flow' },
+    }];
+    const edgeResult = reduceCanvasEdgeChanges(
+      [{ id: 'edge_assist_next', type: 'remove' }],
+      currentEdges,
+    );
+    expect(edgeResult.nextEdgesForPersistence).toEqual([]);
   });
 
   it('preserves saved node prompt while updating position', () => {

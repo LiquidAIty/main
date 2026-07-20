@@ -26,6 +26,7 @@ import AgentBuilderShell from '../features/agentbuilder/core/AgentBuilderShell';
 import AgentBuilderSplitter from '../features/agentbuilder/core/AgentBuilderSplitter';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
+import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
 import OpenClaudeConsolePanel from '../features/agentbuilder/console/OpenClaudeConsolePanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
 import HermesConsole, {
@@ -123,20 +124,6 @@ const AgentManager = lazy(async () => {
   const mod = await import('../components/AgentManager');
   return { default: mod.AgentManager };
 });
-const UnifiedGraphSurface = lazy(
-  () => import('../components/knowledge/UnifiedGraphSurface'),
-);
-const KnowGraphAnalysisSurface = lazy(
-  () => import('../components/knowledge/KnowGraphAnalysisSurface'),
-);
-const NativeCodeGraphSurface = lazy(async () => {
-  const mod = await import('../components/knowledge/NativeAuthorityGraphSurface');
-  return { default: mod.NativeCodeGraphSurface };
-});
-const NativeThinkGraphSurface = lazy(async () => {
-  const mod = await import('../components/knowledge/NativeAuthorityGraphSurface');
-  return { default: mod.NativeThinkGraphSurface };
-});
 import { resolveCbmProjectName } from '../components/codegraph/resolveCodeGraphProjectIdentity';
 
 // AgentPage (MVP): left icon rail + main chat + right tabs (Plan, Links, Knowledge, Dashboard)
@@ -218,12 +205,6 @@ const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // not agent-card capabilities: card/bus wiring must never hide project
 // reasoning, external evidence, or repository reality from that canvas.
 type KnowledgeSurfaceKind = KnowledgeGraphKind | 'unified';
-const HERMES_GRAPH_AUTHORITIES: readonly KnowledgeSurfaceKind[] = [
-  'unified',
-  'thinkgraph',
-  'knowgraph',
-  'codegraph',
-];
 // ---- utils ----
 function clamp(x: number, a: number, b: number) {
   return Math.min(b, Math.max(a, x));
@@ -1828,104 +1809,23 @@ export default function AgentBuilder(): React.ReactElement {
     surfaceRole?: 'large' | 'companion';
   }) => {
     return (
-      <div
-      data-testid={`${surfaceRole}-surface-knowledge`}
-      style={getSurfaceShellStyle(minHeight <= 320)}
-    >
-      <div className="h-full flex flex-col" style={{ position: 'relative' }}>
-        {HERMES_GRAPH_AUTHORITIES.length > 0 ? (
-          <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 6 }}>
-            <div style={{ display: 'flex', gap: 6 }}>
-            {HERMES_GRAPH_AUTHORITIES.map((k) => {
-              const active = k === knowledgeGraphKind;
-              const label =
-                k === 'unified'
-                  ? 'Unified'
-                  : k === 'codegraph'
-                  ? 'CodeGraph'
-                  : k === 'thinkgraph'
-                    ? 'ThinkGraph'
-                    : k === 'knowgraph'
-                      ? 'KnowGraph'
-                      : k;
-              return (
-                <button
-                  key={k}
-                  type="button"
-                  data-testid={`graph-kind-${k}`}
-                  onClick={() => setKnowledgeGraphKind(k)}
-                  style={{
-                    fontSize: 12,
-                    padding: '4px 12px',
-                    borderRadius: 7,
-                    cursor: 'pointer',
-                    border: `1px solid ${active ? '#2dd4bf' : '#26313f'}`,
-                    background: active ? 'rgba(45,212,191,0.12)' : 'rgba(13,18,32,0.7)',
-                    color: active ? '#a9ecdf' : '#8fb3c8',
-                    outline: 'none',
-                    boxShadow: active ? '0 0 0 1px rgba(55,173,170,.18)' : 'none',
-                  }}
-                >
-                  {label}
-                </button>
-              );
-            })}
-            </div>
-          </div>
-        ) : null}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'center',
-            flex: 1,
-            minHeight,
-          }}
-        >
-          <KnowledgeSurfaceErrorBoundary key={`knowledge-${knowledgeGraphKind}`}>
-            <Suspense
-              fallback={
-                <div
-                  style={graphDrawerSectionStyle({
-                    width: '100%',
-                    minHeight,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderRadius: 8,
-                    color: GRAPH_THEME.drawer.inputMuted,
-                  })}
-                >
-                  Loading knowledge graph...
-                </div>
-              }
-            >
-              {knowledgeGraphKind === 'codegraph' ? (
-                <NativeCodeGraphSurface project={codeGraphProjectName || null} onAskMain={handleAskMain} onSelectedObjectChange={handleGraphSelectionChange} />
-              ) : knowledgeGraphKind === 'thinkgraph' ? (
-                <NativeThinkGraphSurface
-                  projection={thinkGraphProjection.projection}
-                  status={thinkGraphProjection.status}
-                  error={thinkGraphProjection.error}
-                  onAskMain={handleAskMain}
-                  onSelectedObjectChange={handleGraphSelectionChange}
-                />
-              ) : knowledgeGraphKind === 'knowgraph' ? (
-                <KnowGraphAnalysisSurface projectId={activeProject} onAskMain={handleAskMain} onSelectedObjectChange={handleGraphSelectionChange} />
-              ) : (
-                <UnifiedGraphSurface
-                  projectId={activeProject}
-                  conversationId={conversationId}
-                  onProjectionChange={handleProjectionChange}
-                  onOpenAuthority={(authority) => setKnowledgeGraphKind(authority)}
-                  onAskMain={handleAskMain}
-                  onSelectedObjectChange={handleGraphSelectionChange}
-                />
-              )}
-            </Suspense>
-          </KnowledgeSurfaceErrorBoundary>
-        </div>
+      <div style={getSurfaceShellStyle(minHeight <= 320)}>
+        <KnowledgeSurfaceErrorBoundary key={`knowledge-${knowledgeGraphKind}`}>
+          <KnowledgeGraphFramework
+            projectId={activeProject || null}
+            codeGraphProjectName={codeGraphProjectName || null}
+            conversationId={conversationId || null}
+            kind={knowledgeGraphKind}
+            minHeight={minHeight}
+            surfaceRole={surfaceRole}
+            thinkGraphProjection={thinkGraphProjection}
+            onKindChange={setKnowledgeGraphKind}
+            onProjectionChange={handleProjectionChange}
+            onAskMain={handleAskMain}
+            onSelectedObjectChange={handleGraphSelectionChange}
+          />
+        </KnowledgeSurfaceErrorBoundary>
       </div>
-    </div>
     );
   };
 

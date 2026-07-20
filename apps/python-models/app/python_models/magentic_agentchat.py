@@ -24,7 +24,6 @@ from autogen_agentchat.teams import MagenticOneGroupChat
 
 from app.python_models import job_folder as jf
 from app.python_models import runtime_profile_executor as rpe
-from app.python_models.dev_spans import build_participant_span, emit_participant_span
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
 from app.python_models.tool_registry import (
     DEFAULT_TOOL_REGISTRY,
@@ -623,15 +622,6 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
         stop_reason: str | None = None
         final_response_text = ""
 
-        # Dev participant spans (fire-and-forget; disabled in production and by
-        # LIQUIDAITY_DEV_SPANS=0). One span per streamed participant message,
-        # tied to the backend run trace via session.runId when supplied.
-        span_identities = _participant_identity_by_agent_name(context)
-        span_correlation = _as_text(getattr(context.session, "runId", "")) or _as_text(
-            context.session.sessionId
-        )
-        span_last_monotonic = time.monotonic()
-        span_turn_index = 0
 
         async for emitted in team.run_stream(task=task):
             # TaskResult terminal item
@@ -662,25 +652,6 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
                 autogen_events.append(payload)
             else:
                 autogen_messages.append(payload)
-                if source != "user":
-                    now_monotonic = time.monotonic()
-                    identity = span_identities.get(source, {})
-                    emit_participant_span(
-                        build_participant_span(
-                            correlation_id=span_correlation,
-                            project_id=_as_text(context.session.projectId),
-                            source=source,
-                            card_id=identity.get("cardId") or None,
-                            provider=identity.get("provider") or None,
-                            model=identity.get("model") or None,
-                            output=content,
-                            duration_ms=int((now_monotonic - span_last_monotonic) * 1000),
-                            turn_index=span_turn_index,
-                            message_type=payload["type"],
-                        )
-                    )
-                    span_last_monotonic = now_monotonic
-                    span_turn_index += 1
 
         if not final_response_text and autogen_messages:
             final_response_text = _as_text(autogen_messages[-1].get("content"))

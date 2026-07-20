@@ -91,39 +91,6 @@ One authority per graph. No cross-writes, no UI→DB graph write.
 (Orchestrator). The deck store owns saved cards + wires; provider+model resolve per card; fail closed on
 missing model config.
 
-### 8. Hermes Dev Observatory (dev-only, never production)
-
-Hermes has two roles with the same honest rules. **Product role:** native inherited-context project
-investigation, one evolving Inspector report, explicit Run Plan preparation, postflight review, and the
-under-chat activity feed. Main alone writes ThinkGraph. **Developer role:** the
-evidence layer — runtime telemetry, CoderReport claim verification, card/config drift detection.
-Both act only through explicit tools and audited seams; Hermes is never an invisible controller,
-never a backdoor, never the owner of secrets. The observatory is Hermes' developer brain view —
-an inspection surface, NOT an agent card (a canvas card must be a real model-run agent).
-
-One state source, two consumers (the developer's eyes and the coding agent's sockets):
-
-```txt
-telemetry     services/agentTelemetry.ts — bounded ring + JSONL mirror under the gitignored
-              coder-workspace/dev-telemetry/ (survives watch reloads; events restored from disk
-              are labeled source=durable). Stages: frontdoor → hermes_context →
-              mag_one_dispatch → participant_turn (Python spans) → card_call → graph_read/write
-              → hermes_postflight. Non-blocking, redacted, dev-only.
-spans         python_models/dev_spans.py — one span per participant turn from OUR run_stream
-              loop (never vendored AutoGen), fire-and-forget POST to /agent-harness/span,
-              joined to the run trace via session.runId.
-sockets       /api/dev/agent-harness/* — describe_system, describe_card, probe_frontdoor
-              (dry-run only), probe_card (live double-gated), trace/:id, events(+clear),
-              drift, coder-jobs (list/get/claim over the canonical handoff folders),
-              coder-reports (submit → deterministic claim verification → SUPPORTED/
-              UNSUPPORTED/CONTRADICTED/MISSING_PROOF with evidence event ids),
-              run-pipeline-probe (non-live).
-MCP           app/dev_agent_harness_mcp.py — 14 tools mirroring the routes; registered by a
-              coding agent locally; refuses production; never launched by product code.
-observatory   /dev/agent-runs (dev build only) — Runs | System | Cards | Coder Reports | Drift.
-              Rail plug icon lights when a coding agent probed recently.
-```
-
 The Coder card is ONE capability with interchangeable execution adapters over the SAME job
 contract (handoff/<jobId>/prompt.md), CoderReport format, and verification path:
 `external_coder` / `mcp_coder` / `plugin_coder` (bring your own Claude Code/Codex/etc.) or

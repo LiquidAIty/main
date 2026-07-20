@@ -82,15 +82,6 @@ describe('Edge authority: only an explicit type grants anything', () => {
       .not.toContain('card_hermes_steward');
   });
 
-  it('the Main → Hermes hermes_observe edge satisfies the canvas authority gate', () => {
-    const persisted = [
-      { id: 'edge_yt562bl6', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'hermes_observe' },
-    ];
-    const gateMatch = persisted.find(
-      (e) => e.edgeType === 'hermes_observe' && e.target === 'card_hermes_steward',
-    );
-    expect(gateMatch).toBeDefined();
-  });
 });
 
 describe('Canonical Cards Runtime', () => {

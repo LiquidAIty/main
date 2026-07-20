@@ -299,9 +299,7 @@ export class ClaudeCodeAdapter extends CliCoderAdapter {
   }
 
   protected writeAdapterRunFiles(packet: CoderRunPacket, runtimeDir: string): void {
-    // Composed MCP config (dossier §3 / blocker B): dev-harness MCP always;
-    // the CodeGraph host (mcp_host.py) is added only for read-only audit runs.
-    // No authority set = dev-harness only, byte-identical to before.
+    // The restricted CodeGraph doorway is added only for read-only audit runs.
     const mcpConfig = {
       mcpServers: buildCoderMcpServers({
         runId: packet.runId,

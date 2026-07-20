@@ -1,6 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { normalizeRuntimeOptions } from './store';
+const dbMocks = vi.hoisted(() => ({ query: vi.fn() }));
+vi.mock('../db/pool', () => ({
+  pool: { query: dbMocks.query },
+}));
+
+import { getDeckDocument, normalizeRuntimeOptions } from './store';
+
+beforeEach(() => {
+  dbMocks.query.mockReset();
+});
 
 // Persistence proof: the local SLM provider survives the deck-store sanitizer, so a
 // card's local-model selection is written into (and read back from) the deck JSON.
@@ -43,5 +52,108 @@ describe('deck store runtime-options tool persistence', () => {
 
   it('an absent selection stays absent — no default tools are injected', () => {
     expect(normalizeRuntimeOptions({})?.tools).toBe(null);
+  });
+});
+
+describe('deck store Hermes observation compatibility', () => {
+  it('upgrades only the historical directed Main-to-Hermes flow edge', async () => {
+    const deck = {
+      id: 'deck_builder',
+      name: 'Builder',
+      version: 1,
+      promptTemplates: [],
+      nodes: [
+        {
+          id: 'card_main_chat',
+          kind: 'agent',
+          title: 'Main',
+          runtimeBinding: 'main_chat',
+          runtimeType: 'assistant_agent',
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: 'custom-hermes-card',
+          kind: 'agent',
+          title: 'Hermes',
+          runtimeBinding: 'hermes_steward',
+          runtimeType: 'assistant_agent',
+          position: { x: 100, y: 0 },
+        },
+        {
+          id: 'worker',
+          kind: 'agent',
+          title: 'Worker',
+          runtimeBinding: 'research_agent',
+          runtimeType: 'assistant_agent',
+          position: { x: 200, y: 0 },
+        },
+        {
+          id: 'card_magentic',
+          kind: 'agent',
+          title: 'Bus',
+          runtimeType: 'magentic_one',
+          position: { x: 300, y: 0 },
+        },
+      ],
+      edges: [
+        {
+          id: 'legacy-authority',
+          source: 'card_main_chat',
+          sourceHandle: 'out-a',
+          target: 'custom-hermes-card',
+          targetHandle: 'in-a',
+          edgeType: 'flow',
+        },
+        {
+          id: 'reversed',
+          source: 'custom-hermes-card',
+          target: 'card_main_chat',
+          edgeType: 'flow',
+        },
+        {
+          id: 'invalid',
+          source: 'card_main_chat',
+          target: 'custom-hermes-card',
+          edgeType: 'unknown_authority',
+        },
+        {
+          id: 'unrelated',
+          source: 'card_main_chat',
+          target: 'worker',
+          edgeType: 'flow',
+        },
+        {
+          id: 'control',
+          source: 'card_main_chat',
+          target: 'card_magentic',
+          edgeType: 'magentic_control',
+        },
+      ],
+    };
+    dbMocks.query.mockResolvedValueOnce({
+      rows: [{
+        agent_io_schema: {
+          v3_state: {
+            decks: { deck_builder: deck },
+            deckRuns: {},
+            meta: { decks: {} },
+          },
+        },
+      }],
+    });
+
+    const result = await getDeckDocument('project-one', 'deck_builder');
+    const edges = result.deck!.edges;
+    expect(edges.find((edge) => edge.id === 'legacy-authority')).toEqual(expect.objectContaining({
+      source: 'card_main_chat',
+      sourceHandle: 'out-a',
+      target: 'custom-hermes-card',
+      targetHandle: 'in-a',
+      edgeType: 'hermes_observe',
+      metadata: expect.objectContaining({ legacyCompatibility: true }),
+    }));
+    expect(edges.find((edge) => edge.id === 'reversed')?.edgeType).toBe('flow');
+    expect(edges.find((edge) => edge.id === 'invalid')?.edgeType).toBe('invalid');
+    expect(edges.find((edge) => edge.id === 'unrelated')?.edgeType).toBe('flow');
   });
 });

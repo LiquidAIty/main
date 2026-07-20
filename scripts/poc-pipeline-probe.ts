@@ -387,9 +387,9 @@ async function main(): Promise<void> {
     report('thinkgraph-read', 'FAIL', String(err?.message || err));
   }
 
-  // Source contract only, not a browser smoke: this proves the selected-node
-  // inspector seam is shipped without pretending interaction was exercised.
-  const inspectorPath = path.join(
+  // Source contract only, not a browser smoke: prove the active framework owns
+  // all four graph authorities and is mounted by the product page.
+  const frameworkPath = path.join(
     repoRoot,
     'client',
     'src',
@@ -398,16 +398,17 @@ async function main(): Promise<void> {
     'KnowledgeGraphFramework.tsx',
   );
   try {
-    const source = readFileSync(inspectorPath, 'utf8');
-    // The surface was renamed inspector -> drawer; this probe kept asserting the
-    // retired test id and reported a live, working Inspector as missing.
-    const ok = source.includes('knowledge-graph-node-drawer') && source.includes('selectedNodeId');
+    const source = readFileSync(frameworkPath, 'utf8');
+    const pageSource = readFileSync(path.join(repoRoot, 'client', 'src', 'pages', 'agentbuilder.tsx'), 'utf8');
+    const ok = ['UnifiedGraphSurface', 'NativeCodeGraphSurface', 'NativeThinkGraphSurface', 'KnowGraphAnalysisSurface']
+      .every((name) => source.includes(name))
+      && pageSource.includes('<KnowledgeGraphFramework');
     report(
       'graph-inspector',
       ok ? 'PASS' : 'FAIL',
       ok
-        ? 'selected-node drawer source present (browser interaction not exercised by this probe)'
-        : 'selected-node drawer contract missing from KnowledgeGraphFramework',
+        ? 'active four-authority graph framework is mounted (browser interaction not exercised by this probe)'
+        : 'active graph framework composition is incomplete',
     );
   } catch (err: any) {
     report('graph-inspector', 'FAIL', String(err?.message || err));

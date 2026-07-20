@@ -72,14 +72,11 @@ describe('resolveCoderToolPolicy', () => {
 });
 
 describe('buildCoderMcpServers', () => {
-  it('default composition is the dev-harness MCP only (byte-identical to legacy)', () => {
+  it('does not inject an MCP server into ordinary execution', () => {
     vi.stubEnv('LIQUIDAITY_PYTHON', '/py/python');
     vi.stubEnv('LIQUIDAITY_GRPC_CWD', '/repo');
     const servers = buildCoderMcpServers({ runId: 'coder_x', includeCodeGraph: false });
-    expect(Object.keys(servers)).toEqual(['liquid_aity_coder']);
-    expect(servers.liquid_aity_coder.command).toBe('/py/python');
-    expect(servers.liquid_aity_coder.args[0].replace(/\\/g, '/')).toMatch(/apps\/python-models\/app\/dev_agent_harness_mcp\.py$/);
-    expect(servers.liquid_aity_coder.env).toEqual({ LIQUIDAITY_CODER_RUN_ID: 'coder_x' });
+    expect(servers).toEqual({});
   });
 
   it('codegraph composition points at the RESTRICTED doorway, never the full mcp_host', () => {
@@ -90,10 +87,10 @@ describe('buildCoderMcpServers', () => {
     expect(servers[CODEGRAPH_MCP_SERVER].args[0]).not.toMatch(/mcp_host\.py$/);
   });
 
-  it('scoped audit composition (no dev harness) exposes ONLY the codegraph doorway', () => {
+  it('scoped audit composition exposes ONLY the codegraph doorway', () => {
     vi.stubEnv('LIQUIDAITY_PYTHON', '/py/python');
     vi.stubEnv('LIQUIDAITY_GRPC_CWD', '/repo');
-    const servers = buildCoderMcpServers({ runId: 'coder_a', includeDevHarness: false, includeCodeGraph: true });
+    const servers = buildCoderMcpServers({ runId: 'coder_a', includeCodeGraph: true });
     expect(Object.keys(servers)).toEqual([CODEGRAPH_MCP_SERVER]);
     expect(servers[CODEGRAPH_MCP_SERVER].args[0].replace(/\\/g, '/')).toMatch(/codegraph_doorway_mcp\.py$/);
   });

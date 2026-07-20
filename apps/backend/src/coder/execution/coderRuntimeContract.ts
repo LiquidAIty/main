@@ -98,33 +98,20 @@ function resolvePythonExecutable(): string {
 }
 
 /**
- * Compose the Coder CLI's MCP servers. The dev-harness MCP (Observatory/job
- * tools) is included by default (`includeDevHarness`). When `includeCodeGraph`
- * is set (direct_main_audit), the RESTRICTED codegraph doorway
+ * Compose the Coder CLI's MCP servers. When `includeCodeGraph` is set
+ * (direct_main_audit), the RESTRICTED codegraph doorway
  * (`codegraph_doorway_mcp.py`, exposing ONLY `codegraph.status`/`codegraph.search`)
- * is added; a read-only audit sets `includeDevHarness=false` so it gets the
- * doorway alone. The doorway is a scoped surface over the existing backend
+ * is added. The doorway is a scoped surface over the existing backend
  * CodeGraph handlers — not a second CodeGraph service and not a `.mjs` host.
  * Live subprocess boot of the doorway is a live-validation item.
  */
 export function buildCoderMcpServers(opts: {
   runId: string;
   includeCodeGraph: boolean;
-  /** Dev-harness Observatory/job MCP. Defaults on (legacy/execution); a read-only
-   * audit sets this false so it gets ONLY the scoped codegraph doorway. */
-  includeDevHarness?: boolean;
 }): Record<string, McpServerSpec> {
   const python = resolvePythonExecutable();
   const appDir = path.join(resolveRepoRoot(), 'apps', 'python-models', 'app');
   const servers: Record<string, McpServerSpec> = {};
-  if (opts.includeDevHarness ?? true) {
-    servers.liquid_aity_coder = {
-      type: 'stdio',
-      command: python,
-      args: [path.join(appDir, 'dev_agent_harness_mcp.py')],
-      env: { LIQUIDAITY_CODER_RUN_ID: opts.runId },
-    };
-  }
   if (opts.includeCodeGraph) {
     // The RESTRICTED codegraph doorway (codegraph.status/search only) — NOT the
     // full mcp_host — so a read-only audit reaches CodeGraph and nothing else.

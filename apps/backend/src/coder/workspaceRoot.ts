@@ -103,8 +103,3 @@ export function resolveCardRunDir(projectId: string, cardId: string, runId: stri
   mkdirSync(dir, { recursive: true });
   return dir;
 }
-
-/** <project-workspace>/cards/<card-id>/runs/<run-id>/manifest.json */
-export function resolveCardRunManifestPath(projectId: string, cardId: string, runId: string): string {
-  return path.join(resolveCardRunDir(projectId, cardId, runId), 'manifest.json');
-}

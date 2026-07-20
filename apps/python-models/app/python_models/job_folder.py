@@ -384,7 +384,3 @@ def resolve_card_run_dir(workspace_root: str, card_id: str, run_id: str) -> str:
         raise ValueError(f"card_run_dir_escapes: {target!r}")
     os.makedirs(target, exist_ok=True)
     return target
-
-
-def resolve_card_run_manifest_path(workspace_root: str, card_id: str, run_id: str) -> str:
-    return os.path.join(resolve_card_run_dir(workspace_root, card_id, run_id), "manifest.json")

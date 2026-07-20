@@ -2,10 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { join as pathJoin } from 'node:path';
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-// Static import: NodeNext ESM requires an explicit extension on relative
-// dynamic import('../../../services/agentTelemetry'); static imports resolve
-// without it and read the same module-scope state (the telemetry ring buffer).
-import { clearAgentEvents, listAgentEvents } from '../../../services/agentTelemetry';
 // Type-only import of the canonical runCard signature so the vi.fn mocks below
 // capture the real 4-arg call shape (card, effectiveAgent, input, context) —
 // otherwise mock.calls is typed as [][] and tuple indexing fails truthfully.
@@ -306,53 +302,5 @@ describe('runMagOne — Coder job-folder handoff (jobId)', () => {
       else process.env.LIQUIDAITY_GRPC_CWD = previous;
       rmSync(root, { recursive: true, force: true });
     }
-  });
-});
-
-describe('runMagOne — dev telemetry at the dispatch boundary', () => {
-  it('records started + completed events with participants and real calledAgents', async () => {
-    clearAgentEvents();
-    const runCard = vi.fn(async () => ({
-      status: 'success',
-      output: 'team answer',
-      magenticTrace: {
-        plan: {
-          autogenMessages: [
-            { source: 'user', type: 'TextMessage', content: 'task' },
-            { source: 'Research Agent', type: 'TextMessage', content: 'finding' },
-          ],
-        },
-      },
-    }));
-    await runMagOne(
-      { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_telemetry' },
-      deps({ runCard: runCard as any }),
-    );
-    const events = listAgentEvents().filter((e) => e.stage === 'mag_one_dispatch');
-    expect(events.map((e) => e.status)).toEqual(['started', 'completed']);
-    expect(events[1]).toMatchObject({
-      mode: 'real_model_call',
-      cardId: 'card_magentic',
-      metadata: {
-        connectedParticipants: ['card_research'],
-        calledAgents: ['Research Agent'],
-      },
-    });
-    expect(events[1].correlationId).toMatch(/^mag_one_run_/);
-    clearAgentEvents();
-  });
-
-  it('records a failed dispatch event when the run throws', async () => {
-    clearAgentEvents();
-    const result = await runMagOne(
-      { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_telemetry' },
-      deps({ runCard: vi.fn(async () => { throw new Error('rails down'); }) as any }),
-    );
-    expect(result.status).toBe('failed');
-    expect(result.failure).toBe('rails down');
-    const events = listAgentEvents().filter((e) => e.stage === 'mag_one_dispatch');
-    expect(events.map((e) => e.status)).toEqual(['started', 'failed']);
-    expect(events[1].errorSummary).toBe('rails down');
-    clearAgentEvents();
   });
 });

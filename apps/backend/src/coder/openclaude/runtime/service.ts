@@ -15,7 +15,6 @@ import { resolveOpenClaudeProviderTarget } from '../provider/openai53';
  * collapse to the real Console PTY runtime, and a permanently-failing `run()`
  * with `DEFAULT_MODE='headless'` reads like a headless execution path exists.
  * It does not: `coder/execution/coderConsoleRuntime.ts` is the one runtime, and
- * `coderRouter.runHeadlessCoderReality` is a separate admin inspection socket.
  */
 export class OpenClaudeRuntimeService {
   constructor(private readonly adapter = new OpenClaudeAdapter()) {}

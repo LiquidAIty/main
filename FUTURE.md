@@ -45,10 +45,6 @@ part of the active research loop until its own pass wires it in.
   confusing or broken in a specific reported case.
 - **Hermes activity durability** — the under-chat feed buffer is RAM-only (wiped on backend restart);
   move to a store when Hermes history must survive restarts.
-- **Agent telemetry durability + Python-side spans** — the dev agent-harness telemetry ring
-  (PLAN.md §8) is RAM-only and TS-boundary-only by design. When run history must survive restarts
-  or per-participant calls inside a Mag One team run need spans, add a tiny dev-only store and a
-  rails-side event post — do not widen the ring into a product feature without that decision.
 - **Card model authority is per-card, by design** — `card_magentic` runs `openai/gpt-5.1-chat-latest`;
   other cards carry their own saved provider/model (e.g. `openrouter/z-ai/glm-5.2`). Mixed models
   across cards are correct when the live card configs say so — never normalize all cards to one
@@ -78,7 +74,7 @@ phases; each phase must work repeatedly before the next is pulled. Honest orderi
 ```txt
 NOW (kernel)      research loop (chat → Hermes → Mag One → cards → report → run memory)
                   + coding loop (bounded job → execution adapter → CoderReport → deterministic
-                  evidence verification → CBM refresh) + the Hermes Dev Observatory proving both.
+                  proof review → CBM refresh).
 NEXT (wedges)     Trading research: user thesis anchors in ThinkGraph, sourced evidence in
                   KnowGraph, probabilistic scenarios, inspectable deltas. NO financial advice,
                   NO autonomous trading; paper trading later. Coding: dual-path Coder adapters

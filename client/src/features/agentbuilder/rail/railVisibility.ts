@@ -97,12 +97,10 @@ export function isHermesConnectedToMainChat(
   );
   if (mainChatIds.size === 0 || hermesIds.size === 0) return false;
   return edges.some(
-    (edge) => {
-      const type = normalizeDeckEdgeType(edge.edgeType);
-      if (type !== 'flow' && type !== 'hermes_observe') return false;
-      return (mainChatIds.has(edge.source) && hermesIds.has(edge.target)) ||
-        (hermesIds.has(edge.source) && mainChatIds.has(edge.target));
-    },
+    (edge) =>
+      normalizeDeckEdgeType(edge.edgeType) === 'hermes_observe' &&
+      mainChatIds.has(edge.source) &&
+      hermesIds.has(edge.target),
   );
 }
 
@@ -124,11 +122,9 @@ export function deriveVisibleRailItems({
   deck: Pick<DeckDocument, 'nodes' | 'edges'>;
   workspaceView: string;
 }): ProgressiveRailVisibility {
-  const hermesConnectedToMainChat = isHermesConnectedToMainChat(deck.nodes, deck.edges);
   return {
-    // Graphs are Hermes's canvas. The launcher is present only while Hermes is
-    // actually connected to Main Chat; graph data may still be empty/unseeded.
-    showKnowledge: hermesConnectedToMainChat,
+    // Project graphs are an owner-visible workbench, not a card-topology capability.
+    showKnowledge: true,
     showWorldsignal:
       workspaceView === 'worldsignal' ||
       isBusConnectedCard(deck.nodes, deck.edges, isWorldSignalsAgentCard),

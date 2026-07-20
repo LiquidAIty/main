@@ -19,12 +19,34 @@ describe('Main / Hermes / graph authority topology', () => {
     ]));
   });
 
-  it('uses the directed Main to Hermes orange edge as graph-workspace availability', () => {
+  it('keeps the graph workspace owner-visible regardless of Hermes topology', () => {
     expect(isHermesConnectedToMainChat(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(true);
     expect(deriveVisibleRailItems({ deck: INITIAL_DECK, workspaceView: 'chat' }).showKnowledge).toBe(true);
     const disconnected = { ...INITIAL_DECK, edges: INITIAL_DECK.edges.filter((edge) => edge.target !== 'card_hermes_steward') };
     expect(isHermesConnectedToMainChat(disconnected.nodes, disconnected.edges)).toBe(false);
-    expect(deriveVisibleRailItems({ deck: disconnected, workspaceView: 'chat' }).showKnowledge).toBe(false);
+    expect(deriveVisibleRailItems({ deck: disconnected, workspaceView: 'chat' }).showKnowledge).toBe(true);
+  });
+
+  it('does not grant Hermes visibility to legacy, reversed, or invalid edges', () => {
+    const withoutObserve = INITIAL_DECK.edges.filter((edge) => edge.edgeType !== 'hermes_observe');
+    const replacement = (edgeType: string, source = 'card_main_chat', target = 'card_hermes_steward') => ({
+      id: `test:${edgeType}:${source}:${target}`,
+      source,
+      target,
+      edgeType,
+    });
+    expect(isHermesConnectedToMainChat(INITIAL_DECK.nodes, [
+      ...withoutObserve,
+      replacement('flow'),
+    ] as any)).toBe(false);
+    expect(isHermesConnectedToMainChat(INITIAL_DECK.nodes, [
+      ...withoutObserve,
+      replacement('hermes_observe', 'card_hermes_steward', 'card_main_chat'),
+    ] as any)).toBe(false);
+    expect(isHermesConnectedToMainChat(INITIAL_DECK.nodes, [
+      ...withoutObserve,
+      replacement('invalid'),
+    ] as any)).toBe(false);
   });
 
   it('seeds Main→Hermes as hermes_observe observation edge and keeps workers blue', () => {

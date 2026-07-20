@@ -42,9 +42,6 @@ export function resolveCardRunDir(cardId: string, runId: string): string {
   return path.join(resolveCardWorkspace(cardId), 'runs', sanitizeId(runId));
 }
 
-export function resolveCardRunManifestPath(cardId: string, runId: string): string {
-  return path.join(resolveCardRunDir(cardId, runId), 'manifest.json');
-}
 ```
 
 ### Python

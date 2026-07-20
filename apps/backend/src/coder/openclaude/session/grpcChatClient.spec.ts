@@ -34,6 +34,12 @@ const coder = {
   prompt: 'Coder prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['run_local_coder'] },
 };
 const flow = (source: string, target: string) => ({ id: `${source}:${target}`, source, target, edgeType: 'flow' });
+const observe = (source: string, target: string, id = `${source}:${target}:observe`) => ({
+  id,
+  source,
+  target,
+  edgeType: 'hermes_observe',
+});
 const doc = (nodes: any[], edges: any[]) => ({ deck: { id: 'deck_builder', nodes, edges }, meta: { deckRevision: 'r1' } });
 
 describe('native Main / Hermes / Search doorways', () => {
@@ -41,8 +47,31 @@ describe('native Main / Hermes / Search doorways', () => {
     deckMocks.getDeckDocument.mockReset();
   });
 
-  it('uses the orange network as the only Main child authority', () => {
-    expect(selectDoorwayCards([main, hermes, search], [flow(main.id, hermes.id)], 'chat')).toEqual([hermes]);
+  it('uses the directed observation edge as the only Hermes authority', () => {
+    expect(selectDoorwayCards([main, hermes, search], [observe(main.id, hermes.id)], 'chat')).toEqual([hermes]);
+    expect(selectDoorwayCards([main, hermes], [], 'chat')).toEqual([]);
+    expect(selectDoorwayCards([main, hermes], [flow(main.id, hermes.id)], 'chat')).toEqual([]);
+    expect(selectDoorwayCards([main, hermes], [observe(hermes.id, main.id)], 'chat')).toEqual([]);
+    expect(selectDoorwayCards(
+      [main, hermes],
+      [{ id: 'invalid', source: main.id, target: hermes.id, edgeType: 'invalid' }],
+      'chat',
+    )).toEqual([]);
+    expect(selectDoorwayCards([main, hermes], [], 'canvas')).toEqual([]);
+  });
+
+  it('deduplicates Hermes and resolves authority by binding, not a hard-coded card id', () => {
+    const customHermes = { ...hermes, id: 'card_custom_observer' };
+    expect(selectDoorwayCards(
+      [main, customHermes],
+      [
+        observe(main.id, customHermes.id, 'observe-1'),
+        observe(main.id, customHermes.id, 'observe-2'),
+      ],
+      'chat',
+    )).toEqual([customHermes]);
+    const arbitrary = { ...search, id: 'card_custom_observer', runtimeBinding: null };
+    expect(selectDoorwayCards([main, arbitrary], [observe(main.id, arbitrary.id)], 'chat')).toEqual([]);
   });
 
   it('decodes opaque gRPC Agent text progress with its exact parent linkage', () => {
@@ -89,8 +118,8 @@ describe('native Main / Hermes / Search doorways', () => {
     expect(definition.system_prompt).toContain('card_local_coder');
   });
 
-  it('resolves Main plus Hermes only when only Hermes is orange-connected', async () => {
-    deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [flow(main.id, hermes.id), flow(hermes.id, search.id)]));
+  it('resolves Main plus Hermes only when Hermes has observation authority', async () => {
+    deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [observe(main.id, hermes.id), flow(hermes.id, search.id)]));
     const config = await resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat');
     expect(config?.cardId).toBe(main.id);
     expect(config?.parentAllowedMcpTools).toEqual([
@@ -106,7 +135,7 @@ describe('native Main / Hermes / Search doorways', () => {
   });
 
   it('adds server-minted project context to Hermes without requiring selected nodes', async () => {
-    deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [flow(main.id, hermes.id), flow(hermes.id, search.id)]));
+    deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [observe(main.id, hermes.id), flow(hermes.id, search.id)]));
     const context = {
       projectId: 'p1',
       conversationId: 'c1',
@@ -123,7 +152,7 @@ describe('native Main / Hermes / Search doorways', () => {
   });
 
   it('does not inject the obsolete active-report channel into Main or Hermes', async () => {
-    deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [flow(main.id, hermes.id), flow(hermes.id, search.id)]));
+    deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [observe(main.id, hermes.id), flow(hermes.id, search.id)]));
     const config = await resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat', 'req_new', {
       projectId: 'p1', conversationId: 'c1', focusNodeIds: [], requestedOutcome: null,
     });
@@ -154,8 +183,8 @@ describe('native Main / Hermes / Search doorways', () => {
     expect(buildHarnessRuntimeContext(deriveSessionId('p1', 'c1'), 'req_handback')).not.toContain('[LIQUIDAITY_GRAPH_CONTEXT]');
   });
 
-  it('resolves Hermes to Search through the persisted second orange edge', async () => {
-    deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [flow(main.id, hermes.id), flow(hermes.id, search.id)]));
+  it('resolves Hermes to Search through its persisted flow edge', async () => {
+    deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [observe(main.id, hermes.id), flow(hermes.id, search.id)]));
     const [definition] = await resolveCardDoorwayDefinitions(deriveSessionId('p1', 'c1'), 'chat') as any[];
     expect(definition.card_id).toBe(hermes.id);
     expect(definition.allowed_card_run_ids).toEqual([search.id]);

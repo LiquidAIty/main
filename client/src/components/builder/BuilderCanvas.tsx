@@ -423,6 +423,28 @@ export function shouldPersistEdgeChanges(changes: EdgeChange[]): boolean {
   return changes.some((change) => PERSISTED_EDGE_CHANGE_TYPES.has(change.type));
 }
 
+export function reduceCanvasNodeChanges(
+  changes: NodeChange[],
+  currentNodes: Node[],
+): { nextNodes: Node[]; nextNodesForPersistence: Node[] | null } {
+  const nextNodes = applyNodeChanges(changes, currentNodes);
+  return {
+    nextNodes,
+    nextNodesForPersistence: shouldPersistNodeChanges(changes) ? nextNodes : null,
+  };
+}
+
+export function reduceCanvasEdgeChanges(
+  changes: EdgeChange[],
+  currentEdges: Edge[],
+): { nextEdges: Edge[]; nextEdgesForPersistence: Edge[] | null } {
+  const nextEdges = applyEdgeChanges(changes, currentEdges);
+  return {
+    nextEdges,
+    nextEdgesForPersistence: shouldPersistEdgeChanges(changes) ? nextEdges : null,
+  };
+}
+
 export function mergeFlowNodesIntoDeck(nextNodes: Node[], prevNodes: AgentCardInstance[]): AgentCardInstance[] {
   const nextNodeById = new Map(nextNodes.map((node) => [node.id, node] as const));
   const merged = prevNodes
@@ -604,9 +626,8 @@ export default function BuilderCanvas({
   const [edges, setEdges] = useEdgesState(flowEdges);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const latestDocumentRef = useRef(document);
-  const pendingDocumentMutationRef = useRef<((prev: DeckDocument) => DeckDocument) | null>(null);
-  const pendingPersistMetaRef = useRef<{ reason: string; detail?: Record<string, unknown> } | null>(null);
-  const [pendingDocumentFlushNonce, setPendingDocumentFlushNonce] = useState(0);
+  const latestFlowNodesRef = useRef(nodes);
+  const latestFlowEdgesRef = useRef(edges);
   const selectedEdge = useMemo(
     () => document.edges.find((edge) => edge.id === selectedEdgeId) || null,
     [document.edges, selectedEdgeId],
@@ -623,6 +644,14 @@ export default function BuilderCanvas({
   useEffect(() => {
     setEdges((current) => syncFlowEdgesForRender(current, flowEdges));
   }, [flowEdges, setEdges]);
+
+  useEffect(() => {
+    latestFlowNodesRef.current = nodes;
+  }, [nodes]);
+
+  useEffect(() => {
+    latestFlowEdgesRef.current = edges;
+  }, [edges]);
 
   // Left-rail camera: pan/zoom to fit the agent/bus nodes on the scene.
   useEffect(() => {
@@ -673,18 +702,6 @@ export default function BuilderCanvas({
     };
   }, [flowNodes.length, presentationViewportKey, reactFlowInstance]);
 
-  useEffect(() => {
-    const pendingMutation = pendingDocumentMutationRef.current;
-    if (!pendingMutation) return;
-    pendingDocumentMutationRef.current = null;
-    const pendingPersist = pendingPersistMetaRef.current;
-    pendingPersistMetaRef.current = null;
-    if (pendingPersist) {
-      onPersistGraphMutation?.(pendingPersist.reason, pendingPersist.detail);
-    }
-    setDocument((prev) => pendingMutation(prev));
-  }, [pendingDocumentFlushNonce, onPersistGraphMutation, setDocument]);
-
   const isPlainConnectionAllowed = (
     connection: Pick<Connection, 'source' | 'sourceHandle' | 'target' | 'targetHandle'>,
     currentEdges: Edge[],
@@ -692,57 +709,47 @@ export default function BuilderCanvas({
   ): boolean => isPlainConnectionAllowedForDocument(document, connection, currentEdges, ignoreEdgeId);
 
   const onNodesChange = (changes: NodeChange[]) => {
-    const hasPersistedNodeChange = shouldPersistNodeChanges(changes);
-    let nextNodesForMerge: Node[] | null = null;
-    setNodes((current) => {
-      const next = applyNodeChanges(changes, current);
-      if (hasPersistedNodeChange) {
-        nextNodesForMerge = next;
-      } else if (DEV_MODE && changes.every((change) => change.type === 'select')) {
+    const reduced = reduceCanvasNodeChanges(changes, latestFlowNodesRef.current);
+    latestFlowNodesRef.current = reduced.nextNodes;
+    setNodes(reduced.nextNodes);
+    if (!reduced.nextNodesForPersistence) {
+      if (DEV_MODE && changes.every((change) => change.type === 'select')) {
         console.debug('[builder] ignored node selection-only canvas change', {
           changeTypes: changes.map((change) => change.type),
         });
       }
-      return next;
+      return;
+    }
+    onPersistGraphMutation?.('canvas:nodes', {
+      changeTypes: changes.map((change) => change.type),
     });
-    if (!hasPersistedNodeChange || !nextNodesForMerge) return;
-    pendingPersistMetaRef.current = {
-      reason: 'canvas:nodes',
-      detail: { changeTypes: changes.map((change) => change.type) },
-    };
-    pendingDocumentMutationRef.current = (prev) => ({
+    setDocument((prev) => ({
       ...prev,
       version: prev.version + 1,
-      nodes: mergeFlowNodesIntoDeck(nextNodesForMerge as Node[], prev.nodes),
-    });
-    setPendingDocumentFlushNonce((current) => current + 1);
+      nodes: mergeFlowNodesIntoDeck(reduced.nextNodesForPersistence as Node[], prev.nodes),
+    }));
   };
 
   const onEdgesChange = (changes: EdgeChange[]) => {
-    const hasPersistedEdgeChange = shouldPersistEdgeChanges(changes);
-    let nextEdgesForMerge: Edge[] | null = null;
-    setEdges((current) => {
-      const next = applyEdgeChanges(changes, current);
-      if (hasPersistedEdgeChange) {
-        nextEdgesForMerge = next;
-      } else if (DEV_MODE && changes.every((change) => change.type === 'select')) {
+    const reduced = reduceCanvasEdgeChanges(changes, latestFlowEdgesRef.current);
+    latestFlowEdgesRef.current = reduced.nextEdges;
+    setEdges(reduced.nextEdges);
+    if (!reduced.nextEdgesForPersistence) {
+      if (DEV_MODE && changes.every((change) => change.type === 'select')) {
         console.debug('[builder] ignored edge selection-only canvas change', {
           changeTypes: changes.map((change) => change.type),
         });
       }
-      return next;
+      return;
+    }
+    onPersistGraphMutation?.('canvas:edges', {
+      changeTypes: changes.map((change) => change.type),
     });
-    if (!hasPersistedEdgeChange || !nextEdgesForMerge) return;
-    pendingPersistMetaRef.current = {
-      reason: 'canvas:edges',
-      detail: { changeTypes: changes.map((change) => change.type) },
-    };
-    pendingDocumentMutationRef.current = (prev) => ({
+    setDocument((prev) => ({
       ...prev,
       version: prev.version + 1,
-      edges: mergeFlowEdgesIntoDeck(nextEdgesForMerge as Edge[], prev.edges),
-    });
-    setPendingDocumentFlushNonce((current) => current + 1);
+      edges: mergeFlowEdgesIntoDeck(reduced.nextEdgesForPersistence as Edge[], prev.edges),
+    }));
   };
   const commitConnection = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target) return;

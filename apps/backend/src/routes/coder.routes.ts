@@ -40,7 +40,6 @@ import {
   type ThinkGraphPatchAuthority,
 } from '../services/thinkgraph/thinkGraphStore';
 import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/harnessTrace';
-import { flushAgentTelemetry, recordAgentEvent } from '../services/agentTelemetry';
 // The app's one canonical Agent Canvas deck id, defined once on the deck store.
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { createCodebaseMemoryMcpCaller } from '../services/graphContext/cbmMcpCaller';
@@ -271,7 +270,6 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
 // authority from the live Main Chat card + real conversation. Same validation and
 // same one applyThinkGraphPatch writer as the ThinkGraph card path.
 router.post('/mcp-bridge/thinkgraph_submit_update', async (req, res) => {
-  const startedMs = Date.now();
   const projectId = String(req.body?.projectId || '').trim();
   const conversationId = String(req.body?.conversationId || '').trim();
   try {
@@ -289,23 +287,6 @@ router.post('/mcp-bridge/thinkgraph_submit_update', async (req, res) => {
       resources: Array.isArray(req.body?.resources) ? req.body.resources : [],
       relations: Array.isArray(req.body?.relations) ? req.body.relations : [],
       statements: Array.isArray(req.body?.statements) ? req.body.statements : [],
-    });
-    recordAgentEvent({
-      stage: 'graph_write',
-      status: result.ok ? 'completed' : 'failed',
-      mode: 'real_model_call',
-      caller: 'main_chat',
-      projectId,
-      deckId: BUILDER_DECK_ID,
-      conversationId,
-      correlationId: authority.correlationId,
-      cardId: mainCardId,
-      inputSummary: 'main_chat thinkgraph_submit_update',
-      outputSummary: result.ok ? `status=${result.status}` : '',
-      errorSummary: result.ok ? null : result.error,
-      durationMs: Date.now() - startedMs,
-      graphWrites: result.ok && result.status === 'applied' ? ['thinkgraph'] : [],
-      metadata: { invocationPath: 'direct_harness' },
     });
     return res.status(result.ok ? 200 : 422).json(result);
   } catch (error) {
@@ -603,16 +584,6 @@ router.post('/mcp-bridge/thinkgraph_read_scope', async (req, res) => {
     }
     const scope = await readThinkGraphScope({ projectId, limit: Number(req.body?.limit) || undefined });
     console.log('[THINKGRAPH][tool] read_scope project=%s correlation=%s nodes=%d', projectId, correlationId, scope.nodes.length);
-    recordAgentEvent({
-      stage: 'graph_read',
-      status: 'completed',
-      mode: 'real_model_call',
-      caller: 'thinkgraph_card_tool',
-      projectId,
-      correlationId,
-      graphReads: ['thinkgraph'],
-      outputSummary: `${scope.nodes.length} node(s), ${scope.edges.length} edge(s)`,
-    });
     return res.json({ ok: true, scope });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_read_scope_failed' });
@@ -630,21 +601,6 @@ router.post('/mcp-bridge/thinkgraph_apply_patch', async (req, res) => {
       String(authority?.correlationId || ''),
       result.ok ? result.status : `error:${result.error}`,
     );
-    recordAgentEvent({
-      stage: 'graph_write',
-      status: result.ok ? 'completed' : 'blocked',
-      mode: 'real_model_call',
-      caller: 'thinkgraph_card_tool',
-      projectId: String(authority?.projectId || '') || null,
-      cardId: String((authority as any)?.cardId || '') || null,
-      correlationId: String(authority?.correlationId || '') || null,
-      graphWrites: ['thinkgraph'],
-      outputSummary: result.ok ? result.status : '',
-      errorSummary: result.ok ? null : result.error,
-      metadata: result.ok
-        ? { storedResourceIds: result.storedResourceIds, storedStatementIds: result.storedStatementIds }
-        : {},
-    });
     return res.status(result.ok ? 200 : 400).json(result);
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_apply_patch_failed' });
@@ -968,25 +924,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
   };
   writeSse('session', { sessionId });
   logHarnessTrace(`[harness] request received ${`corr=${correlationId}`} project=${projectId} mode=${mode}`);
-  // Dev telemetry: the front door — a real user message entering Main Chat.
-  const frontdoorStartedMs = Date.now();
-  recordAgentEvent({
-    stage: 'frontdoor',
-    status: 'started',
-    mode: 'real_model_call',
-    caller: 'user',
-    projectId,
-    conversationId,
-    correlationId,
-    inputSummary: message,
-    metadata: {
-      surfaceMode: mode,
-      sessionId,
-      ...(projectionId ? { projectionId } : {}),
-      ...(selectedGraphObjectRefs.length ? { selectedGraphObjectCount: selectedGraphObjectRefs.length } : {}),
-      ...(graphContextMeasurements ? { graphContextMeasurements } : {}),
-    },
-  });
   if (graphContext) {
     // The exact measured graph-context cost of THIS turn, visible to the
     // browser before the model even answers — counting, not enforcement.
@@ -1002,13 +939,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
   let turnFinished = false;
   let activeRuntimeViews: GraphView[] = [];
   const pendingGraphViewWrites: Promise<void>[] = [];
-  const hermesToolUseIds = new Set<string>();
-  const hermesStartedAt = new Map<string, number>();
-  // Durable caller attribution for LiquidAIty MCP actions: one card_call event
-  // pair (started/completed) per mcp__liquidaity__* invocation, carrying the
-  // engine-supplied invokingCardId from the tool_start event — the record that
-  // proves WHICH card (Main Chat vs a doorway child) performed the action.
-  const liquidaityCallByToolUse = new Map<string, { invokingCardId: string; toolName: string; startedMs: number }>();
+  const liquidaityToolUses = new Set<string>();
   try {
     const handle = await startGrpcTurn({
       sessionId,
@@ -1022,42 +953,9 @@ router.post('/openclaude/session/chat', async (req, res) => {
     }, async (event) => {
       if (turnFinished) return;
       if (event.kind === 'tool_start' && event.toolName.startsWith('mcp__liquidaity__')) {
-        liquidaityCallByToolUse.set(event.toolUseId, {
-          invokingCardId: event.invokingCardId,
-          toolName: event.toolName,
-          startedMs: Date.now(),
-        });
-        recordAgentEvent({
-          stage: 'card_call',
-          status: 'started',
-          mode: 'real_model_call',
-          caller: 'harness',
-          projectId,
-          deckId: BUILDER_DECK_ID,
-          conversationId,
-          correlationId,
-          cardId: event.invokingCardId,
-          inputSummary: `${event.toolName} ${String(event.argsJson || '').slice(0, 200)}`,
-          metadata: { toolUseId: event.toolUseId, toolName: event.toolName, invokingCardId: event.invokingCardId, agentType: event.agentType },
-        });
-      } else if (event.kind === 'tool_result' && liquidaityCallByToolUse.has(event.toolUseId)) {
-        const started = liquidaityCallByToolUse.get(event.toolUseId)!;
-        liquidaityCallByToolUse.delete(event.toolUseId);
-        recordAgentEvent({
-          stage: 'card_call',
-          status: event.isError ? 'failed' : 'completed',
-          mode: 'real_model_call',
-          caller: 'harness',
-          projectId,
-          deckId: BUILDER_DECK_ID,
-          conversationId,
-          correlationId,
-          cardId: started.invokingCardId,
-          outputSummary: String(event.output || '').slice(0, 200),
-          errorSummary: event.isError ? `${started.toolName} failed` : null,
-          durationMs: Date.now() - started.startedMs,
-          metadata: { toolUseId: event.toolUseId, toolName: started.toolName, invokingCardId: started.invokingCardId },
-        });
+        liquidaityToolUses.add(event.toolUseId);
+      } else if (event.kind === 'tool_result' && liquidaityToolUses.has(event.toolUseId)) {
+        liquidaityToolUses.delete(event.toolUseId);
         if (!event.isError) {
           try {
             const payload = JSON.parse(String(event.output || '{}')) as Record<string, unknown>;
@@ -1073,78 +971,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
             // A normal tool result may be prose or a non-view JSON payload.
           }
         }
-      }
-      if (event.kind === 'tool_start' && event.toolName === 'Agent') {
-        try {
-          const input = JSON.parse(event.argsJson || '{}') as Record<string, unknown>;
-          if (input.subagent_type === 'card_hermes_steward') {
-            // Canvas authority gate: Hermes requires a hermes_observe edge
-            // from an authorized card in the saved deck. Prompt text cannot
-            // bypass missing topology. Disconnected = no spawn.
-            // Deck is loaded lazily; a missing/unreadable deck means no authority.
-            let hermesEdge: any = null;
-            try {
-              const chk = await getDeckDocument(projectId, BUILDER_DECK_ID);
-              hermesEdge = (chk?.deck as any)?.edges?.find(
-                (e: any) => e.edgeType === 'hermes_observe' && e.target === 'card_hermes_steward',
-              );
-            } catch { /* deck unreadable = no authority */ }
-            if (!hermesEdge) {
-              logHarnessTrace(
-                `[harness] hermes blocked corr=${correlationId} reason=no_hermes_observe_edge`,
-              );
-              return; // skip this tool_start — no spawn without authority
-            }
-            // Both legitimate invocation forms are recorded: prompt omitted =
-            // full native parent-context inheritance; prompt present = a
-            // scoped task from Main Chat. The form is real event metadata.
-            const inherited = !Object.prototype.hasOwnProperty.call(input, 'prompt');
-            hermesToolUseIds.add(event.toolUseId);
-            hermesStartedAt.set(event.toolUseId, Date.now());
-            recordAgentEvent({
-              stage: 'hermes_context',
-              status: 'started',
-              mode: 'real_model_call',
-              caller: 'harness',
-              projectId,
-              deckId: BUILDER_DECK_ID,
-              conversationId,
-              correlationId,
-              cardId: 'card_hermes_steward',
-              inputSummary: inherited
-                ? 'native inherited parent context; prompt omitted'
-                : String(input.prompt || '').slice(0, 200),
-              metadata: { toolUseId: event.toolUseId, invocationForm: inherited ? 'inherited_context' : 'scoped_task' },
-            });
-          }
-        } catch {
-          // The raw tool event still flows; malformed args simply cannot prove Hermes.
-        }
-      } else if (event.kind === 'tool_result' && hermesToolUseIds.has(event.toolUseId)) {
-        recordAgentEvent({
-          stage: 'hermes_context',
-          status: event.isError ? 'failed' : 'completed',
-          mode: 'real_model_call',
-          caller: 'harness',
-          projectId,
-          deckId: BUILDER_DECK_ID,
-          conversationId,
-          correlationId,
-          cardId: 'card_hermes_steward',
-          // The REAL terminal result of the foreground Hermes child (the Agent
-          // tool_result), bounded — never a hardcoded "Mag One job-folder
-          // result" string (Hermes preparation is not a Mag One job) and never
-          // Mag One wording on the Hermes path.
-          outputSummary: event.isError ? '' : String(event.output || '').slice(0, 200),
-          errorSummary: event.isError ? 'named Hermes agent turn failed' : null,
-          durationMs: Date.now() - (hermesStartedAt.get(event.toolUseId) ?? Date.now()),
-          metadata: { toolUseId: event.toolUseId },
-        });
-        // hermes_postflight is NOT emitted here. It requires:
-        // 1) real completed source run, 2) readable run manifest,
-        // 3) actual Hermes invocation, 4) review result, 5) Hermes-owned
-        // review artifact, 6) artifact readback, 7) event ref to that artifact.
-        // Until all seven are met, the stage chip is honestly absent.
       }
       // Backend trace of the REAL event (only when it carries lifecycle signal),
       // then the unchanged SSE forward to the browser.
@@ -1174,39 +1000,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
     logHarnessTrace(
       `[harness] request completed corr=${correlationId} providerUsage=${usage.usageAvailable ? `${usage.providerInputTokens}in/${usage.providerOutputTokens}out (${usage.usageSource})` : 'unavailable'} cost=${usage.totalCostUsd ?? 'unavailable'} contextBreakdown=${usage.contextBreakdownJson ? 'present' : 'unavailable'}`,
     );
-    recordAgentEvent({
-      stage: 'frontdoor',
-      status: 'completed',
-      mode: 'real_model_call',
-      caller: 'user',
-      projectId,
-      conversationId,
-      correlationId,
-      // Real resolved identity of the turn (saved main_chat card), so the
-      // event trail answers "which card/model acted" without log spelunking.
-      cardId: handle.resolved.cardId,
-      provider: handle.resolved.provider,
-      model: handle.resolved.providerModelId,
-      outputSummary: String(finalText || ''),
-      durationMs: Date.now() - frontdoorStartedMs,
-      // Provider-reported usage (null = provider did not report — never a
-      // fake zero) + the engine's own per-component context ESTIMATES.
-      metadata: {
-        providerUsage: {
-          inputTokens: usage.providerInputTokens,
-          outputTokens: usage.providerOutputTokens,
-          totalCostUsd: usage.totalCostUsd,
-          usageAvailable: usage.usageAvailable,
-          usageSource: usage.usageSource,
-        },
-        ...(usage.contextBreakdownJson ? { contextBreakdownJson: usage.contextBreakdownJson } : {}),
-      },
-    });
-    // The telemetry writer is intentionally non-blocking at each event
-    // boundary, but the completed turn must not be reported before its
-    // already-recorded internal events are durable. This also preserves the
-    // trace when the dev stack watcher reloads immediately after a run.
-    await flushAgentTelemetry();
     // Save the assistant reply only when real text was produced — never an empty
     // bubble (mirrors the frontend's "no text → no bubble" contract). Best-effort,
     // same as the user message: a DB failure must never block or break the live
@@ -1224,18 +1017,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
     turnFinished = true;
     const reason = error instanceof Error ? error.message : 'grpc_turn_failed';
     logHarnessTrace(`[harness] request failed corr=${correlationId} reason=${redactTrace(reason)}`);
-    recordAgentEvent({
-      stage: 'frontdoor',
-      status: 'failed',
-      mode: 'real_model_call',
-      caller: 'user',
-      projectId,
-      conversationId,
-      correlationId,
-      errorSummary: reason,
-      durationMs: Date.now() - frontdoorStartedMs,
-    });
-    await flushAgentTelemetry();
     writeSse('error', {
       code: 'harness_turn_failed',
       message: 'The chat run failed. Check the correlation ID in the backend logs.',

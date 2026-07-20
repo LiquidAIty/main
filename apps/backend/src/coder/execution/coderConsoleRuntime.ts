@@ -150,7 +150,7 @@ export async function runCoderConsoleSession(
   let mcpFlags: string[] | undefined;
   let auditTools: { allowedTools: string[]; disallowedTools: string[] } | null = null;
   if (isAudit) {
-    const servers = buildCoderMcpServers({ runId: packet.runId, includeDevHarness: false, includeCodeGraph: true });
+    const servers = buildCoderMcpServers({ runId: packet.runId, includeCodeGraph: true });
     const mcpConfigPath = writeRunMcpConfig(packet.runId, servers);
     if (!mcpConfigPath) {
       return blocked(packet, null, 'blocked', 'console_coder_mcp_config_write_failed');
