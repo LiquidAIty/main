@@ -23,7 +23,6 @@ type ConsolePanelStatus = 'disconnected' | 'idle' | 'starting' | 'running' | 'fa
 
 export type OpenClaudeConsolePanelProps = {
   open: boolean;
-  variant?: 'drawer' | 'embedded';
   targetRoot: string;
   projectId?: string;
   provider?: string | null;
@@ -64,7 +63,6 @@ const STATUS_LABEL: Record<ConsolePanelStatus, string> = {
 
 function OpenClaudeConsolePanelInner({
   open,
-  variant = 'drawer',
   targetRoot,
   projectId,
   provider,
@@ -174,18 +172,16 @@ function OpenClaudeConsolePanelInner({
       data-testid="openclaude-console-panel"
       aria-label={CODER_DISPLAY_NAMES.console}
       style={{
-        position: variant === 'drawer' ? 'absolute' : 'relative',
-        right: variant === 'drawer' ? 0 : undefined,
-        top: variant === 'drawer' ? 0 : undefined,
-        bottom: variant === 'drawer' ? 0 : undefined,
-        width: variant === 'drawer' ? 'min(640px, 60%)' : '100%',
-        height: variant === 'embedded' ? '100%' : undefined,
+        position: 'absolute',
+        right: 0,
+        top: 0,
+        bottom: 0,
+        width: 'min(640px, 60%)',
         display: 'flex',
         flexDirection: 'column',
         background: '#0b0f14',
         color: '#d7e0ea',
-        borderLeft: variant === 'drawer' ? '1px solid #1c2733' : undefined,
-        borderTop: variant === 'embedded' ? '1px solid #1c2733' : undefined,
+        borderLeft: '1px solid #1c2733',
         zIndex: 40,
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
         fontSize: 12,

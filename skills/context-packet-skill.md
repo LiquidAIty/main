@@ -4,7 +4,7 @@
 @type Skill
 @status active
 @related_to spec-as-prompt
-@related_to codebase-memory-indexing
+@related_to codebasedmemoryskill
 @related_to skillgraph-neo4j-indexing
 @requires fresh_cbm_index
 

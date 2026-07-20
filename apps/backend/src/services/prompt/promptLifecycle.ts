@@ -14,12 +14,12 @@ import type { EpisodeNodeKind, EpisodeNodeInput } from '../thinkgraph/episodeCon
  * artifact (this store never becomes a second document store); only lineage,
  * version, status, graph references, approval, execution run, outcome, and
  * evaluation metadata are tracked here — and surfaced into ThinkGraph via the
- * generic episode contract (promptRecordToEpisodeNodes). Draft generators (Coder
- * or Main) may seed a draft, but their output is only ever a draft: no
+ * generic episode contract (promptRecordToEpisodeNodes). Draft generators (Coder,
+ * Hermes, or Main) may seed a draft, but their output is only ever a draft: no
  * prompt reaches the artifact until Main approves it.
  */
 export type PromptStatus = 'draft' | 'approved' | 'executed';
-export type PromptSource = 'main_chat' | 'coder';
+export type PromptSource = 'main_chat' | 'coder' | 'hermes';
 
 export type PromptRecord = {
   promptId: string;

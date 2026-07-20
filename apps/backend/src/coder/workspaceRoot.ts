@@ -41,13 +41,13 @@ export function resolveProjectWorkspaceRoot(projectId: string): string {
 }
 
 /**
- * The working directory for a product Main Chat session over gRPC.
+ * The working directory for a PRODUCT chat session (Main / Hermes over gRPC).
  *
  * It must NOT be the repo root: the engine walks up from its working directory
  * loading project-memory files (AGENTS.md / CLAUDE.md / .claude/rules/*), and a
  * repo-root cwd injects the repo's DEVELOPER instructions (~8.4k tokens, M-1)
- * into a product conversation that never needed them. Main drives the project
- * through MCP tools (ThinkGraph/KnowGraph/CodeGraph/canvas), not the
+ * into a PRODUCT conversation that never needed them. Main and Hermes drive the
+ * project through MCP tools (ThinkGraph/KnowGraph/CodeGraph/canvas), not the
  * filesystem, so a neutral out-of-repo directory removes the memory walk with
  * zero capability loss. The Coder keeps its real repo root — it is spawned by
  * the backend via resolveRepoRoot(), a different process, unaffected by this.

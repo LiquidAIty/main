@@ -6,7 +6,8 @@ existing Mag One run is then given the EXACT bytes of that file as its task and 
 assigned ``returns/<job-id>/`` directory as its return surface.
 
 This module provides the canonical handoff resolver plus a separate returns-only
-resolver for review without granting access to the handoff task-entrypoint path.
+resolver for post-run review. Hermes can use the latter without acquiring the
+handoff task-entrypoint path.
 It never trusts a caller path: the workspace root is the server-forced trusted
 root (resolved in TS and carried in), and the job id must be one opaque path
 segment (no separators, no traversal, no absolute). Resolution is structurally

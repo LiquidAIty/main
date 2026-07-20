@@ -19,7 +19,8 @@ NOT another TypeScript planner/context-packet subsystem.
 
 - The **CBM indexer** WRITES CodeGraph (through the existing codebase-memory/indexing system).
 - The **Harness / Coder** READ CodeGraph through MCP (search/scoped repository reads).
-- Code changes still pass the existing CBM scope gate before edits.
+- CBM maps code structure and impact; it is not a runtime permission gate. Direct source reads,
+  compile output, focused tests, and live proof win when graph memory disagrees.
 
 ## Boundary (what must NOT come back)
 

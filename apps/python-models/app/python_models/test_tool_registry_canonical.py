@@ -20,7 +20,7 @@ def test_canonical_capability_ids_resolve_to_runner_implementations() -> None:
 
 def test_capabilities_without_a_runner_adapter_stay_loudly_unknown() -> None:
     registry = build_default_tool_registry()
-    with pytest.raises(RuntimeError, match="card_tool_unknown: unsupported.future_planner"):
-        registry.resolve_one("unsupported.future_planner")
+    with pytest.raises(RuntimeError, match="card_tool_unknown: hermes.memory_read"):
+        registry.resolve_one("hermes.memory_read")
     with pytest.raises(RuntimeError, match="card_tool_unknown: card.run_assistant_agent"):
         registry.resolve_one("card.run_assistant_agent")

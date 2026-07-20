@@ -1,6 +1,6 @@
 // CodeGraph / Codebase-Memory MCP caller — the real "code-based memory is an MCP" client glue.
 // Extracted from the deleted graphContextBuilder so the live localcoder CBM scope gate keeps its
-// MCP connection. Pure MCP stdio client: NO graph_liq reads, NO context-packet builder, no shitcode.
+// Pure MCP stdio client: no direct graph-database reads and no context-packet builder.
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';

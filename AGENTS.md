@@ -29,10 +29,30 @@ Before planning code work, before editing, and before claiming what a file does,
 Do not start with broad grep.
 Do not start with random file opening.
 
-**Skills:** See `skills/codebasedmemoryskill.md` for CBM tool reference. See `skills/ai-native-runtime-awareness.md` for the runtime awareness fabric (event pipeline, Hermes observer, postflight review, evidence tiers).
+**Skills:** See `skills/codebasedmemoryskill.md` for the canonical CBM tool reference.
+The previously referenced `skills/ai-native-runtime-awareness.md` does not exist and must not be
+treated as an active runtime contract.
 Do not guess from memory.
 Do not claim code behavior without direct reads.
 Do not treat stale graph memory as proof.
+
+## Current Runtime Boundaries
+
+- Main Chat runs through the persistent OpenClaude-derived gRPC Harness.
+- The real OpenClaude Code terminal/PTY is the Coder surface intended below Main Chat.
+- `run_local_coder` and the Local Coder card are working bounded coding paths and are not cleanup
+  residue.
+- Hermes is correctly positioned as a Main sub-agent. Preserve its card, prompt, edges,
+  inherited-context selection, tool grants, and process-launch boundary.
+- The current inherited-context Agent named Hermes is pre-integration plumbing, not proof that the
+  external Hermes runtime executed. Actual Hermes must eventually launch through one real adapter,
+  potentially through the OpenClaude process/terminal boundary.
+- Hermes gets its own terminal or UI when that runtime is integrated. A Hermes activity panel is not
+  the OpenClaude Coder terminal and must not occupy the under-chat Coder slot.
+- ThinkGraph is the current SQL/SQLite Engraphis project-reasoning store.
+- KnowGraph is Neo4j sourced knowledge/provenance.
+- CodeGraph is CBM repository structure.
+- Apache AGE is reserved for a future AgentGraph and is not ThinkGraph.
 
 The normal code-work order is:
 

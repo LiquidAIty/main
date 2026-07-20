@@ -10,7 +10,8 @@ export type RuntimeBinding =
   | 'research_agent'
   | 'plan_agent'
   | 'worldsignals_agent'
-  | 'trading_agent';
+  | 'trading_agent'
+  | 'hermes_steward';
 
 export type AgentCardRuntimeType =
   | 'assistant_agent'
@@ -23,7 +24,7 @@ export type AgentCardRuntimeType =
 // finalized prompt to Mag One — never worker membership).
 // Mirrors the backend contract: an unrecognised edge is classified 'invalid' and
 // stays inert/visible, never silently promoted to a directional Call.
-export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'invalid';
+export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'hermes_observe' | 'invalid';
 
 export type DeckEdgeRole =
   | 'graph_execution'

@@ -8,8 +8,8 @@ proof_level: cbm_anchor_verified_and_source_verified
 cbm:
   project_identity: C-Projects-main
   index_root: C:/Projects/main
-  full_index_nodes: 5273
-  full_index_edges: 10327
+  full_index_nodes: 5472
+  full_index_edges: 17093
   freshness: ready
 
 roots:
@@ -38,14 +38,18 @@ roots:
 
 ## What this is
 
-When Main decides a project is ready for a proposed team run, it asks Hermes to prepare a Run Plan.
-Hermes writes the exact Mag One variable context packet
-into `C:/Projects/main/coder-workspace/handoff/<jobId>/prompt.md`, then calls
-`run_mag_one` with the shared `jobId`. The Python rails read the exact bytes from
-that file as the run task — no wrapping, no rewriting. Return artifacts land in
+This feature is the proven job-folder and Mag One worker handoff mechanism. The Python rails read
+the exact bytes from `C:/Projects/main/coder-workspace/handoff/<jobId>/prompt.md` as the run task —
+no wrapping, no rewriting. Return artifacts land in
 `C:/Projects/main/coder-workspace/returns/<jobId>/<card-id>/...` for inspection.
 Repo-root `handoff/` was useful for earlier proof artifacts, but it is not the
 backend `run_mag_one` jobId consumption path.
+
+The intended controller flow is: Main asks actual Hermes to prepare a Run Plan, Hermes writes the
+packet, Main presents it, and Main submits the approved job. The packet/readback and Mag One worker
+paths have proof; the complete Main→actual-Hermes→approved-Mag-One controller path does not. The
+current generic inherited-context Agent built from a Hermes card must not be described as actual
+Hermes execution.
 
 `prompt.md` is a run-specific packet, not a durable configuration store. Agent cards
 own durable constants: system prompt/role definition, model/provider, selected tools,
@@ -61,7 +65,7 @@ runtime facts, and relevant wiki/skill/file anchors.
 ## How it works
 
 ```
-Hermes prepares the handoff packet after an explicit request from Main:
+Intended Hermes preparation step (not yet proven through an actual Hermes process):
   Hermes uses write_mag_one_instructions
     → jf.write_handoff_prompt(folder, instructions)   [job_folder.py:96]
       → writes to: coder-workspace/handoff/<jobId>/prompt.md (utf-8, exact bytes)
@@ -120,9 +124,9 @@ Return artifacts:
 10. Tools are bound to saved cards and runtime validation, never granted by
     `prompt.md` or inferred from user wording. Hooks may deny invalid calls, but must
     not become phrase-based routers or deterministic intent classifiers.
-11. Hermes may prepare or revise `prompt.md` without user approval, but cannot run Mag One.
-    Main can submit only after explicit user acceptance and only through a live
-    `magentic_control` connection. Main and Hermes are never worker options.
+11. The intended actual Hermes runtime may prepare or revise `prompt.md` without user approval,
+    but cannot run Mag One. Main can submit only after explicit user acceptance and only through
+    a live `magentic_control` connection. Main and Hermes are never worker options.
 
 ## Start in CBM
 
@@ -175,7 +179,7 @@ contextPointers:
       maxTokens: 1200
 anchors:
   wiki: [wiki/coder-to-mag-one-handoff.md]
-  skills: [skills/cbm-graph-reader-skill.md]
+  skills: [skills/codebasedmemoryskill.md]
   files: [apps/python-models/app/python_models/job_folder.py]
   symbols: [read_handoff_prompt]
 ---

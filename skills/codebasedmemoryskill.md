@@ -1,8 +1,8 @@
 ---
 name: codebasedmemoryskill
 description: Authoritative operating guide for Code Based Memory (CBM) inside LiquidAIty. CBM is mandatory for repository analysis, cleanup, architecture, refactoring, deletion-impact, and code changes.
-version: 2.0.0
-cbm_version: 0.6.1
+version: 2.1.0
+cbm_version: 0.9.0
 project: C-Projects-main
 ---
 
@@ -37,7 +37,7 @@ CBM is mandatory for repository work. Use it at the correct structural points:
 - Stale card IDs, old terminology
 - Commented-out code
 - Files outside CBM coverage
-- Exhaustive text matching (search_code is broken on Windows)
+- Exhaustive text matching when graph-ranked `search_code` is not the right tool
 
 **Hybrid (CBM + rg + source reads) required for:**
 - Safe deletion
@@ -76,12 +76,13 @@ Exceptions: pure prose edits, spelling fixes, emergency repair when CBM itself i
 
 Never claim CBM-path-proven unless trace_path returned the edge. Never claim a function is dead without inbound trace + rg + coverage reasoning.
 
-## Installed Tools (v0.6.1)
+## Installed Tools (v0.9.0)
 
 ### Indexing & Project State
 
 **list_projects** — Canonical project names, node/edge counts.
-Use: first call when project identity uncertain. Returns `{"projects":[{"name":"C-Projects-main","root_path":"C:/Projects/main","nodes":5413,"edges":12121}]}`
+Use: first call when project identity is uncertain. Record the returned root, node count, and edge
+count; do not copy an old example count into a current report.
 
 **index_status** — Current index state.
 Parameter: `{"project":"C-Projects-main"}`
@@ -90,7 +91,9 @@ Do not poll endlessly.
 
 **index_repository** — Full reindex.
 Parameter: `{"repo_path":"C:/Projects/main"}`
-Use ONLY when: no index exists, index format changed, or coverage/freshness evidence proves unusable. Do NOT use before every query, once per subagent, or as a reflex. Check project and status first. Current cold reindex: ~971ms for 473 files.
+Use ONLY when: no index exists, the index format changed, or coverage/freshness evidence proves
+unusable. Do NOT use before every query or as a reflex. Check project and status first; file and
+graph counts vary with the current working tree and exclusion rules.
 
 **detect_changes** — Maps working-tree changes to affected symbols.
 Parameter: `{"project":"C-Projects-main"}`
@@ -102,13 +105,16 @@ Use: before and after meaningful edits. Reports tracked files with uncommitted m
 
 **get_graph_schema** — Node labels, edge types, properties.
 Parameter: `{"project":"C-Projects-main"}`
-Use: early in a serious session, before writing custom Cypher. Returns 13 node labels (Function 1508, Variable 1225, File 473, Module 472, Type 468, Method 416, Section 338, Class 212, Route 193, Folder 91, Interface 10, Channel 6, Project 1) and 20 edge types.
+Use: early in a serious session, before writing custom Cypher. Record the live node labels and
+edge types instead of relying on counts copied from a previous index.
 
 Key edges: CALLS (3840, with confidence/strategy), IMPORTS (444), HANDLES (53, route→handler), TESTS (533), SEMANTICALLY_RELATED (144, LSH-based), SIMILAR_TO (47, Jaccard), HTTP_CALLS (36), GRPC_CALLS (1), CONFIGURES (38).
 
 **get_architecture** — Structure overview.
 Parameter: `{"project":"C-Projects-main"}`
-Limitation in 0.6.1: returns only node/edge counts. Does not return packages, clusters, hotspots, or routes despite accepting aspects parameter. Use search_graph + query_graph for architectural discovery instead.
+The installed 0.9.0 build can return structure, dependencies, routes, entry points, hotspots,
+boundaries, layers, file tree, and graph-derived clusters. Use only the aspects needed for the
+current task.
 
 **search_graph** — Locate symbols by name, label, file pattern.
 Parameters: `{"project":"C-Projects-main","query":"<name>","label":"Function"}`
@@ -128,7 +134,9 @@ Use for structural questions not covered by simpler tools. Cypher support is lim
 Parameters: `{"project":"C-Projects-main","qualified_name":"<exact-qualified-name>"}`
 Use after locating symbol via search_graph. Returns source, signature, return type, complexity, lines, fingerprint. Discover qualified names through search_graph — do not guess them. Known bug: line-offset can return wrong function for ambiguous names; verify against expected line range.
 
-**search_code** — Graph-augmented code search. FIXED in v0.9.0 (tested 2026-07-18). Was broken in v0.6.1 on Windows ("The system cannot find the path specified"). Now returns graph-ranked results with in_degree/out_degree, directory breakdown, dedup ratio (3.3x typical), and ~500ms query time. Prefer search_code over rg for code text search within indexed files. Use rg for files outside CBM coverage and comment-only searches.
+**search_code** — Graph-augmented code search. The installed 0.9.0 build returns graph-ranked
+results with structural degree and directory context. Prefer it for code text inside indexed files.
+Use `rg` for files outside CBM coverage, configs, docs, comments, and exhaustive exact matching.
 
 ### Knowledge & Evidence
 
@@ -137,24 +145,23 @@ Parameters: `{"project":"C-Projects-main","action":"list|update","content":"..."
 Use for durable architecture decisions only. Not for temporary notes, cleanup findings, or unapproved decisions. Current repo: no ADRs exist.
 
 **ingest_traces** — Runtime trace ingestion.
-Status: STUB in 0.6.1 ("Runtime edge creation from traces not yet implemented"). Accepts traces but does not create edges. Documented for future use.
+Treat imported traces as an explicit operation; do not ingest runtime data during ordinary code
+discovery.
 
-## Features NOT in 0.6.1
+## Current 0.9.0 Notes
 
-- **semantic_query** — Not installed. Semantic relationships exist as SEMANTICALLY_RELATED edges (144 total) queryable via query_graph Cypher.
-- **check_index_coverage** — Not installed. No coverage check available.
-- **Cross-repository CROSS_* edges** — Not present.
-- **Team-shared graph artifacts (.codebase-memory/graph.db.zst)** — Not present. `artifact_present: false`.
-- **Auto-index / auto-watch** — Not enabled. `auto_index: false`, `auto_index_limit: 50000`.
-- **LSP-style type resolution** — Partial. Go/C/C++ have dedicated type resolution passes; TypeScript/Python use 6-strategy name-based cascade with confidence scores (0.30-0.95).
-
-## v0.9.0 Upgrade Path
-
-v0.9.0 is available but the update could not overwrite the running 0.6.1 binary (MCP server lock). To upgrade: stop Hermes, run `codebase-memory-mcp update -y`, restart Hermes. v0.9.0 may fix search_code on Windows and add semantic_query, check_index_coverage, and richer get_architecture output.
+- The installed executable reports `codebase-memory-mcp 0.9.0`.
+- `search_code`, `semantic_query`, richer architecture output, complexity signals, and
+  cross-service tracing are available through the current MCP schema.
+- CBM is independent of the LiquidAIty Hermes runtime. Do not stop, restart, or describe Hermes as
+  the owner of CBM.
+- Index coverage still must be checked against source and Git state. A successful query is not
+  freshness proof.
 
 ## Graph Schema Reference
 
-Node labels (counts from fresh index): Function (1508), Variable (1225), File (473), Module (472), Type (468), Method (416), Section (338), Class (212), Route (193), Folder (91), Interface (10), Channel (6), Project (1).
+Typical node labels include Function, Method, Variable, File, Module, Type, Section, Class, Route,
+Folder, Interface, Channel, and Project. Use `get_graph_schema` for current counts.
 
 Critical properties: `name`, `qualified_name`, `file_path`, `start_line`, `end_line`, `is_exported`, `is_test`, `signature`, `return_type`, `complexity`.
 
@@ -168,7 +175,9 @@ CBM indexes tracked files. Uncommitted changes to tracked files ARE visible afte
 
 ## Cold Start & Performance
 
-Every CLI call starts with "mem.init budget_mb=16226" (~1-2s). Queries resolve in <1ms after init. Full reindex: ~971ms for 473 files using 12 parallel workers. The MCP server (running via Hermes) keeps the graph in memory — CLI calls restart the binary each time. For batch operations, batch independent calls together.
+Every CLI call starts a process, while the connected MCP service can keep its own graph state warm.
+Neither lifecycle depends on Hermes. Batch independent calls when useful, but do not reindex as a
+reflex.
 
 ## Hybrid Workflow Pattern (The Core Loop)
 
@@ -213,8 +222,11 @@ Do not repeatedly restart CBM. Do not repeatedly call index_repository.
 - **index_status / detect_changes**: Accept project name string, never filesystem path.
 - **Python functions**: trace_path does not resolve them. Verify via source reads + rg.
 - **Route nodes**: file_path is empty. Read route files directly for handler mapping.
-- **Protected dirs**: localcoder/, worldsignal/, autogen-main/, Kronos-main/, services/esn_rls/, EDGAR caches are off-limits for cleanup but ARE indexed by CBM.
-- **search_code**: Broken on Windows. Use rg exclusively for text search.
+- **Protected dirs**: localcoder/, worldsignal/, autogen-main/, Kronos-main/,
+  services/esn_rls/, and EDGAR caches are off-limits for cleanup. Verify index coverage rather
+  than assuming these vendored/protected boundaries are indexed.
+- **search_code**: Working in the installed 0.9.0 build. Use it for indexed code text; use `rg` for
+  exhaustive exact matches, comments, configs, docs, and files outside CBM coverage.
 - **Cypher**: Limited. Simple MATCH patterns only. No EXISTS subqueries, no OPTIONAL MATCH with complex patterns, no aggregations with WHERE on aggregates.
 
 ## Proven Hybrid Patterns (from live repo testing)

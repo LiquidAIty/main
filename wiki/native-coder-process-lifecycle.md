@@ -8,8 +8,8 @@ proof_level: cbm_anchor_verified_and_source_verified
 cbm:
   project_identity: C-Projects-main
   index_root: C:/Projects/main
-  full_index_nodes: 5273
-  full_index_edges: 10327
+  full_index_nodes: 5472
+  full_index_edges: 17093
   freshness: ready
 
 roots:
@@ -44,17 +44,21 @@ roots:
 
 ## What this is
 
-The end-to-end lifecycle of a native Coder subprocess, from the browser SSE request
-through the Harness, Python control plane, adapter spawn, process execution, MCP child
-management, cancellation, cleanup, and return artifact finalization.
+The two native Coder process lifecycles that currently coexist by design:
+
+1. Persistent Main Chat and interactive OpenClaude console sessions.
+2. A bounded one-shot Local Coder CLI run that returns a validated CoderReport.
+
+They share OpenClaude/LocalCoder technology but are not one continuous request path and must not
+be collapsed into a replacement abstraction.
 
 ## What the user/agent experiences
 
-A coding task is requested (via chat doorway, card run, or console session). The backend
-spawns a native Coder (OpenClaude CLI) process, pipes stdout/stderr, waits up to 5
-minutes for it to complete, parses the CoderReport from stdout, cleans up temporary
-files, and returns the result. Intermediate streaming does not exist — the model waits
-for the final CoderReport.
+Main Chat streams through the persistent gRPC Harness. The interactive Code Console uses a
+long-lived PTY session with input, output, resize, and stop. Separately, a Local Coder card/tool
+request spawns a bounded CLI process, waits up to five minutes, validates the CoderReport from
+stdout, cleans up its temporary MCP file, and returns the result. The one-shot run has no
+intermediate CoderReport streaming.
 
 ## How it works
 
@@ -64,28 +68,29 @@ Lifecycle stages (LocalCoderRuntimeStage):           [adapter.ts:102]
   process_timeout → process_exit_failed →
   json_parse → coder_report_validation → completed
 
-Stage 1 — Request:
-  Browser SSE → POST /openclaude/session/chat        [coder.routes.ts:185]
-    → startGrpcTurn → model calls runConfiguredCard
-    → Python AutoGen → model calls run_local_coder tool
+Persistent Main Chat (separate):
+  Browser SSE → POST /openclaude/session/chat        [coder.routes.ts]
+    → startGrpcTurn → gRPC AgentService.Chat stream
 
-Stage 2 — Adapter:
-  POST /api/coder/localcoder/run                     [coder.routes.ts:422]
-    → localCoderService.run → adapter.runWithDiagnostics [adapter.ts:949]
-      → discoverRuntime → prepareMcpConfig (temp file)
+One-shot Local Coder request:
+  run_local_coder tool or POST /api/coder/localcoder/run
+    → localCoderService.run → adapter.runWithDiagnostics
 
-Stage 3 — Spawn:
+One-shot adapter:
+  → discoverRuntime → prepareMcpConfig (temp file)
+
+One-shot spawn:
   runChildProcess(command, args, options)             [adapter.ts:241]
     → spawn(command, args, { cwd, env, shell, stdio: ['ignore','pipe','pipe'] })
     → timeout = 300s → on close → finish(exitCode, stdout, stderr)
     → timeout → child.kill() → 5s kill fallback → finish
 
-Stage 4 — Parse:
+One-shot parse:
   parseLocalCoderOutput(stdout, packetId)             [adapter.ts:488]
     → JSON.parse → try structured_output/result/output/envelope
     → coderReportSchema validation + coderPacketId match
 
-Stage 5 — Cleanup:
+One-shot cleanup:
   unlinkSync(mcp.tempPath) (best-effort)              [adapter.ts:1061]
   applyProcessDiagnostics(runtimeDiagnostics, result) [adapter.ts:575]
   → CoderReport returned up the chain

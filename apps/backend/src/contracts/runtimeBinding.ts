@@ -8,6 +8,7 @@ const RUNTIME_BINDINGS = [
   'plan_agent',
   'worldsignals_agent',
   'trading_agent',
+  'hermes_steward',
 ] as const satisfies RuntimeBinding[];
 
 const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
@@ -19,6 +20,7 @@ const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_plan_agent: 'plan_agent',
   card_worldsignals_agent: 'worldsignals_agent',
   card_trading_workbench: 'trading_agent',
+  card_hermes_steward: 'hermes_steward',
 };
 
 function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {

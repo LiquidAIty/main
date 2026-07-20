@@ -8,7 +8,7 @@ env vars, no .env, no per-turn spawn, no fallback host.
 
 Exposes exactly this tool surface:
   * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
-  * run_mag_one                      (authorized submission of an existing
+  * run_mag_one                      (Main-only approved submission of an existing
                                       canonical prompt.md through magentic_control)
   * thinkgraph.get_graph_slice       (bounded READ-ONLY graph scope)
   * web_search                       (real Tavily search; Search Agent only by grant)
@@ -24,9 +24,9 @@ to Python handlers (app/control_plane.py) which own validation/policy and use th
 existing backend deck routes + the Python runtime-assignment store. No semantics,
 no fallback lives in this host.
 
-ThinkGraph mutation is an explicit Main Chat grant. KnowGraph ingestion is
-implemented but not granted to Main while the planner boundary is unavailable.
-The host transports structured updates to the canonical writers; graph authorities never
+ThinkGraph mutation is an explicit Main Chat grant; KnowGraph ingestion remains
+an explicit Hermes-only grant. The host
+transports structured updates to the canonical writers; graph authorities never
 appear as cards or conversational agents. The obsolete post-chat pair front door
 and apply_live_patch path remain deleted.
 """
@@ -142,13 +142,12 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="run_mag_one",
             description=(
-                "Submit an existing finalized job folder through an authorized bus control input. "
+                "Main Chat only: submit an existing finalized job folder through the bus control input. "
                 "The job is identified by jobId/projectId/deckId; Mag One reads the exact bytes of "
                 "handoff/<jobId>/prompt.md and writes real artifacts under returns/<jobId>/. "
                 "Supporting files may accompany prompt.md. The prompt file is the final start signal. "
                 "The backend resolves the live worker roster from blue SIDE connections; never type "
-                "a roster. The current product grants no caller this execution authority; calls fail "
-                "closed until the actual planner and approval boundary is integrated."
+                "a roster. Execute only on an explicit user request — Hermes never launches Mag One."
             ),
             inputSchema={
                 "type": "object",
@@ -157,6 +156,10 @@ async def list_tools() -> list[Tool]:
                     "deckId": {"type": "string"},
                     "jobId": {"type": "string"},
                     "conversationId": {"type": "string"},
+                    "parentContext": {
+                        "type": "object",
+                        "description": "Inherited Main Chat review context for Hermes only; never Mag One task input.",
+                    },
                 },
                 "required": ["jobId", "projectId", "deckId"],
             },
@@ -164,11 +167,11 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="write_mag_one_instructions",
             description=(
-                "Future planner insertion point: write the EXACT proposed Mag One task into handoff/<run-id>/prompt.md "
+                "Hermes Run Plan preparation: write the EXACT proposed Mag One task into handoff/<run-id>/prompt.md "
                 "in the trusted active Coder workspace, and assign returns/<run-id>/ as the run's "
                 "result folder. Supply `instructions` (the exact run-specific text Mag One receives — not "
                 "summarized/wrapped/rewritten, and not durable card constants) and optionally `runId` to reuse an existing handoff. "
-                "Writing prompt.md never starts Mag One and the current Main runtime is not granted this tool. "
+                "Hermes may call this tool only when Main explicitly asks it to prepare the existing prompt. Main Chat owns presentation, review, and run approval; writing prompt.md never starts Mag One. "
                 "Returns runId + workspace-relative handoff and returns paths. Run run_mag_one with "
                 "that runId as jobId to have Mag One read those exact bytes as its task."
             ),
@@ -303,7 +306,7 @@ async def list_tools() -> list[Tool]:
             name="thinkgraph.submit_update",
             description=(
                 "Main Chat only: submit zero or ONE bounded structured ThinkGraph update after "
-                "reviewing the turn. Required shape: "
+                "reviewing the turn or Hermes findings. Required shape: "
                 "each resource is {id, label, kind?, properties?}; each relation is {a, b, tag?}; "
                 "each statement is {id, subject, predicateTerm, object, rationale?, review?, tag?, properties?}. "
                 "Statement subject and object MUST be resource ids in this update or existing project resources; "
@@ -355,7 +358,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="knowgraph.ingest",
             description=(
-                "Ingest REAL source material into KnowGraph through the existing "
+                "Hermes only: ingest REAL source material into KnowGraph through the existing "
                 "Neo/Python extraction pipeline (chunking, extraction prompts, entity/relationship "
                 "extraction, provenance, Neo4j writes). Each document must carry real source text "
                 "plus source metadata (source_url/title/fetched_at/document_id). Never invent "
@@ -478,6 +481,70 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="hermes.memory_read",
+            description=(
+                "Hermes only: read your project-scoped SQL memory (private steward continuity — "
+                "prior judgments, patterns, draft state). Omit key to list recent items."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {"projectId": {"type": "string"}, "key": {"type": "string"}},
+                "required": ["projectId"],
+            },
+        ),
+        Tool(
+            name="hermes.memory_write",
+            description=(
+                "Hermes only: upsert one key/value item in your project-scoped SQL memory. "
+                "Separate from ThinkGraph — this is your private continuity, not shared project "
+                "reasoning."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "key": {"type": "string"},
+                    "value": {},
+                },
+                "required": ["projectId", "key", "value"],
+            },
+        ),
+        Tool(
+            name="hermes.read_report",
+            description=(
+                "Hermes only: read the current full durable investigation report for the active native "
+                "parentRunId before revising it. The server resolves project and conversation identity; "
+                "Main Chat receives only the separate bounded report context."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {"parentRunId": {"type": "string"}},
+                "required": ["parentRunId"],
+            },
+        ),
+        Tool(
+            name="hermes.write_report",
+            description=(
+                "Hermes only: create or revise the one durable human-readable investigation report for "
+                "the active project conversation. The server resolves project and conversation "
+                "identity from parentRunId; never supply them. Include only real stable "
+                "ThinkGraph node ids, KnowGraph refs, and CodeGraph refs. On success, return "
+                "the completion metadata exactly; do not repeat the report body to Main Chat."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "parentRunId": {"type": "string"},
+                    "reportMarkdown": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "thinkGraphNodeIds": {"type": "array", "items": {"type": "string"}},
+                    "knowGraphRefs": {"type": "array", "items": {"type": "string"}},
+                    "codeGraphRefs": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["parentRunId", "reportMarkdown", "summary"],
+            },
+        ),
+        Tool(
             name="web_search",
             description=(
                 "Search the live web through Tavily and return real URLs, titles, domains, "
@@ -575,6 +642,10 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "knowgraph_create_analysis_view": {"analysisId", "projectId", "producingInvocation", "parentViewId"},
     "codegraph.status": set(),
     "codegraph.search": {"query", "limit"},
+    "hermes.memory_read": {"projectId", "key"},
+    "hermes.memory_write": {"projectId", "key", "value"},
+    "hermes.read_report": {"parentRunId"},
+    "hermes.write_report": {"parentRunId", "reportMarkdown", "summary", "thinkGraphNodeIds", "knowGraphRefs", "codeGraphRefs"},
     "write_mag_one_instructions": {"instructions", "runId"},
     "read_model_results": {"runId", "path"},
     "canvas.inspect": {"projectId", "deckId"},
@@ -607,6 +678,10 @@ _BRIDGE_PATHS: dict[str, str] = {
     "knowgraph_create_analysis_view": "knowgraph_create_analysis_view",
     "codegraph.status": "codegraph_status",
     "codegraph.search": "codegraph_search",
+    "hermes.memory_read": "hermes_memory_read",
+    "hermes.memory_write": "hermes_memory_write",
+    "hermes.read_report": "hermes_read_report",
+    "hermes.write_report": "hermes_write_report",
 }
 
 # Coder job-folder tools dispatch to the ONE shared Python implementation

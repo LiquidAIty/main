@@ -139,12 +139,11 @@ class TestPythonMcpHost:
             "knowgraph_create_analysis_view",
             "codegraph.status",
             "codegraph.search",
+            "hermes.memory_read",
+            "hermes.memory_write",
+            "hermes.read_report",
+            "hermes.write_report",
             "web_search",
-            "worldsignals.batch",
-            "worldsignals.capabilities",
-            "worldsignals.command",
-            "worldsignals.poll",
-            "worldsignals.stream_events",
         ])
 
     def test_card_run_schema_matches_the_doorway_contract(self):

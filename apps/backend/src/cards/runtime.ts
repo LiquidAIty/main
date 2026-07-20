@@ -177,7 +177,7 @@ export function resolvedMagenticOptions(
     .filter((node) => {
       // Principal roles are structurally never workers, even against stale edges.
       const binding = resolveCardBinding(node);
-      if (binding === 'main_chat') return false;
+      if (binding === 'main_chat' || binding === 'hermes_steward') return false;
       const runtimeType = resolveCardRuntimeType(node);
       return isAssistLikeRuntimeType(runtimeType) || runtimeType === 'graph_flow';
     })
@@ -265,6 +265,8 @@ export function resolveCardTools(card: any): string[] {
       knowgraph_ingest: 'knowgraph.ingest',
       codegraph_status: 'codegraph.status',
       codegraph_search: 'codegraph.search',
+      hermes_memory_read: 'hermes.memory_read',
+      hermes_memory_write: 'hermes.memory_write',
       mag_one_describe_connected_agents: 'mag_one.describe_connected_agents',
       run_mag_one: 'run_mag_one',
       run_coder_subagent: 'run_coder_subagent',
@@ -716,8 +718,9 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     return done({ status: 'failed', runtimeType, error: String(error?.message || 'card_resolution_failed') });
   }
 
-  // Explicit trusted caller authority is transported unchanged. Configured
-  // AutoGen cards do not gain graph authority from a binding or card id.
+  // Explicit trusted caller authority is transported unchanged. Native Hermes
+  // writes ThinkGraph through the Harness MCP tool; configured AutoGen cards do
+  // not gain graph authority from a binding or card id.
   const resolvedBinding = resolveRuntimeBinding(
     effectiveCard?.runtimeOptions?.binding ?? effectiveCard?.runtimeBinding ?? effectiveCard?.binding,
     effectiveCard?.id,

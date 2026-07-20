@@ -19,15 +19,17 @@ activation signal. No TS brain, no fallbacks, no fake success. Full rules: [AGEN
 
 ### Stack topology
 
-Four services + two DBs — `npm run dev:all` plus `docker start sim-pg neo4j`:
+Four services + three storage authorities — `npm run dev:all` plus the required database
+containers:
 
 ```txt
 frontend      :5173    Vite / React / ReactFlow canvas
 backend       :4000    Express — transport, MCP bridge, deck store
 autogen       :8003    Python AutoGen / MagenticOne
 gRPC harness  :50051   localcoder — the chat + coder engine
-Postgres      :5433    sim-pg — decks, conversations, ThinkGraph (AGE)
-Neo4j                  KnowGraph
+Postgres      :5433    sim-pg — projects, decks, conversations
+SQLite                 ThinkGraph — Engraphis project reasoning/state
+Neo4j                  KnowGraph — sourced knowledge/provenance
 ```
 
 Failure signatures: blank canvas = backend or DB:5433 down · chat no reply = gRPC:50051 down ·
@@ -35,13 +37,20 @@ chat silent = autogen down.
 
 ### 1. Harness Chat — the front door
 
-The gRPC harness (`localcoder`) over a persistent session. Client → backend
-`/api/coder/openclaude/session/{chat,answer,history}` → harness on :50051. Main Chat steers the
-conversation, reads and writes the project ThinkGraph, receives a bounded active-report summary, and
-remains the principal responder. When deeper work is useful, Main invokes the orange-connected saved
-Hermes card as a native inherited-context `Agent`. Hermes reads ThinkGraph itself, conditionally uses
-Search/KnowGraph/CodeGraph, and creates or revises one Inspector report. It returns only completion
-metadata, never a competing long-form Main response.
+The OpenClaude-derived gRPC Harness (`localcoder`) owns the persistent Main Chat session. Client →
+backend `/api/coder/openclaude/session/{chat,answer,history}` → Harness on :50051. Main remains the
+principal responder.
+
+The saved Hermes card is correctly wired as a Main sub-agent through persisted card/edge authority.
+Keep that topology and its inherited-context/tool-grant boundary. Today, however, the Harness builds a
+generic inherited-context `Agent` from the saved Hermes card; that is useful pre-integration plumbing,
+not proof that the installed Hermes runtime executed. The missing final seam is one real Hermes
+process adapter. It may be launched through the OpenClaude terminal/process boundary if that proves to
+be the correct installed-runtime interface.
+
+The under-chat terminal belongs to OpenClaude Code/Coder. Hermes gets its own terminal or UI when the
+actual Hermes runtime is integrated. The currently restored Hermes pull-up panel under chat is a known
+placement bug, not the intended product boundary.
 
 ### 2. The one MCP server — the control surface
 
@@ -54,11 +63,11 @@ There is **no TS MCP server** — TS is only the client. Each tool bridges to a 
 
 ### 3. Orchestrator (Mag One) — the team run
 
-After Main explicitly asks for a Run Plan, Hermes writes the existing
-`coder-workspace/handoff/<jobId>/prompt.md`. Main presents that exact plan. Only after explicit user
-acceptance may Main call `run_mag_one({jobId, projectId, deckId})`. The backend requires exactly one
-live Main→Mag One `magentic_control` edge, then resolves workers only from live `magentic_option` side
-edges and runs `MagenticOneGroupChat`. Main and Hermes are structurally excluded from worker eligibility.
+The intended path is: actual Hermes prepares the existing
+`coder-workspace/handoff/<jobId>/prompt.md`; Main presents the plan; only after explicit user acceptance
+may Main call `run_mag_one({jobId, projectId, deckId})`. The Mag One executor and worker-card paths
+exist and are tested independently. A full Main → actual Hermes → approved Mag One runtime proof has
+not yet happened, so documentation must not present it as complete.
 
 ### 4. Agent cards + the bus
 
@@ -67,20 +76,24 @@ the ONLY activation signal** — connected = eligible, disconnected = inactive. 
 from the Orchestrator, not directly. A card's saved config (prompt, provider/model, tools, bindings) is the
 source of truth for what a card *is* — never a TS name-match.
 
-### 5. Coder — a normal bus card
+### 5. Coder — two real surfaces, not substitutes
 
-`run_local_coder(objective, …)` (Python tool) → backend `/api/coder/localcoder/run` — **the server injects
-the trusted filesystem root + run id; never the model** — → `LocalCoderAdapter` → the real coder CLI →
-authoritative `CoderReport`. The Coder is not special: it's a bus card the Orchestrator instructs, with full
-coding ability + CBM.
+The persistent OpenClaude console/session is the interactive Coder surface and is intended below Main
+Chat. It owns the real PTY, input/output, resize, stop, and session lifecycle.
+
+The Local Coder card is also working and must remain. `run_local_coder(objective, …)` (Python tool) →
+backend `/api/coder/localcoder/run` — **the server injects the trusted filesystem root + run id; never
+the model** — → `LocalCoderAdapter` → the configured OpenClaude/Coder CLI → validated `CoderReport`.
+This bounded card/tool path and the persistent terminal are different useful modes. Neither should be
+deleted or replaced with a newly invented run-packet abstraction.
 
 ### 6. Graphs — one writer each
 
 ```txt
-ThinkGraph   Postgres/AGE   planning & operational reasoning; Harness writes (MCP card-scoped tools),
-                            reads via thinkgraph.get_graph_slice → /thinkgraph/graph-view
+ThinkGraph   SQLite/Engraphis planning & operational reasoning; bounded Python tools write/read it
 KnowGraph    Neo4j          grounded source-backed knowledge; Python research writes; Harness reads
 CodeGraph    CBM (SQLite)   repo structure / edit boundaries; the CBM indexer writes
+AgentGraph   future AGE     not implemented and not a current runtime authority
 ```
 
 One authority per graph. No cross-writes, no UI→DB graph write.
@@ -91,18 +104,16 @@ One authority per graph. No cross-writes, no UI→DB graph write.
 (Orchestrator). The deck store owns saved cards + wires; provider+model resolve per card; fail closed on
 missing model config.
 
-The Coder card is ONE capability with interchangeable execution adapters over the SAME job
-contract (handoff/<jobId>/prompt.md), CoderReport format, and verification path:
-`external_coder` / `mcp_coder` / `plugin_coder` (bring your own Claude Code/Codex/etc.) or
-`openclaude_api_coder` (the managed OpenClaude Code runtime + the card's configured API model).
-The adapter records WHO executed; it never redefines the card, and there is no hidden fallback
-between adapters — an unavailable mode is reported and the user picks another.
+Do not invent replacement adapter contracts around the working Coder paths. The saved Local Coder
+card/tool route and persistent OpenClaude terminal already define the current boundaries. Any future
+adapter must reuse the real process/session authority and fail honestly; it must not become a fake
+fallback or a second orchestration system.
 
 Guards: every route 403s in production; probes default dry-run; a live call is a REAL single-card
 run through the canonical executor (no fake outputs, no minted graph authority); report
 verification is deterministic (no LLM grades work). DB roles stay as documented in FUTURE.md:
-Prisma = auth/session only; raw pg JSONB = deck/conversation app state; AGE = ThinkGraph;
-Neo4j = KnowGraph; CBM = CodeGraph; dev telemetry/reports = coder-workspace JSONL, never
+Prisma = auth/session only; raw pg JSONB = deck/conversation app state; SQLite/Engraphis =
+ThinkGraph; Neo4j = KnowGraph; CBM = CodeGraph; AGE = future AgentGraph only; dev telemetry/reports = coder-workspace JSONL, never
 product analytics.
 
 ---
@@ -159,31 +170,27 @@ dead code purged across the project's life, lessons encoded in DONT.md.
 Next: pull capabilities from [FUTURE.md](./FUTURE.md) in order. The current batch breakdown
 and product vision live in FUTURE.md.
 
-### Fable 5 — Hermes Integration (current)
+### Fable 5 — Actual Hermes Integration (current)
 
-The loop is incomplete. Launch has discovery (Harness), handoff (prompt.md, doorways), and
-execution (Local Coder, Mag One). Missing: verification, persistence, and context compounding.
+The useful pre-integration chain is retained:
 
-Hermes fills this gap as Main's knowledge-compounding investigation agent:
+```txt
+saved Hermes card + prompt + persisted Main→Hermes authority
+→ Harness sub-agent selection
+→ inherited parent context + saved tool grants
+→ one missing real Hermes process adapter
+```
 
-- reviews CoderReports skeptically (separate evaluator, not the coder);
-- classifies blockers into patterns;
-- reads ThinkGraph and CodeGraph for context;
-- researches and qualifies sourced evidence into KnowGraph when needed;
-- revises one project/conversation Inspector report while Main decides what enters ThinkGraph;
-- prepares the existing `prompt.md` only when Main requests a Run Plan.
+Do not delete that chain and do not rename a generic model call into “Hermes.” The current
+`hermes_review_completed_job` implementation is explicitly an unconnected scaffold that returns
+not-implemented; it is not runtime proof and is not the integration target. First prove the installed
+Hermes executable, invocation/session mode, working directory, prompt input, output/stream behavior,
+and tool/MCP surface. Then connect exactly one bounded adapter and give Hermes its own terminal/UI.
+The OpenClaude Coder terminal remains below Main Chat.
 
-Hermes runs as a Python module in `apps/python-models/app/python_models/hermes/` and is
-surfaced in the UI as the seeded `card_hermes_steward` agent card; under Chat the hidden
-terminal (HermesConsole) shows the native Hermes turn's live SSE stream (no polling).
-Completed-job review — Coder or Mag One results land in a job folder → Hermes reviews it →
-Main decides the next iteration — is reduced to ONE scaffold: `review_completed_job(job_folder)`
-plus one MCP tool `hermes_review_completed_job`. It is **scaffolded, not connected yet**: the
-review runtime, the Coder and Mag One completion triggers, and the card grant are all TODO,
-and the first end-to-end review test has not happened. (The earlier twelve fragmented review
-attempts — separate Coder/Mag One review functions, `POST /hermes/review` + `/hermes/review_run`
-routes, the RAM activity feed, and their DTOs/probes/tests — were removed.) No new MCP host.
-Main remains the one ThinkGraph writer. No TS brain.
+The ADMIN database currently lacks the persisted Hermes card, prompt, and edges because prior cleanup
+mutated durable data. Source/seed recovery does not restore PostgreSQL. Restore that data only through
+an explicit, reviewed, read-back-proven database recovery step.
 
 ### Feature Context Resolver (deferred to Fable 6+)
 

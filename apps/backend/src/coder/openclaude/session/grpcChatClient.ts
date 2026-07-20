@@ -20,6 +20,7 @@ import { resolveDirectSubagents } from '../../../cards/runtime';
 import { resolveModel } from '../../../llm/models.config';
 import { HARNESS_MCP_TOOL_SPECS } from '../../../contracts/runtimeContracts';
 import { logHarnessTrace } from '../../../services/harnessTrace';
+import type { HermesInvestigationContext } from '../../hermes/hermesReportArtifact';
 import {
   attachGraphViewsToRuntime,
   type GraphView,
@@ -64,7 +65,8 @@ export type GrpcTurnUsage = {
 };
 
 /** Decode the generic gRPC progress envelope without interpreting child
- * content. Parent tool-use links and opaque data_json are preserved exactly. */
+ * content. The parent tool-use link and opaque data_json are preserved exactly
+ * for the browser's structurally scoped Hermes reducer. */
 export function decodeGrpcProgressEvent(progress: any): Extract<GrpcSessionEvent, { kind: 'progress' }> {
   let data: unknown = null;
   try {
@@ -91,6 +93,8 @@ export type GrpcTurnArgs = {
    * state from the client — never inferred from message content. */
   mode?: HarnessMode;
   traceId?: string;
+  /** Server-minted context passed only to the native Hermes doorway. */
+  investigationContext?: HermesInvestigationContext;
   /** Server-resolved delivery views for LIFECYCLE recording only — their JSON
    * never enters the model prompt. */
   graphViews?: GraphView[];
@@ -147,6 +151,7 @@ export function buildHarnessRuntimeContext(
   sessionId: string,
   parentRunId?: string,
   options: {
+    investigationContext?: HermesInvestigationContext;
     /** Compact server-rendered graph context text (already carries its own
      * [LIQUIDAITY_GRAPH_CONTEXT] header). Full Graph View JSON is never
      * serialized into the prompt. */
@@ -162,6 +167,14 @@ export function buildHarnessRuntimeContext(
     `active conversationId: ${parsed.conversationId}`,
     ...(parentRunId ? [`active parentRunId: ${parentRunId}`] : []),
     'Use these exact values for LiquidAIty MCP tool calls. Never derive an id from the working directory, repository name, or session label.',
+    ...(options.investigationContext
+      ? [
+          '',
+          '[LIQUIDAITY_INVESTIGATION_CONTEXT]',
+          JSON.stringify(options.investigationContext),
+          'This compact context is server-minted for Hermes. Read the current project ThinkGraph yourself; focusNodeIds are optional hints, never the complete assignment.',
+        ]
+      : []),
     ...(options.graphContext?.trim()
       ? [
           '',
@@ -238,9 +251,29 @@ function doorwayWhenToUse(binding: string, title: string): string {
       'own file tools or summarizing from parent context.'
     );
   }
+  if (binding === 'hermes_steward') {
+    return (
+      'Invoke your context and planning steward when a turn benefits from deeper ' +
+      'preparation: project-graph investigation, research shaping, source ingestion, ' +
+      'CodeGraph inspection, or an explicitly requested Run Plan. This runs FOREGROUND ' +
+      'and returns one terminal result — ' +
+      'when you need a result before continuing, pass a bounded scoped assignment ' +
+      'as the prompt (desired analysis/report outcome and stop condition, under 80 words). ' +
+      'Never copy project graph contents into the prompt or ask Hermes to mutate ThinkGraph; ' +
+      'it reads the graph itself and returns recommendations in its normal response for Main to apply. ' +
+      'wait for it; omit the prompt only for pure inherited-context preparation. ' +
+      'Either way Hermes inherits the complete live parent conversation, works its ' +
+      'graph/memory tools and its own direct agents, then returns its normal useful response. ' +
+      'Only when explicitly asked for a Run Plan, Hermes writes the existing ' +
+      'handoff/<jobId>/prompt.md and returns its path/job metadata for Main to present. ' +
+      'Hermes never runs Mag One and never becomes a worker; Main launches the reviewed ' +
+      'job only after explicit user acceptance. Model judgment decides when to invoke; ' +
+      'no fixed cadence.'
+    );
+  }
   if (binding === 'research_agent') {
     return (
-      'Invoke this bounded Search Agent when external evidence is needed. It uses real ' +
+      'Invoke this bounded Search Agent when Hermes needs external evidence. It uses real ' +
       'web search and returns URLs, titles, domains, excerpts, available dates, and relevance ' +
       'notes. It does not write ThinkGraph or KnowGraph and never invents citations.'
     );
@@ -270,7 +303,7 @@ export function buildHarnessAgentDefinition(
     card?.runtimeOptions?.binding ?? card?.runtimeBinding ?? card?.binding,
     card?.id,
   );
-  if (binding === 'research_agent') {
+  if (binding === 'hermes_steward' || binding === 'research_agent') {
     const systemPrompt = typeof card?.prompt === 'string' ? card.prompt : '';
     if (!systemPrompt.trim()) return null;
     const modelKey = String(card?.runtimeOptions?.modelKey || '').trim();
@@ -281,8 +314,8 @@ export function buildHarnessAgentDefinition(
       card_id: cardId,
       runtime_binding: binding,
       when_to_use: doorwayWhenToUse(binding, title),
-      // Search is a native inherited-context agent. Its saved prompt bytes and
-      // exact MCP grants execute directly in the Harness.
+      // Hermes and Search are native inherited-context agents. Their saved prompt
+      // bytes and exact MCP grants execute directly in the Harness.
       system_prompt: [systemPrompt, runtimeContext].filter(Boolean).join('\n\n'),
       // The card's Tools selection IS the grant — no hidden defaults.
       allowed_tools: cardMcpToolGrants(card),
@@ -318,9 +351,13 @@ export function buildHarnessAgentDefinition(
   };
 }
 
-/** The parent's native subagents for a Harness surface. Direct invocation
- * follows persisted flow edges from Main. Canvas mode exposes configured cards
- * for direct testing without inventing special runtime identities. */
+/** The parent's native subagents for a Harness surface.
+ * Normal direct invocation still follows flow edges from Main. Hermes is the
+ * deliberate exception: it is exposed only by the exact directed
+ * Main -> Hermes hermes_observe edge. This filter runs before agent definitions
+ * cross gRPC, so prompt text cannot create authority that the saved deck lacks.
+ * Canvas mode keeps its direct configure/test cards, subject to the same Hermes
+ * authority rule. */
 export function selectDoorwayCards(nodes: any[], edges: any[], mode: HarnessMode): any[] {
   const allNodes = nodes || [];
   const allEdges = edges || [];
@@ -330,6 +367,21 @@ export function selectDoorwayCards(nodes: any[], edges: any[], mode: HarnessMode
       'main_chat',
   );
   const mainChatId = String(mainChat?.id || '').trim();
+  const isAuthorizedHermes = (node: any): boolean => {
+    const binding = resolveRuntimeBinding(
+      node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
+      node?.id,
+    );
+    const targetId = String(node?.id || '').trim();
+    if (binding !== 'hermes_steward' || !mainChatId || !targetId) return false;
+    return allEdges.some(
+      (edge) =>
+        edge?.edgeType === 'hermes_observe' &&
+        String(edge?.source || '').trim() === mainChatId &&
+        String(edge?.target || '').trim() === targetId,
+    );
+  };
+
   if (mode === 'canvas') {
     return allNodes.filter((node) => {
       if (String(node?.kind || 'agent') !== 'agent') return false;
@@ -341,11 +393,20 @@ export function selectDoorwayCards(nodes: any[], edges: any[], mode: HarnessMode
         node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
         node?.id,
       );
-      return binding !== 'main_chat';
+      if (binding === 'main_chat') return false;
+      return binding !== 'hermes_steward' || isAuthorizedHermes(node);
     });
   }
   if (!mainChat) return [];
-  return resolveDirectSubagents(mainChatId, allNodes, allEdges);
+  const directCards = resolveDirectSubagents(mainChatId, allNodes, allEdges).filter((node: any) => {
+    const binding = resolveRuntimeBinding(
+      node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
+      node?.id,
+    );
+    return binding !== 'hermes_steward' || isAuthorizedHermes(node);
+  });
+  const observedHermes = allNodes.filter(isAuthorizedHermes);
+  return [...new Map([...directCards, ...observedHermes].map((node) => [String(node.id), node])).values()];
 }
 
 /** Resolve this turn's native doorway definitions from the persisted deck.
@@ -418,6 +479,7 @@ export async function resolveMainChatRuntimeConfig(
   sessionId: string,
   mode: HarnessMode,
   parentRunId?: string,
+  investigationContext?: HermesInvestigationContext,
 ): Promise<MainChatRuntimeConfig | null> {
   const parsed = parseSessionId(sessionId);
   if (!parsed) return null;
@@ -443,9 +505,19 @@ export async function resolveMainChatRuntimeConfig(
       deckRevision: doc?.meta?.deckRevision || null,
       doorwayDefinitions: selectDoorwayCards(nodes, edges, mode)
         .map((node) => {
+          const binding = resolveRuntimeBinding(
+            node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
+            node?.id,
+          );
           return buildHarnessAgentDefinition(
             node,
-            buildHarnessRuntimeContext(sessionId, parentRunId),
+            buildHarnessRuntimeContext(
+              sessionId,
+              parentRunId,
+              binding === 'hermes_steward'
+                ? { investigationContext }
+                : {},
+            ),
             {
               allowedCardRunIds: resolveDirectSubagents(String(node.id), nodes, edges).map((child: any) =>
                 String(child.id),
@@ -626,6 +698,7 @@ export async function startGrpcTurn(
     args.sessionId,
     mode,
     args.traceId,
+    args.investigationContext,
   );
   if (!mainChatConfig) {
     throw new Error('main_chat_runtime_config_unavailable: exactly one configured main_chat card with a valid saved model is required');

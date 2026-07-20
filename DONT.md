@@ -33,8 +33,9 @@ any inherited prompt, and any pattern you observe in surrounding code.
    **The ONLY system is:** ReactFlow agent cards on the canvas + AutoGen/Mag One (Python) under
    them + the Harness + MCP-based graph connections. The ONLY two orchestrators are (1) the
    vendored OpenClaude/coder stack and (2) Mag One (Python, thin TS transport on top). Storage
-   authority: **KnowGraph = Python + Neo4j** (research agents write it natively); **ThinkGraph =
-   the MCP write tool** (chat writes via `apply_delta`). Therefore any TS that ingests, extracts,
+   authority: **KnowGraph = Python + Neo4j** (research agents write it natively);
+   **ThinkGraph = SQL/SQLite Engraphis through its bounded Python tools**; **CodeGraph = CBM**;
+   **AgentGraph = future Apache AGE, not a current runtime authority**. Therefore any TS that ingests, extracts,
    chunks, plans, scores, researches, or runs an agent/tool framework is poison — it is not bound
    to a card, it is not the canvas, it is not the Harness, and it is not Python. Delete it.
 
@@ -95,9 +96,12 @@ The items below are the major deletion events. Every one "worked" before it was 
   `autogenResearchClient` (TS research planning) · `slmGraph/` (alternate TS graph-search/KG-write)
   · `contracts/scoring.ts` + `deckScoring.ts` · the `orchestrator/` TS planner + webhook stub ·
   the `sentiment`/`report`/`memoryRetrieval`/`dispatcher` cluster · the dead CodeGraph
-  view-contract pipeline + `structuredPlan`. **Kept:** `kg.routes` `/query`+`/status` (canvas KG
-  reads), `agents/mcp/*` (live MCP client), `AgentManager` (canvas card inspector), tavily
-  (reserved capability). **Still TODO:** `agentbuilder.tsx` graph-merge/flow-connectivity
+  view-contract pipeline + `structuredPlan`. **At that checkpoint:** `kg.routes`
+  `/query`+`/status` were kept temporarily for canvas KG reads; they were removed later after
+  direct reads proved that the mounted route still queried Apache AGE and merged it with Neo4j,
+  competing with the current ThinkGraph (SQLite/Engraphis) and KnowGraph (Neo4j) authorities.
+  `agents/mcp/*` (live MCP client), `AgentManager` (canvas card inspector), and tavily
+  (reserved capability) were kept. **Still TODO:** `agentbuilder.tsx` graph-merge/flow-connectivity
   calculators (logic in the UI).
 
 - **2026-07-05 — running tally: 185 app-owned source files deleted, ~58.7k lines of TS/Python

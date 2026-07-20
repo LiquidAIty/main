@@ -12,6 +12,7 @@ import {
   normalizeDeckEdgeType,
   normalizeRuntimeBinding,
   normalizeRuntimeType,
+  safeText,
 } from '../deck/deckPrimitives';
 
 // Card identity comes from the SAVED runtime binding — never an id/template/
@@ -78,6 +79,29 @@ export function buildBusConnectedCardIds(
   }
 
   return connected;
+}
+
+export function isHermesConnectedToMainChat(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+): boolean {
+  const mainChatIds = new Set(
+    nodes
+      .filter((node) => safeText(node.runtimeBinding).trim().toLowerCase() === 'main_chat')
+      .map((node) => node.id),
+  );
+  const hermesIds = new Set(
+    nodes
+      .filter((node) => safeText(node.runtimeBinding).trim().toLowerCase() === 'hermes_steward')
+      .map((node) => node.id),
+  );
+  if (mainChatIds.size === 0 || hermesIds.size === 0) return false;
+  return edges.some(
+    (edge) =>
+      normalizeDeckEdgeType(edge.edgeType) === 'hermes_observe' &&
+      mainChatIds.has(edge.source) &&
+      hermesIds.has(edge.target),
+  );
 }
 
 /** A card's surface is reachable when the card is bus-connected — bus

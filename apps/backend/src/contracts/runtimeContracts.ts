@@ -208,6 +208,10 @@ for (const name of [
   'knowgraph.ingest',
   'codegraph.status',
   'codegraph.search',
+  'hermes.memory_read',
+  'hermes.memory_write',
+  'hermes.read_report',
+  'hermes.write_report',
   'mag_one.describe_connected_agents',
   'write_mag_one_instructions',
   'read_model_results',
@@ -235,6 +239,21 @@ export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
   ...AUTOGEN_CARD_TOOL_SPECS,
   ...HARNESS_MCP_TOOL_SPECS,
 ];
+
+export type HermesReviewReport = {
+  runId: string;
+  verdict: string;
+  recommendation: string;
+  thinkGraphWrite:
+    | {
+        status: 'applied' | 'duplicate' | 'empty';
+        correlationId: string;
+        storedResourceIds: string[];
+        storedStatementIds: string[];
+      }
+    | { status: 'blocked'; reason: string };
+  activityCount: number;
+};
 
 // Job-folder handoff run outputs, threaded verbatim from the Python rails.
 // Present only for a handoff run (a jobId was supplied); null otherwise.

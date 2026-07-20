@@ -44,11 +44,19 @@ export class SessionStreamError extends Error {
  * saved card as a direct Single Assist doorway. Explicit — never inferred. */
 export type HarnessMode = 'chat' | 'canvas';
 
+/** Optional, UI-neutral ThinkGraph focus hints. The backend always mints the
+ * project/conversation context for Hermes; no graph selection is required. */
+export type InvestigationContextInput = {
+  focusNodeIds?: string[];
+  requestedOutcome?: string;
+};
+
 export async function streamSession(args: {
   projectId: string;
   conversationId: string;
   message: string;
   mode?: HarnessMode;
+  investigationContext?: InvestigationContextInput;
   /** Projection IDENTITY only — the server resolves the persisted projection
    * and derives the model context. The browser never carries graph membership. */
   projectionId?: string;
@@ -68,6 +76,7 @@ export async function streamSession(args: {
       message: args.message,
       // Default 'chat' when omitted (backend also defaults to chat).
       mode: args.mode === 'canvas' ? 'canvas' : 'chat',
+      ...(args.investigationContext ? { investigationContext: args.investigationContext } : {}),
       ...(args.projectionId ? { projectionId: args.projectionId } : {}),
       ...(args.activeGraphViewId ? { activeGraphViewId: args.activeGraphViewId } : {}),
       ...(args.knowgraphScope ? { knowgraphScope: args.knowgraphScope } : {}),

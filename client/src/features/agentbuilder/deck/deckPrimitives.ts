@@ -72,15 +72,17 @@ export function normalizeRuntimeOptions(
 }
 
 
-/** Recognise only real edge types — mirrors the backend contract
+/** Recognise ONLY the three real edge types — mirrors the backend contract
  * (decks/store.ts). Anything else is 'invalid': visible on the canvas but
  * authorising nothing. The old default returned 'flow' (invocation authority)
- * for typos and corrupt data. */
+ * for typos and corrupt data, which is how Main→Hermes delegation silently
+ * died twice (C-1). */
 export function normalizeDeckEdgeType(value: unknown): DeckEdgeType {
   const type = safeText(value).trim().toLowerCase();
   if (type === 'magentic_option') return 'magentic_option';
   if (type === 'magentic_control') return 'magentic_control';
   if (type === 'flow') return 'flow';
+  if (type === 'hermes_observe') return 'hermes_observe';
   return 'invalid';
 }
 
@@ -100,5 +102,6 @@ export function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   if (normalized === 'plan_agent') return 'plan_agent';
   if (normalized === 'worldsignals_agent') return 'worldsignals_agent';
   if (normalized === 'trading_agent') return 'trading_agent';
+  if (normalized === 'hermes_steward') return 'hermes_steward';
   return null;
 }

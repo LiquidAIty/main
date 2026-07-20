@@ -13,7 +13,6 @@ import thinkgraphRoutes from './thinkgraph.routes';
 import codegraphRoutes from './codegraph.routes';
 import projectsRoutes from './projects.routes';
 import decksRoutes from './decks.routes';
-import kgRoutes from './kg.routes';
 import worldsignalRoutes from './worldsignal.routes';
 import knowledgeSeedRoutes from './knowledgeSeed.routes';
 import unifiedRoutes from './unified.routes';
@@ -39,7 +38,6 @@ router.use('/unified', authMiddleware, unifiedRoutes);
 router.use('/worldsignal', authMiddleware, worldsignalRoutes);
 router.use('/projects', authMiddleware, projectsRoutes);
 router.use('/projects', authMiddleware, decksRoutes);
-router.use('/projects/:projectId/kg', authMiddleware, kgRoutes);
 router.use('/projects', authMiddleware, knowledgeSeedRoutes);
 
 export default router;

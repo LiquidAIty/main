@@ -28,6 +28,12 @@ import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWor
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
 import OpenClaudeConsolePanel from '../features/agentbuilder/console/OpenClaudeConsolePanel';
+import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
+import HermesConsole, {
+  EMPTY_HERMES_TERMINAL_STATE,
+  reduceHermesTerminalEvent,
+  type HermesTerminalState,
+} from '../components/hermes/HermesConsole';
 import {
   SessionStreamError,
   streamSession,
@@ -195,6 +201,9 @@ const AGENTS_CANVAS_MIN_WIDTH = 520;
 const WORKSPACE_COMPANION_MIN_WIDTH = 360;
 const WORKSPACE_COLLAPSE_EDGE_PX = 28;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
+// Hermes owns one project-intelligence canvas. Its three tabs are authorities,
+// not agent-card capabilities: card/bus wiring must never hide project
+// reasoning, external evidence, or repository reality from that canvas.
 type KnowledgeSurfaceKind = KnowledgeGraphKind | 'unified';
 // ---- utils ----
 function clamp(x: number, a: number, b: number) {
@@ -329,6 +338,9 @@ export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
   const largeSurface = 'chat' as const;
   const [nativeSessionBusy, setNativeSessionBusy] = useState(false);
+  const [hermesTerminal, setHermesTerminal] = useState<HermesTerminalState>(
+    EMPTY_HERMES_TERMINAL_STATE,
+  );
   const [workspaceView, setWorkspaceView] = useState<
     | 'chat'
     | 'canvas'
@@ -518,8 +530,10 @@ export default function AgentBuilder(): React.ReactElement {
     const pid = canvasProjectId;
     if (!pid) {
       setMessages([]);
+      setHermesTerminal(EMPTY_HERMES_TERMINAL_STATE);
       return;
     }
+    setHermesTerminal(EMPTY_HERMES_TERMINAL_STATE);
     const ctrl = new AbortController();
     let cancelled = false;
     waitForBackendReady({ signal: ctrl.signal })
@@ -1680,6 +1694,7 @@ export default function AgentBuilder(): React.ReactElement {
           : {}),
         ...(sentGraphObjectRef ? { selectedGraphObjectRefs: [sentGraphObjectRef] } : {}),
         onEvent: (event) => {
+          setHermesTerminal((current) => reduceHermesTerminalEvent(current, event));
           if (event.kind === 'text') {
             // Real model text streams into the chat — creates the assistant bubble on
             // the first token, appends to it afterward. Nothing renders before this.
@@ -1702,6 +1717,10 @@ export default function AgentBuilder(): React.ReactElement {
         })
         .catch((error: unknown) => {
           setNativeSessionBusy(false);
+          setHermesTerminal((current) => reduceHermesTerminalEvent(current, {
+            kind: 'error',
+            message: error instanceof Error ? error.message : 'Hermes stream cancelled.',
+          }));
           if (error instanceof SessionStreamError) {
             const correlation = error.correlationId ? ` Correlation: ${error.correlationId}.` : '';
             appendAssistantText(`Chat failed (${error.code}).${correlation}`);
@@ -1719,7 +1738,10 @@ export default function AgentBuilder(): React.ReactElement {
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
     // Normal chat is the primary interaction surface: BuilderChat speaking to the
-    // persistent OpenClaude session, with compact real per-turn work shown inline.
+    // persistent Harness session, with compact real per-turn work shown inline
+    // beneath the active assistant message (HarnessWork). The primary (non-compact)
+    // surface keeps a near-invisible pull-tab that reveals the active native
+    // Hermes child stream beneath chat; the Code Console remains separate.
     const chat = (
       <div style={{ height: '100%', minHeight: 0 }}>
         <BuilderChat
@@ -1736,26 +1758,16 @@ export default function AgentBuilder(): React.ReactElement {
     return (
       <div
         data-testid={`${surfaceRole}-surface-chat`}
-        style={{
-          ...getSurfaceShellStyle(compact),
-          display: 'flex',
-          flexDirection: 'column',
-        }}
+        style={getSurfaceShellStyle(compact)}
       >
-        <div style={{ flex: 1, minHeight: 0 }}>{chat}</div>
-        {!compact && openClaudeConsoleOpen ? (
-          <div style={{ flex: '0 0 240px', minHeight: 0, position: 'relative' }}>
-            <OpenClaudeConsolePanel
-              open
-              variant="embedded"
-              targetRoot="C:/Projects/main"
-              projectId={typeof activeProject === 'string' ? activeProject : undefined}
-              provider={localCoderConsoleConfig.provider}
-              model={localCoderConsoleConfig.model}
-              onClose={() => setOpenClaudeConsoleOpen(false)}
-            />
-          </div>
-        ) : null}
+        {compact ? (
+          <div style={{ height: '100%' }}>{chat}</div>
+        ) : (
+          <HarnessChatPanel
+            chat={chat}
+            hermes={<HermesConsole terminal={hermesTerminal} />}
+          />
+        )}
       </div>
     );
   };
@@ -2075,6 +2087,14 @@ export default function AgentBuilder(): React.ReactElement {
               drawer={
                 <>
                   {workspaceDrawer}
+                  <OpenClaudeConsolePanel
+                    open={openClaudeConsoleOpen}
+                    targetRoot="C:/Projects/main"
+                    projectId={typeof activeProject === 'string' ? activeProject : undefined}
+                    provider={localCoderConsoleConfig.provider}
+                    model={localCoderConsoleConfig.model}
+                    onClose={() => setOpenClaudeConsoleOpen(false)}
+                  />
                 </>
               }
             />

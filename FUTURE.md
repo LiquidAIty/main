@@ -27,10 +27,12 @@ part of the active research loop until its own pass wires it in.
   contract. Kronos/Cronos work resumes later by explicit decision.
 - **WorldSignals (parked signal primitive)** — vendored `worldsignal/` service, `worldsignal.routes.ts`,
   `card_worldsignals_agent` (disconnected), one Playwright spec in `e2e/`. Not in the research loop.
-- **Coder / LocalCoder / OpenClaude (parked code executor)** — vendored `localcoder/` (gRPC Harness
-  engine), `card_local_coder` (disconnected), Code Console UI, `coder-workspace/` job folders,
-  `.openclaude-profile.json` (consumed by localcoder provider profile). Deferred: Coder terminal
-  canvas, connected-agent rail entries, workspace capability grants.
+- **Coder / LocalCoder / OpenClaude (working boundaries, incomplete placement/integration)** —
+  vendored `localcoder/` supplies the persistent gRPC Harness used by Main Chat; the persistent
+  OpenClaude console owns the real PTY/session lifecycle; and `card_local_coder` plus
+  `run_local_coder` provide the bounded one-shot coding path. These are separate useful surfaces,
+  not abandoned alternatives. The Code Console still needs to replace the Hermes-labelled
+  under-chat pull-up; Hermes belongs in its own terminal/UI when its real runtime is integrated.
 - **CodeGraph view (wired but dormant)** — `client/src/components/codegraph/*` renders through the
   vendored `client/src/vendor/codebase-memory-ui` server via the vite `/rpc` + `/api/layout` proxies
   to `127.0.0.1:9749`; that server must be running or the proxies log ECONNREFUSED (harmless).
@@ -38,13 +40,16 @@ part of the active research loop until its own pass wires it in.
 - **Plan Agent** — parked card; the Plan object vision lives below in this file.
 - **e2e layer (barely started)** — `e2e/playwright/worldsignal.spec.ts` + `playwright.config.ts` +
   `@playwright/test`. One spec for a parked surface; grow or cut in a dedicated pass.
-- **Auth on Prisma, agent runtime on raw Postgres/graph stores** — login/signup →
+- **Auth on Prisma, app state on raw Postgres, graphs in their own stores** — login/signup →
   `auth/userService` + `auth/sessionStore` → `services/database.ts` (Prisma) is the correct, deliberate
-  split: Prisma owns auth/session; ThinkGraph/KnowGraph/CodeGraph/deck state use `pg`/AGE/Neo4j directly
-  for active agent context. Not debt, not scheduled for consolidation — leave as-is unless it is
-  confusing or broken in a specific reported case.
-- **Hermes activity durability** — the under-chat feed buffer is RAM-only (wiped on backend restart);
-  move to a store when Hermes history must survive restarts.
+  split: Prisma owns auth/session; raw Postgres owns project/deck/conversation app state;
+  SQLite/Engraphis owns ThinkGraph; Neo4j owns KnowGraph; and CBM owns CodeGraph. Apache AGE is
+  reserved for a future AgentGraph and is not a current graph authority. This split is deliberate.
+- **Hermes runtime/UI (pre-integration)** — preserve the saved Hermes card, Main→Hermes edge,
+  inherited-context selection, prompt/model/tool grants, and report seams. The current generic
+  Harness `Agent` built from that card is not proof that the installed Hermes runtime ran. Integrate
+  one real Hermes process boundary, then give it a separate terminal/UI and choose durability from
+  actual runtime events rather than retaining the Hermes-labelled under-chat development feed.
 - **Card model authority is per-card, by design** — `card_magentic` runs `openai/gpt-5.1-chat-latest`;
   other cards carry their own saved provider/model (e.g. `openrouter/z-ai/glm-5.2`). Mixed models
   across cards are correct when the live card configs say so — never normalize all cards to one
@@ -72,7 +77,8 @@ object-aware chat, agent teams, user-owned data, tools tailored to the individua
 phases; each phase must work repeatedly before the next is pulled. Honest ordering:
 
 ```txt
-NOW (kernel)      research loop (chat → Hermes → Mag One → cards → report → run memory)
+NOW (kernel)      proven chat, card, Mag One-worker, Coder, and graph primitives; finish the real
+                  Main → Hermes process boundary before claiming the integrated research loop
                   + coding loop (bounded job → execution adapter → CoderReport → deterministic
                   proof review → CBM refresh).
 NEXT (wedges)     Trading research: user thesis anchors in ThinkGraph, sourced evidence in
@@ -263,7 +269,8 @@ Harness Context Pack. 5. Prove a fresh turn uses real graph context without full
 
 ### Batch B — Contextual Capabilities
 1. CodeGraph/CBM scoped retrieval for code steps. 2. Deliberate SkillsGraph retrieval. 3. Extend Context
-Pack with code/skills only when relevant. 4. Prove stale CBM blocks code-edit context rather than guessing.
+Pack with code/skills only when relevant. 4. Report stale or incomplete CBM honestly and use direct
+source reads plus focused proof; never treat stale graph memory as authority or invent context.
 
 ### Batch C — Bounded Harness Work and Review
 1. Minimal agent contracts. 2. One approved Plan step through a fast Harness worker. 3. Real

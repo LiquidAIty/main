@@ -13,8 +13,14 @@ const LIVE_STACK = process.env.LIQUIDAITY_LIVE_STACK === '1';
 describe('Python Agent MCP host — real stdio discovery + calls', () => {
   it('exposes exactly the Mag One entrypoints, the bounded ThinkGraph read, and the Harness control surface (no model-facing write, no pair front door, no visible-flow wrapper)', async () => {
     const names = await listPythonAgentMcpTools();
-    // Mirror of the Python host's own surface test
-    // (test_thinkgraph_card_tools.TestPythonMcpHost).
+    // Mirror of the Python host's own surface test (test_thinkgraph_card_tools
+    // TestPythonMcpHost) — one host, with native Hermes living in LocalCoder
+    // rather than a second model-facing preflight tool.
+    //
+    // This list froze at 19 while the host legitimately grew to 34: the
+    // WorldSignals channel (5), the clean-room analysis engine (7), the Hermes
+    // report surface (2), and web_search. Each is a documented, additive
+    // capability — the failure was this expectation, not the host.
     expect(names).toEqual([
       'canvas.inspect',
       'canvas.upsert_wire',
@@ -24,6 +30,10 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'card.update_configuration',
       'codegraph.search',
       'codegraph.status',
+      'hermes.memory_read',
+      'hermes.memory_write',
+      'hermes.read_report',
+      'hermes.write_report',
       'knowgraph.ingest',
       'knowgraph.query',
       'knowgraph_analyze_scope',

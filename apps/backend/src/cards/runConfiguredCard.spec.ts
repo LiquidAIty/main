@@ -261,6 +261,20 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.cardRuntime.runtimeScope).toBeUndefined();
   });
 
+  it('does not give a configured Hermes card native Harness graph authority', async () => {
+    const HERMES_CARD = {
+      ...AGENT_CARD,
+      id: 'card_hermes_steward',
+      title: 'Hermes Steward',
+      runtimeBinding: 'hermes_steward',
+    };
+    mockGetDeck.mockResolvedValue(deckWith([HERMES_CARD]));
+    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'ok' });
+    await runConfiguredCard({ ...ARGS, cardId: 'card_hermes_steward', conversationId: 'conv-7' });
+    const payload = mockRunCard.mock.calls[0][0];
+    expect(payload.cardRuntime.runtimeScope).toBeUndefined();
+  });
+
   it('never mints thinkgraph authority for a non-thinkgraph card, conversation or not', async () => {
     mockGetDeck.mockResolvedValue(
       deckWith([{ ...AGENT_CARD, id: 'card_research_agent', runtimeBinding: 'research_agent' }]),

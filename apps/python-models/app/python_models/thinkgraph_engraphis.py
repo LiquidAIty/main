@@ -30,7 +30,7 @@ DEFAULT_DB_PATH = _REPO_ROOT / "db" / "thinkgraph-engraphis-v2.sqlite"
 _WORKING_KINDS = {"Goal", "Question", "ResearchNeed", "CodeInspectionNeed", "RequiredProof", "Job"}
 _EPISODIC_KINDS = {
     "Comparison", "ResearchResult", "CodeFinding", "PositionOutput", "DoubleAgentReport",
-    "ProcessLeak", "WorkerResult", "TestResult", "MainResponse",
+    "ProcessLeak", "WorkerResult", "TestResult", "HermesReview", "MainResponse",
     "UserJudgment", "MigrationEvent",
 }
 _PROCEDURAL_KINDS = {"SkillFinding", "PromptFinding"}
