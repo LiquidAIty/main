@@ -7,7 +7,7 @@
  * string-concatenating an exchange prefix.
  */
 
-export type InstrumentRef = {
+type InstrumentRef = {
   /** Canonical Alpaca symbol, e.g. "RDW". */
   symbol: string;
   /** TradingView chart symbol (exchange-qualified), e.g. "NYSE:RDW". */

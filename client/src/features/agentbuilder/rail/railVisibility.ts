@@ -25,7 +25,7 @@ function hasRuntimeBinding(
   return Boolean(card && normalizeRuntimeBinding(card.runtimeBinding) === binding);
 }
 
-export function isTradingAgentCard(card: AgentCardInstance | null | undefined): boolean {
+function isTradingAgentCard(card: AgentCardInstance | null | undefined): boolean {
   return hasRuntimeBinding(card, 'trading_agent');
 }
 
@@ -35,14 +35,14 @@ export function isWorldSignalsAgentCard(
   return hasRuntimeBinding(card, 'worldsignals_agent');
 }
 
-export type ProgressiveRailVisibility = {
+type ProgressiveRailVisibility = {
   showKnowledge: boolean;
   showWorldsignal: boolean;
   showTrading: boolean;
   showOpenClaudeConsole: boolean;
 };
 
-export function buildBusConnectedCardIds(
+function buildBusConnectedCardIds(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
 ): Set<string> {

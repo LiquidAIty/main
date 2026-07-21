@@ -20,9 +20,6 @@ type AgentType =
   | 'research_agent';
 
 interface AgentManagerProps {
-  projectId: string;
-  /** Saved deck the selected card belongs to (runtime-assignment reads/writes). */
-  deckId?: string;
   agentType: AgentType;
   activeTab: string;
   selectedCardId?: string | null;
@@ -223,11 +220,11 @@ function cleanNumber(value: unknown): number | null {
 
 // Local SLM graph worker, selectable as a card provider. The actual model id comes
 // from the card's Model field (default below); provider routes to the local endpoint.
-export const LOCAL_MODEL_PROVIDER = 'local_openai_compatible';
-export const LOCAL_MODEL_LABEL = 'Local Gemma Worker';
-export const LOCAL_MODEL_DEFAULT_KEY = 'local-gemma-slm';
+const LOCAL_MODEL_PROVIDER = 'local_openai_compatible';
+const LOCAL_MODEL_LABEL = 'Local Gemma Worker';
+const LOCAL_MODEL_DEFAULT_KEY = 'local-gemma-slm';
 
-export type ModelProviderChoice = 'openai' | 'openrouter' | 'local_openai_compatible' | '';
+type ModelProviderChoice = 'openai' | 'openrouter' | 'local_openai_compatible' | '';
 
 /** Keep a recognized model provider (incl. the local SLM), else null. */
 function normalizeModelProvider(
@@ -501,8 +498,6 @@ export function buildActiveAgentManagerLocalConfig(input: {
 }
 
 export function AgentManager({
-  projectId,
-  deckId,
   activeTab,
   cardName,
   cardSubtext,

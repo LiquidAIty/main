@@ -9,7 +9,7 @@ function isLandingWorkbenchNode(value: unknown): boolean {
   return normalized.endsWith('_workbench');
 }
 
-export type CanvasLandingViewport = {
+type CanvasLandingViewport = {
   x: number;
   y: number;
   zoom: number;
@@ -82,7 +82,7 @@ export function buildInitialWorkbenchLandingViewport(
   });
 }
 
-export function resolveInitialBusSeamCenterX(
+function resolveInitialBusSeamCenterX(
   canvasElement: HTMLDivElement | null,
 ): number {
   const canvasRegion = canvasElement?.closest('[data-testid="workspace-canvas-region"]');

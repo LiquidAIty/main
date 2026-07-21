@@ -32,7 +32,7 @@ import {
   SYSTEM_CARD_RUNTIME_BINDINGS,
 } from './deckSeed';
 
-export function isLocalCoderControllerCard(card: AgentCardInstance | null | undefined): boolean {
+function isLocalCoderControllerCard(card: AgentCardInstance | null | undefined): boolean {
   if (!card) return false;
   return (
     safeText(card.id).trim().toLowerCase() === 'card_local_coder' ||
@@ -42,7 +42,7 @@ export function isLocalCoderControllerCard(card: AgentCardInstance | null | unde
   );
 }
 
-export function normalizeLocalCoderControllerCard(card: AgentCardInstance): AgentCardInstance {
+function normalizeLocalCoderControllerCard(card: AgentCardInstance): AgentCardInstance {
   if (!isLocalCoderControllerCard(card)) return card;
   const runtimeOptions = normalizeRuntimeOptions(card.runtimeOptions) ?? {};
   // Provider/model are the saved card's authority — no hardcoded default and no
@@ -134,7 +134,7 @@ export function buildSingleCardRunDocument(
   };
 }
 
-export function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
+function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
   if (!Array.isArray(value)) {
     return cloneDeckDocument(INITIAL_DECK.nodes);
   }
@@ -198,7 +198,7 @@ export function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
   return normalizedNodes.filter((node) => !isLegacyUaCard(node));
 }
 
-export function normalizeDeckPromptTemplates(value: unknown): PromptTemplate[] {
+function normalizeDeckPromptTemplates(value: unknown): PromptTemplate[] {
   if (!Array.isArray(value)) {
     return cloneDeckDocument(INITIAL_PROMPT_TEMPLATES);
   }
@@ -219,7 +219,7 @@ export function normalizeDeckPromptTemplates(value: unknown): PromptTemplate[] {
     : cloneDeckDocument(INITIAL_PROMPT_TEMPLATES);
 }
 
-export function normalizeDeckEdges(value: unknown): DeckEdge[] {
+function normalizeDeckEdges(value: unknown): DeckEdge[] {
   if (!Array.isArray(value)) {
     return cloneDeckDocument(INITIAL_DECK.edges);
   }
@@ -283,7 +283,7 @@ export function formatBuilderStatusMessage(
   return text;
 }
 
-export function seedCurrentSystemCardsIntoLegacyDeck(
+function seedCurrentSystemCardsIntoLegacyDeck(
   deck: DeckDocument,
 ): DeckDocument {
   const legacyCompatibleNodeIds = new Set([

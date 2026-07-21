@@ -10,10 +10,7 @@ export type FrontendCrashRecord = {
   activeDeckOrCanvasId: string | null;
 };
 
-type CrashListener = (record: FrontendCrashRecord | null) => void;
-
 let lastCrashRecord: FrontendCrashRecord | null = null;
-const listeners = new Set<CrashListener>();
 let globalHooksInstalled = false;
 
 function safeWindowLocation() {
@@ -46,17 +43,12 @@ function readUrlContext() {
   };
 }
 
-function notifyListeners() {
-  listeners.forEach((listener) => listener(lastCrashRecord));
-}
-
 export function getLastFrontendCrash(): FrontendCrashRecord | null {
   return lastCrashRecord;
 }
 
 export function clearFrontendCrash(): void {
   lastCrashRecord = null;
-  notifyListeners();
 }
 
 export function reportFrontendCrash(
@@ -76,18 +68,7 @@ export function reportFrontendCrash(
     activeDeckOrCanvasId: urlContext.activeDeckOrCanvasId,
   };
   lastCrashRecord = record;
-  notifyListeners();
   return record;
-}
-
-export function subscribeFrontendCrash(
-  listener: CrashListener,
-): () => void {
-  listeners.add(listener);
-  listener(lastCrashRecord);
-  return () => {
-    listeners.delete(listener);
-  };
 }
 
 export function installGlobalFrontendCrashHooks(): void {

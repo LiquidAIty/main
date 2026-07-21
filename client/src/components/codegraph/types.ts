@@ -46,13 +46,3 @@ export type CodeGraphData = {
     cross_edges: CodeGraphEdge[];
   }>;
 };
-
-export type CodeGraphViewContract = {
-  projectId?: string | null;
-  focusPaths?: string[];
-  focusSymbols?: string[];
-  nodeLabelAllowlist?: string[];
-  edgeTypeAllowlist?: string[];
-  showLabels?: boolean;
-  maxNodes?: number;
-};

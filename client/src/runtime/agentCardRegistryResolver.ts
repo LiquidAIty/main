@@ -35,7 +35,7 @@ export type ResolverEdgeInput = {
  * How a card relates to the bus in the UI.
  * Derived from existing edgeType values — no new DeckEdgeType created.
  */
-export type BusConnection =
+type BusConnection =
   | 'orchestrator'  // IS the bus (Sol / Magentic-One)
   | 'orchestrated'  // Direct magentic_option edge peer of Sol
   | 'delegated'     // Flow edge downstream from an orchestrated card

@@ -628,16 +628,3 @@ export type V3ProjectBlob = {
   hiddenTelemetry: Record<string, unknown>;
   meta: V3ProjectBlobMeta;
 };
-
-export type {
-  ProjectKnowledgeSeed,
-  SeedEntity,
-  SeedEntityKind,
-  SeedPattern,
-  SeedProvenance,
-  SeedRelationship,
-  SeedSourceKind,
-  SeedStatus,
-  SeedTruth,
-  SeedTruthScope,
-} from './knowledgeSeed';

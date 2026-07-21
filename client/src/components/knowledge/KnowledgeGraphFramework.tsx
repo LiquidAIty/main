@@ -17,7 +17,7 @@ const NativeThinkGraphSurface = lazy(async () => {
   return { default: mod.NativeThinkGraphSurface };
 });
 
-export type KnowledgeSurfaceKind = KnowledgeGraphKind | 'unified';
+type KnowledgeSurfaceKind = KnowledgeGraphKind | 'unified';
 
 const GRAPH_AUTHORITIES: readonly KnowledgeSurfaceKind[] = [
   'unified',

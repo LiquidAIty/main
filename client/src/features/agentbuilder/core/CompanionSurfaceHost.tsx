@@ -5,26 +5,16 @@ import { GRAPH_THEME, graphCompanionPanelStyle } from '../../../components/graph
 type CompanionSurfaceHostProps = {
   workspaceView: string;
   minWidth: number;
-  hasKnowledgeWorkspaceSelection: boolean;
-  hasActiveUaSurface: boolean;
-  knowledgeSelectionSurface: ReactNode;
   knowledgeSurface: ReactNode;
-  codegraphSurface: ReactNode;
   tradingSurface: ReactNode;
-  uaSurface: ReactNode;
   worldsignalSurface: ReactNode;
 };
 
 export default function CompanionSurfaceHost({
   workspaceView,
   minWidth,
-  hasKnowledgeWorkspaceSelection,
-  hasActiveUaSurface,
-  knowledgeSelectionSurface,
   knowledgeSurface,
-  codegraphSurface,
   tradingSurface,
-  uaSurface,
   worldsignalSurface,
 }: CompanionSurfaceHostProps) {
   if (workspaceView === 'canvas' || workspaceView === 'chat') {
@@ -51,15 +41,8 @@ export default function CompanionSurfaceHost({
             background: 'transparent',
           }}
         >
-          {workspaceView === 'knowledge' &&
-            hasKnowledgeWorkspaceSelection &&
-            knowledgeSelectionSurface}
-          {workspaceView === 'knowledge' &&
-            !hasKnowledgeWorkspaceSelection &&
-            knowledgeSurface}
-          {workspaceView === 'codegraph' && codegraphSurface}
+          {workspaceView === 'knowledge' && knowledgeSurface}
           {workspaceView === 'trading' && tradingSurface}
-          {hasActiveUaSurface && uaSurface}
           {workspaceView === 'worldsignal' && worldsignalSurface}
         </div>
       </div>

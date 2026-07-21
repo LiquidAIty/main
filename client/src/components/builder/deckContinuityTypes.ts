@@ -4,8 +4,6 @@
 // Mag One. (Extracted from the deleted deterministic assistPlanSurface module so the
 // deck-reload continuity state keeps a stable, plainly-typed home.)
 
-export type PlanItem = { id: string; text: string; status: 'draft' | 'approved' | 'done' };
-
 export type LinkRef = {
   id: string;
   title: string;

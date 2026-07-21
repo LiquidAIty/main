@@ -3,11 +3,11 @@
 // pages/agentbuilder.tsx (decomposition pass 2026-07-08).
 import React from 'react';
 
-export const SYNODIC_MONTH_DAYS = 29.530588861;
+const SYNODIC_MONTH_DAYS = 29.530588861;
 /** Reference Julian Date of a known new moon (2000-01-06 18:14 UTC ≈ JD 2451550.09765). */
-export const REF_NEW_MOON_JD = 2451550.09765;
+const REF_NEW_MOON_JD = 2451550.09765;
 
-export function julianDateUtc(d: Date): number {
+function julianDateUtc(d: Date): number {
   return d.getTime() / 86400000 + 2440587.5;
 }
 
@@ -23,7 +23,7 @@ export function synodicPhaseFromDate(d: Date): number {
 }
 
 /** Illuminated fraction of the lunar disk (0=new … 1=full … 0=new). */
-export function moonIllumination(phase01: number): number {
+function moonIllumination(phase01: number): number {
   const p = ((phase01 % 1) + 1) % 1;
   return 0.5 * (1 - Math.cos(2 * Math.PI * p));
 }
@@ -33,7 +33,7 @@ export function moonIllumination(phase01: number): number {
  * fraction of the left disk covered by the right disk (overlap / π).
  * Monotonic decreasing in t: t=0 → 1, t=1 → 0.
  */
-export function overlapFractionTwoUnitCircles(t: number): number {
+function overlapFractionTwoUnitCircles(t: number): number {
   const tt = Math.min(1, Math.max(0, t));
   return (
     (2 / Math.PI) * (Math.acos(tt) - tt * Math.sqrt(Math.max(0, 1 - tt * tt)))
@@ -41,7 +41,7 @@ export function overlapFractionTwoUnitCircles(t: number): number {
 }
 
 /** Invert overlap fraction to separation parameter t=d/(2R) for the two-circle terminator model. */
-export function separationTFromOverlapFraction(targetOverlap: number): number {
+function separationTFromOverlapFraction(targetOverlap: number): number {
   const g = Math.min(1, Math.max(0, targetOverlap));
   let lo = 0;
   let hi = 1;
@@ -54,7 +54,7 @@ export function separationTFromOverlapFraction(targetOverlap: number): number {
   return (lo + hi) / 2;
 }
 
-export type BuilderRailMoonOrbProps = {
+type BuilderRailMoonOrbProps = {
   /** Synodic phase in [0,1); values outside are wrapped. */
   phase01: number;
 };

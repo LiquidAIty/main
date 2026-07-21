@@ -17,7 +17,7 @@ const MIN_OPEN_HEIGHT = 120;
 // over. Capped to a modest fixed height (and never past ~42% of the panel).
 const MAX_OPEN_HEIGHT = 240;
 
-export type HarnessChatPanelProps = {
+type HarnessChatPanelProps = {
   chat: ReactNode;
   /** Main's native Hermes child stream — the ONE under-chat surface. */
   hermes: ReactNode;

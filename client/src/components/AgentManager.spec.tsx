@@ -57,7 +57,6 @@ function renderManager(options?: {
   act(() => {
     root.render(
       React.createElement(AgentManager, {
-        projectId: 'project_test',
         agentType: 'agent_builder',
         activeTab: options?.activeTab || 'Runtime',
         localConfig: options?.localConfig || createLocalConfig('assistant_agent'),
@@ -85,7 +84,6 @@ describe('AgentManager runtime editor', () => {
       const [cardName, setCardName] = React.useState('Alpha Agent');
       const [cardSubtext, setCardSubtext] = React.useState('Subtext');
       return React.createElement(AgentManager, {
-        projectId: 'project_test',
         agentType: 'agent_builder',
         activeTab: 'Prompt',
         selectedCardId: 'card_alpha',

@@ -204,7 +204,7 @@ export function resolveDeckRunFinalText(run: DeckRun | null | undefined): string
   );
 }
 
-export function resolveDeckRunChatReply(run: DeckRun | null | undefined): string {
+function resolveDeckRunChatReply(run: DeckRun | null | undefined): string {
   // Only a real final output from a successful run may become assistant chat.
   // No structured-plan JSON, no Task Ledger artifact, and no error text is ever
   // turned into a chat reply; absent a real final output this returns "".

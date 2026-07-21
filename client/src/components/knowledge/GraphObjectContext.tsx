@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react';
 import { graphDrawerButtonStyle } from '../graph/graphVisualTokens';
 
 export type GraphAuthority = 'thinkgraph' | 'knowgraph' | 'codegraph';
-export type GraphSelectionSurface = GraphAuthority | 'unified';
+type GraphSelectionSurface = GraphAuthority | 'unified';
 
 export type GraphObjectRef = {
   authority: GraphAuthority;

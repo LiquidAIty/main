@@ -28,7 +28,7 @@ const MAX_POLL_MS = 3_000;
 const BACKOFF = 1.5;
 const DEFAULT_TIMEOUT_MS = 60_000;
 
-export type WaitForBackendOptions = {
+type WaitForBackendOptions = {
   signal?: AbortSignal;
   /** Hard cap on how long to wait before resolving false. Defaults to 60s. */
   timeoutMs?: number;
@@ -39,7 +39,7 @@ export type WaitForBackendOptions = {
 async function defaultFetchHealth(): Promise<boolean> {
   try {
     // cache:'no-store' so a stale 304 during boot can't fake readiness.
-    const response = await fetch(HEALTH_URL, { cache: 'no-store' });
+    await fetch(HEALTH_URL, { cache: 'no-store' });
     // Any HTTP response means the backend is listening. The health root itself
     // returns 200 {status:'ok'}, but we resolve on any status so a 500 still
     // unblocks the caller to hit the real endpoint and surface the real error

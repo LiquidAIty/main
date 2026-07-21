@@ -43,7 +43,7 @@ export type LatestCardRunRecord = {
   result: CardRunResult;
 };
 
-export type DeckRunExecutionOutcome = {
+type DeckRunExecutionOutcome = {
   ok: boolean;
   run?: DeckRun;
   finalText?: string;

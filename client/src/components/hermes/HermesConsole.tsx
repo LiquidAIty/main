@@ -4,9 +4,9 @@
  * report artifact, or inferred agent identity.
  */
 
-export type HermesTerminalStatus = 'idle' | 'running' | 'completed' | 'error';
+type HermesTerminalStatus = 'idle' | 'running' | 'completed' | 'error';
 
-export type HermesTerminalActivity = {
+type HermesTerminalActivity = {
   id: string;
   text: string;
   failed: boolean;
@@ -146,7 +146,7 @@ export function reduceHermesTerminalEvent(
   return state;
 }
 
-export type HermesConsoleProps = {
+type HermesConsoleProps = {
   terminal: HermesTerminalState;
 };
 

@@ -21,7 +21,7 @@ import {
   MAGENTIC_ONE_DEFAULT_PROVIDER,
 } from './deckPrimitives';
 
-export function buildSeedPromptTemplate(parts: {
+function buildSeedPromptTemplate(parts: {
   role: string;
   goal: string;
   constraints: string;

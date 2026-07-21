@@ -28,7 +28,7 @@ export type CodeGraphScope = {
 
 export const MAX_DEPENDENCY_DEPTH = 10;
 
-export type CodeGraphScopeValidation = { ok: boolean; errors: string[] };
+type CodeGraphScopeValidation = { ok: boolean; errors: string[] };
 
 function isExplicitIdList(value: unknown): value is string[] {
   return (

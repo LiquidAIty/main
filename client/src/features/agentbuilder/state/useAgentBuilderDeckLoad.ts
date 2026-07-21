@@ -4,19 +4,12 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { waitForBackendReady } from '../../../components/builder/backendReadiness';
 import { guardedRequest, safeJson } from '../../../components/builder/requestGuards';
 import type { LatestCardRunRecord } from '../../../components/builder/useBuilderDeckRuntimeActions';
-import type { LinkRef } from '../../../components/builder/deckContinuityTypes';
+import type { AgentBuilderChatMessage } from '../console/useAgentBuilderMainChat';
 import type {
   DeckDocument,
   DeckRun,
   DeckRuntimeEvent,
 } from '../../../types/agentgraph';
-
-type BuilderChatMessage = { role: 'assistant' | 'user'; text: string };
-
-type EmptyProjectState = {
-  messages: BuilderChatMessage[];
-  links: LinkRef[];
-};
 
 type LoadResult = {
   deck: DeckDocument;
@@ -28,16 +21,12 @@ type UseAgentBuilderDeckLoadArgs = {
   projectsApi: string;
   builderDeckId: string;
   currentDeckRef: MutableRefObject<DeckDocument>;
-  emptyProjectState: EmptyProjectState;
+  emptyMessages: AgentBuilderChatMessage[];
   buildProjectlessDeckDocument: () => DeckDocument;
   resolveProjectDeckLoadResult: (
     currentDeck: DeckDocument,
     persistedDeck: DeckDocument | null,
   ) => LoadResult;
-  loadProjectState: (projectId: string) => {
-    messages: BuilderChatMessage[];
-    links: LinkRef[];
-  };
   formatBuilderStatusMessage: (
     errorMessage: unknown,
     fallbackMessage: string,
@@ -53,7 +42,7 @@ type UseAgentBuilderDeckLoadArgs = {
   setLatestDeckRun: Dispatch<SetStateAction<DeckRun | null>>;
   setLatestCardRun: Dispatch<SetStateAction<LatestCardRunRecord | null>>;
   setLiveDeckEvents: Dispatch<SetStateAction<DeckRuntimeEvent[]>>;
-  setMessages: Dispatch<SetStateAction<BuilderChatMessage[]>>;
+  setMessages: Dispatch<SetStateAction<AgentBuilderChatMessage[]>>;
   setStateLoaded: Dispatch<SetStateAction<boolean>>;
   setDeckStatusMessage: Dispatch<SetStateAction<string | null>>;
 };
@@ -63,10 +52,9 @@ export default function useAgentBuilderDeckLoad({
   projectsApi,
   builderDeckId,
   currentDeckRef,
-  emptyProjectState,
+  emptyMessages,
   buildProjectlessDeckDocument,
   resolveProjectDeckLoadResult,
-  loadProjectState,
   formatBuilderStatusMessage,
   recordDeckWriteReason,
   snapshotDeckBoard,
@@ -92,7 +80,7 @@ export default function useAgentBuilderDeckLoad({
       setLatestDeckRun(null);
       setLatestCardRun(null);
       setLiveDeckEvents([]);
-      setMessages([...emptyProjectState.messages]);
+      setMessages([...emptyMessages]);
       setStateLoaded(false);
       setDeckStatusMessage(null);
       return;
@@ -181,12 +169,11 @@ export default function useAgentBuilderDeckLoad({
       } catch (err: unknown) {
         if (controller.signal.aborted) return;
         recordDeckWriteReason('deck-load-error');
-        const next = loadProjectState(canvasProjectId);
         setLatestDeckRun(null);
         setLatestCardRun(null);
         setLiveDeckEvents([]);
         setDeckRevision(null);
-        setMessages([...next.messages]);
+        setMessages([...emptyMessages]);
         setStateLoaded(true);
         const errorMessage =
           typeof err === 'object' && err !== null && 'message' in err
@@ -213,11 +200,10 @@ export default function useAgentBuilderDeckLoad({
     builderDeckId,
     canvasProjectId,
     currentDeckRef,
-    emptyProjectState.messages,
+    emptyMessages,
     formatBuilderStatusMessage,
     lastPersistedBoardFingerprintRef,
     lastPersistedBoardSnapshotRef,
-    loadProjectState,
     projectsApi,
     recordDeckWriteReason,
     resolveProjectDeckLoadResult,

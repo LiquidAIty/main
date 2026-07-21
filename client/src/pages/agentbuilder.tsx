@@ -8,10 +8,8 @@ import React, {
   useState,
 } from 'react';
 
-import type { AgentManagerLocalConfig } from '../components/AgentManager';
 import BuilderChat from '../components/builder/BuilderChat';
 import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
-import BuilderDrawer from '../components/builder/BuilderDrawer';
 import WorldSignalSurface, {
   type WorldSignalsInspectorBridge,
   type WorldSignalsInspectorSection,
@@ -19,35 +17,26 @@ import WorldSignalSurface, {
 } from '../components/worldsignal/WorldSignalSurface';
 import WorldSignalsInspectorPanel from '../components/worldsignal/WorldSignalsInspectorPanel';
 import AgentCanvasPane from '../features/agentbuilder/canvas/AgentCanvasPane';
-import AgentBuilderCanvasRegion from '../features/agentbuilder/core/AgentBuilderCanvasRegion';
-import AgentBuilderChatPane from '../features/agentbuilder/core/AgentBuilderChatPane';
 import AgentBuilderRail from '../features/agentbuilder/core/AgentBuilderRail';
-import AgentBuilderShell from '../features/agentbuilder/core/AgentBuilderShell';
-import AgentBuilderSplitter from '../features/agentbuilder/core/AgentBuilderSplitter';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
+import useAgentBuilderWorkspaceLayout from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
 import OpenClaudeConsolePanel from '../features/agentbuilder/console/OpenClaudeConsolePanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
-import HermesConsole, {
-  EMPTY_HERMES_TERMINAL_STATE,
-  reduceHermesTerminalEvent,
-  type HermesTerminalState,
-} from '../components/hermes/HermesConsole';
-import {
-  SessionStreamError,
-  streamSession,
-  loadSessionHistory,
-} from '../features/agentbuilder/console/openClaudeSessionClient';
+import HermesConsole from '../components/hermes/HermesConsole';
+import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
+import type { AgentBuilderChatMessage } from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
+import useAgentBuilderCardEditor from '../features/agentbuilder/state/useAgentBuilderCardEditor';
 import useAgentBuilderDeck from '../features/agentbuilder/state/useAgentBuilderDeck';
 import useAgentBuilderDeckLoad from '../features/agentbuilder/state/useAgentBuilderDeckLoad';
 import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuilderProject';
+import AgentBuilderProjectDrawer from '../features/agentbuilder/project/AgentBuilderProjectDrawer';
 import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import useAgentBuilderThinkGraphProjection from '../features/agentbuilder/state/useAgentBuilderThinkGraphProjection';
 import TradingUI from './tradingui';
-import type { LinkRef } from '../components/builder/deckContinuityTypes';
 import { resolveDeckWorkspaceRoot } from '../features/agentbuilder/state/deckWorkspaceRoot';
 import {
   GRAPH_THEME,
@@ -70,8 +59,6 @@ import {
   cloneDeckDocument,
   DEFAULT_WORKSPACE_ROOT,
   normalizeDeckEdgeType,
-  normalizeRuntimeBinding,
-  normalizeRuntimeOptions,
   normalizeRuntimeType,
   safeText,
   uid,
@@ -96,7 +83,6 @@ import {
   BuilderRailMoonOrb,
   synodicPhaseFromDate,
 } from '../features/agentbuilder/core/BuilderRailMoonOrb';
-import { resolveEffectiveAgent } from '../components/builder/deckRuntime';
 import {
   buildDeckRuntimeVisualState,
 } from '../components/builder/deckRunState';
@@ -106,13 +92,11 @@ import {
 import {
   isAbortLikeError,
 } from '../components/builder/requestGuards';
-import { waitForBackendReady } from '../components/builder/backendReadiness';
 import {
   useBuilderDeckRuntimeActions,
 } from '../components/builder/useBuilderDeckRuntimeActions';
 import type {
   AgentCardInstance,
-  AgentTemplate,
   DeckEdge,
   DeckDocument,
   KnowledgeGraphKind,
@@ -196,21 +180,11 @@ class KnowledgeSurfaceErrorBoundary extends React.Component<
 
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
 const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime', 'Task'] as const;
-const AGENTS_CHAT_MIN_WIDTH = 280;
-const AGENTS_CANVAS_MIN_WIDTH = 520;
-const WORKSPACE_COMPANION_MIN_WIDTH = 360;
-const WORKSPACE_COLLAPSE_EDGE_PX = 28;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
 // reasoning, external evidence, or repository reality from that canvas.
 type KnowledgeSurfaceKind = KnowledgeGraphKind | 'unified';
-// ---- utils ----
-function clamp(x: number, a: number, b: number) {
-  return Math.min(b, Math.max(a, x));
-}
-
-
 const WORKSPACE_OBJECT_CONTEXT_LIST_LIMIT = 12;
 const WORKSPACE_OBJECT_SELECTED_TEXT_LIMIT = 240;
 const WORKSPACE_OBJECT_SUMMARY_LIMIT = 400;
@@ -285,68 +259,17 @@ function buildCanvasObjectAwareness(document: DeckDocument): Pick<
 }
 
 const PROJECTS_API = '/api/projects';
-const EMPTY_PROJECT_STATE = {
-  messages: [] as { role: 'assistant' | 'user'; text: string }[],
-  links: [] as LinkRef[],
-};
-
-function resolveAgentTemplate(
-  card: AgentCardInstance | null,
-  templates: AgentTemplate[],
-): AgentTemplate | null {
-  if (!card) return null;
-  return templates.find((template) => template.id === card.templateId) || null;
-}
-
-function sameStringArray(
-  left: string[] | undefined,
-  right: string[] | undefined,
-): boolean {
-  const a = Array.isArray(left) ? left : [];
-  const b = Array.isArray(right) ? right : [];
-  if (a.length !== b.length) return false;
-  return a.every((value, index) => value === b[index]);
-}
-
-function sameObjectShape(
-  left: Record<string, unknown> | null | undefined,
-  right: Record<string, unknown> | null | undefined,
-): boolean {
-  return JSON.stringify(left || null) === JSON.stringify(right || null);
-}
-
-function compactAgentOverrides(
-  overrides: Partial<AgentTemplate>,
-): Partial<AgentTemplate> | undefined {
-  const filtered = Object.fromEntries(
-    Object.entries(overrides).filter(([, value]) => value !== undefined),
-  ) as Partial<AgentTemplate>;
-  return Object.keys(filtered).length > 0 ? filtered : undefined;
-}
-
-// helper: load all project-local state (defaults only; real data is fetched from backend)
-function loadProjectState() {
-  return {
-    messages: [...EMPTY_PROJECT_STATE.messages],
-    links: [...EMPTY_PROJECT_STATE.links],
-  };
-}
+const EMPTY_PROJECT_MESSAGES: AgentBuilderChatMessage[] = [];
 
 /** Mean synodic month in days (NASA/USNO convention). */
 export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
   const largeSurface = 'chat' as const;
-  const [nativeSessionBusy, setNativeSessionBusy] = useState(false);
-  const [hermesTerminal, setHermesTerminal] = useState<HermesTerminalState>(
-    EMPTY_HERMES_TERMINAL_STATE,
-  );
   const [workspaceView, setWorkspaceView] = useState<
     | 'chat'
     | 'canvas'
     | 'knowledge'
-    | 'codegraph'
     | 'trading'
-    | 'code'
     | 'worldsignal'
   >(() => {
     const params = new URLSearchParams(window.location.search);
@@ -371,17 +294,20 @@ export default function AgentBuilder(): React.ReactElement {
     workspaceView,
     openCanvasWorkspace: () => setWorkspaceView('canvas'),
   });
-  const [chatPanelWidth, setChatPanelWidth] = useState(420);
-  const [chatResizeHandleActive, setChatResizeHandleActive] = useState(false);
-  const [chatResizeDragging, setChatResizeDragging] = useState(false);
-  const workspaceShellRef = useRef<HTMLDivElement | null>(null);
-  const chatResizeSessionRef = useRef<{
-    startX: number;
-    startWidth: number;
-    pendingWidth: number;
-    reservedWidth: number;
-  } | null>(null);
-  const chatResizeFrameRef = useRef<number | null>(null);
+  const {
+    canvasMinWidth,
+    chatMinWidth,
+    chatPanelWidth,
+    companionMinWidth,
+    handleSplitterMouseDown,
+    onSplitterMouseEnter,
+    onSplitterMouseLeave,
+    splitterActive,
+    workspaceShellRef,
+  } = useAgentBuilderWorkspaceLayout({
+    setWorkspaceView,
+    workspaceView,
+  });
   const [moonPhase01, setMoonPhase01] = useState(() =>
     synodicPhaseFromDate(new Date()),
   );
@@ -466,8 +392,6 @@ export default function AgentBuilder(): React.ReactElement {
     [deck.nodes],
   );
   const [deckRunInput, setDeckRunInput] = useState('');
-  const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
-  const [newProjectName, setNewProjectName] = useState('');
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
     useState<KnowledgeSurfaceKind>('unified');
   const conversationId = 'main';
@@ -514,44 +438,22 @@ export default function AgentBuilder(): React.ReactElement {
       cancelled = true;
     };
   }, []);
-  // chat state must be declared before callbacks/effects that write to it.
-  const [messages, setMessages] = useState<
-    { role: 'assistant' | 'user'; text: string }[]
-  >(() => loadProjectState().messages);
+  const {
+    handleNativeSend,
+    hermesTerminal,
+    messages,
+    nativeSessionBusy,
+    setMessages,
+  } = useAgentBuilderMainChat({
+    activeProjection,
+    canvasProjectId,
+    conversationId,
+    initialMessages: EMPTY_PROJECT_MESSAGES,
+    pendingGraphObjectRef,
+    setPendingGraphObjectRef,
+    workspaceView,
+  });
   const [stateLoaded, setStateLoaded] = useState(false);
-
-  // Restore the durable project-scoped Main transcript on open / project
-  // switch. This load is read-only and
-  // best-effort: a fresh project or a read failure leaves chat empty, never
-  // errors. A late response for a project the user already switched away from is
-  // discarded (guarded by the captured projectId).
-  useEffect(() => {
-    const pid = canvasProjectId;
-    if (!pid) {
-      setMessages([]);
-      setHermesTerminal(EMPTY_HERMES_TERMINAL_STATE);
-      return;
-    }
-    setHermesTerminal(EMPTY_HERMES_TERMINAL_STATE);
-    const ctrl = new AbortController();
-    let cancelled = false;
-    waitForBackendReady({ signal: ctrl.signal })
-      .then((ready) => {
-        if (cancelled || !ready) return;
-        return loadSessionHistory({ projectId: pid, conversationId, signal: ctrl.signal });
-      })
-      .then((history) => {
-        if (cancelled || !history) return;
-        setMessages(history);
-      })
-      .catch(() => {
-        /* best-effort; chat opens regardless */
-      });
-    return () => {
-      cancelled = true;
-      ctrl.abort();
-    };
-  }, [canvasProjectId, conversationId]);
 
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
@@ -667,10 +569,9 @@ export default function AgentBuilder(): React.ReactElement {
     projectsApi: PROJECTS_API,
     builderDeckId: BUILDER_DECK_ID,
     currentDeckRef,
-    emptyProjectState: EMPTY_PROJECT_STATE,
+    emptyMessages: EMPTY_PROJECT_MESSAGES,
     buildProjectlessDeckDocument,
     resolveProjectDeckLoadResult,
-    loadProjectState,
     formatBuilderStatusMessage,
     recordDeckWriteReason,
     snapshotDeckBoard,
@@ -728,21 +629,21 @@ export default function AgentBuilder(): React.ReactElement {
     () => buildDeckRuntimeVisualState(runtimeEvents),
     [runtimeEvents],
   );
-  const selectedCard = useMemo(
-    () => deck.nodes.find((node) => node.id === selectedCardId) || null,
-    [deck.nodes, selectedCardId],
-  );
-  const selectedTemplate = useMemo(
-    () => resolveAgentTemplate(selectedCard, INITIAL_AGENT_TEMPLATES),
-    [selectedCard],
-  );
-  const effectiveAgent = useMemo(
-    () =>
-      selectedCard
-        ? resolveEffectiveAgent(selectedCard, INITIAL_AGENT_TEMPLATES)
-        : null,
-    [selectedCard],
-  );
+  const {
+    effectiveAgent,
+    handleRenameSelectedCard,
+    handleSaveSelectedCardConfig,
+    handleUpdateSelectedCardSubtext,
+    selectedCard,
+    selectedCardConfig,
+  } = useAgentBuilderCardEditor({
+    deck,
+    recordDeckWriteReason,
+    selectedCardId,
+    setDeck,
+    setLatestCardRun,
+    setLatestDeckRun,
+  });
   const builderTabs = useMemo(() => {
     if (selectedCard) return [...BUILDER_NODE_TABS];
     return [...BUILDER_PROJECT_TABS];
@@ -751,34 +652,6 @@ export default function AgentBuilder(): React.ReactElement {
     if (workspaceView === 'canvas') return builderTabs;
     return [];
   }, [builderTabs, workspaceView]);
-  const selectedCardConfig = useMemo<AgentManagerLocalConfig | null>(() => {
-    if (!effectiveAgent || !selectedCard) return null;
-    return {
-      runtime_binding: selectedCard.runtimeBinding ?? null,
-      runtime_type: selectedCard.runtimeType ?? 'assistant_agent',
-      runtime_options: selectedCard.runtimeOptions ?? null,
-      parent_graph_id: selectedCard.parentGraphId ?? null,
-      provider:
-        effectiveAgent.provider === 'openai' ||
-        effectiveAgent.provider === 'openrouter' ||
-        effectiveAgent.provider === 'local_openai_compatible'
-          ? effectiveAgent.provider
-          : '',
-      model_key: effectiveAgent.model || null,
-      temperature: effectiveAgent.temperature ?? null,
-      max_tokens: effectiveAgent.maxTokens ?? null,
-      prompt_template: selectedCard.prompt || '',
-      tools: effectiveAgent.tools,
-      knowledge_sources: effectiveAgent.knowledgeSources || [],
-      response_format: effectiveAgent.ioSchema
-        ? {
-            type: 'json_schema',
-            name: 'card_schema',
-            schema: effectiveAgent.ioSchema,
-          }
-      : null,
-    };
-  }, [effectiveAgent, selectedCard]);
   const activeDeckWorkspaceContext = useMemo<DeckWorkspaceContext>(
     () => {
       const workspaceRoot = resolveDeckWorkspaceRoot(
@@ -1041,161 +914,6 @@ export default function AgentBuilder(): React.ReactElement {
       },
     });
 
-  const handleSaveSelectedCardConfig = useCallback(
-    (nextConfig: AgentManagerLocalConfig) => {
-      if (!selectedCard || !selectedTemplate) return;
-
-      setLatestCardRun(null);
-      setLatestDeckRun(null);
-      recordDeckWriteReason('card-editor');
-      setDeck((currentDeck) => {
-        const nextRuntimeBinding = normalizeRuntimeBinding(
-          nextConfig.runtime_binding,
-        );
-        const nextRuntimeType =
-          normalizeRuntimeType(nextConfig.runtime_type) ??
-          normalizeRuntimeType(selectedCard.runtimeType) ??
-          'assistant_agent';
-        const nextParentGraphId = cleanOptionalText(nextConfig.parent_graph_id);
-        const nextProvider =
-          nextConfig.provider === 'openai' ||
-          nextConfig.provider === 'openrouter' ||
-          nextConfig.provider === 'local_openai_compatible'
-            ? nextConfig.provider
-            : null;
-        const nextModel = String(nextConfig.model_key || '').trim() || null;
-        const nextTemperature =
-          typeof nextConfig.temperature === 'number'
-            ? nextConfig.temperature
-            : null;
-        const nextMaxTokens =
-          typeof nextConfig.max_tokens === 'number'
-            ? nextConfig.max_tokens
-            : null;
-        const nextTools = Array.isArray(nextConfig.tools)
-          ? nextConfig.tools
-              .filter((tool): tool is string => typeof tool === 'string')
-              .map((tool) => tool.trim())
-              .filter(Boolean)
-          : [];
-        const nextRuntimeOptions = normalizeRuntimeOptions({
-          ...(nextConfig.runtime_options || {}),
-          tools: nextTools,
-        });
-        const nextKnowledgeSources = Array.isArray(nextConfig.knowledge_sources)
-          ? nextConfig.knowledge_sources
-              .filter((entry): entry is string => typeof entry === 'string')
-              .map((entry) => entry.trim())
-              .filter(Boolean)
-          : [];
-        const nextIoSchema =
-          nextConfig.response_format?.type === 'json_schema' &&
-          nextConfig.response_format?.schema &&
-          typeof nextConfig.response_format.schema === 'object'
-            ? (nextConfig.response_format.schema as Record<string, unknown>)
-            : null;
-
-        const nextOverrides = compactAgentOverrides({
-          provider:
-            nextProvider !== (selectedTemplate.provider ?? null)
-              ? nextProvider
-              : undefined,
-          model:
-            nextModel !== (selectedTemplate.model ?? null)
-              ? nextModel
-              : undefined,
-          temperature:
-            nextTemperature !== (selectedTemplate.temperature ?? null)
-              ? nextTemperature
-              : undefined,
-          maxTokens:
-            nextMaxTokens !== (selectedTemplate.maxTokens ?? null)
-              ? nextMaxTokens
-              : undefined,
-          knowledgeSources: !sameStringArray(
-            nextKnowledgeSources,
-            selectedTemplate.knowledgeSources,
-          )
-            ? nextKnowledgeSources
-            : undefined,
-          ioSchema: !sameObjectShape(nextIoSchema, selectedTemplate.ioSchema)
-            ? nextIoSchema || undefined
-            : undefined,
-        });
-
-        const nextNodes = currentDeck.nodes.map((node) =>
-          node.id === selectedCard.id
-            ? {
-                ...node,
-                prompt: String(nextConfig.prompt_template || ''),
-                runtimeBinding: nextRuntimeBinding,
-                runtimeType: nextRuntimeType,
-                runtimeOptions: nextRuntimeOptions,
-                parentGraphId: nextParentGraphId,
-                overrides: nextOverrides,
-              }
-            : node,
-        );
-
-        // Edges are never silently dropped on a card-config save: an edge that
-        // no longer matches a runtime shape is classified 'invalid' by the
-        // normalizers and stays visible-but-inert.
-        return {
-          ...currentDeck,
-          version: currentDeck.version + 1,
-          nodes: nextNodes,
-        };
-      });
-    },
-    [recordDeckWriteReason, selectedCard, selectedTemplate],
-  );
-
-  const handleRenameSelectedCard = useCallback(
-    (nextName: string) => {
-      if (!selectedCard) return;
-
-      setLatestCardRun(null);
-      setLatestDeckRun(null);
-      recordDeckWriteReason('card-rename');
-      setDeck((currentDeck) => ({
-        ...currentDeck,
-        version: currentDeck.version + 1,
-        nodes: currentDeck.nodes.map((node) =>
-          node.id === selectedCard.id
-            ? {
-                ...node,
-                title: nextName,
-              }
-            : node,
-        ),
-      }));
-    },
-    [recordDeckWriteReason, selectedCard],
-  );
-
-  const handleUpdateSelectedCardSubtext = useCallback(
-    (nextSubtext: string) => {
-      if (!selectedCard) return;
-
-      setLatestCardRun(null);
-      setLatestDeckRun(null);
-      recordDeckWriteReason('card-subtitle-update');
-      setDeck((currentDeck) => ({
-        ...currentDeck,
-        version: currentDeck.version + 1,
-        nodes: currentDeck.nodes.map((node) =>
-          node.id === selectedCard.id
-            ? {
-                ...node,
-                subtitle: nextSubtext.length > 0 ? nextSubtext : undefined,
-              }
-            : node,
-        ),
-      }));
-    },
-    [recordDeckWriteReason, selectedCard],
-  );
-
 
 
   const renderAgentBuilderPanel = () => {
@@ -1241,8 +959,6 @@ export default function AgentBuilder(): React.ReactElement {
               >
                 <AgentManager
                   key={`deck-card:${selectedCard.id}:${tab}`}
-                  projectId={canvasProjectId || 'deck-card'}
-                  deckId={BUILDER_DECK_ID}
                   agentType="agent_builder"
                   activeTab={tab}
                   selectedCardId={selectedCard.id}
@@ -1464,54 +1180,6 @@ export default function AgentBuilder(): React.ReactElement {
     setWorldSignalInspectorSection(null);
   }, []);
 
-  const handleCreateProject = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-
-    const name = newProjectName.trim();
-    if (!name) return;
-
-    const code = name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)/g, '');
-
-    const projectType = 'assist';
-
-    try {
-      const res = await fetch(PROJECTS_API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          code,
-          project_type: projectType,
-        }),
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(text || `HTTP ${res.status}`);
-      }
-      const data = await res.json().catch(() => null);
-      const newId =
-        (data?.project && typeof data.project === 'object' && String(data.project.id || '').trim()) ||
-        String(data?.id || '').trim();
-
-      setShowCreateProjectForm(false);
-      setNewProjectName('');
-
-      await refreshProjects('after-create', newId);
-
-      if (newId) {
-        setActiveProjectWithUrl(newId);
-      }
-    } catch (err: any) {
-      console.error('Create project failed', err);
-      setProjectsError(
-        `Failed to create project: ${err?.message || 'Unknown error'}`,
-      );
-    }
-  };
-
   const getSurfaceShellStyle = useCallback(
     (compact: boolean, extra?: React.CSSProperties): React.CSSProperties => {
       return {
@@ -1521,206 +1189,6 @@ export default function AgentBuilder(): React.ReactElement {
       };
     },
     [],
-  );
-
-  const clampAgentsChatWidth = useCallback(
-    (nextWidth: number, reservedWidth: number) => {
-      const shellWidth = workspaceShellRef.current?.clientWidth ?? 0;
-      if (shellWidth <= 0) return Math.max(AGENTS_CHAT_MIN_WIDTH, nextWidth);
-      const maxWidth = Math.max(
-        AGENTS_CHAT_MIN_WIDTH,
-        shellWidth - reservedWidth,
-      );
-      return clamp(nextWidth, AGENTS_CHAT_MIN_WIDTH, maxWidth);
-    },
-    [],
-  );
-
-  const resolveAgentsChatMaxWidth = useCallback(
-    (reservedWidth: number) => {
-      const shellWidth = workspaceShellRef.current?.clientWidth ?? 0;
-      if (shellWidth <= 0) return AGENTS_CHAT_MIN_WIDTH;
-      return Math.max(AGENTS_CHAT_MIN_WIDTH, shellWidth - reservedWidth);
-    },
-    [],
-  );
-
-  const finishChatResize = useCallback(
-    (mode: 'commit' | 'cancel') => {
-      const session = chatResizeSessionRef.current;
-      if (!session) return;
-      chatResizeSessionRef.current = null;
-      setChatResizeDragging(false);
-      setChatResizeHandleActive(false);
-      if (chatResizeFrameRef.current !== null) {
-        window.cancelAnimationFrame(chatResizeFrameRef.current);
-        chatResizeFrameRef.current = null;
-      }
-      if (mode === 'cancel') {
-        setChatPanelWidth(session.startWidth);
-        return;
-      }
-      setChatPanelWidth(session.pendingWidth);
-      const maxWidth = resolveAgentsChatMaxWidth(session.reservedWidth);
-      if (session.pendingWidth >= maxWidth - WORKSPACE_COLLAPSE_EDGE_PX) {
-        setWorkspaceView('chat');
-      }
-    },
-    [resolveAgentsChatMaxWidth],
-  );
-
-  useEffect(() => {
-    if (!chatResizeDragging) return;
-    const handleMouseMove = (event: MouseEvent) => {
-      const session = chatResizeSessionRef.current;
-      if (!session) return;
-      const delta = event.clientX - session.startX;
-      session.pendingWidth = clampAgentsChatWidth(
-        session.startWidth + delta,
-        session.reservedWidth,
-      );
-      if (chatResizeFrameRef.current !== null) return;
-      chatResizeFrameRef.current = window.requestAnimationFrame(() => {
-        chatResizeFrameRef.current = null;
-        const activeSession = chatResizeSessionRef.current;
-        if (!activeSession) return;
-        setChatPanelWidth(activeSession.pendingWidth);
-      });
-    };
-    const handleMouseUp = () => finishChatResize('commit');
-    const handleWindowBlur = () => finishChatResize('commit');
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      finishChatResize('cancel');
-    };
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-    window.addEventListener('blur', handleWindowBlur);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-      window.removeEventListener('blur', handleWindowBlur);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [chatResizeDragging, clampAgentsChatWidth, finishChatResize]);
-
-  useEffect(() => {
-    return () => {
-      if (chatResizeFrameRef.current !== null) {
-        window.cancelAnimationFrame(chatResizeFrameRef.current);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    const reservedWidth =
-      workspaceView === 'canvas'
-        ? AGENTS_CANVAS_MIN_WIDTH
-        : WORKSPACE_COMPANION_MIN_WIDTH;
-    const syncAgentsWidths = () => {
-      setChatPanelWidth((current) =>
-        clampAgentsChatWidth(current, reservedWidth),
-      );
-    };
-    syncAgentsWidths();
-    window.addEventListener('resize', syncAgentsWidths);
-    return () => window.removeEventListener('resize', syncAgentsWidths);
-  }, [clampAgentsChatWidth, workspaceView]);
-
-  // Native persistent OpenClaude chat: send goes to the gRPC QueryEngine SSE
-  // bridge (NOT the Python deck-run). Upper chat stays compact (user message +
-  // final done.full_text); raw events go to the lower OpenClaude session stream.
-  const handleNativeSend = useCallback(
-    (t: string) => {
-      const trimmed = t.trim();
-      if (!trimmed) return;
-      if (!canvasProjectId) {
-        setMessages((m) => [...m, { role: 'assistant', text: 'Select or create a project before chatting.' }]);
-        return;
-      }
-      if (nativeSessionBusy) return;
-      const sentGraphObjectRef = pendingGraphObjectRef;
-      // Only the REAL user message is added on send. No empty assistant placeholder —
-      // the assistant bubble is created lazily on the FIRST real text token (below),
-      // never before. If the model emits no text, no assistant bubble is created.
-      setMessages((m) => [...m, { role: 'user', text: trimmed }]);
-      setNativeSessionBusy(true);
-      // Append real model text into the single assistant bubble for this turn,
-      // creating that bubble on the first non-empty chunk (never an empty bubble).
-      let assistantStarted = false;
-      const appendAssistantText = (chunk: string) => {
-        if (!chunk) return;
-        assistantStarted = true;
-        setMessages((m) => {
-          const copy = [...m];
-          const last = copy[copy.length - 1];
-          if (last && last.role === 'assistant') {
-            copy[copy.length - 1] = { role: 'assistant', text: last.text + chunk };
-          } else {
-            copy.push({ role: 'assistant', text: chunk });
-          }
-          return copy;
-        });
-      };
-      void streamSession({
-        projectId: canvasProjectId,
-        conversationId,
-        message: trimmed,
-        // Agent Builder canvas surface (the hex+ view) = canvas mode: every
-        // eligible saved card is a direct Single Assist doorway. Normal project
-        // chat = chat mode: only the ThinkGraph doorway. Explicit surface state,
-        // never inferred from message content.
-        mode: workspaceView === 'canvas' ? 'canvas' : 'chat',
-        // Projection identity only — Main's context is resolved server-side
-        // from the persisted projection the user is looking at. A projection
-        // viewed under another role is exploration, not Main's context.
-        ...(activeProjection && activeProjection.role === 'main_chat'
-          ? {
-              projectionId: activeProjection.projectionId,
-              ...(activeProjection.activeGraphViewId ? { activeGraphViewId: activeProjection.activeGraphViewId } : {}),
-              ...(activeProjection.knowgraphScope ? { knowgraphScope: activeProjection.knowgraphScope } : {}),
-            }
-          : {}),
-        ...(sentGraphObjectRef ? { selectedGraphObjectRefs: [sentGraphObjectRef] } : {}),
-        onEvent: (event) => {
-          setHermesTerminal((current) => reduceHermesTerminalEvent(current, event));
-          if (event.kind === 'text') {
-            // Real model text streams into the chat — creates the assistant bubble on
-            // the first token, appends to it afterward. Nothing renders before this.
-            appendAssistantText(String((event as { text?: unknown }).text || ''));
-            return;
-          }
-        },
-      })
-        .then(({ finalText }) => {
-          setNativeSessionBusy(false);
-          if (sentGraphObjectRef) {
-            setPendingGraphObjectRef((current) => current && graphObjectRefKey(current) === graphObjectRefKey(sentGraphObjectRef) ? null : current);
-          }
-          const completedText = finalText.trim();
-          if (!assistantStarted && completedText) {
-            appendAssistantText(completedText);
-          } else if (!assistantStarted) {
-            appendAssistantText('The chat completed without an assistant response. Please try again.');
-          }
-        })
-        .catch((error: unknown) => {
-          setNativeSessionBusy(false);
-          setHermesTerminal((current) => reduceHermesTerminalEvent(current, {
-            kind: 'error',
-            message: error instanceof Error ? error.message : 'Hermes stream cancelled.',
-          }));
-          if (error instanceof SessionStreamError) {
-            const correlation = error.correlationId ? ` Correlation: ${error.correlationId}.` : '';
-            appendAssistantText(`Chat failed (${error.code}).${correlation}`);
-            return;
-          }
-          appendAssistantText('Chat request failed before the stream opened. Route: /api/coder/openclaude/session/chat.');
-        });
-    },
-    [activeProjection, canvasProjectId, conversationId, nativeSessionBusy, pendingGraphObjectRef, workspaceView],
   );
 
   const renderChatSurface = (
@@ -1878,72 +1346,17 @@ export default function AgentBuilder(): React.ReactElement {
     />
   );
 
-  const workspaceChatPane = (
-    <AgentBuilderChatPane
-      workspaceView={workspaceView}
-      surfaceName={largeSurface}
-      chatPanelWidth={chatPanelWidth}
-      minWidth={AGENTS_CHAT_MIN_WIDTH}
-    >
-      {renderChatSurface(activeProject, false, 'large')}
-    </AgentBuilderChatPane>
-  );
-
-  const workspaceSplitter = workspaceView !== 'chat' ? (
-    <AgentBuilderSplitter
-      active={chatResizeHandleActive}
-      dragging={chatResizeDragging}
-      onMouseEnter={() => setChatResizeHandleActive(true)}
-      onMouseLeave={() => {
-        if (!chatResizeDragging) {
-          setChatResizeHandleActive(false);
-        }
-      }}
-      onMouseDown={(event) => {
-        event.preventDefault();
-        setChatResizeHandleActive(true);
-        const reservedWidth =
-          workspaceView === 'canvas'
-            ? AGENTS_CANVAS_MIN_WIDTH
-            : WORKSPACE_COMPANION_MIN_WIDTH;
-        chatResizeSessionRef.current = {
-          startX: event.clientX,
-          startWidth: chatPanelWidth,
-          pendingWidth: chatPanelWidth,
-          reservedWidth,
-        };
-        setChatResizeDragging(true);
-      }}
-    />
-  ) : null;
-
-  const workspaceCanvasRegion = workspaceView === 'canvas' ? (
-    <AgentBuilderCanvasRegion minWidth={AGENTS_CANVAS_MIN_WIDTH}>
-      {renderCanvasSurface(false, 'large')}
-    </AgentBuilderCanvasRegion>
-  ) : null;
-
   const workspaceCompanionSurfaceHost = (
     <CompanionSurfaceHost
       workspaceView={workspaceView}
-      minWidth={WORKSPACE_COMPANION_MIN_WIDTH}
-      hasKnowledgeWorkspaceSelection={false}
-      hasActiveUaSurface={false}
-      knowledgeSelectionSurface={null}
+      minWidth={companionMinWidth}
       knowledgeSurface={
         renderKnowledgeGraphSurface({
           minHeight: 420,
           surfaceRole: 'companion',
         })
       }
-      codegraphSurface={
-        renderKnowledgeGraphSurface({
-          minHeight: 420,
-          surfaceRole: 'companion',
-        })
-      }
       tradingSurface={<TradingUI />}
-      uaSurface={null}
       worldsignalSurface={
         <WorldSignalSurface
           projectId={
@@ -2068,219 +1481,46 @@ export default function AgentBuilder(): React.ReactElement {
       >
         <AgentBuilderWorkspace
           rail={workspaceRail}
-          shell={
-            <AgentBuilderShell
-              workspaceShellRef={workspaceShellRef}
-              chatPane={workspaceChatPane}
-              splitter={workspaceSplitter}
-              canvasRegion={workspaceCanvasRegion}
-              companionSurfaceHost={workspaceCompanionSurfaceHost}
-              drawer={
-                <>
-                  {workspaceDrawer}
-                  <OpenClaudeConsolePanel
-                    open={openClaudeConsoleOpen}
-                    targetRoot="C:/Projects/main"
-                    projectId={typeof activeProject === 'string' ? activeProject : undefined}
-                    provider={localCoderConsoleConfig.provider}
-                    model={localCoderConsoleConfig.model}
-                    onClose={() => setOpenClaudeConsoleOpen(false)}
-                  />
-                </>
-              }
-            />
+          workspaceShellRef={workspaceShellRef}
+          workspaceView={workspaceView}
+          surfaceName={largeSurface}
+          chatPanelWidth={chatPanelWidth}
+          chatMinWidth={chatMinWidth}
+          chat={renderChatSurface(activeProject, false, 'large')}
+          splitterActive={splitterActive}
+          onSplitterMouseEnter={onSplitterMouseEnter}
+          onSplitterMouseLeave={onSplitterMouseLeave}
+          onSplitterMouseDown={handleSplitterMouseDown}
+          canvasMinWidth={canvasMinWidth}
+          canvas={renderCanvasSurface(false, 'large')}
+          companion={workspaceCompanionSurfaceHost}
+          drawer={
+            <>
+              {workspaceDrawer}
+              <OpenClaudeConsolePanel
+                open={openClaudeConsoleOpen}
+                targetRoot="C:/Projects/main"
+                projectId={typeof activeProject === 'string' ? activeProject : undefined}
+                provider={localCoderConsoleConfig.provider}
+                model={localCoderConsoleConfig.model}
+                onClose={() => setOpenClaudeConsoleOpen(false)}
+              />
+            </>
           }
         />
 
-      {/* drawers */}
-      {openDrawer === 'navigation' && (
-        <BuilderDrawer
-          title="Projects"
-          onClose={() => setOpenDrawer(null)}
-          colors={C}
-        >
-          <div data-testid="navigation-drawer" className="space-y-3">
-            <div
-              data-testid="drawer-projects-section"
-              className="text-xs uppercase mb-2 flex items-center justify-between"
-              style={{ color: C.neutral }}
-            >
-              <span>Chat Projects</span>
-              <button
-                onClick={() => setShowCreateProjectForm(!showCreateProjectForm)}
-                className="text-[11px] px-2 py-1 rounded"
-                style={{ border: `1px solid ${C.border}`, color: C.text }}
-                data-testid="new-project-button"
-              >
-                New Project
-              </button>
-            </div>
-
-            {showCreateProjectForm && (
-              <form
-                onSubmit={handleCreateProject}
-                className="mb-2 p-2 rounded"
-                style={{ border: `1px solid ${C.border}`, background: C.bg }}
-                data-testid="create-project-form"
-              >
-                <div className="flex gap-2 mb-2">
-                  <input
-                    type="text"
-                    value={newProjectName}
-                    onChange={(e) => setNewProjectName(e.target.value)}
-                    placeholder="Project name"
-                    autoFocus
-                    className="flex-1 px-2 py-1 text-xs rounded focus:outline-none"
-                    style={{
-                      background: C.panel,
-                      border: `1px solid ${C.border}`,
-                      color: C.text,
-                    }}
-                    data-testid="project-name-input"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!newProjectName.trim()}
-                    className="text-xs py-1 px-3 rounded font-medium"
-                    style={{
-                      background: newProjectName.trim()
-                        ? `rgba(79,162,173,0.18)`
-                        : C.panel,
-                      border: `1px solid ${newProjectName.trim() ? C.primary : C.border}`,
-                      color: C.text,
-                      cursor: newProjectName.trim() ? 'pointer' : 'not-allowed',
-                    }}
-                    data-testid="create-project-submit"
-                  >
-                    Create
-                  </button>
-                </div>
-              </form>
-            )}
-
-            <div
-              className="space-y-2"
-              style={{ maxHeight: 400, overflowY: 'auto' }}
-            >
-              {projectsError && (
-                <div className="text-xs" style={{ color: C.neutral }}>
-                  {safeText(projectsError)}
-                </div>
-              )}
-              {assistProjects.map((project) => (
-                <div key={project.id} className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      setActiveProjectWithUrl(project.id);
-                      setOpenDrawer(null);
-                    }}
-                    className="flex-1 text-left p-3 rounded"
-                    style={{
-                      background:
-                        activeProject === project.id
-                          ? 'rgba(79,162,173,0.18)'
-                          : 'transparent',
-                      border: `1px solid ${activeProject === project.id ? C.primary : C.border}`,
-                      color: C.text,
-                    }}
-                  >
-                    <div className="font-medium">
-                      {safeText(project.name || project.id)}
-                    </div>
-                    {project.code && (
-                      <div
-                        className="opacity-60 text-xs"
-                        style={{ marginTop: 2 }}
-                      >
-                        {safeText(project.code)}
-                      </div>
-                    )}
-                  </button>
-                  <button
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      if (
-                        !confirm(
-                          `Delete project "${project.name}"? This cannot be undone.`,
-                        )
-                      )
-                        return;
-                      try {
-                        const res = await fetch(
-                          `${PROJECTS_API}/${project.id}`,
-                          { method: 'DELETE' },
-                        );
-                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                        await refreshProjects('after-delete');
-                        if (activeProject === project.id) {
-                          const remaining = assistProjects.filter(
-                            (entry) => entry.id !== project.id,
-                          );
-                          if (remaining.length > 0) {
-                            setActiveProjectWithUrl(remaining[0].id);
-                          } else {
-                            setActiveProjectWithUrl('');
-                          }
-                        }
-                      } catch (err: any) {
-                        alert(`Failed to delete project: ${err.message}`);
-                      }
-                    }}
-                    className="p-2 rounded"
-                    style={{
-                      background: 'transparent',
-                      border: `1px solid ${C.border}`,
-                      color: C.warn,
-                    }}
-                    title="Delete project"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-
-              {assistProjects.length === 0 && !projectsError && (
-                <div className="text-xs" style={{ color: C.neutral }}>
-                  No projects available.
-                </div>
-              )}
-            </div>
-
-            <div
-              className="mt-6 pt-4"
-              style={{ borderTop: `1px solid ${C.border}` }}
-            >
-              <div
-                className="text-xs uppercase mb-2"
-                style={{ color: C.neutral }}
-              >
-                Account
-              </div>
-              <button
-                onClick={async () => {
-                  try {
-                    await fetch('/api/auth/logout', {
-                      method: 'POST',
-                      credentials: 'include',
-                    });
-                    window.location.href = '/login';
-                  } catch (err) {
-                    console.error('Logout failed:', err);
-                  }
-                }}
-                className="w-full text-left p-3 rounded"
-                style={{
-                  background: 'transparent',
-                  border: `1px solid ${C.border}`,
-                  color: C.text,
-                }}
-              >
-                <div className="font-medium">Sign Out</div>
-              </button>
-            </div>
-          </div>
-        </BuilderDrawer>
-      )}
+      <AgentBuilderProjectDrawer
+        activeProject={activeProject}
+        colors={C}
+        open={openDrawer === 'navigation'}
+        projects={assistProjects}
+        projectsApi={PROJECTS_API}
+        projectsError={projectsError}
+        onClose={() => setOpenDrawer(null)}
+        refreshProjects={refreshProjects}
+        setActiveProjectWithUrl={setActiveProjectWithUrl}
+        setProjectsError={setProjectsError}
+      />
       </div>
     </FrontendCrashBoundary>
   );

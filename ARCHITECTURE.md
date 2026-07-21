@@ -212,6 +212,41 @@ proven dead. The actual source, data, tests, and adapter boundaries are protecte
 - Vendored runtimes: `localcoder/`, `autogen-main/`, `worldsignal/`, and `Kronos-main` retain their
   upstream boundaries and are not ordinary cleanup targets.
 
+## Agent Builder file ownership
+
+- Page composition: `client/src/pages/agentbuilder.tsx` selects the active project/workspace and
+  composes the rail, Main Chat, canvas, inspector, console, graph, trading, and WorldSignals surfaces.
+- Project and deck state: `client/src/features/agentbuilder/state/useAgentBuilderProject.ts`,
+  `useAgentBuilderDeck.ts`, `useAgentBuilderDeckLoad.ts`, `useAgentBuilderAutosave.ts`, and
+  `useAgentBuilderProjectReset.ts` own selection, loading, revisions, persistence, and reset effects.
+  `client/src/features/agentbuilder/project/AgentBuilderProjectDrawer.tsx` owns project
+  create/select/delete presentation and requests.
+- Canvas: `client/src/features/agentbuilder/canvas/AgentCanvasPane.tsx` is the Agent Builder canvas
+  surface; `client/src/components/builder/BuilderCanvas.tsx` owns ReactFlow node, edge, selection,
+  connection, and viewport behavior.
+- Card editing: `client/src/features/agentbuilder/state/useAgentBuilderCardEditor.ts` owns selected-card
+  derivation and configuration/name/subtext mutations. `client/src/components/AgentManager.tsx`
+  renders the card editor.
+- Main Chat: `client/src/features/agentbuilder/console/useAgentBuilderMainChat.ts` owns transcript
+  loading, streamed Harness turns, busy/error state, and selected graph references.
+  `client/src/components/builder/BuilderChat.tsx` renders the conversation.
+- OpenClaude console: `client/src/features/agentbuilder/console/OpenClaudeConsolePanel.tsx`,
+  `openClaudeConsoleClient.ts`, and `XtermView.tsx` own the persistent terminal UI and client
+  lifecycle. Backend PTY ownership remains in
+  `apps/backend/src/coder/openclaude/console/consoleSession.ts`.
+- Graph workspace: `client/src/components/knowledge/KnowledgeGraphFramework.tsx` selects the
+  ThinkGraph, KnowGraph, and CodeGraph surfaces. The graph authorities remain separate.
+- UI shell and polish: `client/src/features/agentbuilder/core/AgentBuilderWorkspace.tsx` owns the
+  rail/chat/splitter/canvas/companion/overlay layout;
+  `useAgentBuilderWorkspaceLayout.ts` owns resize behavior; `AgentBuilderRail.tsx` and
+  `CompanionSurfaceHost.tsx` own their actual visual regions.
+- Backend routes: `apps/backend/src/routes/index.ts` mounts the supported route families.
+  `projects.routes.ts` and `decks.routes.ts` own project/deck transport; `coder.routes.ts` owns
+  Harness, Coder, console, card-control, and MCP-bridge transport; `thinkgraph.routes.ts`,
+  `knowgraph.routes.ts`, and `codegraph.routes.ts` expose their respective authorities;
+  `unified.routes.ts` reads combined bounded context; `worldsignal.routes.ts` owns the retained
+  specialist bridge; `auth.routes.ts` and `health.routes.ts` own access and liveness.
+
 ## Adding a card
 
 1. Decide whether it is a real runnable agent, a controller, or a UI/data card. Do not create a card

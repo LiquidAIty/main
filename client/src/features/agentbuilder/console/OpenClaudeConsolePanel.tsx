@@ -21,7 +21,7 @@ import { CODER_DISPLAY_NAMES, redactCoderBranding } from './coderConsoleNames';
 
 type ConsolePanelStatus = 'disconnected' | 'idle' | 'starting' | 'running' | 'failed' | 'complete';
 
-export type OpenClaudeConsolePanelProps = {
+type OpenClaudeConsolePanelProps = {
   open: boolean;
   targetRoot: string;
   projectId?: string;

@@ -8,14 +8,14 @@
  */
 import type { GraphObjectRef } from '../../../components/knowledge/GraphObjectContext';
 
-export type NativeSessionEvent = {
+type NativeSessionEvent = {
   kind: 'session' | 'text' | 'tool_start' | 'tool_result' | 'permission' | 'done' | 'error' | 'end' | string;
   [key: string]: unknown;
 };
 
 const BASE = '/api/coder/openclaude/session';
 
-export type SessionStreamFailure = {
+type SessionStreamFailure = {
   code: string;
   message: string;
   correlationId?: string;
@@ -42,11 +42,11 @@ export class SessionStreamError extends Error {
 /** Which Harness surface the turn runs in. Chat mode exposes only the
  * ThinkGraph doorway; canvas (Agent Builder / Edit) mode exposes every eligible
  * saved card as a direct Single Assist doorway. Explicit — never inferred. */
-export type HarnessMode = 'chat' | 'canvas';
+type HarnessMode = 'chat' | 'canvas';
 
 /** Optional, UI-neutral ThinkGraph focus hints. The backend always mints the
  * project/conversation context for Hermes; no graph selection is required. */
-export type InvestigationContextInput = {
+type InvestigationContextInput = {
   focusNodeIds?: string[];
   requestedOutcome?: string;
 };

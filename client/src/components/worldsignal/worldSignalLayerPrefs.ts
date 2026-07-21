@@ -8,7 +8,7 @@
  * replace.
  */
 
-export type WorldSignalLayerPrefs = {
+type WorldSignalLayerPrefs = {
   profileVersion: number;
   enabledLayerIds: string[];
 };

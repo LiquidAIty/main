@@ -1,4 +1,4 @@
-export type GuardedRequestOptions<T> = {
+type GuardedRequestOptions<T> = {
   key: string;
   method?: string;
   ttlMs?: number;

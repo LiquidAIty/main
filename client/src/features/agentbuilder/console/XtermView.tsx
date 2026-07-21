@@ -8,7 +8,7 @@ import type { ConsoleOutputChunk } from './openClaudeConsoleClient';
  * environments. The parent also keeps a plain-text transcript mirror.
  */
 
-export type XtermViewProps = {
+type XtermViewProps = {
   chunks: ConsoleOutputChunk[];
   interactive: boolean;
   onInput?: (data: string) => void;

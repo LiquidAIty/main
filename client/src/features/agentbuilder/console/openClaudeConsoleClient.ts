@@ -8,9 +8,9 @@
 
 export type ConsoleMode = 'interactive' | 'print' | 'task' | 'shell';
 
-export type ConsoleSessionState = 'starting' | 'running' | 'exited' | 'failed';
+type ConsoleSessionState = 'starting' | 'running' | 'exited' | 'failed';
 
-export type ConsoleTransportMode = 'pty' | 'pipe';
+type ConsoleTransportMode = 'pty' | 'pipe';
 
 export type ConsoleSessionInfo = {
   id: string;
@@ -39,7 +39,7 @@ export type ConsoleOutputChunk = {
   at: string;
 };
 
-export type StartSessionResult =
+type StartSessionResult =
   | { ok: true; session: ConsoleSessionInfo }
   | { ok: false; error: string; missing: string[] };
 

@@ -222,7 +222,7 @@ export function toFlowNodes(
   });
 }
 
-export type DeckEdgeVisualState = {
+type DeckEdgeVisualState = {
   isLoopEdge: boolean;
   isReturnEdge: boolean;
   offset: number;
@@ -476,7 +476,8 @@ export function mergeFlowEdgesIntoDeck(nextEdges: Edge[], prevEdges: DeckEdge[])
         normalizeDeckEdgeMetadata((nextEdge.data as FlowEdgeData | undefined)?.metadata) ??
         edge.metadata ??
         null;
-      const { metadata: _ignoredMetadata, ...edgeWithoutMetadata } = edge;
+      const edgeWithoutMetadata = { ...edge };
+      delete edgeWithoutMetadata.metadata;
       return {
         ...edgeWithoutMetadata,
         source: nextEdge.source,

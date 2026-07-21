@@ -14,16 +14,16 @@ import type {
 } from '../../types/agentgraph';
 import { normalizeDeckEdgeType } from '../../features/agentbuilder/deck/deckPrimitives';
 
-export type DeckValidationIssueLevel = 'error' | 'warning';
+type DeckValidationIssueLevel = 'error' | 'warning';
 
-export type DeckValidationIssueCode =
+type DeckValidationIssueCode =
   | 'missing_card_id'
   | 'duplicate_card_id'
   | 'invalid_edge_reference'
   | 'duplicate_edge'
   | 'orphan_card';
 
-export type DeckValidationIssue = {
+type DeckValidationIssue = {
   level: DeckValidationIssueLevel;
   code: DeckValidationIssueCode;
   message: string;
@@ -31,7 +31,7 @@ export type DeckValidationIssue = {
   edgeId?: string;
 };
 
-export type DeckValidationResult = {
+type DeckValidationResult = {
   ok: boolean;
   errors: DeckValidationIssue[];
   warnings: DeckValidationIssue[];

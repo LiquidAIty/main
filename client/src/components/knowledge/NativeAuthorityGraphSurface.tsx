@@ -9,7 +9,7 @@ import { AskMainAction, type GraphObjectRef } from './GraphObjectContext';
 import './nativeAuthorityGraphSurface.css';
 
 // The server-owned graph projection contract rendered by the native surfaces.
-export type GraphProjectionNode = {
+type GraphProjectionNode = {
   id: string;
   canonicalId?: string;
   label: string;
@@ -48,7 +48,7 @@ export type GraphProjectionNode = {
   retrievalReason?: string;
 };
 
-export type GraphProjectionEdge = {
+type GraphProjectionEdge = {
   id: string;
   source: string;
   target: string;
