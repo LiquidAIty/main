@@ -582,23 +582,22 @@ export const INITIAL_DECK: DeckDocument = {
   //   flow             ORANGE  source parent → target native subagent
   //   magentic_option  BLUE    side worker slot on the Mag One bus
   //   magentic_control BLUE    dedicated top control input (submit final prompt)
-  //   hermes_observe   GREEN   Main Chat → Hermes observation authority
+  //   hermes_observe   GREEN   observation authority: any card → Hermes steward
   edges: [
-    { id: 'edge_main_chat_hermes', source: 'card_main_chat', sourceHandle: 'observe-out', target: 'card_hermes_steward', targetHandle: 'observe-in', edgeType: 'hermes_observe' },
-    { id: 'edge_main_chat_coder', source: 'card_main_chat', sourceHandle: 'call-out', target: 'card_local_coder', targetHandle: 'call-in', edgeType: 'flow' },
-    { id: 'edge_hermes_search', source: 'card_hermes_steward', sourceHandle: 'call-out', target: 'card_research_agent', targetHandle: 'call-in', edgeType: 'flow' },
-    { id: 'edge_hermes_worldsignals', source: 'card_hermes_steward', sourceHandle: 'call-out', target: 'card_worldsignals_agent', targetHandle: 'call-in', edgeType: 'flow' },
+    { id: 'edge_main_chat_hermes', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'hermes_observe' },
+    { id: 'edge_main_chat_coder', source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' },
+    { id: 'edge_hermes_search', source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' },
+    { id: 'edge_hermes_worldsignals', source: 'card_hermes_steward', target: 'card_worldsignals_agent', edgeType: 'flow' },
     {
       id: 'edge_main_chat_magentic_control',
       source: 'card_main_chat',
-      sourceHandle: 'magone-control-out',
       target: 'card_magentic',
-      targetHandle: 'magone-control-in',
+      targetHandle: 'task-bus-top',
       edgeType: 'magentic_control',
     },
-    { id: 'edge_coder_magentic_bus', source: 'card_magentic', sourceHandle: 'magone-member-left-1', target: 'card_local_coder', targetHandle: 'magone-member-right', edgeType: 'magentic_option' },
-    { id: 'edge_search_magentic_bus', source: 'card_magentic', sourceHandle: 'magone-member-left-2', target: 'card_research_agent', targetHandle: 'magone-member-right', edgeType: 'magentic_option' },
-    { id: 'edge_worldsignals_magentic_bus', source: 'card_magentic', sourceHandle: 'magone-member-left-3', target: 'card_worldsignals_agent', targetHandle: 'magone-member-right', edgeType: 'magentic_option' },
+    { id: 'edge_coder_magentic_bus', source: 'card_local_coder', target: 'card_magentic', targetHandle: 'bus-in-1', edgeType: 'magentic_option' },
+    { id: 'edge_search_magentic_bus', source: 'card_research_agent', target: 'card_magentic', targetHandle: 'bus-in-2', edgeType: 'magentic_option' },
+    { id: 'edge_worldsignals_magentic_bus', source: 'card_worldsignals_agent', target: 'card_magentic', targetHandle: 'bus-in-3', edgeType: 'magentic_option' },
   ],
 };
 

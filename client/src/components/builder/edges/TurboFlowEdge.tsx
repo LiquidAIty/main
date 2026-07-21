@@ -1,4 +1,4 @@
-import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, type EdgeProps } from "@xyflow/react";
+import { BaseEdge, getSmoothStepPath, type EdgeProps } from "@xyflow/react";
 
 import type { DeckEdgeType } from "../../../types/agentgraph";
 import { GRAPH_THEME } from "../../graph/graphVisualTokens";
@@ -107,51 +107,19 @@ export default function TurboFlowEdge(props: EdgeProps) {
     : isActive
       ? Math.max(0.92, Math.min(1, opacity))
       : Math.max(0.88, Math.min(1, opacity));
-  const relationshipLabel = isMagenticWorker
-    ? "Mag One team"
-    : isMagenticControl
-      ? "Control"
-      : edgeData.edgeType === "hermes_observe"
-        ? "Observes"
-        : isInvalid
-          ? "Invalid"
-          : "Calls";
-  const labelX = (sourceX + targetX) / 2;
-  const labelY = (sourceY + targetY) / 2;
 
   return (
-    <>
-      <BaseEdge
-        path={edgePath}
-        markerEnd={isMagenticWorker ? undefined : markerEnd}
-        style={{
-          stroke,
-          strokeWidth,
-          opacity: edgeOpacity,
-          strokeLinecap: "round",
-          strokeLinejoin: "round",
-          strokeDasharray: isInvalid ? "3 5" : isMagenticControl ? "7 4" : undefined,
-        }}
-      />
-      <EdgeLabelRenderer>
-        <div
-          style={{
-            position: "absolute",
-            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-            pointerEvents: "none",
-            borderRadius: 999,
-            padding: "2px 6px",
-            background: "rgba(8, 11, 14, 0.88)",
-            border: `1px solid ${stroke}`,
-            color: GRAPH_THEME.surface.text,
-            fontSize: 9,
-            lineHeight: 1.2,
-            opacity: edgeOpacity,
-          }}
-        >
-          {relationshipLabel}
-        </div>
-      </EdgeLabelRenderer>
-    </>
+    <BaseEdge
+      path={edgePath}
+      markerEnd={markerEnd}
+      style={{
+        stroke,
+        strokeWidth,
+        opacity: edgeOpacity,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        strokeDasharray: isInvalid ? "3 5" : isMagenticControl ? "7 4" : undefined,
+      }}
+    />
   );
 }

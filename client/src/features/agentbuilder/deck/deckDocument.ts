@@ -243,10 +243,6 @@ export function formatBuilderStatusMessage(
     return 'Canvas data is unavailable for this selection.';
   if (text === 'deck_load_failed') return 'Canvas data could not be loaded.';
   if (text === 'deck_save_failed') return 'Could not save the current board.';
-  if (text === 'deck_conflict')
-    return 'Saving stopped because a newer board revision exists. Your visible work is preserved here; reload the saved board before making further persisted changes.';
-  if (text === 'deck_revision_required')
-    return 'Saving stopped because the saved board revision is missing. Reload the saved board before trying again.';
   if (text === 'card_run_failed') return 'Card run failed.';
   if (text === 'deck_run_failed') return 'Board run failed.';
   if (text === 'template_not_found')

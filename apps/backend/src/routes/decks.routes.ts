@@ -51,32 +51,16 @@ router.post('/:projectId/decks', async (req, res) => {
       req.params.projectId,
       requestedDeckId,
       document as DeckDocument,
-      {
-        expectedRevision: typeof req.body?.expectedRevision === 'string' ? req.body.expectedRevision : null,
-        integrity:
-          req.body?.integrity && typeof req.body.integrity === 'object'
-            ? {
-                reason:
-                  typeof req.body.integrity.reason === 'string'
-                    ? req.body.integrity.reason
-                    : null,
-                removedNodeIds: Array.isArray(req.body.integrity.removedNodeIds)
-                  ? req.body.integrity.removedNodeIds
-                  : null,
-              }
-            : null,
-      },
+      { expectedRevision: typeof req.body?.expectedRevision === 'string' ? req.body.expectedRevision : null },
     );
     return res.json({ ok: true, deck: result.deck, meta: result.meta });
   } catch (err: any) {
     const status =
       err?.message === 'project_not_found'
         ? 404
-        : err?.message === 'deck_conflict' || err?.message === 'deck_revision_required'
+        : err?.message === 'deck_conflict'
           ? 409
-          : err?.message === 'deck_relationship_invalid'
-            ? 409
-            : 500;
+          : 500;
     return res.status(status).json({ ok: false, error: err?.message || 'deck_create_failed' });
   }
 });
@@ -104,18 +88,6 @@ router.put('/:projectId/decks/:deckId', async (req, res) => {
       document as DeckDocument,
       {
         expectedRevision: typeof expectedRevision === 'string' ? expectedRevision : null,
-        integrity:
-          req.body?.integrity && typeof req.body.integrity === 'object'
-            ? {
-                reason:
-                  typeof req.body.integrity.reason === 'string'
-                    ? req.body.integrity.reason
-                    : null,
-                removedNodeIds: Array.isArray(req.body.integrity.removedNodeIds)
-                  ? req.body.integrity.removedNodeIds
-                  : null,
-              }
-            : null,
       },
     );
     return res.json({ ok: true, deck: result.deck, meta: result.meta });
@@ -123,13 +95,11 @@ router.put('/:projectId/decks/:deckId', async (req, res) => {
     const status =
       err?.message === 'project_not_found'
         ? 404
-        : err?.message === 'deck_conflict' || err?.message === 'deck_revision_required'
+        : err?.message === 'deck_conflict'
           ? 409
           : String(err?.message || '').startsWith('deck_integrity_')
             ? 409
-          : err?.message === 'deck_relationship_invalid'
-            ? 409
-            : 500;
+          : 500;
     return res.status(status).json({ ok: false, error: err?.message || 'deck_save_failed' });
   }
 });

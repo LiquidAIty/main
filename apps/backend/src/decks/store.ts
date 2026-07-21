@@ -127,15 +127,9 @@ function cleanOptionalBoolean(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null;
 }
 
-export type DeckSaveIntegrityIntent = {
-  reason?: string | null;
-  removedNodeIds?: string[] | null;
-};
-
-export function validateDeckIntegrityTransition(
+function validateDeckIntegrityTransition(
   currentDeck: DeckDocument | null,
   nextDeck: DeckDocument,
-  integrity?: DeckSaveIntegrityIntent | null,
 ) {
   if (!currentDeck || currentDeck.nodes.length === 0) return;
   if (nextDeck.nodes.length === 0) {
@@ -145,151 +139,8 @@ export function validateDeckIntegrityTransition(
   const removedNodeIds = currentDeck.nodes
     .map((node) => node.id)
     .filter((nodeId) => !nextNodeIds.has(nodeId));
-  if (removedNodeIds.length === 0) return;
-  if (removedNodeIds.length > 1) {
-    throw new Error('deck_integrity_multi_node_reduction_blocked');
-  }
-  const confirmedRemovedNodeIds = Array.isArray(integrity?.removedNodeIds)
-    ? integrity.removedNodeIds.map((nodeId) => String(nodeId || '').trim()).filter(Boolean)
-    : [];
-  if (
-    String(integrity?.reason || '').trim() !== 'canvas:delete-card-confirmed' ||
-    confirmedRemovedNodeIds.length !== 1 ||
-    confirmedRemovedNodeIds[0] !== removedNodeIds[0]
-  ) {
-    throw new Error('deck_integrity_unexplained_node_removal_blocked');
-  }
-}
-
-const SEMANTIC_HANDLE_IDS = {
-  callInput: 'call-in',
-  callOutput: 'call-out',
-  magOneControlInput: 'magone-control-in',
-  magOneControlOutput: 'magone-control-out',
-  magOneMemberLeft: 'magone-member-left',
-  magOneMemberRight: 'magone-member-right',
-  magOneMemberLeftPrefix: 'magone-member-left-',
-  magOneMemberRightPrefix: 'magone-member-right-',
-  hermesObserveInput: 'observe-in',
-  hermesObserveOutput: 'observe-out',
-} as const;
-
-function semanticEdgeFingerprint(edge: DeckEdge): string {
-  return [
-    edge.source,
-    String(edge.sourceHandle || ''),
-    edge.target,
-    String(edge.targetHandle || ''),
-    edge.edgeType,
-  ].join('::');
-}
-
-function cardBinding(card: AgentCardInstance): string {
-  return resolveRuntimeBinding(
-    (card.runtimeOptions as any)?.binding ?? card.runtimeBinding,
-    card.id,
-  ) || '';
-}
-
-function cardRuntimeType(card: AgentCardInstance): string {
-  return String(card.runtimeType || 'assistant_agent').trim().toLowerCase();
-}
-
-function isMainChatCard(card: AgentCardInstance): boolean {
-  return cardBinding(card) === 'main_chat';
-}
-
-function isHermesCard(card: AgentCardInstance): boolean {
-  return cardBinding(card) === 'hermes_steward';
-}
-
-function isMagOneCard(card: AgentCardInstance): boolean {
-  return cardRuntimeType(card) === 'magentic_one';
-}
-
-function isMagenticWorkerCard(card: AgentCardInstance): boolean {
-  if (String(card.parentGraphId || '').trim()) return false;
-  if (isMainChatCard(card) || isHermesCard(card) || isMagOneCard(card)) return false;
-  const runtimeType = cardRuntimeType(card);
-  return (
-    runtimeType === 'assistant_agent' ||
-    runtimeType === 'local_coder' ||
-    runtimeType === 'graph_flow'
-  );
-}
-
-function isMembershipSourceHandle(value: unknown): boolean {
-  const handle = String(value || '').trim();
-  return (
-    handle.startsWith(SEMANTIC_HANDLE_IDS.magOneMemberLeftPrefix) ||
-    handle.startsWith(SEMANTIC_HANDLE_IDS.magOneMemberRightPrefix)
-  );
-}
-
-function isMembershipTargetHandle(value: unknown): boolean {
-  const handle = String(value || '').trim();
-  return (
-    handle === SEMANTIC_HANDLE_IDS.magOneMemberLeft ||
-    handle === SEMANTIC_HANDLE_IDS.magOneMemberRight
-  );
-}
-
-function isValidSemanticEdge(
-  edge: DeckEdge,
-  nodeMap: Map<string, AgentCardInstance>,
-): boolean {
-  const source = nodeMap.get(edge.source);
-  const target = nodeMap.get(edge.target);
-  if (!source || !target || source.id === target.id) return false;
-  if (edge.edgeType === 'magentic_control') {
-    return (
-      isMainChatCard(source) &&
-      isMagOneCard(target) &&
-      edge.sourceHandle === SEMANTIC_HANDLE_IDS.magOneControlOutput &&
-      edge.targetHandle === SEMANTIC_HANDLE_IDS.magOneControlInput
-    );
-  }
-  if (edge.edgeType === 'magentic_option') {
-    return (
-      isMagOneCard(source) &&
-      isMagenticWorkerCard(target) &&
-      isMembershipSourceHandle(edge.sourceHandle) &&
-      isMembershipTargetHandle(edge.targetHandle)
-    );
-  }
-  if (edge.edgeType === 'hermes_observe') {
-    return (
-      isMainChatCard(source) &&
-      isHermesCard(target) &&
-      edge.sourceHandle === SEMANTIC_HANDLE_IDS.hermesObserveOutput &&
-      edge.targetHandle === SEMANTIC_HANDLE_IDS.hermesObserveInput
-    );
-  }
-  if (edge.edgeType === 'flow') {
-    return (
-      !isMagOneCard(source) &&
-      !isMagOneCard(target) &&
-      edge.sourceHandle === SEMANTIC_HANDLE_IDS.callOutput &&
-      edge.targetHandle === SEMANTIC_HANDLE_IDS.callInput
-    );
-  }
-  return false;
-}
-
-export function validateDeckRelationshipTransition(
-  currentDeck: DeckDocument | null,
-  nextDeck: DeckDocument,
-): void {
-  const currentEdges = new Map(
-    (currentDeck?.edges || []).map((edge) => [edge.id, semanticEdgeFingerprint(edge)] as const),
-  );
-  const nodeMap = new Map(nextDeck.nodes.map((node) => [node.id, node] as const));
-  for (const edge of nextDeck.edges) {
-    if (currentEdges.get(edge.id) === semanticEdgeFingerprint(edge)) continue;
-    if (!isValidSemanticEdge(edge, nodeMap)) {
-      throw new Error('deck_relationship_invalid');
-    }
-  }
+  if (removedNodeIds.length <= 1) return;
+  throw new Error('deck_integrity_multi_node_reduction_blocked');
 }
 
 function normalizeDeckEdgeMetadata(value: unknown): DeckEdgeMetadata | null {
@@ -741,7 +592,6 @@ export async function saveDeckDocument(
   document: DeckDocument,
   options?: {
     expectedRevision?: string | null;
-    integrity?: DeckSaveIntegrityIntent | null;
   },
 ): Promise<{
   deck: DeckDocument;
@@ -760,14 +610,10 @@ export async function saveDeckDocument(
     const currentDeckMeta = currentDeck
       ? blob.meta.decks[deckId] || normalizeRevisionMeta(null, currentDeck)
       : null;
-    if (currentDeck && !expectedRevision) {
-      throw new Error('deck_revision_required');
-    }
-    if (currentDeck && currentDeckMeta?.revision !== expectedRevision) {
+    if (expectedRevision && currentDeckMeta?.revision !== expectedRevision) {
       throw new Error('deck_conflict');
     }
-    validateDeckIntegrityTransition(currentDeck, nextDeck, options?.integrity);
-    validateDeckRelationshipTransition(currentDeck, nextDeck);
+    validateDeckIntegrityTransition(currentDeck, nextDeck);
     return {
       ...blob,
       decks: {

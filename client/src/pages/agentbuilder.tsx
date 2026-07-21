@@ -316,8 +316,6 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckState,
     deckRevision,
     setDeckRevision,
-    deckConflictRevision,
-    setDeckConflictRevision,
     latestDeckRun,
     setLatestDeckRun,
     setLatestCardRun,
@@ -343,7 +341,6 @@ export default function AgentBuilder(): React.ReactElement {
     currentDeckRef.current = deck;
   }, [deck]);
   const [hermesConsoleOpen, setHermesConsoleOpen] = useState(false);
-  const [deckReloadNonce, setDeckReloadNonce] = useState(0);
   const localCoderConsoleConfig = useMemo(
     () => resolveLocalCoderControllerConsoleConfig(deck),
     [deck],
@@ -536,16 +533,6 @@ export default function AgentBuilder(): React.ReactElement {
           message: `Blocked saving a partial board because ${removedNodeIds.length} nodes disappeared during ${reason}.`,
         };
       }
-      if (
-        removedNodeIds.length === 1 &&
-        reason !== 'canvas:delete-card-confirmed'
-      ) {
-        return {
-          ok: false,
-          removedNodeIds,
-          message: `Blocked saving because card ${removedNodeIds[0]} disappeared without a confirmed delete action.`,
-        };
-      }
       return {
         ok: true,
         removedNodeIds,
@@ -603,8 +590,6 @@ export default function AgentBuilder(): React.ReactElement {
     setMessages,
     setStateLoaded,
     setDeckStatusMessage,
-    reloadNonce: deckReloadNonce,
-    setDeckConflictRevision,
   });
   useAgentBuilderProjectReset({
     canvasProjectId,
@@ -635,8 +620,6 @@ export default function AgentBuilder(): React.ReactElement {
     isAbortLikeError,
     setDeckRevision,
     setDeckStatusMessage,
-    deckConflictRevision,
-    setDeckConflictRevision,
   });
 
   const showDeckBuilder = workspaceView === 'canvas';
@@ -1284,14 +1267,6 @@ export default function AgentBuilder(): React.ReactElement {
         onDeleteSelectedEdge={handleDeleteSelectedEdge}
         inspectMode={false}
         focusZone={canvasFocusZone}
-        autosaveConflictMessage={
-          deckConflictRevision
-            ? 'Saving is paused because a newer saved board exists. Your current visible work has not been overwritten.'
-            : null
-        }
-        onReloadSavedDeck={() => {
-          setDeckReloadNonce((current) => current + 1);
-        }}
       />
     );
   };

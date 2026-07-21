@@ -93,18 +93,18 @@ describe('agentbuilder authoring flow', () => {
         edgeType: 'magentic_control',
       },
       {
-        source: 'card_magentic',
-        target: 'card_local_coder',
+        source: 'card_local_coder',
+        target: 'card_magentic',
         edgeType: 'magentic_option',
       },
       {
-        source: 'card_magentic',
-        target: 'card_research_agent',
+        source: 'card_research_agent',
+        target: 'card_magentic',
         edgeType: 'magentic_option',
       },
       {
-        source: 'card_magentic',
-        target: 'card_worldsignals_agent',
+        source: 'card_worldsignals_agent',
+        target: 'card_magentic',
         edgeType: 'magentic_option',
       },
     ]);

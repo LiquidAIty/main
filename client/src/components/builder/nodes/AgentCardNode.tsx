@@ -2,7 +2,6 @@ import { Handle, Position } from '@xyflow/react';
 import type { AgentCardInstance } from '../../../types/agentgraph';
 import { GRAPH_THEME, graphGlassCardStyle } from '../../graph/graphVisualTokens';
 import { GRAPH_TEXT } from '../../graph/graphWorkspaceContract';
-import { SEMANTIC_HANDLE_IDS } from '../deckValidation';
 
 type AgentCardNodeData = AgentCardInstance & {
   assistStructureMode?: 'single' | 'seq' | 'branch' | 'merge' | 'branch_merge' | null;
@@ -23,10 +22,8 @@ export default function AgentCardNode({
 }) {
   const runtimeType = String(data?.runtimeType || 'assistant_agent').trim();
   const isGraph = runtimeType === 'graph_flow';
-  const runtimeBinding = String(data?.runtimeBinding || '').trim();
-  const isMainChat = runtimeBinding === 'main_chat';
-  const isHermes = runtimeBinding === 'hermes_steward';
-  const canJoinMagOne = !String(data?.parentGraphId || '').trim() && !isMainChat && !isHermes;
+  const canReceiveConnection = true;
+  const canStartConnection = true;
   const shellActive = Boolean(selected || data?.isInspecting || data?.isRuntimeActive);
   const name = String(data?.title || '').trim() || 'Agent';
   const subtext = String(data?.subtitle || '').replace(/\s+/g, ' ').trim() || 'Operational agent';
@@ -35,6 +32,7 @@ export default function AgentCardNode({
   const tools = Array.isArray(data?.runtimeOptions?.tools)
     ? data.runtimeOptions.tools.map((tool) => String(tool).trim()).filter(Boolean)
     : [];
+  const runtimeBinding = String(data?.runtimeBinding || '').trim();
   const roleBadge = runtimeBinding === 'main_chat'
     ? 'Main'
     : runtimeBinding === 'hermes_steward'
@@ -73,116 +71,49 @@ export default function AgentCardNode({
       }
     >
       <Handle
-        id={SEMANTIC_HANDLE_IDS.callInput}
         type="target"
         position={Position.Left}
-        aria-label={`${name} direct call input`}
-        title="Direct call input"
-        isConnectable
-        isConnectableStart={false}
-        isConnectableEnd
+        aria-label={`${name} input`}
+        isConnectable={canReceiveConnection}
         style={{
           width: 12,
           height: 12,
           left: -7,
-          top: '72%',
           borderRadius: '999px',
           border: `1.5px solid ${GRAPH_THEME.accent.primaryBorder}`,
-          background: `radial-gradient(circle at 32% 28%, ${GRAPH_THEME.accent.primarySoft}, rgba(12,16,20,0.96))`,
-          boxShadow: `inset 0 0 0 1px ${GRAPH_THEME.accent.primarySoft}`,
+          background: canReceiveConnection
+            ? `radial-gradient(circle at 32% 28%, ${GRAPH_THEME.accent.primarySoft}, rgba(12,16,20,0.96))`
+            : '#111315',
+          boxShadow: canReceiveConnection ? `inset 0 0 0 1px ${GRAPH_THEME.accent.primarySoft}` : undefined,
+          opacity: canReceiveConnection ? 1 : 0.4,
         }}
       />
       <Handle
-        id={SEMANTIC_HANDLE_IDS.callOutput}
         type="source"
         position={Position.Right}
-        aria-label={`${name} direct call output`}
-        title="Direct call output"
-        isConnectable
-        isConnectableStart
-        isConnectableEnd={false}
+        aria-label={`${name} output`}
+        isConnectable={canStartConnection}
         style={{
           width: 12,
           height: 12,
           right: -7,
-          top: '72%',
           borderRadius: '999px',
           border: shellActive
             ? `1.5px solid ${GRAPH_THEME.accent.solar}`
             : `1.5px solid ${GRAPH_THEME.accent.primary}`,
-          background: shellActive
-            ? `radial-gradient(circle at 30% 26%, ${GRAPH_THEME.accent.solarSoft}, rgba(22,18,16,0.96))`
-            : `radial-gradient(circle at 32% 28%, ${GRAPH_THEME.accent.primarySoft}, rgba(12,18,22,0.96))`,
-          boxShadow: shellActive
-            ? `inset 0 0 0 1px rgba(255,200,160,0.12), 0 0 0 1px ${GRAPH_THEME.accent.solarSoft}`
-            : `inset 0 0 0 1px ${GRAPH_THEME.accent.primarySoft}`,
+          background: canStartConnection
+            ? shellActive
+              ? `radial-gradient(circle at 30% 26%, ${GRAPH_THEME.accent.solarSoft}, rgba(22,18,16,0.96))`
+              : `radial-gradient(circle at 32% 28%, ${GRAPH_THEME.accent.primarySoft}, rgba(12,18,22,0.96))`
+            : '#111315',
+          boxShadow: canStartConnection
+            ? shellActive
+              ? `inset 0 0 0 1px rgba(255,200,160,0.12), 0 0 0 1px ${GRAPH_THEME.accent.solarSoft}`
+              : `inset 0 0 0 1px ${GRAPH_THEME.accent.primarySoft}`
+            : undefined,
+          opacity: canStartConnection ? 1 : 0.4,
         }}
       />
-      {canJoinMagOne ? (
-        <>
-          <Handle
-            id={SEMANTIC_HANDLE_IDS.magOneMemberLeft}
-            type="target"
-            position={Position.Left}
-            aria-label={`${name} Mag One membership input from the left`}
-            title="Mag One team membership"
-            isConnectable
-            isConnectableStart={false}
-            isConnectableEnd
-            style={{ width: 9, height: 9, left: -5, top: '28%', background: '#22B8C7', border: '1px solid #9CF5F4' }}
-          />
-          <Handle
-            id={SEMANTIC_HANDLE_IDS.magOneMemberRight}
-            type="target"
-            position={Position.Right}
-            aria-label={`${name} Mag One membership input from the right`}
-            title="Mag One team membership"
-            isConnectable
-            isConnectableStart={false}
-            isConnectableEnd
-            style={{ width: 9, height: 9, right: -5, top: '28%', background: '#22B8C7', border: '1px solid #9CF5F4' }}
-          />
-        </>
-      ) : null}
-      {isMainChat ? (
-        <>
-          <Handle
-            id={SEMANTIC_HANDLE_IDS.magOneControlOutput}
-            type="source"
-            position={Position.Bottom}
-            aria-label="Main Chat Mag One control submission output"
-            title="Submit approved job to Mag One"
-            isConnectable
-            isConnectableStart
-            isConnectableEnd={false}
-            style={{ width: 14, height: 7, bottom: -4, left: '34%', background: '#52DCEB', border: '1px solid #BFFBFF' }}
-          />
-          <Handle
-            id={SEMANTIC_HANDLE_IDS.hermesObserveOutput}
-            type="source"
-            position={Position.Top}
-            aria-label="Main Chat Hermes observation output"
-            title="Allow Hermes to observe Main Chat"
-            isConnectable
-            isConnectableStart
-            isConnectableEnd={false}
-            style={{ width: 12, height: 7, top: -4, left: '66%', background: '#77D6A6', border: '1px solid #C8F5DB' }}
-          />
-        </>
-      ) : null}
-      {isHermes ? (
-        <Handle
-          id={SEMANTIC_HANDLE_IDS.hermesObserveInput}
-          type="target"
-          position={Position.Top}
-          aria-label="Hermes observation input from Main Chat"
-          title="Observe Main Chat"
-          isConnectable
-          isConnectableStart={false}
-          isConnectableEnd
-          style={{ width: 12, height: 7, top: -4, left: '50%', background: '#77D6A6', border: '1px solid #C8F5DB' }}
-        />
-      ) : null}
 
       <div
         style={{

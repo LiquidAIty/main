@@ -36,35 +36,7 @@ type UseAgentBuilderAutosaveArgs = {
   isAbortLikeError: (error: unknown) => boolean;
   setDeckRevision: Dispatch<SetStateAction<string | null>>;
   setDeckStatusMessage: Dispatch<SetStateAction<string | null>>;
-  deckConflictRevision: string | null;
-  setDeckConflictRevision: Dispatch<SetStateAction<string | null>>;
 };
-
-export function isDeckAutosaveBlocked(deckConflictRevision: string | null): boolean {
-  return deckConflictRevision !== null;
-}
-
-export function resolveDeckAutosaveFailure(
-  errorMessage: string,
-  revisionBefore: string | null,
-): {
-  conflictRevision: string | null;
-  revisionAfter: string | null;
-  autosaveBlocked: boolean;
-} {
-  if (errorMessage !== 'deck_conflict' && errorMessage !== 'deck_revision_required') {
-    return {
-      conflictRevision: null,
-      revisionAfter: revisionBefore,
-      autosaveBlocked: false,
-    };
-  }
-  return {
-    conflictRevision: revisionBefore || 'missing-revision',
-    revisionAfter: revisionBefore,
-    autosaveBlocked: true,
-  };
-}
 
 export default function useAgentBuilderAutosave({
   builderDev,
@@ -86,12 +58,9 @@ export default function useAgentBuilderAutosave({
   isAbortLikeError,
   setDeckRevision,
   setDeckStatusMessage,
-  deckConflictRevision,
-  setDeckConflictRevision,
 }: UseAgentBuilderAutosaveArgs) {
   useEffect(() => {
     if (!canvasProjectId || !stateLoaded || deckLoadBusy || deckLoadError) return;
-    if (isDeckAutosaveBlocked(deckConflictRevision)) return;
     const boardFingerprint = JSON.stringify({
       nodes: deck.nodes,
       edges: deck.edges,
@@ -147,9 +116,8 @@ export default function useAgentBuilderAutosave({
           const data = await safeJson(response);
           if (!response.ok) {
             const errorMessage = String(data?.error || 'deck_save_failed').trim();
-            const failure = resolveDeckAutosaveFailure(errorMessage, revisionBefore);
-            if (failure.autosaveBlocked) {
-              setDeckConflictRevision(failure.conflictRevision);
+            if (errorMessage === 'deck_conflict') {
+              setDeckRevision(null);
             }
             setDeckStatusMessage(
               formatBuilderStatusMessage(
@@ -164,7 +132,7 @@ export default function useAgentBuilderAutosave({
               nodeCount: deck.nodes.length,
               edgeCount: deck.edges.length,
               revisionBefore,
-              revisionAfter: failure.revisionAfter,
+              revisionAfter: null,
               ok: false,
               error: errorMessage,
             });
@@ -231,7 +199,6 @@ export default function useAgentBuilderAutosave({
     builderDev,
     canvasProjectId,
     deck,
-    deckConflictRevision,
     deckLoadError,
     deckLoadBusy,
     deckRevision,
@@ -244,7 +211,6 @@ export default function useAgentBuilderAutosave({
     layoutAutosaveAbortRef,
     projectsApi,
     setDeckRevision,
-    setDeckConflictRevision,
     setDeckStatusMessage,
     snapshotDeckBoard,
     stateLoaded,

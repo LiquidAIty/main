@@ -53,20 +53,8 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(INITIAL_DECK.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'hermes_observe' }),
       expect.objectContaining({ source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' }),
-      expect.objectContaining({
-        source: 'card_magentic',
-        sourceHandle: 'magone-member-left-2',
-        target: 'card_research_agent',
-        targetHandle: 'magone-member-right',
-        edgeType: 'magentic_option',
-      }),
-      expect.objectContaining({
-        source: 'card_magentic',
-        sourceHandle: 'magone-member-left-1',
-        target: 'card_local_coder',
-        targetHandle: 'magone-member-right',
-        edgeType: 'magentic_option',
-      }),
+      expect.objectContaining({ source: 'card_research_agent', target: 'card_magentic', edgeType: 'magentic_option' }),
+      expect.objectContaining({ source: 'card_local_coder', target: 'card_magentic', edgeType: 'magentic_option' }),
     ]));
   });
 

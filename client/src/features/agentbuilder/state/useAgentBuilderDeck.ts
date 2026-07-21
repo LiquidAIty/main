@@ -18,7 +18,6 @@ export default function useAgentBuilderDeck({
 }: UseAgentBuilderDeckArgs) {
   const [deck, setDeckState] = useState<DeckDocument>(() => createInitialDeck());
   const [deckRevision, setDeckRevision] = useState<string | null>(null);
-  const [deckConflictRevision, setDeckConflictRevision] = useState<string | null>(null);
   const [latestDeckRun, setLatestDeckRun] = useState<DeckRun | null>(null);
   const [latestCardRun, setLatestCardRun] = useState<LatestCardRunRecord | null>(null);
   const [liveDeckEvents, setLiveDeckEvents] = useState<DeckRuntimeEvent[]>([]);
@@ -34,8 +33,6 @@ export default function useAgentBuilderDeck({
     setDeckState,
     deckRevision,
     setDeckRevision,
-    deckConflictRevision,
-    setDeckConflictRevision,
     latestDeckRun,
     setLatestDeckRun,
     latestCardRun,
