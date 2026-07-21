@@ -159,16 +159,14 @@ describe('OpenClaudeConsolePanel', () => {
     expect(host.querySelector('[data-testid="openclaude-xterm"]')).not.toBeNull();
   });
 
-  it('titles the panel "Code Console" with no internal branding in chrome', async () => {
+  it('titles the real terminal "OpenClaude Code"', async () => {
     const host = await render(
       <OpenClaudeConsolePanel open targetRoot="C:/Projects/main" client={fakeClient()} />,
     );
-    expect(host.textContent).toContain('Code Console');
-    // Idle chrome (no raw terminal transcript) must be free of internal names.
-    expect(/OpenClaude|LocalCoder|Local Coder|Claude/i.test(host.textContent || '')).toBe(false);
+    expect(host.textContent).toContain('OpenClaude Code');
   });
 
-  it('keeps the running-state chrome free of internal branding', async () => {
+  it('keeps LocalCoder branding out of the human OpenClaude terminal chrome', async () => {
     const host = await render(
       <OpenClaudeConsolePanel
         open
@@ -178,7 +176,7 @@ describe('OpenClaudeConsolePanel', () => {
         initialTranscript={[{ seq: 1, stream: 'stdout', data: 'compiled ok', at: 'x' }]}
       />,
     );
-    expect(/OpenClaude|LocalCoder|Local Coder|Claude/i.test(host.textContent || '')).toBe(false);
+    expect(/LocalCoder|Local Coder/i.test(host.textContent || '')).toBe(false);
   });
 
   it('preserves raw CLI branding in the transcript by default (developer mode)', async () => {

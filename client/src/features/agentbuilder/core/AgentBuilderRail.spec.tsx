@@ -43,7 +43,7 @@ function render(node: React.ReactElement) {
   return container;
 }
 
-describe('AgentBuilderRail OpenClaude console icon', () => {
+describe('AgentBuilderRail Hermes terminal icon', () => {
   it('shows the graph launcher with the stable rail treatment', () => {
     const host = render(
       <AgentBuilderRail {...baseProps} visibleRailItems={baseVisibility} />,
@@ -58,37 +58,34 @@ describe('AgentBuilderRail OpenClaude console icon', () => {
     const host = render(
       <AgentBuilderRail
         {...baseProps}
-        visibleRailItems={{ ...baseVisibility, showOpenClaudeConsole: true }}
+        visibleRailItems={{ ...baseVisibility, showHermesTerminal: true }}
       />,
     );
-    expect(host.querySelector('[data-testid="rail-openclaude-console-button"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="rail-hermes-terminal-button"]')).not.toBeNull();
   });
 
-  it('labels the console icon "Code Console" with no internal branding', () => {
-    // Product language: the rail entry names the surface it opens.
+  it('labels the separate console as the Hermes Terminal', () => {
     const host = render(
       <AgentBuilderRail
         {...baseProps}
-        visibleRailItems={{ ...baseVisibility, showOpenClaudeConsole: true }}
+        visibleRailItems={{ ...baseVisibility, showHermesTerminal: true }}
       />,
     );
     const button = host.querySelector(
-      '[data-testid="rail-openclaude-console-button"]',
+      '[data-testid="rail-hermes-terminal-button"]',
     ) as HTMLButtonElement;
-    expect(button.getAttribute('aria-label')).toBe('Code Console');
-    expect(button.getAttribute('title')).toBe('Code Console');
-    // Visible chrome is clean. (Internal data-testids may still carry old names.)
-    expect(/OpenClaude|LocalCoder|Local Coder|Claude/i.test(host.textContent || '')).toBe(false);
+    expect(button.getAttribute('aria-label')).toBe('Hermes Terminal');
+    expect(button.getAttribute('title')).toBe('Hermes Terminal');
   });
 
   it('hides the terminal icon when the console is not visible', () => {
     const host = render(
       <AgentBuilderRail
         {...baseProps}
-        visibleRailItems={{ ...baseVisibility, showOpenClaudeConsole: false }}
+        visibleRailItems={{ ...baseVisibility, showHermesTerminal: false }}
       />,
     );
-    expect(host.querySelector('[data-testid="rail-openclaude-console-button"]')).toBeNull();
+    expect(host.querySelector('[data-testid="rail-hermes-terminal-button"]')).toBeNull();
   });
 
   it('invokes the open handler when the terminal icon is clicked', () => {
@@ -96,12 +93,12 @@ describe('AgentBuilderRail OpenClaude console icon', () => {
     const host = render(
       <AgentBuilderRail
         {...baseProps}
-        visibleRailItems={{ ...baseVisibility, showOpenClaudeConsole: true }}
-        onOpenOpenClaudeConsole={onOpen}
+        visibleRailItems={{ ...baseVisibility, showHermesTerminal: true }}
+        onOpenHermesTerminal={onOpen}
       />,
     );
     const button = host.querySelector(
-      '[data-testid="rail-openclaude-console-button"]',
+      '[data-testid="rail-hermes-terminal-button"]',
     ) as HTMLButtonElement;
     act(() => {
       button.dispatchEvent(new MouseEvent('click', { bubbles: true }));

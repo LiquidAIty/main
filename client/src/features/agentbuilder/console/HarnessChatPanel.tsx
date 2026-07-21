@@ -1,83 +1,87 @@
-import { useCallback, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
-/**
- * The left panel: the Harness chat surface on top (the passed `chat`, i.e.
- * BuilderChat with inline work), and a near-invisible pull-tab at the bottom
- * that reveals the under-chat surface. That surface is the live native Hermes
- * child terminal — one surface, nothing else lives under the chat. The separate
- * Code Console remains the Local Coder terminal.
- *   - no UI name/label beyond what the Hermes feed renders itself
- *   - near-invisible until grabbed (a thin minimal handle)
- *   - Hermes child activity/prose only; Main's reply remains in chat
- */
-
-const HANDLE_HEIGHT = 9;
-const MIN_OPEN_HEIGHT = 120;
-// A contained window below chat — it must never grow tall enough to take
-// over. Capped to a modest fixed height (and never past ~42% of the panel).
-const MAX_OPEN_HEIGHT = 240;
+const HANDLE_HEIGHT = 12;
+const MIN_OPEN_HEIGHT = 160;
+const MIN_CHAT_HEIGHT = 180;
+const DEFAULT_OPEN_HEIGHT = 300;
 
 type HarnessChatPanelProps = {
   chat: ReactNode;
-  /** Main's native Hermes child stream — the ONE under-chat surface. */
-  hermes: ReactNode;
+  terminal: ReactNode;
 };
 
-export default function HarnessChatPanel({ chat, hermes }: HarnessChatPanelProps) {
+/** Main Chat with the persistent OpenClaude Code terminal docked beneath it. */
+export default function HarnessChatPanel({ chat, terminal }: HarnessChatPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [opened, setOpened] = useState(false);
-  const [height, setHeight] = useState(0);
   const dragRef = useRef(false);
   const movedRef = useRef(false);
+  const listenersRef = useRef<{
+    move: (event: MouseEvent) => void;
+    up: () => void;
+  } | null>(null);
+  const [height, setHeight] = useState(0);
+
+  const clampHeight = useCallback((next: number) => {
+    const total = containerRef.current?.getBoundingClientRect().height ?? 0;
+    const maximum = Math.max(MIN_OPEN_HEIGHT, total - MIN_CHAT_HEIGHT - HANDLE_HEIGHT);
+    if (next < MIN_OPEN_HEIGHT / 2) return 0;
+    return Math.min(maximum, Math.max(MIN_OPEN_HEIGHT, next));
+  }, []);
+
+  const removeDragListeners = useCallback(() => {
+    const listeners = listenersRef.current;
+    if (!listeners) return;
+    window.removeEventListener('mousemove', listeners.move);
+    window.removeEventListener('mouseup', listeners.up);
+    listenersRef.current = null;
+    dragRef.current = false;
+  }, []);
+
+  useEffect(() => removeDragListeners, [removeDragListeners]);
 
   const onDragStart = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
+    removeDragListeners();
     dragRef.current = true;
     movedRef.current = false;
-    const onMove = (move: MouseEvent) => {
+    const move = (nextEvent: MouseEvent) => {
       if (!dragRef.current || !containerRef.current) return;
       movedRef.current = true;
-      setOpened(true);
       const rect = containerRef.current.getBoundingClientRect();
-      const next = rect.bottom - move.clientY;
-      // Contained: a modest window, never tall enough to take over chat.
-      const max = Math.min(MAX_OPEN_HEIGHT, Math.max(MIN_OPEN_HEIGHT, Math.round(rect.height * 0.42)));
-      setHeight(next < MIN_OPEN_HEIGHT / 2 ? 0 : Math.min(max, Math.max(MIN_OPEN_HEIGHT, next)));
+      setHeight(clampHeight(rect.bottom - nextEvent.clientY));
     };
-    const onUp = () => {
-      dragRef.current = false;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  }, []);
+    const up = () => removeDragListeners();
+    listenersRef.current = { move, up };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }, [clampHeight, removeDragListeners]);
 
-  // Reveal is by PULLING the handle up (drag) — chat stays primary, Hermes
-  // is uncovered beneath it. A plain click only collapses an already-open
-  // panel; it never jumps open / takes over the chat.
   const onHandleClick = useCallback(() => {
-    if (movedRef.current) return;
-    setHeight((h) => (h > 0 ? 0 : h));
-  }, []);
+    if (movedRef.current) {
+      movedRef.current = false;
+      return;
+    }
+    setHeight((current) => (current > 0 ? 0 : clampHeight(DEFAULT_OPEN_HEIGHT)));
+  }, [clampHeight]);
 
+  const open = height > 0;
   return (
     <div
       ref={containerRef}
       data-testid="harness-chat-panel"
       style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}
     >
-      <div data-testid="harness-chat" style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      <div data-testid="harness-chat" style={{ flex: 1, minHeight: MIN_CHAT_HEIGHT, overflow: 'hidden' }}>
         {chat}
       </div>
 
-      {/* Near-invisible pull tab — a thin minimal grab handle, no label. */}
-      <div
-        data-testid="chat-hermes-handle"
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label="Resize Hermes panel"
-        title=""
+      <button
+        type="button"
+        data-testid="chat-openclaude-handle"
+        aria-expanded={open}
+        aria-controls="chat-openclaude-region"
+        aria-label={open ? 'Collapse OpenClaude Code terminal' : 'Expand OpenClaude Code terminal'}
+        title={open ? 'Slide down OpenClaude Code' : 'Slide up OpenClaude Code'}
         onMouseDown={onDragStart}
         onClick={onHandleClick}
         style={{
@@ -87,51 +91,29 @@ export default function HarnessChatPanel({ chat, hermes }: HarnessChatPanelProps
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          opacity: height > 0 ? 0.5 : 0.18,
-          transition: 'opacity 120ms ease',
-        }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLDivElement).style.opacity = '0.6';
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLDivElement).style.opacity = height > 0 ? '0.5' : '0.18';
+          border: 0,
+          borderTop: '1px solid rgba(79,162,173,0.18)',
+          background: 'rgba(11,15,20,0.78)',
+          color: 'rgba(215,224,234,0.72)',
+          padding: 0,
         }}
       >
-        <div style={{ width: 28, height: 3, borderRadius: 2, background: 'currentColor' }} />
-      </div>
+        <span aria-hidden="true" style={{ width: 34, height: 3, borderRadius: 2, background: 'currentColor' }} />
+      </button>
 
-      {/* Hermes lives below chat: a contained, centered "window" using the
-          same dark look as agent replies, inset to match the chat sides.
-          Hidden until the handle is pulled up. */}
       <div
-        data-testid="chat-hermes-region"
+        id="chat-openclaude-region"
+        data-testid="chat-openclaude-region"
+        aria-hidden={!open}
         style={{
           flex: '0 0 auto',
-          height: opened ? height : 0,
+          height,
+          minHeight: 0,
           overflow: 'hidden',
-          padding: opened && height > 0 ? '0 16px 12px' : 0,
-          boxSizing: 'border-box',
+          visibility: open ? 'visible' : 'hidden',
         }}
       >
-        {opened ? (
-          <div
-            data-testid="chat-hermes-window"
-            style={{
-              height: '100%',
-              display: 'flex',
-              flexDirection: 'column',
-              borderRadius: 14,
-              overflow: 'hidden',
-              background:
-                'linear-gradient(180deg, rgba(28,30,34,0.55) 0%, rgba(22,24,28,0.72) 100%)',
-              border: '1px solid rgba(255,255,255,0.06)',
-              boxShadow:
-                'inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -1px 0 rgba(0,0,0,0.18), 0 4px 18px rgba(0,0,0,0.14)',
-            }}
-          >
-            {hermes}
-          </div>
-        ) : null}
+        {terminal}
       </div>
     </div>
   );

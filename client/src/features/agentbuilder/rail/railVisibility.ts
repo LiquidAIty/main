@@ -7,7 +7,6 @@ import type {
   DeckDocument,
   DeckEdge,
 } from '../../../types/agentgraph';
-import { shouldShowOpenClaudeConsoleRail } from '../console/consoleVisibility';
 import {
   normalizeDeckEdgeType,
   normalizeRuntimeBinding,
@@ -39,7 +38,7 @@ type ProgressiveRailVisibility = {
   showKnowledge: boolean;
   showWorldsignal: boolean;
   showTrading: boolean;
-  showOpenClaudeConsole: boolean;
+  showHermesTerminal: boolean;
 };
 
 function buildBusConnectedCardIds(
@@ -131,10 +130,9 @@ export function deriveVisibleRailItems({
     showTrading:
       workspaceView === 'trading' ||
       isBusConnectedCard(deck.nodes, deck.edges, isTradingAgentCard),
-    showOpenClaudeConsole: shouldShowOpenClaudeConsoleRail({
-      cards: deck.nodes,
-      edges: deck.edges,
-    }),
+    // Hermes owns a distinct human-facing terminal surface. Runtime discovery
+    // occurs when it starts; visibility is not coupled to LocalCoder or Mag One.
+    showHermesTerminal: true,
   };
 }
 

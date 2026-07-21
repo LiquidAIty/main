@@ -340,9 +340,13 @@ export default function AgentBuilder(): React.ReactElement {
   useEffect(() => {
     currentDeckRef.current = deck;
   }, [deck]);
-  const [openClaudeConsoleOpen, setOpenClaudeConsoleOpen] = useState(false);
+  const [hermesConsoleOpen, setHermesConsoleOpen] = useState(false);
   const localCoderConsoleConfig = useMemo(
     () => resolveLocalCoderControllerConsoleConfig(deck),
+    [deck],
+  );
+  const terminalRoot = useMemo(
+    () => resolveDeckWorkspaceRoot(deck, null) || DEFAULT_WORKSPACE_ROOT,
     [deck],
   );
   const visibleRailItems = useMemo(
@@ -440,7 +444,6 @@ export default function AgentBuilder(): React.ReactElement {
   }, []);
   const {
     handleNativeSend,
-    hermesTerminal,
     messages,
     nativeSessionBusy,
     setMessages,
@@ -1196,11 +1199,9 @@ export default function AgentBuilder(): React.ReactElement {
     compact = false,
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
-    // Normal chat is the primary interaction surface: BuilderChat speaking to the
-    // persistent Harness session, with compact real per-turn work shown inline
-    // beneath the active assistant message (HarnessWork). The primary (non-compact)
-    // surface keeps a near-invisible pull-tab that reveals the active native
-    // Hermes child stream beneath chat; the Code Console remains separate.
+    // Normal chat is the primary interaction surface. The existing persistent
+    // OpenClaude PTY stays mounted beneath it so collapse and workspace changes
+    // do not destroy the selected project's live terminal session.
     const chat = (
       <div style={{ height: '100%', minHeight: 0 }}>
         <BuilderChat
@@ -1224,7 +1225,17 @@ export default function AgentBuilder(): React.ReactElement {
         ) : (
           <HarnessChatPanel
             chat={chat}
-            hermes={<HermesConsole terminal={hermesTerminal} />}
+            terminal={
+              <OpenClaudeConsolePanel
+                open
+                placement="docked"
+                title="OpenClaude Code"
+                targetRoot={terminalRoot}
+                projectId={typeof activeProject === 'string' ? activeProject : undefined}
+                provider={localCoderConsoleConfig.provider}
+                model={localCoderConsoleConfig.model}
+              />
+            }
           />
         )}
       </div>
@@ -1341,8 +1352,8 @@ export default function AgentBuilder(): React.ReactElement {
       onShowKnowledgeWorkspace={showKnowledgeWorkspace}
       onShowTradingWorkspace={showTradingWorkspace}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
-      openClaudeConsoleActive={openClaudeConsoleOpen}
-      onOpenOpenClaudeConsole={() => setOpenClaudeConsoleOpen((prev) => !prev)}
+      hermesTerminalActive={hermesConsoleOpen}
+      onOpenHermesTerminal={() => setHermesConsoleOpen((prev) => !prev)}
     />
   );
 
@@ -1497,13 +1508,11 @@ export default function AgentBuilder(): React.ReactElement {
           drawer={
             <>
               {workspaceDrawer}
-              <OpenClaudeConsolePanel
-                open={openClaudeConsoleOpen}
-                targetRoot="C:/Projects/main"
+              <HermesConsole
+                open={hermesConsoleOpen}
+                targetRoot={terminalRoot}
                 projectId={typeof activeProject === 'string' ? activeProject : undefined}
-                provider={localCoderConsoleConfig.provider}
-                model={localCoderConsoleConfig.model}
-                onClose={() => setOpenClaudeConsoleOpen(false)}
+                onClose={() => setHermesConsoleOpen(false)}
               />
             </>
           }

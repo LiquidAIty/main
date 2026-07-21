@@ -13,10 +13,7 @@ type RailVisibility = {
   showKnowledge: boolean;
   showWorldsignal: boolean;
   showTrading: boolean;
-  // Terminal icon for the OpenClaude Console Bridge. Optional so existing
-  // callers keep compiling; shown when Local Coder is bus-connected or a
-  // console session exists.
-  showOpenClaudeConsole?: boolean;
+  showHermesTerminal?: boolean;
 };
 
 type AgentBuilderRailProps = {
@@ -29,8 +26,8 @@ type AgentBuilderRailProps = {
   onShowKnowledgeWorkspace: () => void;
   onShowTradingWorkspace: () => void;
   onOpenNavigationDrawer: () => void;
-  openClaudeConsoleActive?: boolean;
-  onOpenOpenClaudeConsole?: () => void;
+  hermesTerminalActive?: boolean;
+  onOpenHermesTerminal?: () => void;
 };
 
 function Icon({ d, size = 22 }: { d: string; size?: number }) {
@@ -79,8 +76,8 @@ export default function AgentBuilderRail({
   onShowKnowledgeWorkspace,
   onShowTradingWorkspace,
   onOpenNavigationDrawer,
-  openClaudeConsoleActive,
-  onOpenOpenClaudeConsole,
+  hermesTerminalActive,
+  onOpenHermesTerminal,
 }: AgentBuilderRailProps) {
   return (
     <aside
@@ -160,15 +157,15 @@ export default function AgentBuilderRail({
           <Icon d="M4 18h16M6 15l3-3 3 2 4-6 2 2" />
         </button>
       ) : null}
-      {visibleRailItems.showOpenClaudeConsole ? (
+      {visibleRailItems.showHermesTerminal ? (
         <button
           type="button"
-          title="Code Console"
-          aria-label="Code Console"
-          data-testid="rail-openclaude-console-button"
-          onClick={onOpenOpenClaudeConsole}
+          title="Hermes Terminal"
+          aria-label="Hermes Terminal"
+          data-testid="rail-hermes-terminal-button"
+          onClick={onOpenHermesTerminal}
           className="p-2 rounded"
-          style={{ color: openClaudeConsoleActive ? colors.primary : colors.text }}
+          style={{ color: hermesTerminalActive ? colors.primary : colors.text }}
         >
           <Icon d="M4 5h16v14H4z M7 9l3 3-3 3 M13 15h4" />
         </button>

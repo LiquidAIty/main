@@ -43,10 +43,8 @@ type StartSessionResult =
   | { ok: true; session: ConsoleSessionInfo }
   | { ok: false; error: string; missing: string[] };
 
-const BASE = '/api/coder/openclaude/console';
-
-async function postJson(path: string, body: unknown): Promise<Response> {
-  return fetch(`${BASE}${path}`, {
+async function postJson(base: string, path: string, body: unknown): Promise<Response> {
+  return fetch(`${base}${path}`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -70,9 +68,10 @@ export type OpenClaudeConsoleClient = {
   streamUrl(id: string): string;
 };
 
-export const openClaudeConsoleClient: OpenClaudeConsoleClient = {
+export function createConsoleClient(base: string): OpenClaudeConsoleClient {
+  return {
   async startSession(request) {
-    const response = await postJson('/sessions', request);
+    const response = await postJson(base, '/sessions', request);
     const payload = await response.json().catch(() => ({}));
     if (response.ok && payload?.ok) {
       return { ok: true, session: payload.session as ConsoleSessionInfo };
@@ -84,7 +83,7 @@ export const openClaudeConsoleClient: OpenClaudeConsoleClient = {
     };
   },
   async getSession(id) {
-    const response = await fetch(`${BASE}/sessions/${encodeURIComponent(id)}`, {
+    const response = await fetch(`${base}/sessions/${encodeURIComponent(id)}`, {
       credentials: 'include',
     });
     if (!response.ok) return null;
@@ -96,21 +95,25 @@ export const openClaudeConsoleClient: OpenClaudeConsoleClient = {
     };
   },
   async sendInput(id, data) {
-    const response = await postJson(`/sessions/${encodeURIComponent(id)}/input`, { data });
+    const response = await postJson(base, `/sessions/${encodeURIComponent(id)}/input`, { data });
     const payload = await response.json().catch(() => ({}));
     return Boolean(payload?.delivered);
   },
   async resizeSession(id, cols, rows) {
-    const response = await postJson(`/sessions/${encodeURIComponent(id)}/resize`, { cols, rows });
+    const response = await postJson(base, `/sessions/${encodeURIComponent(id)}/resize`, { cols, rows });
     const payload = await response.json().catch(() => ({}));
     return Boolean(payload?.resized);
   },
   async stopSession(id) {
-    const response = await postJson(`/sessions/${encodeURIComponent(id)}/stop`, {});
+    const response = await postJson(base, `/sessions/${encodeURIComponent(id)}/stop`, {});
     const payload = await response.json().catch(() => ({}));
     return Boolean(payload?.stopped);
   },
   streamUrl(id) {
-    return `${BASE}/sessions/${encodeURIComponent(id)}/stream`;
+    return `${base}/sessions/${encodeURIComponent(id)}/stream`;
   },
-};
+  };
+}
+
+export const openClaudeConsoleClient = createConsoleClient('/api/coder/openclaude/console');
+export const hermesConsoleClient = createConsoleClient('/api/coder/hermes/console');

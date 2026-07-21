@@ -302,6 +302,57 @@ type ManagerOptions = {
   idFactory?: () => string;
 };
 
+export type HermesConsoleRuntimeResolution = {
+  ready: boolean;
+  command: string;
+  baseArgs: string[];
+  describe: string;
+  source: 'configured' | 'installed';
+  shell: boolean;
+  missing: string[];
+};
+
+/** Resolve the installed Hermes CLI without substituting another runtime. */
+export function resolveHermesConsoleRuntime(
+  env: NodeJS.ProcessEnv = process.env,
+): HermesConsoleRuntimeResolution {
+  const configured = String(env.HERMES_CLI_PATH || '').trim();
+  const executableNames = process.platform === 'win32'
+    ? ['hermes.exe', 'hermes.cmd', 'hermes.bat']
+    : ['hermes'];
+  const candidates = [
+    ...(configured ? [configured] : []),
+    ...String(env.PATH || '')
+      .split(path.delimiter)
+      .filter(Boolean)
+      .flatMap((directory) => executableNames.map((name) => path.join(directory, name))),
+    ...(process.platform === 'win32' && env.LOCALAPPDATA
+      ? [path.join(env.LOCALAPPDATA, 'hermes', 'hermes-agent', 'venv', 'Scripts', 'hermes.exe')]
+      : []),
+  ];
+  const command = candidates.find((candidate) => existsSync(candidate));
+  if (!command) {
+    return {
+      ready: false,
+      command: '',
+      baseArgs: [],
+      describe: '',
+      source: configured ? 'configured' : 'installed',
+      shell: false,
+      missing: ['hermes_cli_entrypoint_missing'],
+    };
+  }
+  return {
+    ready: true,
+    command,
+    baseArgs: ['chat', '--cli'],
+    describe: `${command} chat --cli`,
+    source: configured && path.resolve(configured) === path.resolve(command) ? 'configured' : 'installed',
+    shell: /\.(?:cmd|bat)$/i.test(command),
+    missing: [],
+  };
+}
+
 export class OpenClaudeConsoleSession {
   private readonly emitter = new EventEmitter();
   private readonly buffer: ConsoleOutputChunk[] = [];
@@ -520,7 +571,12 @@ export class OpenClaudeConsoleSessionManager {
     model: string,
   ): string[] {
     if (request.args && request.args.length > 0) return [...request.args];
-    const modelFlags = model && provider ? ['--model', model, '--provider', provider] : [];
+    // OpenRouter is an OpenAI-compatible transport, not an OpenClaude CLI
+    // provider name. Keep the controller/provider provenance as `openrouter`,
+    // but select the CLI's real `openai` adapter while pointing it at
+    // OPENAI_BASE_URL below.
+    const cliProvider = provider === 'openrouter' ? 'openai' : provider;
+    const modelFlags = model && cliProvider ? ['--model', model, '--provider', cliProvider] : [];
     if (mode === 'interactive') {
       // A normal interactive OpenClaude session keeps its full CLI abilities.
       return [...modelFlags];
@@ -728,3 +784,112 @@ export class OpenClaudeConsoleSessionManager {
 }
 
 export const openClaudeConsoleSessionManager = new OpenClaudeConsoleSessionManager();
+
+type HermesManagerOptions = {
+  workspaceRoot?: string;
+  env?: NodeJS.ProcessEnv;
+  ptySpawn?: ConsoleSpawn | null;
+  resolveRuntime?: (env: NodeJS.ProcessEnv) => HermesConsoleRuntimeResolution;
+  maxBufferChars?: number;
+  now?: () => string;
+  idFactory?: () => string;
+};
+
+/**
+ * Separate lifecycle owner for the installed Hermes CLI. It deliberately has
+ * its own session map and `hms_` identity; no OpenClaude session can be read,
+ * written, resized, or stopped through this manager.
+ */
+export class HermesConsoleSessionManager {
+  private readonly sessions = new Map<string, OpenClaudeConsoleSession>();
+  private readonly workspaceRoot: string;
+  private readonly env: NodeJS.ProcessEnv;
+  private readonly ptySpawn: ConsoleSpawn | null;
+  private readonly resolveRuntime: (env: NodeJS.ProcessEnv) => HermesConsoleRuntimeResolution;
+  private readonly maxBufferChars: number;
+  private readonly now: () => string;
+  private readonly idFactory: () => string;
+  private counter = 0;
+
+  constructor(options: HermesManagerOptions = {}) {
+    this.workspaceRoot = options.workspaceRoot
+      ? path.resolve(options.workspaceRoot)
+      : resolveLocalCoderWorkspaceRoot(process.cwd());
+    this.env = options.env || process.env;
+    this.ptySpawn = options.ptySpawn !== undefined ? options.ptySpawn : defaultPtySpawn();
+    this.resolveRuntime = options.resolveRuntime || resolveHermesConsoleRuntime;
+    this.maxBufferChars = options.maxBufferChars ?? DEFAULT_MAX_BUFFER_CHARS;
+    this.now = options.now || nowIso;
+    this.idFactory = options.idFactory || (() => `hms_${Date.now()}_${++this.counter}`);
+  }
+
+  start(request: StartConsoleSessionRequest): StartConsoleSessionResult {
+    const mode = request.mode || 'interactive';
+    if (mode !== 'interactive') {
+      return { ok: false, error: 'hermes_console_interactive_only', missing: [] };
+    }
+    const targetRoot = path.resolve(request.targetRoot || this.workspaceRoot);
+    if (!existsSync(targetRoot)) {
+      return { ok: false, error: `hermes_console_target_root_missing: ${targetRoot}`, missing: [] };
+    }
+    const runtime = this.resolveRuntime(this.env);
+    if (!runtime.ready) {
+      return { ok: false, error: 'hermes_runtime_unavailable', missing: runtime.missing };
+    }
+    if (!this.ptySpawn) {
+      return { ok: false, error: 'hermes_pty_unavailable', missing: ['node_pty'] };
+    }
+
+    const info: ConsoleSessionInfo = {
+      id: this.idFactory(),
+      targetRoot,
+      mode: 'interactive',
+      state: 'starting',
+      commandPath: redactConsoleSecrets(runtime.describe),
+      runtimeSource: `hermes_${runtime.source}`,
+      transportMode: 'pty',
+      provider: null,
+      model: null,
+      interactiveSupported: true,
+      pid: null,
+      startedAt: this.now(),
+      exitedAt: null,
+      exitCode: null,
+      exitSignal: null,
+      warnings: [],
+      error: null,
+    };
+    const session = new OpenClaudeConsoleSession(info, this.maxBufferChars, this.now);
+    this.sessions.set(info.id, session);
+
+    try {
+      const child = this.ptySpawn(runtime.command, runtime.baseArgs, {
+        cwd: targetRoot,
+        env: { ...this.env, HERMES_SESSION_SOURCE: 'liquidaity-terminal' },
+        shell: runtime.shell,
+        interactive: true,
+      });
+      session.attachChild(child);
+      session.markRunning();
+    } catch (error) {
+      session.markFailed(
+        `hermes_console_spawn_failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return { ok: true, session };
+  }
+
+  get(id: string): OpenClaudeConsoleSession | undefined {
+    return this.sessions.get(id);
+  }
+
+  list(): ConsoleSessionInfo[] {
+    return [...this.sessions.values()].map((session) => session.info);
+  }
+
+  stopAll(): void {
+    for (const session of this.sessions.values()) session.stop();
+  }
+}
+
+export const hermesConsoleSessionManager = new HermesConsoleSessionManager();

@@ -1,8 +1,12 @@
-/**
- * The hidden under-chat terminal for Main's one native Hermes Agent child.
- * It consumes the current Harness SSE stream only: no polling, second session,
- * report artifact, or inferred agent identity.
- */
+import OpenClaudeConsolePanel from '../../features/agentbuilder/console/OpenClaudeConsolePanel';
+import {
+  hermesConsoleClient,
+  type OpenClaudeConsoleClient,
+} from '../../features/agentbuilder/console/openClaudeConsoleClient';
+
+/** Harness child-event state remains a pre-integration observation seam. The
+ * visible Hermes terminal below is different: it owns the actual installed
+ * Hermes CLI session through `/api/coder/hermes/console/*`. */
 
 type HermesTerminalStatus = 'idle' | 'running' | 'completed' | 'error';
 
@@ -147,82 +151,29 @@ export function reduceHermesTerminalEvent(
 }
 
 type HermesConsoleProps = {
-  terminal: HermesTerminalState;
+  open: boolean;
+  targetRoot: string;
+  projectId?: string;
+  onClose?: () => void;
+  client?: OpenClaudeConsoleClient;
 };
 
-export default function HermesConsole({ terminal }: HermesConsoleProps) {
-  const statusLabel = terminal.status === 'running'
-    ? 'running'
-    : terminal.status === 'completed'
-      ? 'complete'
-      : terminal.status;
-
+export default function HermesConsole({
+  open,
+  targetRoot,
+  projectId,
+  onClose,
+  client = hermesConsoleClient,
+}: HermesConsoleProps) {
   return (
-    <div
-      data-testid="hermes-console"
-      data-status={terminal.status}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        minHeight: 0,
-        color: 'rgba(214,222,235,0.86)',
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-        fontSize: 12,
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '7px 12px',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-        }}
-      >
-        <span style={{ color: 'rgba(77,211,210,0.92)', fontWeight: 700 }}>Hermes</span>
-        <span data-testid="hermes-terminal-status" style={{ opacity: 0.55 }}>{statusLabel}</span>
-        {terminal.status === 'running' ? (
-          <span aria-hidden="true" style={{ marginLeft: 'auto', color: 'rgba(77,211,210,0.8)' }}>●</span>
-        ) : null}
-      </div>
-
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '9px 12px 12px' }}>
-        {terminal.status === 'idle' ? (
-          <div data-testid="hermes-terminal-empty" style={{ opacity: 0.5 }}>
-            Hermes is ready beneath Main Chat.
-          </div>
-        ) : (
-          <>
-            <div data-testid="hermes-terminal-objective" style={{ opacity: 0.62, marginBottom: 8 }}>
-              objective: {terminal.objective}
-            </div>
-            {terminal.activity.map((entry) => (
-              <div
-                key={entry.id}
-                data-testid="hermes-terminal-activity"
-                data-failed={entry.failed ? 'true' : 'false'}
-                style={{ color: entry.failed ? 'rgba(248,113,113,0.9)' : 'rgba(148,163,184,0.75)' }}
-              >
-                {entry.failed ? '×' : '·'} {entry.text}
-              </div>
-            ))}
-            {terminal.responseText ? (
-              <div
-                data-testid="hermes-terminal-response"
-                style={{ whiteSpace: 'pre-wrap', lineHeight: 1.48, marginTop: 9 }}
-              >
-                {terminal.responseText}
-              </div>
-            ) : null}
-            {terminal.error ? (
-              <div data-testid="hermes-terminal-error" style={{ color: 'rgba(248,113,113,0.9)', marginTop: 8 }}>
-                {terminal.error}
-              </div>
-            ) : null}
-          </>
-        )}
-      </div>
-    </div>
+    <OpenClaudeConsolePanel
+      open={open}
+      targetRoot={targetRoot}
+      projectId={projectId}
+      title="Hermes Terminal"
+      testIdPrefix="hermes-console"
+      client={client}
+      onClose={onClose}
+    />
   );
 }

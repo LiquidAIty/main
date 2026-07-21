@@ -5,6 +5,7 @@ import type { OpenClaudeRunRequest } from '../coder/openclaude/contracts';
 import { openClaudeRuntimeService } from '../coder/openclaude/runtime/service';
 import { localCoderService } from '../coder/localcoder/service';
 import {
+  hermesConsoleSessionManager,
   openClaudeConsoleSessionManager,
   type ConsoleMode,
 } from '../coder/openclaude/console/consoleSession';
@@ -1106,98 +1107,105 @@ router.get('/openclaude/terminal/launch', (req, res) => {
   return res.status(statusCode).json({ ok: launch.ok, launch });
 });
 
-// ── OpenClaude Console Bridge ──────────────────────────────────────────────
-// Runs the real OpenClaude CLI as a long-lived, streamed process for the in-app
-// terminal view. Not a sandbox; not a CoderReport. See PLAN.md.
+// ── Native terminal transports ─────────────────────────────────────────────
+// The route plumbing is shared, but each runtime owns a separate manager and
+// session namespace: `occ_*` for OpenClaude and `hms_*` for actual Hermes.
+type ConsoleRouteManager =
+  | typeof openClaudeConsoleSessionManager
+  | typeof hermesConsoleSessionManager;
 
-router.post('/openclaude/console/sessions', (req, res) => {
-  const started = openClaudeConsoleSessionManager.start({
-    targetRoot: typeof req.body?.targetRoot === 'string' ? req.body.targetRoot : undefined,
-    mode: parseConsoleMode(req.body?.mode),
-    model: typeof req.body?.model === 'string' ? req.body.model : undefined,
-    provider: typeof req.body?.provider === 'string' ? req.body.provider : undefined,
-    prompt: typeof req.body?.prompt === 'string' ? req.body.prompt : undefined,
-    args: Array.isArray(req.body?.args) ? req.body.args.map((a: unknown) => String(a)) : undefined,
-  });
-  if (!started.ok) {
-    return res.status(424).json({ ok: false, error: started.error, missing: started.missing });
-  }
-  const info = started.session.info;
-  // A child that failed to spawn is reported honestly, never as a live session.
-  return res.status(info.state === 'failed' ? 502 : 200).json({
-    ok: info.state !== 'failed',
-    session: info,
-  });
-});
-
-router.get('/openclaude/console/sessions', (_req, res) => {
-  return res.json({ ok: true, sessions: openClaudeConsoleSessionManager.list() });
-});
-
-router.get('/openclaude/console/sessions/:id', (req, res) => {
-  const session = openClaudeConsoleSessionManager.get(req.params.id);
-  if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
-  return res.json({ ok: true, session: session.info, transcript: session.transcript() });
-});
-
-router.get('/openclaude/console/sessions/:id/stream', (req, res) => {
-  const session = openClaudeConsoleSessionManager.get(req.params.id);
-  if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  res.write(`event: info\ndata: ${JSON.stringify(session.info)}\n\n`);
-  const unsubscribe = session.subscribe((event) => {
-    if (event.kind === 'chunk') {
-      res.write(`event: chunk\ndata: ${JSON.stringify(event.chunk)}\n\n`);
-    } else {
-      res.write(`event: lifecycle\ndata: ${JSON.stringify(event.info)}\n\n`);
+function mountConsoleSessionRoutes(prefix: string, manager: ConsoleRouteManager): void {
+  router.post(`${prefix}/sessions`, (req, res) => {
+    const started = manager.start({
+      targetRoot: typeof req.body?.targetRoot === 'string' ? req.body.targetRoot : undefined,
+      mode: parseConsoleMode(req.body?.mode),
+      model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+      provider: typeof req.body?.provider === 'string' ? req.body.provider : undefined,
+      prompt: typeof req.body?.prompt === 'string' ? req.body.prompt : undefined,
+      args: Array.isArray(req.body?.args) ? req.body.args.map((a: unknown) => String(a)) : undefined,
+    });
+    if (!started.ok) {
+      return res.status(424).json({ ok: false, error: started.error, missing: started.missing });
     }
+    const info = started.session.info;
+    return res.status(info.state === 'failed' ? 502 : 200).json({
+      ok: info.state !== 'failed',
+      session: info,
+    });
   });
-  req.on('close', () => {
-    unsubscribe();
-    res.end();
-  });
-  return undefined;
-});
 
-router.post('/openclaude/console/sessions/:id/input', (req, res) => {
-  const session = openClaudeConsoleSessionManager.get(req.params.id);
-  if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
-  const data = typeof req.body?.data === 'string' ? req.body.data : '';
-  const delivered = session.write(data);
-  return res.status(delivered ? 200 : 409).json({
-    ok: delivered,
-    delivered,
-    interactiveSupported: session.info.interactiveSupported,
+  router.get(`${prefix}/sessions`, (_req, res) => {
+    return res.json({ ok: true, sessions: manager.list() });
   });
-});
 
-router.post('/openclaude/console/sessions/:id/resize', (req, res) => {
-  const session = openClaudeConsoleSessionManager.get(req.params.id);
-  if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
-  const cols = Number(req.body?.cols);
-  const rows = Number(req.body?.rows);
-  if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) {
-    return res.status(400).json({ ok: false, error: 'console_resize_invalid_dimensions' });
-  }
-  const resized = session.resize(Math.floor(cols), Math.floor(rows));
-  return res.status(resized ? 200 : 409).json({
-    ok: resized,
-    resized,
-    transportMode: session.info.transportMode,
+  router.get(`${prefix}/sessions/:id`, (req, res) => {
+    const session = manager.get(req.params.id);
+    if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
+    return res.json({ ok: true, session: session.info, transcript: session.transcript() });
   });
-});
 
-router.post('/openclaude/console/sessions/:id/stop', (req, res) => {
-  const session = openClaudeConsoleSessionManager.get(req.params.id);
-  if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
-  const stopped = session.stop();
-  return res.json({ ok: true, stopped, session: session.info });
-});
+  router.get(`${prefix}/sessions/:id/stream`, (req, res) => {
+    const session = manager.get(req.params.id);
+    if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write(`event: info\ndata: ${JSON.stringify(session.info)}\n\n`);
+    const unsubscribe = session.subscribe((event) => {
+      if (event.kind === 'chunk') {
+        res.write(`event: chunk\ndata: ${JSON.stringify(event.chunk)}\n\n`);
+      } else {
+        res.write(`event: lifecycle\ndata: ${JSON.stringify(event.info)}\n\n`);
+      }
+    });
+    req.on('close', () => {
+      unsubscribe();
+      res.end();
+    });
+    return undefined;
+  });
+
+  router.post(`${prefix}/sessions/:id/input`, (req, res) => {
+    const session = manager.get(req.params.id);
+    if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
+    const data = typeof req.body?.data === 'string' ? req.body.data : '';
+    const delivered = session.write(data);
+    return res.status(delivered ? 200 : 409).json({
+      ok: delivered,
+      delivered,
+      interactiveSupported: session.info.interactiveSupported,
+    });
+  });
+
+  router.post(`${prefix}/sessions/:id/resize`, (req, res) => {
+    const session = manager.get(req.params.id);
+    if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
+    const cols = Number(req.body?.cols);
+    const rows = Number(req.body?.rows);
+    if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) {
+      return res.status(400).json({ ok: false, error: 'console_resize_invalid_dimensions' });
+    }
+    const resized = session.resize(Math.floor(cols), Math.floor(rows));
+    return res.status(resized ? 200 : 409).json({
+      ok: resized,
+      resized,
+      transportMode: session.info.transportMode,
+    });
+  });
+
+  router.post(`${prefix}/sessions/:id/stop`, (req, res) => {
+    const session = manager.get(req.params.id);
+    if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
+    const stopped = session.stop();
+    return res.json({ ok: true, stopped, session: session.info });
+  });
+}
+
+mountConsoleSessionRoutes('/openclaude/console', openClaudeConsoleSessionManager);
+mountConsoleSessionRoutes('/hermes/console', hermesConsoleSessionManager);
 
 
 /** Resolve the saved Main Chat card from the live deck (binding, never a title

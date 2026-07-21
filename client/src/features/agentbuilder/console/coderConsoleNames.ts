@@ -1,37 +1,19 @@
 /**
- * User-facing naming firewall for the coder console.
+ * Optional display-only redaction for terminal transcripts.
  *
- * Product UI chrome must never show `Claude`, `OpenClaude`, or `LocalCoder`.
- * Internal ids, file names, routes, and the vendored runtime keep their names
- * for now (a broad internal rename is a later SPEC). This module is the single
- * source of the clean display names plus an optional redaction helper for raw
- * terminal output shown to non-developer users.
+ * Product chrome now names the real OpenClaude and Hermes terminal owners
+ * directly. This helper remains only for explicitly redacted transcript views.
  */
 
 export const CODER_DISPLAY_NAMES = {
   /** Canvas card / agent role. */
   card: 'Coder',
-  /** Left rail item + terminal panel title + feature name. */
-  console: 'Code Console',
   /** Runtime/engine label. "Harness" was briefly used here but collides with
    * the chat front door's product name — the coder runtime is "Coder Engine". */
   runtime: 'Coder Engine',
   /** Task/session label. */
   session: 'Coder Session',
 } as const;
-
-const INTERNAL_ID_TO_DISPLAY: Record<string, string> = {
-  localcoder: CODER_DISPLAY_NAMES.card,
-  local_coder: CODER_DISPLAY_NAMES.card,
-  openclaude: CODER_DISPLAY_NAMES.card,
-  openclaudeconsole: CODER_DISPLAY_NAMES.console,
-  openclaude_console: CODER_DISPLAY_NAMES.console,
-};
-
-/** Map an internal id to a clean user-facing display name (falls back to id). */
-export function coderDisplayName(internalId: string): string {
-  return INTERNAL_ID_TO_DISPLAY[String(internalId).trim().toLowerCase()] ?? internalId;
-}
 
 // Order matters: multi-word brands first so "Claude Code" / "OpenClaude" are
 // handled before the bare "Claude" rule.

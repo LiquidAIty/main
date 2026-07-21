@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { OpenClaudeConsoleClient } from '../../features/agentbuilder/console/openClaudeConsoleClient';
 
 import HermesConsole, {
   EMPTY_HERMES_TERMINAL_STATE,
@@ -149,30 +150,32 @@ describe('Hermes native child terminal', () => {
     });
   });
 
-  it('renders the live objective, activity, and response without polling', async () => {
-    const terminal = reduce([
-      START,
-      {
-        kind: 'tool_start',
-        toolName: 'mcp__liquidaity__thinkgraph_get_graph_slice',
-        toolUseId: 'graph-read',
-        invokingCardId: 'card_hermes_steward',
-      },
-      {
-        kind: 'progress',
-        parentToolUseId: 'agent-call-1',
-        data: { type: 'agent_text_delta', agentType: 'card_hermes_steward', text: 'Gap one.' },
-      },
-    ]);
-    const host = await render(<HermesConsole terminal={terminal} />);
-
-    expect(host.querySelector('[data-testid="hermes-terminal-status"]')?.textContent).toBe('running');
-    expect(host.querySelector('[data-testid="hermes-terminal-objective"]')?.textContent).toContain(
-      'Read ThinkGraph and identify three gaps.',
+  it('owns the separate Hermes session route and reports unavailable runtime honestly', async () => {
+    const client: OpenClaudeConsoleClient = {
+      startSession: vi.fn(async () => ({
+        ok: false as const,
+        error: 'hermes_runtime_unavailable',
+        missing: ['hermes_cli_entrypoint_missing'],
+      })),
+      getSession: vi.fn(async () => null),
+      sendInput: vi.fn(async () => true),
+      resizeSession: vi.fn(async () => true),
+      stopSession: vi.fn(async () => true),
+      streamUrl: (id) => `/api/coder/hermes/console/sessions/${id}/stream`,
+    };
+    const host = await render(
+      <HermesConsole open targetRoot="C:/Projects/main" projectId="project-1" client={client} />,
     );
-    expect(host.querySelector('[data-testid="hermes-terminal-activity"]')?.textContent).toContain(
-      'thinkgraph_get_graph_slice started',
+    expect(host.textContent).toContain('Hermes Terminal');
+    expect(host.textContent).not.toContain('Hermes is ready beneath Main Chat.');
+    const start = host.querySelector('[data-testid="hermes-console-start"]') as HTMLButtonElement;
+    await act(async () => start.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(client.startSession).toHaveBeenCalledWith(
+      expect.objectContaining({ targetRoot: 'C:/Projects/main', mode: 'interactive' }),
     );
-    expect(host.querySelector('[data-testid="hermes-terminal-response"]')?.textContent).toBe('Gap one.');
+    expect(host.querySelector('[data-testid="hermes-console-error"]')?.textContent).toContain(
+      'hermes_cli_entrypoint_missing',
+    );
+    expect(host.querySelector('[data-testid="hermes-console-session-id"]')?.textContent).toContain('—');
   });
 });

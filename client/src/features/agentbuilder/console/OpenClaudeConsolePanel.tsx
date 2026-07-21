@@ -7,7 +7,7 @@ import {
   type OpenClaudeConsoleClient,
 } from './openClaudeConsoleClient';
 import XtermView from './XtermView';
-import { CODER_DISPLAY_NAMES, redactCoderBranding } from './coderConsoleNames';
+import { redactCoderBranding } from './coderConsoleNames';
 
 /**
  * OpenClaude Console Bridge panel — the in-app terminal view of the real
@@ -24,6 +24,9 @@ type ConsolePanelStatus = 'disconnected' | 'idle' | 'starting' | 'running' | 'fa
 type OpenClaudeConsolePanelProps = {
   open: boolean;
   targetRoot: string;
+  title?: string;
+  placement?: 'overlay' | 'docked';
+  testIdPrefix?: string;
   projectId?: string;
   provider?: string | null;
   model?: string | null;
@@ -64,6 +67,9 @@ const STATUS_LABEL: Record<ConsolePanelStatus, string> = {
 function OpenClaudeConsolePanelInner({
   open,
   targetRoot,
+  title = 'OpenClaude Code',
+  placement = 'overlay',
+  testIdPrefix = 'openclaude-console',
   projectId,
   provider,
   model,
@@ -169,20 +175,22 @@ function OpenClaudeConsolePanelInner({
 
   return (
     <section
-      data-testid="openclaude-console-panel"
-      aria-label={CODER_DISPLAY_NAMES.console}
+      data-testid={`${testIdPrefix}-panel`}
+      aria-label={title}
       style={{
-        position: 'absolute',
-        right: 0,
-        top: 0,
-        bottom: 0,
-        width: 'min(640px, 60%)',
+        position: placement === 'overlay' ? 'absolute' : 'relative',
+        right: placement === 'overlay' ? 0 : undefined,
+        top: placement === 'overlay' ? 0 : undefined,
+        bottom: placement === 'overlay' ? 0 : undefined,
+        width: placement === 'overlay' ? 'min(640px, 60%)' : '100%',
+        height: placement === 'docked' ? '100%' : undefined,
         display: 'flex',
         flexDirection: 'column',
         background: '#0b0f14',
         color: '#d7e0ea',
-        borderLeft: '1px solid #1c2733',
-        zIndex: 40,
+        borderLeft: placement === 'overlay' ? '1px solid #1c2733' : undefined,
+        borderTop: placement === 'docked' ? '1px solid #1c2733' : undefined,
+        zIndex: placement === 'overlay' ? 40 : undefined,
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
         fontSize: 12,
       }}
@@ -196,26 +204,26 @@ function OpenClaudeConsolePanelInner({
           borderBottom: '1px solid #1c2733',
         }}
       >
-        <strong style={{ flex: 1 }}>{CODER_DISPLAY_NAMES.console}</strong>
-        <span data-testid="openclaude-console-status" style={{ opacity: 0.8 }}>
+        <strong style={{ flex: 1 }}>{title}</strong>
+        <span data-testid={`${testIdPrefix}-status`} style={{ opacity: 0.8 }}>
           {STATUS_LABEL[status]}
         </span>
         {onClose ? (
-          <button type="button" data-testid="openclaude-console-close" onClick={onClose}>
+          <button type="button" data-testid={`${testIdPrefix}-close`} onClick={onClose}>
             ✕
           </button>
         ) : null}
       </header>
 
       <div style={{ padding: '6px 12px', borderBottom: '1px solid #11181f', opacity: 0.85 }}>
-        <div data-testid="openclaude-console-target-root">root: {targetRoot}</div>
-        <div data-testid="openclaude-console-session-id">
+        <div data-testid={`${testIdPrefix}-target-root`}>root: {targetRoot}</div>
+        <div data-testid={`${testIdPrefix}-session-id`}>
           session: {session?.id ?? '—'}
           {projectId ? ` · project: ${projectId}` : ''}
         </div>
         {session?.model ? <div>model: {session.model}</div> : null}
         {session ? (
-          <div data-testid="openclaude-console-transport">transport: {session.transportMode}</div>
+          <div data-testid={`${testIdPrefix}-transport`}>transport: {session.transportMode}</div>
         ) : null}
         <div style={{ color: '#f0a35e', marginTop: 2 }}>
           Local process — runs with this machine&apos;s permissions. Not a sandbox.
@@ -232,7 +240,7 @@ function OpenClaudeConsolePanelInner({
       ) : null}
 
       <pre
-        data-testid="openclaude-console-transcript"
+        data-testid={`${testIdPrefix}-transcript`}
         style={{
           maxHeight: session ? 140 : undefined,
           flex: session ? undefined : 1,
@@ -244,7 +252,7 @@ function OpenClaudeConsolePanelInner({
         }}
       >
         {redactBranding ? (
-          <span data-testid="openclaude-console-redacted-note" style={{ color: '#6b7785' }}>
+          <span data-testid={`${testIdPrefix}-redacted-note`} style={{ color: '#6b7785' }}>
             {'[display names cleaned — raw transcript available in developer mode]\n'}
           </span>
         ) : null}
@@ -256,7 +264,7 @@ function OpenClaudeConsolePanelInner({
       </pre>
 
       {startError ? (
-        <div data-testid="openclaude-console-error" style={{ padding: '6px 12px', color: '#e06c75' }}>
+        <div data-testid={`${testIdPrefix}-error`} style={{ padding: '6px 12px', color: '#e06c75' }}>
           {startError}
         </div>
       ) : null}
@@ -265,7 +273,7 @@ function OpenClaudeConsolePanelInner({
         {!session || status === 'complete' || status === 'failed' ? (
           <button
             type="button"
-            data-testid="openclaude-console-start"
+            data-testid={`${testIdPrefix}-start`}
             disabled={busy}
             onClick={() => startSession('interactive')}
           >
@@ -274,7 +282,7 @@ function OpenClaudeConsolePanelInner({
         ) : (
           <>
             <input
-              data-testid="openclaude-console-input"
+              data-testid={`${testIdPrefix}-input`}
               value={input}
               placeholder={session.interactiveSupported ? 'Type a command…' : 'Read-only session'}
               disabled={!session.interactiveSupported}
@@ -287,10 +295,10 @@ function OpenClaudeConsolePanelInner({
               }}
               style={{ flex: 1, background: '#11181f', color: '#d7e0ea', border: '1px solid #1c2733', padding: '4px 8px' }}
             />
-            <button type="button" data-testid="openclaude-console-send" onClick={() => void sendInput()} disabled={!session.interactiveSupported}>
+            <button type="button" data-testid={`${testIdPrefix}-send`} onClick={() => void sendInput()} disabled={!session.interactiveSupported}>
               Send
             </button>
-            <button type="button" data-testid="openclaude-console-stop" onClick={() => void stopSession()}>
+            <button type="button" data-testid={`${testIdPrefix}-stop`} onClick={() => void stopSession()}>
               Stop
             </button>
           </>

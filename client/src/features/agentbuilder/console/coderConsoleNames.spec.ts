@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   CODER_DISPLAY_NAMES,
-  coderDisplayName,
   containsCoderBranding,
   redactCoderBranding,
 } from './coderConsoleNames';
@@ -11,18 +10,10 @@ describe('coder console display names', () => {
     const values = Object.values(CODER_DISPLAY_NAMES).join(' ');
     // Product language: the coder runtime is "Coder Engine" ("Harness" names
     // the chat front door, not the coder).
-    expect(values).toBe('Coder Code Console Coder Engine Coder Session');
+    expect(values).toBe('Coder Coder Engine Coder Session');
     expect(containsCoderBranding(values)).toBe(false);
   });
 
-  it('maps internal ids to clean display names', () => {
-    expect(coderDisplayName('localcoder')).toBe('Coder');
-    expect(coderDisplayName('local_coder')).toBe('Coder');
-    expect(coderDisplayName('openclaude')).toBe('Coder');
-    expect(coderDisplayName('openclaudeConsole')).toBe('Code Console');
-    // Unknown ids pass through unchanged (no guessing).
-    expect(coderDisplayName('plan')).toBe('plan');
-  });
 });
 
 describe('redactCoderBranding', () => {
