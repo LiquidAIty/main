@@ -4,6 +4,7 @@
 // Mag One selects workers off live bus edges. The old start-card/entry-point
 // derivation was PlanFlow residue and was removed.
 import type {
+  AgentCardInstance,
   DeckDocument,
   DeckEdge,
   DeckEdgeExecutionMode,
@@ -63,6 +64,146 @@ const EDGE_MERGE_INTENT_VALUES = new Set<DeckEdgeMergeIntent>([
   'select_best',
   'manual_review',
 ]);
+
+export const SEMANTIC_HANDLE_IDS = {
+  callInput: 'call-in',
+  callOutput: 'call-out',
+  magOneControlInput: 'magone-control-in',
+  magOneControlOutput: 'magone-control-out',
+  magOneMemberLeft: 'magone-member-left',
+  magOneMemberRight: 'magone-member-right',
+  magOneMemberLeftPrefix: 'magone-member-left-',
+  magOneMemberRightPrefix: 'magone-member-right-',
+  hermesObserveInput: 'observe-in',
+  hermesObserveOutput: 'observe-out',
+} as const;
+
+type SemanticConnection = {
+  source: string | null;
+  sourceHandle: string | null;
+  target: string | null;
+  targetHandle: string | null;
+};
+
+export type ResolvedSemanticConnection = {
+  source: string;
+  sourceHandle: string;
+  target: string;
+  targetHandle: string;
+  edgeType: DeckEdgeType;
+};
+
+function normalizedRuntimeType(node: AgentCardInstance): string {
+  return String(node.runtimeType || 'assistant_agent').trim().toLowerCase();
+}
+
+function normalizedRuntimeBinding(node: AgentCardInstance): string {
+  return String(node.runtimeBinding || '').trim().toLowerCase();
+}
+
+function isMainChatCard(node: AgentCardInstance): boolean {
+  return normalizedRuntimeBinding(node) === 'main_chat';
+}
+
+function isHermesCard(node: AgentCardInstance): boolean {
+  return normalizedRuntimeBinding(node) === 'hermes_steward';
+}
+
+function isMagOneCard(node: AgentCardInstance): boolean {
+  return normalizedRuntimeType(node) === 'magentic_one';
+}
+
+export function isMagOneMembershipSourceHandle(handleId: unknown): boolean {
+  const handle = String(handleId || '').trim();
+  return (
+    handle.startsWith(SEMANTIC_HANDLE_IDS.magOneMemberLeftPrefix) ||
+    handle.startsWith(SEMANTIC_HANDLE_IDS.magOneMemberRightPrefix)
+  );
+}
+
+export function isMagOneMembershipTargetHandle(handleId: unknown): boolean {
+  const handle = String(handleId || '').trim();
+  return (
+    handle === SEMANTIC_HANDLE_IDS.magOneMemberLeft ||
+    handle === SEMANTIC_HANDLE_IDS.magOneMemberRight
+  );
+}
+
+function isMagOneWorkerCard(node: AgentCardInstance): boolean {
+  if (String(node.parentGraphId || '').trim()) return false;
+  if (isMainChatCard(node) || isHermesCard(node) || isMagOneCard(node)) return false;
+  const runtimeType = normalizedRuntimeType(node);
+  return (
+    runtimeType === 'assistant_agent' ||
+    runtimeType === 'local_coder' ||
+    runtimeType === 'graph_flow'
+  );
+}
+
+export function resolveSemanticConnection(
+  document: Pick<DeckDocument, 'nodes'>,
+  connection: SemanticConnection,
+): ResolvedSemanticConnection | null {
+  const sourceId = String(connection.source || '').trim();
+  const targetId = String(connection.target || '').trim();
+  const sourceHandle = String(connection.sourceHandle || '').trim();
+  const targetHandle = String(connection.targetHandle || '').trim();
+  if (!sourceId || !targetId || sourceId === targetId || !sourceHandle || !targetHandle) {
+    return null;
+  }
+  const nodeMap = new Map(document.nodes.map((node) => [node.id, node] as const));
+  const sourceNode = nodeMap.get(sourceId);
+  const targetNode = nodeMap.get(targetId);
+  if (!sourceNode || !targetNode) return null;
+
+  if (
+    isMainChatCard(sourceNode) &&
+    isMagOneCard(targetNode) &&
+    sourceHandle === SEMANTIC_HANDLE_IDS.magOneControlOutput &&
+    targetHandle === SEMANTIC_HANDLE_IDS.magOneControlInput
+  ) {
+    return { source: sourceId, sourceHandle, target: targetId, targetHandle, edgeType: 'magentic_control' };
+  }
+
+  if (
+    isMagOneCard(sourceNode) &&
+    isMagOneWorkerCard(targetNode) &&
+    isMagOneMembershipSourceHandle(sourceHandle) &&
+    isMagOneMembershipTargetHandle(targetHandle)
+  ) {
+    return { source: sourceId, sourceHandle, target: targetId, targetHandle, edgeType: 'magentic_option' };
+  }
+
+  if (
+    isMainChatCard(sourceNode) &&
+    isHermesCard(targetNode) &&
+    sourceHandle === SEMANTIC_HANDLE_IDS.hermesObserveOutput &&
+    targetHandle === SEMANTIC_HANDLE_IDS.hermesObserveInput
+  ) {
+    return { source: sourceId, sourceHandle, target: targetId, targetHandle, edgeType: 'hermes_observe' };
+  }
+
+  if (
+    !isMagOneCard(sourceNode) &&
+    !isMagOneCard(targetNode) &&
+    sourceHandle === SEMANTIC_HANDLE_IDS.callOutput &&
+    targetHandle === SEMANTIC_HANDLE_IDS.callInput
+  ) {
+    return { source: sourceId, sourceHandle, target: targetId, targetHandle, edgeType: 'flow' };
+  }
+
+  return null;
+}
+
+export function buildSemanticRelationshipIdentityKey(
+  edge: Pick<DeckEdge, 'source' | 'target' | 'edgeType'>,
+): string {
+  return [
+    normalizeDeckEdgeType(edge.edgeType),
+    String(edge.source || '').trim(),
+    String(edge.target || '').trim(),
+  ].join('::');
+}
 
 function cleanOptionalText(value: unknown): string | null {
   const text = String(value || '').trim();

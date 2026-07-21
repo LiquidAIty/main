@@ -1,21 +1,22 @@
 import { Handle, Position } from '@xyflow/react';
+import { SEMANTIC_HANDLE_IDS } from '../deckValidation';
 
 const leftHandles = [
-  { id: 'bus-in-1', top: 48 },
-  { id: 'bus-in-2', top: 120 },
-  { id: 'bus-in-3', top: 192 },
-  { id: 'bus-in-4', top: 264 },
-  { id: 'bus-in-5', top: 336 },
-  { id: 'bus-in-6', top: 408 },
+  { id: `${SEMANTIC_HANDLE_IDS.magOneMemberLeftPrefix}1`, top: 48 },
+  { id: `${SEMANTIC_HANDLE_IDS.magOneMemberLeftPrefix}2`, top: 120 },
+  { id: `${SEMANTIC_HANDLE_IDS.magOneMemberLeftPrefix}3`, top: 192 },
+  { id: `${SEMANTIC_HANDLE_IDS.magOneMemberLeftPrefix}4`, top: 264 },
+  { id: `${SEMANTIC_HANDLE_IDS.magOneMemberLeftPrefix}5`, top: 336 },
+  { id: `${SEMANTIC_HANDLE_IDS.magOneMemberLeftPrefix}6`, top: 408 },
 ];
 
 const rightHandles = [
-  { id: 'bus-out-1', top: 48 },
-  { id: 'bus-out-2', top: 120 },
-  { id: 'bus-out-3', top: 192 },
-  { id: 'bus-out-4', top: 264 },
-  { id: 'bus-out-5', top: 336 },
-  { id: 'bus-out-6', top: 408 },
+  { id: `${SEMANTIC_HANDLE_IDS.magOneMemberRightPrefix}1`, top: 48 },
+  { id: `${SEMANTIC_HANDLE_IDS.magOneMemberRightPrefix}2`, top: 120 },
+  { id: `${SEMANTIC_HANDLE_IDS.magOneMemberRightPrefix}3`, top: 192 },
+  { id: `${SEMANTIC_HANDLE_IDS.magOneMemberRightPrefix}4`, top: 264 },
+  { id: `${SEMANTIC_HANDLE_IDS.magOneMemberRightPrefix}5`, top: 336 },
+  { id: `${SEMANTIC_HANDLE_IDS.magOneMemberRightPrefix}6`, top: 408 },
 ];
 
 const handleBaseStyle = {
@@ -68,11 +69,14 @@ export default function MagenticBusNode() {
       />
       {/* Main Chat's approved magentic_control edge enters here. */}
       <Handle
-        id="task-bus-top"
+        id={SEMANTIC_HANDLE_IDS.magOneControlInput}
         type="target"
         position={Position.Top}
         aria-label="Mag One control input — Main Chat submits an approved job"
         title="Control input: approved Main Chat job"
+        isConnectable
+        isConnectableStart={false}
+        isConnectableEnd
         style={{
           ...handleBaseStyle,
           width: 16,
@@ -89,10 +93,13 @@ export default function MagenticBusNode() {
         <Handle
           key={handle.id}
           id={handle.id}
-          type="target"
+          type="source"
           position={Position.Left}
           aria-label={handle.id}
           title="Mag One worker membership port"
+          isConnectable
+          isConnectableStart
+          isConnectableEnd={false}
           style={{
             ...leftHandleStyle,
             left: -3,
@@ -108,6 +115,9 @@ export default function MagenticBusNode() {
           position={Position.Right}
           aria-label={handle.id}
           title="Mag One worker membership port"
+          isConnectable
+          isConnectableStart
+          isConnectableEnd={false}
           style={{
             ...rightHandleStyle,
             right: -3,

@@ -75,7 +75,7 @@ function summarizeText(value: string | null | undefined, maxLength = 220): strin
 //                              a worker. Never grants direct invocation.
 //   'magentic_control' BLUE    top control input: the source may submit the
 //                              finalized prompt to Mag One. Never a worker.
-const MAG_ONE_CONTROL_HANDLE = 'task-bus-top';
+const MAG_ONE_CONTROL_HANDLES = new Set(['magone-control-in', 'task-bus-top']);
 
 //   'invalid'          an unrecognised/malformed type. Grants nothing. It is a
 //                      classification, not a default: only an explicit 'flow'
@@ -101,7 +101,7 @@ function busSideHandle(edge: any, magenticCardId: string): string {
 function isMagenticControlEdge(edge: any, magenticCardId: string): boolean {
   const type = normalizeEdgeType(edge?.edgeType);
   if (type === 'magentic_control') return true;
-  return type === 'magentic_option' && busSideHandle(edge, magenticCardId) === MAG_ONE_CONTROL_HANDLE;
+  return type === 'magentic_option' && MAG_ONE_CONTROL_HANDLES.has(busSideHandle(edge, magenticCardId));
 }
 
 /** Resolve the enabled top-level cards structurally authorized to submit to

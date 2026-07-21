@@ -5,7 +5,13 @@ vi.mock('../db/pool', () => ({
   pool: { query: dbMocks.query },
 }));
 
-import { getDeckDocument, normalizeRuntimeOptions } from './store';
+import {
+  getDeckDocument,
+  normalizeRuntimeOptions,
+  saveDeckDocument,
+  validateDeckIntegrityTransition,
+  validateDeckRelationshipTransition,
+} from './store';
 
 beforeEach(() => {
   dbMocks.query.mockReset();
@@ -155,5 +161,109 @@ describe('deck store Hermes observation compatibility', () => {
     expect(edges.find((edge) => edge.id === 'reversed')?.edgeType).toBe('flow');
     expect(edges.find((edge) => edge.id === 'invalid')?.edgeType).toBe('invalid');
     expect(edges.find((edge) => edge.id === 'unrelated')?.edgeType).toBe('flow');
+  });
+});
+
+describe('deck save concurrency and integrity', () => {
+  const currentDeck = {
+    id: 'deck_custom',
+    name: 'Custom',
+    version: 1,
+    promptTemplates: [],
+    nodes: [
+      {
+        id: 'worker',
+        kind: 'agent',
+        title: 'Worker',
+        runtimeType: 'assistant_agent',
+        position: { x: 0, y: 0 },
+      },
+    ],
+    edges: [],
+  } as any;
+
+  function mockCurrentDeck(revision = 'server-newer') {
+    dbMocks.query.mockResolvedValueOnce({
+      rows: [{
+        agent_io_schema: {
+          v3_state: {
+            decks: { deck_custom: currentDeck },
+            deckRuns: {},
+            meta: { decks: { deck_custom: { revision, savedAt: null } } },
+          },
+        },
+      }],
+    });
+  }
+
+  it('rejects a stale revision before issuing any database update', async () => {
+    mockCurrentDeck();
+    await expect(
+      saveDeckDocument('project-one', 'deck_custom', currentDeck, {
+        expectedRevision: 'client-stale',
+      }),
+    ).rejects.toThrow('deck_conflict');
+    expect(dbMocks.query).toHaveBeenCalledTimes(1);
+    expect(String(dbMocks.query.mock.calls[0][0])).toContain('SELECT agent_io_schema');
+  });
+
+  it('rejects a missing revision so a conflicted client cannot retry unconditionally', async () => {
+    mockCurrentDeck();
+    await expect(
+      saveDeckDocument('project-one', 'deck_custom', currentDeck, {
+        expectedRevision: null,
+      }),
+    ).rejects.toThrow('deck_revision_required');
+    expect(dbMocks.query).toHaveBeenCalledTimes(1);
+    expect(String(dbMocks.query.mock.calls[0][0])).not.toContain('UPDATE');
+  });
+
+  it('rejects unexplained one-card disappearance and accepts exact confirmed intent', () => {
+    const nextDeck = { ...currentDeck, nodes: [] };
+    expect(() => validateDeckIntegrityTransition(currentDeck, nextDeck)).toThrow(
+      'deck_integrity_empty_nodes_blocked',
+    );
+
+    const currentWithTwo = {
+      ...currentDeck,
+      nodes: [...currentDeck.nodes, { ...currentDeck.nodes[0], id: 'other' }],
+    };
+    const nextWithOne = { ...currentWithTwo, nodes: [currentWithTwo.nodes[0]] };
+    expect(() => validateDeckIntegrityTransition(currentWithTwo, nextWithOne)).toThrow(
+      'deck_integrity_unexplained_node_removal_blocked',
+    );
+    expect(() =>
+      validateDeckIntegrityTransition(currentWithTwo, nextWithOne, {
+        reason: 'canvas:delete-card-confirmed',
+        removedNodeIds: ['other'],
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe('deck semantic relationship validation', () => {
+  const nodes = [
+    { id: 'main', kind: 'agent', runtimeBinding: 'main_chat', runtimeType: 'assistant_agent', title: 'Main', position: { x: 0, y: 0 } },
+    { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Mag', position: { x: 100, y: 0 } },
+    { id: 'coder', kind: 'agent', runtimeBinding: 'local_coder', runtimeType: 'local_coder', title: 'Coder', position: { x: 200, y: 0 } },
+  ] as any;
+
+  it('accepts canonical membership and directional calls', () => {
+    expect(() => validateDeckRelationshipTransition(null, {
+      id: 'deck', name: 'Deck', version: 1, promptTemplates: [], nodes,
+      edges: [
+        { id: 'member', source: 'mag', sourceHandle: 'magone-member-right-1', target: 'coder', targetHandle: 'magone-member-left', edgeType: 'magentic_option' },
+        { id: 'call', source: 'main', sourceHandle: 'call-out', target: 'coder', targetHandle: 'call-in', edgeType: 'flow' },
+      ],
+    } as any)).not.toThrow();
+  });
+
+  it('rejects reversed handle semantics and noncanonical membership direction', () => {
+    expect(() => validateDeckRelationshipTransition(null, {
+      id: 'deck', name: 'Deck', version: 1, promptTemplates: [], nodes,
+      edges: [
+        { id: 'bad', source: 'coder', sourceHandle: 'magone-member-right', target: 'mag', targetHandle: 'magone-member-left-1', edgeType: 'magentic_option' },
+      ],
+    } as any)).toThrow('deck_relationship_invalid');
   });
 });

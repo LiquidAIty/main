@@ -71,9 +71,9 @@ export function buildMainChatControlEdge(): DeckEdge {
   return {
     id: MAIN_CHAT_CONTROL_EDGE_ID,
     source: MAIN_CHAT_CARD_ID,
-    sourceHandle: null,
+    sourceHandle: 'magone-control-out',
     target: 'card_magentic',
-    targetHandle: 'task-bus-top',
+    targetHandle: 'magone-control-in',
     edgeType: 'magentic_control',
   };
 }

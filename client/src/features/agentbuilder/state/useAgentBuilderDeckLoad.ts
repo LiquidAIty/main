@@ -45,6 +45,8 @@ type UseAgentBuilderDeckLoadArgs = {
   setMessages: Dispatch<SetStateAction<AgentBuilderChatMessage[]>>;
   setStateLoaded: Dispatch<SetStateAction<boolean>>;
   setDeckStatusMessage: Dispatch<SetStateAction<string | null>>;
+  reloadNonce: number;
+  setDeckConflictRevision: Dispatch<SetStateAction<string | null>>;
 };
 
 export default function useAgentBuilderDeckLoad({
@@ -70,12 +72,15 @@ export default function useAgentBuilderDeckLoad({
   setMessages,
   setStateLoaded,
   setDeckStatusMessage,
+  reloadNonce,
+  setDeckConflictRevision,
 }: UseAgentBuilderDeckLoadArgs) {
   useEffect(() => {
     if (!canvasProjectId) {
       recordDeckWriteReason('builder-await-project');
       setDeck(buildProjectlessDeckDocument());
       setDeckRevision(null);
+      setDeckConflictRevision(null);
       setDeckLoadError(null);
       setLatestDeckRun(null);
       setLatestCardRun(null);
@@ -91,6 +96,7 @@ export default function useAgentBuilderDeckLoad({
     setDeckLoadError(null);
     setStateLoaded(false);
     setDeckRevision(null);
+    setDeckConflictRevision(null);
     setDeckStatusMessage('Loading canvas...');
 
     void (async () => {
@@ -212,11 +218,13 @@ export default function useAgentBuilderDeckLoad({
     setDeckLoadError,
     setDeckRevision,
     setDeckStatusMessage,
+    setDeckConflictRevision,
     setLatestCardRun,
     setLatestDeckRun,
     setLiveDeckEvents,
     setMessages,
     setStateLoaded,
     snapshotDeckBoard,
+    reloadNonce,
   ]);
 }

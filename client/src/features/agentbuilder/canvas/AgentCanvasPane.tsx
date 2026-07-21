@@ -22,6 +22,8 @@ type AgentCanvasPaneProps = {
   onDeleteSelectedEdge: () => void;
   inspectMode?: boolean;
   focusZone?: { zone: 'agents'; nonce: number } | null;
+  autosaveConflictMessage?: string | null;
+  onReloadSavedDeck?: () => void;
 };
 
 export default function AgentCanvasPane({
@@ -40,6 +42,8 @@ export default function AgentCanvasPane({
   onDeleteSelectedEdge,
   inspectMode = false,
   focusZone,
+  autosaveConflictMessage = null,
+  onReloadSavedDeck,
 }: AgentCanvasPaneProps) {
   return (
     <div
@@ -60,6 +64,8 @@ export default function AgentCanvasPane({
         onDeleteSelectedEdge={onDeleteSelectedEdge}
         inspectMode={inspectMode}
         focusZone={focusZone}
+        autosaveConflictMessage={autosaveConflictMessage}
+        onReloadSavedDeck={onReloadSavedDeck}
       />
     </div>
   );
