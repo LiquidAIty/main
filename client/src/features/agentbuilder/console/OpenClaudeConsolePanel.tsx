@@ -36,6 +36,11 @@ type OpenClaudeConsolePanelProps = {
   /** Test seam: a session already known to the host. */
   initialSession?: ConsoleSessionInfo | null;
   initialTranscript?: ConsoleOutputChunk[];
+  /** Attach the newest live session exposed by this panel's injected client. */
+  attachExisting?: boolean;
+  /** Runtime-specific wording; OpenClaude keeps its existing defaults. */
+  idleLabel?: string;
+  completeLabel?: string;
   /** Test seam: EventSource constructor (undefined in jsdom = no live stream). */
   eventSourceImpl?: typeof EventSource;
   /**
@@ -77,6 +82,9 @@ function OpenClaudeConsolePanelInner({
   client = openClaudeConsoleClient,
   initialSession = null,
   initialTranscript = [],
+  attachExisting = false,
+  idleLabel = 'Idle',
+  completeLabel = 'Complete',
   eventSourceImpl,
   redactBranding = false,
 }: OpenClaudeConsolePanelProps) {
@@ -89,13 +97,45 @@ function OpenClaudeConsolePanelInner({
   const [input, setInput] = useState('');
   const [startError, setStartError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [disconnected, setDisconnected] = useState(false);
   const streamRef = useRef<EventSource | null>(null);
 
-  const status = statusOf(session);
+  const status = disconnected ? 'disconnected' : statusOf(session);
+  const statusLabel = status === 'idle'
+    ? idleLabel
+    : status === 'complete'
+      ? completeLabel
+      : STATUS_LABEL[status];
 
   const appendChunk = useCallback((chunk: ConsoleOutputChunk) => {
     setChunks((prev) => [...prev, chunk].slice(-2000));
   }, []);
+
+  useEffect(() => {
+    if (!open || !attachExisting || session) return;
+    let cancelled = false;
+    setDisconnected(false);
+    void client.listSessions()
+      .then(async (sessions) => {
+        const normalizedRoot = targetRoot.replace(/\\/g, '/').toLowerCase();
+        const live = sessions
+          .filter((candidate) =>
+            (candidate.state === 'running' || candidate.state === 'starting') &&
+            candidate.targetRoot.replace(/\\/g, '/').toLowerCase() === normalizedRoot)
+          .sort((left, right) => String(right.startedAt || '').localeCompare(String(left.startedAt || '')))[0];
+        if (!live || cancelled) return;
+        const detail = await client.getSession(live.id);
+        if (cancelled) return;
+        setSession(detail?.session ?? live);
+        setChunks(detail?.transcript ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setDisconnected(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attachExisting, client, open, session, targetRoot]);
 
   // Subscribe to the live transcript stream for the active session.
   useEffect(() => {
@@ -206,7 +246,7 @@ function OpenClaudeConsolePanelInner({
       >
         <strong style={{ flex: 1 }}>{title}</strong>
         <span data-testid={`${testIdPrefix}-status`} style={{ opacity: 0.8 }}>
-          {STATUS_LABEL[status]}
+          {statusLabel}
         </span>
         {onClose ? (
           <button type="button" data-testid={`${testIdPrefix}-close`} onClick={onClose}>

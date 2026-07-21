@@ -77,6 +77,7 @@ import {
 } from '../features/agentbuilder/deck/deckDocument';
 import {
   deriveVisibleRailItems,
+  isHermesStewardCard,
   isWorldSignalsAgentCard,
 } from '../features/agentbuilder/rail/railVisibility';
 import {
@@ -818,8 +819,11 @@ export default function AgentBuilder(): React.ReactElement {
       const selectedNode = cardId
         ? deck.nodes.find((node) => node.id === cardId) || null
         : null;
-      // Open the agent-card drawer only for real deck cards.
-      setObjectDrawerOpen(Boolean(selectedNode));
+      const isHermesSelection = isHermesStewardCard(selectedNode);
+      // Hermes owns its real hms_* terminal surface; every other card keeps the
+      // existing inspector behavior.
+      setHermesConsoleOpen(isHermesSelection);
+      setObjectDrawerOpen(Boolean(selectedNode) && !isHermesSelection);
       const isMagenticSelection = Boolean(
         selectedNode &&
           normalizeRuntimeType(selectedNode.runtimeType) === 'magentic_one',
@@ -844,6 +848,13 @@ export default function AgentBuilder(): React.ReactElement {
     },
     [deck.nodes, recordUiOnlyAction, tab],
   );
+
+  const openHermesTerminal = useCallback(() => {
+    const hermesCard = deck.nodes.find(isHermesStewardCard);
+    if (!hermesCard) return;
+    setWorkspaceView('canvas');
+    handleSelectCard(hermesCard.id);
+  }, [deck.nodes, handleSelectCard]);
 
   const handleSelectEdge = useCallback(
     (edgeId: string | null) => {
@@ -1353,7 +1364,7 @@ export default function AgentBuilder(): React.ReactElement {
       onShowTradingWorkspace={showTradingWorkspace}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
       hermesTerminalActive={hermesConsoleOpen}
-      onOpenHermesTerminal={() => setHermesConsoleOpen((prev) => !prev)}
+      onOpenHermesTerminal={openHermesTerminal}
     />
   );
 

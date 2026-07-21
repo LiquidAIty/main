@@ -61,6 +61,7 @@ export type OpenClaudeConsoleClient = {
     prompt?: string;
     args?: string[];
   }): Promise<StartSessionResult>;
+  listSessions(): Promise<ConsoleSessionInfo[]>;
   getSession(id: string): Promise<{ session: ConsoleSessionInfo; transcript: ConsoleOutputChunk[] } | null>;
   sendInput(id: string, data: string): Promise<boolean>;
   resizeSession(id: string, cols: number, rows: number): Promise<boolean>;
@@ -81,6 +82,15 @@ export function createConsoleClient(base: string): OpenClaudeConsoleClient {
       error: String(payload?.error || `console_start_failed_${response.status}`),
       missing: Array.isArray(payload?.missing) ? payload.missing.map(String) : [],
     };
+  },
+  async listSessions() {
+    const response = await fetch(`${base}/sessions`, { credentials: 'include' });
+    if (!response.ok) throw new Error(`console_sessions_unavailable_${response.status}`);
+    const payload = await response.json().catch(() => null);
+    if (!payload?.ok || !Array.isArray(payload.sessions)) {
+      throw new Error('console_sessions_invalid_response');
+    }
+    return payload.sessions as ConsoleSessionInfo[];
   },
   async getSession(id) {
     const response = await fetch(`${base}/sessions/${encodeURIComponent(id)}`, {

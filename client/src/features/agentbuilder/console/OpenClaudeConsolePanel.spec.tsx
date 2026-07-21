@@ -36,6 +36,7 @@ function runningSession(): ConsoleSessionInfo {
 function fakeClient(overrides: Partial<OpenClaudeConsoleClient> = {}): OpenClaudeConsoleClient {
   return {
     startSession: vi.fn(async () => ({ ok: true as const, session: runningSession() })),
+    listSessions: vi.fn(async () => []),
     getSession: vi.fn(async () => null),
     sendInput: vi.fn(async () => true),
     resizeSession: vi.fn(async () => true),

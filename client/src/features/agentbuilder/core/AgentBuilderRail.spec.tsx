@@ -105,4 +105,18 @@ describe('AgentBuilderRail Hermes terminal icon', () => {
     });
     expect(onOpen).toHaveBeenCalled();
   });
+
+  it('uses the normal rail selected treatment while the Hermes surface is open', () => {
+    const host = render(
+      <AgentBuilderRail
+        {...baseProps}
+        visibleRailItems={{ ...baseVisibility, showHermesTerminal: true }}
+        hermesTerminalActive
+      />,
+    );
+    const button = host.querySelector(
+      '[data-testid="rail-hermes-terminal-button"]',
+    ) as HTMLButtonElement;
+    expect(button.style.color).toBe('rgb(0, 170, 255)');
+  });
 });

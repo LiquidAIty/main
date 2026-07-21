@@ -27,6 +27,19 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(deriveVisibleRailItems({ deck: disconnected, workspaceView: 'chat' }).showKnowledge).toBe(true);
   });
 
+  it('shows exactly one Hermes rail destination when the restored card exists', () => {
+    const visible = deriveVisibleRailItems({ deck: INITIAL_DECK, workspaceView: 'chat' });
+    expect(visible.showHermesTerminal).toBe(true);
+
+    const withoutHermes = {
+      ...INITIAL_DECK,
+      nodes: INITIAL_DECK.nodes.filter((node) => node.id !== 'card_hermes_steward'),
+    };
+    expect(
+      deriveVisibleRailItems({ deck: withoutHermes, workspaceView: 'chat' }).showHermesTerminal,
+    ).toBe(false);
+  });
+
   it('does not grant Hermes visibility to legacy, reversed, or invalid edges', () => {
     const withoutObserve = INITIAL_DECK.edges.filter((edge) => edge.edgeType !== 'hermes_observe');
     const replacement = (edgeType: string, source = 'card_main_chat', target = 'card_hermes_steward') => ({

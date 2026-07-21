@@ -173,6 +173,9 @@ export default function HermesConsole({
       title="Hermes Terminal"
       testIdPrefix="hermes-console"
       client={client}
+      attachExisting
+      idleLabel="Stopped"
+      completeLabel="Stopped"
       onClose={onClose}
     />
   );

@@ -28,6 +28,12 @@ function isTradingAgentCard(card: AgentCardInstance | null | undefined): boolean
   return hasRuntimeBinding(card, 'trading_agent');
 }
 
+export function isHermesStewardCard(
+  card: AgentCardInstance | null | undefined,
+): boolean {
+  return card?.id === 'card_hermes_steward';
+}
+
 export function isWorldSignalsAgentCard(
   card: AgentCardInstance | null | undefined,
 ): boolean {
@@ -130,9 +136,9 @@ export function deriveVisibleRailItems({
     showTrading:
       workspaceView === 'trading' ||
       isBusConnectedCard(deck.nodes, deck.edges, isTradingAgentCard),
-    // Hermes owns a distinct human-facing terminal surface. Runtime discovery
-    // occurs when it starts; visibility is not coupled to LocalCoder or Mag One.
-    showHermesTerminal: true,
+    // The restored saved card owns this navigation item. Runtime state is
+    // discovered by the Hermes session API and never controls rail visibility.
+    showHermesTerminal: deck.nodes.some(isHermesStewardCard),
   };
 }
 
