@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 const HANDLE_HEIGHT = 12;
 const MIN_OPEN_HEIGHT = 160;
-const MIN_CHAT_HEIGHT = 180;
 const DEFAULT_OPEN_HEIGHT = 300;
 
 type HarnessChatPanelProps = {
@@ -20,10 +19,11 @@ export default function HarnessChatPanel({ chat, terminal }: HarnessChatPanelPro
     up: () => void;
   } | null>(null);
   const [height, setHeight] = useState(0);
+  const [gptMainMode, setGptMainMode] = useState(false);
 
   const clampHeight = useCallback((next: number) => {
     const total = containerRef.current?.getBoundingClientRect().height ?? 0;
-    const maximum = Math.max(MIN_OPEN_HEIGHT, total - MIN_CHAT_HEIGHT - HANDLE_HEIGHT);
+    const maximum = Math.max(MIN_OPEN_HEIGHT, total - HANDLE_HEIGHT);
     if (next < MIN_OPEN_HEIGHT / 2) return 0;
     return Math.min(maximum, Math.max(MIN_OPEN_HEIGHT, next));
   }, []);
@@ -48,7 +48,9 @@ export default function HarnessChatPanel({ chat, terminal }: HarnessChatPanelPro
       if (!dragRef.current || !containerRef.current) return;
       movedRef.current = true;
       const rect = containerRef.current.getBoundingClientRect();
-      setHeight(clampHeight(rect.bottom - nextEvent.clientY));
+      const nextHeight = clampHeight(rect.bottom - nextEvent.clientY);
+      setHeight(nextHeight);
+      setGptMainMode(nextHeight >= Math.max(MIN_OPEN_HEIGHT, rect.height - HANDLE_HEIGHT));
     };
     const up = () => removeDragListeners();
     listenersRef.current = { move, up };
@@ -61,7 +63,13 @@ export default function HarnessChatPanel({ chat, terminal }: HarnessChatPanelPro
       movedRef.current = false;
       return;
     }
-    setHeight((current) => (current > 0 ? 0 : clampHeight(DEFAULT_OPEN_HEIGHT)));
+    setHeight((current) => {
+      if (current > 0) {
+        setGptMainMode(false);
+        return 0;
+      }
+      return clampHeight(DEFAULT_OPEN_HEIGHT);
+    });
   }, [clampHeight]);
 
   const open = height > 0;
@@ -69,19 +77,22 @@ export default function HarnessChatPanel({ chat, terminal }: HarnessChatPanelPro
     <div
       ref={containerRef}
       data-testid="harness-chat-panel"
+      data-main-mode={gptMainMode ? 'chatgpt' : 'native'}
       style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}
     >
-      <div data-testid="harness-chat" style={{ flex: 1, minHeight: MIN_CHAT_HEIGHT, overflow: 'hidden' }}>
-        {chat}
-      </div>
+      {!gptMainMode ? (
+        <div data-testid="harness-chat" style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          {chat}
+        </div>
+      ) : null}
 
       <button
         type="button"
         data-testid="chat-openclaude-handle"
         aria-expanded={open}
         aria-controls="chat-openclaude-region"
-        aria-label={open ? 'Collapse OpenClaude Code terminal' : 'Expand OpenClaude Code terminal'}
-        title={open ? 'Slide down OpenClaude Code' : 'Slide up OpenClaude Code'}
+        aria-label={gptMainMode ? 'Exit ChatGPT Main mode' : open ? 'Collapse OpenClaude Code terminal' : 'Expand OpenClaude Code terminal'}
+        title={gptMainMode ? 'GPT = Main — pull down to restore native Main Chat' : open ? 'Slide down OpenClaude Code' : 'Slide up OpenClaude Code'}
         onMouseDown={onDragStart}
         onClick={onHandleClick}
         style={{

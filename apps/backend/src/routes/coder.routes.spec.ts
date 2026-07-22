@@ -4,7 +4,7 @@ import express from 'express';
 import { describe, expect, it, vi } from 'vitest';
 // Static imports: NodeNext ESM rejects extensionless dynamic import('./coder.routes')
 // after the '.routes' infix strip. vitest hoists vi.mock() above these.
-import router, { resolveHermesProjectId } from './coder.routes';
+import router, { resolveCodeGraphProjectName, resolveHermesProjectId } from './coder.routes';
 
 const planningMocks = vi.hoisted(() => ({
   packet: {
@@ -158,6 +158,22 @@ describe('coder routes', () => {
   // vendored runtime is built or API keys are exported on the test machine.
   const BROKEN_COMMAND = 'node C:/liquidaity/nonexistent/openclaude.mjs';
 
+  it('selects the configured LiquidAIty CodeGraph project instead of the first indexed repository', () => {
+    const previous = process.env.LIQUIDAITY_CODEGRAPH_PROJECT;
+    process.env.LIQUIDAITY_CODEGRAPH_PROJECT = 'C-Projects-main';
+    try {
+      expect(resolveCodeGraphProjectName([
+        { name: 'C-Projects-kaiwiki-site' },
+        { name: 'C-Projects-main' },
+      ])).toBe('C-Projects-main');
+      expect(() => resolveCodeGraphProjectName([{ name: 'C-Projects-kaiwiki-site' }]))
+        .toThrow('cbm_project_not_indexed: C-Projects-main');
+    } finally {
+      if (previous === undefined) delete process.env.LIQUIDAITY_CODEGRAPH_PROJECT;
+      else process.env.LIQUIDAITY_CODEGRAPH_PROJECT = previous;
+    }
+  });
+
   async function withBrokenRuntime<T>(fn: () => Promise<T>): Promise<T> {
     const previous = process.env.LOCALCODER_COMMAND;
     process.env.LOCALCODER_COMMAND = BROKEN_COMMAND;
@@ -192,6 +208,29 @@ describe('coder routes', () => {
         error: 'hermes_investigation_context_not_active',
       });
       expect(readResponse.status).toBe(409);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('keeps the external Main Hermes doorway bounded before starting the runtime', async () => {
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/main_invoke_hermes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'project-1', conversationId: 'conversation-1' }),
+      });
+      await expect(response.json()).resolves.toEqual({ ok: false, error: 'requestedOutcome_required' });
+      expect(response.status).toBe(400);
+
+      const statusResponse = await fetch(`${baseUrl}/mcp-bridge/main_hermes_status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parentRunId: 'req_not_external' }),
+      });
+      await expect(statusResponse.json()).resolves.toEqual({ ok: false, error: 'external_main_hermes_session_not_found' });
+      expect(statusResponse.status).toBe(404);
     } finally {
       await closeServer(server);
     }

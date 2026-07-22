@@ -48,4 +48,33 @@ describe('HarnessChatPanel OpenClaude dock', () => {
     expect(handle.getAttribute('aria-expanded')).toBe('false');
     expect(host.querySelector('[data-testid="openclaude-terminal-instance"]')).toBe(terminal);
   });
+
+  it('makes ChatGPT the sole Main at full height and restores native Main when pulled down', async () => {
+    const host = await render();
+    const panel = host.querySelector('[data-testid="harness-chat-panel"]') as HTMLDivElement;
+    panel.getBoundingClientRect = () => ({
+      x: 0, y: 0, top: 0, left: 0, right: 800, bottom: 600,
+      width: 800, height: 600, toJSON: () => ({}),
+    });
+    const handle = host.querySelector('[data-testid="chat-openclaude-handle"]') as HTMLButtonElement;
+    const terminal = host.querySelector('[data-testid="openclaude-terminal-instance"]');
+
+    await act(async () => {
+      handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientY: 590 }));
+      window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientY: 0 }));
+      window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    });
+    expect(panel.getAttribute('data-main-mode')).toBe('chatgpt');
+    expect(host.querySelector('[data-testid="main-chat"]')).toBeNull();
+    expect(host.querySelector('[data-testid="openclaude-terminal-instance"]')).toBe(terminal);
+
+    await act(async () => {
+      handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientY: 0 }));
+      window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientY: 595 }));
+      window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    });
+    expect(panel.getAttribute('data-main-mode')).toBe('native');
+    expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="openclaude-terminal-instance"]')).toBe(terminal);
+  });
 });
