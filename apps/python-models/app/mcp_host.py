@@ -62,115 +62,7 @@ MCP_TRANSPORT = os.environ.get("LIQUIDAITY_MCP_TRANSPORT", "stdio").strip().lowe
 HTTP_MCP_HOST = "127.0.0.1"
 HTTP_MCP_PORT = int(os.environ.get("LIQUIDAITY_HTTP_MCP_PORT", "8765"))
 HTTP_MCP_PATH = "/mcp"
-CHATGPT_MAIN = os.environ.get("LIQUIDAITY_MCP_PRINCIPAL", "").strip() == "chatgpt_main"
-CHATGPT_MAIN_TOOL_NAMES = {
-    "main.context", "main.invoke_hermes", "main.hermes_status",
-    "thinkgraph.get_graph_slice", "thinkgraph.submit_update", "knowgraph.query",
-    "codegraph.status", "codegraph.search", "canvas.inspect",
-    "mag_one.describe_connected_agents", "write_mag_one_instructions", "run_mag_one",
-    "read_model_results", "run_coder_subagent",
-}
-
-CHATGPT_MAIN_INSTRUCTIONS = """You are the sole human-facing Main for the connected LiquidAIty session. LiquidAIty is the persistent governed system, not a passive tool bag. Start with main.context. Use only the exposed project-scoped capabilities. Never request or expose raw database access, SQL, Cypher, filesystem access, shell, git, credentials, schemas, the Coder terminal, or permission bypasses. Hermes is the grounding boundary before any Coder or Magentic-One execution: call main.invoke_hermes, wait for main.hermes_status to return a report, obtain explicit user approval, and only then dispatch. The external handoff tools load Hermes's report server-side and never accept raw chat as a coding prompt. Report real statuses and failures. Do not claim ChatGPT-to-LiquidAIty end-to-end success until the user performs that test."""
-
-_CHATGPT_MAIN_IDENTITY_ENV = (
-    ("projectId", "LIQUIDAITY_MAIN_PROJECT_ID"),
-    ("deckId", "LIQUIDAITY_MAIN_DECK_ID"),
-    ("conversationId", "LIQUIDAITY_MAIN_CONVERSATION_ID"),
-)
-
-# These fields belong to the configured Main session, not to the model-facing
-# tool contract. They remain absent from the public schema and allowed arguments.
-_CHATGPT_MAIN_SERVER_OWNED_IDENTITY = {
-    "codegraph.search": frozenset({"projectId", "conversationId"}),
-}
-
-server = Server("liquidaity", instructions=CHATGPT_MAIN_INSTRUCTIONS if CHATGPT_MAIN else None)
-
-
-def _chatgpt_main_context() -> dict[str, Any]:
-    return {
-        "ok": True,
-        "principal": "chatgpt_main",
-        "role": "Main",
-        "projectId": os.environ.get("LIQUIDAITY_MAIN_PROJECT_ID", "").strip(),
-        "deckId": os.environ.get("LIQUIDAITY_MAIN_DECK_ID", "").strip(),
-        "conversationId": os.environ.get("LIQUIDAITY_MAIN_CONVERSATION_ID", "").strip(),
-        "configured": all(
-            os.environ.get(name, "").strip()
-            for name in (
-                "LIQUIDAITY_MAIN_PROJECT_ID",
-                "LIQUIDAITY_MAIN_DECK_ID",
-                "LIQUIDAITY_MAIN_CONVERSATION_ID",
-            )
-        ),
-        "executionBoundary": "Hermes report -> explicit user approval -> existing OpenClaude Coder or Magentic-One route",
-    }
-
-
-def _chatgpt_main_tools(tools: list[Tool]) -> list[Tool]:
-    projected = [tool for tool in tools if tool.name in CHATGPT_MAIN_TOOL_NAMES]
-    projected.extend([
-        Tool(
-            name="main.context",
-            description="Read the configured LiquidAIty project/deck/conversation identity and governed Main boundary. No secrets.",
-            inputSchema={"type": "object", "properties": {}, "required": []},
-        ),
-        Tool(
-            name="main.invoke_hermes",
-            description="Start the real installed Hermes runtime for one grounded investigation. Returns the server-minted parentRunId used for status and approved execution.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "conversationId": {"type": "string"},
-                    "requestedOutcome": {"type": "string"},
-                    "focusNodeIds": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["projectId", "conversationId", "requestedOutcome"],
-            },
-        ),
-        Tool(
-            name="main.hermes_status",
-            description="Read bounded lifecycle status and the governed Hermes report for a prior invocation. Does not expose the Hermes terminal transcript.",
-            inputSchema={
-                "type": "object",
-                "properties": {"parentRunId": {"type": "string"}},
-                "required": ["parentRunId"],
-            },
-        ),
-    ])
-    for index, tool in enumerate(projected):
-        if tool.name == "run_coder_subagent":
-            projected[index] = Tool(
-                name=tool.name,
-                description="After explicit user approval, run the existing OpenClaude Coder route using the active Hermes report as the approved prompt. Raw chat prompt input is not accepted.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "parentRunId": {"type": "string"},
-                        "projectId": {"type": "string"},
-                        "deckId": {"type": "string"},
-                        "conversationId": {"type": "string"},
-                        "cardId": {"type": "string"},
-                        "adapter": {"type": "string", "enum": ["claude_code"]},
-                        "authority": {"type": "string", "enum": ["direct_main_audit", "mag_one_execution"]},
-                        "graphViewIds": {"type": "array", "items": {"type": "string"}},
-                    },
-                    "required": ["parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter"],
-                },
-            )
-        elif tool.name == "write_mag_one_instructions":
-            projected[index] = Tool(
-                name=tool.name,
-                description="After explicit user approval, write the active Hermes report unchanged as the Magentic-One job instructions.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {"parentRunId": {"type": "string"}, "runId": {"type": "string"}},
-                    "required": ["parentRunId", "runId"],
-                },
-            )
-    return projected
+server = Server("liquidaity")
 
 
 def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
@@ -733,7 +625,7 @@ async def list_tools() -> list[Tool]:
             },
         ),
     ]
-    return _chatgpt_main_tools(tools) if CHATGPT_MAIN else tools
+    return tools
 
 
 # Structural allow-list per tool: unexpected keys are rejected honestly, never
@@ -773,9 +665,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "worldsignals.batch": {"commands"},
     "worldsignals.poll": set(),
     "worldsignals.stream_events": {"max_events", "timeout_seconds"},
-    "main.context": set(),
-    "main.invoke_hermes": {"projectId", "conversationId", "requestedOutcome", "focusNodeIds"},
-    "main.hermes_status": {"parentRunId"},
 }
 
 _BRIDGE_PATHS: dict[str, str] = {
@@ -797,8 +686,6 @@ _BRIDGE_PATHS: dict[str, str] = {
     "hermes.memory_write": "hermes_memory_write",
     "hermes.read_report": "hermes_read_report",
     "hermes.write_report": "hermes_write_report",
-    "main.invoke_hermes": "main_invoke_hermes",
-    "main.hermes_status": "main_hermes_status",
 }
 
 # Coder job-folder tools dispatch to the ONE shared Python implementation
@@ -824,16 +711,10 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-    if CHATGPT_MAIN and name not in CHATGPT_MAIN_TOOL_NAMES:
-        return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"tool_not_granted_to_chatgpt_main: {name}"}))]
     allowed = _ALLOWED_KEYS.get(name)
     if allowed is None:
         return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"unknown_tool: {name}"}))]
     args = arguments or {}
-    if CHATGPT_MAIN and name == "write_mag_one_instructions":
-        allowed = {"parentRunId", "runId"}
-    elif CHATGPT_MAIN and name == "run_coder_subagent":
-        allowed = {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "authority", "graphViewIds"}
     extra = [k for k in args.keys() if k not in allowed]
     if extra:
         return [
@@ -842,39 +723,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 text=json.dumps({"ok": False, "error": f"tool_arguments_rejected: {','.join(sorted(extra))}"}),
             )
         ]
-    if CHATGPT_MAIN:
-        args = dict(args)
-        server_owned_identity = _CHATGPT_MAIN_SERVER_OWNED_IDENTITY.get(name, frozenset())
-        for field, env_name in _CHATGPT_MAIN_IDENTITY_ENV:
-            if field not in allowed and field not in server_owned_identity:
-                continue
-            configured = os.environ.get(env_name, "").strip()
-            if not configured:
-                if field in server_owned_identity:
-                    return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"chatgpt_main_{field}_unconfigured"}))]
-                continue
-            supplied = str(args.get(field) or "").strip()
-            if supplied and supplied != configured:
-                return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"chatgpt_main_{field}_mismatch"}))]
-            args[field] = configured
-    if name == "main.context":
-        return [TextContent(type="text", text=json.dumps(_chatgpt_main_context()))]
-    if CHATGPT_MAIN and name in {"run_coder_subagent", "write_mag_one_instructions"}:
-        parent_run_id = str(args.get("parentRunId") or "")
-        report_text = await asyncio.to_thread(_bridge_sync, "hermes_read_report", {"parentRunId": parent_run_id})
-        try:
-            report_payload = json.loads(report_text)
-        except json.JSONDecodeError:
-            report_payload = {}
-        report = report_payload.get("report") if isinstance(report_payload, dict) else None
-        report_markdown = report.get("reportMarkdown") if isinstance(report, dict) else None
-        if not isinstance(report_markdown, str) or not report_markdown.strip():
-            return [TextContent(type="text", text=json.dumps({"ok": False, "error": "active_hermes_report_required"}))]
-        args = dict(args)
-        if name == "run_coder_subagent":
-            args["approvedPrompt"] = report_markdown
-        else:
-            args = {"runId": str(args.get("runId") or ""), "instructions": report_markdown}
     if name == "knowgraph.query":
         # Direct in-process reuse of the ONE proven hybrid retrieval
         # (services/knowgraph via tool_registry) — read-only; honest error when

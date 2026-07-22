@@ -67,7 +67,6 @@ import {
 } from '../services/prompt/promptLifecycle';
 
 const router = Router();
-const externalMainHermesSessions = new Map<string, string>();
 
 export function resolveCodeGraphProjectName(projects: unknown[]): string {
   const configuredProject = String(process.env.LIQUIDAITY_CODEGRAPH_PROJECT || 'C-Projects-main').trim();
@@ -720,87 +719,6 @@ router.post('/mcp-bridge/hermes_read_report', (req, res) => {
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'hermes_report_read_failed';
     return res.status(reason === 'hermes_investigation_context_not_active' ? 409 : 400).json({ ok: false, error: reason });
-  }
-});
-
-// ChatGPT-as-Main gets one bounded Hermes doorway, not Hermes's raw terminal.
-// The server mints the investigation/run identity and starts the existing real
-// Hermes PTY manager. Downstream external execution reads this report by id;
-// raw ChatGPT text can never be forwarded to Coder through that path.
-router.post('/mcp-bridge/main_invoke_hermes', (req, res) => {
-  const projectId = String(req.body?.projectId || '').trim();
-  const conversationId = String(req.body?.conversationId || '').trim();
-  const requestedOutcome = String(req.body?.requestedOutcome || '').trim();
-  const focusNodeIds = Array.isArray(req.body?.focusNodeIds)
-    ? req.body.focusNodeIds.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 64)
-    : [];
-  if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-  if (!conversationId) return res.status(400).json({ ok: false, error: 'conversationId_required' });
-  if (!requestedOutcome) return res.status(400).json({ ok: false, error: 'requestedOutcome_required' });
-  if (requestedOutcome.length > 20_000) return res.status(400).json({ ok: false, error: 'requestedOutcome_too_long' });
-
-  const parentRunId = `req_chatgpt-main-${randomUUID()}`;
-  try {
-    beginHermesInvestigation(parentRunId, {
-      projectId,
-      conversationId,
-      focusNodeIds,
-      requestedOutcome,
-    });
-    const started = hermesConsoleSessionManager.start({ mode: 'interactive' });
-    if (!started.ok) {
-      endHermesInvestigation(parentRunId);
-      return res.status(503).json({ ok: false, error: started.error, missing: started.missing });
-    }
-    const prompt = [
-      'You are Hermes, the grounded planning boundary for LiquidAIty Main.',
-      `Investigate this requested outcome: ${requestedOutcome}`,
-      focusNodeIds.length ? `User-selected focus node ids: ${focusNodeIds.join(', ')}` : '',
-      `Project id: ${projectId}. Conversation id: ${conversationId}.`,
-      'Use only your governed LiquidAIty capabilities. Do not execute Coder or Magentic-One.',
-      `When grounded, call hermes.write_report with parentRunId ${parentRunId}, a complete execution-ready reportMarkdown, a concise summary, and any real graph references.`,
-    ].filter(Boolean).join('\n\n');
-    if (!started.session.submitLine(prompt)) {
-      started.session.stop();
-      endHermesInvestigation(parentRunId);
-      return res.status(502).json({ ok: false, error: 'hermes_prompt_delivery_failed' });
-    }
-    externalMainHermesSessions.set(parentRunId, started.session.info.id);
-    return res.json({
-      ok: true,
-      parentRunId,
-      session: {
-        id: started.session.info.id,
-        state: started.session.info.state,
-        runtimeSource: started.session.info.runtimeSource,
-        transportMode: started.session.info.transportMode,
-      },
-    });
-  } catch (error) {
-    endHermesInvestigation(parentRunId);
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'main_invoke_hermes_failed' });
-  }
-});
-
-router.post('/mcp-bridge/main_hermes_status', (req, res) => {
-  const parentRunId = String(req.body?.parentRunId || '').trim();
-  const sessionId = externalMainHermesSessions.get(parentRunId);
-  if (!sessionId) return res.status(404).json({ ok: false, error: 'external_main_hermes_session_not_found' });
-  const session = hermesConsoleSessionManager.get(sessionId);
-  try {
-    return res.json({
-      ok: true,
-      parentRunId,
-      session: session ? {
-        id: session.info.id,
-        state: session.info.state,
-        exitCode: session.info.exitCode,
-        error: session.info.error,
-      } : null,
-      report: readActiveHermesReport(parentRunId),
-    });
-  } catch (error) {
-    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : 'main_hermes_status_failed' });
   }
 });
 

@@ -213,29 +213,6 @@ describe('coder routes', () => {
     }
   });
 
-  it('keeps the external Main Hermes doorway bounded before starting the runtime', async () => {
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/main_invoke_hermes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId: 'project-1', conversationId: 'conversation-1' }),
-      });
-      await expect(response.json()).resolves.toEqual({ ok: false, error: 'requestedOutcome_required' });
-      expect(response.status).toBe(400);
-
-      const statusResponse = await fetch(`${baseUrl}/mcp-bridge/main_hermes_status`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parentRunId: 'req_not_external' }),
-      });
-      await expect(statusResponse.json()).resolves.toEqual({ ok: false, error: 'external_main_hermes_session_not_found' });
-      expect(statusResponse.status).toBe(404);
-    } finally {
-      await closeServer(server);
-    }
-  });
-
   it('returns 424 with an exact blocker from the LocalCoder status route when nothing runnable', async () => {
     await withBrokenRuntime(async () => {
       const { server, baseUrl } = await createApiServer();
