@@ -39,6 +39,7 @@ import copy
 import json
 import os
 import sys
+import threading
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -141,9 +142,14 @@ class LiquidAItyServer(Server):
 
 server = LiquidAItyServer("liquidaity")
 
+_NATIVE_ENGRAPHIS_MCP: Any | None = None
+_NATIVE_ENGRAPHIS_TOOLS: tuple[Tool, ...] | None = None
+_NATIVE_ENGRAPHIS_NAMES: frozenset[str] = frozenset()
+_NATIVE_ENGRAPHIS_CALL_LOCK = threading.Lock()
 
-def _native_engraphis_mcp():
-    """Return Engraphis' own FastMCP registry, bound to ThinkGraph's database."""
+
+def _load_native_engraphis_mcp():
+    """Import Engraphis' FastMCP registry after binding ThinkGraph's database."""
     repo_root = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
     os.environ.setdefault(
         "ENGRAPHIS_DB_PATH",
@@ -157,9 +163,52 @@ def _native_engraphis_mcp():
     return mcp
 
 
+async def _initialize_native_engraphis() -> None:
+    """Discover Engraphis once, before the outer MCP server accepts requests.
+
+    The installed MCP SDK has no public server-mount/import API. Calling the
+    nested FastMCP ``list_tools`` method from the outer low-level server's own
+    ``tools/list`` callback stalls that stdio request. Startup discovery keeps
+    Engraphis' original Tool objects and handlers while removing that nested
+    request-lifecycle interaction.
+    """
+    global _NATIVE_ENGRAPHIS_MCP, _NATIVE_ENGRAPHIS_NAMES, _NATIVE_ENGRAPHIS_TOOLS
+    if _NATIVE_ENGRAPHIS_TOOLS is not None:
+        return
+    native_mcp = _load_native_engraphis_mcp()
+    tools = tuple(await native_mcp.list_tools())
+    names = [tool.name for tool in tools]
+    if len(names) != len(set(names)):
+        raise RuntimeError("native_engraphis_duplicate_tool_name")
+    _NATIVE_ENGRAPHIS_MCP = native_mcp
+    _NATIVE_ENGRAPHIS_TOOLS = tools
+    _NATIVE_ENGRAPHIS_NAMES = frozenset(names)
+
+
+def _native_engraphis_mcp():
+    """Return the initialized native Engraphis FastMCP registry."""
+    if _NATIVE_ENGRAPHIS_MCP is None:
+        raise RuntimeError("native_engraphis_not_initialized")
+    return _NATIVE_ENGRAPHIS_MCP
+
+
 async def _native_engraphis_tools() -> list[Tool]:
-    """Discover native Engraphis tools from the installed registry verbatim."""
-    return list(await _native_engraphis_mcp().list_tools())
+    """Return the original native Engraphis Tool objects discovered at startup."""
+    await _initialize_native_engraphis()
+    return list(_NATIVE_ENGRAPHIS_TOOLS or ())
+
+
+def _call_native_engraphis(name: str, arguments: dict[str, Any]):
+    """Run Engraphis' native dispatcher without blocking the outer MCP loop.
+
+    FastMCP 1.28 executes synchronous registered functions inline. Engraphis
+    initializes its local embedding model on the first tool call, so delegating
+    on the outer server's event loop prevents stdio from sending any response.
+    One serialized worker preserves FastMCP's native validation/handler path and
+    the service's original single-request execution semantics.
+    """
+    with _NATIVE_ENGRAPHIS_CALL_LOCK:
+        return asyncio.run(_native_engraphis_mcp().call_tool(name, arguments))
 
 
 def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
@@ -995,10 +1044,8 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-    native_engraphis = {
-        tool.name
-        for tool in await _native_engraphis_tools()
-    }
+    await _initialize_native_engraphis()
+    native_engraphis = _NATIVE_ENGRAPHIS_NAMES
     if name in native_engraphis:
         context = _authenticated_main_context()
         if context is not None:
@@ -1015,7 +1062,11 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                     )
                 ]
         try:
-            result = await _native_engraphis_mcp().call_tool(name, dict(arguments or {}))
+            result = await asyncio.to_thread(
+                _call_native_engraphis,
+                name,
+                dict(arguments or {}),
+            )
             if isinstance(result, dict):
                 return [TextContent(type="text", text=json.dumps(result))]
             return [
@@ -1313,6 +1364,7 @@ async def _run_streamable_http() -> None:
 
 
 async def main() -> None:
+    await _initialize_native_engraphis()
     if MCP_TRANSPORT == "stdio":
         await _run_stdio()
         return

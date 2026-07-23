@@ -5,6 +5,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -68,6 +69,181 @@ asyncio.run(check())
     assert "LIQUIDAITY_MAIN_PROJECT_ID" not in host
     assert "LIQUIDAITY_MAIN_DECK_ID" not in host
     assert "LIQUIDAITY_MAIN_CONVERSATION_ID" not in host
+
+
+def test_native_engraphis_registry_is_initialized_once_without_schema_adaptation():
+    code = """
+import asyncio, json, mcp_host
+async def check():
+    await mcp_host._initialize_native_engraphis()
+    native = {tool.name: tool for tool in await mcp_host._native_engraphis_mcp().list_tools()}
+    first = await mcp_host._native_engraphis_tools()
+    await mcp_host._initialize_native_engraphis()
+    second = await mcp_host._native_engraphis_tools()
+    assert len(native) == 18
+    assert [id(tool) for tool in first] == [id(tool) for tool in second]
+    assert {tool.name for tool in first} == set(native)
+    for tool in first:
+        assert tool.model_dump() == native[tool.name].model_dump()
+    combined = await mcp_host.list_tools()
+    combined_names = [tool.name for tool in combined]
+    assert len(combined_names) == 54
+    assert len(set(combined_names)) == 54
+    assert len(set(combined_names) - set(native)) == 36
+    print(json.dumps(sorted(native)))
+asyncio.run(check())
+"""
+    result = _run_in_script_launch_context(code)
+    assert result.returncode == 0, result.stderr
+    assert len(json.loads(result.stdout)) == 18
+
+
+def test_native_engraphis_dispatch_keeps_sync_handlers_off_the_outer_event_loop(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    outer_thread = threading.get_ident()
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+    native_result = mcp_host.TextContent(
+        type="text",
+        text=json.dumps({"ok": True, "source": "native"}),
+    )
+
+    class NativeMcp:
+        async def call_tool(self, name, arguments):
+            calls.append((name, arguments, threading.get_ident()))
+            entered.set()
+            if not release.wait(timeout=2):
+                raise RuntimeError("test_release_timeout")
+            return [native_result]
+
+    async def initialized():
+        return None
+
+    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
+    monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_NAMES", frozenset({"engraphis_stats"}))
+    monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
+
+    async def check():
+        task = asyncio.create_task(mcp_host.call_tool("engraphis_stats", {"canonical": True}))
+        for _ in range(200):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.005)
+        assert entered.is_set()
+        heartbeat = False
+        await asyncio.sleep(0)
+        heartbeat = True
+        release.set()
+        result = await asyncio.wait_for(task, timeout=2)
+        return result, heartbeat
+
+    result, heartbeat = asyncio.run(check())
+    assert heartbeat is True
+    assert result[0] is native_result
+    assert calls == [("engraphis_stats", {"canonical": True}, calls[0][2])]
+    assert calls[0][2] != outer_thread
+
+    active = 0
+    max_active = 0
+    state_lock = threading.Lock()
+
+    class SerializedNativeMcp:
+        async def call_tool(self, _name, _arguments):
+            nonlocal active, max_active
+            with state_lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with state_lock:
+                active -= 1
+            return [mcp_host.TextContent(type="text", text="serialized")]
+
+    monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: SerializedNativeMcp())
+
+    async def check_serialization():
+        return await asyncio.gather(
+            mcp_host.call_tool("engraphis_stats", {"request": 1}),
+            mcp_host.call_tool("engraphis_stats", {"request": 2}),
+        )
+
+    serialized_results = asyncio.run(check_serialization())
+    assert [result[0].text for result in serialized_results] == ["serialized", "serialized"]
+    assert max_active == 1
+
+
+def test_native_engraphis_worker_completion_failure_and_cancellation_exit_cleanly():
+    code = """
+import asyncio, json, time, mcp_host
+
+class NativeFailure(RuntimeError):
+    pass
+
+class NativeMcp:
+    async def call_tool(self, name, arguments):
+        if name == 'native_failure':
+            raise NativeFailure('canonical native failure')
+        if name == 'cancelled_call':
+            time.sleep(0.1)
+        return [mcp_host.TextContent(type='text', text=json.dumps({
+            'name': name,
+            'arguments': arguments,
+        }))]
+
+native = NativeMcp()
+mcp_host._NATIVE_ENGRAPHIS_MCP = native
+mcp_host._NATIVE_ENGRAPHIS_TOOLS = ()
+mcp_host._NATIVE_ENGRAPHIS_NAMES = frozenset({
+    'normal_call', 'native_failure', 'cancelled_call',
+})
+
+async def check():
+    normal = await mcp_host.call_tool('normal_call', {'value': 1})
+    assert json.loads(normal[0].text) == {
+        'name': 'normal_call',
+        'arguments': {'value': 1},
+    }
+    try:
+        await asyncio.to_thread(
+            mcp_host._call_native_engraphis,
+            'native_failure',
+            {'value': 2},
+        )
+    except NativeFailure as exc:
+        assert str(exc) == 'canonical native failure'
+    else:
+        raise AssertionError('native_exception_was_not_propagated')
+    typed = await mcp_host.call_tool('native_failure', {'value': 3})
+    assert json.loads(typed[0].text) == {
+        'ok': False,
+        'error': 'engraphis_failed: canonical native failure',
+    }
+    pending = asyncio.create_task(
+        mcp_host.call_tool('cancelled_call', {'value': 4})
+    )
+    await asyncio.sleep(0.01)
+    pending.cancel()
+    try:
+        await pending
+    except asyncio.CancelledError:
+        pass
+    else:
+        raise AssertionError('cancelled_call_was_not_cancelled')
+
+asyncio.run(check())
+print('NATIVE_WORKER_LIFECYCLE_OK')
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=_APP_DIR,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "NATIVE_WORKER_LIFECYCLE_OK" in result.stdout
 
 
 def test_coder_and_mag_one_dispatch_without_hermes_report_substitution():
@@ -150,7 +326,7 @@ finally:
 
 def test_stdio_initializes_and_lists_the_canonical_catalog():
     code = f"""
-import asyncio, sys, mcp_host
+import asyncio, json, sys, time, mcp_host
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -164,10 +340,15 @@ async def check():
     async with stdio_client(params) as streams:
         async with ClientSession(streams[0], streams[1]) as session:
             await session.initialize()
+            started = time.perf_counter()
             actual = sorted(tool.name for tool in (await session.list_tools()).tools)
+            elapsed = time.perf_counter() - started
             assert actual == expected
             assert 'main.context' in actual
-            print('STDIO_OK')
+            assert len(actual) == 54
+            assert sum(name.startswith('engraphis_') for name in actual) == 18
+            assert elapsed < 10
+            print(json.dumps({{'status': 'STDIO_OK', 'count': len(actual), 'elapsed': elapsed}}))
 
 asyncio.run(check())
 """
@@ -176,7 +357,7 @@ asyncio.run(check())
         cwd=_APP_DIR,
         capture_output=True,
         text=True,
-        timeout=50,
+        timeout=20,
     )
     assert result.returncode == 0, result.stderr
     assert "STDIO_OK" in result.stdout
