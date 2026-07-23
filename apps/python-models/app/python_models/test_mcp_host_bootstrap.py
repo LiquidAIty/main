@@ -80,22 +80,22 @@ async def check():
     first = await mcp_host._native_engraphis_tools()
     await mcp_host._initialize_native_engraphis()
     second = await mcp_host._native_engraphis_tools()
-    assert len(native) == 18
+    assert len(native) == 29
     assert [id(tool) for tool in first] == [id(tool) for tool in second]
     assert {tool.name for tool in first} == set(native)
     for tool in first:
         assert tool.model_dump() == native[tool.name].model_dump()
     combined = await mcp_host.list_tools()
     combined_names = [tool.name for tool in combined]
-    assert len(combined_names) == 54
-    assert len(set(combined_names)) == 54
+    assert len(combined_names) == 65
+    assert len(set(combined_names)) == 65
     assert len(set(combined_names) - set(native)) == 36
     print(json.dumps(sorted(native)))
 asyncio.run(check())
 """
     result = _run_in_script_launch_context(code)
     assert result.returncode == 0, result.stderr
-    assert len(json.loads(result.stdout)) == 18
+    assert len(json.loads(result.stdout)) == 29
 
 
 def test_native_engraphis_dispatch_keeps_sync_handlers_off_the_outer_event_loop(monkeypatch):
@@ -117,7 +117,7 @@ def test_native_engraphis_dispatch_keeps_sync_handlers_off_the_outer_event_loop(
             entered.set()
             if not release.wait(timeout=2):
                 raise RuntimeError("test_release_timeout")
-            return [native_result]
+            return [native_result], {"result": {"ok": True, "source": "native"}}
 
     async def initialized():
         return None
@@ -142,7 +142,8 @@ def test_native_engraphis_dispatch_keeps_sync_handlers_off_the_outer_event_loop(
 
     result, heartbeat = asyncio.run(check())
     assert heartbeat is True
-    assert result[0] is native_result
+    assert result[0][0] is native_result
+    assert result[1] == {"result": {"ok": True, "source": "native"}}
     assert calls == [("engraphis_stats", {"canonical": True}, calls[0][2])]
     assert calls[0][2] != outer_thread
 
@@ -345,8 +346,8 @@ async def check():
             elapsed = time.perf_counter() - started
             assert actual == expected
             assert 'main.context' in actual
-            assert len(actual) == 54
-            assert sum(name.startswith('engraphis_') for name in actual) == 18
+            assert len(actual) == 65
+            assert sum(name.startswith('engraphis_') for name in actual) == 29
             assert elapsed < 10
             print(json.dumps({{'status': 'STDIO_OK', 'count': len(actual), 'elapsed': elapsed}}))
 

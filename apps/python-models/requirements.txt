@@ -4,7 +4,7 @@ pydantic==2.12.5
 pytest==8.4.2
 python-dotenv==1.2.2
 # Active ThinkGraph memory engine. Apache-2.0; local Sentence Transformers only.
-engraphis[server]==0.9.5
+engraphis[mcp]==1.0.0
 python-multipart==0.0.32
 # Auth0 access-token verification for the public MCP resource server.
 PyJWT[crypto]==2.13.0

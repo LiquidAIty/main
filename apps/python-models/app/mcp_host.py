@@ -1043,7 +1043,7 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
 
 
 @server.call_tool()
-async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     await _initialize_native_engraphis()
     native_engraphis = _NATIVE_ENGRAPHIS_NAMES
     if name in native_engraphis:
@@ -1067,14 +1067,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 name,
                 dict(arguments or {}),
             )
-            if isinstance(result, dict):
-                return [TextContent(type="text", text=json.dumps(result))]
-            return [
-                block
-                if isinstance(block, TextContent)
-                else TextContent(type="text", text=str(block))
-                for block in result
-            ]
+            # FastMCP 1.0 tools return the MCP SDK's native result union:
+            # unstructured content, structured content, or the
+            # (content_blocks, structured_content) combination. Returning it
+            # unchanged lets the outer low-level Server normalize the same
+            # contract without stringifying or discarding structuredContent.
+            return result
         except Exception as err:  # noqa: BLE001 - preserve one honest tool-level failure
             return [
                 TextContent(
