@@ -17,9 +17,10 @@ DB functions fail honestly on connection/constraint errors — no fallback store
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
 from typing import Any
+
+from app.python_models.postgres import connect_postgres as _connect
 
 SKILL_STATUSES = ("candidate", "promoted", "retired")
 
@@ -40,21 +41,6 @@ _FORBIDDEN_REF_KEYS = {"sql", "cypher", "query", "raw", "raw_query", "statement"
 _REF_MAX_KEYS = 16
 _REF_MAX_LIST_ITEMS = 64
 _REF_MAX_TEXT = 500
-
-
-def _connect():
-    """One short-lived autocommit connection to the app's Postgres (same env family
-    as the backend pool: POSTGRES_HOST/PORT/DB/USER/PASSWORD, default sim-pg:5433)."""
-    import psycopg
-
-    return psycopg.connect(
-        host=os.environ.get("POSTGRES_HOST", "localhost"),
-        port=int(os.environ.get("POSTGRES_PORT", "5433")),
-        dbname=os.environ.get("POSTGRES_DB", "liquidaity"),
-        user=os.environ.get("POSTGRES_USER", "liquidaity-user"),
-        password=os.environ.get("POSTGRES_PASSWORD", "LiquidAIty"),
-        autocommit=True,
-    )
 
 
 _DDL = """

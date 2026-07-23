@@ -35,6 +35,42 @@ const runtimeMocks = vi.hoisted(() => ({
     status: 'completed' as const,
     output: 'ok',
   })),
+  resolveCardModelStrict: vi.fn(() => ({
+    provider: 'openrouter',
+    providerModelId: 'z-ai/glm-5.2',
+  })),
+}));
+
+const deckMocks = vi.hoisted(() => ({
+  getDeckDocument: vi.fn(async () => ({
+    deck: {
+      nodes: [{ id: 'card_local_coder', kind: 'agent', runtimeType: 'local_coder' }],
+      edges: [],
+    },
+  })),
+}));
+
+const coderRouterMocks = vi.hoisted(() => ({
+  runCoderSubagent: vi.fn(async (request: { approvedPrompt: string }) => ({
+    ok: true,
+    adapter: 'codex',
+    parentRunId: 'parent-1',
+    childRunId: 'child-1',
+    correlationId: 'trace-1',
+    promptHash: 'hash-1',
+    sessionId: 'session-1',
+    processExitCode: null,
+    structuredEventCount: 0,
+    exactCommand: null,
+    stdout: '',
+    stderr: '',
+    commandExitStatus: null,
+    report: { status: 'completed', promptSeen: request.approvedPrompt },
+    resultKind: 'coder_report',
+    transcriptArtifact: 'coder-workspace/runs/child-1/transcript.txt',
+    verification: null,
+    error: null,
+  })),
 }));
 
 const cbmScopeMocks = vi.hoisted(() => ({
@@ -106,6 +142,14 @@ const graphViewMocks = vi.hoisted(() => ({
     measurements: null,
   })),
   fetchDoorwayContext: vi.fn(async () => ({ ok: true, views: [], modelContext: '' })),
+  fetchAgentGraphContext: vi.fn(async () => ({
+    ok: true,
+    projectId: 'project-1',
+    conversationId: 'main',
+    receivingAgentId: 'card_local_coder',
+    literateQueryView: '[CONTEXT agentctx:test]\n(Finding)-[:USES]->(Reference)',
+  })),
+  recordAgentGraphResult: vi.fn(async () => ({ ok: true })),
 }));
 
 const dbMocks = vi.hoisted(() => ({
@@ -118,6 +162,16 @@ vi.mock('../services/graphContext/cbmScopeGate', () => ({
 
 vi.mock('../cards/runtime', () => ({
   runConfiguredCard: runtimeMocks.runConfiguredCard,
+  resolveCardModelStrict: runtimeMocks.resolveCardModelStrict,
+}));
+
+vi.mock('../decks/store', () => ({
+  BUILDER_DECK_ID: 'deck_builder',
+  getDeckDocument: deckMocks.getDeckDocument,
+}));
+
+vi.mock('../coder/execution/coderRouter', () => ({
+  runCoderSubagent: coderRouterMocks.runCoderSubagent,
 }));
 
 vi.mock('../conversations/store', () => ({
@@ -268,6 +322,42 @@ describe('coder routes', () => {
       else process.env.LOCALCODER_COMMAND = previous;
     }
   }
+
+  it('hands prompt plus a Python-resolved AgentGraph context id to Coder and links the result', async () => {
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentRunId: 'parent-1',
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          conversationId: 'main',
+          cardId: 'card_local_coder',
+          adapter: 'codex',
+          approvedPrompt: 'Inspect the referenced code.',
+          agentContextId: 'agentctx:test',
+        }),
+      });
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(payload.agentContextId).toBe('agentctx:test');
+      expect(coderRouterMocks.runCoderSubagent).toHaveBeenCalledWith(expect.objectContaining({
+        approvedPrompt: expect.stringContaining('[AGENTGRAPH_CONTEXT_ID agentctx:test]'),
+      }));
+      expect(graphViewMocks.recordAgentGraphResult).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        contextId: 'agentctx:test',
+        resultId: 'child-1',
+        runId: 'trace-1',
+        status: 'completed',
+        resultRef: 'coder-workspace/runs/child-1/transcript.txt',
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
 
   it('keeps the Hermes report bridge closed outside an active native investigation', async () => {
     const { server, baseUrl } = await createApiServer();

@@ -204,6 +204,9 @@ export const HARNESS_MCP_TOOL_SPECS: ToolSpec[] = [];
 for (const name of [
   'thinkgraph.get_graph_slice',
   'thinkgraph.submit_update',
+  'agentgraph.create_context',
+  'agentgraph.read_context',
+  'agentgraph.expand_reference',
   'knowgraph.query',
   'knowgraph.ingest',
   'codegraph.status',

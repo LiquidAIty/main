@@ -161,6 +161,70 @@ def unified_model_context(
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
+@app.post("/agentgraph/create-context")
+def agentgraph_create_context(payload: dict[str, Any]):
+    from app.python_models.agentgraph import AgentGraphError, create_context
+
+    try:
+        return create_context(
+            project_id=str(payload.get("projectId") or ""),
+            deck_id=str(payload.get("deckId") or ""),
+            conversation_id=str(payload.get("conversationId") or ""),
+            receiving_agent_id=str(payload.get("receivingAgentId") or ""),
+            proposal=dict(payload.get("context") or {}),
+        )
+    except AgentGraphError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.get("/agentgraph/read-context")
+def agentgraph_read_context(projectId: str, contextId: str):
+    from app.python_models.agentgraph import AgentGraphError, read_context
+
+    try:
+        return read_context(contextId, projectId)
+    except AgentGraphError as err:
+        raise HTTPException(status_code=404, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.post("/agentgraph/expand-reference")
+async def agentgraph_expand_reference(payload: dict[str, Any]):
+    from app.python_models.agentgraph import AgentGraphError, expand_reference
+
+    try:
+        return await expand_reference(
+            str(payload.get("referenceId") or ""),
+            str(payload.get("projectId") or ""),
+        )
+    except AgentGraphError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.post("/agentgraph/record-result")
+def agentgraph_record_result(payload: dict[str, Any]):
+    from app.python_models.agentgraph import AgentGraphError, record_result
+
+    try:
+        return record_result(
+            context_id=str(payload.get("contextId") or ""),
+            project_id=str(payload.get("projectId") or ""),
+            result_id=str(payload.get("resultId") or ""),
+            run_id=str(payload.get("runId") or ""),
+            status=str(payload.get("status") or ""),
+            result_ref=str(payload.get("resultRef") or ""),
+        )
+    except AgentGraphError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
 @app.post("/unified/object-context")
 def unified_object_context(payload: dict[str, Any]):
     """Resolve identity-only selected graph objects into bounded Main context."""

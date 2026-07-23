@@ -268,8 +268,72 @@ async def list_tools() -> list[Tool]:
                         "items": {"type": "string"},
                         "description": "Persisted Graph View ids (canonical, e.g. codegraph:…) to attach. IDs only — the server resolves the persisted views and renders their compact context; never paste view content.",
                     },
+                    "agentContext": {
+                        "type": "object",
+                        "description": (
+                            "Model-selected compact AgentGraph importance for this handoff. "
+                            "Python validates and persists it, then transports only the context id."
+                        ),
+                        "properties": {
+                            "items": {"type": "array", "minItems": 1, "maxItems": 24, "items": {"type": "object"}},
+                            "relationships": {"type": "array", "minItems": 1, "maxItems": 48, "items": {"type": "object"}},
+                            "references": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "object"}},
+                            "priorContextId": {"type": "string"},
+                        },
+                        "required": ["items", "relationships", "references"],
+                        "additionalProperties": False,
+                    },
                 },
                 "required": ["parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt"],
+            },
+        ),
+        Tool(
+            name="agentgraph.create_context",
+            description=(
+                "Create one compact Apache AGE AgentGraph context from model-selected items, "
+                "relationships, and stable existing Graph View references. Python validates "
+                "project/card identity, scalar properties, permitted relationships, and size."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "deckId": {"type": "string"},
+                    "conversationId": {"type": "string"},
+                    "receivingAgentId": {"type": "string"},
+                    "context": {"type": "object"},
+                },
+                "required": ["projectId", "deckId", "conversationId", "receivingAgentId", "context"],
+            },
+        ),
+        Tool(
+            name="agentgraph.read_context",
+            description=(
+                "Read one project-scoped AgentGraph context as a compact Literate Query View. "
+                "Returns stable source references and their canonical bounded expansion tools."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "contextId": {"type": "string"},
+                },
+                "required": ["projectId", "contextId"],
+            },
+        ),
+        Tool(
+            name="agentgraph.expand_reference",
+            description=(
+                "Resolve one AgentGraph reference and delegate to its existing ThinkGraph, "
+                "KnowGraph, or CodeGraph operation. No arbitrary SQL or Cypher is accepted."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "referenceId": {"type": "string"},
+                },
+                "required": ["projectId", "referenceId"],
             },
         ),
         Tool(
@@ -861,7 +925,10 @@ def _external_tool_catalog(tools: list[Tool], context: dict[str, Any]) -> list[T
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
     "main.context": set(),
-    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt", "authority", "graphViewIds"},
+    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt", "authority", "graphViewIds", "agentContext"},
+    "agentgraph.create_context": {"projectId", "deckId", "conversationId", "receivingAgentId", "context"},
+    "agentgraph.read_context": {"projectId", "contextId"},
+    "agentgraph.expand_reference": {"projectId", "referenceId"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "jobId", "conversationId", "parentContext"},
     "thinkgraph.submit_update": {"projectId", "conversationId", "resources", "relations", "statements"},
@@ -975,6 +1042,53 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 text=json.dumps({"ok": False, "error": f"tool_arguments_rejected: {','.join(sorted(extra))}"}),
             )
         ]
+    if name.startswith("agentgraph."):
+        from app.python_models import agentgraph
+
+        try:
+            if name == "agentgraph.create_context":
+                result = await asyncio.to_thread(
+                    agentgraph.create_context,
+                    project_id=str(args.get("projectId") or ""),
+                    deck_id=str(args.get("deckId") or ""),
+                    conversation_id=str(args.get("conversationId") or ""),
+                    receiving_agent_id=str(args.get("receivingAgentId") or ""),
+                    proposal=args.get("context") or {},
+                )
+            elif name == "agentgraph.read_context":
+                result = await asyncio.to_thread(
+                    agentgraph.read_context,
+                    str(args.get("contextId") or ""),
+                    str(args.get("projectId") or ""),
+                )
+            else:
+                result = await agentgraph.expand_reference(
+                    str(args.get("referenceId") or ""),
+                    str(args.get("projectId") or ""),
+                )
+            return [TextContent(type="text", text=json.dumps(result))]
+        except agentgraph.AgentGraphError as err:
+            return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
+        except Exception as err:  # noqa: BLE001 - honest tool-level failure
+            return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"agentgraph_failed: {err}"}))]
+    if name == "run_coder_subagent" and args.get("agentContext") is not None:
+        from app.python_models import agentgraph
+
+        proposal = dict(args.pop("agentContext") or {})
+        proposal.setdefault("promptRef", f"harness:{str(args.get('parentRunId') or '')}")
+        proposal.setdefault("producingRunId", str(args.get("parentRunId") or ""))
+        try:
+            created = await asyncio.to_thread(
+                agentgraph.create_context,
+                project_id=str(args.get("projectId") or ""),
+                deck_id=str(args.get("deckId") or ""),
+                conversation_id=str(args.get("conversationId") or ""),
+                receiving_agent_id=str(args.get("cardId") or ""),
+                proposal=proposal,
+            )
+        except agentgraph.AgentGraphError as err:
+            return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
+        args["agentContextId"] = created["contextId"]
     if name == "main.context":
         if context is None:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": "main_context_unavailable"}))]

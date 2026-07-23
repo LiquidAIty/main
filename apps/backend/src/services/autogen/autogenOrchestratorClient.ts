@@ -379,6 +379,32 @@ export async function fetchUnifiedModelContext(params: {
   return requestThinkGraphJson(`/unified/model-context?${query.toString()}`, { method: 'GET' });
 }
 
+export async function fetchAgentGraphContext(params: {
+  projectId: string;
+  contextId: string;
+}): Promise<unknown> {
+  const query = new URLSearchParams({
+    projectId: params.projectId,
+    contextId: params.contextId,
+  });
+  return requestThinkGraphJson(`/agentgraph/read-context?${query.toString()}`, { method: 'GET' });
+}
+
+export async function recordAgentGraphResult(params: {
+  projectId: string;
+  contextId: string;
+  resultId: string;
+  runId: string;
+  status: string;
+  resultRef?: string;
+}): Promise<unknown> {
+  return requestThinkGraphJson('/agentgraph/record-result', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+}
+
 export async function fetchGraphObjectContext(params: {
   projectId: string;
   conversationId: string;
