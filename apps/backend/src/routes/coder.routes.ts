@@ -17,6 +17,7 @@ import {
 } from '../coder/openclaude/mcp/liquidAItyAgentFlow';
 import {
   deriveSessionId,
+  resolveMainChatRuntimeConfig,
   startGrpcTurn,
   type GrpcTurnHandle,
 } from '../coder/openclaude/session/grpcChatClient';
@@ -45,6 +46,7 @@ import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/ha
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { createCodebaseMemoryMcpCaller } from '../services/graphContext/cbmMcpCaller';
 import { pool } from '../db/pool';
+import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantStore';
 import { runCoderSubagent } from '../coder/execution/coderRouter';
 import { setLatestCoderAuditView, getLatestCoderAuditView } from '../coder/execution/coderAuditView';
 import type { CodeGraphViewContractResult } from '../contracts/coderContracts';
@@ -85,6 +87,44 @@ export function resolveCodeGraphProjectName(projects: unknown[]): string {
 // MCP SDK (liquidAItyAgentFlow.ts is SDK-free), so they are safe in the Nx serve
 // graph. The separate MCP host process (which DOES use the SDK) bridges MCP tool
 // / resource calls to these endpoints — single authority, no duplicated state.
+router.post('/mcp-bridge/external_main_context', async (req, res) => {
+  const issuer = String(req.body?.issuer || '').trim();
+  const subject = String(req.body?.subject || '').trim();
+  if (!issuer || !subject) {
+    return res.status(400).json({ ok: false, error: 'verified_issuer_and_subject_required' });
+  }
+  try {
+    const grant = await resolveExternalIdentityMainGrant(issuer, subject);
+    if (!grant) return res.status(403).json({ ok: false, error: 'external_identity_grant_required' });
+
+    const conversationId = `external-mcp:${grant.grantId}`;
+    const main = await resolveMainChatRuntimeConfig(
+      deriveSessionId(grant.projectId, conversationId),
+      'chat',
+    );
+    if (!main) {
+      return res.status(409).json({ ok: false, error: 'persisted_main_chat_unavailable' });
+    }
+    return res.json({
+      ok: true,
+      context: {
+        projectId: grant.projectId,
+        projectName: grant.projectName,
+        deckId: BUILDER_DECK_ID,
+        conversationId,
+        mainCardId: main.cardId,
+        instructions: main.prompt,
+        savedMainToolGrants: main.parentAllowedMcpTools,
+      },
+    });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'external_main_context_failed',
+    });
+  }
+});
+
 router.post('/mcp-bridge/describe_connected_agents', async (req, res) => {
   try {
     // Blank deckId defaults to the ONE canonical Agent Canvas deck — the same

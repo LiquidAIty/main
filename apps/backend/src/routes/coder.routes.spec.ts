@@ -58,6 +58,7 @@ const chatSessionMocks = vi.hoisted(() => {
     getConversationMessages: vi.fn(async () => []),
     lastCancel: vi.fn(),
     startGrpcTurn: vi.fn(),
+    resolveMainChatRuntimeConfig: vi.fn(),
     usage,
   };
   mocks.startGrpcTurn.mockImplementation(async (_params: unknown, _onEvent: (event: any) => void) => ({
@@ -122,6 +123,7 @@ vi.mock('../conversations/store', () => ({
 
 vi.mock('../coder/openclaude/session/grpcChatClient', () => ({
   deriveSessionId: (projectId: string, conversationId: string) => `${projectId}:${conversationId}`,
+  resolveMainChatRuntimeConfig: chatSessionMocks.resolveMainChatRuntimeConfig,
   startGrpcTurn: chatSessionMocks.startGrpcTurn,
 }));
 
@@ -157,6 +159,52 @@ describe('coder routes', () => {
   // route tests never spawn a real coder process, regardless of whether the
   // vendored runtime is built or API keys are exported on the test machine.
   const BROKEN_COMMAND = 'node C:/liquidaity/nonexistent/openclaude.mjs';
+
+  it('resolves external Main only through the exact identity grant, owned project, and persisted Main card', async () => {
+    dbMocks.query.mockResolvedValueOnce({
+      rows: [{
+        grant_id: '70f63a4d-1a67-4dcc-a8ee-cce267572747',
+        user_id: 'user-1',
+        project_id: '20ac92da-01fd-4cf6-97cc-0672421e751a',
+        project_name: 'Main Chat',
+      }],
+    });
+    chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
+      cardId: 'card_main_chat',
+      prompt: 'Persisted Main instructions.',
+      parentAllowedMcpTools: ['mcp__liquidaity__codegraph_search'],
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/external_main_context`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ issuer: 'https://tenant.auth0.com/', subject: 'auth0|jeremiah' }),
+      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        context: {
+          projectId: '20ac92da-01fd-4cf6-97cc-0672421e751a',
+          deckId: 'deck_builder',
+          conversationId: 'external-mcp:70f63a4d-1a67-4dcc-a8ee-cce267572747',
+          mainCardId: 'card_main_chat',
+          instructions: 'Persisted Main instructions.',
+          savedMainToolGrants: ['mcp__liquidaity__codegraph_search'],
+        },
+      });
+      expect(dbMocks.query).toHaveBeenCalledWith(
+        expect.stringContaining('p.owner_user_id = g.user_id'),
+        ['https://tenant.auth0.com', 'auth0|jeremiah'],
+      );
+      expect(chatSessionMocks.resolveMainChatRuntimeConfig).toHaveBeenCalledWith(
+        '20ac92da-01fd-4cf6-97cc-0672421e751a:external-mcp:70f63a4d-1a67-4dcc-a8ee-cce267572747',
+        'chat',
+      );
+    } finally {
+      await closeServer(server);
+    }
+  });
 
   it('selects the configured LiquidAIty CodeGraph project instead of the first indexed repository', () => {
     const previous = process.env.LIQUIDAITY_CODEGRAPH_PROJECT;

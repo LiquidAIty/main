@@ -145,6 +145,14 @@ describe('isLiquidAItyOwnedDevProcess — fresh stops ONLY grounded LiquidAIty o
     const p = { pid: 12, name: 'node.exe', commandLine: 'node C:\\Projects\\main\\client\\node_modules\\.bin\\..\\vite\\bin\\vite.js dev' };
     expect(isLiquidAItyOwnedDevProcess(p, REPO)).toEqual({ owned: true, role: 'frontend' });
   });
+  it('owns only the official Python HTTP MCP host under the repo', () => {
+    const p = {
+      pid: 15,
+      name: 'python.exe',
+      commandLine: 'C:\\Projects\\main\\apps\\python-models\\.venv\\Scripts\\python.exe C:\\Projects\\main\\apps\\python-models\\app\\mcp_host.py',
+    };
+    expect(isLiquidAItyOwnedDevProcess(p, REPO)).toEqual({ owned: true, role: 'mcp' });
+  });
   it('owns the concurrently supervisor under the repo', () => {
     const p = {
       pid: 13, name: 'node.exe',
@@ -158,6 +166,7 @@ describe('isLiquidAItyOwnedDevProcess — fresh stops ONLY grounded LiquidAIty o
       'bun run some-other-thing.ts',
       'node C:\\OtherApp\\server.js',
       'python.exe -m http.server 9000',
+      'C:\\Projects\\main\\apps\\python-models\\.venv\\Scripts\\python.exe C:\\Projects\\main\\apps\\python-models\\app\\other_host.py',
       'C:\\Program Files\\PostgreSQL\\bin\\postgres.exe',
       'node C:\\Projects\\main\\node_modules\\.bin\\eslint.js src', // in-repo but not a dev role
     ]) {

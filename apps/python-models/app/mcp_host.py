@@ -34,9 +34,12 @@ and apply_live_patch path remain deleted.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import os
 import sys
+from dataclasses import dataclass
+from uuid import uuid4
 
 # Bootstrap the package root onto sys.path. The gRPC harness launches this host as a
 # SCRIPT (`python .../apps/python-models/app/mcp_host.py`), so sys.path[0] is the
@@ -53,6 +56,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from mcp.server import Server
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.provider import AccessToken
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
@@ -62,7 +67,78 @@ MCP_TRANSPORT = os.environ.get("LIQUIDAITY_MCP_TRANSPORT", "stdio").strip().lowe
 HTTP_MCP_HOST = "127.0.0.1"
 HTTP_MCP_PORT = int(os.environ.get("LIQUIDAITY_HTTP_MCP_PORT", "8765"))
 HTTP_MCP_PATH = "/mcp"
-server = Server("liquidaity")
+PUBLIC_MCP_RESOURCE_URL = os.environ.get(
+    "LIQUIDAITY_PUBLIC_MCP_RESOURCE_URL",
+    "https://exemption-unstable-wolverine.ngrok-free.dev/mcp",
+).strip()
+AUTH0_ISSUER_URL = os.environ.get("LIQUIDAITY_AUTH0_ISSUER_URL", "").strip()
+AUTH0_AUDIENCE = os.environ.get("LIQUIDAITY_AUTH0_AUDIENCE", "").strip()
+AUTH0_CLIENT_ID = os.environ.get("LIQUIDAITY_AUTH0_CLIENT_ID", "").strip()
+AUTH0_REQUIRED_SCOPE = os.environ.get("LIQUIDAITY_AUTH0_REQUIRED_SCOPE", "liquidaity.main").strip()
+OAUTH_ENFORCED = os.environ.get("LIQUIDAITY_MCP_OAUTH_ENFORCED", "false").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
+
+@dataclass(frozen=True)
+class OAuthConfig:
+    resource_url: str
+    issuer_url: str
+    audience: str
+    client_id: str
+    required_scope: str
+
+
+def _oauth_config() -> OAuthConfig:
+    issuer = AUTH0_ISSUER_URL.rstrip("/") + "/" if AUTH0_ISSUER_URL else ""
+    config = OAuthConfig(
+        resource_url=PUBLIC_MCP_RESOURCE_URL.rstrip("/"),
+        issuer_url=issuer,
+        audience=AUTH0_AUDIENCE.rstrip("/"),
+        client_id=AUTH0_CLIENT_ID,
+        required_scope=AUTH0_REQUIRED_SCOPE,
+    )
+    if not OAUTH_ENFORCED:
+        return config
+    missing = [
+        name
+        for name, value in (
+            ("LIQUIDAITY_PUBLIC_MCP_RESOURCE_URL", config.resource_url),
+            ("LIQUIDAITY_AUTH0_ISSUER_URL", config.issuer_url),
+            ("LIQUIDAITY_AUTH0_AUDIENCE", config.audience),
+            ("LIQUIDAITY_AUTH0_CLIENT_ID", config.client_id),
+        )
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(f"oauth_config_missing: {','.join(missing)}")
+    if not config.resource_url.startswith("https://") or not config.resource_url.endswith(HTTP_MCP_PATH):
+        raise RuntimeError("oauth_resource_url_must_be_canonical_https_mcp")
+    if config.audience != config.resource_url:
+        raise RuntimeError("oauth_audience_must_equal_resource_url")
+    if not config.issuer_url.startswith("https://"):
+        raise RuntimeError("oauth_issuer_must_be_https")
+    if config.required_scope != "liquidaity.main":
+        raise RuntimeError("oauth_required_scope_must_be_liquidaity.main")
+    return config
+
+
+def _authenticated_main_context() -> dict[str, Any] | None:
+    access_token = get_access_token()
+    context = (access_token.claims or {}).get("liquidaity") if access_token else None
+    return context if isinstance(context, dict) else None
+
+
+class LiquidAItyServer(Server):
+    def create_initialization_options(self, *args: Any, **kwargs: Any):
+        options = super().create_initialization_options(*args, **kwargs)
+        context = _authenticated_main_context()
+        if context is not None:
+            options.instructions = str(context.get("instructions") or "") or None
+        return options
+
+
+server = LiquidAItyServer("liquidaity")
 
 
 def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
@@ -83,6 +159,70 @@ def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
         return body or json.dumps({"ok": False, "error": f"backend_http_{err.code}"})
     except URLError as err:
         return json.dumps({"ok": False, "error": f"backend_unreachable: {err.reason}"})
+
+
+def _resolve_external_main_context_sync(issuer: str, subject: str) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(_bridge_sync("external_main_context", {"issuer": issuer, "subject": subject}))
+    except (TypeError, ValueError):
+        return None
+    context = payload.get("context") if isinstance(payload, dict) and payload.get("ok") is True else None
+    required = {"projectId", "deckId", "conversationId", "mainCardId", "savedMainToolGrants"}
+    return context if isinstance(context, dict) and required.issubset(context) else None
+
+
+class Auth0TokenVerifier:
+    """Verify Auth0 JWTs and bind the principal to one owned LiquidAIty project."""
+
+    def __init__(self, config: OAuthConfig, jwk_client: Any | None = None):
+        from jwt import PyJWKClient
+
+        self.config = config
+        self.jwk_client = jwk_client or PyJWKClient(f"{config.issuer_url}.well-known/jwks.json")
+
+    def _verify_sync(self, token: str) -> AccessToken | None:
+        import jwt
+
+        try:
+            header = jwt.get_unverified_header(token)
+            if header.get("alg") != "RS256":
+                return None
+            signing_key = self.jwk_client.get_signing_key_from_jwt(token).key
+            claims = jwt.decode(
+                token,
+                signing_key,
+                algorithms=["RS256"],
+                audience=self.config.audience,
+                issuer=self.config.issuer_url,
+                options={"require": ["exp", "iat", "sub"]},
+            )
+            client_id = str(claims.get("azp") or claims.get("client_id") or "").strip()
+            if client_id != self.config.client_id:
+                return None
+            raw_scope = claims.get("scope") or ""
+            scopes = raw_scope.split() if isinstance(raw_scope, str) else [str(value) for value in raw_scope]
+            if self.config.required_scope not in scopes:
+                return None
+            subject = str(claims.get("sub") or "").strip()
+            if not subject:
+                return None
+            context = _resolve_external_main_context_sync(self.config.issuer_url, subject)
+            if context is None:
+                return None
+            return AccessToken(
+                token=token,
+                client_id=client_id,
+                scopes=scopes,
+                expires_at=int(claims["exp"]),
+                resource=self.config.resource_url,
+                subject=subject,
+                claims={**claims, "liquidaity": context},
+            )
+        except Exception:
+            return None
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        return await asyncio.to_thread(self._verify_sync, token)
 
 
 async def _bridge(path: str, payload: dict[str, Any]) -> list[TextContent]:
@@ -625,7 +765,81 @@ async def list_tools() -> list[Tool]:
             },
         ),
     ]
-    return tools
+    context = _authenticated_main_context()
+    return _external_tool_catalog(tools, context) if context is not None else tools
+
+
+_EXTERNAL_READ_ONLY_TOOLS = {
+    "mag_one.describe_connected_agents",
+    "read_model_results",
+    "canvas.inspect",
+    "thinkgraph.get_graph_slice",
+    "knowgraph.query",
+    "knowgraph_get_analysis",
+    "knowgraph_get_topics",
+    "knowgraph_get_gateways",
+    "knowgraph_get_gaps",
+    "codegraph.status",
+    "codegraph.search",
+    "worldsignals.capabilities",
+    "worldsignals.poll",
+    "worldsignals.stream_events",
+}
+_SERVER_OWNED_ARGUMENTS = {"projectId", "deckId", "conversationId", "correlationId"}
+
+
+def _saved_main_tool_names(context: dict[str, Any], known_names: set[str]) -> set[str]:
+    by_qualified = {
+        f"mcp__liquidaity__{name.replace('.', '_')}": name
+        for name in known_names
+    }
+    result: set[str] = set()
+    for raw in context.get("savedMainToolGrants") or []:
+        grant = str(raw or "").strip()
+        name = grant if grant in known_names else by_qualified.get(grant)
+        if not name:
+            raise RuntimeError(f"saved_main_tool_not_in_canonical_catalog: {grant}")
+        result.add(name)
+    return result
+
+
+def _external_tool_names(context: dict[str, Any], known_names: set[str]) -> set[str]:
+    return (_EXTERNAL_READ_ONLY_TOOLS & known_names) | _saved_main_tool_names(context, known_names)
+
+
+def _external_tool_catalog(tools: list[Tool], context: dict[str, Any]) -> list[Tool]:
+    known_names = {tool.name for tool in tools}
+    allowed = _external_tool_names(context, known_names)
+    security_schemes = [{"type": "oauth2", "scopes": [AUTH0_REQUIRED_SCOPE]}]
+    result: list[Tool] = []
+    for tool in tools:
+        if tool.name not in allowed:
+            continue
+        schema = copy.deepcopy(tool.inputSchema)
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            for field in _SERVER_OWNED_ARGUMENTS:
+                properties.pop(field, None)
+        required = schema.get("required")
+        if isinstance(required, list):
+            schema["required"] = [field for field in required if field not in _SERVER_OWNED_ARGUMENTS]
+        if tool.name == "run_coder_subagent":
+            if isinstance(properties, dict):
+                properties.pop("parentRunId", None)
+            if isinstance(schema.get("required"), list):
+                schema["required"] = [field for field in schema["required"] if field != "parentRunId"]
+        payload = tool.model_dump(by_alias=True, exclude_none=True)
+        payload["inputSchema"] = schema
+        payload["securitySchemes"] = security_schemes
+        if tool.name in _EXTERNAL_READ_ONLY_TOOLS:
+            annotations = dict(payload.get("annotations") or {})
+            annotations["readOnlyHint"] = True
+            payload["annotations"] = annotations
+        meta = dict(payload.get("_meta") or {})
+        meta["securitySchemes"] = security_schemes
+        payload["_meta"] = meta
+        result.append(Tool.model_validate(payload))
+    return result
 
 
 # Structural allow-list per tool: unexpected keys are rejected honestly, never
@@ -645,7 +859,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "knowgraph_get_gaps": {"analysisId"},
     "knowgraph_create_analysis_view": {"analysisId", "projectId", "producingInvocation", "parentViewId"},
     "codegraph.status": set(),
-    "codegraph.search": {"query", "limit"},
+    "codegraph.search": {"projectId", "conversationId", "query", "limit"},
     "hermes.memory_read": {"projectId", "key"},
     "hermes.memory_write": {"projectId", "key", "value"},
     "hermes.read_report": {"parentRunId"},
@@ -714,7 +928,29 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     allowed = _ALLOWED_KEYS.get(name)
     if allowed is None:
         return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"unknown_tool: {name}"}))]
-    args = arguments or {}
+    args = dict(arguments or {})
+    context = _authenticated_main_context()
+    if context is not None:
+        try:
+            known_names = set(_ALLOWED_KEYS)
+            saved = _saved_main_tool_names(context, known_names)
+            effective = (_EXTERNAL_READ_ONLY_TOOLS & known_names) | saved
+            if name not in effective:
+                raise ValueError(f"external_tool_not_granted: {name}")
+            supplied_identity = sorted(_SERVER_OWNED_ARGUMENTS & args.keys())
+            if name == "run_coder_subagent" and "parentRunId" in args:
+                supplied_identity.append("parentRunId")
+            if supplied_identity:
+                raise ValueError(f"caller_identity_rejected: {','.join(supplied_identity)}")
+            for field in ("projectId", "deckId", "conversationId"):
+                if field in allowed:
+                    args[field] = str(context[field])
+            if "correlationId" in allowed:
+                args["correlationId"] = f"external-mcp:{uuid4()}"
+            if name == "run_coder_subagent":
+                args["parentRunId"] = f"req_external_main_{uuid4()}"
+        except (KeyError, RuntimeError, ValueError) as err:
+            return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
     extra = [k for k in args.keys() if k not in allowed]
     if extra:
         return [
@@ -801,8 +1037,18 @@ async def _run_streamable_http() -> None:
     import uvicorn
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from mcp.server.transport_security import TransportSecuritySettings
+    from pydantic import AnyHttpUrl
+    from starlette.authentication import AuthenticationBackend
     from starlette.applications import Starlette
+    from starlette.middleware.authentication import AuthenticationMiddleware
     from starlette.responses import PlainTextResponse
+    from starlette.routing import Mount
+
+    from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
+    from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend, RequireAuthMiddleware
+    from mcp.server.auth.routes import build_resource_metadata_url, create_protected_resource_routes
+
+    config_values = _oauth_config()
 
     session_manager = StreamableHTTPSessionManager(
         app=server,
@@ -821,8 +1067,29 @@ async def _run_streamable_http() -> None:
         async with session_manager.run():
             yield
 
-    http_app = Starlette(lifespan=lifespan)
-    http_app.mount("/", endpoint)
+    if OAUTH_ENFORCED:
+        resource_url = AnyHttpUrl(config_values.resource_url)
+        metadata_url = build_resource_metadata_url(resource_url)
+        protected_endpoint: Any = RequireAuthMiddleware(
+            endpoint,
+            required_scopes=[config_values.required_scope],
+            resource_metadata_url=metadata_url,
+        )
+        protected_endpoint = AuthContextMiddleware(protected_endpoint)
+        auth_backend: AuthenticationBackend = BearerAuthBackend(Auth0TokenVerifier(config_values))
+        protected_endpoint = AuthenticationMiddleware(protected_endpoint, backend=auth_backend)
+        routes = [
+            *create_protected_resource_routes(
+                resource_url=resource_url,
+                authorization_servers=[AnyHttpUrl(config_values.issuer_url)],
+                scopes_supported=[config_values.required_scope],
+                resource_name="LiquidAIty Main",
+            ),
+            Mount("/", app=protected_endpoint),
+        ]
+    else:
+        routes = [Mount("/", app=endpoint)]
+    http_app = Starlette(routes=routes, lifespan=lifespan)
     config = uvicorn.Config(
         http_app,
         host=HTTP_MCP_HOST,

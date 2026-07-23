@@ -5,8 +5,11 @@ import os
 import socket
 import subprocess
 import sys
+import time
 
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _APP_DIR not in sys.path:
+    sys.path.insert(0, _APP_DIR)
 
 
 def _run_in_script_launch_context(code: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
@@ -143,3 +146,200 @@ finally:
     )
     assert result.returncode == 0, result.stderr
     assert "STREAMABLE_HTTP_OK" in result.stdout
+
+
+def test_auth0_token_verifier_checks_jwt_contract_and_resolves_server_owned_main(monkeypatch):
+    import jwt
+    import mcp_host
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    class StaticJwkClient:
+        def get_signing_key_from_jwt(self, _token):
+            return type("SigningKey", (), {"key": private_key.public_key()})()
+
+    config = mcp_host.OAuthConfig(
+        resource_url="https://exemption-unstable-wolverine.ngrok-free.dev/mcp",
+        issuer_url="https://tenant.auth0.com/",
+        audience="https://exemption-unstable-wolverine.ngrok-free.dev/mcp",
+        client_id="chatgpt-client",
+        required_scope="liquidaity.main",
+    )
+    verifier = mcp_host.Auth0TokenVerifier(config, StaticJwkClient())
+    monkeypatch.setattr(
+        mcp_host,
+        "_resolve_external_main_context_sync",
+        lambda issuer, subject: {
+            "projectId": "project-1",
+            "deckId": "deck_builder",
+            "conversationId": "external-mcp:grant-1",
+            "mainCardId": "card_main_chat",
+            "instructions": "Persisted Main instructions.",
+            "savedMainToolGrants": ["mcp__liquidaity__codegraph_search"],
+        } if issuer == config.issuer_url and subject == "auth0|jeremiah" else None,
+    )
+    now = int(time.time())
+    base = {
+        "iss": config.issuer_url,
+        "sub": "auth0|jeremiah",
+        "aud": config.audience,
+        "iat": now,
+        "exp": now + 300,
+        "azp": config.client_id,
+        "scope": "openid liquidaity.main",
+    }
+
+    def encoded(claims, key=private_key):
+        return jwt.encode(claims, key, algorithm="RS256", headers={"kid": "test-key"})
+
+    verified = verifier._verify_sync(encoded(base))
+    assert verified is not None
+    assert verified.subject == "auth0|jeremiah"
+    assert verified.claims["liquidaity"]["projectId"] == "project-1"
+
+    invalid_claims = [
+        {**base, "iss": "https://wrong.auth0.com/"},
+        {**base, "aud": "https://wrong.example/mcp"},
+        {**base, "exp": now - 1},
+        {**base, "nbf": now + 300},
+        {**base, "azp": "wrong-client"},
+        {**base, "scope": "openid profile"},
+    ]
+    assert verifier._verify_sync(encoded(base, other_key)) is None
+    assert all(verifier._verify_sync(encoded(claims)) is None for claims in invalid_claims)
+
+
+def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_identity(monkeypatch):
+    import asyncio
+    import mcp_host
+    from mcp.server.auth.provider import AccessToken
+
+    context = {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "external-mcp:grant-1",
+        "mainCardId": "card_main_chat",
+        "instructions": "Persisted Main instructions.",
+        "savedMainToolGrants": [
+            "mcp__liquidaity__codegraph_search",
+            "mcp__liquidaity__run_coder_subagent",
+        ],
+    }
+    monkeypatch.setattr(
+        mcp_host,
+        "get_access_token",
+        lambda: AccessToken(
+            token="verified",
+            client_id="chatgpt-client",
+            scopes=["liquidaity.main"],
+            subject="auth0|jeremiah",
+            claims={"liquidaity": context},
+        ),
+    )
+    tools = asyncio.run(mcp_host.list_tools())
+    by_name = {tool.name: tool for tool in tools}
+    assert "codegraph.status" in by_name
+    assert "codegraph.search" in by_name
+    assert "run_coder_subagent" in by_name
+    assert "run_mag_one" not in by_name
+    assert "projectId" not in by_name["run_coder_subagent"].inputSchema["properties"]
+    assert "parentRunId" not in by_name["run_coder_subagent"].inputSchema["properties"]
+    assert by_name["codegraph.search"].model_dump()["securitySchemes"] == [
+        {"type": "oauth2", "scopes": ["liquidaity.main"]}
+    ]
+    assert by_name["codegraph.search"].annotations.readOnlyHint is True
+    assert by_name["run_coder_subagent"].annotations is None
+
+    calls = []
+    async def bridge(path, payload):
+        calls.append((path, payload))
+        return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
+    monkeypatch.setattr(mcp_host, "_bridge", bridge)
+
+    asyncio.run(mcp_host.call_tool("codegraph.search", {"query": "Main", "limit": 3}))
+    assert calls[-1] == ("codegraph_search", {
+        "projectId": "project-1",
+        "conversationId": "external-mcp:grant-1",
+        "query": "Main",
+        "limit": 3,
+    })
+
+    denied = asyncio.run(mcp_host.call_tool("run_coder_subagent", {
+        "projectId": "spoofed",
+        "cardId": "coder-card",
+        "adapter": "codex",
+        "approvedPrompt": "Approved exact task.",
+    }))
+    assert "caller_identity_rejected: projectId" in denied[0].text
+
+    asyncio.run(mcp_host.call_tool("run_coder_subagent", {
+        "cardId": "coder-card",
+        "adapter": "codex",
+        "approvedPrompt": "Approved exact task.",
+    }))
+    path, payload = calls[-1]
+    assert path == "run_coder_subagent"
+    assert payload["projectId"] == "project-1"
+    assert payload["deckId"] == "deck_builder"
+    assert payload["conversationId"] == "external-mcp:grant-1"
+    assert payload["parentRunId"].startswith("req_external_main_")
+
+
+def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp():
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    resource = "https://exemption-unstable-wolverine.ngrok-free.dev/mcp"
+    code = f"""
+import json, os, subprocess, sys, time
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+env = {{
+    **os.environ,
+    'LIQUIDAITY_MCP_TRANSPORT': 'streamable-http',
+    'LIQUIDAITY_HTTP_MCP_PORT': '{port}',
+    'LIQUIDAITY_PUBLIC_MCP_RESOURCE_URL': '{resource}',
+    'LIQUIDAITY_AUTH0_ISSUER_URL': 'https://tenant.auth0.com/',
+    'LIQUIDAITY_AUTH0_AUDIENCE': '{resource}',
+    'LIQUIDAITY_AUTH0_CLIENT_ID': 'chatgpt-client',
+    'LIQUIDAITY_MCP_OAUTH_ENFORCED': 'true',
+}}
+server = subprocess.Popen([sys.executable, 'mcp_host.py'], cwd={_APP_DIR!r}, env=env)
+try:
+    metadata_url = 'http://127.0.0.1:{port}/.well-known/oauth-protected-resource/mcp'
+    failure = None
+    for _ in range(30):
+        try:
+            metadata = json.load(urlopen(metadata_url, timeout=1))
+            break
+        except Exception as exc:
+            failure = exc
+            time.sleep(0.1)
+    else:
+        raise failure or RuntimeError('oauth_metadata_not_ready')
+    assert metadata['resource'] == '{resource}'
+    assert metadata['authorization_servers'] == ['https://tenant.auth0.com/']
+    assert metadata['scopes_supported'] == ['liquidaity.main']
+    try:
+        urlopen(Request('http://127.0.0.1:{port}/mcp', data=b'{{}}', method='POST'), timeout=2)
+        raise AssertionError('anonymous_mcp_was_accepted')
+    except HTTPError as exc:
+        assert exc.code == 401
+        challenge = exc.headers['WWW-Authenticate']
+        assert 'resource_metadata="{resource.replace('/mcp', '/.well-known/oauth-protected-resource/mcp')}"' in challenge
+    print('OAUTH_METADATA_AND_CHALLENGE_OK')
+finally:
+    server.terminate()
+    server.wait(timeout=10)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=_APP_DIR,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "OAUTH_METADATA_AND_CHALLENGE_OK" in result.stdout

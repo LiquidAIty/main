@@ -118,7 +118,7 @@ export function decideAutogenAction(listener: PortListener | null): UvicornActio
   return decideUvicornAction(listener, 'app.main:app', AUTOGEN_PORT);
 }
 
-export type OwnedRole = 'grpc' | 'autogen' | 'backend' | 'frontend' | 'supervisor';
+export type OwnedRole = 'grpc' | 'autogen' | 'backend' | 'frontend' | 'mcp' | 'supervisor';
 
 /**
  * May `dev:fresh` stop this process? ONLY when its command line carries a grounded
@@ -148,6 +148,12 @@ export function isLiquidAItyOwnedDevProcess(
   }
   if (/\/client\/[\s\S]*vite[\s\S]*\bdev\b/.test(cmd) || /--workspace client run dev/.test(cmd)) {
     return { owned: true, role: 'frontend' };
+  }
+  if (
+    norm(proc.name).includes('python') &&
+    /apps\/python-models\/app\/mcp_host\.py(?:\s|$)/.test(cmd)
+  ) {
+    return { owned: true, role: 'mcp' };
   }
   if (/concurrently[\s\S]*dev:grpc/.test(cmd) || /run dev:all\b/.test(cmd)) {
     return { owned: true, role: 'supervisor' };
