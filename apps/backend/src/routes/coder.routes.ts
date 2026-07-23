@@ -235,6 +235,22 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
       body.authority === 'mag_one_execution' || body.authority === 'direct_main_audit'
         ? body.authority
         : undefined;
+    if (authority === 'direct_main_audit') {
+      const main = await resolveMainChatRuntimeConfig(
+        deriveSessionId(projectId, conversationId),
+        'chat',
+        String(body.parentRunId || ''),
+      );
+      const connected = main?.doorwayDefinitions.some(
+        (definition) => String(definition.card_id || '') === cardId,
+      );
+      if (!connected) {
+        return res.status(403).json({
+          ok: false,
+          error: `direct_main_coder_edge_required: ${cardId}`,
+        });
+      }
+    }
     // The caller (Main's tool call) supplies persisted Graph View IDS only —
     // never view content. The server resolves the persisted records and
     // renders the one compact representation; a request still carrying full
@@ -527,6 +543,89 @@ router.post('/mcp-bridge/hermes_memory_write', async (req, res) => {
   }
 });
 
+// ── Deliberate Graph View selection (ThinkGraph is the one writer) ──────────
+router.post('/mcp-bridge/thinkgraph_persist_graph_view', async (req, res) => {
+  const projectId = String(req.body?.projectId || '').trim();
+  const conversationId = String(req.body?.conversationId || '').trim();
+  const receivingRole = String(req.body?.receivingRole || '').trim();
+  const query = String(req.body?.query || '').trim();
+  const includedCanonicalNodeIds = Array.isArray(req.body?.includedCanonicalNodeIds)
+    ? req.body.includedCanonicalNodeIds
+    : [];
+  const records = Array.isArray(req.body?.records) ? req.body.records : [];
+  if (!projectId || !conversationId) {
+    return res.status(400).json({ ok: false, error: 'projectId_and_conversationId_required' });
+  }
+  if (receivingRole !== 'main_chat' && receivingRole !== 'coder') {
+    return res.status(400).json({ ok: false, error: 'graph_view_receiving_role_invalid' });
+  }
+  if (!query) return res.status(400).json({ ok: false, error: 'graph_view_query_required' });
+  if (includedCanonicalNodeIds.length === 0 || records.length === 0) {
+    return res.status(400).json({ ok: false, error: 'graph_view_deliberate_selection_required' });
+  }
+  const selected = {
+    rootCanonicalNodeIds: Array.isArray(req.body?.rootCanonicalNodeIds)
+      ? req.body.rootCanonicalNodeIds
+      : includedCanonicalNodeIds.slice(0, 3),
+    includedCanonicalNodeIds,
+    includedRelationships: Array.isArray(req.body?.includedRelationships)
+      ? req.body.includedRelationships
+      : [],
+    records,
+    query,
+    provenanceRefs: Array.isArray(req.body?.provenanceRefs) ? req.body.provenanceRefs : [],
+    note: String(req.body?.note || '').trim(),
+    parentViewId: String(req.body?.parentViewId || '').trim(),
+    omittedNeighborCount: Math.max(0, Number(req.body?.omittedNeighborCount) || 0),
+  };
+  const viewIdentity = createHash('sha256').update(JSON.stringify({
+    projectId,
+    conversationId,
+    producingRole: 'main_chat',
+    receivingRole,
+    ...selected,
+  })).digest('hex').slice(0, 24);
+  let graphView: GraphView;
+  try {
+    [graphView] = parseGraphViews([{
+      schemaVersion: 'graph-view.v1',
+      viewId: `codegraph:${viewIdentity}`,
+      authority: 'codegraph',
+      status: 'candidate',
+      producingRole: 'main_chat',
+      receivingRole,
+      filter: { nodeTypes: [], trustStates: [] },
+      hopDepth: 0,
+      ...selected,
+    }], { projectId, conversationId }, 'candidate');
+  } catch (error) {
+    return res.status(400).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'graph_view_selection_invalid',
+    });
+  }
+  try {
+    const persisted = await persistGraphViewOnPython(graphView) as {
+      ok?: unknown;
+      view?: { viewId?: unknown };
+    };
+    const persistedId = String(persisted?.view?.viewId || '').trim();
+    if (persisted?.ok !== true || persistedId !== graphView.viewId) {
+      throw new Error('graph_view_persistence_result_invalid');
+    }
+    return res.json({
+      ok: true,
+      graphViewId: persistedId,
+      graphView: persisted.view,
+    });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'graph_view_persistence_failed',
+    });
+  }
+});
+
 // ── CodeGraph reads (CBM is the one indexer/writer; these are thin reads) ───
 router.post('/mcp-bridge/codegraph_status', async (_req, res) => {
   let session: Awaited<ReturnType<typeof createCodebaseMemoryMcpCaller>> | null = null;
@@ -558,10 +657,7 @@ router.post('/mcp-bridge/codegraph_search', async (req, res) => {
         .map((value: unknown): string => String(value || '').trim().replace(/^code:/, ''))
         .filter((value: string) => Boolean(value)),
     )].slice(0, 20);
-    const projectId = String(req.body?.projectId || '').trim();
-    const conversationId = String(req.body?.conversationId || '').trim();
     if (!query) return res.status(400).json({ ok: false, error: 'query_required' });
-    if (!projectId || !conversationId) return res.status(400).json({ ok: false, error: 'projectId_and_conversationId_required' });
     const limit = Math.min(Math.max(Number(req.body?.limit) || 15, 1), 50);
     session = await createCodebaseMemoryMcpCaller(process.cwd());
     const projectList = await session.callTool('list_projects', {});
@@ -573,44 +669,7 @@ router.post('/mcp-bridge/codegraph_search', async (req, res) => {
     const result = await session.callTool('search_graph', exactQualifiedNames
       ? { project: cbmProject, qn_pattern: exactQualifiedNames, limit }
       : { project: cbmProject, query, limit });
-    const matches = Array.isArray((result as any)?.results) ? (result as any).results : [];
-    const includedCanonicalNodeIds = matches.map((match: any) => String(match?.qualified_name || match?.name || '')).filter(Boolean);
-    const now = new Date().toISOString();
-    const viewIdentity = createHash('sha256').update(JSON.stringify({
-      projectId,
-      conversationId,
-      receivingRole: String(req.body?.receivingRole || 'main_chat'),
-      parentViewId: String(req.body?.parentViewId || '').trim(),
-      includedCanonicalNodeIds,
-    })).digest('hex').slice(0, 24);
-    const [graphView] = parseGraphViews([{
-      schemaVersion: 'graph-view.v1',
-      authority: 'codegraph',
-      viewId: `codegraph:${viewIdentity}`,
-      status: 'returned',
-      producingRole: String(req.body?.producingRole || 'coder'),
-      receivingRole: String(req.body?.receivingRole || 'main_chat'),
-      rootCanonicalNodeIds: includedCanonicalNodeIds.slice(0, 3),
-      includedCanonicalNodeIds,
-      includedRelationships: [],
-      query,
-      filter: { nodeTypes: [], trustStates: [] },
-      hopDepth: Math.min(6, Math.max(0, Number(req.body?.hopDepth) || 0)),
-      provenanceRefs: [...new Set(matches.map((match: any) => String(match?.file_path || '')).filter(Boolean))],
-      note: String(req.body?.note || '').trim(),
-      parentViewId: String(req.body?.parentViewId || '').trim(),
-      records: matches.map((match: any) => ({
-        canonicalId: String(match?.qualified_name || match?.name || ''),
-        summary: [String(match?.name || ''), String(match?.label || ''), String(match?.file_path || '')].filter(Boolean).join(' · '),
-        selectionReason: `Matched CodeGraph inspection query: ${query}`,
-        ...(Number.isFinite(match?.rank) ? { relevance: Number(match.rank) } : {}),
-        provenanceRefs: [String(match?.file_path || '')].filter(Boolean),
-      })),
-      omittedNeighborCount: Math.max(0, Number((result as any)?.total || matches.length) - matches.length),
-      createdAt: now,
-      updatedAt: now,
-    }], { projectId, conversationId }, 'returned');
-    return res.json({ ok: true, cbmProject, result, graphView });
+    return res.json({ ok: true, cbmProject, result });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'codegraph_search_failed' });
   } finally {

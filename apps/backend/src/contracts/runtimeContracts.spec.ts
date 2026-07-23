@@ -8,7 +8,7 @@ describe('runtime-specific tool catalogs', () => {
 
   it('keeps native graph and control tools in the Harness catalog', () => {
     expect(harness).toEqual(expect.arrayContaining([
-      'thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query',
+      'thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'thinkgraph.persist_graph_view', 'knowgraph.query',
       'knowgraph.ingest', 'codegraph.status', 'codegraph.search',
       'agentgraph.create_context', 'agentgraph.read_context', 'agentgraph.expand_reference',
       'card.run_assistant_agent', 'web_search',

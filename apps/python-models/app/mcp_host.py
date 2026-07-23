@@ -268,20 +268,12 @@ async def list_tools() -> list[Tool]:
                         "items": {"type": "string"},
                         "description": "Persisted Graph View ids (canonical, e.g. codegraph:…) to attach. IDs only — the server resolves the persisted views and renders their compact context; never paste view content.",
                     },
-                    "agentContext": {
-                        "type": "object",
+                    "agentContextId": {
+                        "type": "string",
                         "description": (
-                            "Model-selected compact AgentGraph importance for this handoff. "
-                            "Python validates and persists it, then transports only the context id."
+                            "Existing canonical AgentGraph context id. Create and review the "
+                            "context independently; this tool transports the id unchanged."
                         ),
-                        "properties": {
-                            "items": {"type": "array", "minItems": 1, "maxItems": 24, "items": {"type": "object"}},
-                            "relationships": {"type": "array", "minItems": 1, "maxItems": 48, "items": {"type": "object"}},
-                            "references": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "object"}},
-                            "priorContextId": {"type": "string"},
-                        },
-                        "required": ["items", "relationships", "references"],
-                        "additionalProperties": False,
                     },
                 },
                 "required": ["parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt"],
@@ -547,6 +539,81 @@ async def list_tools() -> list[Tool]:
                     "statements": {"type": "array", "items": {"type": "object", "required": ["id", "subject", "predicateTerm", "object"], "properties": {"id": {"type": "string"}, "subject": {"type": "string"}, "predicateTerm": {"type": "string"}, "object": {"type": "string"}, "rationale": {"type": "string"}, "review": {"type": "string"}, "tag": {"type": "string"}, "properties": {"type": "object", "additionalProperties": {"type": ["string", "number", "boolean"]}}}}},
                 },
                 "required": ["projectId", "conversationId"],
+            },
+        ),
+        Tool(
+            name="thinkgraph.persist_graph_view",
+            description=(
+                "Main Chat only: persist one deliberate model-selected CodeGraph Graph View "
+                "through the canonical ThinkGraph writer. Call codegraph.search first, review "
+                "the discovery results, and pass only meaningful chosen records and relationships. "
+                "Never copy a fixed top-N result list as semantic selection. Project, conversation, "
+                "producing role, Graph View id, and persistence are server-owned."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "conversationId": {"type": "string"},
+                    "receivingRole": {"type": "string", "enum": ["main_chat", "coder"]},
+                    "rootCanonicalNodeIds": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "includedCanonicalNodeIds": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string"},
+                    },
+                    "records": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "canonicalId": {"type": "string"},
+                                "summary": {"type": "string"},
+                                "selectionReason": {"type": "string"},
+                                "provenanceRefs": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                            "required": ["canonicalId", "summary", "selectionReason"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "includedRelationships": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "source": {"type": "string"},
+                                "target": {"type": "string"},
+                                "type": {"type": "string"},
+                            },
+                            "required": ["source", "target", "type"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "query": {"type": "string"},
+                    "provenanceRefs": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "note": {"type": "string"},
+                    "parentViewId": {"type": "string"},
+                    "omittedNeighborCount": {"type": "integer"},
+                },
+                "required": [
+                    "projectId",
+                    "conversationId",
+                    "receivingRole",
+                    "includedCanonicalNodeIds",
+                    "records",
+                    "query",
+                ],
             },
         ),
         Tool(
@@ -925,13 +992,18 @@ def _external_tool_catalog(tools: list[Tool], context: dict[str, Any]) -> list[T
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
     "main.context": set(),
-    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt", "authority", "graphViewIds", "agentContext"},
+    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt", "authority", "graphViewIds", "agentContextId"},
     "agentgraph.create_context": {"projectId", "deckId", "conversationId", "receivingAgentId", "context"},
     "agentgraph.read_context": {"projectId", "contextId"},
     "agentgraph.expand_reference": {"projectId", "referenceId"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "jobId", "conversationId", "parentContext"},
     "thinkgraph.submit_update": {"projectId", "conversationId", "resources", "relations", "statements"},
+    "thinkgraph.persist_graph_view": {
+        "projectId", "conversationId", "receivingRole", "rootCanonicalNodeIds",
+        "includedCanonicalNodeIds", "records", "includedRelationships", "query",
+        "provenanceRefs", "note", "parentViewId", "omittedNeighborCount",
+    },
     "knowgraph.query": {"projectId", "conversationId", "query", "anchors", "maxResults", "parentViewId", "includeFullText"},
     "knowgraph.ingest": {"projectId", "documents", "researchFocus"},
     "knowgraph_analyze_scope": {"request"},
@@ -969,6 +1041,7 @@ _BRIDGE_PATHS: dict[str, str] = {
     "mag_one.describe_connected_agents": "describe_connected_agents",
     "run_mag_one": "run_mag_one",
     "thinkgraph.submit_update": "thinkgraph_submit_update",
+    "thinkgraph.persist_graph_view": "thinkgraph_persist_graph_view",
     "knowgraph.ingest": "knowgraph_ingest",
     "knowgraph_analyze_scope": "knowgraph_analyze_scope",
     "knowgraph_get_analysis": "knowgraph_get_analysis",
@@ -1071,24 +1144,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
         except Exception as err:  # noqa: BLE001 - honest tool-level failure
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"agentgraph_failed: {err}"}))]
-    if name == "run_coder_subagent" and args.get("agentContext") is not None:
-        from app.python_models import agentgraph
-
-        proposal = dict(args.pop("agentContext") or {})
-        proposal.setdefault("promptRef", f"harness:{str(args.get('parentRunId') or '')}")
-        proposal.setdefault("producingRunId", str(args.get("parentRunId") or ""))
-        try:
-            created = await asyncio.to_thread(
-                agentgraph.create_context,
-                project_id=str(args.get("projectId") or ""),
-                deck_id=str(args.get("deckId") or ""),
-                conversation_id=str(args.get("conversationId") or ""),
-                receiving_agent_id=str(args.get("cardId") or ""),
-                proposal=proposal,
-            )
-        except agentgraph.AgentGraphError as err:
-            return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
-        args["agentContextId"] = created["contextId"]
     if name == "main.context":
         if context is None:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": "main_context_unavailable"}))]

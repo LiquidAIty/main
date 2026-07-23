@@ -7,8 +7,8 @@ import {
   resolveCoderToolPolicy,
   resolveConsolePermissionMode,
   resolveConsoleAuditTools,
-  CODEGRAPH_MCP_SERVER,
-  CODEGRAPH_MCP_TOOLS,
+  CODEBASE_MEMORY_MCP_SERVER,
+  CODEBASE_MEMORY_READ_TOOLS,
   LEGACY_HARNESS_TOOL_POLICY,
 } from './coderRuntimeContract';
 
@@ -36,7 +36,7 @@ afterEach(() => vi.unstubAllEnvs());
 describe('resolveCoderToolPolicy', () => {
   it('direct_main_audit is structurally read-only: native reads + CodeGraph, no edits, no shell', () => {
     const policy = resolveCoderToolPolicy('direct_main_audit');
-    expect(policy.allowedTools).toEqual(expect.arrayContaining(['Read', 'Grep', 'Glob', ...CODEGRAPH_MCP_TOOLS]));
+    expect(policy.allowedTools).toEqual(expect.arrayContaining(['Read', 'Grep', 'Glob', ...CODEBASE_MEMORY_READ_TOOLS]));
     // No mutating capability may be allow-listed.
     for (const forbidden of ['Edit', 'Write', 'NotebookEdit', 'Bash', 'PowerShell']) {
       expect(policy.allowedTools).not.toContain(forbidden);
@@ -54,13 +54,15 @@ describe('resolveCoderToolPolicy', () => {
     expect(policy.codeGraphMcp).toBe(false);
   });
 
-  it('audit CodeGraph tools are read-only status/search only (no write tool ids)', () => {
-    expect(CODEGRAPH_MCP_TOOLS).toEqual([
-      `mcp__${CODEGRAPH_MCP_SERVER}__codegraph_status`,
-      `mcp__${CODEGRAPH_MCP_SERVER}__codegraph_search`,
-    ]);
-    for (const tool of CODEGRAPH_MCP_TOOLS) {
-      expect(tool).not.toMatch(/thinkgraph|knowgraph|submit|ingest|update|write|run_mag_one|run_coder/i);
+  it('audit CBM tools are native read and analysis operations only', () => {
+    expect(CODEBASE_MEMORY_READ_TOOLS).toEqual(expect.arrayContaining([
+      `mcp__${CODEBASE_MEMORY_MCP_SERVER}__search_graph`,
+      `mcp__${CODEBASE_MEMORY_MCP_SERVER}__trace_path`,
+      `mcp__${CODEBASE_MEMORY_MCP_SERVER}__query_graph`,
+      `mcp__${CODEBASE_MEMORY_MCP_SERVER}__get_code_snippet`,
+    ]));
+    for (const tool of CODEBASE_MEMORY_READ_TOOLS) {
+      expect(tool).not.toMatch(/index_repository|delete_project|manage_adr|ingest_traces/i);
     }
   });
 
@@ -79,27 +81,24 @@ describe('buildCoderMcpServers', () => {
     expect(servers).toEqual({});
   });
 
-  it('codegraph composition points at the RESTRICTED doorway, never the full mcp_host', () => {
-    vi.stubEnv('LIQUIDAITY_PYTHON', '/py/python');
-    vi.stubEnv('LIQUIDAITY_GRPC_CWD', '/repo');
+  it('codegraph composition points directly at the native CBM executable', () => {
     const servers = buildCoderMcpServers({ runId: 'coder_y', includeCodeGraph: true });
-    expect(servers[CODEGRAPH_MCP_SERVER].args[0].replace(/\\/g, '/')).toMatch(/apps\/python-models\/app\/codegraph_doorway_mcp\.py$/);
-    expect(servers[CODEGRAPH_MCP_SERVER].args[0]).not.toMatch(/mcp_host\.py$/);
+    expect(servers[CODEBASE_MEMORY_MCP_SERVER].command.replace(/\\/g, '/')).toMatch(/codebase-memory-mcp\.exe$/);
+    expect(servers[CODEBASE_MEMORY_MCP_SERVER].args).toEqual([]);
+    expect(servers[CODEBASE_MEMORY_MCP_SERVER].env.CODEBASE_ROOT.replace(/\\/g, '/')).toMatch(/\/Projects\/main$/i);
   });
 
-  it('scoped audit composition exposes ONLY the codegraph doorway', () => {
-    vi.stubEnv('LIQUIDAITY_PYTHON', '/py/python');
-    vi.stubEnv('LIQUIDAITY_GRPC_CWD', '/repo');
+  it('scoped audit composition exposes only the canonical native CBM server', () => {
     const servers = buildCoderMcpServers({ runId: 'coder_a', includeCodeGraph: true });
-    expect(Object.keys(servers)).toEqual([CODEGRAPH_MCP_SERVER]);
-    expect(servers[CODEGRAPH_MCP_SERVER].args[0].replace(/\\/g, '/')).toMatch(/codegraph_doorway_mcp\.py$/);
+    expect(Object.keys(servers)).toEqual([CODEBASE_MEMORY_MCP_SERVER]);
+    expect(servers[CODEBASE_MEMORY_MCP_SERVER].env.LIQUIDAITY_CODER_RUN_ID).toBe('coder_a');
   });
 });
 
 describe('resolveConsoleAuditTools + audit argv (item 4)', () => {
-  it('allows only Read/Grep/Glob + the two codegraph doorway tokens; denies all mutation/shell', () => {
+  it('allows only Read/Grep/Glob plus native read-only CBM tokens; denies all mutation/shell', () => {
     const { allowedTools, disallowedTools } = resolveConsoleAuditTools();
-    expect(allowedTools).toEqual(['Read', 'Grep', 'Glob', ...CODEGRAPH_MCP_TOOLS]);
+    expect(allowedTools).toEqual(['Read', 'Grep', 'Glob', ...CODEBASE_MEMORY_READ_TOOLS]);
     for (const forbidden of ['Bash', 'PowerShell', 'Edit', 'Write', 'NotebookEdit']) {
       expect(allowedTools).not.toContain(forbidden);
       expect(disallowedTools).toContain(forbidden);
@@ -113,7 +112,7 @@ describe('resolveConsoleAuditTools + audit argv (item 4)', () => {
       mcpFlags: ['--mcp-config', '/tmp/mcp.json', '--strict-mcp-config'],
       allowedTools, disallowedTools,
     });
-    expect(args[args.indexOf('--allowedTools') + 1]).toContain('mcp__liquid_aity_codegraph__codegraph_status');
+    expect(args[args.indexOf('--allowedTools') + 1]).toContain('mcp__codebase-memory__search_graph');
     expect(args[args.indexOf('--allowedTools') + 1]).toContain('Read');
     expect(args[args.indexOf('--disallowedTools') + 1]).toContain('Bash');
     expect(args).toEqual(expect.arrayContaining(['--mcp-config', '/tmp/mcp.json', '--strict-mcp-config']));

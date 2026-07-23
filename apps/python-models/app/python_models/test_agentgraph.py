@@ -68,21 +68,15 @@ def test_validation_rejects_missing_canonical_graph_view_before_database_access(
         )
 
 
-def test_run_coder_subagent_persists_model_proposal_and_transports_only_context_id(monkeypatch) -> None:
+def test_run_coder_subagent_transports_existing_context_id_unchanged(monkeypatch) -> None:
     from app import mcp_host
-    from app.python_models import agentgraph
 
     captured: dict = {}
-
-    def fake_create_context(**kwargs):
-        captured["create"] = kwargs
-        return {"ok": True, "contextId": "agentctx:test"}
 
     async def fake_bridge(path: str, payload: dict):
         captured["bridge"] = {"path": path, "payload": payload}
         return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
 
-    monkeypatch.setattr(agentgraph, "create_context", fake_create_context)
     monkeypatch.setattr(mcp_host, "_bridge", fake_bridge)
     result = asyncio.run(mcp_host.call_tool("run_coder_subagent", {
         "parentRunId": "parent-1",
@@ -92,14 +86,9 @@ def test_run_coder_subagent_persists_model_proposal_and_transports_only_context_
         "cardId": "card_local_coder",
         "adapter": "codex",
         "approvedPrompt": "Inspect the referenced code.",
-        "agentContext": {
-            "items": [{"id": "finding", "kind": "finding", "text": "Bounded context."}],
-            "references": [{"id": "code", "authority": "codegraph", "canonicalId": "codegraph:view"}],
-            "relationships": [{"source": "finding", "target": "code", "type": "USES"}],
-        },
+        "agentContextId": "agentctx:test",
     }))
     assert json.loads(result[0].text)["ok"] is True
-    assert captured["create"]["proposal"]["promptRef"] == "harness:parent-1"
     assert "agentContext" not in captured["bridge"]["payload"]
     assert captured["bridge"]["payload"]["agentContextId"] == "agentctx:test"
 

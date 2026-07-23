@@ -152,6 +152,12 @@ const graphViewMocks = vi.hoisted(() => ({
   recordAgentGraphResult: vi.fn(async () => ({ ok: true })),
 }));
 
+const cbmCallerMocks = vi.hoisted(() => ({
+  callTool: vi.fn(),
+  close: vi.fn(async () => undefined),
+  create: vi.fn(),
+}));
+
 const dbMocks = vi.hoisted(() => ({
   query: vi.fn(),
 }));
@@ -191,6 +197,10 @@ vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
 
 vi.mock('../services/autogen/autogenOrchestratorClient', () => graphViewMocks);
 
+vi.mock('../services/graphContext/cbmMcpCaller', () => ({
+  createCodebaseMemoryMcpCaller: cbmCallerMocks.create,
+}));
+
 vi.mock('../db/pool', () => ({
   pool: { query: dbMocks.query },
 }));
@@ -210,6 +220,38 @@ async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
+}
+
+function coderGraphView(overrides: Record<string, unknown> = {}) {
+  return {
+    schemaVersion: 'graph-view.v1',
+    viewId: 'codegraph:selected-1',
+    authority: 'codegraph',
+    status: 'candidate',
+    projectId: 'project-1',
+    conversationId: 'main',
+    producingRole: 'main_chat',
+    receivingRole: 'coder',
+    rootCanonicalNodeIds: ['symbol:one'],
+    includedCanonicalNodeIds: ['symbol:one'],
+    includedRelationships: [],
+    records: [{
+      canonicalId: 'symbol:one',
+      summary: 'Selected symbol',
+      selectionReason: 'Main selected this implementation boundary.',
+      provenanceRefs: ['one.ts'],
+      estimatedCharacters: 15,
+      estimatedTokens: 4,
+    }],
+    query: 'find implementation boundary',
+    filter: { nodeTypes: [], trustStates: [] },
+    hopDepth: 0,
+    provenanceRefs: ['one.ts'],
+    omittedNeighborCount: 0,
+    createdAt: '2026-07-23T00:00:00Z',
+    updatedAt: '2026-07-23T00:00:00Z',
+    ...overrides,
+  };
 }
 
 describe('coder routes', () => {
@@ -310,6 +352,248 @@ describe('coder routes', () => {
       semanticFreshness: 'stale',
       reason: 'indexed_revision_mismatch:old-head:current-head',
     });
+  });
+
+  it('returns honest CodeGraph discovery results without constructing or persisting a Graph View', async () => {
+    cbmCallerMocks.callTool.mockReset();
+    cbmCallerMocks.close.mockClear();
+    cbmCallerMocks.create.mockResolvedValueOnce({
+      callTool: cbmCallerMocks.callTool,
+      close: cbmCallerMocks.close,
+    });
+    cbmCallerMocks.callTool
+      .mockResolvedValueOnce({ projects: [{ name: 'C-Projects-main' }] })
+      .mockResolvedValueOnce({
+        total: 1,
+        results: [{
+          name: 'persistGraphViewOnPython',
+          qualified_name: 'C-Projects-main.apps.backend.persistGraphViewOnPython',
+          label: 'Function',
+          file_path: 'apps/backend/src/services/autogen/autogenOrchestratorClient.ts',
+        }],
+      });
+    graphViewMocks.persistGraphViewOnPython.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/codegraph_search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: 'persist Graph View',
+          limit: 5,
+          projectId: 'project-1',
+          conversationId: 'main',
+          producingRole: 'main_chat',
+          receivingRole: 'coder',
+        }),
+      });
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(payload).toEqual({
+        ok: true,
+        cbmProject: 'C-Projects-main',
+        result: expect.objectContaining({ total: 1 }),
+      });
+      expect(payload.graphView).toBeUndefined();
+      expect(payload.graphViewId).toBeUndefined();
+      expect(cbmCallerMocks.callTool).toHaveBeenLastCalledWith('search_graph', {
+        project: 'C-Projects-main',
+        query: 'persist Graph View',
+        limit: 5,
+      });
+      expect(graphViewMocks.persistGraphViewOnPython).not.toHaveBeenCalled();
+      expect(cbmCallerMocks.close).toHaveBeenCalledOnce();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('persists only an explicit Main-selected CodeGraph view through the canonical ThinkGraph writer', async () => {
+    graphViewMocks.persistGraphViewOnPython.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/thinkgraph_persist_graph_view`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          conversationId: 'main',
+          receivingRole: 'coder',
+          rootCanonicalNodeIds: ['symbol:one'],
+          includedCanonicalNodeIds: ['symbol:one'],
+          records: [{
+            canonicalId: 'symbol:one',
+            summary: 'The selected implementation boundary.',
+            selectionReason: 'Main chose this result after reviewing the search response.',
+            provenanceRefs: ['one.ts'],
+          }],
+          includedRelationships: [],
+          query: 'persist Graph View',
+          provenanceRefs: ['one.ts'],
+        }),
+      });
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(payload.graphViewId).toMatch(/^codegraph:[a-f0-9]{24}$/);
+      expect(graphViewMocks.persistGraphViewOnPython).toHaveBeenCalledOnce();
+      const persisted = graphViewMocks.persistGraphViewOnPython.mock.calls[0][0] as any;
+      expect(persisted).toMatchObject({
+        viewId: payload.graphViewId,
+        authority: 'codegraph',
+        status: 'candidate',
+        projectId: 'project-1',
+        conversationId: 'main',
+        producingRole: 'main_chat',
+        receivingRole: 'coder',
+        includedCanonicalNodeIds: ['symbol:one'],
+      });
+      expect(persisted.records[0].selectionReason).toContain('Main chose');
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('fails a direct Main audit without its saved Main to Coder edge before model execution', async () => {
+    chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
+      doorwayDefinitions: [],
+    });
+    coderRouterMocks.runCoderSubagent.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentRunId: 'parent-1',
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          conversationId: 'main',
+          cardId: 'card_local_coder',
+          adapter: 'codex',
+          authority: 'direct_main_audit',
+          approvedPrompt: 'Inspect selected code.',
+          graphViewIds: ['codegraph:selected-1'],
+        }),
+      });
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({
+        ok: false,
+        error: 'direct_main_coder_edge_required: card_local_coder',
+      });
+      expect(coderRouterMocks.runCoderSubagent).not.toHaveBeenCalled();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it.each([
+    ['missing', [], 'coder_targeted_graph_view_required'],
+    ['wrong receiving role', [coderGraphView({ receivingRole: 'main_chat' })], 'coder_targeted_graph_view_required'],
+  ])('rejects %s Graph View authority before model execution', async (_label, views, error) => {
+    chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
+      doorwayDefinitions: [{ card_id: 'card_local_coder' }],
+    });
+    graphViewMocks.fetchDoorwayContext.mockResolvedValueOnce({ ok: true, views, modelContext: '' });
+    coderRouterMocks.runCoderSubagent.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentRunId: 'parent-1',
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          conversationId: 'main',
+          cardId: 'card_local_coder',
+          adapter: 'codex',
+          authority: 'direct_main_audit',
+          approvedPrompt: 'Inspect selected code.',
+          graphViewIds: ['codegraph:selected-1'],
+        }),
+      });
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({ ok: false, error });
+      expect(coderRouterMocks.runCoderSubagent).not.toHaveBeenCalled();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it.each([
+    ['fabricated', 'graph_view_unknown: codegraph:fabricated'],
+    ['cross-scope', 'graph_view_scope_mismatch: codegraph:selected-1'],
+  ])('propagates a canonical ThinkGraph %s rejection before model execution', async (_label, error) => {
+    chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
+      doorwayDefinitions: [{ card_id: 'card_local_coder' }],
+    });
+    graphViewMocks.fetchDoorwayContext.mockRejectedValueOnce(new Error(error));
+    coderRouterMocks.runCoderSubagent.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentRunId: 'parent-1',
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          conversationId: 'main',
+          cardId: 'card_local_coder',
+          adapter: 'codex',
+          authority: 'direct_main_audit',
+          approvedPrompt: 'Inspect selected code.',
+          graphViewIds: ['codegraph:selected-1'],
+        }),
+      });
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({ ok: false, error });
+      expect(coderRouterMocks.runCoderSubagent).not.toHaveBeenCalled();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('resolves one persisted Coder-targeted Graph View and unchanged AgentGraph id before execution', async () => {
+    chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
+      doorwayDefinitions: [{ card_id: 'card_local_coder' }],
+    });
+    graphViewMocks.fetchDoorwayContext.mockResolvedValueOnce({
+      ok: true,
+      views: [coderGraphView()],
+      modelContext: '[LIQUIDAITY_GRAPH_CONTEXT]\n- symbol:one',
+    });
+    coderRouterMocks.runCoderSubagent.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentRunId: 'parent-1',
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          conversationId: 'main',
+          cardId: 'card_local_coder',
+          adapter: 'codex',
+          authority: 'direct_main_audit',
+          approvedPrompt: 'Inspect selected code.',
+          graphViewIds: ['codegraph:selected-1'],
+          agentContextId: 'agentctx:test',
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect(coderRouterMocks.runCoderSubagent).toHaveBeenCalledWith(expect.objectContaining({
+        approvedPrompt: expect.stringContaining('[AGENTGRAPH_CONTEXT_ID agentctx:test]'),
+      }));
+      expect(graphViewMocks.fetchDoorwayContext).toHaveBeenCalledWith(
+        'project-1',
+        'main',
+        ['codegraph:selected-1'],
+      );
+    } finally {
+      await closeServer(server);
+    }
   });
 
   async function withBrokenRuntime<T>(fn: () => Promise<T>): Promise<T> {

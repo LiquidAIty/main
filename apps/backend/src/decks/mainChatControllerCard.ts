@@ -46,6 +46,7 @@ export function buildMainChatControllerCard(prompt = MAIN_CHAT_PROMPT_TEMPLATE.c
       tools: [
         'thinkgraph.get_graph_slice',
         'thinkgraph.submit_update',
+        'thinkgraph.persist_graph_view',
         'knowgraph.query',
         'codegraph.search',
         'codegraph.status',

@@ -131,7 +131,7 @@ describe('runCoderConsoleSession (Console PTY bridge)', () => {
     // only, no shell) + strict scoped MCP config.
     const args = capture.req?.args ?? [];
     expect(args[args.indexOf('--permission-mode') + 1]).toBe('plan');
-    expect(args[args.indexOf('--allowedTools') + 1]).toContain('mcp__liquid_aity_codegraph__codegraph_status');
+    expect(args[args.indexOf('--allowedTools') + 1]).toContain('mcp__codebase-memory__search_graph');
     expect(args[args.indexOf('--allowedTools') + 1]).not.toContain('Bash');
     expect(args[args.indexOf('--disallowedTools') + 1]).toContain('Edit');
     expect(args).toContain('--strict-mcp-config');

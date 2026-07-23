@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveRepoRoot } from '../workspaceRoot';
 import {
@@ -33,18 +34,26 @@ export type CoderToolPolicy = {
   codeGraphMcp: boolean;
 };
 
-/** MCP server name for the composed CodeGraph host (see buildCoderMcpServers). */
-export const CODEGRAPH_MCP_SERVER = 'liquid_aity_codegraph';
+/** Native CBM server name from the repository's canonical .mcp.json. */
+export const CODEBASE_MEMORY_MCP_SERVER = 'codebase-memory';
 
-// The only CodeGraph MCP tools the read-only audit may call. Token form verified
+// Native read-only CBM tools the audit may call. Token form verified
 // from OpenClaude source: `mcp__${normalizeNameForMCP(server)}__${normalizeNameForMCP(tool)}`,
 // where normalizeNameForMCP replaces every [^a-zA-Z0-9_-] with '_' (localcoder
-// src/services/mcp/normalization.ts + mcpStringUtils.ts) — so `codegraph.status`
-// → `codegraph_status`. The write tools mcp_host also exposes are omitted here.
-export const CODEGRAPH_MCP_TOOLS = [
-  `mcp__${CODEGRAPH_MCP_SERVER}__codegraph_status`,
-  `mcp__${CODEGRAPH_MCP_SERVER}__codegraph_search`,
-];
+// src/services/mcp/normalization.ts + mcpStringUtils.ts). CBM state-changing
+// operations are deliberately absent from this direct audit policy.
+export const CODEBASE_MEMORY_READ_TOOLS = [
+  'list_projects',
+  'index_status',
+  'get_graph_schema',
+  'get_architecture',
+  'search_graph',
+  'search_code',
+  'trace_path',
+  'query_graph',
+  'get_code_snippet',
+  'detect_changes',
+].map((tool) => `mcp__${CODEBASE_MEMORY_MCP_SERVER}__${tool}`);
 
 /**
  * The legacy `harness_subagent` policy: exactly what `run_coder_subagent` has
@@ -65,7 +74,7 @@ export function resolveCoderToolPolicy(mode: CoderAuthorityMode): CoderToolPolic
   if (mode === 'direct_main_audit') {
     return {
       // Read-only audit: native reads + CodeGraph, nothing that mutates the repo.
-      allowedTools: ['Read', 'Grep', 'Glob', ...CODEGRAPH_MCP_TOOLS],
+      allowedTools: ['Read', 'Grep', 'Glob', ...CODEBASE_MEMORY_READ_TOOLS],
       disallowedTools: ['Write', 'Edit', 'NotebookEdit', 'Bash', 'PowerShell', 'WebFetch', 'WebSearch'],
       permissionMode: 'dontAsk',
       allowsMutatingShell: false,
@@ -89,37 +98,51 @@ export type McpServerSpec = {
   env: Record<string, string>;
 };
 
-/** Reuse the existing Python resolution (env override, else the in-repo venv). */
-function resolvePythonExecutable(): string {
-  return (
-    process.env.LIQUIDAITY_PYTHON ||
-    path.join(resolveRepoRoot(), 'apps', 'python-models', '.venv', 'Scripts', 'python.exe')
+function resolveNativeCodebaseMemoryServer(): McpServerSpec {
+  const repoRoot = resolveRepoRoot();
+  const configPath = path.join(repoRoot, '.mcp.json');
+  const config = JSON.parse(readFileSync(configPath, 'utf8')) as {
+    mcpServers?: Record<string, {
+      type?: unknown;
+      command?: unknown;
+      args?: unknown;
+      env?: unknown;
+    }>;
+  };
+  const configured = config.mcpServers?.[CODEBASE_MEMORY_MCP_SERVER];
+  const command = String(configured?.command || '').trim();
+  const args = Array.isArray(configured?.args)
+    ? configured.args.map((value) => String(value))
+    : [];
+  const rawEnv = configured?.env && typeof configured.env === 'object'
+    ? configured.env as Record<string, unknown>
+    : {};
+  const env = Object.fromEntries(
+    Object.entries(rawEnv).map(([key, value]) => [key, String(value)]),
   );
+  if (!command) throw new Error('native_codebase_memory_mcp_command_required');
+  if (!env.CODEBASE_ROOT || path.resolve(env.CODEBASE_ROOT) !== path.resolve(repoRoot)) {
+    throw new Error('native_codebase_memory_mcp_root_mismatch');
+  }
+  return { type: 'stdio', command, args, env };
 }
 
 /**
  * Compose the Coder CLI's MCP servers. When `includeCodeGraph` is set
- * (direct_main_audit), the RESTRICTED codegraph doorway
- * (`codegraph_doorway_mcp.py`, exposing ONLY `codegraph.status`/`codegraph.search`)
- * is added. The doorway is a scoped surface over the existing backend
- * CodeGraph handlers — not a second CodeGraph service and not a `.mjs` host.
- * Live subprocess boot of the doorway is a live-validation item.
+ * (direct_main_audit), the repository's canonical native CBM server is added
+ * directly. No LiquidAIty wrapper, second indexer, or alternate graph authority
+ * sits between Coder and CBM.
  */
 export function buildCoderMcpServers(opts: {
   runId: string;
   includeCodeGraph: boolean;
 }): Record<string, McpServerSpec> {
-  const python = resolvePythonExecutable();
-  const appDir = path.join(resolveRepoRoot(), 'apps', 'python-models', 'app');
   const servers: Record<string, McpServerSpec> = {};
   if (opts.includeCodeGraph) {
-    // The RESTRICTED codegraph doorway (codegraph.status/search only) — NOT the
-    // full mcp_host — so a read-only audit reaches CodeGraph and nothing else.
-    servers[CODEGRAPH_MCP_SERVER] = {
-      type: 'stdio',
-      command: python,
-      args: [path.join(appDir, 'codegraph_doorway_mcp.py')],
-      env: { LIQUIDAITY_CODER_RUN_ID: opts.runId },
+    const native = resolveNativeCodebaseMemoryServer();
+    servers[CODEBASE_MEMORY_MCP_SERVER] = {
+      ...native,
+      env: { ...native.env, LIQUIDAITY_CODER_RUN_ID: opts.runId },
     };
   }
   return servers;
@@ -135,7 +158,7 @@ export function buildCoderMcpServers(opts: {
  */
 export function resolveConsoleAuditTools(): { allowedTools: string[]; disallowedTools: string[] } {
   return {
-    allowedTools: ['Read', 'Grep', 'Glob', ...CODEGRAPH_MCP_TOOLS],
+    allowedTools: ['Read', 'Grep', 'Glob', ...CODEBASE_MEMORY_READ_TOOLS],
     disallowedTools: ['Bash', 'PowerShell', 'Edit', 'Write', 'NotebookEdit'],
   };
 }

@@ -258,6 +258,7 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
         "instructions": "Persisted Main instructions.",
         "savedMainToolGrants": [
             "mcp__liquidaity__codegraph_search",
+            "mcp__liquidaity__thinkgraph_persist_graph_view",
             "mcp__liquidaity__run_coder_subagent",
         ],
     }
@@ -277,10 +278,15 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
     assert "main.context" in by_name
     assert "codegraph.status" in by_name
     assert "codegraph.search" in by_name
+    assert "thinkgraph.persist_graph_view" in by_name
     assert "run_coder_subagent" in by_name
     assert "run_mag_one" not in by_name
     assert "projectId" not in by_name["run_coder_subagent"].inputSchema["properties"]
     assert "parentRunId" not in by_name["run_coder_subagent"].inputSchema["properties"]
+    assert "agentContextId" in by_name["run_coder_subagent"].inputSchema["properties"]
+    assert "agentContext" not in by_name["run_coder_subagent"].inputSchema["properties"]
+    assert "projectId" not in by_name["thinkgraph.persist_graph_view"].inputSchema["properties"]
+    assert "conversationId" not in by_name["thinkgraph.persist_graph_view"].inputSchema["properties"]
     assert by_name["codegraph.search"].model_dump()["securitySchemes"] == [
         {"type": "oauth2", "scopes": ["liquidaity.main"]}
     ]
@@ -301,6 +307,35 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
         "limit": 3,
     })
 
+    asyncio.run(mcp_host.call_tool("thinkgraph.persist_graph_view", {
+        "receivingRole": "coder",
+        "includedCanonicalNodeIds": ["symbol:one"],
+        "records": [{
+            "canonicalId": "symbol:one",
+            "summary": "Selected implementation boundary.",
+            "selectionReason": "Main deliberately selected this result.",
+            "provenanceRefs": ["one.ts"],
+        }],
+        "includedRelationships": [],
+        "query": "Main",
+        "provenanceRefs": ["one.ts"],
+    }))
+    assert calls[-1] == ("thinkgraph_persist_graph_view", {
+        "projectId": "project-1",
+        "conversationId": "external-mcp:grant-1",
+        "receivingRole": "coder",
+        "includedCanonicalNodeIds": ["symbol:one"],
+        "records": [{
+            "canonicalId": "symbol:one",
+            "summary": "Selected implementation boundary.",
+            "selectionReason": "Main deliberately selected this result.",
+            "provenanceRefs": ["one.ts"],
+        }],
+        "includedRelationships": [],
+        "query": "Main",
+        "provenanceRefs": ["one.ts"],
+    })
+
     denied = asyncio.run(mcp_host.call_tool("run_coder_subagent", {
         "projectId": "spoofed",
         "cardId": "coder-card",
@@ -313,6 +348,7 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
         "cardId": "coder-card",
         "adapter": "codex",
         "approvedPrompt": "Approved exact task.",
+        "agentContextId": "agentctx:test",
     }))
     path, payload = calls[-1]
     assert path == "run_coder_subagent"
@@ -320,6 +356,7 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
     assert payload["deckId"] == "deck_builder"
     assert payload["conversationId"] == "external-mcp:grant-1"
     assert payload["parentRunId"].startswith("req_external_main_")
+    assert payload["agentContextId"] == "agentctx:test"
 
 
 def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp():

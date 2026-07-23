@@ -135,7 +135,7 @@ describe('ClaudeCodeAdapter caller authority (dossier §3.3)', () => {
     adapter.dispose('coder_legacy');
   });
 
-  it('with direct_main_audit, is read-only (Read/Grep/Glob, no shell, denies Edit) and composes the CodeGraph MCP host', () => {
+  it('with direct_main_audit, is read-only and composes the native CBM host directly', () => {
     const root = fixture();
     const adapter = prepared(root, { authority: 'direct_main_audit' }, 'coder_audit');
     const args = adapter.inspectLaunch('coder_audit').args;
@@ -147,8 +147,9 @@ describe('ClaudeCodeAdapter caller authority (dossier §3.3)', () => {
     expect(allowed).not.toContain('PowerShell');
     expect(args[args.indexOf('--disallowedTools') + 1]).toContain('Edit');
     const mcp = readMcp(root, 'coder_audit');
-    expect(Object.keys(mcp.mcpServers)).toEqual(['liquid_aity_codegraph']);
-    expect(String(mcp.mcpServers.liquid_aity_codegraph.args[0]).replace(/\\/g, '/')).toMatch(/codegraph_doorway_mcp\.py$/);
+    expect(Object.keys(mcp.mcpServers)).toEqual(['codebase-memory']);
+    expect(String(mcp.mcpServers['codebase-memory'].command).replace(/\\/g, '/')).toMatch(/codebase-memory-mcp\.exe$/);
+    expect(mcp.mcpServers['codebase-memory'].args).toEqual([]);
     adapter.dispose('coder_audit');
   });
 

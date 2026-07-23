@@ -1,8 +1,9 @@
 """Compact Apache AGE context references for one agent handoff.
 
 AgentGraph owns importance, cross-authority references, handoff identity, and
-result lineage only. ThinkGraph, KnowGraph, and CodeGraph remain canonical and
-are expanded through their existing operations.
+result lineage only. ThinkGraph owns persisted Graph View identity. CodeGraph
+reference expansion is discovery-only; deliberate selection must already have
+been persisted through ThinkGraph before AgentGraph can reference it.
 """
 
 from __future__ import annotations
