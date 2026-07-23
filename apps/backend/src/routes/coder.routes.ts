@@ -115,6 +115,14 @@ router.post('/mcp-bridge/external_main_context', async (req, res) => {
         mainCardId: main.cardId,
         instructions: main.prompt,
         savedMainToolGrants: main.parentAllowedMcpTools,
+        availableActionPaths: [
+          ...main.parentAllowedMcpTools.map((grant) => ({ kind: 'tool', grant })),
+          ...main.doorwayDefinitions.map((doorway) => ({
+            kind: 'agent',
+            cardId: String(doorway.card_id || ''),
+            runtimeBinding: String(doorway.runtime_binding || ''),
+          })),
+        ],
       },
     });
   } catch (error) {

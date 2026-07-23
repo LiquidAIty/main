@@ -10,10 +10,17 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any, Callable, Sequence
 from urllib.parse import urlparse
+
+from neo4j.time import Date as Neo4jDate
+from neo4j.time import DateTime as Neo4jDateTime
+from neo4j.time import Duration as Neo4jDuration
+from neo4j.time import Time as Neo4jTime
 
 CHUNK_VECTOR_INDEX = "chunk_embedding_idx"
 CHUNK_FULLTEXT_INDEX = "chunk_text_fulltext_idx"
@@ -34,6 +41,9 @@ EMBEDDING_BATCH_SIZE = 32
 DEFAULT_OUTCOMES = ("supported", "contradicted", "uncertain")
 MAX_RESULTS_CEILING = 50
 RRF_K = 60
+# Vector and full-text ranks measure query relevance. Exact rank measures anchor
+# context, so it remains useful without acting as a third equal relevance vote.
+RRF_CHANNEL_WEIGHTS = {"vector": 1.0, "fulltext": 1.0, "exact": 0.1}
 # Cosine floor for the vector channel. An ANN index ALWAYS returns its nearest
 # neighbours, so without a floor a totally unrelated query still "matches" the
 # nearest chunks and `empty` becomes unreachable. Measured on this corpus with
@@ -144,6 +154,19 @@ def _row_get(row: object, key: str) -> Any:
         return row[key]  # type: ignore[index]
     except Exception:
         return None
+
+
+def _json_contract_value(value: Any) -> Any:
+    """Convert supported Neo4j values at the retrieval contract boundary."""
+    if isinstance(value, (Neo4jDate, Neo4jDateTime, Neo4jTime, Neo4jDuration)):
+        return value.iso_format()
+    if isinstance(value, (date, datetime, time)):
+        return value.isoformat()
+    if isinstance(value, Mapping):
+        return {key: _json_contract_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_contract_value(item) for item in value]
+    return value
 
 
 def _domain(url: str) -> str:
@@ -353,7 +376,7 @@ def _channel_params(scopes: list[str], request: KnowGraphRetrievalRequest, cap: 
 
 def _record_to_assertion(record: object) -> dict[str, Any]:
     return {
-        key: _row_get(record, key)
+        key: _json_contract_value(_row_get(record, key))
         for key in (
             "assertion_id", "text", "assertion_kind", "document_id", "chapter",
             "section", "pages", "chunk_refs", "epistemic_level", "created_at",
@@ -382,6 +405,7 @@ def _fuse(channels: dict[str, list[dict[str, Any]]]) -> list[_Candidate]:
     candidates: dict[str, _Candidate] = {}
     reasons = {"vector": "semantic_chunk_match", "fulltext": "fulltext_match", "exact": "exact_anchor_match"}
     for channel, rows in channels.items():
+        channel_weight = RRF_CHANNEL_WEIGHTS[channel]
         for rank, record in enumerate(rows, start=1):
             assertion_id = _clean(record.get("assertion_id"))
             if not assertion_id:
@@ -389,7 +413,7 @@ def _fuse(channels: dict[str, list[dict[str, Any]]]) -> list[_Candidate]:
             candidate = candidates.setdefault(assertion_id, _Candidate(record=dict(record)))
             if channel not in candidate.ranks:
                 candidate.ranks[channel] = rank
-                candidate.score += 1.0 / (RRF_K + rank)
+                candidate.score += channel_weight / (RRF_K + rank)
                 candidate.reasons.append(reasons[channel])
     return sorted(candidates.values(), key=lambda item: (-item.score, _clean(item.record.get("assertion_id"))))
 

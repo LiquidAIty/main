@@ -62,7 +62,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 BACKEND = os.environ.get("LIQUIDAITY_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
-KNOWGRAPH_QUERY_TIMEOUT_S = float(os.environ.get("KNOWGRAPH_QUERY_TIMEOUT_S", "10"))
+KNOWGRAPH_QUERY_TIMEOUT_S = float(os.environ.get("KNOWGRAPH_QUERY_TIMEOUT_S", "20"))
 MCP_TRANSPORT = os.environ.get("LIQUIDAITY_MCP_TRANSPORT", "stdio").strip().lower()
 HTTP_MCP_HOST = "127.0.0.1"
 HTTP_MCP_PORT = int(os.environ.get("LIQUIDAITY_HTTP_MCP_PORT", "8765"))
@@ -233,6 +233,15 @@ async def _bridge(path: str, payload: dict[str, Any]) -> list[TextContent]:
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     tools = [
+        Tool(
+            name="main.context",
+            description=(
+                "READ-ONLY compact server-owned Main context: project, deck, conversation, "
+                "Main card, saved grants, and currently available action paths. Identity is "
+                "resolved by the authenticated server and accepts no caller-supplied fields."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
         Tool(
             name="run_coder_subagent",
             description=(
@@ -469,9 +478,9 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "projectId": {"type": "string"},
                     "conversationId": {"type": "string"},
-                    "resources": {"type": "array", "items": {"type": "object", "required": ["id", "label"], "properties": {"id": {"type": "string"}, "label": {"type": "string"}, "kind": {"type": "string"}, "properties": {"type": "object"}}}},
+                    "resources": {"type": "array", "items": {"type": "object", "required": ["id", "label"], "properties": {"id": {"type": "string"}, "label": {"type": "string"}, "kind": {"type": "string"}, "properties": {"type": "object", "additionalProperties": {"type": ["string", "number", "boolean"]}}}}},
                     "relations": {"type": "array", "items": {"type": "object", "required": ["a", "b"], "properties": {"a": {"type": "string"}, "b": {"type": "string"}, "tag": {"type": "string"}}}},
-                    "statements": {"type": "array", "items": {"type": "object", "required": ["id", "subject", "predicateTerm", "object"], "properties": {"id": {"type": "string"}, "subject": {"type": "string"}, "predicateTerm": {"type": "string"}, "object": {"type": "string"}, "rationale": {"type": "string"}, "review": {"type": "string"}, "tag": {"type": "string"}, "properties": {"type": "object"}}}},
+                    "statements": {"type": "array", "items": {"type": "object", "required": ["id", "subject", "predicateTerm", "object"], "properties": {"id": {"type": "string"}, "subject": {"type": "string"}, "predicateTerm": {"type": "string"}, "object": {"type": "string"}, "rationale": {"type": "string"}, "review": {"type": "string"}, "tag": {"type": "string"}, "properties": {"type": "object", "additionalProperties": {"type": ["string", "number", "boolean"]}}}}},
                 },
                 "required": ["projectId", "conversationId"],
             },
@@ -492,8 +501,13 @@ async def list_tools() -> list[Tool]:
                     "conversationId": {"type": "string"},
                     "query": {"type": "string"},
                     "anchors": {"type": "array", "items": {"type": "string"}},
-                    "maxResults": {"type": "integer"},
+                    "maxResults": {"type": "integer", "minimum": 1, "maximum": 12, "default": 5},
                     "parentViewId": {"type": "string"},
+                    "includeFullText": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Explicit expansion: include complete selected chunk text. Default false returns compact summaries.",
+                    },
                 },
                 "required": ["projectId", "conversationId", "query"],
             },
@@ -770,6 +784,7 @@ async def list_tools() -> list[Tool]:
 
 
 _EXTERNAL_READ_ONLY_TOOLS = {
+    "main.context",
     "mag_one.describe_connected_agents",
     "read_model_results",
     "canvas.inspect",
@@ -845,11 +860,12 @@ def _external_tool_catalog(tools: list[Tool], context: dict[str, Any]) -> list[T
 # Structural allow-list per tool: unexpected keys are rejected honestly, never
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
+    "main.context": set(),
     "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt", "authority", "graphViewIds"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "jobId", "conversationId", "parentContext"},
     "thinkgraph.submit_update": {"projectId", "conversationId", "resources", "relations", "statements"},
-    "knowgraph.query": {"projectId", "conversationId", "query", "anchors", "maxResults", "parentViewId"},
+    "knowgraph.query": {"projectId", "conversationId", "query", "anchors", "maxResults", "parentViewId", "includeFullText"},
     "knowgraph.ingest": {"projectId", "documents", "researchFocus"},
     "knowgraph_analyze_scope": {"request"},
     "knowgraph_get_analysis": {"analysisId"},
@@ -959,6 +975,19 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 text=json.dumps({"ok": False, "error": f"tool_arguments_rejected: {','.join(sorted(extra))}"}),
             )
         ]
+    if name == "main.context":
+        if context is None:
+            return [TextContent(type="text", text=json.dumps({"ok": False, "error": "main_context_unavailable"}))]
+        compact = {
+            "projectId": str(context.get("projectId") or ""),
+            "projectName": str(context.get("projectName") or ""),
+            "deckId": str(context.get("deckId") or ""),
+            "conversationId": str(context.get("conversationId") or ""),
+            "mainCardId": str(context.get("mainCardId") or ""),
+            "grants": [str(value) for value in (context.get("savedMainToolGrants") or [])],
+            "availableActionPaths": list(context.get("availableActionPaths") or []),
+        }
+        return [TextContent(type="text", text=json.dumps({"ok": True, "context": compact}))]
     if name == "knowgraph.query":
         # Direct in-process reuse of the ONE proven hybrid retrieval
         # (services/knowgraph via tool_registry) — read-only; honest error when
@@ -967,17 +996,48 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             from app.python_models.tool_registry import retrieve_knowgraph_context_tool
 
             max_results = args.get("maxResults")
+            bounded_max_results = min(max_results, 12) if isinstance(max_results, int) and max_results > 0 else 5
             result = await asyncio.wait_for(
                 retrieve_knowgraph_context_tool(
                     project_id=str(args.get("projectId") or ""),
                     conversation_id=str(args.get("conversationId") or ""),
                     query=str(args.get("query") or ""),
                     anchors=[str(a) for a in (args.get("anchors") or []) if str(a).strip()],
-                    max_results=max_results if isinstance(max_results, int) and max_results > 0 else 12,
+                    max_results=bounded_max_results,
                     parent_view_id=str(args.get("parentViewId") or "") or None,
                 ),
                 timeout=KNOWGRAPH_QUERY_TIMEOUT_S,
             )
+            if not args.get("includeFullText"):
+                result["assertions"] = [
+                    {
+                        **{key: value for key, value in assertion.items() if key != "text"},
+                        "summary": str(assertion.get("text") or "")[:480],
+                        "omittedCharacters": max(0, len(str(assertion.get("text") or "")) - 480),
+                    }
+                    for assertion in result.get("assertions") or []
+                ]
+                result.pop("evidence", None)
+                graph_view = result.get("graphView")
+                if isinstance(graph_view, dict):
+                    graph_view["records"] = [
+                        {
+                            **record,
+                            "summary": str(record.get("summary") or "")[:480],
+                            "estimatedCharacters": min(int(record.get("estimatedCharacters") or 0), 480),
+                            "estimatedTokens": min(int(record.get("estimatedTokens") or 0), 120),
+                        }
+                        for record in graph_view.get("records") or []
+                    ]
+                result["expansion"] = {
+                    "tool": "knowgraph.query",
+                    "arguments": {
+                        "query": str(args.get("query") or ""),
+                        "anchors": list(args.get("anchors") or []),
+                        "maxResults": bounded_max_results,
+                        "includeFullText": True,
+                    },
+                }
             return [TextContent(type="text", text=json.dumps({"ok": True, **result}))]
         except asyncio.TimeoutError:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": "knowgraph_query_timeout"}))]

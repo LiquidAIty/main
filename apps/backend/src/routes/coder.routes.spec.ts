@@ -173,6 +173,10 @@ describe('coder routes', () => {
       cardId: 'card_main_chat',
       prompt: 'Persisted Main instructions.',
       parentAllowedMcpTools: ['mcp__liquidaity__codegraph_search'],
+      doorwayDefinitions: [{
+        card_id: 'card_hermes_steward',
+        runtime_binding: 'hermes_steward',
+      }],
     });
     const { server, baseUrl } = await createApiServer();
     try {
@@ -191,6 +195,14 @@ describe('coder routes', () => {
           mainCardId: 'card_main_chat',
           instructions: 'Persisted Main instructions.',
           savedMainToolGrants: ['mcp__liquidaity__codegraph_search'],
+          availableActionPaths: [
+            { kind: 'tool', grant: 'mcp__liquidaity__codegraph_search' },
+            {
+              kind: 'agent',
+              cardId: 'card_hermes_steward',
+              runtimeBinding: 'hermes_steward',
+            },
+          ],
         },
       });
       expect(dbMocks.query).toHaveBeenCalledWith(

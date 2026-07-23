@@ -362,53 +362,6 @@ function ensureMainChatControllerCard(deck: DeckDocument): DeckDocument {
   return { ...deck, promptTemplates, nodes, edges: finalEdges };
 }
 
-/**
- * One narrow read-compatibility migration for decks saved before
- * hermes_observe existed. Only the historical directed Main -> Hermes flow edge
- * is upgraded. Reversed, missing, invalid, and unrelated edges stay inert and
- * no edge is fabricated.
- */
-function normalizeLegacyHermesObserveEdge(deck: DeckDocument): DeckDocument {
-  const mainChatIds = new Set(
-    deck.nodes
-      .filter(
-        (node) =>
-          resolveRuntimeBinding((node.runtimeOptions as any)?.binding ?? node.runtimeBinding, node.id) ===
-          'main_chat',
-      )
-      .map((node) => node.id),
-  );
-  const hermesIds = new Set(
-    deck.nodes
-      .filter(
-        (node) =>
-          resolveRuntimeBinding((node.runtimeOptions as any)?.binding ?? node.runtimeBinding, node.id) ===
-          'hermes_steward',
-      )
-      .map((node) => node.id),
-  );
-  let changed = false;
-  const edges = deck.edges.map((edge) => {
-    if (
-      edge.edgeType !== 'flow' ||
-      !mainChatIds.has(edge.source) ||
-      !hermesIds.has(edge.target)
-    ) {
-      return edge;
-    }
-    changed = true;
-    return {
-      ...edge,
-      edgeType: 'hermes_observe' as const,
-      metadata: {
-        ...(edge.metadata || {}),
-        legacyCompatibility: true,
-      },
-    };
-  });
-  return changed ? { ...deck, edges } : deck;
-}
-
 function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as any;
@@ -437,7 +390,7 @@ function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument
           .filter((edge: DeckEdge | null): edge is DeckEdge => Boolean(edge))
       : [],
   };
-  return normalizeLegacyHermesObserveEdge(ensureMainChatControllerCard(deck));
+  return ensureMainChatControllerCard(deck);
 }
 
 function normalizeDeckRuns(value: unknown): DeckRun[] {

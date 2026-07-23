@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import unittest
+from datetime import timezone
 from types import SimpleNamespace
 
 import hybrid_retrieval as hr
+from neo4j.time import DateTime
 
 PROJECT = "stagea-unit"
 # Explicit scopes so unit tests never touch Postgres scope resolution.
@@ -108,6 +111,34 @@ class ContractTests(unittest.TestCase):
         # Mentioned entities become relations + next anchors, never the evidence.
         self.assertEqual(result.relations[0]["target"], "Knowledge Graph")
 
+    def test_neo4j_datetime_is_iso_serialized_at_record_boundary(self):
+        ingested_at = DateTime(
+            2026, 7, 16, 1, 36, 8, 319_000_000, tzinfo=timezone.utc
+        )
+        driver = FakeDriver(
+            vector=[
+                _chunk(
+                    created_at=ingested_at,
+                    related_entities=[{"name": "Knowledge Graph", "labels": ["Concept"]}],
+                )
+            ]
+        )
+
+        result = hr.retrieve_knowgraph_context(
+            _request(anchors=[]), driver=driver, embed_fn=fake_embed
+        )
+        payload = result.to_dict()
+
+        self.assertEqual(payload["assertions"][0]["created_at"], ingested_at.iso_format())
+        serialized = json.loads(json.dumps(payload))
+        self.assertEqual(
+            serialized["assertions"][0]["created_at"], ingested_at.iso_format()
+        )
+        self.assertEqual(
+            hr._json_contract_value({"history": [ingested_at]}),
+            {"history": [ingested_at.iso_format()]},
+        )
+
     def test_vector_channel_applies_a_similarity_floor(self):
         driver = FakeDriver(vector=[_chunk()])
         hr.retrieve_knowgraph_context(_request(), driver=driver, embed_fn=fake_embed)
@@ -134,6 +165,37 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(
             set(result.assertions[0]["retrieval_reasons"]),
             {"semantic_chunk_match", "fulltext_match", "exact_anchor_match"},
+        )
+
+    def test_anchor_context_cannot_outrank_query_relevance(self):
+        anchor_only = _chunk("anchor-only", text="Document title repeated throughout")
+        substantive = _chunk(
+            "substantive",
+            text="Extracted facts retain source-document references for provenance.",
+        )
+        relevant_exact = _chunk(
+            "relevant-exact",
+            text="The anchor appears in a passage that also answers the query.",
+        )
+
+        fused = hr._fuse(
+            {
+                "vector": [substantive, relevant_exact],
+                "fulltext": [substantive, relevant_exact],
+                "exact": [anchor_only, relevant_exact],
+            }
+        )
+        by_id = {candidate.record["assertion_id"]: candidate for candidate in fused}
+
+        self.assertLess(by_id["anchor-only"].score, by_id["substantive"].score)
+        self.assertEqual(by_id["anchor-only"].reasons, ["exact_anchor_match"])
+        self.assertGreater(
+            by_id["relevant-exact"].score,
+            (1.0 / (hr.RRF_K + 2)) * 2,
+        )
+        self.assertEqual(
+            by_id["relevant-exact"].ranks,
+            {"vector": 2, "fulltext": 2, "exact": 2},
         )
 
     def test_empty_result_is_structured_and_not_failure(self):

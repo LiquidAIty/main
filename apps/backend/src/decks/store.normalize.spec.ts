@@ -55,8 +55,8 @@ describe('deck store runtime-options tool persistence', () => {
   });
 });
 
-describe('deck store Hermes observation compatibility', () => {
-  it('upgrades only the historical directed Main-to-Hermes flow edge', async () => {
+describe('deck store edge persistence', () => {
+  it('preserves a directed Main-to-Hermes flow edge exactly as saved', async () => {
     const deck = {
       id: 'deck_builder',
       name: 'Builder',
@@ -97,7 +97,7 @@ describe('deck store Hermes observation compatibility', () => {
       ],
       edges: [
         {
-          id: 'legacy-authority',
+          id: 'main-hermes-flow',
           source: 'card_main_chat',
           sourceHandle: 'out-a',
           target: 'custom-hermes-card',
@@ -144,13 +144,12 @@ describe('deck store Hermes observation compatibility', () => {
 
     const result = await getDeckDocument('project-one', 'deck_builder');
     const edges = result.deck!.edges;
-    expect(edges.find((edge) => edge.id === 'legacy-authority')).toEqual(expect.objectContaining({
+    expect(edges.find((edge) => edge.id === 'main-hermes-flow')).toEqual(expect.objectContaining({
       source: 'card_main_chat',
       sourceHandle: 'out-a',
       target: 'custom-hermes-card',
       targetHandle: 'in-a',
-      edgeType: 'hermes_observe',
-      metadata: expect.objectContaining({ legacyCompatibility: true }),
+      edgeType: 'flow',
     }));
     expect(edges.find((edge) => edge.id === 'reversed')?.edgeType).toBe('flow');
     expect(edges.find((edge) => edge.id === 'invalid')?.edgeType).toBe('invalid');

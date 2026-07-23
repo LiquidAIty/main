@@ -367,20 +367,6 @@ export function selectDoorwayCards(nodes: any[], edges: any[], mode: HarnessMode
       'main_chat',
   );
   const mainChatId = String(mainChat?.id || '').trim();
-  const isAuthorizedHermes = (node: any): boolean => {
-    const binding = resolveRuntimeBinding(
-      node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
-      node?.id,
-    );
-    const targetId = String(node?.id || '').trim();
-    if (binding !== 'hermes_steward' || !mainChatId || !targetId) return false;
-    return allEdges.some(
-      (edge) =>
-        edge?.edgeType === 'hermes_observe' &&
-        String(edge?.source || '').trim() === mainChatId &&
-        String(edge?.target || '').trim() === targetId,
-    );
-  };
 
   if (mode === 'canvas') {
     return allNodes.filter((node) => {
@@ -393,20 +379,11 @@ export function selectDoorwayCards(nodes: any[], edges: any[], mode: HarnessMode
         node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
         node?.id,
       );
-      if (binding === 'main_chat') return false;
-      return binding !== 'hermes_steward' || isAuthorizedHermes(node);
+      return binding !== 'main_chat';
     });
   }
   if (!mainChat) return [];
-  const directCards = resolveDirectSubagents(mainChatId, allNodes, allEdges).filter((node: any) => {
-    const binding = resolveRuntimeBinding(
-      node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
-      node?.id,
-    );
-    return binding !== 'hermes_steward' || isAuthorizedHermes(node);
-  });
-  const observedHermes = allNodes.filter(isAuthorizedHermes);
-  return [...new Map([...directCards, ...observedHermes].map((node) => [String(node.id), node])).values()];
+  return resolveDirectSubagents(mainChatId, allNodes, allEdges);
 }
 
 /** Resolve this turn's native doorway definitions from the persisted deck.

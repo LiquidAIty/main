@@ -115,6 +115,7 @@ class TestPythonMcpHost:
         tools = asyncio.run(mcp_host.list_tools())
         names = sorted(t.name for t in tools)
         assert names == sorted([
+            "main.context",
             "run_coder_subagent",
             "mag_one.describe_connected_agents",
             "run_mag_one",
@@ -172,7 +173,100 @@ class TestPythonMcpHost:
         assert set(properties["statements"]["items"]["required"]) == {
             "id", "subject", "predicateTerm", "object"
         }
+        scalar_contract = {"type": ["string", "number", "boolean"]}
+        assert properties["resources"]["items"]["properties"]["properties"]["additionalProperties"] == scalar_contract
+        assert properties["statements"]["items"]["properties"]["properties"]["additionalProperties"] == scalar_contract
         assert "Minimal valid example" in update.description
+
+    def test_main_context_is_compact_and_server_owned(self, monkeypatch):
+        from app import mcp_host
+
+        context = {
+            "projectId": "project-1",
+            "projectName": "Project",
+            "deckId": "deck_builder",
+            "conversationId": "conversation-1",
+            "mainCardId": "card_main_chat",
+            "savedMainToolGrants": ["thinkgraph.get_graph_slice"],
+            "availableActionPaths": [
+                {"kind": "agent", "cardId": "card_hermes_steward", "runtimeBinding": "hermes_steward"}
+            ],
+            "instructions": "must not be returned",
+        }
+        monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: context)
+
+        result = asyncio.run(mcp_host.call_tool("main.context", {}))
+        payload = json.loads(result[0].text)
+
+        assert payload == {
+            "ok": True,
+            "context": {
+                "projectId": "project-1",
+                "projectName": "Project",
+                "deckId": "deck_builder",
+                "conversationId": "conversation-1",
+                "mainCardId": "card_main_chat",
+                "grants": ["thinkgraph.get_graph_slice"],
+                "availableActionPaths": [
+                    {"kind": "agent", "cardId": "card_hermes_steward", "runtimeBinding": "hermes_steward"}
+                ],
+            },
+        }
+
+    def test_knowgraph_query_is_compact_by_default_and_explicitly_expandable(self, monkeypatch):
+        from app import mcp_host
+
+        async def fake_retrieve(**_kwargs):
+            text = "grounded evidence " * 100
+            return {
+                "retrieval_state": "evidence",
+                "assertions": [{
+                    "assertion_id": "chunk-1",
+                    "text": text,
+                    "document_id": "document-1",
+                    "chunk_refs": ["chunk-1"],
+                    "source_url": "https://example.com/source",
+                    "retrieval_reasons": ["fulltext_match"],
+                    "fused_score": 0.032,
+                }],
+                "evidence": [{"assertion_id": "chunk-1", "text": text}],
+                "graphView": {
+                    "records": [{
+                        "canonicalId": "chunk-1",
+                        "summary": text,
+                        "estimatedCharacters": len(text),
+                        "estimatedTokens": len(text) // 4,
+                    }]
+                },
+            }
+
+        monkeypatch.setattr(
+            tr,
+            "retrieve_knowgraph_context_tool",
+            fake_retrieve,
+        )
+        result = asyncio.run(mcp_host.call_tool(
+            "knowgraph.query",
+            {
+                "projectId": "project-1",
+                "conversationId": "conversation-1",
+                "query": "grounded evidence",
+            },
+        ))
+        payload = json.loads(result[0].text)
+
+        assertion = payload["assertions"][0]
+        assert "text" not in assertion
+        assert len(assertion["summary"]) == 480
+        assert assertion["document_id"] == "document-1"
+        assert assertion["chunk_refs"] == ["chunk-1"]
+        assert assertion["source_url"] == "https://example.com/source"
+        assert assertion["retrieval_reasons"] == ["fulltext_match"]
+        assert assertion["fused_score"] == 0.032
+        assert "evidence" not in payload
+        assert payload["expansion"]["arguments"]["includeFullText"] is True
+        assert payload["expansion"]["arguments"]["maxResults"] == 5
+        assert len(payload["graphView"]["records"][0]["summary"]) == 480
 
     def test_host_never_exposes_a_write_tool_or_pair_front_door(self):
         from app import mcp_host
