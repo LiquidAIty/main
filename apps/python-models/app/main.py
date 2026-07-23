@@ -295,7 +295,7 @@ def thinkgraph_apply_patch(payload: dict):
 
 
 @app.post("/thinkgraph/graph-views")
-def thinkgraph_persist_graph_view(payload: dict):
+def thinkgraph_store_graph_view(payload: dict):
     from app.python_models.thinkgraph_engraphis import get_thinkgraph
     try:
         return get_thinkgraph().persist_graph_view(payload.get("view") or {})

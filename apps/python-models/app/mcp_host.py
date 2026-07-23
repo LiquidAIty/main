@@ -6,11 +6,12 @@ and the gRPC Harness (localcoder/src/grpc/server.ts) spawns them as ONE stdio
 MCP client for the server's lifetime — before any chat work is accepted. No
 env vars, no .env, no per-turn spawn, no fallback host.
 
-Exposes exactly this tool surface:
+Exposes this application tool surface plus the complete installed Engraphis
+FastMCP registry:
   * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
   * run_mag_one                      (Main-only approved submission of an existing
                                       canonical prompt.md through magentic_control)
-  * thinkgraph.get_graph_slice       (bounded READ-ONLY graph scope)
+  * thinkgraph.get_graph_slice       (bounded product projection)
   * web_search                       (real Tavily search; Search Agent only by grant)
   * canvas.inspect / card.update_configuration / canvas.upsert_wire /
     card.assign_runtime_skill / card.assign_data_binding /
@@ -25,10 +26,10 @@ existing backend deck routes + the Python runtime-assignment store. No semantics
 no fallback lives in this host.
 
 ThinkGraph mutation is an explicit Main Chat grant; KnowGraph ingestion remains
-an explicit Hermes-only grant. The host
-transports structured updates to the canonical writers; graph authorities never
-appear as cards or conversational agents. The obsolete post-chat pair front door
-and apply_live_patch path remain deleted.
+an explicit Hermes-only grant. Engraphis tools are imported from
+``engraphis.mcp_server`` without copied schemas, handlers, or a second registry,
+and use the same database as ThinkGraph. Graph authorities never appear as cards
+or conversational agents.
 """
 
 from __future__ import annotations
@@ -139,6 +140,26 @@ class LiquidAItyServer(Server):
 
 
 server = LiquidAItyServer("liquidaity")
+
+
+def _native_engraphis_mcp():
+    """Return Engraphis' own FastMCP registry, bound to ThinkGraph's database."""
+    repo_root = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
+    os.environ.setdefault(
+        "ENGRAPHIS_DB_PATH",
+        os.environ.get(
+            "THINKGRAPH_ENGRAPHIS_DB",
+            os.path.join(repo_root, "db", "thinkgraph-engraphis-v2.sqlite"),
+        ),
+    )
+    from engraphis.mcp_server import mcp
+
+    return mcp
+
+
+async def _native_engraphis_tools() -> list[Tool]:
+    """Discover native Engraphis tools from the installed registry verbatim."""
+    return list(await _native_engraphis_mcp().list_tools())
 
 
 def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
@@ -282,9 +303,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="agentgraph.create_context",
             description=(
-                "Create one compact Apache AGE AgentGraph context from model-selected items, "
-                "relationships, and stable existing Graph View references. Python validates "
-                "project/card identity, scalar properties, permitted relationships, and size."
+                "Create one compact AgentGraph handoff context composed on native Engraphis "
+                "memory and link operations. Python validates project/card identity, scalar "
+                "properties, permitted relationships, and stable Graph View references."
             ),
             inputSchema={
                 "type": "object",
@@ -542,81 +563,6 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="thinkgraph.persist_graph_view",
-            description=(
-                "Main Chat only: persist one deliberate model-selected CodeGraph Graph View "
-                "through the canonical ThinkGraph writer. Call codegraph.search first, review "
-                "the discovery results, and pass only meaningful chosen records and relationships. "
-                "Never copy a fixed top-N result list as semantic selection. Project, conversation, "
-                "producing role, Graph View id, and persistence are server-owned."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "conversationId": {"type": "string"},
-                    "receivingRole": {"type": "string", "enum": ["main_chat", "coder"]},
-                    "rootCanonicalNodeIds": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                    "includedCanonicalNodeIds": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {"type": "string"},
-                    },
-                    "records": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "canonicalId": {"type": "string"},
-                                "summary": {"type": "string"},
-                                "selectionReason": {"type": "string"},
-                                "provenanceRefs": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
-                            },
-                            "required": ["canonicalId", "summary", "selectionReason"],
-                            "additionalProperties": False,
-                        },
-                    },
-                    "includedRelationships": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "id": {"type": "string"},
-                                "source": {"type": "string"},
-                                "target": {"type": "string"},
-                                "type": {"type": "string"},
-                            },
-                            "required": ["source", "target", "type"],
-                            "additionalProperties": False,
-                        },
-                    },
-                    "query": {"type": "string"},
-                    "provenanceRefs": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                    "note": {"type": "string"},
-                    "parentViewId": {"type": "string"},
-                    "omittedNeighborCount": {"type": "integer"},
-                },
-                "required": [
-                    "projectId",
-                    "conversationId",
-                    "receivingRole",
-                    "includedCanonicalNodeIds",
-                    "records",
-                    "query",
-                ],
-            },
-        ),
-        Tool(
             name="knowgraph.query",
             description=(
                 "READ-ONLY grounded knowledge retrieval from KnowGraph (Neo4j): sourced claims, "
@@ -745,27 +691,6 @@ async def list_tools() -> list[Tool]:
                     "parentViewId": {"type": "string"},
                 },
                 "required": ["analysisId", "projectId", "producingInvocation"],
-            },
-        ),
-        Tool(
-            name="codegraph.status",
-            description=(
-                "READ-ONLY CodeGraph/CBM index freshness and project status. CBM remains the "
-                "only CodeGraph writer/indexer."
-            ),
-            inputSchema={"type": "object", "properties": {}, "required": []},
-        ),
-        Tool(
-            name="codegraph.search",
-            description=(
-                "READ-ONLY structural code search through the CBM index: symbols, definitions, "
-                "and structure with qualified names usable for deeper tracing. No writes, no "
-                "indexing authority."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
-                "required": ["query"],
             },
         ),
         Tool(
@@ -910,6 +835,7 @@ async def list_tools() -> list[Tool]:
             },
         ),
     ]
+    tools.extend(await _native_engraphis_tools())
     context = _authenticated_main_context()
     return _external_tool_catalog(tools, context) if context is not None else tools
 
@@ -925,8 +851,6 @@ _EXTERNAL_READ_ONLY_TOOLS = {
     "knowgraph_get_topics",
     "knowgraph_get_gateways",
     "knowgraph_get_gaps",
-    "codegraph.status",
-    "codegraph.search",
     "worldsignals.capabilities",
     "worldsignals.poll",
     "worldsignals.stream_events",
@@ -999,11 +923,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "jobId", "conversationId", "parentContext"},
     "thinkgraph.submit_update": {"projectId", "conversationId", "resources", "relations", "statements"},
-    "thinkgraph.persist_graph_view": {
-        "projectId", "conversationId", "receivingRole", "rootCanonicalNodeIds",
-        "includedCanonicalNodeIds", "records", "includedRelationships", "query",
-        "provenanceRefs", "note", "parentViewId", "omittedNeighborCount",
-    },
     "knowgraph.query": {"projectId", "conversationId", "query", "anchors", "maxResults", "parentViewId", "includeFullText"},
     "knowgraph.ingest": {"projectId", "documents", "researchFocus"},
     "knowgraph_analyze_scope": {"request"},
@@ -1013,8 +932,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "knowgraph_get_gateways": {"analysisId"},
     "knowgraph_get_gaps": {"analysisId"},
     "knowgraph_create_analysis_view": {"analysisId", "projectId", "producingInvocation", "parentViewId"},
-    "codegraph.status": set(),
-    "codegraph.search": {"projectId", "conversationId", "query", "limit"},
     "hermes.memory_read": {"projectId", "key"},
     "hermes.memory_write": {"projectId", "key", "value"},
     "hermes.read_report": {"parentRunId"},
@@ -1041,7 +958,6 @@ _BRIDGE_PATHS: dict[str, str] = {
     "mag_one.describe_connected_agents": "describe_connected_agents",
     "run_mag_one": "run_mag_one",
     "thinkgraph.submit_update": "thinkgraph_submit_update",
-    "thinkgraph.persist_graph_view": "thinkgraph_persist_graph_view",
     "knowgraph.ingest": "knowgraph_ingest",
     "knowgraph_analyze_scope": "knowgraph_analyze_scope",
     "knowgraph_get_analysis": "knowgraph_get_analysis",
@@ -1050,8 +966,6 @@ _BRIDGE_PATHS: dict[str, str] = {
     "knowgraph_get_gateways": "knowgraph_get_gateways",
     "knowgraph_get_gaps": "knowgraph_get_gaps",
     "knowgraph_create_analysis_view": "knowgraph_create_analysis_view",
-    "codegraph.status": "codegraph_status",
-    "codegraph.search": "codegraph_search",
     "hermes.memory_read": "hermes_memory_read",
     "hermes.memory_write": "hermes_memory_write",
     "hermes.read_report": "hermes_read_report",
@@ -1081,6 +995,42 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+    native_engraphis = {
+        tool.name
+        for tool in await _native_engraphis_tools()
+    }
+    if name in native_engraphis:
+        context = _authenticated_main_context()
+        if context is not None:
+            known_names = set(_ALLOWED_KEYS) | native_engraphis
+            effective = (_EXTERNAL_READ_ONLY_TOOLS & known_names) | _saved_main_tool_names(
+                context,
+                known_names,
+            )
+            if name not in effective:
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps({"ok": False, "error": f"external_tool_not_granted: {name}"}),
+                    )
+                ]
+        try:
+            result = await _native_engraphis_mcp().call_tool(name, dict(arguments or {}))
+            if isinstance(result, dict):
+                return [TextContent(type="text", text=json.dumps(result))]
+            return [
+                block
+                if isinstance(block, TextContent)
+                else TextContent(type="text", text=str(block))
+                for block in result
+            ]
+        except Exception as err:  # noqa: BLE001 - preserve one honest tool-level failure
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps({"ok": False, "error": f"engraphis_failed: {err}"}),
+                )
+            ]
     allowed = _ALLOWED_KEYS.get(name)
     if allowed is None:
         return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"unknown_tool: {name}"}))]
@@ -1088,7 +1038,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     context = _authenticated_main_context()
     if context is not None:
         try:
-            known_names = set(_ALLOWED_KEYS)
+            known_names = set(_ALLOWED_KEYS) | native_engraphis
             saved = _saved_main_tool_names(context, known_names)
             effective = (_EXTERNAL_READ_ONLY_TOOLS & known_names) | saved
             if name not in effective:

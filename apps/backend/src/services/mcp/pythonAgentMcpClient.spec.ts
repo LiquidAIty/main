@@ -28,8 +28,24 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'card.assign_runtime_skill',
       'card.run_assistant_agent',
       'card.update_configuration',
-      'codegraph.search',
-      'codegraph.status',
+      'engraphis_consolidate',
+      'engraphis_correct',
+      'engraphis_end_session',
+      'engraphis_forget',
+      'engraphis_index_repo',
+      'engraphis_ingest',
+      'engraphis_link',
+      'engraphis_pin',
+      'engraphis_recall',
+      'engraphis_recall_grounded',
+      'engraphis_recall_proactive',
+      'engraphis_record_event',
+      'engraphis_remember',
+      'engraphis_search_code',
+      'engraphis_start_session',
+      'engraphis_stats',
+      'engraphis_timeline',
+      'engraphis_why',
       'hermes.memory_read',
       'hermes.memory_write',
       'hermes.read_report',
@@ -61,6 +77,9 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
     // visible-flow / agent-fabric wrapper tools are all gone.
     expect(names).not.toContain('thinkgraph.process_conversation_pair');
     expect(names).not.toContain('thinkgraph.apply_live_patch');
+    expect(names).not.toContain('thinkgraph.persist_graph_view');
+    expect(names).not.toContain('codegraph.status');
+    expect(names).not.toContain('codegraph.search');
     expect(names).not.toContain('execute_visible_flow');
     expect(names).not.toContain('describe_agent_fabric');
   }, 30_000);

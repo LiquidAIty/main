@@ -8,7 +8,7 @@ import {
   resolveConsolePermissionMode,
   resolveConsoleAuditTools,
   CODEBASE_MEMORY_MCP_SERVER,
-  CODEBASE_MEMORY_READ_TOOLS,
+  CODEBASE_MEMORY_TOOL_GRANT,
   LEGACY_HARNESS_TOOL_POLICY,
 } from './coderRuntimeContract';
 
@@ -36,7 +36,7 @@ afterEach(() => vi.unstubAllEnvs());
 describe('resolveCoderToolPolicy', () => {
   it('direct_main_audit is structurally read-only: native reads + CodeGraph, no edits, no shell', () => {
     const policy = resolveCoderToolPolicy('direct_main_audit');
-    expect(policy.allowedTools).toEqual(expect.arrayContaining(['Read', 'Grep', 'Glob', ...CODEBASE_MEMORY_READ_TOOLS]));
+    expect(policy.allowedTools).toEqual(expect.arrayContaining(['Read', 'Grep', 'Glob', CODEBASE_MEMORY_TOOL_GRANT]));
     // No mutating capability may be allow-listed.
     for (const forbidden of ['Edit', 'Write', 'NotebookEdit', 'Bash', 'PowerShell']) {
       expect(policy.allowedTools).not.toContain(forbidden);
@@ -47,23 +47,18 @@ describe('resolveCoderToolPolicy', () => {
     expect(policy.permissionMode).toBe('dontAsk');
   });
 
-  it('mag_one_execution grants implementation authority (Edit/Write/shell), no CodeGraph MCP', () => {
+  it('mag_one_execution grants implementation authority plus the native CodeGraph MCP', () => {
     const policy = resolveCoderToolPolicy('mag_one_execution');
-    expect(policy.allowedTools).toEqual(expect.arrayContaining(['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'PowerShell']));
+    expect(policy.allowedTools).toEqual(expect.arrayContaining([
+      'Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'PowerShell', CODEBASE_MEMORY_TOOL_GRANT,
+    ]));
     expect(policy.allowsMutatingShell).toBe(true);
-    expect(policy.codeGraphMcp).toBe(false);
+    expect(policy.codeGraphMcp).toBe(true);
   });
 
-  it('audit CBM tools are native read and analysis operations only', () => {
-    expect(CODEBASE_MEMORY_READ_TOOLS).toEqual(expect.arrayContaining([
-      `mcp__${CODEBASE_MEMORY_MCP_SERVER}__search_graph`,
-      `mcp__${CODEBASE_MEMORY_MCP_SERVER}__trace_path`,
-      `mcp__${CODEBASE_MEMORY_MCP_SERVER}__query_graph`,
-      `mcp__${CODEBASE_MEMORY_MCP_SERVER}__get_code_snippet`,
-    ]));
-    for (const tool of CODEBASE_MEMORY_READ_TOOLS) {
-      expect(tool).not.toMatch(/index_repository|delete_project|manage_adr|ingest_traces/i);
-    }
+  it('grants the complete native CBM server catalog without copying tool names', () => {
+    expect(CODEBASE_MEMORY_TOOL_GRANT).toBe(`mcp__${CODEBASE_MEMORY_MCP_SERVER}`);
+    expect(CODEBASE_MEMORY_TOOL_GRANT).not.toContain('__search_graph');
   });
 
   it('legacy harness policy is exactly the historical shell-capable, no-edit args', () => {
@@ -98,7 +93,7 @@ describe('buildCoderMcpServers', () => {
 describe('resolveConsoleAuditTools + audit argv (item 4)', () => {
   it('allows only Read/Grep/Glob plus native read-only CBM tokens; denies all mutation/shell', () => {
     const { allowedTools, disallowedTools } = resolveConsoleAuditTools();
-    expect(allowedTools).toEqual(['Read', 'Grep', 'Glob', ...CODEBASE_MEMORY_READ_TOOLS]);
+    expect(allowedTools).toEqual(['Read', 'Grep', 'Glob', CODEBASE_MEMORY_TOOL_GRANT]);
     for (const forbidden of ['Bash', 'PowerShell', 'Edit', 'Write', 'NotebookEdit']) {
       expect(allowedTools).not.toContain(forbidden);
       expect(disallowedTools).toContain(forbidden);
@@ -112,7 +107,8 @@ describe('resolveConsoleAuditTools + audit argv (item 4)', () => {
       mcpFlags: ['--mcp-config', '/tmp/mcp.json', '--strict-mcp-config'],
       allowedTools, disallowedTools,
     });
-    expect(args[args.indexOf('--allowedTools') + 1]).toContain('mcp__codebase-memory__search_graph');
+    expect(args[args.indexOf('--allowedTools') + 1]).toContain('mcp__codebase-memory');
+    expect(args[args.indexOf('--allowedTools') + 1]).not.toContain('mcp__codebase-memory__search_graph');
     expect(args[args.indexOf('--allowedTools') + 1]).toContain('Read');
     expect(args[args.indexOf('--disallowedTools') + 1]).toContain('Bash');
     expect(args).toEqual(expect.arrayContaining(['--mcp-config', '/tmp/mcp.json', '--strict-mcp-config']));

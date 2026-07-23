@@ -127,6 +127,24 @@ class TestPythonMcpHost:
             "card.assign_runtime_skill",
             "card.assign_data_binding",
             "card.run_assistant_agent",
+            "engraphis_consolidate",
+            "engraphis_correct",
+            "engraphis_end_session",
+            "engraphis_forget",
+            "engraphis_index_repo",
+            "engraphis_ingest",
+            "engraphis_link",
+            "engraphis_pin",
+            "engraphis_recall",
+            "engraphis_recall_grounded",
+            "engraphis_recall_proactive",
+            "engraphis_record_event",
+            "engraphis_remember",
+            "engraphis_search_code",
+            "engraphis_start_session",
+            "engraphis_stats",
+            "engraphis_timeline",
+            "engraphis_why",
             "thinkgraph.get_graph_slice",
             "thinkgraph.submit_update",
             "agentgraph.create_context",
@@ -141,8 +159,6 @@ class TestPythonMcpHost:
             "knowgraph_get_gateways",
             "knowgraph_get_gaps",
             "knowgraph_create_analysis_view",
-            "codegraph.status",
-            "codegraph.search",
             "hermes.memory_read",
             "hermes.memory_write",
             "hermes.read_report",
@@ -154,6 +170,9 @@ class TestPythonMcpHost:
             "worldsignals.poll",
             "worldsignals.stream_events",
         ])
+        assert "codegraph.status" not in names
+        assert "codegraph.search" not in names
+        assert "thinkgraph.persist_graph_view" not in names
 
     def test_card_run_schema_matches_the_doorway_contract(self):
         from app import mcp_host
@@ -326,13 +345,18 @@ class TestPythonMcpHost:
             "thinkgraph.process_conversation_pair",
         ):
             assert gone not in names, f"host regressed: {gone}"
-        # No tool accepts a raw patch/prompt/model/task-ledger key.
+        # Inspect each real schema; native Engraphis tools intentionally do not
+        # live in the application handler allow-list.
         for tool in tools:
-            allowed = mcp_host._ALLOWED_KEYS[tool.name]
-            assert "taskLedger" not in allowed
-            assert "prompt" not in allowed
-            assert "model" not in allowed
-            assert "patch" not in allowed
+            properties = set((tool.inputSchema or {}).get("properties") or {})
+            assert not properties & {
+                "taskLedger",
+                "taskLedgerArtifact",
+                "prompt",
+                "model",
+                "modelKey",
+                "patch",
+            }
 
 
 # --------------------------------------------------------------------------- #

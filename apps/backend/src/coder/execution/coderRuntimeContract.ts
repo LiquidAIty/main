@@ -37,23 +37,10 @@ export type CoderToolPolicy = {
 /** Native CBM server name from the repository's canonical .mcp.json. */
 export const CODEBASE_MEMORY_MCP_SERVER = 'codebase-memory';
 
-// Native read-only CBM tools the audit may call. Token form verified
-// from OpenClaude source: `mcp__${normalizeNameForMCP(server)}__${normalizeNameForMCP(tool)}`,
-// where normalizeNameForMCP replaces every [^a-zA-Z0-9_-] with '_' (localcoder
-// src/services/mcp/normalization.ts + mcpStringUtils.ts). CBM state-changing
-// operations are deliberately absent from this direct audit policy.
-export const CODEBASE_MEMORY_READ_TOOLS = [
-  'list_projects',
-  'index_status',
-  'get_graph_schema',
-  'get_architecture',
-  'search_graph',
-  'search_code',
-  'trace_path',
-  'query_graph',
-  'get_code_snippet',
-  'detect_changes',
-].map((tool) => `mcp__${CODEBASE_MEMORY_MCP_SERVER}__${tool}`);
+// OpenClaude's server-level MCP permission. It is intentionally not a list of
+// CBM tool names: the connected native server owns discovery and this grant
+// admits whatever catalog that server actually advertises.
+export const CODEBASE_MEMORY_TOOL_GRANT = `mcp__${CODEBASE_MEMORY_MCP_SERVER}`;
 
 /**
  * The legacy `harness_subagent` policy: exactly what `run_coder_subagent` has
@@ -74,7 +61,7 @@ export function resolveCoderToolPolicy(mode: CoderAuthorityMode): CoderToolPolic
   if (mode === 'direct_main_audit') {
     return {
       // Read-only audit: native reads + CodeGraph, nothing that mutates the repo.
-      allowedTools: ['Read', 'Grep', 'Glob', ...CODEBASE_MEMORY_READ_TOOLS],
+      allowedTools: ['Read', 'Grep', 'Glob', CODEBASE_MEMORY_TOOL_GRANT],
       disallowedTools: ['Write', 'Edit', 'NotebookEdit', 'Bash', 'PowerShell', 'WebFetch', 'WebSearch'],
       permissionMode: 'dontAsk',
       allowsMutatingShell: false,
@@ -83,11 +70,20 @@ export function resolveCoderToolPolicy(mode: CoderAuthorityMode): CoderToolPolic
   }
   // mag_one_execution: approved implementation authority on the same identity.
   return {
-    allowedTools: ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'PowerShell'],
+    allowedTools: [
+      'Read',
+      'Grep',
+      'Glob',
+      'Edit',
+      'Write',
+      'Bash',
+      'PowerShell',
+      CODEBASE_MEMORY_TOOL_GRANT,
+    ],
     disallowedTools: ['WebFetch', 'WebSearch'],
     permissionMode: 'dontAsk',
     allowsMutatingShell: true,
-    codeGraphMcp: false,
+    codeGraphMcp: true,
   };
 }
 
@@ -150,7 +146,7 @@ export function buildCoderMcpServers(opts: {
 
 /**
  * OpenClaude tool allow/deny for a read-only direct_main_audit: native reads +
- * the two codegraph doorway tools only; every mutating/native-shell tool denied.
+ * the native Codebase Memory server; every mutating/native-shell tool denied.
  * Flag names verified from OpenClaude source (main.tsx: `--allowedTools` /
  * `--disallowedTools`). Combined with `--permission-mode plan` and the scoped
  * doorway MCP, this is defense in depth — the audit cannot Edit/Write/shell or
@@ -158,7 +154,7 @@ export function buildCoderMcpServers(opts: {
  */
 export function resolveConsoleAuditTools(): { allowedTools: string[]; disallowedTools: string[] } {
   return {
-    allowedTools: ['Read', 'Grep', 'Glob', ...CODEBASE_MEMORY_READ_TOOLS],
+    allowedTools: ['Read', 'Grep', 'Glob', CODEBASE_MEMORY_TOOL_GRANT],
     disallowedTools: ['Bash', 'PowerShell', 'Edit', 'Write', 'NotebookEdit'],
   };
 }

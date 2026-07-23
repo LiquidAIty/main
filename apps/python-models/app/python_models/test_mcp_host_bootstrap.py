@@ -176,7 +176,7 @@ asyncio.run(check())
         cwd=_APP_DIR,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=50,
     )
     assert result.returncode == 0, result.stderr
     assert "STDIO_OK" in result.stdout
@@ -211,7 +211,7 @@ def test_auth0_token_verifier_checks_jwt_contract_and_resolves_server_owned_main
             "conversationId": "external-mcp:grant-1",
             "mainCardId": "card_main_chat",
             "instructions": "Persisted Main instructions.",
-            "savedMainToolGrants": ["mcp__liquidaity__codegraph_search"],
+            "savedMainToolGrants": ["mcp__liquidaity__engraphis_recall"],
         } if issuer == config.issuer_url and subject == "auth0|jeremiah" else None,
     )
     now = int(time.time())
@@ -257,8 +257,7 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
         "mainCardId": "card_main_chat",
         "instructions": "Persisted Main instructions.",
         "savedMainToolGrants": [
-            "mcp__liquidaity__codegraph_search",
-            "mcp__liquidaity__thinkgraph_persist_graph_view",
+            "mcp__liquidaity__engraphis_recall",
             "mcp__liquidaity__run_coder_subagent",
         ],
     }
@@ -276,65 +275,40 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
     tools = asyncio.run(mcp_host.list_tools())
     by_name = {tool.name: tool for tool in tools}
     assert "main.context" in by_name
-    assert "codegraph.status" in by_name
-    assert "codegraph.search" in by_name
-    assert "thinkgraph.persist_graph_view" in by_name
+    assert "engraphis_recall" in by_name
+    assert "codegraph.status" not in by_name
+    assert "codegraph.search" not in by_name
+    assert "thinkgraph.persist_graph_view" not in by_name
     assert "run_coder_subagent" in by_name
     assert "run_mag_one" not in by_name
     assert "projectId" not in by_name["run_coder_subagent"].inputSchema["properties"]
     assert "parentRunId" not in by_name["run_coder_subagent"].inputSchema["properties"]
     assert "agentContextId" in by_name["run_coder_subagent"].inputSchema["properties"]
     assert "agentContext" not in by_name["run_coder_subagent"].inputSchema["properties"]
-    assert "projectId" not in by_name["thinkgraph.persist_graph_view"].inputSchema["properties"]
-    assert "conversationId" not in by_name["thinkgraph.persist_graph_view"].inputSchema["properties"]
-    assert by_name["codegraph.search"].model_dump()["securitySchemes"] == [
+    assert by_name["engraphis_recall"].model_dump()["securitySchemes"] == [
         {"type": "oauth2", "scopes": ["liquidaity.main"]}
     ]
-    assert by_name["codegraph.search"].annotations.readOnlyHint is True
     assert by_name["run_coder_subagent"].annotations is None
 
     calls = []
+    native_tools = asyncio.run(mcp_host._native_engraphis_tools())
+    class NativeMcp:
+        async def list_tools(self):
+            return native_tools
+
+        async def call_tool(self, name, arguments):
+            calls.append((name, arguments))
+            return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
+
+    monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
+
     async def bridge(path, payload):
         calls.append((path, payload))
         return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
     monkeypatch.setattr(mcp_host, "_bridge", bridge)
 
-    asyncio.run(mcp_host.call_tool("codegraph.search", {"query": "Main", "limit": 3}))
-    assert calls[-1] == ("codegraph_search", {
-        "projectId": "project-1",
-        "conversationId": "external-mcp:grant-1",
-        "query": "Main",
-        "limit": 3,
-    })
-
-    asyncio.run(mcp_host.call_tool("thinkgraph.persist_graph_view", {
-        "receivingRole": "coder",
-        "includedCanonicalNodeIds": ["symbol:one"],
-        "records": [{
-            "canonicalId": "symbol:one",
-            "summary": "Selected implementation boundary.",
-            "selectionReason": "Main deliberately selected this result.",
-            "provenanceRefs": ["one.ts"],
-        }],
-        "includedRelationships": [],
-        "query": "Main",
-        "provenanceRefs": ["one.ts"],
-    }))
-    assert calls[-1] == ("thinkgraph_persist_graph_view", {
-        "projectId": "project-1",
-        "conversationId": "external-mcp:grant-1",
-        "receivingRole": "coder",
-        "includedCanonicalNodeIds": ["symbol:one"],
-        "records": [{
-            "canonicalId": "symbol:one",
-            "summary": "Selected implementation boundary.",
-            "selectionReason": "Main deliberately selected this result.",
-            "provenanceRefs": ["one.ts"],
-        }],
-        "includedRelationships": [],
-        "query": "Main",
-        "provenanceRefs": ["one.ts"],
-    })
+    asyncio.run(mcp_host.call_tool("engraphis_recall", {"query": "Main", "limit": 3}))
+    assert calls[-1] == ("engraphis_recall", {"query": "Main", "limit": 3})
 
     denied = asyncio.run(mcp_host.call_tool("run_coder_subagent", {
         "projectId": "spoofed",

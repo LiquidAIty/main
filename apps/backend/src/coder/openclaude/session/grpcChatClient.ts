@@ -19,6 +19,7 @@ import { resolveRuntimeBinding } from '../../../contracts/runtimeBinding';
 import { resolveDirectSubagents } from '../../../cards/runtime';
 import { resolveModel } from '../../../llm/models.config';
 import { HARNESS_MCP_TOOL_SPECS } from '../../../contracts/runtimeContracts';
+import { listPythonAgentMcpTools } from '../../../services/mcp/pythonAgentMcpClient';
 import { logHarnessTrace } from '../../../services/harnessTrace';
 import type { HermesInvestigationContext } from '../../hermes/hermesReportArtifact';
 import {
@@ -217,9 +218,11 @@ export function resolveHarnessTimeoutDeadline(
  * REAL per-card MCP grant (enforced as the child's allowed_tools / the
  * parent's pool filter). No card selection → no MCP tools; never a hidden
  * default grant. */
-function cardMcpToolGrants(card: any): string[] {
+function cardMcpToolGrants(card: any, availableToolNames?: readonly string[]): string[] {
   const raw = Array.isArray(card?.runtimeOptions?.tools) ? card.runtimeOptions.tools : [];
-  const known = new Set(HARNESS_MCP_TOOL_SPECS.map((spec) => spec.name));
+  const known = new Set(
+    availableToolNames ?? HARNESS_MCP_TOOL_SPECS.map((spec) => spec.name),
+  );
   return raw
     .map((tool: unknown) => String(tool || '').trim())
     .filter(Boolean)
@@ -294,6 +297,8 @@ export function buildHarnessAgentDefinition(
      * run through the card-run control tool (backend-resolved from persisted
      * direct edges — never model-chosen). */
     allowedCardRunIds?: string[];
+    /** Live names fetched from the official Python MCP host. */
+    availableMcpTools?: readonly string[];
   },
 ): Record<string, unknown> | null {
   const cardId = String(card?.id || '').trim();
@@ -318,7 +323,7 @@ export function buildHarnessAgentDefinition(
       // bytes and exact MCP grants execute directly in the Harness.
       system_prompt: [systemPrompt, runtimeContext].filter(Boolean).join('\n\n'),
       // The card's Tools selection IS the grant — no hidden defaults.
-      allowed_tools: cardMcpToolGrants(card),
+      allowed_tools: cardMcpToolGrants(card, opts?.availableMcpTools),
       context_mode_inherit_parent: true,
       ...(allowedCardRunIds.length > 0 ? { allowed_card_run_ids: allowedCardRunIds } : {}),
       ...(model ? { model } : {}),
@@ -397,11 +402,13 @@ export async function resolveCardDoorwayDefinitions(
   if (!parsed) return [];
   try {
     const doc = await getDeckDocument(parsed.projectId, BUILDER_DECK_ID);
+    const availableMcpTools = await listPythonAgentMcpTools();
     const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
     const edges: any[] = Array.isArray((doc?.deck as any)?.edges) ? (doc!.deck as any).edges : [];
     return selectDoorwayCards(nodes, edges, mode)
       .map((node) =>
         buildHarnessAgentDefinition(node, null, {
+          availableMcpTools,
           allowedCardRunIds: resolveDirectSubagents(String(node.id), nodes, edges).map((child: any) =>
             String(child.id),
           ),
@@ -462,6 +469,7 @@ export async function resolveMainChatRuntimeConfig(
   if (!parsed) return null;
   try {
     const doc = await getDeckDocument(parsed.projectId, BUILDER_DECK_ID);
+    const availableMcpTools = await listPythonAgentMcpTools();
     const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
     const resolution = resolveMainChatCardFromDeck(nodes);
     if (!resolution.ok) return null;
@@ -499,11 +507,12 @@ export async function resolveMainChatRuntimeConfig(
               allowedCardRunIds: resolveDirectSubagents(String(node.id), nodes, edges).map((child: any) =>
                 String(child.id),
               ),
+              availableMcpTools,
             },
           );
         })
         .filter((def): def is Record<string, unknown> => Boolean(def)),
-      parentAllowedMcpTools: cardMcpToolGrants(card),
+      parentAllowedMcpTools: cardMcpToolGrants(card, availableMcpTools),
       parentAllowedNativeTools: cardNativeToolGrants(card),
     };
   } catch {

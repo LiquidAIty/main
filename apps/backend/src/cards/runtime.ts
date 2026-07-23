@@ -263,8 +263,6 @@ export function resolveCardTools(card: any): string[] {
       thinkgraph_submit_update: 'thinkgraph.submit_update',
       knowgraph_query: 'knowgraph.query',
       knowgraph_ingest: 'knowgraph.ingest',
-      codegraph_status: 'codegraph.status',
-      codegraph_search: 'codegraph.search',
       hermes_memory_read: 'hermes.memory_read',
       hermes_memory_write: 'hermes.memory_write',
       mag_one_describe_connected_agents: 'mag_one.describe_connected_agents',

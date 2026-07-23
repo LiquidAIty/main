@@ -106,7 +106,11 @@ class TestPythonMcpHostIsThin:
         assert 'name="thinkgraph.submit_update"' in source
         assert 'name="knowgraph.query"' in source
         assert 'name="knowgraph.ingest"' in source
-        assert 'name="codegraph.search"' in source
+        assert "from engraphis.mcp_server import mcp" in source
+        assert "tools.extend(await _native_engraphis_tools())" in source
+        assert 'name="codegraph.search"' not in source
+        assert 'name="codegraph.status"' not in source
+        assert 'name="thinkgraph.persist_graph_view"' not in source
         assert 'name="web_search"' in source
 
 

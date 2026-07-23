@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createHash, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 import { ZodError } from 'zod';
 import type { OpenClaudeRunRequest } from '../coder/openclaude/contracts';
 import { openClaudeRuntimeService } from '../coder/openclaude/runtime/service';
@@ -44,7 +44,6 @@ import {
 import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/harnessTrace';
 // The app's one canonical Agent Canvas deck id, defined once on the deck store.
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
-import { createCodebaseMemoryMcpCaller } from '../services/graphContext/cbmMcpCaller';
 import { pool } from '../db/pool';
 import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantStore';
 import { runCoderSubagent } from '../coder/execution/coderRouter';
@@ -71,53 +70,6 @@ import {
 } from '../services/prompt/promptLifecycle';
 
 const router = Router();
-
-export function resolveCodeGraphProjectName(projects: unknown[]): string {
-  const configuredProject = String(process.env.LIQUIDAITY_CODEGRAPH_PROJECT || 'C-Projects-main').trim();
-  const availableProjects = projects
-    .map((project) => String((project as { name?: unknown })?.name || '').trim())
-    .filter(Boolean);
-  if (!availableProjects.includes(configuredProject)) {
-    throw new Error(`cbm_project_not_indexed: ${configuredProject}`);
-  }
-  return configuredProject;
-}
-
-export function describeCodeGraphFreshness(status: unknown): {
-  operationalStatus: string;
-  semanticFreshness: 'unverified' | 'stale';
-  reason: string;
-} {
-  const value = status && typeof status === 'object'
-    ? status as Record<string, unknown>
-    : {};
-  const git = value.git && typeof value.git === 'object'
-    ? value.git as Record<string, unknown>
-    : {};
-  const operationalStatus = String(value.status || 'unknown');
-  const indexedRevision = String(
-    value.indexed_revision
-    || value.indexedRevision
-    || value.indexed_commit
-    || value.indexedCommit
-    || '',
-  ).trim();
-  const worktreeRevision = String(git.head_sha || git.headSha || '').trim();
-  if (indexedRevision && worktreeRevision && indexedRevision !== worktreeRevision) {
-    return {
-      operationalStatus,
-      semanticFreshness: 'stale',
-      reason: `indexed_revision_mismatch:${indexedRevision}:${worktreeRevision}`,
-    };
-  }
-  return {
-    operationalStatus,
-    semanticFreshness: 'unverified',
-    reason: indexedRevision
-      ? 'revision_match_does_not_prove_deleted_symbol_purge'
-      : 'cbm_status_does_not_report_an_indexed_revision',
-  };
-}
 
 // ── LiquidAIty MCP bridge (SDK-free) ───────────────────────────────────────
 // Internal JSON endpoints that run the proven MCP handlers server-side, where
@@ -309,9 +261,6 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
       }
       doorwayGraphContext = String(doorway?.modelContext || '');
     }
-    if (authority === 'direct_main_audit' && !attachedViews.some((view) => view.receivingRole === 'coder')) {
-      return res.status(400).json({ ok: false, error: 'coder_targeted_graph_view_required' });
-    }
     await Promise.all(attachedViews.map((view) => persistGraphViewOnPython({
       ...view,
       status: 'active',
@@ -344,9 +293,8 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
         updatedAt: completedAt,
       })));
     }
-    let returnedGraphView: GraphView | null = null;
-    // A successful read-only audit publishes its filtered CodeGraph view for the
-    // frontend to focus the existing CodeGraphSurface on the audited branch.
+    // Preserve the real audit result for the existing audit inspector. Native
+    // CBM remains the source; no synthetic Graph View is minted from its refs.
     if (result.ok && result.resultKind === 'audit' && result.report) {
       const audit = result.report as Record<string, unknown>;
       setLatestCoderAuditView({
@@ -363,42 +311,6 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
         viewContract: (audit.viewContract ?? {}) as CodeGraphViewContractResult,
         transcriptArtifact: result.transcriptArtifact ?? null,
       });
-      const includedCanonicalNodeIds = Array.isArray(audit.codeGraphNodeRefs) ? audit.codeGraphNodeRefs.map(String).filter(Boolean) : [];
-      const now = new Date().toISOString();
-      [returnedGraphView] = parseGraphViews([{
-        schemaVersion: 'graph-view.v1',
-        viewId: `codegraph:return:${result.childRunId}`,
-        authority: 'codegraph',
-        status: 'returned',
-        projectId,
-        conversationId,
-        jobId: result.childRunId,
-        invocationId: result.correlationId,
-        producingRole: 'coder',
-        receivingRole: 'main_chat',
-        rootCanonicalNodeIds: includedCanonicalNodeIds.slice(0, 3),
-        includedCanonicalNodeIds,
-        includedRelationships: [],
-        records: includedCanonicalNodeIds.map((canonicalId) => ({
-          canonicalId,
-          summary: `${canonicalId} was selected by the live Coder CodeGraph audit.`,
-          selectionReason: String(audit.codeGraphQuery || 'Selected by Coder inspection'),
-          provenanceRefs: Array.isArray(audit.files) ? audit.files.map(String).slice(0, 12) : [],
-        })),
-        query: String(audit.codeGraphQuery || ''),
-        filter: {
-          nodeTypes: Array.isArray((audit.viewContract as any)?.nodeLabelAllowlist) ? (audit.viewContract as any).nodeLabelAllowlist : [],
-          trustStates: [],
-        },
-        hopDepth: 0,
-        provenanceRefs: [result.transcriptArtifact, ...(Array.isArray(audit.files) ? audit.files.map(String) : [])].filter((value): value is string => Boolean(value)).slice(0, 40),
-        note: String(audit.conclusion || ''),
-        parentViewId: attachedViews[0]?.viewId,
-        omittedNeighborCount: 0,
-        createdAt: now,
-        updatedAt: now,
-      }], { projectId, conversationId }, 'returned');
-      await persistGraphViewOnPython(returnedGraphView);
     }
     if (agentContextId) {
       try {
@@ -414,7 +326,6 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
         return res.status(502).json({
           ...result,
           ok: false,
-          graphView: returnedGraphView,
           agentContextId,
           error: `agentgraph_result_link_failed: ${error instanceof Error ? error.message : String(error)}`,
         });
@@ -422,7 +333,6 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
     }
     return res.status(result.ok ? 200 : 502).json({
       ...result,
-      graphView: returnedGraphView,
       agentContextId: agentContextId || null,
     });
   } catch (error) {
@@ -540,140 +450,6 @@ router.post('/mcp-bridge/hermes_memory_write', async (req, res) => {
     return res.json({ ok: true, key, stored: true });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'hermes_memory_write_failed' });
-  }
-});
-
-// ── Deliberate Graph View selection (ThinkGraph is the one writer) ──────────
-router.post('/mcp-bridge/thinkgraph_persist_graph_view', async (req, res) => {
-  const projectId = String(req.body?.projectId || '').trim();
-  const conversationId = String(req.body?.conversationId || '').trim();
-  const receivingRole = String(req.body?.receivingRole || '').trim();
-  const query = String(req.body?.query || '').trim();
-  const includedCanonicalNodeIds = Array.isArray(req.body?.includedCanonicalNodeIds)
-    ? req.body.includedCanonicalNodeIds
-    : [];
-  const records = Array.isArray(req.body?.records) ? req.body.records : [];
-  if (!projectId || !conversationId) {
-    return res.status(400).json({ ok: false, error: 'projectId_and_conversationId_required' });
-  }
-  if (receivingRole !== 'main_chat' && receivingRole !== 'coder') {
-    return res.status(400).json({ ok: false, error: 'graph_view_receiving_role_invalid' });
-  }
-  if (!query) return res.status(400).json({ ok: false, error: 'graph_view_query_required' });
-  if (includedCanonicalNodeIds.length === 0 || records.length === 0) {
-    return res.status(400).json({ ok: false, error: 'graph_view_deliberate_selection_required' });
-  }
-  const selected = {
-    rootCanonicalNodeIds: Array.isArray(req.body?.rootCanonicalNodeIds)
-      ? req.body.rootCanonicalNodeIds
-      : includedCanonicalNodeIds.slice(0, 3),
-    includedCanonicalNodeIds,
-    includedRelationships: Array.isArray(req.body?.includedRelationships)
-      ? req.body.includedRelationships
-      : [],
-    records,
-    query,
-    provenanceRefs: Array.isArray(req.body?.provenanceRefs) ? req.body.provenanceRefs : [],
-    note: String(req.body?.note || '').trim(),
-    parentViewId: String(req.body?.parentViewId || '').trim(),
-    omittedNeighborCount: Math.max(0, Number(req.body?.omittedNeighborCount) || 0),
-  };
-  const viewIdentity = createHash('sha256').update(JSON.stringify({
-    projectId,
-    conversationId,
-    producingRole: 'main_chat',
-    receivingRole,
-    ...selected,
-  })).digest('hex').slice(0, 24);
-  let graphView: GraphView;
-  try {
-    [graphView] = parseGraphViews([{
-      schemaVersion: 'graph-view.v1',
-      viewId: `codegraph:${viewIdentity}`,
-      authority: 'codegraph',
-      status: 'candidate',
-      producingRole: 'main_chat',
-      receivingRole,
-      filter: { nodeTypes: [], trustStates: [] },
-      hopDepth: 0,
-      ...selected,
-    }], { projectId, conversationId }, 'candidate');
-  } catch (error) {
-    return res.status(400).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'graph_view_selection_invalid',
-    });
-  }
-  try {
-    const persisted = await persistGraphViewOnPython(graphView) as {
-      ok?: unknown;
-      view?: { viewId?: unknown };
-    };
-    const persistedId = String(persisted?.view?.viewId || '').trim();
-    if (persisted?.ok !== true || persistedId !== graphView.viewId) {
-      throw new Error('graph_view_persistence_result_invalid');
-    }
-    return res.json({
-      ok: true,
-      graphViewId: persistedId,
-      graphView: persisted.view,
-    });
-  } catch (error) {
-    return res.status(502).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'graph_view_persistence_failed',
-    });
-  }
-});
-
-// ── CodeGraph reads (CBM is the one indexer/writer; these are thin reads) ───
-router.post('/mcp-bridge/codegraph_status', async (_req, res) => {
-  let session: Awaited<ReturnType<typeof createCodebaseMemoryMcpCaller>> | null = null;
-  try {
-    session = await createCodebaseMemoryMcpCaller(process.cwd());
-    const projectList = await session.callTool('list_projects', {});
-    const projects = Array.isArray((projectList as any).projects) ? (projectList as any).projects : [];
-    const cbmProject = resolveCodeGraphProjectName(projects);
-    const status = await session.callTool('index_status', { project: cbmProject });
-    return res.json({
-      ok: true,
-      cbmProject,
-      status,
-      freshness: describeCodeGraphFreshness(status),
-    });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'codegraph_status_failed' });
-  } finally {
-    await session?.close();
-  }
-});
-
-router.post('/mcp-bridge/codegraph_search', async (req, res) => {
-  let session: Awaited<ReturnType<typeof createCodebaseMemoryMcpCaller>> | null = null;
-  try {
-    const query = String(req.body?.query || '').trim();
-    const canonicalRefs = [...new Set<string>(
-      (Array.isArray(req.body?.canonicalRefs) ? req.body.canonicalRefs : [])
-        .map((value: unknown): string => String(value || '').trim().replace(/^code:/, ''))
-        .filter((value: string) => Boolean(value)),
-    )].slice(0, 20);
-    if (!query) return res.status(400).json({ ok: false, error: 'query_required' });
-    const limit = Math.min(Math.max(Number(req.body?.limit) || 15, 1), 50);
-    session = await createCodebaseMemoryMcpCaller(process.cwd());
-    const projectList = await session.callTool('list_projects', {});
-    const projects = Array.isArray((projectList as any).projects) ? (projectList as any).projects : [];
-    const cbmProject = resolveCodeGraphProjectName(projects);
-    const exactQualifiedNames = canonicalRefs.length > 0
-      ? `^(?:${canonicalRefs.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})$`
-      : null;
-    const result = await session.callTool('search_graph', exactQualifiedNames
-      ? { project: cbmProject, qn_pattern: exactQualifiedNames, limit }
-      : { project: cbmProject, query, limit });
-    return res.json({ ok: true, cbmProject, result });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'codegraph_search_failed' });
-  } finally {
-    await session?.close();
   }
 });
 

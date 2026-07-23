@@ -17,7 +17,6 @@ import threading
 from typing import Any, Callable
 from urllib.parse import urlencode
 from urllib.request import urlopen
-from urllib.request import Request
 
 from app.python_models.thinkgraph_engraphis import ThinkGraphEngraphis, get_thinkgraph
 
@@ -38,13 +37,6 @@ def _bounded(value: int, low: int, high: int) -> int:
 def _get_json(path: str, params: dict[str, Any], *, backend_url: str | None = None) -> dict[str, Any]:
     base = (backend_url or os.getenv("LIQUIDAITY_BACKEND_URL") or "http://127.0.0.1:4000").rstrip("/")
     with urlopen(f"{base}{path}?{urlencode(params, doseq=True)}", timeout=90) as response:  # noqa: S310 - configured local backend
-        return json.loads(response.read().decode("utf-8"))
-
-
-def _post_json(path: str, payload: dict[str, Any], *, backend_url: str | None = None) -> dict[str, Any]:
-    base = (backend_url or os.getenv("LIQUIDAITY_BACKEND_URL") or "http://127.0.0.1:4000").rstrip("/")
-    request = Request(f"{base}{path}", data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
-    with urlopen(request, timeout=90) as response:  # noqa: S310 - configured local backend
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -93,7 +85,6 @@ def _build_unified_context(
     graph: ThinkGraphEngraphis | None = None,
     read_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _get_json,
     read_codegraph_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _get_codegraph_json,
-    post_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _post_json,
 ) -> dict[str, Any]:
     if not request.project_id.strip() or not request.conversation_id.strip():
         raise ValueError("project_id_and_conversation_id_required")
@@ -121,8 +112,9 @@ def _build_unified_context(
     know_ms = (time.perf_counter() - know_started) * 1000
     code_started = time.perf_counter()
     try:
-        code_status = post_json("/api/coder/mcp-bridge/codegraph_status", {})
-        code_project = str(code_status.get("cbmProject") or "").strip()
+        code_project = str(
+            os.getenv("LIQUIDAITY_CODEGRAPH_PROJECT") or "C-Projects-main"
+        ).strip()
         if not code_project:
             raise ValueError("codegraph_project_unavailable")
         code = read_codegraph_json("/api/layout", {"project": code_project, "max_nodes": limits["codegraph"]})
@@ -319,7 +311,6 @@ def build_unified_context(
     graph: ThinkGraphEngraphis | None = None,
     read_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _get_json,
     read_codegraph_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _get_codegraph_json,
-    post_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _post_json,
 ) -> dict[str, Any]:
     """Single-flight authority resolution with honest immutable replay metadata."""
     request_identity = {
@@ -352,7 +343,12 @@ def build_unified_context(
         joined["timingsMs"] = {**joined.get("timingsMs", {}), "joinedInflight": 0.0}
         return joined
     try:
-        result = _build_unified_context(request, graph=graph, read_json=read_json, read_codegraph_json=read_codegraph_json, post_json=post_json)
+        result = _build_unified_context(
+            request,
+            graph=graph,
+            read_json=read_json,
+            read_codegraph_json=read_codegraph_json,
+        )
         state["result"] = deepcopy(result)
         return result
     except Exception as error:
@@ -375,7 +371,6 @@ def build_graph_object_context(
     graph: ThinkGraphEngraphis | None = None,
     read_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _get_json,
     read_codegraph_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _get_codegraph_json,
-    post_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _post_json,
 ) -> dict[str, Any]:
     """Resolve compact object identities against the current project authorities.
 
@@ -391,7 +386,6 @@ def build_graph_object_context(
         graph=graph,
         read_json=read_json,
         read_codegraph_json=read_codegraph_json,
-        post_json=post_json,
     )
     nodes_by_identity = {
         (str(node.get("authority")), str(node.get("source_id"))): node
@@ -600,7 +594,7 @@ def render_model_context(projection: dict[str, Any], role_views: list[dict[str, 
     sections["retrieval"] = [
         "RETRIEVAL: full records and anything beyond this view are available through the bounded tools — "
         "read_thinkgraph_scope (reasoning records), retrieve_knowgraph_context (evidence and sources), "
-        "and the Coder doorway's codegraph_search (repository symbols). "
+        "and the Coder runtime's native Codebase Memory MCP catalog (repository structure). "
         "Reference records by the canonical ids shown above.",
     ]
 
@@ -663,7 +657,6 @@ def build_model_context(
     graph: ThinkGraphEngraphis | None = None,
     read_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _get_json,
     read_codegraph_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _get_codegraph_json,
-    post_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _post_json,
 ) -> dict[str, Any]:
     """Resolve the projection through its persistent authorities: rebuild
     deterministically from the same configuration and require content-hash
@@ -672,7 +665,12 @@ def build_model_context(
     Views plus the ThinkGraph reasoning state — never the display projection's
     node/edge dump. The graphs are the store; a mismatch means they moved
     since the human looked, which fails honestly."""
-    rebuilt = build_unified_context(request, graph=graph, read_json=read_json, read_codegraph_json=read_codegraph_json, post_json=post_json)
+    rebuilt = build_unified_context(
+        request,
+        graph=graph,
+        read_json=read_json,
+        read_codegraph_json=read_codegraph_json,
+    )
     if str(rebuilt.get("projectionId")) != str(projection_id):
         raise ValueError(f"projection_superseded: current is {rebuilt.get('projectionId')}")
     resolved_graph = graph or get_thinkgraph()

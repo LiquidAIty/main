@@ -41,7 +41,7 @@ def fake_read(path, params):
             "edges": [{"id": "know-edge", "source": "know:one", "target": "know:two", "type": "SUPPORTED_BY"}],
         }}
     if path == "/api/layout":
-        assert params["project"] == "repo"
+        assert params["project"] == "C-Projects-main"
         return {
             "nodes": [
                 {"id": 10, "x": 1, "y": 2, "z": 3, "label": "Function", "name": "pkg.one", "size": 4, "color": "#fff"},
@@ -54,12 +54,6 @@ def fake_read(path, params):
     raise AssertionError(path)
 
 
-def fake_post(path, payload):
-    assert path == "/api/coder/mcp-bridge/codegraph_status"
-    assert payload == {}
-    return {"ok": True, "cbmProject": "repo"}
-
-
 def request(**overrides):
     values = {"project_id": "project-1", "conversation_id": "main"}
     values.update(overrides)
@@ -67,7 +61,7 @@ def request(**overrides):
 
 
 def test_full_authority_data_passes_through_without_classifier_membership():
-    result = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    result = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
     assert result["counts"]["selected"] == {"thinkgraph": 2, "knowgraph": 2, "codegraph": 3}
     assert result["counts"]["nodes"] == 7
     assert result["counts"]["edges"] == 3
@@ -79,17 +73,17 @@ def test_full_authority_data_passes_through_without_classifier_membership():
 
 
 def test_codegraph_coordinates_and_full_membership_are_preserved():
-    result = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    result = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
     code = next(node for node in result["nodes"] if node["source_id"] == "pkg.one")
     assert (code["x"], code["y"], code["z"], code["size"]) == (1.0, 2.0, 3.0, 4.0)
-    assert result["identity"]["codeGraphProjectId"] == "repo"
+    assert result["identity"]["codeGraphProjectId"] == "C-Projects-main"
 
 
 def test_projection_identity_is_stable_and_changes_with_source_identity():
-    first = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
-    second = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    first = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
+    second = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
     assert first["projectionId"] == second["projectionId"]
-    other = build_unified_context(request(conversation_id="other"), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    other = build_unified_context(request(conversation_id="other"), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
     assert other["projectionId"] != first["projectionId"]
 
 
@@ -98,17 +92,17 @@ def test_partial_authority_failure_is_honest_and_does_not_backfill():
         if path == "/api/knowgraph/analysis/latest":
             raise RuntimeError("neo4j_down")
         return fake_read(path, params)
-    result = build_unified_context(request(), graph=FakeThinkGraph(), read_json=partial_read, read_codegraph_json=fake_read, post_json=fake_post)
+    result = build_unified_context(request(), graph=FakeThinkGraph(), read_json=partial_read, read_codegraph_json=fake_read)
     assert result["counts"]["selected"] == {"thinkgraph": 2, "knowgraph": 0, "codegraph": 3}
     assert {warning["code"] for warning in result["warnings"]} >= {"authority_unavailable", "empty_authority_view"}
 
 
 def test_model_context_uses_the_same_projection_identity():
-    built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
-    delivered = build_model_context(built["projectionId"], request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
+    delivered = build_model_context(built["projectionId"], request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
     assert delivered["projectionId"] == built["projectionId"]
     with pytest.raises(ValueError, match="projection_superseded"):
-        build_model_context("unified:wrong", request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+        build_model_context("unified:wrong", request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
 
 
 def test_selected_objects_resolve_by_authority_with_bounded_relationships():
@@ -120,7 +114,7 @@ def test_selected_objects_resolve_by_authority_with_bounded_relationships():
             {"authority": "knowgraph", "canonicalId": "know:one", "selectedThrough": "knowgraph"},
             {"authority": "codegraph", "canonicalId": "pkg.one", "selectedThrough": "codegraph"},
         ],
-        graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post,
+        graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read,
     )
     assert [record["authority"] for record in context["resolved"]] == ["thinkgraph", "knowgraph", "codegraph"]
     assert "ThinkGraph Finding — think:one" in context["modelContext"]
@@ -130,18 +124,18 @@ def test_selected_objects_resolve_by_authority_with_bounded_relationships():
 
 
 def test_unified_object_selection_preserves_source_authority_and_rejects_stale_or_missing_identity():
-    built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
     resolved = build_graph_object_context(
         "project-1", "main",
         [{"authority": "thinkgraph", "canonicalId": "think:two", "selectedThrough": "unified", "sourceAuthority": "thinkgraph", "projectionId": built["projectionId"]}],
-        graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post,
+        graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read,
     )
     assert resolved["resolved"][0]["authority"] == "thinkgraph"
     with pytest.raises(ValueError, match="projection_superseded"):
         build_graph_object_context(
             "project-1", "main",
             [{"authority": "thinkgraph", "canonicalId": "think:two", "selectedThrough": "unified", "sourceAuthority": "thinkgraph", "projectionId": "unified:stale"}],
-            graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post,
+            graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read,
         )
     class ProjectIsolatedThinkGraph(FakeThinkGraph):
         def projection(self, project_id: str, limit: int = 5000):
@@ -153,13 +147,13 @@ def test_unified_object_selection_preserves_source_authority_and_rejects_stale_o
         build_graph_object_context(
             "another-project", "main",
             [{"authority": "thinkgraph", "canonicalId": "think:two", "selectedThrough": "thinkgraph"}],
-            graph=ProjectIsolatedThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post,
+            graph=ProjectIsolatedThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read,
         )
 
 
 def test_model_context_is_bounded_to_role_views_never_the_projection_dump():
-    built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
-    delivered = build_model_context(built["projectionId"], request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
+    delivered = build_model_context(built["projectionId"], request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
     text = delivered["modelContext"]
     # Reasoning state (structural ThinkGraph types) + this role's persisted views.
     assert "REASONING STATE" in text and "- Decision: Think two" in text
@@ -184,7 +178,7 @@ def test_model_context_is_bounded_to_role_views_never_the_projection_dump():
 
 
 def test_render_model_context_with_no_role_views_is_honest_not_a_fallback_dump():
-    built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
     rendered = render_model_context(built, [])
     assert "ROLE GRAPH VIEWS: none persisted for this role" in rendered["text"]
     assert "-CALLS->" not in rendered["text"] and "pkg.one" not in rendered["text"]
@@ -205,7 +199,7 @@ def test_identical_concurrent_requests_join_one_full_authority_read():
 
     def resolve():
         barrier.wait(timeout=2)
-        return build_unified_context(request(project_id="concurrent"), graph=FakeThinkGraph(), read_json=slow_read, read_codegraph_json=slow_read, post_json=fake_post)
+        return build_unified_context(request(project_id="concurrent"), graph=FakeThinkGraph(), read_json=slow_read, read_codegraph_json=slow_read)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         first, second = [future.result(timeout=3) for future in [pool.submit(resolve), pool.submit(resolve)]]

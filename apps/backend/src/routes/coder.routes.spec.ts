@@ -4,11 +4,7 @@ import express from 'express';
 import { describe, expect, it, vi } from 'vitest';
 // Static imports: NodeNext ESM rejects extensionless dynamic import('./coder.routes')
 // after the '.routes' infix strip. vitest hoists vi.mock() above these.
-import router, {
-  describeCodeGraphFreshness,
-  resolveCodeGraphProjectName,
-  resolveHermesProjectId,
-} from './coder.routes';
+import router, { resolveHermesProjectId } from './coder.routes';
 
 const planningMocks = vi.hoisted(() => ({
   packet: {
@@ -141,7 +137,11 @@ const graphViewMocks = vi.hoisted(() => ({
     modelContext: '',
     measurements: null,
   })),
-  fetchDoorwayContext: vi.fn(async () => ({ ok: true, views: [], modelContext: '' })),
+  fetchDoorwayContext: vi.fn(async (): Promise<{
+    ok: boolean;
+    views: Record<string, unknown>[];
+    modelContext: string;
+  }> => ({ ok: true, views: [], modelContext: '' })),
   fetchAgentGraphContext: vi.fn(async () => ({
     ok: true,
     projectId: 'project-1',
@@ -150,12 +150,6 @@ const graphViewMocks = vi.hoisted(() => ({
     literateQueryView: '[CONTEXT agentctx:test]\n(Finding)-[:USES]->(Reference)',
   })),
   recordAgentGraphResult: vi.fn(async () => ({ ok: true })),
-}));
-
-const cbmCallerMocks = vi.hoisted(() => ({
-  callTool: vi.fn(),
-  close: vi.fn(async () => undefined),
-  create: vi.fn(),
 }));
 
 const dbMocks = vi.hoisted(() => ({
@@ -196,10 +190,6 @@ vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
 }));
 
 vi.mock('../services/autogen/autogenOrchestratorClient', () => graphViewMocks);
-
-vi.mock('../services/graphContext/cbmMcpCaller', () => ({
-  createCodebaseMemoryMcpCaller: cbmCallerMocks.create,
-}));
 
 vi.mock('../db/pool', () => ({
   pool: { query: dbMocks.query },
@@ -272,7 +262,7 @@ describe('coder routes', () => {
     chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
       cardId: 'card_main_chat',
       prompt: 'Persisted Main instructions.',
-      parentAllowedMcpTools: ['mcp__liquidaity__codegraph_search'],
+      parentAllowedMcpTools: ['mcp__liquidaity__engraphis_recall'],
       doorwayDefinitions: [{
         card_id: 'card_hermes_steward',
         runtime_binding: 'hermes_steward',
@@ -294,9 +284,9 @@ describe('coder routes', () => {
           conversationId: 'external-mcp:70f63a4d-1a67-4dcc-a8ee-cce267572747',
           mainCardId: 'card_main_chat',
           instructions: 'Persisted Main instructions.',
-          savedMainToolGrants: ['mcp__liquidaity__codegraph_search'],
+          savedMainToolGrants: ['mcp__liquidaity__engraphis_recall'],
           availableActionPaths: [
-            { kind: 'tool', grant: 'mcp__liquidaity__codegraph_search' },
+            { kind: 'tool', grant: 'mcp__liquidaity__engraphis_recall' },
             {
               kind: 'agent',
               cardId: 'card_hermes_steward',
@@ -313,141 +303,6 @@ describe('coder routes', () => {
         '20ac92da-01fd-4cf6-97cc-0672421e751a:external-mcp:70f63a4d-1a67-4dcc-a8ee-cce267572747',
         'chat',
       );
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  it('selects the configured LiquidAIty CodeGraph project instead of the first indexed repository', () => {
-    const previous = process.env.LIQUIDAITY_CODEGRAPH_PROJECT;
-    process.env.LIQUIDAITY_CODEGRAPH_PROJECT = 'C-Projects-main';
-    try {
-      expect(resolveCodeGraphProjectName([
-        { name: 'C-Projects-kaiwiki-site' },
-        { name: 'C-Projects-main' },
-      ])).toBe('C-Projects-main');
-      expect(() => resolveCodeGraphProjectName([{ name: 'C-Projects-kaiwiki-site' }]))
-        .toThrow('cbm_project_not_indexed: C-Projects-main');
-    } finally {
-      if (previous === undefined) delete process.env.LIQUIDAITY_CODEGRAPH_PROJECT;
-      else process.env.LIQUIDAITY_CODEGRAPH_PROJECT = previous;
-    }
-  });
-
-  it('does not equate operational CBM readiness with semantic freshness', () => {
-    expect(describeCodeGraphFreshness({
-      status: 'ready',
-      git: { head_sha: 'current-head' },
-    })).toEqual({
-      operationalStatus: 'ready',
-      semanticFreshness: 'unverified',
-      reason: 'cbm_status_does_not_report_an_indexed_revision',
-    });
-    expect(describeCodeGraphFreshness({
-      status: 'ready',
-      indexed_revision: 'old-head',
-      git: { head_sha: 'current-head' },
-    })).toEqual({
-      operationalStatus: 'ready',
-      semanticFreshness: 'stale',
-      reason: 'indexed_revision_mismatch:old-head:current-head',
-    });
-  });
-
-  it('returns honest CodeGraph discovery results without constructing or persisting a Graph View', async () => {
-    cbmCallerMocks.callTool.mockReset();
-    cbmCallerMocks.close.mockClear();
-    cbmCallerMocks.create.mockResolvedValueOnce({
-      callTool: cbmCallerMocks.callTool,
-      close: cbmCallerMocks.close,
-    });
-    cbmCallerMocks.callTool
-      .mockResolvedValueOnce({ projects: [{ name: 'C-Projects-main' }] })
-      .mockResolvedValueOnce({
-        total: 1,
-        results: [{
-          name: 'persistGraphViewOnPython',
-          qualified_name: 'C-Projects-main.apps.backend.persistGraphViewOnPython',
-          label: 'Function',
-          file_path: 'apps/backend/src/services/autogen/autogenOrchestratorClient.ts',
-        }],
-      });
-    graphViewMocks.persistGraphViewOnPython.mockClear();
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/codegraph_search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: 'persist Graph View',
-          limit: 5,
-          projectId: 'project-1',
-          conversationId: 'main',
-          producingRole: 'main_chat',
-          receivingRole: 'coder',
-        }),
-      });
-      expect(response.status).toBe(200);
-      const payload = await response.json();
-      expect(payload).toEqual({
-        ok: true,
-        cbmProject: 'C-Projects-main',
-        result: expect.objectContaining({ total: 1 }),
-      });
-      expect(payload.graphView).toBeUndefined();
-      expect(payload.graphViewId).toBeUndefined();
-      expect(cbmCallerMocks.callTool).toHaveBeenLastCalledWith('search_graph', {
-        project: 'C-Projects-main',
-        query: 'persist Graph View',
-        limit: 5,
-      });
-      expect(graphViewMocks.persistGraphViewOnPython).not.toHaveBeenCalled();
-      expect(cbmCallerMocks.close).toHaveBeenCalledOnce();
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  it('persists only an explicit Main-selected CodeGraph view through the canonical ThinkGraph writer', async () => {
-    graphViewMocks.persistGraphViewOnPython.mockClear();
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/thinkgraph_persist_graph_view`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: 'project-1',
-          conversationId: 'main',
-          receivingRole: 'coder',
-          rootCanonicalNodeIds: ['symbol:one'],
-          includedCanonicalNodeIds: ['symbol:one'],
-          records: [{
-            canonicalId: 'symbol:one',
-            summary: 'The selected implementation boundary.',
-            selectionReason: 'Main chose this result after reviewing the search response.',
-            provenanceRefs: ['one.ts'],
-          }],
-          includedRelationships: [],
-          query: 'persist Graph View',
-          provenanceRefs: ['one.ts'],
-        }),
-      });
-      expect(response.status).toBe(200);
-      const payload = await response.json();
-      expect(payload.graphViewId).toMatch(/^codegraph:[a-f0-9]{24}$/);
-      expect(graphViewMocks.persistGraphViewOnPython).toHaveBeenCalledOnce();
-      const persisted = graphViewMocks.persistGraphViewOnPython.mock.calls[0][0] as any;
-      expect(persisted).toMatchObject({
-        viewId: payload.graphViewId,
-        authority: 'codegraph',
-        status: 'candidate',
-        projectId: 'project-1',
-        conversationId: 'main',
-        producingRole: 'main_chat',
-        receivingRole: 'coder',
-        includedCanonicalNodeIds: ['symbol:one'],
-      });
-      expect(persisted.records[0].selectionReason).toContain('Main chose');
     } finally {
       await closeServer(server);
     }
@@ -480,40 +335,6 @@ describe('coder routes', () => {
         ok: false,
         error: 'direct_main_coder_edge_required: card_local_coder',
       });
-      expect(coderRouterMocks.runCoderSubagent).not.toHaveBeenCalled();
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  it.each([
-    ['missing', [], 'coder_targeted_graph_view_required'],
-    ['wrong receiving role', [coderGraphView({ receivingRole: 'main_chat' })], 'coder_targeted_graph_view_required'],
-  ])('rejects %s Graph View authority before model execution', async (_label, views, error) => {
-    chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
-      doorwayDefinitions: [{ card_id: 'card_local_coder' }],
-    });
-    graphViewMocks.fetchDoorwayContext.mockResolvedValueOnce({ ok: true, views, modelContext: '' });
-    coderRouterMocks.runCoderSubagent.mockClear();
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          parentRunId: 'parent-1',
-          projectId: 'project-1',
-          deckId: 'deck_builder',
-          conversationId: 'main',
-          cardId: 'card_local_coder',
-          adapter: 'codex',
-          authority: 'direct_main_audit',
-          approvedPrompt: 'Inspect selected code.',
-          graphViewIds: ['codegraph:selected-1'],
-        }),
-      });
-      expect(response.status).toBe(400);
-      await expect(response.json()).resolves.toEqual({ ok: false, error });
       expect(coderRouterMocks.runCoderSubagent).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
