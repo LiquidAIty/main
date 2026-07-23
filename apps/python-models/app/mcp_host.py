@@ -980,7 +980,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": "main_context_unavailable"}))]
         compact = {
             "projectId": str(context.get("projectId") or ""),
-            "projectName": str(context.get("projectName") or ""),
             "deckId": str(context.get("deckId") or ""),
             "conversationId": str(context.get("conversationId") or ""),
             "mainCardId": str(context.get("mainCardId") or ""),
@@ -1009,26 +1008,60 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 timeout=KNOWGRAPH_QUERY_TIMEOUT_S,
             )
             if not args.get("includeFullText"):
-                result["assertions"] = [
-                    {
-                        **{key: value for key, value in assertion.items() if key != "text"},
-                        "summary": str(assertion.get("text") or "")[:480],
-                        "omittedCharacters": max(0, len(str(assertion.get("text") or "")) - 480),
-                    }
-                    for assertion in result.get("assertions") or []
-                ]
+                compact_assertions = []
+                for assertion in result.get("assertions") or []:
+                    full_text = str(assertion.get("text") or "")
+                    chunk_refs = [
+                        str(value)
+                        for value in (assertion.get("chunk_refs") or [])
+                        if str(value).strip()
+                    ]
+                    compact_assertions.append({
+                        "canonicalId": str(
+                            assertion.get("assertion_id")
+                            or assertion.get("id")
+                            or ""
+                        ),
+                        "summary": full_text[:480],
+                        "documentId": str(assertion.get("document_id") or ""),
+                        "chunkId": chunk_refs[0] if chunk_refs else "",
+                        "retrievalReasons": [
+                            str(value)
+                            for value in (assertion.get("retrieval_reasons") or [])
+                            if str(value).strip()
+                        ],
+                        "fusedScore": assertion.get("fused_score"),
+                        "sourceTitle": str(assertion.get("source_title") or ""),
+                        "sourceRef": str(assertion.get("source_url") or ""),
+                        "omittedCharacters": max(0, len(full_text) - 480),
+                    })
+                result["assertions"] = compact_assertions
                 result.pop("evidence", None)
+                omitted_relation_count = len(result.pop("relations", None) or [])
                 graph_view = result.get("graphView")
                 if isinstance(graph_view, dict):
-                    graph_view["records"] = [
-                        {
-                            **record,
-                            "summary": str(record.get("summary") or "")[:480],
-                            "estimatedCharacters": min(int(record.get("estimatedCharacters") or 0), 480),
-                            "estimatedTokens": min(int(record.get("estimatedTokens") or 0), 120),
-                        }
-                        for record in graph_view.get("records") or []
-                    ]
+                    omitted_record_count = len(graph_view.pop("records", None) or [])
+                    omitted_view_relation_count = len(
+                        graph_view.pop("includedRelationships", None) or []
+                    )
+                    graph_view["omittedRecordCount"] = omitted_record_count
+                    graph_view["omittedRelationshipCount"] = omitted_view_relation_count
+                else:
+                    omitted_record_count = 0
+                    omitted_view_relation_count = 0
+                result["resultSummary"] = {
+                    "state": str(result.get("retrieval_state") or ""),
+                    "resultCount": len(compact_assertions),
+                }
+                result["omitted"] = {
+                    "fullTextCharacters": sum(
+                        int(assertion["omittedCharacters"])
+                        for assertion in compact_assertions
+                    ),
+                    "relationCount": omitted_relation_count,
+                    "graphViewRecordCount": omitted_record_count,
+                    "graphViewRelationshipCount": omitted_view_relation_count,
+                }
                 result["expansion"] = {
                     "tool": "knowgraph.query",
                     "arguments": {

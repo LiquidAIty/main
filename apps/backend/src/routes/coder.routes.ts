@@ -81,6 +81,42 @@ export function resolveCodeGraphProjectName(projects: unknown[]): string {
   return configuredProject;
 }
 
+export function describeCodeGraphFreshness(status: unknown): {
+  operationalStatus: string;
+  semanticFreshness: 'unverified' | 'stale';
+  reason: string;
+} {
+  const value = status && typeof status === 'object'
+    ? status as Record<string, unknown>
+    : {};
+  const git = value.git && typeof value.git === 'object'
+    ? value.git as Record<string, unknown>
+    : {};
+  const operationalStatus = String(value.status || 'unknown');
+  const indexedRevision = String(
+    value.indexed_revision
+    || value.indexedRevision
+    || value.indexed_commit
+    || value.indexedCommit
+    || '',
+  ).trim();
+  const worktreeRevision = String(git.head_sha || git.headSha || '').trim();
+  if (indexedRevision && worktreeRevision && indexedRevision !== worktreeRevision) {
+    return {
+      operationalStatus,
+      semanticFreshness: 'stale',
+      reason: `indexed_revision_mismatch:${indexedRevision}:${worktreeRevision}`,
+    };
+  }
+  return {
+    operationalStatus,
+    semanticFreshness: 'unverified',
+    reason: indexedRevision
+      ? 'revision_match_does_not_prove_deleted_symbol_purge'
+      : 'cbm_status_does_not_report_an_indexed_revision',
+  };
+}
+
 // ── LiquidAIty MCP bridge (SDK-free) ───────────────────────────────────────
 // Internal JSON endpoints that run the proven MCP handlers server-side, where
 // the backend already owns deck state + the Python transport. These import NO
@@ -446,7 +482,12 @@ router.post('/mcp-bridge/codegraph_status', async (_req, res) => {
     const projects = Array.isArray((projectList as any).projects) ? (projectList as any).projects : [];
     const cbmProject = resolveCodeGraphProjectName(projects);
     const status = await session.callTool('index_status', { project: cbmProject });
-    return res.json({ ok: true, cbmProject, status });
+    return res.json({
+      ok: true,
+      cbmProject,
+      status,
+      freshness: describeCodeGraphFreshness(status),
+    });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'codegraph_status_failed' });
   } finally {

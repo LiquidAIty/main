@@ -147,6 +147,14 @@ function isModelNotFoundMessage(body: string): boolean {
   )
 }
 
+function isDependentServiceFailure(body: string): boolean {
+  const lower = body.toLowerCase()
+  return (
+    lower.includes('badrequestfordependentservice') ||
+    lower.includes('dependent service')
+  )
+}
+
 export function formatOpenAICategoryMarker(
   category: OpenAICompatibilityFailureCategory,
 ): string {
@@ -317,6 +325,17 @@ export function classifyOpenAIHttpFailure(options: {
       status: options.status,
       message: body,
       hint: 'Provider/model rejected tool-calling payload. Retry without tools or use a tool-capable model.',
+    }
+  }
+
+  if (options.status === 400 && isDependentServiceFailure(body)) {
+    return {
+      source: 'http',
+      category: 'provider_unavailable',
+      retryable: false,
+      status: options.status,
+      message: body,
+      hint: 'The configured provider accepted the request but its downstream model service failed. Keep the saved provider/model unchanged and retry only after that external route is healthy.',
     }
   }
 

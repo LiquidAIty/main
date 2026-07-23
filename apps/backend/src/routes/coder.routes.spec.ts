@@ -4,7 +4,11 @@ import express from 'express';
 import { describe, expect, it, vi } from 'vitest';
 // Static imports: NodeNext ESM rejects extensionless dynamic import('./coder.routes')
 // after the '.routes' infix strip. vitest hoists vi.mock() above these.
-import router, { resolveCodeGraphProjectName, resolveHermesProjectId } from './coder.routes';
+import router, {
+  describeCodeGraphFreshness,
+  resolveCodeGraphProjectName,
+  resolveHermesProjectId,
+} from './coder.routes';
 
 const planningMocks = vi.hoisted(() => ({
   packet: {
@@ -232,6 +236,26 @@ describe('coder routes', () => {
       if (previous === undefined) delete process.env.LIQUIDAITY_CODEGRAPH_PROJECT;
       else process.env.LIQUIDAITY_CODEGRAPH_PROJECT = previous;
     }
+  });
+
+  it('does not equate operational CBM readiness with semantic freshness', () => {
+    expect(describeCodeGraphFreshness({
+      status: 'ready',
+      git: { head_sha: 'current-head' },
+    })).toEqual({
+      operationalStatus: 'ready',
+      semanticFreshness: 'unverified',
+      reason: 'cbm_status_does_not_report_an_indexed_revision',
+    });
+    expect(describeCodeGraphFreshness({
+      status: 'ready',
+      indexed_revision: 'old-head',
+      git: { head_sha: 'current-head' },
+    })).toEqual({
+      operationalStatus: 'ready',
+      semanticFreshness: 'stale',
+      reason: 'indexed_revision_mismatch:old-head:current-head',
+    });
   });
 
   async function withBrokenRuntime<T>(fn: () => Promise<T>): Promise<T> {

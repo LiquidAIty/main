@@ -108,6 +108,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(result.evidence[0]["document_id"], "doc-1")
         self.assertEqual(result.evidence[0]["pages"], "chars 0-1400")
         self.assertEqual(result.evidence[0]["chunk_refs"], ["chunk-1"])
+        self.assertFalse(result.retryable)
         # Mentioned entities become relations + next anchors, never the evidence.
         self.assertEqual(result.relations[0]["target"], "Knowledge Graph")
 

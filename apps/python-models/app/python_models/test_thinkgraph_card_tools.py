@@ -202,7 +202,6 @@ class TestPythonMcpHost:
             "ok": True,
             "context": {
                 "projectId": "project-1",
-                "projectName": "Project",
                 "deckId": "deck_builder",
                 "conversationId": "conversation-1",
                 "mainCardId": "card_main_chat",
@@ -219,18 +218,23 @@ class TestPythonMcpHost:
         async def fake_retrieve(**_kwargs):
             text = "grounded evidence " * 100
             return {
+                "retryable": False,
                 "retrieval_state": "evidence",
                 "assertions": [{
                     "assertion_id": "chunk-1",
                     "text": text,
                     "document_id": "document-1",
                     "chunk_refs": ["chunk-1"],
+                    "source_title": "Grounded source",
                     "source_url": "https://example.com/source",
                     "retrieval_reasons": ["fulltext_match"],
                     "fused_score": 0.032,
                 }],
                 "evidence": [{"assertion_id": "chunk-1", "text": text}],
+                "relations": [{"source": "chunk-1", "target": "entity-1"}],
                 "graphView": {
+                    "viewId": "knowgraph:view-1",
+                    "includedRelationships": [{"source": "chunk-1", "target": "entity-1"}],
                     "records": [{
                         "canonicalId": "chunk-1",
                         "summary": text,
@@ -258,15 +262,54 @@ class TestPythonMcpHost:
         assertion = payload["assertions"][0]
         assert "text" not in assertion
         assert len(assertion["summary"]) == 480
-        assert assertion["document_id"] == "document-1"
-        assert assertion["chunk_refs"] == ["chunk-1"]
-        assert assertion["source_url"] == "https://example.com/source"
-        assert assertion["retrieval_reasons"] == ["fulltext_match"]
-        assert assertion["fused_score"] == 0.032
+        assert assertion["canonicalId"] == "chunk-1"
+        assert assertion["documentId"] == "document-1"
+        assert assertion["chunkId"] == "chunk-1"
+        assert assertion["sourceTitle"] == "Grounded source"
+        assert assertion["sourceRef"] == "https://example.com/source"
+        assert assertion["retrievalReasons"] == ["fulltext_match"]
+        assert assertion["fusedScore"] == 0.032
+        assert payload["retryable"] is False
         assert "evidence" not in payload
+        assert "relations" not in payload
         assert payload["expansion"]["arguments"]["includeFullText"] is True
         assert payload["expansion"]["arguments"]["maxResults"] == 5
-        assert len(payload["graphView"]["records"][0]["summary"]) == 480
+        assert "records" not in payload["graphView"]
+        assert "includedRelationships" not in payload["graphView"]
+        assert payload["graphView"]["viewId"] == "knowgraph:view-1"
+        assert payload["graphView"]["omittedRecordCount"] == 1
+        assert payload["graphView"]["omittedRelationshipCount"] == 1
+        assert payload["omitted"]["relationCount"] == 1
+
+    def test_knowgraph_expansion_arguments_are_accepted_by_the_exposed_schema(self, monkeypatch):
+        from app import mcp_host
+
+        async def fake_retrieve(**_kwargs):
+            return {
+                "retrieval_state": "empty",
+                "assertions": [],
+                "evidence": [],
+                "relations": [],
+            }
+
+        monkeypatch.setattr(tr, "retrieve_knowgraph_context_tool", fake_retrieve)
+        tools = asyncio.run(mcp_host.list_tools())
+        query_tool = next(tool for tool in tools if tool.name == "knowgraph.query")
+        result = asyncio.run(mcp_host.call_tool(
+            "knowgraph.query",
+            {
+                "projectId": "project-1",
+                "conversationId": "conversation-1",
+                "query": "provenance",
+            },
+        ))
+        payload = json.loads(result[0].text)
+        expansion_keys = set(payload["expansion"]["arguments"])
+        schema_keys = set(query_tool.inputSchema["properties"])
+
+        assert payload["expansion"]["tool"] == query_tool.name
+        assert expansion_keys <= schema_keys
+        assert expansion_keys <= mcp_host._ALLOWED_KEYS[query_tool.name]
 
     def test_host_never_exposes_a_write_tool_or_pair_front_door(self):
         from app import mcp_host

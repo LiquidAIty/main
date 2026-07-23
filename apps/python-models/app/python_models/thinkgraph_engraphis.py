@@ -76,13 +76,26 @@ def _mtype(kind: str, properties: dict[str, Any]) -> MemoryType:
 
 
 def _scalar_properties(value: Any) -> dict[str, str | int | float | bool]:
-    if not isinstance(value, dict):
+    if value is None:
         return {}
-    return {
-        str(key): item
-        for key, item in value.items()
-        if isinstance(item, (str, int, float, bool)) and not isinstance(item, complex)
-    }
+    if not isinstance(value, dict):
+        raise ValueError("patch_properties_must_be_flat_object")
+    if len(value) > 20:
+        raise ValueError("patch_properties_too_many_keys")
+    result: dict[str, str | int | float | bool] = {}
+    for raw_key, item in value.items():
+        key = str(raw_key)
+        if not key.strip() or len(key) > 60 or "\n" in key:
+            raise ValueError(f"patch_property_key_not_compact: {key}")
+        if (
+            not isinstance(item, (str, int, float, bool))
+            or isinstance(item, complex)
+        ):
+            raise ValueError(f"patch_property_value_must_be_scalar: {key}")
+        if isinstance(item, str) and (len(item) > 200 or "\n" in item):
+            raise ValueError(f"patch_property_value_not_compact: {key}")
+        result[key] = item
+    return result
 
 
 class ThinkGraphEngraphis:

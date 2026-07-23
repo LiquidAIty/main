@@ -56,7 +56,7 @@ async def check():
     assert 'approvedPrompt' in coder.inputSchema['properties']
     assert coder.inputSchema['properties']['adapter']['enum'] == ['claude_code', 'codex']
     assert by_name['run_mag_one'].inputSchema['required'] == ['jobId', 'projectId', 'deckId']
-    assert not any(name.startswith('main.') for name in by_name)
+    assert by_name['main.context'].inputSchema == {'type': 'object', 'properties': {}, 'required': []}
     print(json.dumps({name: tool.model_dump() for name, tool in by_name.items()}, sort_keys=True))
 asyncio.run(check())
 """
@@ -105,7 +105,7 @@ def test_streamable_http_initializes_and_lists_the_canonical_catalog():
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     code = f"""
-import asyncio, os, subprocess, sys
+import asyncio, os, subprocess, sys, mcp_host
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 env = {{
@@ -115,16 +115,16 @@ env = {{
 }}
 server = subprocess.Popen([sys.executable, 'mcp_host.py'], cwd={_APP_DIR!r}, env=env)
 async def check():
+    expected = sorted(tool.name for tool in await mcp_host.list_tools())
     failure = None
     for _ in range(50):
         try:
             async with streamable_http_client('http://127.0.0.1:{port}/mcp') as streams:
                 async with ClientSession(streams[0], streams[1]) as session:
                     await session.initialize()
-                    actual = [tool.name for tool in (await session.list_tools()).tools]
-                    assert 'codegraph.search' in actual
-                    assert 'codegraph.status' in actual
-                    assert not any(name.startswith('main.') for name in actual)
+                    actual = sorted(tool.name for tool in (await session.list_tools()).tools)
+                    assert actual == expected
+                    assert 'main.context' in actual
                     print('STREAMABLE_HTTP_OK')
                     return
         except Exception as exc:
@@ -146,6 +146,40 @@ finally:
     )
     assert result.returncode == 0, result.stderr
     assert "STREAMABLE_HTTP_OK" in result.stdout
+
+
+def test_stdio_initializes_and_lists_the_canonical_catalog():
+    code = f"""
+import asyncio, sys, mcp_host
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+async def check():
+    expected = sorted(tool.name for tool in await mcp_host.list_tools())
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=['mcp_host.py'],
+        cwd={_APP_DIR!r},
+    )
+    async with stdio_client(params) as streams:
+        async with ClientSession(streams[0], streams[1]) as session:
+            await session.initialize()
+            actual = sorted(tool.name for tool in (await session.list_tools()).tools)
+            assert actual == expected
+            assert 'main.context' in actual
+            print('STDIO_OK')
+
+asyncio.run(check())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=_APP_DIR,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "STDIO_OK" in result.stdout
 
 
 def test_auth0_token_verifier_checks_jwt_contract_and_resolves_server_owned_main(monkeypatch):
@@ -240,6 +274,7 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
     )
     tools = asyncio.run(mcp_host.list_tools())
     by_name = {tool.name: tool for tool in tools}
+    assert "main.context" in by_name
     assert "codegraph.status" in by_name
     assert "codegraph.search" in by_name
     assert "run_coder_subagent" in by_name

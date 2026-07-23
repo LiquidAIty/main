@@ -77,6 +77,22 @@ test('classifies tool compatibility failures', () => {
   expect(failure.category).toBe('tool_call_incompatible')
 })
 
+test('classifies downstream dependent-service failures as an external provider outage', () => {
+  const failure = classifyOpenAIHttpFailure({
+    status: 400,
+    body: JSON.stringify({
+      error: {
+        code: 'BadRequestForDependentService',
+        metadata: { provider_name: 'Azure' },
+      },
+    }),
+  })
+
+  expect(failure.category).toBe('provider_unavailable')
+  expect(failure.retryable).toBe(false)
+  expect(failure.hint).toContain('downstream model service failed')
+})
+
 test('embeds and extracts category markers in formatted messages', () => {
   const marker = formatOpenAICategoryMarker('endpoint_not_found')
   expect(marker).toBe('[openai_category=endpoint_not_found]')

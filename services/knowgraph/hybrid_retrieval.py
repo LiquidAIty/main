@@ -101,9 +101,10 @@ class KnowGraphRetrievalResult:
     excluded_as_seen: list[str]
     retrieval_notes: list[str]
     omitted_neighbor_count: int = 0
-    # False only when re-running the same query is structurally pointless (an
-    # unprepared corpus). A genuine empty result stays retryable: new anchors or
-    # a new query against a populated corpus can still find evidence.
+    # A successful evidence result is terminal for this bounded request and is
+    # not retryable. A genuine empty result stays retryable because new anchors
+    # or a materially different query against a populated corpus may find evidence.
+    # An unprepared corpus is also not retryable until its external state changes.
     retryable: bool = True
 
     def to_dict(self) -> dict[str, Any]:
@@ -686,4 +687,5 @@ def retrieve_knowgraph_context(
         excluded_as_seen=list(request.prior_assertion_ids or []) + list(request.prior_source_refs or []),
         retrieval_notes=notes,
         omitted_neighbor_count=max(0, len(fused) - len(assertions)),
+        retryable=state == "empty",
     )

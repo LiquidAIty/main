@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 
 import numpy as np
+import pytest
 
 from app.python_models.thinkgraph_engraphis import ThinkGraphEngraphis
 
@@ -73,6 +74,21 @@ def test_patch_preserves_ids_and_is_idempotent(tmp_path):
     canonical_ids = {node["canonicalId"] for node in projection["nodes"]}
     assert all(edge["source"] in canonical_ids and edge["target"] in canonical_ids for edge in projection["edges"])
     assert projection["authority"] == "engraphis-v2"
+
+
+@pytest.mark.parametrize("invalid_value", [["nested"], {"nested": True}])
+def test_patch_rejects_non_scalar_properties_without_coercion(tmp_path, invalid_value):
+    graph = adapter(tmp_path)
+    invalid_patch = patch()
+    invalid_patch["resources"][0]["properties"]["invalid"] = invalid_value
+
+    with pytest.raises(
+        ValueError,
+        match="patch_property_value_must_be_scalar: invalid",
+    ):
+        graph.apply_patch(authority(), invalid_patch)
+
+    assert graph.projection("ADMIN")["counts"] == {"nodes": 0, "edges": 0}
 
 
 def test_exact_lookup_neighborhood_and_project_isolation(tmp_path):
