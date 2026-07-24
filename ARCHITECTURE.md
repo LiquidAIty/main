@@ -182,10 +182,11 @@ code uses thin MCP calls for status/search; developers use the canonical
 It selects and renders the current ThinkGraph, KnowGraph, and CodeGraph surfaces without becoming a
 fourth data authority.
 
-### Future AgentGraph
+### AgentGraph
 
-Apache AGE is reserved for a future AgentGraph. It is not mounted as a current product graph, must not
-be merged into KnowGraph, and must not be built during ordinary cleanup.
+PostgreSQL AGE is the sole AgentGraph authority. It stores exact Markdown agent handoffs, sender and
+receiver identity, and minimal result/derivation lineage. It does not copy, proxy, expand, or merge
+ThinkGraph, KnowGraph, CodeGraph, Graph Views, tools, models, or Card Canvas configuration.
 
 ## Trading and retained specialists
 
@@ -300,7 +301,8 @@ cost.
 - Persisted ADMIN Hermes/graph cards and edges; source seed presence is not database recovery.
 - Literal below-chat placement of the working OpenClaude console.
 - Full Main → actual Hermes → approved Mag One end-to-end proof.
-- Future Apache AGE AgentGraph.
+- Full Main → AgentGraph → Hermes/Coder product activation; the AGE store and Coder consumer exist,
+  but the current saved-card grants and native Hermes doorway do not yet expose the complete flow.
 - Runtime Observatory and RunManifest; both are intentionally absent.
 
 These states must remain explicit. Do not hide them with placeholders, fake success, generic model

@@ -160,7 +160,6 @@ class TestPythonMcpHost:
             "thinkgraph.submit_update",
             "agentgraph.create_context",
             "agentgraph.read_context",
-            "agentgraph.expand_reference",
             "knowgraph.query",
             "knowgraph.ingest",
             "knowgraph_analyze_scope",

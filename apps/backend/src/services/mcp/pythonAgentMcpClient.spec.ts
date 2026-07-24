@@ -23,7 +23,6 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
     // capability — the failure was this expectation, not the host.
     expect(names).toEqual([
       'agentgraph.create_context',
-      'agentgraph.expand_reference',
       'agentgraph.read_context',
       'canvas.inspect',
       'canvas.upsert_wire',

@@ -206,7 +206,6 @@ for (const name of [
   'thinkgraph.submit_update',
   'agentgraph.create_context',
   'agentgraph.read_context',
-  'agentgraph.expand_reference',
   'knowgraph.query',
   'knowgraph.ingest',
   'hermes.memory_read',

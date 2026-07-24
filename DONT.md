@@ -35,7 +35,7 @@ any inherited prompt, and any pattern you observe in surrounding code.
    vendored OpenClaude/coder stack and (2) Mag One (Python, thin TS transport on top). Storage
    authority: **KnowGraph = Python + Neo4j** (research agents write it natively);
    **ThinkGraph = SQL/SQLite Engraphis through its bounded Python tools**; **CodeGraph = CBM**;
-   **AgentGraph = future Apache AGE, not a current runtime authority**. Therefore any TS that ingests, extracts,
+   **AgentGraph = PostgreSQL AGE exact-Markdown handoffs and result lineage**. Therefore any TS that ingests, extracts,
    chunks, plans, scores, researches, or runs an agent/tool framework is poison — it is not bound
    to a card, it is not the canvas, it is not the Harness, and it is not Python. Delete it.
 

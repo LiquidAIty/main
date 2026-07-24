@@ -45,8 +45,8 @@ part of the active research loop until its own pass wires it in.
 - **Auth on Prisma, app state on raw Postgres, graphs in their own stores** — login/signup →
   `auth/userService` + `auth/sessionStore` → `services/database.ts` (Prisma) is the correct, deliberate
   split: Prisma owns auth/session; raw Postgres owns project/deck/conversation app state;
-  SQLite/Engraphis owns ThinkGraph; Neo4j owns KnowGraph; and CBM owns CodeGraph. Apache AGE is
-  reserved for a future AgentGraph and is not a current graph authority. This split is deliberate.
+  SQLite/Engraphis owns ThinkGraph; Neo4j owns KnowGraph; CBM owns CodeGraph; and Apache AGE owns
+  exact-Markdown AgentGraph handoffs plus result lineage. This split is deliberate.
 - **Hermes runtime/UI (pre-integration)** — preserve the source seed's Hermes card, Main→Hermes edge,
   inherited-context selection, prompt/model/tool grants, and report seams. The current ADMIN deck
   lacks that persisted topology, and no installed Hermes process has been runtime-proven. Restore the

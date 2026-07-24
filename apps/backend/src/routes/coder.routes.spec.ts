@@ -94,6 +94,7 @@ const chatSessionMocks = vi.hoisted(() => {
     getConversationMessages: vi.fn(async () => []),
     lastCancel: vi.fn(),
     startGrpcTurn: vi.fn(),
+    resolveExternalMainRuntimeContext: vi.fn(),
     resolveMainChatRuntimeConfig: vi.fn(),
     usage,
   };
@@ -147,7 +148,7 @@ const graphViewMocks = vi.hoisted(() => ({
     projectId: 'project-1',
     conversationId: 'main',
     receivingAgentId: 'card_local_coder',
-    literateQueryView: '[CONTEXT agentctx:test]\n(Finding)-[:USES]->(Reference)',
+    markdown: '# Exact AGE handoff\n\nKeep this Markdown unchanged.',
   })),
   recordAgentGraphResult: vi.fn(async () => ({ ok: true })),
 }));
@@ -181,6 +182,7 @@ vi.mock('../conversations/store', () => ({
 
 vi.mock('../coder/openclaude/session/grpcChatClient', () => ({
   deriveSessionId: (projectId: string, conversationId: string) => `${projectId}:${conversationId}`,
+  resolveExternalMainRuntimeContext: chatSessionMocks.resolveExternalMainRuntimeContext,
   resolveMainChatRuntimeConfig: chatSessionMocks.resolveMainChatRuntimeConfig,
   startGrpcTurn: chatSessionMocks.startGrpcTurn,
 }));
@@ -250,7 +252,7 @@ describe('coder routes', () => {
   // vendored runtime is built or API keys are exported on the test machine.
   const BROKEN_COMMAND = 'node C:/liquidaity/nonexistent/openclaude.mjs';
 
-  it('resolves external Main only through the exact identity grant, owned project, and persisted Main card', async () => {
+  it('establishes external identity/project authorization before resolving persisted Main runtime', async () => {
     dbMocks.query.mockResolvedValueOnce({
       rows: [{
         grant_id: '70f63a4d-1a67-4dcc-a8ee-cce267572747',
@@ -259,14 +261,18 @@ describe('coder routes', () => {
         project_name: 'Main Chat',
       }],
     });
-    chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
-      cardId: 'card_main_chat',
-      prompt: 'Persisted Main instructions.',
-      parentAllowedMcpTools: ['mcp__liquidaity__engraphis_recall'],
-      doorwayDefinitions: [{
-        card_id: 'card_hermes_steward',
-        runtime_binding: 'hermes_steward',
-      }],
+    chatSessionMocks.resolveExternalMainRuntimeContext.mockResolvedValueOnce({
+      mainCardId: 'card_main_chat',
+      instructions: 'Persisted Main instructions.',
+      savedMainToolGrants: ['engraphis_recall'],
+      availableActionPaths: [
+        { kind: 'tool', grant: 'engraphis_recall' },
+        {
+          kind: 'agent',
+          cardId: 'card_hermes_steward',
+          runtimeBinding: 'hermes_steward',
+        },
+      ],
     });
     const { server, baseUrl } = await createApiServer();
     try {
@@ -282,11 +288,40 @@ describe('coder routes', () => {
           projectId: '20ac92da-01fd-4cf6-97cc-0672421e751a',
           deckId: 'deck_builder',
           conversationId: 'external-mcp:70f63a4d-1a67-4dcc-a8ee-cce267572747',
+        },
+      });
+      expect(chatSessionMocks.resolveExternalMainRuntimeContext).not.toHaveBeenCalled();
+      expect(chatSessionMocks.resolveMainChatRuntimeConfig).not.toHaveBeenCalled();
+
+      dbMocks.query.mockResolvedValueOnce({
+        rows: [{
+          grant_id: '70f63a4d-1a67-4dcc-a8ee-cce267572747',
+          user_id: 'user-1',
+          project_id: '20ac92da-01fd-4cf6-97cc-0672421e751a',
+          project_name: 'Main Chat',
+        }],
+      });
+      const runtimeResponse = await fetch(`${baseUrl}/mcp-bridge/external_main_context`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          issuer: 'https://tenant.auth0.com/',
+          subject: 'auth0|jeremiah',
+          resolveRuntime: true,
+        }),
+      });
+      expect(runtimeResponse.status).toBe(200);
+      await expect(runtimeResponse.json()).resolves.toMatchObject({
+        ok: true,
+        context: {
+          projectId: '20ac92da-01fd-4cf6-97cc-0672421e751a',
+          deckId: 'deck_builder',
+          conversationId: 'external-mcp:70f63a4d-1a67-4dcc-a8ee-cce267572747',
           mainCardId: 'card_main_chat',
           instructions: 'Persisted Main instructions.',
-          savedMainToolGrants: ['mcp__liquidaity__engraphis_recall'],
+          savedMainToolGrants: ['engraphis_recall'],
           availableActionPaths: [
-            { kind: 'tool', grant: 'mcp__liquidaity__engraphis_recall' },
+            { kind: 'tool', grant: 'engraphis_recall' },
             {
               kind: 'agent',
               cardId: 'card_hermes_steward',
@@ -299,10 +334,11 @@ describe('coder routes', () => {
         expect.stringContaining('p.owner_user_id = g.user_id'),
         ['https://tenant.auth0.com', 'auth0|jeremiah'],
       );
-      expect(chatSessionMocks.resolveMainChatRuntimeConfig).toHaveBeenCalledWith(
+      expect(chatSessionMocks.resolveExternalMainRuntimeContext).toHaveBeenCalledWith(
         '20ac92da-01fd-4cf6-97cc-0672421e751a:external-mcp:70f63a4d-1a67-4dcc-a8ee-cce267572747',
         'chat',
       );
+      expect(chatSessionMocks.resolveMainChatRuntimeConfig).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }
@@ -375,7 +411,7 @@ describe('coder routes', () => {
     }
   });
 
-  it('resolves one persisted Coder-targeted Graph View and unchanged AgentGraph id before execution', async () => {
+  it('resolves one persisted Coder-targeted Graph View and exact AGE Markdown before execution', async () => {
     chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
       doorwayDefinitions: [{ card_id: 'card_local_coder' }],
     });
@@ -405,8 +441,10 @@ describe('coder routes', () => {
       });
       expect(response.status).toBe(200);
       expect(coderRouterMocks.runCoderSubagent).toHaveBeenCalledWith(expect.objectContaining({
-        approvedPrompt: expect.stringContaining('[AGENTGRAPH_CONTEXT_ID agentctx:test]'),
+        approvedPrompt: expect.stringContaining('# Exact AGE handoff\n\nKeep this Markdown unchanged.'),
       }));
+      expect(coderRouterMocks.runCoderSubagent.mock.calls.at(-1)?.[0].approvedPrompt)
+        .not.toContain('[AGENTGRAPH_CONTEXT_ID');
       expect(graphViewMocks.fetchDoorwayContext).toHaveBeenCalledWith(
         'project-1',
         'main',
@@ -449,7 +487,7 @@ describe('coder routes', () => {
       const payload = await response.json();
       expect(payload.agentContextId).toBe('agentctx:test');
       expect(coderRouterMocks.runCoderSubagent).toHaveBeenCalledWith(expect.objectContaining({
-        approvedPrompt: expect.stringContaining('[AGENTGRAPH_CONTEXT_ID agentctx:test]'),
+        approvedPrompt: expect.stringContaining('# Exact AGE handoff\n\nKeep this Markdown unchanged.'),
       }));
       expect(graphViewMocks.recordAgentGraphResult).toHaveBeenCalledWith({
         projectId: 'project-1',

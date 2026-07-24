@@ -396,6 +396,7 @@ export async function recordAgentGraphResult(params: {
   resultId: string;
   runId: string;
   status: string;
+  markdown?: string;
   resultRef?: string;
 }): Promise<unknown> {
   return requestThinkGraphJson('/agentgraph/record-result', {

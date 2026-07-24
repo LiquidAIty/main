@@ -17,6 +17,7 @@ import {
 } from '../coder/openclaude/mcp/liquidAItyAgentFlow';
 import {
   deriveSessionId,
+  resolveExternalMainRuntimeContext,
   resolveMainChatRuntimeConfig,
   startGrpcTurn,
   type GrpcTurnHandle,
@@ -88,31 +89,29 @@ router.post('/mcp-bridge/external_main_context', async (req, res) => {
     if (!grant) return res.status(403).json({ ok: false, error: 'external_identity_grant_required' });
 
     const conversationId = `external-mcp:${grant.grantId}`;
-    const main = await resolveMainChatRuntimeConfig(
+    const authorizedContext = {
+      projectId: grant.projectId,
+      projectName: grant.projectName,
+      deckId: BUILDER_DECK_ID,
+      conversationId,
+    };
+    if (req.body?.resolveRuntime !== true) {
+      return res.json({ ok: true, context: authorizedContext });
+    }
+
+    const main = await resolveExternalMainRuntimeContext(
       deriveSessionId(grant.projectId, conversationId),
       'chat',
     );
-    if (!main) {
-      return res.status(409).json({ ok: false, error: 'persisted_main_chat_unavailable' });
-    }
+    if (!main) return res.status(409).json({
+      ok: false,
+      error: 'persisted_main_chat_unavailable',
+    });
     return res.json({
       ok: true,
       context: {
-        projectId: grant.projectId,
-        projectName: grant.projectName,
-        deckId: BUILDER_DECK_ID,
-        conversationId,
-        mainCardId: main.cardId,
-        instructions: main.prompt,
-        savedMainToolGrants: main.parentAllowedMcpTools,
-        availableActionPaths: [
-          ...main.parentAllowedMcpTools.map((grant) => ({ kind: 'tool', grant })),
-          ...main.doorwayDefinitions.map((doorway) => ({
-            kind: 'agent',
-            cardId: String(doorway.card_id || ''),
-            runtimeBinding: String(doorway.runtime_binding || ''),
-          })),
-        ],
+        ...authorizedContext,
+        ...main,
       },
     });
   } catch (error) {
@@ -223,7 +222,7 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
         projectId?: unknown;
         conversationId?: unknown;
         receivingAgentId?: unknown;
-        literateQueryView?: unknown;
+        markdown?: unknown;
       };
       if (
         String(context?.projectId || '') !== projectId
@@ -232,8 +231,8 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
       ) {
         return res.status(400).json({ ok: false, error: `agentgraph_context_scope_mismatch: ${agentContextId}` });
       }
-      agentGraphContext = String(context?.literateQueryView || '').trim();
-      if (!agentGraphContext) {
+      agentGraphContext = String(context?.markdown ?? '');
+      if (!agentGraphContext.trim()) {
         return res.status(400).json({ ok: false, error: `agentgraph_context_empty: ${agentContextId}` });
       }
     }
@@ -269,7 +268,7 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
     })));
     const approvedPrompt = [
       String(body.approvedPrompt || ''),
-      agentContextId ? `[AGENTGRAPH_CONTEXT_ID ${agentContextId}]\n${agentGraphContext}` : '',
+      agentContextId ? agentGraphContext : '',
       attachedViews.length ? doorwayGraphContext : '',
     ].filter(Boolean).join('\n\n');
     const result = await runCoderSubagent({

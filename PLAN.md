@@ -98,7 +98,7 @@ deleted or replaced with a newly invented run-packet abstraction.
 ThinkGraph   SQLite/Engraphis planning & operational reasoning; bounded Python tools write/read it
 KnowGraph    Neo4j          grounded source-backed knowledge; Python research writes; Harness reads
 CodeGraph    CBM (SQLite)   repo structure / edit boundaries; the CBM indexer writes
-AgentGraph   future AGE     not implemented and not a current runtime authority
+AgentGraph   PostgreSQL AGE exact Markdown agent handoffs and result lineage
 ```
 
 One authority per graph. No cross-writes, no UI→DB graph write.
@@ -118,7 +118,7 @@ Guards: every route 403s in production; probes default dry-run; a live call is a
 run through the canonical executor (no fake outputs, no minted graph authority); report
 verification is deterministic (no LLM grades work). DB roles stay as documented in FUTURE.md:
 Prisma = auth/session only; raw pg JSONB = deck/conversation app state; SQLite/Engraphis =
-ThinkGraph; Neo4j = KnowGraph; CBM = CodeGraph; AGE = future AgentGraph only; dev telemetry/reports = coder-workspace JSONL, never
+ThinkGraph; Neo4j = KnowGraph; CBM = CodeGraph; AGE = AgentGraph handoffs/result lineage only; dev telemetry/reports = coder-workspace JSONL, never
 product analytics.
 
 ---

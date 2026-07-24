@@ -10,7 +10,7 @@ describe('runtime-specific tool catalogs', () => {
     expect(harness).toEqual(expect.arrayContaining([
       'thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query',
       'knowgraph.ingest',
-      'agentgraph.create_context', 'agentgraph.read_context', 'agentgraph.expand_reference',
+      'agentgraph.create_context', 'agentgraph.read_context',
       'card.run_assistant_agent', 'web_search',
     ]));
     expect(harness).not.toEqual(expect.arrayContaining([

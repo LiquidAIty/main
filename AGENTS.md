@@ -52,7 +52,7 @@ Do not treat stale graph memory as proof.
 - ThinkGraph is the current SQL/SQLite Engraphis project-reasoning store.
 - KnowGraph is Neo4j sourced knowledge/provenance.
 - CodeGraph is CBM repository structure.
-- Apache AGE is reserved for a future AgentGraph and is not ThinkGraph.
+- Apache AGE is the AgentGraph handoff/result-lineage authority and is not ThinkGraph.
 
 The normal code-work order is:
 

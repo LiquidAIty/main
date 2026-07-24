@@ -438,6 +438,16 @@ export type MainChatRuntimeConfig = {
   parentAllowedNativeTools: string[];
 };
 
+export type ExternalMainRuntimeContext = {
+  mainCardId: string;
+  instructions: string | null;
+  savedMainToolGrants: string[];
+  availableActionPaths: Array<
+    | { kind: 'tool'; grant: string }
+    | { kind: 'agent'; cardId: string; runtimeBinding: string }
+  >;
+};
+
 /** The saved card's assigned native tools (runtimeOptions.nativeTools).
  * Pure transport: verbatim strings, no name validation here — the engine owns
  * its native registry and reports grant names missing from the pool. */
@@ -459,6 +469,49 @@ function resolveMainChatCardFromDeck(nodes: any[]): { ok: true; card: any } | { 
   return { ok: true, card: matches[0] };
 }
 
+/**
+ * Resolve the persisted Main connector configuration after authentication,
+ * without opening another stdio MCP client. The authenticated Python host owns
+ * the live catalog and validates these exact saved grant strings against it.
+ */
+export async function resolveExternalMainRuntimeContext(
+  sessionId: string,
+  mode: HarnessMode,
+): Promise<ExternalMainRuntimeContext | null> {
+  const parsed = parseSessionId(sessionId);
+  if (!parsed) return null;
+  const doc = await getDeckDocument(parsed.projectId, BUILDER_DECK_ID);
+  const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
+  const edges: any[] = Array.isArray((doc?.deck as any)?.edges) ? (doc!.deck as any).edges : [];
+  const resolution = resolveMainChatCardFromDeck(nodes);
+  if (!resolution.ok) return null;
+  const card = resolution.card;
+  const savedMainToolGrants: string[] = (
+    Array.isArray(card?.runtimeOptions?.tools) ? card.runtimeOptions.tools : []
+  )
+    .map((tool: unknown) => String(tool || '').trim())
+    .filter(Boolean);
+  const agentPaths = selectDoorwayCards(nodes, edges, mode).map((node) => ({
+    kind: 'agent' as const,
+    cardId: String(node?.id || ''),
+    runtimeBinding: String(
+      resolveRuntimeBinding(
+        node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
+        node?.id,
+      ) || '',
+    ),
+  }));
+  return {
+    mainCardId: String(card?.id || ''),
+    instructions: String(card?.prompt || '').trim() || null,
+    savedMainToolGrants,
+    availableActionPaths: [
+      ...savedMainToolGrants.map((grant: string) => ({ kind: 'tool' as const, grant })),
+      ...agentPaths,
+    ],
+  };
+}
+
 export async function resolveMainChatRuntimeConfig(
   sessionId: string,
   mode: HarnessMode,
@@ -467,57 +520,53 @@ export async function resolveMainChatRuntimeConfig(
 ): Promise<MainChatRuntimeConfig | null> {
   const parsed = parseSessionId(sessionId);
   if (!parsed) return null;
-  try {
-    const doc = await getDeckDocument(parsed.projectId, BUILDER_DECK_ID);
-    const availableMcpTools = await listPythonAgentMcpTools();
-    const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
-    const resolution = resolveMainChatCardFromDeck(nodes);
-    if (!resolution.ok) return null;
-    const card = resolution.card;
-    const modelKey = String(card?.runtimeOptions?.modelKey || '').trim();
-    if (!modelKey) return null;
-    const resolved = resolveModel(modelKey);
-    const uiProvider = String(card?.runtimeOptions?.provider || '').trim().toLowerCase();
-    if (uiProvider && uiProvider !== resolved.provider) return null;
-    const edges: any[] = Array.isArray((doc?.deck as any)?.edges) ? (doc!.deck as any).edges : [];
-    return {
-      cardId: String(card?.id || ''),
-      title: String(card?.title || card?.id || ''),
-      prompt: String(card?.prompt || '').trim() || null,
-      provider: resolved.provider,
-      modelKey,
-      providerModelId: resolved.id,
-      deckRevision: doc?.meta?.deckRevision || null,
-      doorwayDefinitions: selectDoorwayCards(nodes, edges, mode)
-        .map((node) => {
-          const binding = resolveRuntimeBinding(
-            node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
-            node?.id,
-          );
-          return buildHarnessAgentDefinition(
-            node,
-            buildHarnessRuntimeContext(
-              sessionId,
-              parentRunId,
-              binding === 'hermes_steward'
-                ? { investigationContext }
-                : {},
+  const doc = await getDeckDocument(parsed.projectId, BUILDER_DECK_ID);
+  const availableMcpTools = await listPythonAgentMcpTools();
+  const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
+  const resolution = resolveMainChatCardFromDeck(nodes);
+  if (!resolution.ok) return null;
+  const card = resolution.card;
+  const modelKey = String(card?.runtimeOptions?.modelKey || '').trim();
+  if (!modelKey) return null;
+  const resolved = resolveModel(modelKey);
+  const uiProvider = String(card?.runtimeOptions?.provider || '').trim().toLowerCase();
+  if (uiProvider && uiProvider !== resolved.provider) return null;
+  const edges: any[] = Array.isArray((doc?.deck as any)?.edges) ? (doc!.deck as any).edges : [];
+  return {
+    cardId: String(card?.id || ''),
+    title: String(card?.title || card?.id || ''),
+    prompt: String(card?.prompt || '').trim() || null,
+    provider: resolved.provider,
+    modelKey,
+    providerModelId: resolved.id,
+    deckRevision: doc?.meta?.deckRevision || null,
+    doorwayDefinitions: selectDoorwayCards(nodes, edges, mode)
+      .map((node) => {
+        const binding = resolveRuntimeBinding(
+          node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
+          node?.id,
+        );
+        return buildHarnessAgentDefinition(
+          node,
+          buildHarnessRuntimeContext(
+            sessionId,
+            parentRunId,
+            binding === 'hermes_steward'
+              ? { investigationContext }
+              : {},
+          ),
+          {
+            allowedCardRunIds: resolveDirectSubagents(String(node.id), nodes, edges).map((child: any) =>
+              String(child.id),
             ),
-            {
-              allowedCardRunIds: resolveDirectSubagents(String(node.id), nodes, edges).map((child: any) =>
-                String(child.id),
-              ),
-              availableMcpTools,
-            },
-          );
-        })
-        .filter((def): def is Record<string, unknown> => Boolean(def)),
-      parentAllowedMcpTools: cardMcpToolGrants(card, availableMcpTools),
-      parentAllowedNativeTools: cardNativeToolGrants(card),
-    };
-  } catch {
-    return null;
-  }
+            availableMcpTools,
+          },
+        );
+      })
+      .filter((def): def is Record<string, unknown> => Boolean(def)),
+    parentAllowedMcpTools: cardMcpToolGrants(card, availableMcpTools),
+    parentAllowedNativeTools: cardNativeToolGrants(card),
+  };
 }
 
 function resolveProtoPath(): string {

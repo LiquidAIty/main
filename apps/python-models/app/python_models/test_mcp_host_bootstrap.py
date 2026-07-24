@@ -364,7 +364,7 @@ asyncio.run(check())
     assert "STDIO_OK" in result.stdout
 
 
-def test_auth0_token_verifier_checks_jwt_contract_and_resolves_server_owned_main(monkeypatch):
+def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_principal(monkeypatch):
     import jwt
     import mcp_host
     from cryptography.hazmat.primitives.asymmetric import rsa
@@ -387,13 +387,10 @@ def test_auth0_token_verifier_checks_jwt_contract_and_resolves_server_owned_main
     monkeypatch.setattr(
         mcp_host,
         "_resolve_external_main_context_sync",
-        lambda issuer, subject: {
+        lambda issuer, subject, **_kwargs: {
             "projectId": "project-1",
             "deckId": "deck_builder",
             "conversationId": "external-mcp:grant-1",
-            "mainCardId": "card_main_chat",
-            "instructions": "Persisted Main instructions.",
-            "savedMainToolGrants": ["mcp__liquidaity__engraphis_recall"],
         } if issuer == config.issuer_url and subject == "auth0|jeremiah" else None,
     )
     now = int(time.time())
@@ -414,6 +411,7 @@ def test_auth0_token_verifier_checks_jwt_contract_and_resolves_server_owned_main
     assert verified is not None
     assert verified.subject == "auth0|jeremiah"
     assert verified.claims["liquidaity"]["projectId"] == "project-1"
+    assert "mainCardId" not in verified.claims["liquidaity"]
 
     invalid_claims = [
         {**base, "iss": "https://wrong.auth0.com/"},
@@ -451,7 +449,25 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
             client_id="chatgpt-client",
             scopes=["liquidaity.main"],
             subject="auth0|jeremiah",
-            claims={"liquidaity": context},
+            claims={
+                "iss": "https://tenant.auth0.com/",
+                "liquidaity": {
+                    "projectId": "project-1",
+                    "deckId": "deck_builder",
+                    "conversationId": "external-mcp:grant-1",
+                },
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_host,
+        "_resolve_external_main_context_sync",
+        lambda issuer, subject, *, resolve_runtime=False: (
+            context
+            if resolve_runtime
+            and issuer == "https://tenant.auth0.com/"
+            and subject == "auth0|jeremiah"
+            else None
         ),
     )
     tools = asyncio.run(mcp_host.list_tools())
@@ -513,6 +529,54 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
     assert payload["conversationId"] == "external-mcp:grant-1"
     assert payload["parentRunId"].startswith("req_external_main_")
     assert payload["agentContextId"] == "agentctx:test"
+
+
+def test_post_auth_unknown_saved_grant_is_configuration_error_not_authentication(monkeypatch):
+    import asyncio
+    import mcp_host
+    from mcp.server.auth.provider import AccessToken
+
+    monkeypatch.setattr(
+        mcp_host,
+        "get_access_token",
+        lambda: AccessToken(
+            token="verified",
+            client_id="chatgpt-client",
+            scopes=["liquidaity.main"],
+            subject="auth0|jeremiah",
+            claims={
+                "iss": "https://tenant.auth0.com/",
+                "liquidaity": {
+                    "projectId": "project-1",
+                    "deckId": "deck_builder",
+                    "conversationId": "external-mcp:grant-1",
+                },
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_host,
+        "_resolve_external_main_context_sync",
+        lambda _issuer, _subject, *, resolve_runtime=False: {
+            "projectId": "project-1",
+            "deckId": "deck_builder",
+            "conversationId": "external-mcp:grant-1",
+            "mainCardId": "card_main_chat",
+            "instructions": "Persisted Main instructions.",
+            "savedMainToolGrants": ["codegraph.status"],
+            "availableActionPaths": [{"kind": "tool", "grant": "codegraph.status"}],
+        } if resolve_runtime else None,
+    )
+
+    result = asyncio.run(mcp_host.call_tool("main.context", {}))
+    payload = json.loads(result[0].text)
+    assert payload == {
+        "ok": False,
+        "error": (
+            "main_runtime_configuration_error:"
+            "harness_mcp_tool_unknown:codegraph.status"
+        ),
+    }
 
 
 def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp():

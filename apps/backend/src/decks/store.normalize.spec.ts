@@ -5,7 +5,11 @@ vi.mock('../db/pool', () => ({
   pool: { query: dbMocks.query },
 }));
 
-import { getDeckDocument, normalizeRuntimeOptions } from './store';
+import {
+  getDeckDocument,
+  normalizeRuntimeOptions,
+  repairRetiredCodeGraphToolGrants,
+} from './store';
 
 beforeEach(() => {
   dbMocks.query.mockReset();
@@ -52,6 +56,91 @@ describe('deck store runtime-options tool persistence', () => {
 
   it('an absent selection stays absent — no default tools are injected', () => {
     expect(normalizeRuntimeOptions({})?.tools).toBe(null);
+  });
+});
+
+describe('retired CodeGraph grant repair', () => {
+  it('removes only the retired pair from Main and Hermes and is idempotent', () => {
+    const deck = {
+      id: 'deck_builder',
+      name: 'Saved Builder',
+      workspaceRoot: 'C:\\Projects\\main',
+      version: 7,
+      promptTemplates: [{ id: 'custom', content: 'Keep me.' }],
+      nodes: [
+        {
+          id: 'custom-main',
+          kind: 'agent',
+          templateId: 'custom-main-template',
+          prompt: 'Keep the saved Main prompt.',
+          runtimeBinding: 'main_chat',
+          runtimeType: 'assistant_agent',
+          runtimeOptions: {
+            provider: 'openrouter',
+            modelKey: 'z-ai/glm-5.2',
+            tools: ['canvas.inspect', 'codegraph.status', 'future.explicit-error', 'codegraph.search'],
+          },
+          tools: ['legacy.keep', 'codegraph.search'],
+          parentGraphId: null,
+          title: 'Saved Main',
+          subtitle: 'Keep subtitle',
+          position: { x: 12, y: 34 },
+        },
+        {
+          id: 'custom-hermes',
+          kind: 'agent',
+          templateId: 'custom-hermes-template',
+          prompt: 'Keep the saved Hermes prompt.',
+          runtimeBinding: 'hermes_steward',
+          runtimeType: 'assistant_agent',
+          runtimeOptions: {
+            provider: 'openrouter',
+            modelKey: 'openai/gpt-5.1-chat',
+            tools: ['knowgraph.query', 'codegraph.search', 'hermes.memory_write'],
+          },
+          parentGraphId: null,
+          title: 'Saved Hermes',
+          position: { x: 56, y: 78 },
+        },
+        {
+          id: 'unrelated',
+          kind: 'agent',
+          templateId: 'custom-worker',
+          prompt: 'Untouched.',
+          runtimeBinding: 'research_agent',
+          runtimeType: 'assistant_agent',
+          runtimeOptions: { tools: ['codegraph.status', 'web_search'] },
+          parentGraphId: null,
+          title: 'Unrelated',
+          position: { x: 90, y: 12 },
+        },
+      ],
+      edges: [{ id: 'keep-edge', source: 'custom-main', target: 'custom-hermes', edgeType: 'flow' }],
+    } as any;
+
+    const repaired = repairRetiredCodeGraphToolGrants(deck);
+    expect(repaired).toEqual({
+      ...deck,
+      nodes: [
+        {
+          ...deck.nodes[0],
+          runtimeOptions: {
+            ...deck.nodes[0].runtimeOptions,
+            tools: ['canvas.inspect', 'future.explicit-error'],
+          },
+          tools: ['legacy.keep'],
+        },
+        {
+          ...deck.nodes[1],
+          runtimeOptions: {
+            ...deck.nodes[1].runtimeOptions,
+            tools: ['knowgraph.query', 'hermes.memory_write'],
+          },
+        },
+        deck.nodes[2],
+      ],
+    });
+    expect(repairRetiredCodeGraphToolGrants(repaired)).toBe(repaired);
   });
 });
 

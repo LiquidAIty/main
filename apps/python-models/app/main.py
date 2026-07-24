@@ -170,8 +170,11 @@ def agentgraph_create_context(payload: dict[str, Any]):
             project_id=str(payload.get("projectId") or ""),
             deck_id=str(payload.get("deckId") or ""),
             conversation_id=str(payload.get("conversationId") or ""),
+            sender_agent_id=str(payload.get("senderAgentId") or ""),
             receiving_agent_id=str(payload.get("receivingAgentId") or ""),
-            proposal=dict(payload.get("context") or {}),
+            markdown=payload.get("markdown"),
+            prior_context_id=payload.get("priorContextId"),
+            producing_run_id=payload.get("producingRunId"),
         )
     except AgentGraphError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
@@ -191,21 +194,6 @@ def agentgraph_read_context(projectId: str, contextId: str):
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
-@app.post("/agentgraph/expand-reference")
-async def agentgraph_expand_reference(payload: dict[str, Any]):
-    from app.python_models.agentgraph import AgentGraphError, expand_reference
-
-    try:
-        return await expand_reference(
-            str(payload.get("referenceId") or ""),
-            str(payload.get("projectId") or ""),
-        )
-    except AgentGraphError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err)) from err
-
-
 @app.post("/agentgraph/record-result")
 def agentgraph_record_result(payload: dict[str, Any]):
     from app.python_models.agentgraph import AgentGraphError, record_result
@@ -217,7 +205,8 @@ def agentgraph_record_result(payload: dict[str, Any]):
             result_id=str(payload.get("resultId") or ""),
             run_id=str(payload.get("runId") or ""),
             status=str(payload.get("status") or ""),
-            result_ref=str(payload.get("resultRef") or ""),
+            markdown=payload.get("markdown"),
+            result_ref=payload.get("resultRef"),
         )
     except AgentGraphError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err

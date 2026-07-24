@@ -1,114 +1,151 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
+from uuid import uuid4
 
-import numpy as np
 import pytest
-from engraphis.core.interfaces import SearchFilter
 
 from app.python_models.agentgraph import (
     AgentGraphError,
     create_context,
-    expand_reference,
     read_context,
     record_result,
 )
-from app.python_models.thinkgraph_engraphis import ThinkGraphEngraphis
+from app.python_models.postgres import connect_postgres
 
 
-PROJECT_ID = "20ac92da-01fd-4cf6-97cc-0672421e751a"
-CONVERSATION_ID = "main"
-CODER_VIEW_ID = "thinkgraph:coder:kgseed-01"
+def _prepare(cursor) -> None:
+    cursor.execute("LOAD 'age'")
+    cursor.execute('SET search_path = ag_catalog, "$user", public')
 
 
-class LocalTestEmbedder:
-    dim = 384
+def test_age_roundtrip_preserves_exact_markdown_and_minimal_lineage() -> None:
+    project_id = f"agentgraph-test-{uuid4().hex}"
+    conversation_id = f"conversation-{uuid4().hex}"
+    input_markdown = "  # Exact handoff\n\nKeep **all** spacing.\n\n"
+    result_markdown = "# Exact result\n\nReturned unchanged.\n"
+    conn = connect_postgres(autocommit=False)
+    try:
+        first = create_context(
+            project_id=project_id,
+            deck_id="deck_builder",
+            conversation_id=conversation_id,
+            sender_agent_id="card_main_chat",
+            receiving_agent_id="card_local_coder",
+            markdown=input_markdown,
+            producing_run_id="parent-run-1",
+            agent_validator=lambda *_args: None,
+            connection=conn,
+        )
+        first_read = read_context(first["contextId"], project_id, connection=conn)
+        assert first_read["markdown"] == input_markdown
+        assert first_read["senderAgentId"] == "card_main_chat"
+        assert first_read["receivingAgentId"] == "card_local_coder"
+        assert first_read["producingRunId"] == "parent-run-1"
+        assert first_read["priorContextId"] is None
 
-    def embed(self, texts, *, kind="text"):
-        rows = []
-        for text in texts:
-            raw = hashlib.sha384(text.encode("utf-8")).digest()
-            vector = np.frombuffer(raw, dtype=np.uint8).astype(np.float32)
-            vector = np.resize(vector, self.dim)
-            vector /= np.linalg.norm(vector)
-            rows.append(vector)
-        return np.vstack(rows)
+        second = create_context(
+            project_id=project_id,
+            deck_id="deck_builder",
+            conversation_id=conversation_id,
+            sender_agent_id="card_main_chat",
+            receiving_agent_id="card_local_coder",
+            markdown="# Follow-up",
+            prior_context_id=first["contextId"],
+            agent_validator=lambda *_args: None,
+            connection=conn,
+        )
+        second_read = read_context(second["contextId"], project_id, connection=conn)
+        assert second_read["priorContextId"] == first["contextId"]
+
+        stored = record_result(
+            context_id=second["contextId"],
+            project_id=project_id,
+            result_id="result-1",
+            run_id="run-1",
+            status="completed",
+            markdown=result_markdown,
+            result_ref="coder-workspace/runs/result-1/transcript.txt",
+            connection=conn,
+        )
+        assert stored["created"] is True
+        assert stored["markdown"] == result_markdown
+
+        duplicate = record_result(
+            context_id=second["contextId"],
+            project_id=project_id,
+            result_id="result-1",
+            run_id="run-1",
+            status="completed",
+            markdown=result_markdown,
+            result_ref="coder-workspace/runs/result-1/transcript.txt",
+            connection=conn,
+        )
+        assert duplicate["created"] is False
+
+        with conn.cursor() as cursor:
+            _prepare(cursor)
+            cursor.execute(
+                """
+                SELECT *
+                FROM cypher(
+                  'agentgraph',
+                  $$
+                  MATCH (context:AgentContext)-[produced:PRODUCED]->(result:Result)
+                  WHERE context.contextId = $contextId
+                  RETURN properties(result), count(produced)
+                  $$,
+                  %s::agtype
+                ) AS (result_properties agtype, produced_count agtype)
+                """,
+                (
+                    json.dumps(
+                        {"contextId": second["contextId"]},
+                        separators=(",", ":"),
+                    ),
+                ),
+            )
+            rows = cursor.fetchall()
+        assert len(rows) == 1
+        properties = json.loads(str(rows[0][0]))
+        assert properties["markdown"] == result_markdown
+        assert properties["contextId"] == second["contextId"]
+        assert json.loads(str(rows[0][1])) == 1
+    finally:
+        conn.rollback()
+        conn.close()
 
 
-def graph(tmp_path) -> ThinkGraphEngraphis:
-    return ThinkGraphEngraphis(
-        tmp_path / "agentgraph-engraphis.sqlite",
-        embedder=LocalTestEmbedder(),
-    )
+def test_validation_rejects_invalid_identity_before_age_access() -> None:
+    with pytest.raises(AgentGraphError, match="agentgraph_sender_agent_id_invalid"):
+        create_context(
+            project_id="project-1",
+            deck_id="deck_builder",
+            conversation_id="main",
+            sender_agent_id="not an id",
+            receiving_agent_id="card_local_coder",
+            markdown="# Handoff",
+            agent_validator=lambda *_args: None,
+        )
 
 
-def graph_views(*_args) -> list[dict]:
-    return [
-        {
-            "viewId": CODER_VIEW_ID,
-            "authority": "thinkgraph",
-            "query": "AgentGraph context",
-            "rootCanonicalNodeIds": ["decision:agentgraph"],
-        }
-    ]
+def test_mcp_surface_accepts_markdown_and_has_no_reference_expander() -> None:
+    from app import mcp_host
 
-
-def _real_proposal() -> dict:
-    return {
-        "promptRef": "test:agentgraph-live-roundtrip",
-        "items": [
-            {
-                "id": "finding",
-                "kind": "finding",
-                "text": "AgentGraph stores compact cross-graph importance.",
-            },
-            {
-                "id": "decision",
-                "kind": "decision",
-                "text": "Keep source graph records canonical.",
-            },
-        ],
-        "references": [
-            {"id": "source", "authority": "thinkgraph", "canonicalId": CODER_VIEW_ID},
-        ],
-        "relationships": [
-            {"source": "finding", "target": "decision", "type": "SUPPORTS"},
-            {"source": "decision", "target": "source", "type": "USES"},
-        ],
+    tools = {tool.name: tool for tool in asyncio.run(mcp_host.list_tools())}
+    assert "agentgraph.expand_reference" not in tools
+    create_schema = tools["agentgraph.create_context"].inputSchema
+    assert set(create_schema["required"]) == {
+        "projectId",
+        "deckId",
+        "conversationId",
+        "senderAgentId",
+        "receivingAgentId",
+        "markdown",
     }
-
-
-def test_validation_rejects_non_scalar_item_properties_before_engraphis_access() -> None:
-    proposal = _real_proposal()
-    proposal["items"][0]["properties"] = {"nested": {"not": "scalar"}}
-    with pytest.raises(AgentGraphError, match="item_properties_scalar_required"):
-        create_context(
-            project_id=PROJECT_ID,
-            deck_id="deck_builder",
-            conversation_id=CONVERSATION_ID,
-            receiving_agent_id="card_local_coder",
-            proposal=proposal,
-            receiver_validator=lambda *_args: None,
-            graph_view_reader=lambda *_args: [],
-        )
-
-
-def test_validation_rejects_missing_canonical_graph_view_before_engraphis_access() -> None:
-    with pytest.raises(
-        AgentGraphError,
-        match=r"agentgraph_reference_not_found: authority=thinkgraph canonical_id=thinkgraph:coder:kgseed-01",
-    ):
-        create_context(
-            project_id=PROJECT_ID,
-            deck_id="deck_builder",
-            conversation_id=CONVERSATION_ID,
-            receiving_agent_id="card_local_coder",
-            proposal=_real_proposal(),
-            receiver_validator=lambda *_args: None,
-            graph_view_reader=lambda *_args: [],
-        )
+    assert "context" not in create_schema["properties"]
+    assert "references" not in create_schema["properties"]
 
 
 def test_run_coder_subagent_transports_existing_context_id_unchanged(monkeypatch) -> None:
@@ -139,70 +176,3 @@ def test_run_coder_subagent_transports_existing_context_id_unchanged(monkeypatch
     assert json.loads(result[0].text)["ok"] is True
     assert "agentContext" not in captured["bridge"]["payload"]
     assert captured["bridge"]["payload"]["agentContextId"] == "agentctx:test"
-
-
-def test_engraphis_context_roundtrip_reference_expansion_and_result_lineage(tmp_path) -> None:
-    adapter = graph(tmp_path)
-    created = create_context(
-        project_id=PROJECT_ID,
-        deck_id="deck_builder",
-        conversation_id=CONVERSATION_ID,
-        receiving_agent_id="card_local_coder",
-        proposal=_real_proposal(),
-        graph=adapter,
-        receiver_validator=lambda *_args: None,
-        graph_view_reader=graph_views,
-    )
-    context = read_context(
-        created["contextId"],
-        PROJECT_ID,
-        graph=adapter,
-        graph_view_reader=graph_views,
-    )
-    assert context["receivingAgentId"] == "card_local_coder"
-    assert "[:SUPPORTS]" in context["literateQueryView"]
-    assert "[:USES]" in context["literateQueryView"]
-    assert f"canonical view = {CODER_VIEW_ID}" in context["literateQueryView"]
-    assert "engraphis_recall" in context["literateQueryView"]
-
-    expanded = asyncio.run(
-        expand_reference(
-            created["referenceIds"][0],
-            PROJECT_ID,
-            graph=adapter,
-            graph_view_reader=graph_views,
-        )
-    )
-    assert expanded["delegatedTool"] == "engraphis_recall"
-    assert expanded["result"]["engine"] == "engraphis-v2"
-    assert expanded["result"]["projectId"] == PROJECT_ID
-    assert expanded["result"]["query"] == "AgentGraph context"
-    assert expanded["result"]["count"] > 0
-
-    record_result(
-        context_id=created["contextId"],
-        project_id=PROJECT_ID,
-        result_id="test-agentgraph-result",
-        run_id="test-agentgraph-run",
-        status="completed",
-        graph=adapter,
-    )
-    linked = read_context(
-        created["contextId"],
-        PROJECT_ID,
-        graph=adapter,
-        graph_view_reader=graph_views,
-    )
-    assert linked["results"][0]["result_id"] == "test-agentgraph-result"
-
-    workspace_id = adapter.store.get_or_create_workspace(PROJECT_ID)
-    repo_id = adapter.store.get_or_create_repo(workspace_id, "thinkgraph")
-    records = adapter.store.list_memories(
-        SearchFilter(workspace_id=workspace_id, repo_id=repo_id)
-    )
-    relations = {
-        str(link["relation"])
-        for record in records
-        for link in adapter.store.get_links(record.id)
-    }
-    assert {"HAS_ITEM", "HAS_REFERENCE", "SUPPORTS", "USES", "PRODUCED"} <= relations

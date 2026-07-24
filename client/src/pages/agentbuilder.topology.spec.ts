@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import path from 'node:path';
 
 import { INITIAL_DECK } from '../features/agentbuilder/deck/deckSeed';
 import {
@@ -76,10 +77,34 @@ describe('Main / Hermes / graph authority topology', () => {
     const mainTools = byId.get('card_main_chat')?.runtimeOptions?.tools ?? [];
     const hermesTools = byId.get('card_hermes_steward')?.runtimeOptions?.tools ?? [];
     const searchTools = byId.get('card_research_agent')?.runtimeOptions?.tools ?? [];
-    expect(mainTools).toEqual(expect.arrayContaining(['thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query', 'codegraph.search']));
+    expect(mainTools).toEqual(expect.arrayContaining(['thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query', 'canvas.inspect']));
     expect(mainTools).not.toEqual(expect.arrayContaining(['knowgraph.ingest', 'web_search']));
     expect(hermesTools).toEqual(expect.arrayContaining(['thinkgraph.get_graph_slice', 'knowgraph.ingest', 'write_mag_one_instructions', 'card.run_assistant_agent']));
     expect(hermesTools).not.toEqual(expect.arrayContaining(['thinkgraph.submit_update', 'web_search', 'run_mag_one', 'run_coder_subagent']));
     expect(searchTools).toEqual(['web_search']);
   });
+
+  it('assigns Main and Hermes only tools exposed by the real Harness MCP catalog', async () => {
+    process.env.LIQUIDAITY_PY_MCP_PYTHON = path.resolve(
+      process.cwd(),
+      '../apps/python-models/.venv/Scripts/python.exe',
+    );
+    process.env.LIQUIDAITY_PY_MCP_HOST = path.resolve(
+      process.cwd(),
+      '../apps/python-models/app/mcp_host.py',
+    );
+    const { listPythonAgentMcpTools } = await import(
+      '../../../apps/backend/src/services/mcp/pythonAgentMcpClient'
+    );
+    const catalog = new Set(await listPythonAgentMcpTools());
+    const cards = INITIAL_DECK.nodes.filter((node) =>
+      node.runtimeBinding === 'main_chat' || node.runtimeBinding === 'hermes_steward'
+    );
+    const missing = cards.flatMap((card) =>
+      (card.runtimeOptions?.tools ?? [])
+        .filter((tool) => !catalog.has(tool))
+        .map((tool) => `${card.runtimeBinding}:${tool}`)
+    );
+    expect(missing).toEqual([]);
+  }, 30_000);
 });

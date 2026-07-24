@@ -1,4 +1,4 @@
--- AgentGraph is the Apache AGE authority for compact cross-graph context only.
+-- AgentGraph is the Apache AGE authority for exact Markdown agent handoffs and result lineage.
 -- Apply with the same Postgres connection used by Python rails and the backend.
 
 BEGIN;

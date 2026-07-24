@@ -15,6 +15,7 @@ import {
   buildHarnessRuntimeContext,
   decodeGrpcProgressEvent,
   deriveSessionId,
+  resolveExternalMainRuntimeContext,
   resolveCardDoorwayDefinitions,
   resolveHarnessTimeoutDeadline,
   resolveMainChatRuntimeConfig,
@@ -43,6 +44,7 @@ const doc = (nodes: any[], edges: any[]) => ({ deck: { id: 'deck_builder', nodes
 describe('native Main / Hermes / Search doorways', () => {
   beforeEach(() => {
     deckMocks.getDeckDocument.mockReset();
+    mcpMocks.listPythonAgentMcpTools.mockReset();
     mcpMocks.listPythonAgentMcpTools.mockResolvedValue([
       'thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query',
       'knowgraph.ingest', 'engraphis_recall', 'hermes.memory_write',
@@ -139,6 +141,51 @@ describe('native Main / Hermes / Search doorways', () => {
     // the parent's native schemas before serialization.
     expect(config?.parentAllowedNativeTools).toEqual(['Agent']);
     expect(config?.doorwayDefinitions.map((entry: any) => entry.card_id)).toEqual([hermes.id]);
+  });
+
+  it('resolves external Main context after authentication without opening the stdio catalog', async () => {
+    deckMocks.getDeckDocument.mockResolvedValue(doc(
+      [main, hermes, search],
+      [flow(main.id, hermes.id), flow(hermes.id, search.id)],
+    ));
+    const context = await resolveExternalMainRuntimeContext(
+      deriveSessionId('p1', 'external-mcp:grant-1'),
+      'chat',
+    );
+    expect(context).toEqual({
+      mainCardId: main.id,
+      instructions: 'Main prompt',
+      savedMainToolGrants: [
+        'thinkgraph.get_graph_slice',
+        'thinkgraph.submit_update',
+        'knowgraph.query',
+        'engraphis_recall',
+      ],
+      availableActionPaths: [
+        { kind: 'tool', grant: 'thinkgraph.get_graph_slice' },
+        { kind: 'tool', grant: 'thinkgraph.submit_update' },
+        { kind: 'tool', grant: 'knowgraph.query' },
+        { kind: 'tool', grant: 'engraphis_recall' },
+        { kind: 'agent', cardId: hermes.id, runtimeBinding: 'hermes_steward' },
+      ],
+    });
+    expect(mcpMocks.listPythonAgentMcpTools).not.toHaveBeenCalled();
+  });
+
+  it('preserves an unknown saved grant as an explicit runtime configuration error', async () => {
+    deckMocks.getDeckDocument.mockResolvedValue(doc(
+      [{
+        ...main,
+        runtimeOptions: {
+          ...main.runtimeOptions,
+          tools: ['codegraph.status'],
+        },
+      }],
+      [],
+    ));
+    await expect(
+      resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat'),
+    ).rejects.toThrow('harness_mcp_tool_unknown:codegraph.status');
   });
 
   it('adds server-minted project context to Hermes without requiring selected nodes', async () => {
