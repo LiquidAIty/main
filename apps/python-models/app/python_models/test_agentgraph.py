@@ -146,33 +146,3 @@ def test_mcp_surface_accepts_markdown_and_has_no_reference_expander() -> None:
     }
     assert "context" not in create_schema["properties"]
     assert "references" not in create_schema["properties"]
-
-
-def test_run_coder_subagent_transports_existing_context_id_unchanged(monkeypatch) -> None:
-    from app import mcp_host
-
-    captured: dict = {}
-
-    async def fake_bridge(path: str, payload: dict):
-        captured["bridge"] = {"path": path, "payload": payload}
-        return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
-
-    monkeypatch.setattr(mcp_host, "_bridge", fake_bridge)
-    result = asyncio.run(
-        mcp_host.call_tool(
-            "run_coder_subagent",
-            {
-                "parentRunId": "parent-1",
-                "projectId": "project-1",
-                "deckId": "deck_builder",
-                "conversationId": "main",
-                "cardId": "card_local_coder",
-                "adapter": "codex",
-                "approvedPrompt": "Inspect the referenced code.",
-                "agentContextId": "agentctx:test",
-            },
-        )
-    )
-    assert json.loads(result[0].text)["ok"] is True
-    assert "agentContext" not in captured["bridge"]["payload"]
-    assert captured["bridge"]["payload"]["agentContextId"] == "agentctx:test"

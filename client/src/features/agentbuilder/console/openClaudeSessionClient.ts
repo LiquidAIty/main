@@ -41,7 +41,7 @@ export class SessionStreamError extends Error {
 
 /** Which Harness surface the turn runs in. Chat mode exposes only the
  * ThinkGraph doorway; canvas (Agent Builder / Edit) mode exposes every eligible
- * saved card as a direct Single Assist doorway. Explicit — never inferred. */
+ * saved card as a direct saved-card doorway. Explicit — never inferred. */
 type HarnessMode = 'chat' | 'canvas';
 
 /** Optional, UI-neutral ThinkGraph focus hints. The backend always mints the

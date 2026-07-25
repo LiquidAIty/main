@@ -108,7 +108,6 @@ class ProjectSession(BaseModel):
     route: str
     orchestrator: Literal[
         "magentic_one",
-        "graph_flow",
         "assistant_agent",
     ] = "magentic_one"
     modelProvider: RequiredRuntimeString
@@ -119,23 +118,6 @@ class ProjectSession(BaseModel):
     _no_default_models = field_validator("modelProvider", "modelKey", "providerModelId")(
         _reject_default_model_value
     )
-
-
-class CallableHeadRef(BaseModel):
-    cardId: str
-    title: str
-    runtimeType: Literal["assistant_agent", "graph_flow"]
-
-
-class DeckEdgeRef(BaseModel):
-    source: str
-    target: str
-
-
-class GraphFlowSpec(BaseModel):
-    graphCardId: str
-    stepCardIds: list[str] = Field(default_factory=list)
-    edges: list[DeckEdgeRef] = Field(default_factory=list)
 
 
 class CardFanOutConfig(BaseModel):
@@ -195,14 +177,12 @@ class CardRuntimeConfig(BaseModel):
     title: str
     runtimeType: Literal[
         "magentic_one",
-        "graph_flow",
         "assistant_agent",
     ]
     prompt: str = ""
     runtimeOptions: dict = Field(default_factory=dict)
     assistant: dict | None = None
     magentic: dict | None = None
-    graphFlow: dict | None = None
     runtimeScope: dict | None = None
     graph: CardRuntimeGraph | None = None
     participants: list["CardRuntimeParticipant"] = Field(default_factory=list)
@@ -210,7 +190,7 @@ class CardRuntimeConfig(BaseModel):
 
 class CardRuntimePrivateParticipant(BaseModel):
     cardId: str
-    runtimeType: Literal["assistant_agent", "graph_flow", "research_agent", "planner_agent"]
+    runtimeType: Literal["assistant_agent", "research_agent", "planner_agent"]
     runtimeBinding: str | None = None
     prompt: str = ""
     provider: RequiredRuntimeString
@@ -226,7 +206,7 @@ class CardRuntimePrivateParticipant(BaseModel):
 class CardRuntimeParticipant(BaseModel):
     cardId: str
     title: str
-    runtimeType: Literal["assistant_agent", "graph_flow"]
+    runtimeType: Literal["assistant_agent"]
     runtimeBinding: str | None = None
     tools: list[str] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
@@ -265,31 +245,6 @@ class WorkspaceObjectContext(BaseModel):
     activeMagenticParticipants: list[str] = Field(default_factory=list)
     availableCanvasAgents: list[str] = Field(default_factory=list)
     excludedAgents: list[str] = Field(default_factory=list)
-
-
-class SearchWorkerPlan(BaseModel):
-    id: str
-    label: str
-    angle: str = ""
-    search_query: str = ""
-    source_targets: list[str] = Field(default_factory=list)
-    expected_evidence: str = ""
-    disconfirming_focus: str = ""
-    priority: Literal["low", "medium", "high"] = "medium"
-    status: Literal["draft", "approved", "running", "complete", "failed"] = "draft"
-
-
-class SearchSwarmPlan(BaseModel):
-    status: Literal["draft", "ready_for_approval", "approved", "running", "complete"] = "draft"
-    research_question: str = ""
-    depth_label: Literal["quick_scan", "standard", "deep_dive", "custom"] = "standard"
-    swarm_count: int = 0
-    estimated_cost_level: Literal["low", "medium", "high", "custom"] = "low"
-    search_workers: list[SearchWorkerPlan] = Field(default_factory=list)
-    coverage: dict[str, bool] = Field(default_factory=dict)
-    missing_coverage: list[str] = Field(default_factory=list)
-    approval_required: bool = True
-    approved: bool = False
 
 
 class AutoGenMessage(BaseModel):
@@ -361,30 +316,12 @@ class PlanContext(BaseModel):
     sources: list[str] = Field(default_factory=list)
     deltaSummary: str = ""
     status: Literal["draft", "grounded", "revised"] = "draft"
-    searchSwarmPlan: SearchSwarmPlan | None = None
     # Raw AutoGen-derived state only. The app never constructs these from parsed
     # text; they are populated only when AutoGen itself returns structured output
     # (e.g. the orchestrator's Progress Ledger JSON). Otherwise they stay None and
     # the real AutoGen messages/events carry the Task Ledger text.
     task_ledger: dict[str, Any] | None = None
     progress_ledger: dict[str, Any] | None = None
-
-
-class ResearchPack(BaseModel):
-    status: Literal["shaping", "research_pack_ready"] = "shaping"
-    research_question: str = ""
-    entities: list[str] = Field(default_factory=list)
-    relationships: list[str] = Field(default_factory=list)
-    claims: list[str] = Field(default_factory=list)
-    assumptions: list[str] = Field(default_factory=list)
-    risks: list[str] = Field(default_factory=list)
-    counterarguments: list[str] = Field(default_factory=list)
-    evidence_needed: list[str] = Field(default_factory=list)
-    disconfirming_questions: list[str] = Field(default_factory=list)
-    search_terms: list[str] = Field(default_factory=list)
-    source_targets: list[str] = Field(default_factory=list)
-    missing: list[str] = Field(default_factory=list)
-    why_ready_or_not: str = ""
 
 
 class ThinkGraphContext(BaseModel):
@@ -452,6 +389,8 @@ class ResultFolder(BaseModel):
 class ContextPack(BaseModel):
     session: ProjectSession
     userText: str
+    conversationId: str = ""
+    agentContextId: str | None = None
     priorAssistantText: str = ""
     systemPrompt: str = ""
     blackboard: BlackboardSnapshot = Field(default_factory=BlackboardSnapshot)

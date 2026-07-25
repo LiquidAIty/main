@@ -378,13 +378,6 @@ async def list_tools() -> list[Tool]:
                         "items": {"type": "string"},
                         "description": "Persisted Graph View ids (canonical, e.g. codegraph:…) to attach. IDs only — the server resolves the persisted views and renders their compact context; never paste view content.",
                     },
-                    "agentContextId": {
-                        "type": "string",
-                        "description": (
-                            "Existing canonical AgentGraph context id. Create and review the "
-                            "context independently; this tool transports the id unchanged."
-                        ),
-                    },
                 },
                 "required": ["parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt"],
             },
@@ -903,7 +896,9 @@ async def list_tools() -> list[Tool]:
                 "server injects projectId/correlationId/conversationId; the model supplies the "
                 "bound cardId plus the task input only. conversationId is the real live "
                 "conversation this run belongs to, when one exists — card-scoped authority is "
-                "minted server-side from it; never invent one."
+                "minted server-side from it; never invent one. agentContextId may reference one "
+                "existing AgentGraph handoff addressed to this card; PostgreSQL/AGE resolves and "
+                "tracks it inside the Python run."
             ),
             inputSchema={
                 "type": "object",
@@ -913,6 +908,13 @@ async def list_tools() -> list[Tool]:
                     "cardId": {"type": "string"},
                     "correlationId": {"type": "string"},
                     "conversationId": {"type": "string"},
+                    "agentContextId": {
+                        "type": "string",
+                        "description": (
+                            "Existing canonical AgentGraph context id addressed to this card. "
+                            "The tool transports the id unchanged; Python resolves the stored Markdown."
+                        ),
+                    },
                     "input": {"type": "string"},
                 },
                 "required": ["cardId", "input"],
@@ -1025,7 +1027,7 @@ def _external_tool_catalog(tools: list[Tool], context: dict[str, Any]) -> list[T
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
     "main.context": set(),
-    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt", "authority", "graphViewIds", "agentContextId"},
+    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt", "authority", "graphViewIds"},
     "agentgraph.create_context": {
         "projectId",
         "deckId",
@@ -1060,7 +1062,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
     "card.assign_runtime_skill": {"projectId", "deckId", "cardId", "skillId", "skillVersion", "op"},
     "card.assign_data_binding": {"projectId", "deckId", "cardId", "bindingType", "bindingRef", "op"},
-    "card.run_assistant_agent": {"projectId", "deckId", "cardId", "correlationId", "conversationId", "input"},
+    "card.run_assistant_agent": {"projectId", "deckId", "cardId", "correlationId", "conversationId", "agentContextId", "input"},
     "thinkgraph.get_graph_slice": {"projectId", "limit"},
     "web_search": {"query", "max_results"},
     "worldsignals.capabilities": set(),

@@ -1,24 +1,13 @@
-import { Router, type Response } from 'express';
+import { Router } from 'express';
 import {
   deleteDeckDocument,
   getDeckDocument,
   getV3ProjectBlob,
   saveDeckDocument,
-  saveDeckRun,
 } from '../decks/store';
-import { isSingleAssistRunDocument, runSingleAssistCardAsDeckRun } from '../cards/runtime';
-import type {
-  AgentTemplate,
-  DeckDocument,
-  DeckRun,
-  DeckRunResponse,
-} from '../types';
+import type { DeckDocument } from '../types';
 
 const router = Router();
-
-function writeStreamChunk(res: Response, chunk: unknown) {
-  res.write(`${JSON.stringify(chunk)}\n`);
-}
 
 router.get('/:projectId/decks', async (req, res) => {
   try {
@@ -27,7 +16,6 @@ router.get('/:projectId/decks', async (req, res) => {
       id: deckId,
       name: blob.decks[deckId]?.name || deckId,
       meta: blob.meta.decks[deckId] || null,
-      latestRunId: blob.deckRuns[deckId]?.[0]?.id || null,
     }));
     return res.json({ ok: true, decks });
   } catch (err: any) {
@@ -114,92 +102,6 @@ router.delete('/:projectId/decks/:deckId', async (req, res) => {
   } catch (err: any) {
     const status = err?.message === 'project_not_found' ? 404 : 500;
     return res.status(status).json({ ok: false, error: err?.message || 'deck_delete_failed' });
-  }
-});
-
-router.post('/:projectId/decks/:deckId/run', async (req, res) => {
-  const deckId = String(req.params.deckId || req.body?.deckId || req.body?.document?.id || '').trim();
-  const templates = Array.isArray(req.body?.templates)
-    ? (req.body.templates as AgentTemplate[])
-    : [];
-  const useStream =
-    String(req.query.stream || req.body?.stream || '').trim() === '1' ||
-    req.body?.stream === true;
-  if (!deckId) {
-    return res.status(400).json({ ok: false, error: 'deck_id_required' });
-  }
-  if (templates.length === 0) {
-    return res.status(400).json({ ok: false, error: 'templates_required' });
-  }
-
-  try {
-    let deck: DeckDocument | null = null;
-    let deckMeta: {
-      deckRevision: string | null;
-      deckSavedAt: string | null;
-    } | null = null;
-
-    if (req.body?.document && typeof req.body.document === 'object') {
-      const loaded = await getDeckDocument(req.params.projectId, deckId);
-      deck = req.body.document as DeckDocument;
-      deckMeta = loaded.meta;
-    } else {
-      const loaded = await getDeckDocument(req.params.projectId, deckId);
-      deck = loaded.deck;
-      deckMeta = loaded.meta;
-    }
-
-    if (!deck) {
-      return res.status(404).json({ ok: false, error: 'deck_not_found' });
-    }
-    if (useStream) {
-      res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-cache, no-transform');
-      res.setHeader('Connection', 'keep-alive');
-      res.flushHeaders?.();
-    }
-
-    // The deck-run route executes Canvas Single Assist ONLY: a posted selection
-    // with no Mag One orchestrator and exactly one top-level card runs through the
-    // ONE configured-card executor (runConfiguredCard). A full-deck / Mag One team
-    // run is NOT executed here — the one team-run entrypoint is run_mag_one
-    // (a Harness-authored Markdown prompt → native Mag One).
-    const singleAssist = isSingleAssistRunDocument(deck);
-    if (!singleAssist.ok) {
-      const error = 'deck_team_run_use_chat_mag_one';
-      if (useStream) {
-        writeStreamChunk(res, { kind: 'error', error });
-        return res.end();
-      }
-      return res.status(400).json({ ok: false, error } satisfies DeckRunResponse);
-    }
-    const run = (await runSingleAssistCardAsDeckRun({
-      projectId: req.params.projectId,
-      deckId,
-      cardId: singleAssist.cardId,
-      input: String(req.body?.input || ''),
-    })) as unknown as DeckRun;
-
-    const persistedRun = await saveDeckRun(req.params.projectId, deckId, run);
-    const payload: DeckRunResponse = {
-      ok: true,
-      deck,
-      run,
-      meta: persistedRun.meta || deckMeta,
-    };
-    if (useStream) {
-      writeStreamChunk(res, { kind: 'result', ...payload });
-      return res.end();
-    }
-    return res.json(payload);
-  } catch (err: any) {
-    const status = err?.message === 'project_not_found' ? 404 : 500;
-    const error = err?.message || 'deck_run_failed';
-    if (useStream) {
-      writeStreamChunk(res, { kind: 'error', error });
-      return res.status(status).end();
-    }
-    return res.status(status).json({ ok: false, error } satisfies DeckRunResponse);
   }
 });
 

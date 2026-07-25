@@ -22,6 +22,7 @@ from typing import Any
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.teams import MagenticOneGroupChat
 
+from app.python_models import agentgraph as ag
 from app.python_models import job_folder as jf
 from app.python_models import runtime_profile_executor as rpe
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
@@ -352,6 +353,35 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     runtime_options = getattr(context.cardRuntime, "runtimeOptions", None) or {}
     single = context.cardRuntime.participants[0]
     selected_tools = [_as_text(t) for t in (single.tools or []) if _as_text(t)]
+    agent_context_id = _as_text(context.agentContextId)
+    agent_graph_markdown = ""
+    if agent_context_id:
+        try:
+            stored_context = await asyncio.to_thread(
+                ag.read_context,
+                agent_context_id,
+                context.session.projectId,
+            )
+        except Exception as err:
+            return _fail(
+                f"agentgraph_context_read_failed: {err}",
+                "agentgraph_context_read_failed",
+            )
+        if (
+            _as_text(stored_context.get("projectId")) != context.session.projectId
+            or _as_text(stored_context.get("conversationId")) != _as_text(context.conversationId)
+            or _as_text(stored_context.get("receivingAgentId")) != single.cardId
+        ):
+            return _fail(
+                f"agentgraph_context_scope_mismatch: {agent_context_id}",
+                "agentgraph_context_scope_mismatch",
+            )
+        agent_graph_markdown = str(stored_context.get("markdown") or "")
+        if not agent_graph_markdown.strip():
+            return _fail(
+                f"agentgraph_context_empty: {agent_context_id}",
+                "agentgraph_context_empty",
+            )
 
     # Deterministic assigned-profile resolution from the card's PERSISTED runtime
     # binding (never model judgment, never runtime-scope sniffing). No assigned
@@ -400,14 +430,41 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         patch_events_token = THINKGRAPH_PATCH_EVENTS.set([])
 
     started = time.monotonic()
+
+    async def _record_agentgraph_result(status: str, markdown: str | None) -> str | None:
+        if not agent_context_id:
+            return None
+        try:
+            await asyncio.to_thread(
+                lambda: ag.record_result(
+                    context_id=agent_context_id,
+                    project_id=context.session.projectId,
+                    result_id=f"result:{context.session.turnId}",
+                    run_id=context.session.turnId,
+                    status=status,
+                    markdown=markdown,
+                    result_ref=(
+                        f"{result_folder.returns_rel}/"
+                        if result_folder is not None
+                        else None
+                    ),
+                )
+            )
+            return None
+        except Exception as err:
+            return f"agentgraph_result_link_failed: {err}"
+
     try:
         participants = _build_participants(context, client)
         # The guard guarantees exactly one real configured participant, so the
         # default-"Assist" branch of _build_participants is unreachable here.
         agent = participants[0]
-        task = _as_text(context.userText)
+        task_parts = [_as_text(context.userText)]
+        if agent_graph_markdown:
+            task_parts.append(agent_graph_markdown)
         if plan is not None:
-            task = f"{task}\n\n{plan.packet}"
+            task_parts.append(plan.packet)
+        task = "\n\n".join(task_parts)
         result = await agent.run(task=task)
 
         final_text = _final_text_from_result(result)
@@ -440,6 +497,9 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                 return _fail(f"runtime_post_hook_failed: {err}", "post_hook_failed")
 
             if verdict.outcome == "invalid":
+                link_error = await _record_agentgraph_result("failed", final_text)
+                if link_error:
+                    return _fail(link_error, "agentgraph_result_link_failed")
                 return _fail(contract.invalid_error, "invalid_terminal_result")
             if verdict.record == "patched" and not final_text:
                 final_text = json.dumps({"outcome": "patch", "storedRefs": verdict.stored_refs})
@@ -473,6 +533,9 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         )
 
         if not final_text:
+            link_error = await _record_agentgraph_result("failed", None)
+            if link_error:
+                return _fail(link_error, "agentgraph_result_link_failed")
             return OrchestratorRunResponse(
                 ok=False,
                 session=context.session,
@@ -485,6 +548,10 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                 **_returns_fields(),
             )
 
+        link_error = await _record_agentgraph_result("completed", final_text)
+        if link_error:
+            return _fail(link_error, "agentgraph_result_link_failed")
+
         return OrchestratorRunResponse(
             ok=True,
             session=context.session,
@@ -496,14 +563,18 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             **_returns_fields(),
         )
     except Exception as err:  # honest runtime failure — no retry, no fallback
+        link_error = await _record_agentgraph_result("failed", str(err))
         return OrchestratorRunResponse(
             ok=False,
             session=context.session,
             finalResponseText="",
-            error=f"single_card_run_failed: {err}",
+            error=link_error or f"single_card_run_failed: {err}",
             plan=context.plan,
             thinkGraph=context.thinkGraph,
-            knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary="run_failed"),
+            knowGraph=KnowGraphUpdateReport(
+                sourceAgent="single_card",
+                summary="agentgraph_result_link_failed" if link_error else "run_failed",
+            ),
         )
     finally:
         if return_root_token is not None:

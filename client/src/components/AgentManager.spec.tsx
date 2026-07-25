@@ -61,9 +61,6 @@ function renderManager(options?: {
         activeTab: options?.activeTab || 'Runtime',
         localConfig: options?.localConfig || createLocalConfig('assistant_agent'),
         onSaveLocalConfig,
-        promptTestInput: '',
-        onChangePromptTestInput: vi.fn(),
-        onRunPromptTest: vi.fn(),
       }),
     );
   });
@@ -93,9 +90,6 @@ describe('AgentManager runtime editor', () => {
         onChangeCardName: setCardName,
         onChangeCardSubtext: setCardSubtext,
         onSaveLocalConfig: vi.fn(),
-        promptTestInput: '',
-        onChangePromptTestInput: vi.fn(),
-        onRunPromptTest: vi.fn(),
       });
     }
 
@@ -270,14 +264,6 @@ describe('AgentManager runtime editor', () => {
       'Max Stalls',
       'Final Answer Prompt',
     ]);
-    expect(getRuntimeTypeVisibleFieldLabels('graph_flow')).toEqual([
-      'Runtime Type',
-      'Provider',
-      'Model',
-      'Temperature',
-      'Max Tokens',
-      'Consolidate Result',
-    ]);
   });
 
   it('renders runtime-specific fields without surfacing workflow ownership in the normal Assist editor', () => {
@@ -373,30 +359,6 @@ describe('AgentManager runtime editor', () => {
         },
       }),
     );
-  });
-
-  it('keeps legacy graph_flow available only as a compatibility runtime when already present', () => {
-    const { container } = renderManager({
-      activeTab: 'Runtime',
-      localConfig: createLocalConfig('graph_flow'),
-    });
-
-    const runtimeType = container.querySelector('[aria-label="Runtime Type"]') as HTMLSelectElement;
-    const optionValues = Array.from(runtimeType.options).map((option) => ({
-      value: option.value,
-      disabled: option.disabled,
-      label: option.textContent?.trim(),
-    }));
-
-    // Current active runtime set: Assist, Harness (local_coder), Magentic,
-    // and graph_flow as an always-available compatibility runtime.
-    expect(optionValues).toEqual([
-      { value: 'assistant_agent', disabled: false, label: 'Assist' },
-      { value: 'local_coder', disabled: false, label: 'Coder' },
-      { value: 'magentic_one', disabled: false, label: 'Magentic' },
-      { value: 'graph_flow', disabled: false, label: 'Legacy Workflow (compat)' },
-    ]);
-    expect(container.textContent).toContain('legacy compatibility runtime');
   });
 
   it('shows advanced runtime JSON for legacy team runtimes and preserves it on save', () => {

@@ -52,11 +52,9 @@ import { setLatestCoderAuditView, getLatestCoderAuditView } from '../coder/execu
 import type { CodeGraphViewContractResult } from '../contracts/coderContracts';
 import { completeGraphViews, parseGraphViews, type GraphView } from '../contracts/graphView';
 import {
-  fetchAgentGraphContext,
   fetchDoorwayContext,
   fetchUnifiedModelContext,
   persistGraphViewOnPython,
-  recordAgentGraphResult,
 } from '../services/autogen/autogenOrchestratorClient';
 import {
   parseGraphObjectRefs,
@@ -209,33 +207,6 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
     if (body.graphViews !== undefined) {
       return res.status(400).json({ ok: false, error: 'caller_graph_views_removed: pass graphViewIds — the server resolves persisted views' });
     }
-    if (body.agentContext !== undefined) {
-      return res.status(400).json({
-        ok: false,
-        error: 'caller_agent_context_removed: Python AgentGraph must validate and persist the proposal before transport',
-      });
-    }
-    const agentContextId = String(body.agentContextId || '').trim();
-    let agentGraphContext = '';
-    if (agentContextId) {
-      const context = (await fetchAgentGraphContext({ projectId, contextId: agentContextId })) as {
-        projectId?: unknown;
-        conversationId?: unknown;
-        receivingAgentId?: unknown;
-        markdown?: unknown;
-      };
-      if (
-        String(context?.projectId || '') !== projectId
-        || String(context?.conversationId || '') !== conversationId
-        || String(context?.receivingAgentId || '') !== cardId
-      ) {
-        return res.status(400).json({ ok: false, error: `agentgraph_context_scope_mismatch: ${agentContextId}` });
-      }
-      agentGraphContext = String(context?.markdown ?? '');
-      if (!agentGraphContext.trim()) {
-        return res.status(400).json({ ok: false, error: `agentgraph_context_empty: ${agentContextId}` });
-      }
-    }
     const graphViewIds = (Array.isArray(body.graphViewIds) ? body.graphViewIds : [])
       .map((id: unknown) => String(id || '').trim())
       .filter(Boolean);
@@ -268,7 +239,6 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
     })));
     const approvedPrompt = [
       String(body.approvedPrompt || ''),
-      agentContextId ? agentGraphContext : '',
       attachedViews.length ? doorwayGraphContext : '',
     ].filter(Boolean).join('\n\n');
     const result = await runCoderSubagent({
@@ -311,29 +281,7 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
         transcriptArtifact: result.transcriptArtifact ?? null,
       });
     }
-    if (agentContextId) {
-      try {
-        await recordAgentGraphResult({
-          projectId,
-          contextId: agentContextId,
-          resultId: result.childRunId,
-          runId: result.correlationId,
-          status: result.ok ? 'completed' : 'failed',
-          resultRef: result.transcriptArtifact ?? '',
-        });
-      } catch (error) {
-        return res.status(502).json({
-          ...result,
-          ok: false,
-          agentContextId,
-          error: `agentgraph_result_link_failed: ${error instanceof Error ? error.message : String(error)}`,
-        });
-      }
-    }
-    return res.status(result.ok ? 200 : 502).json({
-      ...result,
-      agentContextId: agentContextId || null,
-    });
+    return res.status(result.ok ? 200 : 502).json(result);
   } catch (error) {
     return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'run_coder_subagent_failed' });
   }
@@ -655,8 +603,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
   try {
     const body = req.body || {};
     // conversationId is a structural reference to the real live conversation
-    // (the Harness injects it server-side for doorway calls; absent for a
-    // Task-tab test run). Card-specific authority is minted inside
+    // (the Harness injects it server-side for doorway calls). Card-specific authority is minted inside
     // runConfiguredCard itself — never accepted from the caller.
     const result = await runConfiguredCard({
       projectId: String(body.projectId || ''),
@@ -665,6 +612,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       correlationId: String(body.correlationId || ''),
       input: String(body.input || ''),
       conversationId: String(body.conversationId || ''),
+      agentContextId: String(body.agentContextId || ''),
     });
     return res.json({ ok: result.status === 'completed', result });
   } catch (error) {

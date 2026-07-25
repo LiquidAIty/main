@@ -3,11 +3,9 @@ import type { Dispatch, SetStateAction } from 'react';
 
 import type { AgentManagerLocalConfig } from '../../../components/AgentManager';
 import { resolveEffectiveAgent } from '../../../components/builder/deckRuntime';
-import type { LatestCardRunRecord } from '../../../components/builder/useBuilderDeckRuntimeActions';
 import type {
   AgentTemplate,
   DeckDocument,
-  DeckRun,
 } from '../../../types/agentgraph';
 import {
   cleanOptionalText,
@@ -22,8 +20,6 @@ type UseAgentBuilderCardEditorArgs = {
   recordDeckWriteReason: (reason: string) => void;
   selectedCardId: string | null;
   setDeck: Dispatch<SetStateAction<DeckDocument>>;
-  setLatestCardRun: Dispatch<SetStateAction<LatestCardRunRecord | null>>;
-  setLatestDeckRun: Dispatch<SetStateAction<DeckRun | null>>;
 };
 
 function resolveAgentTemplate(
@@ -68,8 +64,6 @@ export default function useAgentBuilderCardEditor({
   recordDeckWriteReason,
   selectedCardId,
   setDeck,
-  setLatestCardRun,
-  setLatestDeckRun,
 }: UseAgentBuilderCardEditorArgs) {
   const selectedCard = useMemo(
     () => deck.nodes.find((node) => node.id === selectedCardId) || null,
@@ -119,8 +113,6 @@ export default function useAgentBuilderCardEditor({
     (nextConfig: AgentManagerLocalConfig) => {
       if (!selectedCard || !selectedTemplate) return;
 
-      setLatestCardRun(null);
-      setLatestDeckRun(null);
       recordDeckWriteReason('card-editor');
       setDeck((currentDeck) => {
         const nextRuntimeBinding = normalizeRuntimeBinding(
@@ -230,16 +222,12 @@ export default function useAgentBuilderCardEditor({
       selectedCard,
       selectedTemplate,
       setDeck,
-      setLatestCardRun,
-      setLatestDeckRun,
     ],
   );
 
   const handleRenameSelectedCard = useCallback(
     (nextName: string) => {
       if (!selectedCard) return;
-      setLatestCardRun(null);
-      setLatestDeckRun(null);
       recordDeckWriteReason('card-rename');
       setDeck((currentDeck) => ({
         ...currentDeck,
@@ -255,16 +243,12 @@ export default function useAgentBuilderCardEditor({
       recordDeckWriteReason,
       selectedCard,
       setDeck,
-      setLatestCardRun,
-      setLatestDeckRun,
     ],
   );
 
   const handleUpdateSelectedCardSubtext = useCallback(
     (nextSubtext: string) => {
       if (!selectedCard) return;
-      setLatestCardRun(null);
-      setLatestDeckRun(null);
       recordDeckWriteReason('card-subtitle-update');
       setDeck((currentDeck) => ({
         ...currentDeck,
@@ -284,8 +268,6 @@ export default function useAgentBuilderCardEditor({
       recordDeckWriteReason,
       selectedCard,
       setDeck,
-      setLatestCardRun,
-      setLatestDeckRun,
     ],
   );
 

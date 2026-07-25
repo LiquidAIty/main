@@ -242,7 +242,6 @@ type FlowEdgeData = {
 function normalizeRuntimeType(value: unknown): AgentCardRuntimeType {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'magentic_one') return 'magentic_one';
-  if (normalized === 'graph_flow') return 'graph_flow';
   if (normalized === 'local_coder') return 'local_coder';
   return 'assistant_agent';
 }

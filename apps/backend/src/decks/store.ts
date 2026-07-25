@@ -1,8 +1,7 @@
 // @graph entity: DeckStore
 // @graph role: deck-persistence
-// @graph relates_to: AgentBuilderWorkspace, DeckRuntime
+// @graph relates_to: AgentBuilderWorkspace
 // @graph depends_on: Postgres
-// @graph feeds_to: DeckRunRoute
 import { createHash, randomUUID } from 'crypto';
 import { pool } from '../db/pool';
 import { normalizeLocalCoderControllerCard } from '../cards/localCoderController';
@@ -27,7 +26,6 @@ import type {
   DeckEdgeMetadata,
   DeckEdgeRole,
   DeckEdgeType,
-  DeckRun,
   PromptTemplate,
   V3ProjectBlob,
   V3RevisionMeta,
@@ -72,7 +70,6 @@ function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'assistant_agent') return 'assistant_agent';
   if (normalized === 'magentic_one') return 'magentic_one';
-  if (normalized === 'graph_flow') return 'graph_flow';
   if (normalized === 'local_coder') return 'local_coder';
   return null;
 }
@@ -442,10 +439,6 @@ function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument
   return repairRetiredCodeGraphToolGrants(ensureMainChatControllerCard(deck));
 }
 
-function normalizeDeckRuns(value: unknown): DeckRun[] {
-  return Array.isArray(value) ? (value as DeckRun[]) : [];
-}
-
 function hashRevision(value: unknown): string {
   return createHash('sha1').update(JSON.stringify(value ?? null), 'utf8').digest('hex');
 }
@@ -479,9 +472,11 @@ function normalizeProjectBlob(value: unknown): V3ProjectBlob {
     if (deck) decks[deckId] = deck;
   });
 
-  const deckRuns: Record<string, DeckRun[]> = {};
+  const deckRuns: Record<string, unknown[]> = {};
   Object.entries(deckRunsInput).forEach(([deckId, runsValue]) => {
-    deckRuns[deckId] = normalizeDeckRuns(runsValue);
+    // Historical run JSON is preserved byte-for-structure during ordinary
+    // deck saves, but it is no longer interpreted or exposed as live runtime.
+    deckRuns[deckId] = Array.isArray(runsValue) ? runsValue : [];
   });
 
   const rawMeta = raw.meta && typeof raw.meta === 'object' ? (raw.meta as Record<string, unknown>) : {};
@@ -571,19 +566,14 @@ function buildDeckResponseMeta(blob: V3ProjectBlob, deckId: string): {
 
 export async function getDeckDocument(projectId: string, deckId: string): Promise<{
   deck: DeckDocument | null;
-  latestRun: DeckRun | null;
-  runs: DeckRun[];
   meta: {
     deckRevision: string | null;
     deckSavedAt: string | null;
   };
 }> {
   const blob = await getV3ProjectBlob(projectId);
-  const runs = blob.deckRuns[deckId] || [];
   return {
     deck: blob.decks[deckId] || null,
-    latestRun: runs[0] || null,
-    runs,
     meta: buildDeckResponseMeta(blob, deckId),
   };
 }
@@ -636,31 +626,6 @@ export async function saveDeckDocument(
   });
   return {
     deck: nextBlob.decks[deckId],
-    meta: buildDeckResponseMeta(nextBlob, deckId),
-  };
-}
-
-export async function saveDeckRun(
-  projectId: string,
-  deckId: string,
-  run: DeckRun,
-): Promise<{
-  meta: {
-    deckRevision: string | null;
-    deckSavedAt: string | null;
-  };
-}> {
-  const nextBlob = await writeV3ProjectBlobCas(projectId, (blob) => {
-    const currentRuns = blob.deckRuns[deckId] || [];
-    return {
-      ...blob,
-      deckRuns: {
-        ...blob.deckRuns,
-        [deckId]: [run, ...currentRuns].slice(0, 12),
-      },
-    };
-  });
-  return {
     meta: buildDeckResponseMeta(nextBlob, deckId),
   };
 }

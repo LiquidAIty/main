@@ -56,6 +56,7 @@ async def check():
     coder = by_name['run_coder_subagent']
     assert 'approvedPrompt' in coder.inputSchema['properties']
     assert coder.inputSchema['properties']['adapter']['enum'] == ['claude_code', 'codex']
+    assert 'agentContextId' in by_name['card.run_assistant_agent'].inputSchema['properties']
     assert by_name['run_mag_one'].inputSchema['required'] == ['jobId', 'projectId', 'deckId']
     assert by_name['main.context'].inputSchema == {'type': 'object', 'properties': {}, 'required': []}
     print(json.dumps({name: tool.model_dump() for name, tool in by_name.items()}, sort_keys=True))
@@ -87,9 +88,9 @@ async def check():
         assert tool.model_dump() == native[tool.name].model_dump()
     combined = await mcp_host.list_tools()
     combined_names = [tool.name for tool in combined]
-    assert len(combined_names) == 65
-    assert len(set(combined_names)) == 65
-    assert len(set(combined_names) - set(native)) == 36
+    assert len(combined_names) == 64
+    assert len(set(combined_names)) == 64
+    assert len(set(combined_names) - set(native)) == 35
     print(json.dumps(sorted(native)))
 asyncio.run(check())
 """
@@ -346,7 +347,7 @@ async def check():
             elapsed = time.perf_counter() - started
             assert actual == expected
             assert 'main.context' in actual
-            assert len(actual) == 65
+            assert len(actual) == 64
             assert sum(name.startswith('engraphis_') for name in actual) == 29
             assert elapsed < 10
             print(json.dumps({{'status': 'STDIO_OK', 'count': len(actual), 'elapsed': elapsed}}))
@@ -481,7 +482,7 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
     assert "run_mag_one" not in by_name
     assert "projectId" not in by_name["run_coder_subagent"].inputSchema["properties"]
     assert "parentRunId" not in by_name["run_coder_subagent"].inputSchema["properties"]
-    assert "agentContextId" in by_name["run_coder_subagent"].inputSchema["properties"]
+    assert "agentContextId" not in by_name["run_coder_subagent"].inputSchema["properties"]
     assert "agentContext" not in by_name["run_coder_subagent"].inputSchema["properties"]
     assert by_name["engraphis_recall"].model_dump()["securitySchemes"] == [
         {"type": "oauth2", "scopes": ["liquidaity.main"]}
@@ -520,7 +521,6 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
         "cardId": "coder-card",
         "adapter": "codex",
         "approvedPrompt": "Approved exact task.",
-        "agentContextId": "agentctx:test",
     }))
     path, payload = calls[-1]
     assert path == "run_coder_subagent"
@@ -528,7 +528,7 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
     assert payload["deckId"] == "deck_builder"
     assert payload["conversationId"] == "external-mcp:grant-1"
     assert payload["parentRunId"].startswith("req_external_main_")
-    assert payload["agentContextId"] == "agentctx:test"
+    assert "agentContextId" not in payload
 
 
 def test_post_auth_unknown_saved_grant_is_configuration_error_not_authentication(monkeypatch):

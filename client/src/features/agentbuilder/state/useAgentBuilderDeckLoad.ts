@@ -3,12 +3,9 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 
 import { waitForBackendReady } from '../../../components/builder/backendReadiness';
 import { guardedRequest, safeJson } from '../../../components/builder/requestGuards';
-import type { LatestCardRunRecord } from '../../../components/builder/useBuilderDeckRuntimeActions';
 import type { AgentBuilderChatMessage } from '../console/useAgentBuilderMainChat';
 import type {
   DeckDocument,
-  DeckRun,
-  DeckRuntimeEvent,
 } from '../../../types/agentgraph';
 
 type LoadResult = {
@@ -39,9 +36,6 @@ type UseAgentBuilderDeckLoadArgs = {
   setDeckRevision: Dispatch<SetStateAction<string | null>>;
   setDeckLoadBusy: Dispatch<SetStateAction<boolean>>;
   setDeckLoadError: Dispatch<SetStateAction<string | null>>;
-  setLatestDeckRun: Dispatch<SetStateAction<DeckRun | null>>;
-  setLatestCardRun: Dispatch<SetStateAction<LatestCardRunRecord | null>>;
-  setLiveDeckEvents: Dispatch<SetStateAction<DeckRuntimeEvent[]>>;
   setMessages: Dispatch<SetStateAction<AgentBuilderChatMessage[]>>;
   setStateLoaded: Dispatch<SetStateAction<boolean>>;
   setDeckStatusMessage: Dispatch<SetStateAction<string | null>>;
@@ -64,9 +58,6 @@ export default function useAgentBuilderDeckLoad({
   setDeckRevision,
   setDeckLoadBusy,
   setDeckLoadError,
-  setLatestDeckRun,
-  setLatestCardRun,
-  setLiveDeckEvents,
   setMessages,
   setStateLoaded,
   setDeckStatusMessage,
@@ -77,9 +68,6 @@ export default function useAgentBuilderDeckLoad({
       setDeck(buildProjectlessDeckDocument());
       setDeckRevision(null);
       setDeckLoadError(null);
-      setLatestDeckRun(null);
-      setLatestCardRun(null);
-      setLiveDeckEvents([]);
       setMessages([...emptyMessages]);
       setStateLoaded(false);
       setDeckStatusMessage(null);
@@ -139,16 +127,6 @@ export default function useAgentBuilderDeckLoad({
             ? payload.data.meta.deckRevision
             : null,
         );
-        const persistedLatestRun =
-          payload.data?.latestRun && typeof payload.data.latestRun === 'object'
-            ? (payload.data.latestRun as DeckRun)
-            : null;
-        setLatestDeckRun(persistedLatestRun);
-        setLatestCardRun(null);
-        setLiveDeckEvents([]);
-        // The normal chat transcript is the live conversation only — it is NOT
-        // re-painted from saved deck runs (that clobbered the live user message
-        // and rendered old run text as fake chat bubbles).
         setStateLoaded(true);
         setDeckLoadError(null);
         setDeckStatusMessage(
@@ -169,9 +147,6 @@ export default function useAgentBuilderDeckLoad({
       } catch (err: unknown) {
         if (controller.signal.aborted) return;
         recordDeckWriteReason('deck-load-error');
-        setLatestDeckRun(null);
-        setLatestCardRun(null);
-        setLiveDeckEvents([]);
         setDeckRevision(null);
         setMessages([...emptyMessages]);
         setStateLoaded(true);
@@ -212,9 +187,6 @@ export default function useAgentBuilderDeckLoad({
     setDeckLoadError,
     setDeckRevision,
     setDeckStatusMessage,
-    setLatestCardRun,
-    setLatestDeckRun,
-    setLiveDeckEvents,
     setMessages,
     setStateLoaded,
     snapshotDeckBoard,

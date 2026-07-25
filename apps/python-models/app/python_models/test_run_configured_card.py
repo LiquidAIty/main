@@ -7,6 +7,7 @@ through the SAME shared builder the Mag One path uses (same tool registry with
 loud unknown-tool failure — never silently dropped).
 """
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -121,3 +122,70 @@ class TestSharedBuilderReuse:
         ctx = _context(participants=[_participant(tools=["not_a_real_tool"])])
         with pytest.raises(RuntimeError):
             mac._build_participants(ctx, _FakeToolClient())
+
+
+class TestAgentGraphRuntimeContext:
+    def test_python_resolves_exact_handoff_into_task_and_records_result(self, monkeypatch):
+        tasks: list[str] = []
+        recorded: list[dict] = []
+
+        class FakeAgent:
+            async def run(self, *, task):
+                tasks.append(task)
+                return SimpleNamespace(
+                    messages=[SimpleNamespace(content="Completed from the stored handoff.")]
+                )
+
+        ctx = _context(user_text="Approved task.")
+        ctx.conversationId = "conv-1"
+        ctx.agentContextId = "agentctx:one"
+
+        monkeypatch.setattr(mac.ag, "read_context", lambda context_id, project_id: {
+            "contextId": context_id,
+            "projectId": project_id,
+            "conversationId": "conv-1",
+            "receivingAgentId": "tg",
+            "markdown": "# Exact stored handoff\n\nUse source refs unchanged.",
+        })
+        monkeypatch.setattr(mac.ag, "record_result", lambda **kwargs: recorded.append(kwargs))
+        monkeypatch.setattr(mac.rpe, "prepare", lambda **_kwargs: None)
+        monkeypatch.setattr(mac, "_build_model_client", lambda _config: _FakeToolClient())
+        monkeypatch.setattr(mac, "_build_participants", lambda _context, _client: [FakeAgent()])
+
+        response = asyncio.run(mac.run_configured_card(ctx))
+
+        assert response.ok is True
+        assert tasks == [
+            "Approved task.\n\n# Exact stored handoff\n\nUse source refs unchanged."
+        ]
+        assert recorded == [{
+            "context_id": "agentctx:one",
+            "project_id": "p",
+            "result_id": "result:corr-1",
+            "run_id": "corr-1",
+            "status": "completed",
+            "markdown": "Completed from the stored handoff.",
+            "result_ref": None,
+        }]
+
+    def test_scope_mismatch_fails_before_model_runtime(self, monkeypatch):
+        ctx = _context(user_text="Approved task.")
+        ctx.conversationId = "conv-1"
+        ctx.agentContextId = "agentctx:wrong"
+
+        monkeypatch.setattr(mac.ag, "read_context", lambda _context_id, project_id: {
+            "projectId": project_id,
+            "conversationId": "another-conversation",
+            "receivingAgentId": "tg",
+            "markdown": "Misdirected.",
+        })
+        monkeypatch.setattr(
+            mac,
+            "_build_model_client",
+            lambda _config: pytest.fail("model runtime must not start for a misdirected context"),
+        )
+
+        response = asyncio.run(mac.run_configured_card(ctx))
+
+        assert response.ok is False
+        assert response.error == "agentgraph_context_scope_mismatch: agentctx:wrong"

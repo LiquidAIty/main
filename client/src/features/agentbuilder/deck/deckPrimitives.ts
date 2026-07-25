@@ -45,7 +45,6 @@ export function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | nul
   const normalized = safeText(value).trim().toLowerCase();
   if (normalized === 'assistant_agent') return 'assistant_agent';
   if (normalized === 'magentic_one') return 'magentic_one';
-  if (normalized === 'graph_flow') return 'graph_flow';
   if (normalized === 'local_coder') return 'local_coder';
   return null;
 }

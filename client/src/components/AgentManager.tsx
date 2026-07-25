@@ -41,11 +41,6 @@ interface AgentManagerProps {
     finishReason?: string | null;
     usage?: any | null;
   }) => void;
-  promptTestInput?: string;
-  onChangePromptTestInput?: (value: string) => void;
-  onRunPromptTest?: () => void;
-  promptTestBusy?: boolean;
-  promptTestDisabled?: boolean;
   localConfig?: AgentManagerLocalConfig | null;
   onSaveLocalConfig?: (config: AgentManagerLocalConfig) => void | Promise<void>;
 }
@@ -54,10 +49,7 @@ const ACTIVE_RUNTIME_TYPES: AgentCardRuntimeType[] = [
   'assistant_agent',
   'local_coder',
   'magentic_one',
-  'graph_flow',
 ];
-
-const LEGACY_RUNTIME_TYPES: AgentCardRuntimeType[] = [];
 
 export type AgentManagerLocalConfig = {
   runtime_binding?: RuntimeBinding | null;
@@ -203,7 +195,7 @@ function parseJsonValue(
 
 function normalizeRuntimeType(value: unknown): AgentCardRuntimeType {
   const next = String(value || '').trim().toLowerCase() as AgentCardRuntimeType;
-  if (ACTIVE_RUNTIME_TYPES.includes(next) || LEGACY_RUNTIME_TYPES.includes(next)) {
+  if (ACTIVE_RUNTIME_TYPES.includes(next)) {
     return next;
   }
   return 'assistant_agent';
@@ -263,10 +255,6 @@ function getManagedRuntimeOptionKeys(
     managed.add('finalAnswerPrompt');
     return managed;
   }
-  if (runtimeType === 'graph_flow') {
-    managed.add('useSocietyOfMindConsolidation');
-    return managed;
-  }
   if (executionMode === 'swarm') {
     managed.add('executionMode');
     managed.add('swarmMaxWorkers');
@@ -323,12 +311,6 @@ function compactRuntimeOptions(
       maxStalls: cleanNumber(input.maxStalls),
       finalAnswerPrompt: cleanString(input.finalAnswerPrompt),
     };
-  } else if (runtimeType === 'graph_flow') {
-    normalized = {
-      ...normalized,
-      useSocietyOfMindConsolidation:
-        input.useSocietyOfMindConsolidation === false ? false : true,
-    };
   } else if (runtimeType === 'local_coder') {
     normalized = {
       ...normalized,
@@ -364,7 +346,6 @@ function getRuntimeTypeLabel(runtimeType: AgentCardRuntimeType): string {
   if (runtimeType === 'assistant_agent') return 'Assist';
   if (runtimeType === 'local_coder') return 'Coder';
   if (runtimeType === 'magentic_one') return 'Magentic';
-  if (runtimeType === 'graph_flow') return 'Legacy Workflow (compat)';
   return `Legacy: ${runtimeType}`;
 }
 
@@ -414,16 +395,6 @@ export function getRuntimeTypeVisibleFieldLabels(
       'Max Turns',
       'Max Stalls',
       'Final Answer Prompt',
-    ];
-  }
-  if (runtimeType === 'graph_flow') {
-    return [
-      'Runtime Type',
-      'Provider',
-      'Model',
-      'Temperature',
-      'Max Tokens',
-      'Consolidate Result',
     ];
   }
   return ['Runtime Type'];
@@ -505,12 +476,7 @@ export function AgentManager({
   onChangeCardSubtext,
   localConfig,
   selectedCardId,
-  onChangePromptTestInput,
-  onRunPromptTest,
   onSaveLocalConfig,
-  promptTestBusy,
-  promptTestDisabled,
-  promptTestInput,
 }: AgentManagerProps) {
   const runtimeType = normalizeRuntimeType(localConfig?.runtime_type);
   const runtimeOptions = useMemo(() => deriveRuntimeOptions(localConfig), [localConfig]);
@@ -706,8 +672,6 @@ export function AgentManager({
       nextRuntimeOptions.maxTurns = typeof maxTurns === 'number' ? maxTurns : null;
       nextRuntimeOptions.maxStalls = typeof maxStalls === 'number' ? maxStalls : null;
       nextRuntimeOptions.finalAnswerPrompt = cleanString(finalAnswerPrompt);
-    } else if (selectedRuntimeType === 'graph_flow') {
-      nextRuntimeOptions.useSocietyOfMindConsolidation = useSocietyOfMindConsolidation;
     }
 
     return buildActiveAgentManagerLocalConfig({
@@ -915,7 +879,7 @@ export function AgentManager({
   const runtimeOptionsForSelect = getRuntimeTypeSelectOptions(selectedRuntimeType);
   const fieldLabels = getRuntimeTypeVisibleFieldLabels(selectedRuntimeType, executionMode);
   const showAdvancedRuntimeOptions =
-    !['assistant_agent', 'local_coder', 'magentic_one', 'graph_flow'].includes(selectedRuntimeType) ||
+    !['assistant_agent', 'local_coder', 'magentic_one'].includes(selectedRuntimeType) ||
     Object.entries(localConfig?.runtime_options || {}).some(
       ([key, value]) =>
         !getManagedRuntimeOptionKeys(selectedRuntimeType, executionMode).has(key) &&
@@ -1010,28 +974,9 @@ export function AgentManager({
             <textarea value={memoryPolicy} onChange={(event) => updatePromptFields('memoryPolicy', event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
           </Field>
         </GlassInspectorSection>
-        <GlassInspectorSection title="Test & save">
-          <Field label="Prompt Test Input">
-            <textarea
-              value={String(promptTestInput || '')}
-              onChange={(event) => onChangePromptTestInput?.(event.target.value)}
-              rows={4}
-              style={{ ...inputStyle, resize: 'vertical' }}
-            />
-          </Field>
+        <GlassInspectorSection title="Save">
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {renderSaveCardButton()}
-            <button
-              type="button"
-              onClick={() => onRunPromptTest?.()}
-              disabled={promptTestDisabled}
-              style={graphDrawerButtonStyle({
-                opacity: promptTestDisabled ? 0.52 : 1,
-                cursor: promptTestDisabled ? 'not-allowed' : 'pointer',
-              })}
-            >
-              {promptTestBusy ? 'Running...' : 'Run Card'}
-            </button>
           </div>
         </GlassInspectorSection>
         {renderSaveCardFeedback()}
@@ -1194,36 +1139,6 @@ export function AgentManager({
           {renderSaveCardButton()}
         </div>
         {renderSaveCardFeedback()}
-      </div>
-    );
-  }
-
-  if (activeTab === 'Task') {
-    if (selectedRuntimeType !== 'magentic_one') {
-      return (
-        <div className={formScopeClassName} style={{ display: 'grid', gap: 8 }}>
-          <style>{scopedFocusStyles}</style>
-          <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, lineHeight: 1.5 }}>
-            Task objects apply to the Magentic-One orchestrator card.
-          </div>
-        </div>
-      );
-    }
-    return (
-      <div className={formScopeClassName} style={{ display: 'grid', gap: 8 }}>
-        <style>{scopedFocusStyles}</style>
-        {/* Regular native Mag One keeps its OWN internal Task Ledger. It is never
-            forced into an output contract, exposed as a PlanFlow projection, or
-            gated behind approval — so there is nothing to edit here. */}
-        <Field label="Task Ledger">
-          <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, lineHeight: 1.5 }}>
-            Mag One runs as regular native Magentic-One and keeps its own internal Task
-            Ledger (team composition, facts, plan, agent responsibilities) while it works.
-            It is not forced into an output shape or gated behind approval, so there is
-            nothing to configure here. Mag One receives a Markdown orchestration prompt and
-            returns its result.
-          </div>
-        </Field>
       </div>
     );
   }
@@ -1401,22 +1316,6 @@ export function AgentManager({
           />
           Consolidate Result
         </label>
-      ) : null}
-
-      {selectedRuntimeType === 'graph_flow' ? (
-        <div
-          style={{
-            padding: '10px 12px',
-            ...graphDrawerSectionStyle({
-              borderRadius: 8,
-            }),
-            color: GRAPH_THEME.drawer.inputMuted,
-            fontSize: 12,
-            lineHeight: 1.5,
-          }}
-        >
-          This is a legacy compatibility runtime. New orchestration structure should live in the visible graph connections between Assist cards, not in a special workflow card type.
-        </div>
       ) : null}
 
       {showAdvancedRuntimeOptions ? (

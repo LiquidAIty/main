@@ -373,6 +373,7 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
     _require(args, "projectId", "cardId", "correlationId", "input")
     deck_id = str(args.get("deckId") or "").strip()
     conversation_id = str(args.get("conversationId") or "").strip()
+    agent_context_id = str(args.get("agentContextId") or "").strip()
     return await asyncio.to_thread(
         _backend_json,
         "POST",
@@ -383,6 +384,7 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
             "cardId": str(args["cardId"]).strip(),
             "correlationId": str(args["correlationId"]).strip(),
             **({"conversationId": conversation_id} if conversation_id else {}),
+            **({"agentContextId": agent_context_id} if agent_context_id else {}),
             "input": str(args["input"]),
         },
     )

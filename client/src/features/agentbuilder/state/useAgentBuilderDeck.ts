@@ -1,13 +1,6 @@
 import { useState } from 'react';
 
-import type {
-  LatestCardRunRecord,
-} from '../../../components/builder/useBuilderDeckRuntimeActions';
-import type {
-  DeckDocument,
-  DeckRun,
-  DeckRuntimeEvent,
-} from '../../../types/agentgraph';
+import type { DeckDocument } from '../../../types/agentgraph';
 
 type UseAgentBuilderDeckArgs = {
   createInitialDeck: () => DeckDocument;
@@ -18,11 +11,6 @@ export default function useAgentBuilderDeck({
 }: UseAgentBuilderDeckArgs) {
   const [deck, setDeckState] = useState<DeckDocument>(() => createInitialDeck());
   const [deckRevision, setDeckRevision] = useState<string | null>(null);
-  const [latestDeckRun, setLatestDeckRun] = useState<DeckRun | null>(null);
-  const [latestCardRun, setLatestCardRun] = useState<LatestCardRunRecord | null>(null);
-  const [liveDeckEvents, setLiveDeckEvents] = useState<DeckRuntimeEvent[]>([]);
-  const [deckRunBusy, setDeckRunBusy] = useState(false);
-  const [cardRunBusy, setCardRunBusy] = useState(false);
   const [deckLoadBusy, setDeckLoadBusy] = useState(false);
   const [deckSaveBusy, setDeckSaveBusy] = useState(false);
   const [deckStatusMessage, setDeckStatusMessage] = useState<string | null>(null);
@@ -33,16 +21,6 @@ export default function useAgentBuilderDeck({
     setDeckState,
     deckRevision,
     setDeckRevision,
-    latestDeckRun,
-    setLatestDeckRun,
-    latestCardRun,
-    setLatestCardRun,
-    liveDeckEvents,
-    setLiveDeckEvents,
-    deckRunBusy,
-    setDeckRunBusy,
-    cardRunBusy,
-    setCardRunBusy,
     deckLoadBusy,
     setDeckLoadBusy,
     deckSaveBusy,

@@ -105,9 +105,12 @@ One authority per graph. No cross-writes, no UI→DB graph write.
 
 ### 7. Card runtime
 
-`runConfiguredCard` = single-card assist (Canvas Run / Task tab). `runCardWithContract` = team run
-(Orchestrator). The deck store owns saved cards + wires; provider+model resolve per card; fail closed on
-missing model config.
+`runConfiguredCard` = the saved assistant-card doorway used by the Python MCP/Harness path.
+Agent Canvas edits and saves cards; it does not own an execution button or a second deck-run
+runtime. `runCardWithContract` = team run (Orchestrator). The deck store owns saved cards + wires;
+provider+model resolve per card; fail closed on missing model config. When an `agentContextId`
+is supplied, TypeScript transports the id and Python resolves the exact AGE Markdown and records
+result lineage.
 
 Do not invent replacement adapter contracts around the working Coder paths. The saved Local Coder
 card/tool route and persistent OpenClaude terminal already define the current boundaries. Any future

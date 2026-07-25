@@ -21,7 +21,6 @@ export default function AgentCardNode({
   selected?: boolean;
 }) {
   const runtimeType = String(data?.runtimeType || 'assistant_agent').trim();
-  const isGraph = runtimeType === 'graph_flow';
   const canReceiveConnection = true;
   const canStartConnection = true;
   const shellActive = Boolean(selected || data?.isInspecting || data?.isRuntimeActive);
@@ -59,9 +58,7 @@ export default function AgentCardNode({
             : selected
               ? GRAPH_THEME.accent.primaryBorder
               : GRAPH_THEME.card.glassBorder,
-          background: isGraph
-            ? GRAPH_THEME.card.glassGraphBackground
-            : GRAPH_THEME.card.glassBackground,
+          background: GRAPH_THEME.card.glassBackground,
           boxShadow: shellActive
             ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px rgba(55,173,170,0.6), 0 14px 30px rgba(55,173,170,0.24), 0 0 16px rgba(242,166,74,0.16)`
             : selected

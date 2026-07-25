@@ -13,12 +13,6 @@ export function getDevTestJsonBodyLimit(): string {
     : '2mb';
 }
 
-export function requireDevTestMode() {
-  if (!isDevTestModeEnabled()) {
-    throw new Error('dev_test_route_disabled');
-  }
-}
-
 // Removed: getConfiguredPositiveInt / getDevTestLocalIngestRoots /
 // resolveAllowedDevLocalFile — dev local-file-ingest helpers whose callers
 // (the old ingest routes) were deleted; zero consumers remained.

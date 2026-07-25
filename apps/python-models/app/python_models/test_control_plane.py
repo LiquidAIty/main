@@ -142,7 +142,7 @@ class TestRunAssistantAgent:
                 "projectId": "p", "deckId": "d", "cardId": "c", "correlationId": "x",
             }))
 
-    def test_forwards_only_the_five_saved_references(self, monkeypatch):
+    def test_forwards_only_saved_references_and_optional_agent_context_id(self, monkeypatch):
         calls = []
 
         def backend(method, path, payload=None):
@@ -156,3 +156,12 @@ class TestRunAssistantAgent:
         method, path, payload = calls[0]
         assert path == "/api/coder/mcp-bridge/run_configured_card"
         assert sorted(payload.keys()) == ["cardId", "correlationId", "deckId", "input", "projectId"]
+
+        asyncio.run(cp.card_run_assistant_agent({
+            "projectId": "p", "deckId": "d", "cardId": "c",
+            "correlationId": "y", "conversationId": "conv-1",
+            "agentContextId": "agentctx:one", "input": "use the handoff",
+        }))
+        forwarded = calls[1][2]
+        assert forwarded["conversationId"] == "conv-1"
+        assert forwarded["agentContextId"] == "agentctx:one"

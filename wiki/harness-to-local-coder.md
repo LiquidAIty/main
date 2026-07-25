@@ -64,10 +64,9 @@ Harness chat → specialist doorway for card_local_coder
   → selectDoorwayCards(nodes, 'chat')          [grpcChatClient.ts:142]
     → runtimeType='local_coder', binding='local_coder'
   → buildHarnessAgentDefinition(card)
-  → runConfiguredCard({ cardId: 'card_local_coder' })  [runtime.ts:490]
-    → runSingleAssistCardAsDeckRun
-      → resolveCardTools → ['run_local_coder']
-    → runCardWithContract → runSingleCardWithAutoGen
+  → runConfiguredCard({ cardId: 'card_local_coder' })  [runtime.ts]
+    → resolveCardTools → ['run_local_coder']
+    → runSingleCardWithAutoGen
       → model calls run_local_coder tool
 
 Python: run_local_coder(objective, ...)          [tool_registry.py:434]

@@ -1,8 +1,5 @@
 import {
-  AgentRunInvocation,
-  AgentRunResult,
   CardRunResult,
-  DeckExecutionOutput,
   JobHandoffRunResult,
   PythonAutoGenPayloadShape,
   AUTOGEN_CARD_TOOL_SPECS,
@@ -10,7 +7,6 @@ import {
   RuntimeGraphEdge,
   RuntimeGraphNode,
 } from '../contracts/runtimeContracts';
-import { randomUUID } from 'crypto';
 import { orchestrateWithAutoGen, runSingleCardWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
 import { getDeckDocument } from '../decks/store';
 import { resolveModel } from '../llm/models.config';
@@ -179,7 +175,7 @@ export function resolvedMagenticOptions(
       const binding = resolveCardBinding(node);
       if (binding === 'main_chat' || binding === 'hermes_steward') return false;
       const runtimeType = resolveCardRuntimeType(node);
-      return isAssistLikeRuntimeType(runtimeType) || runtimeType === 'graph_flow';
+      return isAssistLikeRuntimeType(runtimeType);
     })
     .filter((node) => {
       if (seen.has(node.id)) return false;
@@ -588,7 +584,7 @@ export function buildPythonAutoGenCardRuntimePayload(
 // resolvers the Mag One path uses (resolveCardModelStrict / resolveCardTools /
 // serializeCardParticipant). No fallback model, no substitute card, no plain completion.
 
-const SINGLE_CARD_RUN_ARG_KEYS = ['projectId', 'deckId', 'cardId', 'correlationId', 'input', 'conversationId', 'runAuthority'] as const;
+const SINGLE_CARD_RUN_ARG_KEYS = ['projectId', 'deckId', 'cardId', 'correlationId', 'input', 'conversationId', 'agentContextId', 'runAuthority'] as const;
 
 export type ConfiguredCardRunArgs = {
   projectId: string;
@@ -597,9 +593,12 @@ export type ConfiguredCardRunArgs = {
   correlationId: string;
   input: string;
   /** The real conversation this run belongs to, when one exists (a live chat
-   * doorway invocation has one; a Task-tab test run does not). Used ONLY for
-   * card-specific authority minting below — never fabricated. */
+   * doorway invocation has one). Used ONLY for card-specific authority
+   * minting below — never fabricated. */
   conversationId?: string;
+  /** Stable pointer to one existing PostgreSQL/AGE handoff addressed to this
+   * card. TypeScript transports the id only; Python resolves and records it. */
+  agentContextId?: string;
   /** Server-authored trusted run context (e.g. ThinkGraph source-pair authority),
    * transported to the Python runtime via cardRuntime.runtimeScope. Never
    * browser-supplied — callers of this function are backend control-plane code. */
@@ -680,6 +679,8 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
   const cardId = String(args?.cardId || '').trim();
   const correlationId = String(args?.correlationId || '').trim();
   const input = String(args?.input || '').trim();
+  const conversationId = String(args?.conversationId || '').trim();
+  const agentContextId = String(args?.agentContextId || '').trim();
   if (!projectId || !deckId || !cardId || !correlationId || !input) {
     return done({ status: 'failed', error: 'card_run_args_incomplete' });
   }
@@ -741,6 +742,8 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       startedAt,
     },
     userText: input,
+    conversationId,
+    ...(agentContextId ? { agentContextId } : {}),
     // Every standalone single-agent run receives its own returns/<run-id>/<card-id>/
     // folder (run-id = correlationId) under the default owned Coder workspace
     // (<repo-root>/coder-workspace) — never a client path. This is only the job-folder
@@ -805,114 +808,6 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     // Transport/rails failure is honest — no retry into a fallback path.
     return done({ status: 'failed', runtimeType, error: String(error?.message || 'single_card_transport_failed') });
   }
-}
-
-// ── Single Assist surface (Task-tab / doorway / Mag One convergence) ─────────
-
-/** Structural projection of the single-card runtime result into the one
- * normalized AgentRunResult every invocation surface reports. Pure. */
-export function toAgentRunResult(
-  run: ConfiguredCardRunResult,
-  invocation: AgentRunInvocation,
-): AgentRunResult {
-  return {
-    runId: run.correlationId,
-    cardId: run.cardId,
-    invocation,
-    // This runner is synchronous: a run that returns is either the card's real
-    // completion or an honest failure (not_found/disabled/not_runnable/failed
-    // keep their exact reason in `error`). No partial/running states exist here.
-    status: run.status === 'completed' ? 'succeeded' : 'failed',
-    summary: run.output,
-    error: run.error,
-    tools: run.tools,
-    toolCallCount: run.toolCallCount,
-    startedAt: run.startedAt,
-    endedAt: run.endedAt,
-  };
-}
-
-/** Structural detection of a Single Assist run document: no Mag One
- * orchestrator on the posted canvas selection and exactly one top-level agent
- * card. Runnability itself (runtimeType, enabled, model, tools) is enforced in
- * ONE place — runConfiguredCard — never duplicated here. Pure. */
-export function isSingleAssistRunDocument(document: {
-  nodes?: any[];
-}): { ok: true; cardId: string } | { ok: false } {
-  const topLevel = (document?.nodes || []).filter(
-    (node) =>
-      String(node?.kind || 'agent') === 'agent' &&
-      !String(node?.parentGraphId || '').trim(),
-  );
-  if (topLevel.some((node) => resolveCardRuntimeType(node) === 'magentic_one')) {
-    return { ok: false };
-  }
-  if (topLevel.length !== 1) return { ok: false };
-  const cardId = String(topLevel[0]?.id || '').trim();
-  return cardId ? { ok: true, cardId } : { ok: false };
-}
-
-/** Run ONE Single Assist card through the canonical configured-card executor
- * and report it in the existing deck-run shape the Task tab already renders.
- * The step additionally carries the normalized AgentRunResult. Card identity,
- * prompt, model, and tools resolve server-side from the SAVED deck — the same
- * trusted source the MCP card.run_assistant_agent path uses. */
-export async function runSingleAssistCardAsDeckRun(args: {
-  projectId: string;
-  deckId: string;
-  cardId: string;
-  input: string;
-}): Promise<DeckExecutionOutput> {
-  const startedAt = new Date().toISOString();
-  const correlationId = `assist_${randomUUID()}`;
-  const run = await runConfiguredCard({
-    projectId: args.projectId,
-    deckId: args.deckId,
-    cardId: args.cardId,
-    correlationId,
-    input: args.input,
-  });
-  const agentRun = toAgentRunResult(run, 'single_assist');
-  const status: 'success' | 'error' = agentRun.status === 'succeeded' ? 'success' : 'error';
-  const step = {
-    id: 'step_1',
-    executionId: `${args.cardId}::single_assist`,
-    cardId: args.cardId,
-    title: args.cardId,
-    input: args.input,
-    runtimeType: run.runtimeType,
-    output: run.output,
-    status,
-    error: run.error ?? undefined,
-    startedAt: run.startedAt,
-    endedAt: run.endedAt,
-    inputSummary: summarizeText(args.input),
-    outputSummary: summarizeText(run.output),
-    agentRunResult: agentRun,
-  };
-  return {
-    id: correlationId,
-    deckId: args.deckId,
-    input: args.input,
-    status,
-    startedAt,
-    endedAt: new Date().toISOString(),
-    cardResults: {
-      [args.cardId]: {
-        output: run.output,
-        status,
-        ...(run.error ? { error: run.error } : {}),
-        startedAt: run.startedAt,
-        endedAt: run.endedAt,
-        runtimeType: run.runtimeType,
-        inputSummary: summarizeText(args.input),
-        outputSummary: summarizeText(run.output),
-      },
-    },
-    ...(status === 'success' ? { finalOutput: run.output } : { error: run.error ?? 'card_run_failed' }),
-    steps: [step],
-    events: [],
-  };
 }
 
 export async function runCardWithContract(

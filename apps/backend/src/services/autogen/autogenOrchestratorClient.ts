@@ -3,7 +3,7 @@ type AutoGenOrchestratorSession = {
   projectId: string;
   turnId: string;
   route: string;
-  orchestrator: 'magentic_one' | 'graph_flow' | 'assistant_agent';
+  orchestrator: 'magentic_one' | 'assistant_agent';
   modelProvider: string;
   modelKey: string;
   providerModelId: string;
@@ -377,33 +377,6 @@ export async function fetchUnifiedModelContext(params: {
   if (params.activeGraphViewId) query.set('activeGraphViewId', params.activeGraphViewId);
   if (params.knowgraphScope) query.set('knowgraphScope', params.knowgraphScope);
   return requestThinkGraphJson(`/unified/model-context?${query.toString()}`, { method: 'GET' });
-}
-
-export async function fetchAgentGraphContext(params: {
-  projectId: string;
-  contextId: string;
-}): Promise<unknown> {
-  const query = new URLSearchParams({
-    projectId: params.projectId,
-    contextId: params.contextId,
-  });
-  return requestThinkGraphJson(`/agentgraph/read-context?${query.toString()}`, { method: 'GET' });
-}
-
-export async function recordAgentGraphResult(params: {
-  projectId: string;
-  contextId: string;
-  resultId: string;
-  runId: string;
-  status: string;
-  markdown?: string;
-  resultRef?: string;
-}): Promise<unknown> {
-  return requestThinkGraphJson('/agentgraph/record-result', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  });
 }
 
 export async function fetchGraphObjectContext(params: {

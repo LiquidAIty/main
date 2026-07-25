@@ -1,20 +1,15 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 
-import type { AgentCardInstance, DeckDocument, DeckRun, DeckRuntimeEvent, RuntimeBinding } from '../types/agentgraph';
+import type { AgentCardInstance, DeckDocument, RuntimeBinding } from '../types/agentgraph';
 // Deck logic moved out of the page in the 2026-07-08 decomposition; the spec
 // tests the real modules directly.
 import { INITIAL_DECK } from '../features/agentbuilder/deck/deckSeed';
 import {
-  buildSingleCardRunDocument,
   hydrateDeckDocument,
   resolveProjectDeckLoadResult,
   resolveProjectDeckPayload,
 } from '../features/agentbuilder/deck/deckDocument';
-import {
-  buildDeckRuntimeVisualState,
-  buildReloadStateFromDeckRuns,
-} from '../components/builder/deckRunState';
 
 function createCard(
   id: string,
@@ -58,7 +53,6 @@ describe('agentbuilder authoring flow', () => {
       'WorldSignals Agent',
     ]);
 
-    expect(INITIAL_DECK.nodes.filter((node) => node.runtimeType === 'graph_flow')).toEqual([]);
     expect(INITIAL_DECK.nodes.map((node) => node.runtimeBinding)).toEqual([
       'main_chat',
       null,
@@ -531,7 +525,7 @@ describe('agentbuilder authoring flow', () => {
 
 
   // The retired authoring-compatibility filter silently DROPPED saved edges that
-  // did not fit the graph_flow/parentGraphId model — real user intent, deleted on
+  // did not fit the retired nested-authoring model — real user intent, deleted on
   // load. Hydration now keeps every edge whose endpoints still exist, whatever its
   // type: an unrecognised type is classified 'invalid' (inert but visible), never
   // silently removed. (Edges orphaned by a retired card are covered above.)
@@ -626,167 +620,4 @@ describe('agentbuilder authoring flow', () => {
     });
   });
 
-  // A selected-card run scopes to EXACTLY the selected card. The backend gate
-  // (isSingleAssistRunDocument) accepts one top-level node and refuses any
-  // document carrying the Mag One card, so the old flow-traversal scope
-  // (which shipped the whole downstream chain) produced documents the route
-  // rejected. Identity/prompt/model/tools still resolve server-side from the
-  // SAVED deck — this document only names the card.
-  it('scopes a selected-card run to exactly the selected card', () => {
-    const magentic = createCard('magentic', 'magentic_one');
-    const assistA = createCard('assist_a', 'assistant_agent');
-    const assistB = createCard('assist_b', 'assistant_agent');
-
-    const document: DeckDocument = {
-      ...createDeck([magentic, assistA, assistB]),
-      edges: [
-        { id: 'edge_magentic_assist', source: magentic.id, target: assistA.id, edgeType: 'magentic_option' },
-        { id: 'edge_assist_chain', source: assistA.id, target: assistB.id, edgeType: 'flow' },
-      ],
-    };
-
-    const assistRunDocument = buildSingleCardRunDocument(document, assistA.id);
-
-    expect(assistRunDocument?.nodes.map((node) => node.id)).toEqual(['assist_a']);
-    expect(assistRunDocument?.edges).toEqual([]);
-    expect(buildSingleCardRunDocument(document, 'missing_card')).toBeNull();
-  });
-
-  it('hydrates reload-time chat without turning ordinary run history into a plan', () => {
-    const latestRun: DeckRun = {
-      id: 'deck_run_latest',
-      deckId: 'deck_builder',
-      startedAt: '2026-04-10T00:00:00.000Z',
-      endedAt: '2026-04-10T00:00:05.000Z',
-      status: 'success',
-      input: 'Map the next move',
-      steps: [
-        {
-          id: 'step_1',
-          executionId: 'card_magentic::single',
-          cardId: 'card_magentic',
-          templateId: 'template_magentic',
-          title: 'Magentic-One',
-          input: 'Map the next move',
-          effectiveAgent: { id: 'template_magentic', name: 'Magentic-One', tools: [] },
-          output: 'Here is the next move.',
-          status: 'success',
-          startedAt: '2026-04-10T00:00:00.000Z',
-          endedAt: '2026-04-10T00:00:05.000Z',
-          outputSummary: 'Here is the next move.',
-        },
-      ],
-      validationSummary: {
-        ok: true,
-        errors: [],
-        warnings: [],
-      },
-      events: [
-        {
-          id: 'evt_latest',
-          at: '2026-04-10T00:00:01.000Z',
-          kind: 'magentic_assignment',
-          cardId: 'card_magentic',
-          cardTitle: 'Magentic-One',
-          runtimeType: 'magentic_one',
-          text: 'Magentic-One assigned work to Main Chat.',
-          progressText: 'Goal: map the next move. Next: calling Main Chat because it is the visible reply node.',
-          status: 'running',
-        },
-      ],
-    };
-
-    const continuity = buildReloadStateFromDeckRuns([latestRun], latestRun);
-
-    expect(continuity.messages).toEqual([
-      { role: 'user', text: 'Map the next move' },
-      { role: 'assistant', text: 'Here is the next move.' },
-    ]);
-    // planSource/plan fields no longer exist on the reload state — the plan
-    // projection went with the mission/Run-Task purge; links is the survivor.
-    expect(continuity.links ?? []).toEqual([]);
-  });
-
-  it('derives live runtime visuals from streamed deck events only', () => {
-    const events: DeckRuntimeEvent[] = [
-      {
-        id: 'evt_1',
-        at: '2026-04-10T00:00:00.000Z',
-        kind: 'step_started',
-        cardId: 'assist_a',
-        cardTitle: 'Assist A',
-        runtimeType: 'assistant_agent',
-        edgeIds: ['edge_a_b'],
-        notes: ['Merged upstream outputs for Assist A.'],
-        text: 'Assist A started.',
-        status: 'running',
-      },
-      {
-        id: 'evt_2',
-        at: '2026-04-10T00:00:01.000Z',
-        kind: 'magentic_assignment',
-        cardId: 'magentic',
-        cardTitle: 'Magentic-One',
-        runtimeType: 'magentic_one',
-        edgeIds: ['edge_magentic_assist'],
-        text: 'Magentic-One assigned work to Assist A.',
-        status: 'running',
-      },
-      {
-        id: 'evt_3',
-        at: '2026-04-10T00:00:01.500Z',
-        kind: 'message',
-        type: 'message',
-        cardId: 'assist_a',
-        cardTitle: 'Assist A',
-        runtimeType: 'assistant_agent',
-        role: 'assistant',
-        content: 'Actual assistant message from Assist A.',
-      },
-      {
-        id: 'evt_4',
-        at: '2026-04-10T00:00:02.000Z',
-        kind: 'swarm_progress',
-        cardId: 'assist_a',
-        cardTitle: 'Assist A',
-        runtimeType: 'assistant_agent',
-        text: 'Assist A swarm worker 2 of 5 completed.',
-        completedWorkers: 2,
-        totalWorkers: 5,
-        status: 'running',
-      },
-      {
-        id: 'evt_5',
-        at: '2026-04-10T00:00:03.000Z',
-        kind: 'step_completed',
-        cardId: 'assist_a',
-        cardTitle: 'Assist A',
-        runtimeType: 'assistant_agent',
-        edgeIds: ['edge_a_b'],
-        text: 'Assist A completed.',
-        outputSummary: 'Prepared the next research summary.',
-        status: 'success',
-      },
-      {
-        id: 'evt_6',
-        at: '2026-04-10T00:00:04.000Z',
-        kind: 'run_completed',
-        text: 'Deck Admin completed.',
-        status: 'success',
-      },
-    ];
-
-    // Card/edge activity is the ONLY visual state the canvas consumes (the
-    // runtime glow); the run completed, so nothing is left active.
-    expect(buildDeckRuntimeVisualState(events)).toEqual({
-      activeCardIds: [],
-      activeEdgeIds: [],
-    });
-
-    // Mid-run (before completion events) the started card and its edges glow.
-    expect(buildDeckRuntimeVisualState(events.slice(0, 4))).toEqual({
-      activeCardIds: ['assist_a'],
-      activeEdgeIds: ['edge_a_b', 'edge_magentic_assist'],
-    });
-  });
 });

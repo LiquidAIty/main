@@ -90,7 +90,7 @@ export type GrpcTurnArgs = {
   model?: string;
   /** Which Harness surface this turn runs in. Chat mode exposes only the
    * structurally selected always-on card doorways; canvas mode exposes every
-   * eligible saved card as a direct Single Assist doorway. Explicit surface
+   * eligible saved card as a direct saved-card doorway. Explicit surface
    * state from the client — never inferred from message content. */
   mode?: HarnessMode;
   traceId?: string;

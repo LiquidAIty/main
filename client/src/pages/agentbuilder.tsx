@@ -41,7 +41,6 @@ import { resolveDeckWorkspaceRoot } from '../features/agentbuilder/state/deckWor
 import {
   GRAPH_THEME,
   graphDrawerButtonStyle,
-  graphDrawerInputStyle,
   graphCompanionTabButtonStyle,
   graphCompanionTabGroupStyle,
   graphDrawerSectionStyle,
@@ -55,21 +54,16 @@ import {
 // Decomposed Agent Builder modules (2026-07-08): the page is composition only;
 // deck primitives/seed/document logic and rail derivation live in the feature.
 import {
-  cleanOptionalText,
   cloneDeckDocument,
   DEFAULT_WORKSPACE_ROOT,
-  normalizeDeckEdgeType,
   normalizeRuntimeType,
   safeText,
-  uid,
 } from '../features/agentbuilder/deck/deckPrimitives';
 import {
   BUILDER_DECK_ID,
-  INITIAL_AGENT_TEMPLATES,
 } from '../features/agentbuilder/deck/deckSeed';
 import {
   buildProjectlessDeckDocument,
-  buildSingleCardRunDocument,
   formatBuilderStatusMessage,
   hydrateDeckDocument,
   resolveLocalCoderControllerConsoleConfig,
@@ -85,24 +79,16 @@ import {
   synodicPhaseFromDate,
 } from '../features/agentbuilder/core/BuilderRailMoonOrb';
 import {
-  buildDeckRuntimeVisualState,
-} from '../components/builder/deckRunState';
-import {
-  validateDeckDocument,
-} from '../components/builder/deckValidation';
-import {
   isAbortLikeError,
 } from '../components/builder/requestGuards';
 import {
-  useBuilderDeckRuntimeActions,
-} from '../components/builder/useBuilderDeckRuntimeActions';
+  useBuilderDeckPersistenceActions,
+} from '../components/builder/useBuilderDeckPersistenceActions';
 import type {
   AgentCardInstance,
   DeckEdge,
   DeckDocument,
   KnowledgeGraphKind,
-  DeckWorkspaceContext,
-  WorkspaceObjectContext,
 } from '../types/agentgraph';
 
 const AgentManager = lazy(async () => {
@@ -180,85 +166,12 @@ class KnowledgeSurfaceErrorBoundary extends React.Component<
 }
 
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime', 'Task'] as const;
+const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
 // reasoning, external evidence, or repository reality from that canvas.
 type KnowledgeSurfaceKind = KnowledgeGraphKind | 'unified';
-const WORKSPACE_OBJECT_CONTEXT_LIST_LIMIT = 12;
-const WORKSPACE_OBJECT_SELECTED_TEXT_LIMIT = 240;
-const WORKSPACE_OBJECT_SUMMARY_LIMIT = 400;
-
-function compactAwarenessText(value: unknown, limit: number): string | null {
-  const text = safeText(value).replace(/\s+/g, ' ').trim();
-  if (!text) return null;
-  return text.length <= limit
-    ? text
-    : `${text.slice(0, Math.max(0, limit - 3)).trim()}...`;
-}
-
-function compactAwarenessList(values: Array<unknown>): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const value of values) {
-    const text = compactAwarenessText(value, 96);
-    if (!text || seen.has(text)) continue;
-    seen.add(text);
-    out.push(text);
-    if (out.length >= WORKSPACE_OBJECT_CONTEXT_LIST_LIMIT) break;
-  }
-  return out;
-}
-
-function getCardDisplayName(card: AgentCardInstance | null | undefined): string {
-  return (
-    compactAwarenessText(card?.title, 96) ||
-    compactAwarenessText(card?.id, 96) ||
-    'Agent'
-  );
-}
-
-function buildCanvasObjectAwareness(document: DeckDocument): Pick<
-  WorkspaceObjectContext,
-  'activeMagenticParticipants' | 'availableCanvasAgents' | 'excludedAgents'
-> {
-  const topLevelCards = document.nodes.filter((node) => !cleanOptionalText(node.parentGraphId));
-  const nodeMap = new Map(topLevelCards.map((node) => [node.id, node] as const));
-  const magenticIds = new Set(
-    topLevelCards
-      .filter((node) => normalizeRuntimeType(node.runtimeType) === 'magentic_one')
-      .map((node) => node.id),
-  );
-  const activeMagenticParticipants = compactAwarenessList(
-    document.edges
-      .filter(
-        (edge) =>
-          (magenticIds.has(edge.source) || magenticIds.has(edge.target)) &&
-          normalizeDeckEdgeType(edge.edgeType) === 'magentic_option',
-      )
-      .map((edge) => nodeMap.get(magenticIds.has(edge.source) ? edge.target : edge.source))
-      .filter(Boolean)
-      .map((node) => getCardDisplayName(node)),
-  );
-  const availableCanvasAgents = compactAwarenessList(
-    topLevelCards.map((node) => getCardDisplayName(node)),
-  );
-  const excludedAgents = compactAwarenessList(
-    topLevelCards
-      .filter((node) => {
-        const runtimeType = normalizeRuntimeType(node.runtimeType);
-        return runtimeType === 'local_coder' || runtimeType === 'graph_flow';
-      })
-      .map((node) => getCardDisplayName(node)),
-  );
-  return {
-    activeMagenticParticipants,
-    availableCanvasAgents,
-    excludedAgents,
-  };
-}
-
 const PROJECTS_API = '/api/projects';
 const EMPTY_PROJECT_MESSAGES: AgentBuilderChatMessage[] = [];
 
@@ -317,15 +230,6 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckState,
     deckRevision,
     setDeckRevision,
-    latestDeckRun,
-    setLatestDeckRun,
-    setLatestCardRun,
-    liveDeckEvents,
-    setLiveDeckEvents,
-    deckRunBusy,
-    setDeckRunBusy,
-    cardRunBusy,
-    setCardRunBusy,
     deckLoadBusy,
     setDeckLoadBusy,
     deckSaveBusy,
@@ -396,7 +300,6 @@ export default function AgentBuilder(): React.ReactElement {
     () => deck.nodes.find((node) => isWorldSignalsAgentCard(node))?.id ?? null,
     [deck.nodes],
   );
-  const [deckRunInput, setDeckRunInput] = useState('');
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
     useState<KnowledgeSurfaceKind>('unified');
   const conversationId = 'main';
@@ -468,7 +371,6 @@ export default function AgentBuilder(): React.ReactElement {
 
   // agent builder state
   const deckSaveAbortRef = useRef<AbortController | null>(null);
-  const deckExecutionAbortRef = useRef<AbortController | null>(null);
   const activeProjectLatestRef = useRef('');
   const lastBuilderDeckWriteReasonRef = useRef<string | null>(null);
   const lastBuilderUiOnlyActionRef = useRef<string | null>(null);
@@ -585,9 +487,6 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckRevision,
     setDeckLoadBusy,
     setDeckLoadError,
-    setLatestDeckRun,
-    setLatestCardRun,
-    setLiveDeckEvents,
     setMessages,
     setStateLoaded,
     setDeckStatusMessage,
@@ -596,10 +495,7 @@ export default function AgentBuilder(): React.ReactElement {
     canvasProjectId,
     deckSaveAbortRef,
     layoutAutosaveAbortRef,
-    deckExecutionAbortRef,
     setDeckSaveBusy,
-    setDeckRunBusy,
-    setCardRunBusy,
   });
   useAgentBuilderAutosave({
     builderDev: BUILDER_DEV,
@@ -624,17 +520,7 @@ export default function AgentBuilder(): React.ReactElement {
   });
 
   const showDeckBuilder = workspaceView === 'canvas';
-  const runtimeEvents = useMemo(
-    () =>
-      liveDeckEvents.length > 0 ? liveDeckEvents : latestDeckRun?.events || [],
-    [latestDeckRun?.events, liveDeckEvents],
-  );
-  const runtimeVisualState = useMemo(
-    () => buildDeckRuntimeVisualState(runtimeEvents),
-    [runtimeEvents],
-  );
   const {
-    effectiveAgent,
     handleRenameSelectedCard,
     handleSaveSelectedCardConfig,
     handleUpdateSelectedCardSubtext,
@@ -645,8 +531,6 @@ export default function AgentBuilder(): React.ReactElement {
     recordDeckWriteReason,
     selectedCardId,
     setDeck,
-    setLatestCardRun,
-    setLatestDeckRun,
   });
   const builderTabs = useMemo(() => {
     if (selectedCard) return [...BUILDER_NODE_TABS];
@@ -656,113 +540,6 @@ export default function AgentBuilder(): React.ReactElement {
     if (workspaceView === 'canvas') return builderTabs;
     return [];
   }, [builderTabs, workspaceView]);
-  const activeDeckWorkspaceContext = useMemo<DeckWorkspaceContext>(
-    () => {
-      const workspaceRoot = resolveDeckWorkspaceRoot(
-        deck,
-        DEFAULT_WORKSPACE_ROOT,
-      );
-      return {
-        workspaceView,
-        largeSurface,
-        activeSurface: null,
-        activeWorkbench: null,
-        connectedWorkbenchAgent: false,
-        repoPath: workspaceRoot,
-        workspaceRoot,
-        graphSource: null,
-        analysisStatus: null,
-        selectedNodeId: null,
-        selectedNodeName: null,
-        activeTab: tab,
-        objectEditor: {
-          open: Boolean(objectDrawerOpen && selectedCard),
-          activeTab: selectedCard ? tab : null,
-          selectedCardId: selectedCard?.id ?? null,
-          selectedCardTitle: selectedCard
-            ? safeText(selectedCard.title || '').trim() || null
-            : null,
-          selectedCardRuntimeType: selectedCard?.runtimeType ?? null,
-          editable: Boolean(
-            workspaceView === 'canvas' &&
-              objectDrawerOpen &&
-              selectedCard &&
-              !deckLoadBusy,
-          ),
-          runnable: Boolean(
-            workspaceView === 'canvas' &&
-              selectedCard &&
-              canvasProjectId &&
-              !deckLoadBusy &&
-              !deckRunBusy &&
-              !cardRunBusy,
-          ),
-        },
-      };
-    },
-    [
-      cardRunBusy,
-      canvasProjectId,
-      deck,
-      deckLoadBusy,
-      deckRunBusy,
-      largeSurface,
-      objectDrawerOpen,
-      selectedCard,
-      tab,
-      workspaceView,
-    ],
-  );
-  const activeWorkspaceObjectContext = useMemo<WorkspaceObjectContext>(() => {
-    const canvasAwareness = buildCanvasObjectAwareness(deck);
-    const workspaceRoot = resolveDeckWorkspaceRoot(
-      deck,
-      DEFAULT_WORKSPACE_ROOT,
-    );
-    const context: WorkspaceObjectContext = {
-      activeSurface:
-        compactAwarenessText(largeSurface, 64) ||
-        compactAwarenessText(workspaceView, 64) ||
-        'chat',
-      workspaceView: compactAwarenessText(workspaceView, 64),
-      ...canvasAwareness,
-    };
-    context.repoPath = compactAwarenessText(workspaceRoot, 220);
-    context.workspaceRoot = compactAwarenessText(workspaceRoot, 220);
-
-    if (workspaceView === 'canvas' && selectedCard) {
-      const runtimeType = normalizeRuntimeType(selectedCard.runtimeType) || 'assistant_agent';
-      const binding = cleanOptionalText(selectedCard.runtimeBinding);
-      context.selectedObjectId = compactAwarenessText(selectedCard.id, 96);
-      context.selectedObjectType = compactAwarenessText(runtimeType, 64);
-      context.selectedObjectTitle = compactAwarenessText(selectedCard.title, 120);
-      context.selectedText = compactAwarenessText(
-        selectedCard.prompt,
-        WORKSPACE_OBJECT_SELECTED_TEXT_LIMIT,
-      );
-      context.openObjectSummary = compactAwarenessText(
-        [
-          `Selected canvas card: ${getCardDisplayName(selectedCard)}`,
-          `runtimeType=${runtimeType}`,
-          binding ? `runtimeBinding=${binding}` : null,
-          tab ? `activeTab=${tab}` : null,
-        ]
-          .filter(Boolean)
-          .join('; '),
-        WORKSPACE_OBJECT_SUMMARY_LIMIT,
-      );
-    }
-
-    return context;
-  }, [
-    deck,
-    largeSurface,
-    selectedCard,
-    tab,
-    workspaceView,
-  ]);
-  const deckValidation = useMemo(() => validateDeckDocument(deck), [deck]);
-
   const deckPersistFingerprint = useMemo(
     () => (BUILDER_DEV ? JSON.stringify(deck) : ''),
     [BUILDER_DEV, deck],
@@ -884,35 +661,20 @@ export default function AgentBuilder(): React.ReactElement {
     setSelectedEdgeId(null);
   }, [recordDeckWriteReason, selectedEdgeId]);
 
-  const { handleSaveDeck, handleRunSelectedCard, handleRunDeck } =
-    useBuilderDeckRuntimeActions({
+  const { handleSaveDeck } =
+    useBuilderDeckPersistenceActions({
       builderDev: BUILDER_DEV,
-      buildSingleCardRunDocument,
       canvasProjectId,
       deck,
-      deckExecutionAbortRef,
       deckId: BUILDER_DECK_ID,
       deckRevision,
-      deckRunInput,
       deckSaveAbortRef,
-      deckValidation,
-      effectiveAgent,
       formatBuilderStatusMessage,
       hydrateDeckDocument,
-      selectedCard,
-      workspaceContext: activeDeckWorkspaceContext,
-      workspaceObjectContext: activeWorkspaceObjectContext,
-      setCardRunBusy,
       setDeck,
       setDeckRevision,
-      setDeckRunBusy,
       setDeckSaveBusy,
       setDeckStatusMessage,
-      setLatestCardRun,
-      setLatestDeckRun,
-      setLiveDeckEvents,
-      templates: INITIAL_AGENT_TEMPLATES,
-      uid,
       projectsApi: PROJECTS_API,
       activeProjectLatestRef,
       recordDeckWriteReason,
@@ -952,8 +714,7 @@ export default function AgentBuilder(): React.ReactElement {
           tab === 'Prompt' ||
           tab === 'Knowledge' ||
           tab === 'Tools' ||
-          tab === 'Runtime' ||
-          tab === 'Task'
+          tab === 'Runtime'
         ) {
           const showCardIdentityFields = tab === BUILDER_NODE_TABS[0];
           return (
@@ -976,13 +737,6 @@ export default function AgentBuilder(): React.ReactElement {
                   agentType="agent_builder"
                   activeTab={tab}
                   selectedCardId={selectedCard.id}
-                  promptTestInput={deckRunInput}
-                  onChangePromptTestInput={setDeckRunInput}
-                  onRunPromptTest={handleRunSelectedCard}
-                  promptTestBusy={cardRunBusy}
-                  promptTestDisabled={
-                    cardRunBusy || deckLoadBusy || !canvasProjectId
-                  }
                   localConfig={selectedCardConfig}
                   cardName={
                     showCardIdentityFields
@@ -1025,29 +779,7 @@ export default function AgentBuilder(): React.ReactElement {
               })}
             >
               <div
-                className="text-xs"
-                style={{
-                  color: GRAPH_THEME.drawer.inputText,
-                  fontWeight: 700,
-                  marginBottom: 8,
-                }}
-              >
-                Run Input
-              </div>
-              <textarea
-                value={deckRunInput}
-                onChange={(event) => setDeckRunInput(event.target.value)}
-                rows={6}
-                style={{
-                  ...graphDrawerInputStyle(),
-                  resize: 'vertical',
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                }}
-              />
-              <div
                 className="flex items-center gap-2"
-                style={{ marginTop: 10 }}
               >
                 <button
                   onClick={() => {
@@ -1068,37 +800,6 @@ export default function AgentBuilder(): React.ReactElement {
                 >
                   {deckSaveBusy ? 'Saving...' : 'Save Board Now'}
                 </button>
-                <button
-                  onClick={() => handleRunDeck()}
-                  disabled={
-                    deckRunBusy ||
-                    deckLoadBusy ||
-                    deck.nodes.length === 0 ||
-                    !canvasProjectId
-                  }
-                  style={graphDrawerButtonStyle({
-                    border: `1px solid ${deckRunBusy ? GRAPH_THEME.drawer.inputBorder : C.primary}`,
-                    background: deckRunBusy
-                      ? 'rgba(18,20,24,0.74)'
-                      : GRAPH_THEME.drawer.buttonBackground,
-                    opacity:
-                      deckRunBusy ||
-                      deckLoadBusy ||
-                      deck.nodes.length === 0 ||
-                      !canvasProjectId
-                        ? 0.58
-                        : 1,
-                    cursor:
-                      deckRunBusy ||
-                      deckLoadBusy ||
-                      deck.nodes.length === 0 ||
-                      !canvasProjectId
-                        ? 'not-allowed'
-                        : 'pointer',
-                  })}
-                >
-                  {deckRunBusy ? 'Running...' : 'Run Deck'}
-                </button>
               </div>
               {deckStatusMessage && (
                 <div
@@ -1107,37 +808,6 @@ export default function AgentBuilder(): React.ReactElement {
                 >
                   {deckStatusMessage}
                 </div>
-              )}
-              {latestDeckRun?.error && (
-                <div
-                  className="text-xs"
-                  style={{ marginTop: 8, color: C.warn }}
-                >
-                  {latestDeckRun.error}
-                </div>
-              )}
-              {latestDeckRun?.steps?.map((step) =>
-                step.magenticTrace?.promptTrace ? (
-                  <details
-                    key={`trace-${step.id}`}
-                    className="text-xs"
-                    style={{
-                      marginTop: 12,
-                      color: GRAPH_THEME.drawer.inputMuted,
-                      border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
-                      padding: 8,
-                      borderRadius: 4,
-                      background: 'rgba(0,0,0,0.1)'
-                    }}
-                  >
-                    <summary style={{ cursor: 'pointer', outline: 'none', fontWeight: 600 }}>
-                      Prompt Trace (Card: {step.title})
-                    </summary>
-                    <pre style={{ marginTop: 8, whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 10 }}>
-                      {JSON.stringify(step.magenticTrace.promptTrace, null, 2)}
-                    </pre>
-                  </details>
-                ) : null
               )}
             </div>
           </>
@@ -1269,8 +939,8 @@ export default function AgentBuilder(): React.ReactElement {
             ? chatPanelWidth
             : null
         }
-        activeCardIds={runtimeVisualState.activeCardIds}
-        activeEdgeIds={runtimeVisualState.activeEdgeIds}
+        activeCardIds={[]}
+        activeEdgeIds={[]}
         selectedCardId={selectedCardId}
         selectedEdgeId={selectedEdgeId}
         onSelectCard={handleSelectCard}

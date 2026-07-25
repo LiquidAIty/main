@@ -143,14 +143,6 @@ const graphViewMocks = vi.hoisted(() => ({
     views: Record<string, unknown>[];
     modelContext: string;
   }> => ({ ok: true, views: [], modelContext: '' })),
-  fetchAgentGraphContext: vi.fn(async () => ({
-    ok: true,
-    projectId: 'project-1',
-    conversationId: 'main',
-    receivingAgentId: 'card_local_coder',
-    markdown: '# Exact AGE handoff\n\nKeep this Markdown unchanged.',
-  })),
-  recordAgentGraphResult: vi.fn(async () => ({ ok: true })),
 }));
 
 const dbMocks = vi.hoisted(() => ({
@@ -251,6 +243,38 @@ describe('coder routes', () => {
   // route tests never spawn a real coder process, regardless of whether the
   // vendored runtime is built or API keys are exported on the test machine.
   const BROKEN_COMMAND = 'node C:/liquidaity/nonexistent/openclaude.mjs';
+
+  it('forwards only the AgentGraph pointer on the configured-card bridge', async () => {
+    runtimeMocks.runConfiguredCard.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'card_worker',
+          correlationId: 'corr-1',
+          conversationId: 'conv-1',
+          agentContextId: 'agentctx:one',
+          input: 'Use the stored handoff.',
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect(runtimeMocks.runConfiguredCard).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        deckId: 'deck_builder',
+        cardId: 'card_worker',
+        correlationId: 'corr-1',
+        conversationId: 'conv-1',
+        agentContextId: 'agentctx:one',
+        input: 'Use the stored handoff.',
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
 
   it('establishes external identity/project authorization before resolving persisted Main runtime', async () => {
     dbMocks.query.mockResolvedValueOnce({
@@ -411,7 +435,7 @@ describe('coder routes', () => {
     }
   });
 
-  it('resolves one persisted Coder-targeted Graph View and exact AGE Markdown before execution', async () => {
+  it('resolves one persisted Coder-targeted Graph View before execution', async () => {
     chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
       doorwayDefinitions: [{ card_id: 'card_local_coder' }],
     });
@@ -436,15 +460,12 @@ describe('coder routes', () => {
           authority: 'direct_main_audit',
           approvedPrompt: 'Inspect selected code.',
           graphViewIds: ['codegraph:selected-1'],
-          agentContextId: 'agentctx:test',
         }),
       });
       expect(response.status).toBe(200);
       expect(coderRouterMocks.runCoderSubagent).toHaveBeenCalledWith(expect.objectContaining({
-        approvedPrompt: expect.stringContaining('# Exact AGE handoff\n\nKeep this Markdown unchanged.'),
+        approvedPrompt: expect.stringContaining('[LIQUIDAITY_GRAPH_CONTEXT]\n- symbol:one'),
       }));
-      expect(coderRouterMocks.runCoderSubagent.mock.calls.at(-1)?.[0].approvedPrompt)
-        .not.toContain('[AGENTGRAPH_CONTEXT_ID');
       expect(graphViewMocks.fetchDoorwayContext).toHaveBeenCalledWith(
         'project-1',
         'main',
@@ -465,42 +486,6 @@ describe('coder routes', () => {
       else process.env.LOCALCODER_COMMAND = previous;
     }
   }
-
-  it('hands prompt plus a Python-resolved AgentGraph context id to Coder and links the result', async () => {
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          parentRunId: 'parent-1',
-          projectId: 'project-1',
-          deckId: 'deck_builder',
-          conversationId: 'main',
-          cardId: 'card_local_coder',
-          adapter: 'codex',
-          approvedPrompt: 'Inspect the referenced code.',
-          agentContextId: 'agentctx:test',
-        }),
-      });
-      expect(response.status).toBe(200);
-      const payload = await response.json();
-      expect(payload.agentContextId).toBe('agentctx:test');
-      expect(coderRouterMocks.runCoderSubagent).toHaveBeenCalledWith(expect.objectContaining({
-        approvedPrompt: expect.stringContaining('# Exact AGE handoff\n\nKeep this Markdown unchanged.'),
-      }));
-      expect(graphViewMocks.recordAgentGraphResult).toHaveBeenCalledWith({
-        projectId: 'project-1',
-        contextId: 'agentctx:test',
-        resultId: 'child-1',
-        runId: 'trace-1',
-        status: 'completed',
-        resultRef: 'coder-workspace/runs/child-1/transcript.txt',
-      });
-    } finally {
-      await closeServer(server);
-    }
-  });
 
   it('keeps the Hermes report bridge closed outside an active native investigation', async () => {
     const { server, baseUrl } = await createApiServer();

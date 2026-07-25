@@ -37,39 +37,34 @@ roots:
 
 ## What this is
 
-When the Harness or Agent Canvas opens a card doorway, the backend resolves the card's
+When the Harness opens a saved-card doorway, the backend resolves the card's
 model, provider, tools, and runtime binding from the canonical deck document — never from
 role heuristics, caller overrides, or model inference. Missing or mismatched config
 produces a structured error, not a silent fallback.
 
 ## What the user/agent experiences
 
-"Run Card" → backend reads deck, validates card, builds AutoGen payload, dispatches.
+Saved-card doorway → backend reads the saved deck, validates the card, builds the AutoGen
+payload, and dispatches to Python rails. Agent Canvas only edits and saves cards; it has no
+separate Run Card/Run Deck/Task execution surface.
 Outcomes: `completed`, `failed`, `not_found`, `disabled`. All carry the caller's
 `correlationId`.
 
 ## How it works
 
-The entire resolution lives in one file: `apps/backend/src/cards/runtime.ts` (926 lines).
-
 ```
-POST /api/coder/mcp-bridge/run_configured_card    [coder.routes.ts:159]
-  → runConfiguredCard                              [runtime.ts:490]
+card.run_assistant_agent                           [mcp_host.py]
+  → card_run_assistant_agent                       [control_plane.py]
+  → POST /api/coder/mcp-bridge/run_configured_card
+  → runConfiguredCard                              [runtime.ts]
     → getDeckDocument → find card → validate enabled
-    → isSingleAssistRunDocument
-    → runSingleAssistCardAsDeckRun
-      → resolveOrchestratorCardModel
-      → buildPythonAutoGenCardRuntimePayload       [runtime.ts:334]
-        → resolveCardRuntimeType
-        → resolveCardModelStrict                   [runtime.ts:118]
-          → normalizeLocalCoderControllerCard       [localCoderController.ts]
-        → resolveCardTools                         [runtime.ts:138]
-        → resolvedMagenticOptions
-        → buildRuntimeGraph                        [runtime.ts:181]
-        → serializeCardParticipant                 [runtime.ts:284]
-      → runCardWithContract                        [runtime.ts:737]
-        → orchestrateWithAutoGen / runSingleCardWithAutoGen
-    → toAgentRunResult
+    → resolveCardModelStrict / resolveCardTools
+    → buildPythonAutoGenCardRuntimePayload
+    → runSingleCardWithAutoGen
+      → Python run_configured_card                  [magentic_agentchat.py]
+        → AgentGraph read_context (when agentContextId exists)
+        → AssistantAgent.run
+        → AgentGraph record_result
 ```
 
 ## Must not break
@@ -109,7 +104,7 @@ index_status(project="C-Projects-main")
 ```
 
 The call chain is CBM-path-proven: `runConfiguredCard` → `resolveCardModelStrict` →
-`buildPythonAutoGenCardRuntimePayload` → `runCardWithContract` are all connected by
+`buildPythonAutoGenCardRuntimePayload` → `runSingleCardWithAutoGen` are connected by
 CALLS edges discoverable via `trace_path`.
 
 ## Valid proof
@@ -125,15 +120,15 @@ assert(result.status !== 'not_found' && result.status !== 'disabled');
 assert(result.correlationId === 'corr-verify');
 ```
 
-Proves: card found, model/tools resolved from saved config, AutoGen invoked.
-Does not prove: AutoGen network round-trip, coder subprocess output quality.
+Use the focused mocked transport tests for ordinary proof. A live call is billable and must
+be explicitly authorized. Unit proof establishes saved config resolution, exact identifier
+transport, Python context scoping, and result-lineage handling without a provider call.
 
 ## Limitations
 
 - **trace_path** accepts only simple function names, not qualified names. Store
   `runConfiguredCard` (not `C-Projects-main.apps.backend.src.cards.runtime.runConfiguredCard`).
 - **index_status** accepts only the project name `C-Projects-main`, not the filesystem path.
-- **Route→handler edges** don't materialize in the CBM graph — the POST handler link at
-  `coder.routes.ts:159` is a source-level fact, not a graph edge.
+- **Route→handler edges** may not materialize in the CBM graph; verify the bridge in source.
 - **No timeout propagation** from `runConfiguredCard` to the AutoGen subprocess.
 - **Deck staleness** is not checked — `getDeckDocument` returns whatever was last saved.

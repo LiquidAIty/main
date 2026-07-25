@@ -152,7 +152,8 @@ The items below are the major deletion events. Every one "worked" before it was 
   - **Deleted `executeDeck` + the whole mission chain.** `executeDeck` was a SECOND Mag One team-run
     path — it called the same `runCardWithContract(magentic_one card)` as `run_mag_one`, just wrapped in
     `mission` metadata. There is ONE team-run entrypoint: `run_mag_one` (Harness-authored Markdown prompt).
-    The deck-run route is now Canvas Single Assist ONLY. Removed the entire dead mission + `WorkspaceHarness`
+    At that point the deck-run route was reduced to Canvas Single Assist; it was removed completely
+    in the later 2026-07-24 runtime cleanup. Removed the entire dead mission + `WorkspaceHarness`
     type cluster (`MissionSpec`/`MissionRun`/`MissionDeckPatch`/`MissionRunStatus`/`DeckRunMissionMetadata`/
     `OpenMissionMessage`/`WorkspaceHarness{Provider,Operation,Permission,Request,Result}`/`run_approved_mission`)
     + mission fields on DeckRun/Request/Response — used by only two files, no product sender ever populated them.
@@ -162,6 +163,20 @@ The items below are the major deletion events. Every one "worked" before it was 
     index NEVER blocks the coder; it inspects normally and reports honestly.
   Lesson: two run paths that both call the same function is one path too many; and a "freshness gate" on a
   local index is an invented guardrail that stops work for zero safety.
+
+- **2026-07-24 — remove the last fake Canvas runtime and duplicate AgentGraph authority.**
+  - Deleted the Agent Canvas Run Card/Run Deck/Task controls, their deck-run route, single-assist
+    wrappers, request/response contracts, event animation, saved-run writer, reload projection,
+    prompt-trace display, and orphan-only tests. Historical run JSON remains opaque in PostgreSQL;
+    ordinary deck saves preserve it and no migration deleted user data.
+  - Deleted `graph_flow` across UI, shared types, backend normalization, Mag One eligibility, and
+    Python contracts. It had no executor, `GraphFlowSpec` had zero callers, and no persisted ADMIN
+    card used it.
+  - Deleted TypeScript AgentGraph context resolution/result writing and the Python HTTP endpoints
+    that existed only for those wrappers. Saved-card execution transports `agentContextId`; Python
+    AutoGen resolves Markdown and writes AGE lineage.
+  Lesson: an editor option, contract, route, or test does not prove a runtime. Keep one execution
+  authority and delete the full connected compatibility cluster when its producer/executor is gone.
 
 - **2026-06-01 through 2026-07-05 (full audit from git log) — running tally from the actual commit
   record: 5,963 files changed, +175,192 / -182,915 lines across ~90 commits.** The DONT.md entries above

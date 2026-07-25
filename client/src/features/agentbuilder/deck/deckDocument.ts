@@ -115,25 +115,6 @@ export function resolveLocalCoderControllerConsoleConfig(
 }
 
 
-/** Scope a deck document down to the ONE selected card for a Single Assist
- * run. The backend (`isSingleAssistRunDocument`) accepts exactly one top-level
- * node — the old flow-traversal scope produced multi-node documents the route
- * refused. Card identity/prompt/model/tools resolve server-side from the
- * SAVED deck; this document only names the card. */
-export function buildSingleCardRunDocument(
-  document: DeckDocument,
-  cardId: string,
-): DeckDocument | null {
-  const selectedNode = document.nodes.find((node) => node.id === cardId);
-  if (!selectedNode) return null;
-
-  return {
-    ...document,
-    nodes: [selectedNode],
-    edges: [],
-  };
-}
-
 function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
   if (!Array.isArray(value)) {
     return cloneDeckDocument(INITIAL_DECK.nodes);
@@ -368,7 +349,7 @@ function seedCurrentSystemCardsIntoLegacyDeck(
 
   // Preserve persisted edge state; never infer/merge seed edges during hydration.
   // The retired authoring-compatibility filter also dropped edges that simply
-  // didn't fit the graph_flow/parentGraphId model — that deleted real user
+  // didn't fit the retired nested-authoring model — that deleted real user
   // intent. The ONLY edges dropped here are ones this upgrade itself orphaned by
   // retiring their endpoint card; an edge to a node that no longer exists is a
   // dangling reference, not a decision. Edge TYPE is never judged: an
