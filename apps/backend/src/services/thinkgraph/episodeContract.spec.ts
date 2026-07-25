@@ -37,7 +37,7 @@ function fullEpisode(overrides: Partial<EpisodeInput> = {}): EpisodeInput {
     },
     goalText: 'Understand the coder runtime collapse',
     nodes,
-    graphRefs: { codeGraph: ['coderRouter.ts::runCoderSubagent', 'coderConsoleRuntime.ts'], knowGraph: ['kg_1'] },
+    graphRefs: { codeGraph: ['coderConsoleRuntime.ts::runOpenClaudeCodeTask'], knowGraph: ['kg_1'] },
     artifacts: [
       { kind: 'terminal_transcript', path: 'coder-workspace/runs/coder_1/transcript.txt', hash: 'abc', ownerNode: 'SpecialistInvocation' },
       { kind: 'test_log', path: 'coder-workspace/runs/coder_1/tests.log', ownerNode: 'TestResult' },

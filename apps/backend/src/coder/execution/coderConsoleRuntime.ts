@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
@@ -20,12 +21,12 @@ import {
   parseCoderAuditResult,
   resolveConsolePermissionMode,
   resolveConsoleAuditTools,
+  type CoderAuthorityMode,
 } from './coderRuntimeContract';
 import { resolveRepoRoot } from '../workspaceRoot';
-import type { CoderRunPacket } from './coderExecution';
 
 /**
- * Console PTY subagent bridge (dossier §3, Phase 4/5).
+ * Direct OpenClaude Code PTY invocation.
  *
  * Runs Main's Coder child as the REAL OpenClaude CLI through the existing
  * `OpenClaudeConsoleSessionManager` — the same runtime the Coder Console renders
@@ -36,8 +37,8 @@ import type { CoderRunPacket } from './coderExecution';
  * CodeGraphViewContract; `mag_one_execution` → the existing validated CoderReport.
  * The redacted terminal transcript is preserved as an artifact.
  *
- * This is the ONLY `run_coder_subagent` execution path — there is no headless
- * fallback. If the Console runtime cannot run (no model, runtime unavailable,
+ * This is the direct Main-to-terminal path — there is no headless fallback.
+ * If the Console runtime cannot run (no model, runtime unavailable,
  * non-zero exit, or no valid result), the result is an honest failure. The live
  * equivalence proof (a real model run yielding a validated result) is deferred to live validation.
  */
@@ -50,6 +51,32 @@ export type ConsoleCoderDeps = {
   signal?: AbortSignal;
   /** Injectable in focused tests; production uses the bounded environment/default value. */
   timeoutMs?: number;
+};
+
+/** Main's saved Coder invocation. This is an identity/prompt envelope for the
+ * one existing OpenClaude Code terminal, not an adapter or runtime selector. */
+export type OpenClaudeCodeTask = {
+  parentRunId: string;
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  cardId: string;
+  approvedPrompt: string;
+  authority?: CoderAuthorityMode;
+  model?: string;
+  provider?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+};
+
+type OpenClaudeCodeRun = {
+  runId: string;
+  correlationId: string;
+  promptHash: string;
+  parentRunId: string;
+  authority?: CoderAuthorityMode;
+  repositoryRoot: string;
+  approvedPrompt: string;
 };
 
 export type ConsoleCoderResultKind = 'audit' | 'coder_report';
@@ -67,6 +94,7 @@ export type ConsoleCommandEvidence = {
 export type ConsoleCoderResult = {
   ok: boolean;
   childRunId: string;
+  parentRunId: string;
   correlationId: string;
   promptHash: string;
   sessionId: string | null;
@@ -93,8 +121,25 @@ const DEFAULT_CONSOLE_EXECUTION_TIMEOUT_MS = 300_000;
 const MAX_CONSOLE_EXECUTION_TIMEOUT_MS = 900_000;
 const STOP_SETTLE_TIMEOUT_MS = 6_000;
 
-function resultKindFor(packet: CoderRunPacket): ConsoleCoderResultKind {
-  return packet.authority === 'direct_main_audit' ? 'audit' : 'coder_report';
+function resultKindFor(run: OpenClaudeCodeRun): ConsoleCoderResultKind {
+  return run.authority === 'direct_main_audit' ? 'audit' : 'coder_report';
+}
+
+function prepareOpenClaudeCodeRun(task: OpenClaudeCodeTask): OpenClaudeCodeRun {
+  if (!task.parentRunId || !task.projectId || !task.deckId || !task.conversationId || !task.cardId) {
+    throw new Error('openclaude_code_identity_incomplete');
+  }
+  const approvedPrompt = String(task.approvedPrompt || '');
+  if (!approvedPrompt.trim()) throw new Error('openclaude_code_prompt_empty');
+  return {
+    runId: `coder_${randomUUID()}`,
+    correlationId: `trace_${randomUUID()}`,
+    promptHash: createHash('sha256').update(Buffer.from(approvedPrompt, 'utf8')).digest('hex'),
+    parentRunId: task.parentRunId,
+    authority: task.authority,
+    repositoryRoot: resolveRepoRoot(),
+    approvedPrompt,
+  };
 }
 
 function resolveExecutionTimeoutMs(injected?: number): number {
@@ -104,7 +149,7 @@ function resolveExecutionTimeoutMs(injected?: number): number {
 }
 
 function blocked(
-  packet: CoderRunPacket,
+  run: OpenClaudeCodeRun,
   sessionId: string | null,
   sessionState: string,
   error: string,
@@ -113,9 +158,10 @@ function blocked(
 ): ConsoleCoderResult {
   return {
     ok: false,
-    childRunId: packet.runId,
-    correlationId: packet.correlationId,
-    promptHash: packet.promptHash,
+    childRunId: run.runId,
+    parentRunId: run.parentRunId,
+    correlationId: run.correlationId,
+    promptHash: run.promptHash,
     sessionId,
     sessionState,
     terminalState,
@@ -127,7 +173,7 @@ function blocked(
     stdout: null,
     stderr: null,
     resultValidationStatus: 'not_attempted',
-    resultKind: resultKindFor(packet),
+    resultKind: resultKindFor(run),
     auditResult: null,
     report: null,
     transcript: '',
@@ -229,23 +275,24 @@ function observedStream(chunks: ConsoleOutputChunk[], stream: 'stdout' | 'stderr
   return observed.length > 0 ? observed.map((chunk) => chunk.data).join('') : null;
 }
 
-export async function runCoderConsoleSession(
-  packet: CoderRunPacket,
+export async function runOpenClaudeCodeTask(
+  task: OpenClaudeCodeTask,
   deps: ConsoleCoderDeps = {},
 ): Promise<ConsoleCoderResult> {
+  const run = prepareOpenClaudeCodeRun(task);
   const manager = deps.manager ?? openClaudeConsoleSessionManager;
-  const timeoutMs = resolveExecutionTimeoutMs(deps.timeoutMs);
-  const model = String(deps.model ?? '').trim();
-  if (deps.signal?.aborted) {
-    return blocked(packet, null, 'cancelled', 'console_coder_cancelled', timeoutMs, 'cancelled');
+  const timeoutMs = resolveExecutionTimeoutMs(task.timeoutMs ?? deps.timeoutMs);
+  const model = String(task.model ?? deps.model ?? '').trim();
+  if (task.signal?.aborted || deps.signal?.aborted) {
+    return blocked(run, null, 'cancelled', 'console_coder_cancelled', timeoutMs, 'cancelled');
   }
   if (!model) {
     // Honest, loud failure — the OpenClaude runtime needs a model resolved from
     // the saved Coder card. No hidden fallback to a second coder.
-    return blocked(packet, null, 'blocked', 'console_coder_model_unresolved', timeoutMs);
+    return blocked(run, null, 'blocked', 'console_coder_model_unresolved', timeoutMs);
   }
 
-  const isAudit = packet.authority === 'direct_main_audit';
+  const isAudit = run.authority === 'direct_main_audit';
   // direct_main_audit: scoped codegraph doorway + native reads only, read-only
   // (plan) mode, all mutation/shell denied. mag_one_execution: implementation
   // authority (acceptEdits), no allowlist, structured CoderReport.
@@ -253,19 +300,19 @@ export async function runCoderConsoleSession(
   let mcpConfigArtifact: string | null = null;
   let auditTools: { allowedTools: string[]; disallowedTools: string[] } | null = null;
   if (isAudit) {
-    const servers = buildCoderMcpServers({ runId: packet.runId, includeCodeGraph: true });
-    const mcpConfig = writeRunMcpConfig(packet.runId, servers);
+    const servers = buildCoderMcpServers({ runId: run.runId, includeCodeGraph: true });
+    const mcpConfig = writeRunMcpConfig(run.runId, servers);
     if (!mcpConfig) {
-      return blocked(packet, null, 'blocked', 'console_coder_mcp_config_write_failed', timeoutMs);
+      return blocked(run, null, 'blocked', 'console_coder_mcp_config_write_failed', timeoutMs);
     }
     mcpConfigArtifact = mcpConfig.artifactRef;
     mcpFlags = ['--mcp-config', mcpConfig.absolutePath, '--strict-mcp-config'];
     auditTools = resolveConsoleAuditTools();
   }
   const args = buildOpenClaudeSubagentArgs({
-    prompt: packet.approvedPrompt,
+    prompt: run.approvedPrompt,
     model,
-    permissionMode: resolveConsolePermissionMode(packet.authority),
+    permissionMode: resolveConsolePermissionMode(run.authority),
     jsonSchema: isAudit ? coderAuditResultJsonSchema : coderReportJsonSchema,
     mcpFlags,
     allowedTools: auditTools?.allowedTools,
@@ -273,22 +320,22 @@ export async function runCoderConsoleSession(
   });
 
   const started = manager.start({
-    targetRoot: packet.repositoryRoot,
+    targetRoot: run.repositoryRoot,
     mode: 'task',
     model,
-    provider: deps.provider,
-    prompt: packet.approvedPrompt,
+    provider: task.provider ?? deps.provider,
+    prompt: run.approvedPrompt,
     args,
   });
   if (!started.ok) {
-    return blocked(packet, null, 'failed', started.error, timeoutMs);
+    return blocked(run, null, 'failed', started.error, timeoutMs);
   }
 
   const session = started.session;
-  const waitOutcome = await awaitSessionExit(session, deps.signal, timeoutMs);
+  const waitOutcome = await awaitSessionExit(session, task.signal ?? deps.signal, timeoutMs);
 
   const transcript = session.transcriptText();
-  const transcriptArtifact = persistTranscript(packet.runId, transcript);
+  const transcriptArtifact = persistTranscript(run.runId, transcript);
   const chunks = session.transcript();
   const raw = session.rawResultText();
 
@@ -328,9 +375,10 @@ export async function runCoderConsoleSession(
 
   return {
     ok: terminalState === 'completed',
-    childRunId: packet.runId,
-    correlationId: packet.correlationId,
-    promptHash: packet.promptHash,
+    childRunId: run.runId,
+    parentRunId: run.parentRunId,
+    correlationId: run.correlationId,
+    promptHash: run.promptHash,
     sessionId: session.info.id,
     sessionState: session.info.state,
     terminalState,
@@ -348,7 +396,7 @@ export async function runCoderConsoleSession(
     stdout: observedStream(chunks, 'stdout'),
     stderr: observedStream(chunks, 'stderr'),
     resultValidationStatus,
-    resultKind: isAudit ? 'audit' : 'coder_report',
+    resultKind: resultKindFor(run),
     auditResult,
     report,
     transcript,

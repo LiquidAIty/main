@@ -50,10 +50,9 @@ const deckMocks = vi.hoisted(() => ({
   })),
 }));
 
-const coderRouterMocks = vi.hoisted(() => ({
-  runCoderSubagent: vi.fn(async (request: { approvedPrompt: string }) => ({
+const consoleRuntimeMocks = vi.hoisted(() => ({
+  runOpenClaudeCodeTask: vi.fn(async (request: { approvedPrompt: string }) => ({
     ok: true,
-    adapter: 'claude_code',
     parentRunId: 'parent-1',
     childRunId: 'child-1',
     correlationId: 'trace-1',
@@ -184,8 +183,8 @@ vi.mock('../decks/store', () => ({
   getDeckDocument: deckMocks.getDeckDocument,
 }));
 
-vi.mock('../coder/execution/coderRouter', () => ({
-  runCoderSubagent: coderRouterMocks.runCoderSubagent,
+vi.mock('../coder/execution/coderConsoleRuntime', () => ({
+  runOpenClaudeCodeTask: consoleRuntimeMocks.runOpenClaudeCodeTask,
 }));
 
 vi.mock('../conversations/store', () => ({
@@ -511,7 +510,7 @@ describe('coder routes', () => {
     chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
       doorwayDefinitions: [],
     });
-    coderRouterMocks.runCoderSubagent.mockClear();
+    consoleRuntimeMocks.runOpenClaudeCodeTask.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
@@ -523,7 +522,6 @@ describe('coder routes', () => {
           deckId: 'deck_builder',
           conversationId: 'main',
           cardId: 'card_local_coder',
-          adapter: 'claude_code',
           authority: 'direct_main_audit',
           approvedPrompt: 'Inspect selected code.',
           graphViewIds: ['codegraph:selected-1'],
@@ -534,7 +532,7 @@ describe('coder routes', () => {
         ok: false,
         error: 'direct_main_coder_edge_required: card_local_coder',
       });
-      expect(coderRouterMocks.runCoderSubagent).not.toHaveBeenCalled();
+      expect(consoleRuntimeMocks.runOpenClaudeCodeTask).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }
@@ -548,7 +546,7 @@ describe('coder routes', () => {
       doorwayDefinitions: [{ card_id: 'card_local_coder' }],
     });
     graphViewMocks.fetchDoorwayContext.mockRejectedValueOnce(new Error(error));
-    coderRouterMocks.runCoderSubagent.mockClear();
+    consoleRuntimeMocks.runOpenClaudeCodeTask.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
@@ -560,7 +558,6 @@ describe('coder routes', () => {
           deckId: 'deck_builder',
           conversationId: 'main',
           cardId: 'card_local_coder',
-          adapter: 'claude_code',
           authority: 'direct_main_audit',
           approvedPrompt: 'Inspect selected code.',
           graphViewIds: ['codegraph:selected-1'],
@@ -568,7 +565,7 @@ describe('coder routes', () => {
       });
       expect(response.status).toBe(400);
       await expect(response.json()).resolves.toEqual({ ok: false, error });
-      expect(coderRouterMocks.runCoderSubagent).not.toHaveBeenCalled();
+      expect(consoleRuntimeMocks.runOpenClaudeCodeTask).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }
@@ -584,7 +581,7 @@ describe('coder routes', () => {
       modelContext: '[LIQUIDAITY_GRAPH_CONTEXT]\n- symbol:one',
     });
     graphViewMocks.transitionGraphViewsOnPython.mockClear();
-    coderRouterMocks.runCoderSubagent.mockClear();
+    consoleRuntimeMocks.runOpenClaudeCodeTask.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
@@ -596,14 +593,13 @@ describe('coder routes', () => {
           deckId: 'deck_builder',
           conversationId: 'main',
           cardId: 'card_local_coder',
-          adapter: 'claude_code',
           authority: 'direct_main_audit',
           approvedPrompt: 'Inspect selected code.',
           graphViewIds: ['codegraph:selected-1'],
         }),
       });
       expect(response.status).toBe(200);
-      expect(coderRouterMocks.runCoderSubagent).toHaveBeenCalledWith(expect.objectContaining({
+      expect(consoleRuntimeMocks.runOpenClaudeCodeTask).toHaveBeenCalledWith(expect.objectContaining({
         approvedPrompt: expect.stringContaining('[LIQUIDAITY_GRAPH_CONTEXT]\n- symbol:one'),
       }));
       expect(graphViewMocks.fetchDoorwayContext).toHaveBeenCalledWith(
@@ -636,7 +632,7 @@ describe('coder routes', () => {
       ],
       modelContext: '[LIQUIDAITY_GRAPH_CONTEXT]\n- exact selected context',
     });
-    coderRouterMocks.runCoderSubagent.mockClear();
+    consoleRuntimeMocks.runOpenClaudeCodeTask.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
@@ -648,7 +644,6 @@ describe('coder routes', () => {
           deckId: 'deck_builder',
           conversationId: 'main',
           cardId: 'card_local_coder',
-          adapter: 'claude_code',
           authority: 'direct_main_audit',
           approvedPrompt: 'Inspect selected code.',
           graphViewIds: ['codegraph:selected-2', 'thinkgraph:selected-1'],

@@ -30,7 +30,7 @@ function seed(jobId = 'job_a') {
     markdown: '# Plan\nDo the thing.',
     source: 'coder',
     goalId: 'goal:g1',
-    codeGraphRefs: ['coderRouter.ts::runCoderSubagent'],
+    codeGraphRefs: ['coderConsoleRuntime.ts::runOpenClaudeCodeTask'],
   });
 }
 

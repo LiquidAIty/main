@@ -48,7 +48,7 @@ import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/ha
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { pool } from '../db/pool';
 import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantStore';
-import { runCoderSubagent } from '../coder/execution/coderRouter';
+import { runOpenClaudeCodeTask } from '../coder/execution/coderConsoleRuntime';
 import { setLatestCoderAuditView, getLatestCoderAuditView } from '../coder/execution/coderAuditView';
 import type { CodeGraphViewContractResult } from '../contracts/coderContracts';
 import {
@@ -309,13 +309,12 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
     });
     let result;
     try {
-      result = await runCoderSubagent({
+      result = await runOpenClaudeCodeTask({
         parentRunId: String(body.parentRunId || ''),
         projectId,
         deckId,
         conversationId,
         cardId,
-        adapter: String(body.adapter || ''),
         approvedPrompt,
         authority,
         model: model.providerModelId,

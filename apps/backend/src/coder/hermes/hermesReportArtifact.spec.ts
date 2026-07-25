@@ -85,7 +85,7 @@ describe('writeHermesReportArtifact', () => {
         goalId: 'goal:g1',
         goalText: 'Understand the coder runtime',
         thinkGraphBranch: ['goal:g1', 'decision:d1'],
-        codeGraphRefs: ['coderRouter.ts::runCoderSubagent'],
+        codeGraphRefs: ['coderConsoleRuntime.ts::runOpenClaudeCodeTask'],
         knowGraphRefs: ['kg:1'],
       },
       'project-1',
@@ -95,7 +95,7 @@ describe('writeHermesReportArtifact', () => {
       goalId: 'goal:g1',
       goalText: 'Understand the coder runtime',
       thinkGraphBranch: ['goal:g1', 'decision:d1'],
-      codeGraphRefs: ['coderRouter.ts::runCoderSubagent'],
+      codeGraphRefs: ['coderConsoleRuntime.ts::runOpenClaudeCodeTask'],
       knowGraphRefs: ['kg:1'],
     });
     // An unfocused turn keeps the original shape — no focused-branch keys leak in.
@@ -108,7 +108,7 @@ describe('writeHermesReportArtifact', () => {
     const workspaceRoot = mkdtempSync(path.join(os.tmpdir(), 'hermes-life-'));
     vi.stubEnv('LIQUIDAITY_GRPC_CWD', workspaceRoot);
     const context = parseHermesInvestigationContext(
-      { goalId: 'goal:g1', codeGraphRefs: ['coderRouter.ts::runCoderSubagent'] },
+      { goalId: 'goal:g1', codeGraphRefs: ['coderConsoleRuntime.ts::runOpenClaudeCodeTask'] },
       'project-1',
       'main',
     );
@@ -121,7 +121,7 @@ describe('writeHermesReportArtifact', () => {
         parentRunId: 'req_life0001',
         reportMarkdown: '# Found',
         summary: 'Found it',
-        codeGraphRefs: ['coderRouter.ts::runCoderSubagent'],
+        codeGraphRefs: ['coderConsoleRuntime.ts::runOpenClaudeCodeTask'],
       });
       expect(completion.status).toBe('created');
       endHermesInvestigation('req_life0001');

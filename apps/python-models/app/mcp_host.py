@@ -355,9 +355,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="run_coder_subagent",
             description=(
-                "Main Chat only: run one approved coding assignment through the application-owned Coder Router. "
-                "The direct visible-console adapter must be named explicitly: claude_code. Unsupported adapters "
-                "fail closed; there is no fallback or substitution. Pass the exact active "
+                "Main Chat only: send one approved coding assignment from the saved connected Coder card "
+                "directly to the existing visible OpenClaude Code terminal. Pass the exact active "
                 "project/deck/conversation/parentRunId from LIQUIDAITY_RUNTIME_CONTEXT, the saved Coder card id, "
                 "and approvedPrompt bytes. Returns the linked child run, the coder session/thread id, structured "
                 "command evidence, and the CoderReport verbatim."
@@ -370,7 +369,6 @@ async def list_tools() -> list[Tool]:
                     "deckId": {"type": "string"},
                     "conversationId": {"type": "string"},
                     "cardId": {"type": "string"},
-                    "adapter": {"type": "string", "enum": ["claude_code"]},
                     "approvedPrompt": {"type": "string"},
                     "authority": {"type": "string", "enum": ["direct_main_audit", "mag_one_execution"]},
                     "graphViewIds": {
@@ -379,7 +377,7 @@ async def list_tools() -> list[Tool]:
                         "description": "Persisted Graph View ids (canonical, e.g. codegraph:…) to attach. IDs only — the server resolves the persisted views and renders their compact context; never paste view content.",
                     },
                 },
-                "required": ["parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt"],
+                "required": ["parentRunId", "projectId", "deckId", "conversationId", "cardId", "approvedPrompt"],
             },
         ),
         Tool(
@@ -1052,7 +1050,7 @@ def _external_tool_catalog(tools: list[Tool], context: dict[str, Any]) -> list[T
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
     "main.context": set(),
-    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt", "authority", "graphViewIds"},
+    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "approvedPrompt", "authority", "graphViewIds"},
     "agentgraph.create_context": {
         "projectId",
         "deckId",

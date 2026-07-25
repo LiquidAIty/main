@@ -13,9 +13,9 @@ function input(overrides: Record<string, unknown> = {}) {
     repositoryIdentity: 'liquidaity',
     revision: 'abc',
     freshness: 'fresh',
-    codeGraphQuery: 'runCoderSubagent',
+    codeGraphQuery: 'runOpenClaudeCodeTask',
     codeGraphNodeRefs: ['n1'],
-    viewContract: { focusSymbols: ['runCoderSubagent'] },
+    viewContract: { focusSymbols: ['runOpenClaudeCodeTask'] },
     transcriptArtifact: 'coder-workspace/runs/coder_1/transcript.txt',
     ...overrides,
   } as Parameters<typeof setLatestCoderAuditView>[0];
@@ -31,7 +31,7 @@ describe('coderAuditView store', () => {
     setLatestCoderAuditView(input({ conclusion: 'second' }));
     const view = getLatestCoderAuditView('p1', 'main');
     expect(view?.conclusion).toBe('second');
-    expect(view?.viewContract.focusSymbols).toEqual(['runCoderSubagent']);
+    expect(view?.viewContract.focusSymbols).toEqual(['runOpenClaudeCodeTask']);
     expect(view?.updatedAt).toBeTruthy();
   });
 

@@ -2,9 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { runCoderConsoleSession, type ConsoleCoderDeps } from './coderConsoleRuntime';
-import { runCoderSubagent } from './coderRouter';
-import { createApprovedCoderRun, type CoderAdapterId } from './coderExecution';
+import { runOpenClaudeCodeTask, type ConsoleCoderDeps } from './coderConsoleRuntime';
 
 // Transcript artifacts write under resolveRepoRoot()/coder-workspace/runs — point
 // that at a temp dir so tests never touch the real tree.
@@ -123,56 +121,49 @@ function validAuditJson(conclusion = 'audit conclusion') {
     repositoryIdentity: 'liquidaity',
     revision: 'c700add0',
     freshness: 'fresh',
-    codeGraphQuery: 'runCoderSubagent',
-    codeGraphNodeRefs: ['coderRouter.ts::runCoderSubagent'],
-    files: ['apps/backend/src/coder/execution/coderRouter.ts'],
-    symbols: ['runCoderSubagent'],
+    codeGraphQuery: 'runOpenClaudeCodeTask',
+    codeGraphNodeRefs: ['coderConsoleRuntime.ts::runOpenClaudeCodeTask'],
+    files: ['apps/backend/src/coder/execution/coderConsoleRuntime.ts'],
+    symbols: ['runOpenClaudeCodeTask'],
     findings: ['console is the only runtime'],
     unresolvedQuestions: [],
     risks: [],
     implementationBoundaries: ['read-only'],
-    requiredTests: ['coderRouter.spec.ts'],
-    viewContract: { projectId: 'p1', focusSymbols: ['runCoderSubagent'], focusPaths: ['apps/backend/src/coder/execution/coderRouter.ts'] },
+    requiredTests: ['coderConsoleRuntime.spec.ts'],
+    viewContract: { projectId: 'p1', focusSymbols: ['runOpenClaudeCodeTask'], focusPaths: ['apps/backend/src/coder/execution/coderConsoleRuntime.ts'] },
     artifactRefs: [],
   });
 }
 
-function packet(authority?: 'direct_main_audit' | 'mag_one_execution') {
-  return createApprovedCoderRun({
+function task(authority?: 'direct_main_audit' | 'mag_one_execution') {
+  return {
     parentRunId: 'parent_1',
     projectId: 'p1',
     deckId: 'deck_builder',
+    conversationId: 'main',
     cardId: 'card_local_coder',
-    adapter: 'claude_code' as CoderAdapterId,
-    invocationMode: 'harness_subagent',
     authority,
-    repositoryRoot: 'C:/Projects/main',
-    allowedPaths: ['.'],
-    deniedPaths: ['.git'],
-    rawRequest: 'audit it',
     approvedPrompt: 'audit the coder runtime',
-    promptVersion: 1,
-    workspaceGranted: true,
-    liveRunApproved: true,
-    proofRequirements: ['Return a validated result.'],
-  } as Parameters<typeof createApprovedCoderRun>[0]);
+    model: MODEL,
+    provider: 'openrouter',
+  };
 }
 
-describe('runCoderConsoleSession (Console PTY bridge)', () => {
+describe('runOpenClaudeCodeTask (visible Console PTY)', () => {
   it('direct_main_audit returns a validated audit result + CodeGraphViewContract, report null, transcript persisted', async () => {
     const session = new FakeSession(validAuditJson('audited by console'));
-    const p = packet('direct_main_audit');
+    const p = task('direct_main_audit');
     const capture: { req?: { args?: string[] } } = {};
-    const promise = runCoderConsoleSession(p, { manager: managerFor({ ok: true, session }, capture), model: MODEL });
+    const promise = runOpenClaudeCodeTask(p, { manager: managerFor({ ok: true, session }, capture) });
     session.exitWith(0);
     const result = await promise;
     expect(result.ok).toBe(true);
     expect(result.resultKind).toBe('audit');
     expect(result.auditResult?.conclusion).toBe('audited by console');
-    expect(result.auditResult?.viewContract.focusSymbols).toContain('runCoderSubagent');
+    expect(result.auditResult?.viewContract.focusSymbols).toContain('runOpenClaudeCodeTask');
     expect(result.report).toBeNull();
-    expect(result.childRunId).toBe(p.runId);
-    expect(result.correlationId).toBe(p.correlationId);
+    expect(result.childRunId).toMatch(/^coder_/);
+    expect(result.correlationId).toMatch(/^trace_/);
     expect(result.transcriptArtifact).toMatch(/coder-workspace\/runs\/.*\/transcript\.txt$/);
     expect(result.terminalState).toBe('completed');
     expect(result.processExitCode).toBe(0);
@@ -194,8 +185,8 @@ describe('runCoderConsoleSession (Console PTY bridge)', () => {
 
   it('mag_one_execution returns the validated CoderReport, auditResult null', async () => {
     const session = new FakeSession(validReportJson('executed'));
-    const p = packet('mag_one_execution');
-    const promise = runCoderConsoleSession(p, { manager: managerFor({ ok: true, session }), model: MODEL });
+    const p = task('mag_one_execution');
+    const promise = runOpenClaudeCodeTask(p, { manager: managerFor({ ok: true, session }) });
     session.exitWith(0);
     const result = await promise;
     expect(result.ok).toBe(true);
@@ -206,7 +197,7 @@ describe('runCoderConsoleSession (Console PTY bridge)', () => {
 
   it('propagates a non-zero exit as a failed run with no fabricated result', async () => {
     const session = new FakeSession(''); // no valid JSON on stdout
-    const promise = runCoderConsoleSession(packet('mag_one_execution'), { manager: managerFor({ ok: true, session }), model: MODEL });
+    const promise = runOpenClaudeCodeTask(task('mag_one_execution'), { manager: managerFor({ ok: true, session }) });
     session.exitWith(1);
     const result = await promise;
     expect(result.ok).toBe(false);
@@ -218,9 +209,8 @@ describe('runCoderConsoleSession (Console PTY bridge)', () => {
   });
 
   it('propagates a session start failure (runtime unavailable) fail-closed', async () => {
-    const result = await runCoderConsoleSession(packet(), {
+    const result = await runOpenClaudeCodeTask(task(), {
       manager: managerFor({ ok: false, error: 'console_runtime_unavailable' }),
-      model: MODEL,
     });
     expect(result.ok).toBe(false);
     expect(result.sessionId).toBeNull();
@@ -230,7 +220,8 @@ describe('runCoderConsoleSession (Console PTY bridge)', () => {
   it('fails honestly (blocked) when no model is resolved — never spawns a doomed run', async () => {
     let started = false;
     const manager = { start: () => { started = true; return { ok: true, session: new FakeSession(validReportJson()) }; } } as unknown as ConsoleCoderDeps['manager'];
-    const result = await runCoderConsoleSession(packet(), { manager });
+    const taskWithoutModel = { ...task(), model: '' };
+    const result = await runOpenClaudeCodeTask(taskWithoutModel, { manager });
     expect(result.ok).toBe(false);
     expect(result.error).toBe('console_coder_model_unresolved');
     expect(started).toBe(false);
@@ -239,9 +230,8 @@ describe('runCoderConsoleSession (Console PTY bridge)', () => {
   it('cancels the existing visible session, retains transcript, and reports cancellation distinctly', async () => {
     const session = new FakeSession('partial output');
     const controller = new AbortController();
-    const promise = runCoderConsoleSession(packet('mag_one_execution'), {
+    const promise = runOpenClaudeCodeTask(task('mag_one_execution'), {
       manager: managerFor({ ok: true, session }),
-      model: MODEL,
       signal: controller.signal,
     });
     controller.abort();
@@ -255,9 +245,8 @@ describe('runCoderConsoleSession (Console PTY bridge)', () => {
 
   it('times out once, stops the existing visible session, and reports timed_out distinctly', async () => {
     const session = new FakeSession('still running');
-    const result = await runCoderConsoleSession(packet('mag_one_execution'), {
+    const result = await runOpenClaudeCodeTask(task('mag_one_execution'), {
       manager: managerFor({ ok: true, session }),
-      model: MODEL,
       timeoutMs: 5,
     });
     expect(session.stopCalls).toBe(1);
@@ -272,9 +261,8 @@ describe('runCoderConsoleSession (Console PTY bridge)', () => {
     ['not json', 'malformed', 'console_coder_result_malformed'],
   ])('distinguishes %s structured output after a clean process exit', async (raw, validation, error) => {
     const session = new FakeSession(raw);
-    const promise = runCoderConsoleSession(packet('mag_one_execution'), {
+    const promise = runOpenClaudeCodeTask(task('mag_one_execution'), {
       manager: managerFor({ ok: true, session }),
-      model: MODEL,
     });
     session.exitWith(0);
     const result = await promise;
@@ -282,67 +270,9 @@ describe('runCoderConsoleSession (Console PTY bridge)', () => {
     expect(result.resultValidationStatus).toBe(validation);
     expect(result.error).toBe(error);
   });
-});
-
-describe('runCoderSubagent (canonical Console PTY runtime — no headless fallback)', () => {
-  it('mag_one_execution: returns the CoderReport through parent/child identity', async () => {
-    const session = new FakeSession(validReportJson('via router'));
-    const promise = runCoderSubagent(
-      { parentRunId: 'req_parent', projectId: 'p1', deckId: 'deck_builder', conversationId: 'c1', cardId: 'card_local_coder', adapter: 'claude_code', approvedPrompt: 'do it', authority: 'mag_one_execution', model: MODEL, provider: 'openrouter' },
-      undefined,
-      { manager: managerFor({ ok: true, session }) },
-    );
-    session.exitWith(0);
-    const result = await promise;
-    expect(result.ok).toBe(true);
-    expect(result.parentRunId).toBe('req_parent');
-    expect(result.childRunId).toMatch(/^coder_/);
-    expect(result.resultKind).toBe('coder_report');
-    expect((result.report as { summary?: string } | null)?.summary).toBe('via router');
-    expect(result.exactCommand).toBeNull();
-    expect(result.commandEvidence?.commandPath).toBe('C:/openclaude/openclaude.exe');
-    expect(result.processExitCode).toBe(0);
-    expect(result.commandExitStatus).toBe(0);
-  });
-
-  it('direct_main_audit: returns the audit result (with view contract) in report', async () => {
-    const session = new FakeSession(validAuditJson('router audit'));
-    const promise = runCoderSubagent(
-      { parentRunId: 'rp', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter: 'claude_code', approvedPrompt: 'audit', authority: 'direct_main_audit', model: MODEL },
-      undefined,
-      { manager: managerFor({ ok: true, session }) },
-    );
-    session.exitWith(0);
-    const result = await promise;
-    expect(result.ok).toBe(true);
-    expect(result.resultKind).toBe('audit');
-    expect((result.report as { conclusion?: string } | null)?.conclusion).toBe('router audit');
-    expect(result.transcriptArtifact).toMatch(/transcript\.txt$/);
-  });
-
-  it.each(['codex', 'nope', ''])('rejects unsupported adapter %j before starting the visible console', async (adapter) => {
-    const session = new FakeSession(validReportJson('console only'));
-    const manager = managerFor({ ok: true, session });
-    await expect(runCoderSubagent(
-      { parentRunId: 'rp', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter, approvedPrompt: 'x', authority: 'mag_one_execution', model: MODEL },
-      undefined,
-      { manager },
-    )).rejects.toThrow(`coder_adapter_unsupported: ${adapter || 'missing'}`);
-  });
-
-  it('returns an honest failure when the Console runtime is unavailable (no hidden second coder)', async () => {
-    const result = await runCoderSubagent(
-      { parentRunId: 'rp', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter: 'claude_code', approvedPrompt: 'x', model: MODEL },
-      undefined,
-      { manager: managerFor({ ok: false, error: 'console_runtime_unavailable' }) },
-    );
-    expect(result.ok).toBe(false);
-    expect(result.error).toBe('console_runtime_unavailable');
-  });
-
-  it('rejects incomplete run identity (fail closed)', async () => {
-    await expect(
-      runCoderSubagent({ parentRunId: '', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter: 'claude_code', approvedPrompt: 'x', model: MODEL }),
-    ).rejects.toThrow('coder_router_identity_incomplete');
+  it('fails closed for incomplete saved-card identity before starting a terminal', async () => {
+    const manager = managerFor({ ok: true, session: new FakeSession(validReportJson()) });
+    await expect(runOpenClaudeCodeTask({ ...task(), parentRunId: '' }, { manager }))
+      .rejects.toThrow('openclaude_code_identity_incomplete');
   });
 });

@@ -17,8 +17,7 @@ import {
  *  - mag_one_execution  : approved implementation. Edit/Write/shell/tests.
  *
  * This module is the single source for tool/permission construction and MCP
- * composition so the headless adapter and (later, per §3) the live console
- * session build identical argv/MCP from one place — never two.
+ * composition for the live console session in one place.
  */
 export type CoderAuthorityMode = 'direct_main_audit' | 'mag_one_execution';
 
@@ -172,9 +171,7 @@ export function resolveConsolePermissionMode(authority?: CoderAuthorityMode): Co
 }
 
 /**
- * The exact OpenClaude non-interactive job argv (mirrors, and is consumed by,
- * `LocalCoderAdapter.jobArgs` so the streamed Console subagent run and the
- * headless LocalCoder job build ONE argv shape). `--output-format json` emits a
+ * The exact OpenClaude non-interactive console argv. `--output-format json` emits a
  * single structured envelope on stdout (tool logs go to stderr), which
  * `parseOpenClaudeCoderReport` reads.
  */
@@ -221,9 +218,8 @@ export type OpenClaudeParseResult = {
 
 /**
  * Parse an OpenClaude `--output-format json` stdout envelope into a validated
- * `CoderReport`. Shared by `LocalCoderAdapter.parseLocalCoderOutput` (which pins
- * `requirePacketId` to its packet) and the Console subagent bridge (which accepts
- * any schema-valid report). Never throws; an unparseable/invalid envelope is an
+ * `CoderReport`. The Console invocation accepts any schema-valid report. Never
+ * throws; an unparseable/invalid envelope is an
  * honest null, never a fabricated report.
  */
 /** Candidate objects an OpenClaude `--output-format json` envelope may carry the

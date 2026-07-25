@@ -21,7 +21,7 @@ describe('buildEpisodeCloseInput', () => {
       steps: {
         MainReasoning: 'decided to audit the coder runtime',
         SpecialistInvocation: 'invoked Coder in direct_main_audit',
-        FilteredCodeGraphView: 'runCoderSubagent branch',
+        FilteredCodeGraphView: 'runOpenClaudeCodeTask branch',
         HermesResearchResult: 'two sources on PTY runtimes',
         MagOneRun: 'orchestration run run1',
         WorkerResult: 'worker returned a diff',
@@ -30,7 +30,7 @@ describe('buildEpisodeCloseInput', () => {
         UserJudgment: 'accepted',
         TrainingEligibility: 'needs_review',
       } as const,
-      graphRefs: { codeGraph: ['coderRouter.ts::runCoderSubagent'], knowGraph: ['kg:1'] },
+      graphRefs: { codeGraph: ['coderConsoleRuntime.ts::runOpenClaudeCodeTask'], knowGraph: ['kg:1'] },
       judgment: 'accepted' as const,
     };
   }
