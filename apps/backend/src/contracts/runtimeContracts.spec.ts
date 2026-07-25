@@ -9,13 +9,11 @@ describe('runtime-specific tool catalogs', () => {
   it('keeps native graph and control tools in the Harness catalog', () => {
     expect(harness).toEqual(expect.arrayContaining([
       'thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query',
-      'knowgraph.ingest',
+      'knowgraph.ingest', 'codegraph.status', 'codegraph.search',
       'agentgraph.create_context', 'agentgraph.read_context',
       'card.run_assistant_agent', 'web_search',
     ]));
-    expect(harness).not.toEqual(expect.arrayContaining([
-      'thinkgraph.persist_graph_view', 'codegraph.status', 'codegraph.search',
-    ]));
+    expect(harness).not.toContain('thinkgraph.persist_graph_view');
   });
 
   it('keeps AutoGen-only semantic tools out of the Harness catalog', () => {

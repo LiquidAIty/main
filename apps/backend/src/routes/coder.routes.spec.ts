@@ -4,7 +4,11 @@ import express from 'express';
 import { describe, expect, it, vi } from 'vitest';
 // Static imports: NodeNext ESM rejects extensionless dynamic import('./coder.routes')
 // after the '.routes' infix strip. vitest hoists vi.mock() above these.
-import router, { resolveHermesProjectId } from './coder.routes';
+import router, {
+  describeCodeGraphFreshness,
+  resolveCodeGraphProjectName,
+  resolveHermesProjectId,
+} from './coder.routes';
 
 const planningMocks = vi.hoisted(() => ({
   packet: {
@@ -76,6 +80,12 @@ const cbmScopeMocks = vi.hoisted(() => ({
     editAllowed: true,
     blockedReason: '',
   })),
+}));
+
+const cbmCallerMocks = vi.hoisted(() => ({
+  callTool: vi.fn(),
+  close: vi.fn(async () => undefined),
+  create: vi.fn(),
 }));
 
 const chatSessionMocks = vi.hoisted(() => {
@@ -151,6 +161,10 @@ const dbMocks = vi.hoisted(() => ({
 
 vi.mock('../services/graphContext/cbmScopeGate', () => ({
   runLocalCoderCbmScopeGate: cbmScopeMocks.runLocalCoderCbmScopeGate,
+}));
+
+vi.mock('../services/graphContext/cbmMcpCaller', () => ({
+  createCodebaseMemoryMcpCaller: cbmCallerMocks.create,
 }));
 
 vi.mock('../cards/runtime', () => ({
@@ -243,6 +257,137 @@ describe('coder routes', () => {
   // route tests never spawn a real coder process, regardless of whether the
   // vendored runtime is built or API keys are exported on the test machine.
   const BROKEN_COMMAND = 'node C:/liquidaity/nonexistent/openclaude.mjs';
+
+  it('selects the configured LiquidAIty CodeGraph project and reports freshness honestly', () => {
+    const previous = process.env.LIQUIDAITY_CODEGRAPH_PROJECT;
+    process.env.LIQUIDAITY_CODEGRAPH_PROJECT = 'C-Projects-main';
+    try {
+      expect(
+        resolveCodeGraphProjectName([
+          { name: 'C-Projects-kaiwiki-site' },
+          { name: 'C-Projects-main' },
+        ]),
+      ).toBe('C-Projects-main');
+      expect(() =>
+        resolveCodeGraphProjectName([{ name: 'C-Projects-kaiwiki-site' }]),
+      ).toThrow('cbm_project_not_indexed: C-Projects-main');
+    } finally {
+      if (previous === undefined) delete process.env.LIQUIDAITY_CODEGRAPH_PROJECT;
+      else process.env.LIQUIDAITY_CODEGRAPH_PROJECT = previous;
+    }
+    expect(
+      describeCodeGraphFreshness({
+        status: 'ready',
+        git: { head_sha: 'current-head' },
+      }),
+    ).toEqual({
+      operationalStatus: 'ready',
+      semanticFreshness: 'unverified',
+      reason: 'cbm_status_does_not_report_an_indexed_revision',
+    });
+  });
+
+  it('returns native CBM status for the configured CodeGraph project', async () => {
+    cbmCallerMocks.callTool.mockReset();
+    cbmCallerMocks.close.mockClear();
+    cbmCallerMocks.create.mockResolvedValueOnce({
+      callTool: cbmCallerMocks.callTool,
+      close: cbmCallerMocks.close,
+    });
+    cbmCallerMocks.callTool
+      .mockResolvedValueOnce({
+        projects: [{ name: 'C-Projects-main', root_path: 'C:/Projects/main' }],
+      })
+      .mockResolvedValueOnce({
+        project: 'C-Projects-main',
+        root_path: 'C:/Projects/main',
+        nodes: 5283,
+        edges: 17347,
+        status: 'ready',
+      });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/codegraph_status`, {
+        method: 'POST',
+      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        cbmProject: 'C-Projects-main',
+        status: {
+          root_path: 'C:/Projects/main',
+          nodes: 5283,
+          edges: 17347,
+          status: 'ready',
+        },
+      });
+      expect(cbmCallerMocks.callTool).toHaveBeenNthCalledWith(1, 'list_projects', {});
+      expect(cbmCallerMocks.callTool).toHaveBeenNthCalledWith(2, 'index_status', {
+        project: 'C-Projects-main',
+      });
+      expect(cbmCallerMocks.close).toHaveBeenCalledOnce();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('returns native CodeGraph search results without constructing another graph', async () => {
+    cbmCallerMocks.callTool.mockReset();
+    cbmCallerMocks.close.mockClear();
+    cbmCallerMocks.create.mockResolvedValueOnce({
+      callTool: cbmCallerMocks.callTool,
+      close: cbmCallerMocks.close,
+    });
+    cbmCallerMocks.callTool
+      .mockResolvedValueOnce({ projects: [{ name: 'C-Projects-main' }] })
+      .mockResolvedValueOnce({
+        total: 1,
+        results: [
+          {
+            name: 'useBuilderDeckPersistenceActions',
+            qualified_name:
+              'C-Projects-main.client.src.components.builder.useBuilderDeckPersistenceActions.useBuilderDeckPersistenceActions',
+            label: 'Function',
+            file_path:
+              'client/src/components/builder/useBuilderDeckPersistenceActions.ts',
+          },
+        ],
+      });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/codegraph_search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: 'useBuilderDeckPersistenceActions',
+          limit: 5,
+        }),
+      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        cbmProject: 'C-Projects-main',
+        result: {
+          total: 1,
+          results: [
+            {
+              name: 'useBuilderDeckPersistenceActions',
+              file_path:
+                'client/src/components/builder/useBuilderDeckPersistenceActions.ts',
+            },
+          ],
+        },
+      });
+      expect(cbmCallerMocks.callTool).toHaveBeenLastCalledWith('search_graph', {
+        project: 'C-Projects-main',
+        query: 'useBuilderDeckPersistenceActions',
+        limit: 5,
+      });
+      expect(cbmCallerMocks.close).toHaveBeenCalledOnce();
+    } finally {
+      await closeServer(server);
+    }
+  });
 
   it('forwards only the AgentGraph pointer on the configured-card bridge', async () => {
     runtimeMocks.runConfiguredCard.mockClear();

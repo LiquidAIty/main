@@ -169,6 +169,8 @@ class TestPythonMcpHost:
             "knowgraph_get_gateways",
             "knowgraph_get_gaps",
             "knowgraph_create_analysis_view",
+            "codegraph.status",
+            "codegraph.search",
             "hermes.memory_read",
             "hermes.memory_write",
             "hermes.read_report",
@@ -180,8 +182,6 @@ class TestPythonMcpHost:
             "worldsignals.poll",
             "worldsignals.stream_events",
         ])
-        assert "codegraph.status" not in names
-        assert "codegraph.search" not in names
         assert "thinkgraph.persist_graph_view" not in names
 
     def test_card_run_schema_matches_the_doorway_contract(self):

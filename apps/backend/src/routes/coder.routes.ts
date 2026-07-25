@@ -37,6 +37,7 @@ import {
   listConversations,
 } from '../conversations/store';
 import { callPythonAgentMcpTool } from '../services/mcp/pythonAgentMcpClient';
+import { createCodebaseMemoryMcpCaller } from '../services/graphContext/cbmMcpCaller';
 import {
   applyThinkGraphPatch,
   readThinkGraphScope,
@@ -69,6 +70,55 @@ import {
 } from '../services/prompt/promptLifecycle';
 
 const router = Router();
+
+export function resolveCodeGraphProjectName(projects: unknown[]): string {
+  const configuredProject = String(
+    process.env.LIQUIDAITY_CODEGRAPH_PROJECT || 'C-Projects-main',
+  ).trim();
+  const availableProjects = projects
+    .map((project) => String((project as { name?: unknown })?.name || '').trim())
+    .filter(Boolean);
+  if (!availableProjects.includes(configuredProject)) {
+    throw new Error(`cbm_project_not_indexed: ${configuredProject}`);
+  }
+  return configuredProject;
+}
+
+export function describeCodeGraphFreshness(status: unknown): {
+  operationalStatus: string;
+  semanticFreshness: 'unverified' | 'stale';
+  reason: string;
+} {
+  const value =
+    status && typeof status === 'object' ? (status as Record<string, unknown>) : {};
+  const git =
+    value.git && typeof value.git === 'object'
+      ? (value.git as Record<string, unknown>)
+      : {};
+  const operationalStatus = String(value.status || 'unknown');
+  const indexedRevision = String(
+    value.indexed_revision ||
+      value.indexedRevision ||
+      value.indexed_commit ||
+      value.indexedCommit ||
+      '',
+  ).trim();
+  const worktreeRevision = String(git.head_sha || git.headSha || '').trim();
+  if (indexedRevision && worktreeRevision && indexedRevision !== worktreeRevision) {
+    return {
+      operationalStatus,
+      semanticFreshness: 'stale',
+      reason: `indexed_revision_mismatch:${indexedRevision}:${worktreeRevision}`,
+    };
+  }
+  return {
+    operationalStatus,
+    semanticFreshness: 'unverified',
+    reason: indexedRevision
+      ? 'revision_match_does_not_prove_deleted_symbol_purge'
+      : 'cbm_status_does_not_report_an_indexed_revision',
+  };
+}
 
 // ── LiquidAIty MCP bridge (SDK-free) ───────────────────────────────────────
 // Internal JSON endpoints that run the proven MCP handlers server-side, where
@@ -313,6 +363,75 @@ router.post('/mcp-bridge/thinkgraph_submit_update', async (req, res) => {
     return res.status(result.ok ? 200 : 422).json(result);
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_submit_update_failed' });
+  }
+});
+
+// ── CodeGraph reads (native CBM is the one indexer/writer) ─────────────────
+router.post('/mcp-bridge/codegraph_status', async (_req, res) => {
+  let session: Awaited<ReturnType<typeof createCodebaseMemoryMcpCaller>> | null = null;
+  try {
+    session = await createCodebaseMemoryMcpCaller(process.cwd());
+    const projectList = await session.callTool('list_projects', {});
+    const projects = Array.isArray(projectList.projects) ? projectList.projects : [];
+    const cbmProject = resolveCodeGraphProjectName(projects);
+    const status = await session.callTool('index_status', { project: cbmProject });
+    return res.json({
+      ok: true,
+      cbmProject,
+      status,
+      freshness: describeCodeGraphFreshness(status),
+    });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'codegraph_status_failed',
+    });
+  } finally {
+    await session?.close();
+  }
+});
+
+router.post('/mcp-bridge/codegraph_search', async (req, res) => {
+  let session: Awaited<ReturnType<typeof createCodebaseMemoryMcpCaller>> | null = null;
+  try {
+    const query = String(req.body?.query || '').trim();
+    const canonicalRefs = [
+      ...new Set<string>(
+        (Array.isArray(req.body?.canonicalRefs) ? req.body.canonicalRefs : [])
+          .map((value: unknown): string =>
+            String(value || '')
+              .trim()
+              .replace(/^code:/, ''),
+          )
+          .filter((value: string) => Boolean(value)),
+      ),
+    ].slice(0, 20);
+    if (!query) return res.status(400).json({ ok: false, error: 'query_required' });
+    const limit = Math.min(Math.max(Number(req.body?.limit) || 15, 1), 50);
+    session = await createCodebaseMemoryMcpCaller(process.cwd());
+    const projectList = await session.callTool('list_projects', {});
+    const projects = Array.isArray(projectList.projects) ? projectList.projects : [];
+    const cbmProject = resolveCodeGraphProjectName(projects);
+    const exactQualifiedNames =
+      canonicalRefs.length > 0
+        ? `^(?:${canonicalRefs
+            .map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+            .join('|')})$`
+        : null;
+    const result = await session.callTool(
+      'search_graph',
+      exactQualifiedNames
+        ? { project: cbmProject, qn_pattern: exactQualifiedNames, limit }
+        : { project: cbmProject, query, limit },
+    );
+    return res.json({ ok: true, cbmProject, result });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'codegraph_search_failed',
+    });
+  } finally {
+    await session?.close();
   }
 });
 

@@ -30,6 +30,8 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'card.assign_runtime_skill',
       'card.run_assistant_agent',
       'card.update_configuration',
+      'codegraph.search',
+      'codegraph.status',
       'engraphis_answer',
       'engraphis_check_update',
       'engraphis_code_impact',
@@ -92,8 +94,6 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
     expect(names).not.toContain('thinkgraph.process_conversation_pair');
     expect(names).not.toContain('thinkgraph.apply_live_patch');
     expect(names).not.toContain('thinkgraph.persist_graph_view');
-    expect(names).not.toContain('codegraph.status');
-    expect(names).not.toContain('codegraph.search');
     expect(names).not.toContain('execute_visible_flow');
     expect(names).not.toContain('describe_agent_fabric');
   }, 30_000);

@@ -208,6 +208,8 @@ for (const name of [
   'agentgraph.read_context',
   'knowgraph.query',
   'knowgraph.ingest',
+  'codegraph.status',
+  'codegraph.search',
   'hermes.memory_read',
   'hermes.memory_write',
   'hermes.read_report',

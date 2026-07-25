@@ -438,6 +438,7 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
         "mainCardId": "card_main_chat",
         "instructions": "Persisted Main instructions.",
         "savedMainToolGrants": [
+            "mcp__liquidaity__codegraph_search",
             "mcp__liquidaity__engraphis_recall",
             "mcp__liquidaity__run_coder_subagent",
         ],
@@ -475,8 +476,8 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
     by_name = {tool.name: tool for tool in tools}
     assert "main.context" in by_name
     assert "engraphis_recall" in by_name
-    assert "codegraph.status" not in by_name
-    assert "codegraph.search" not in by_name
+    assert "codegraph.status" in by_name
+    assert "codegraph.search" in by_name
     assert "thinkgraph.persist_graph_view" not in by_name
     assert "run_coder_subagent" in by_name
     assert "run_mag_one" not in by_name
@@ -487,6 +488,10 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
     assert by_name["engraphis_recall"].model_dump()["securitySchemes"] == [
         {"type": "oauth2", "scopes": ["liquidaity.main"]}
     ]
+    assert by_name["codegraph.search"].model_dump()["securitySchemes"] == [
+        {"type": "oauth2", "scopes": ["liquidaity.main"]}
+    ]
+    assert by_name["codegraph.search"].annotations.readOnlyHint is True
     assert by_name["run_coder_subagent"].annotations is None
 
     calls = []
@@ -508,6 +513,17 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
 
     asyncio.run(mcp_host.call_tool("engraphis_recall", {"query": "Main", "limit": 3}))
     assert calls[-1] == ("engraphis_recall", {"query": "Main", "limit": 3})
+
+    asyncio.run(mcp_host.call_tool("codegraph.search", {"query": "Main", "limit": 3}))
+    assert calls[-1] == (
+        "codegraph_search",
+        {
+            "projectId": "project-1",
+            "conversationId": "external-mcp:grant-1",
+            "query": "Main",
+            "limit": 3,
+        },
+    )
 
     denied = asyncio.run(mcp_host.call_tool("run_coder_subagent", {
         "projectId": "spoofed",
@@ -563,8 +579,8 @@ def test_post_auth_unknown_saved_grant_is_configuration_error_not_authentication
             "conversationId": "external-mcp:grant-1",
             "mainCardId": "card_main_chat",
             "instructions": "Persisted Main instructions.",
-            "savedMainToolGrants": ["codegraph.status"],
-            "availableActionPaths": [{"kind": "tool", "grant": "codegraph.status"}],
+            "savedMainToolGrants": ["missing.tool"],
+            "availableActionPaths": [{"kind": "tool", "grant": "missing.tool"}],
         } if resolve_runtime else None,
     )
 
@@ -574,7 +590,7 @@ def test_post_auth_unknown_saved_grant_is_configuration_error_not_authentication
         "ok": False,
         "error": (
             "main_runtime_configuration_error:"
-            "harness_mcp_tool_unknown:codegraph.status"
+            "harness_mcp_tool_unknown:missing.tool"
         ),
     }
 

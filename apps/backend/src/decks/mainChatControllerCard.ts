@@ -47,6 +47,8 @@ export function buildMainChatControllerCard(prompt = MAIN_CHAT_PROMPT_TEMPLATE.c
         'thinkgraph.get_graph_slice',
         'thinkgraph.submit_update',
         'knowgraph.query',
+        'codegraph.search',
+        'codegraph.status',
         'canvas.inspect',
         'mag_one.describe_connected_agents',
         'run_mag_one',

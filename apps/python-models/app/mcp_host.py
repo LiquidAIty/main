@@ -771,6 +771,29 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="codegraph.status",
+            description=(
+                "READ-ONLY CodeGraph/CBM project and index status. Native CBM remains "
+                "the only CodeGraph writer and indexer."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="codegraph.search",
+            description=(
+                "READ-ONLY repository-structure search through native CBM. Returns "
+                "native qualified identities, paths, relationships, and errors unchanged."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
             name="hermes.memory_read",
             description=(
                 "Hermes only: read your project-scoped SQL memory (private steward continuity — "
@@ -942,6 +965,8 @@ _EXTERNAL_READ_ONLY_TOOLS = {
     "knowgraph_get_topics",
     "knowgraph_get_gateways",
     "knowgraph_get_gaps",
+    "codegraph.status",
+    "codegraph.search",
     "worldsignals.capabilities",
     "worldsignals.poll",
     "worldsignals.stream_events",
@@ -1051,6 +1076,8 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "knowgraph_get_gateways": {"analysisId"},
     "knowgraph_get_gaps": {"analysisId"},
     "knowgraph_create_analysis_view": {"analysisId", "projectId", "producingInvocation", "parentViewId"},
+    "codegraph.status": set(),
+    "codegraph.search": {"projectId", "conversationId", "query", "limit"},
     "hermes.memory_read": {"projectId", "key"},
     "hermes.memory_write": {"projectId", "key", "value"},
     "hermes.read_report": {"parentRunId"},
@@ -1085,6 +1112,8 @@ _BRIDGE_PATHS: dict[str, str] = {
     "knowgraph_get_gateways": "knowgraph_get_gateways",
     "knowgraph_get_gaps": "knowgraph_get_gaps",
     "knowgraph_create_analysis_view": "knowgraph_create_analysis_view",
+    "codegraph.status": "codegraph_status",
+    "codegraph.search": "codegraph_search",
     "hermes.memory_read": "hermes_memory_read",
     "hermes.memory_write": "hermes_memory_write",
     "hermes.read_report": "hermes_read_report",

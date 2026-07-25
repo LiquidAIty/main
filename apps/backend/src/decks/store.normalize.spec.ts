@@ -8,7 +8,7 @@ vi.mock('../db/pool', () => ({
 import {
   getDeckDocument,
   normalizeRuntimeOptions,
-  repairRetiredCodeGraphToolGrants,
+  repairCodeGraphToolGrants,
 } from './store';
 
 beforeEach(() => {
@@ -59,8 +59,8 @@ describe('deck store runtime-options tool persistence', () => {
   });
 });
 
-describe('retired CodeGraph grant repair', () => {
-  it('removes only the retired pair from Main and Hermes and is idempotent', () => {
+describe('required CodeGraph grant repair', () => {
+  it('restores the CodeGraph pair on Main and Hermes, preserves all other grants, and is idempotent', () => {
     const deck = {
       id: 'deck_builder',
       name: 'Saved Builder',
@@ -78,9 +78,9 @@ describe('retired CodeGraph grant repair', () => {
           runtimeOptions: {
             provider: 'openrouter',
             modelKey: 'z-ai/glm-5.2',
-            tools: ['canvas.inspect', 'codegraph.status', 'future.explicit-error', 'codegraph.search'],
+            tools: ['canvas.inspect', 'future.explicit-error'],
           },
-          tools: ['legacy.keep', 'codegraph.search'],
+          tools: ['legacy.keep'],
           parentGraphId: null,
           title: 'Saved Main',
           subtitle: 'Keep subtitle',
@@ -96,7 +96,7 @@ describe('retired CodeGraph grant repair', () => {
           runtimeOptions: {
             provider: 'openrouter',
             modelKey: 'openai/gpt-5.1-chat',
-            tools: ['knowgraph.query', 'codegraph.search', 'hermes.memory_write'],
+            tools: ['knowgraph.query', 'hermes.memory.write'],
           },
           parentGraphId: null,
           title: 'Saved Hermes',
@@ -118,7 +118,7 @@ describe('retired CodeGraph grant repair', () => {
       edges: [{ id: 'keep-edge', source: 'custom-main', target: 'custom-hermes', edgeType: 'flow' }],
     } as any;
 
-    const repaired = repairRetiredCodeGraphToolGrants(deck);
+    const repaired = repairCodeGraphToolGrants(deck);
     expect(repaired).toEqual({
       ...deck,
       nodes: [
@@ -126,21 +126,30 @@ describe('retired CodeGraph grant repair', () => {
           ...deck.nodes[0],
           runtimeOptions: {
             ...deck.nodes[0].runtimeOptions,
-            tools: ['canvas.inspect', 'future.explicit-error'],
+            tools: [
+              'canvas.inspect',
+              'future.explicit-error',
+              'codegraph.status',
+              'codegraph.search',
+            ],
           },
-          tools: ['legacy.keep'],
         },
         {
           ...deck.nodes[1],
           runtimeOptions: {
             ...deck.nodes[1].runtimeOptions,
-            tools: ['knowgraph.query', 'hermes.memory_write'],
+            tools: [
+              'knowgraph.query',
+              'hermes.memory.write',
+              'codegraph.status',
+              'codegraph.search',
+            ],
           },
         },
         deck.nodes[2],
       ],
     });
-    expect(repairRetiredCodeGraphToolGrants(repaired)).toBe(repaired);
+    expect(repairCodeGraphToolGrants(repaired)).toBe(repaired);
   });
 });
 

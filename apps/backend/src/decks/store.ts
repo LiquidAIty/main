@@ -40,7 +40,7 @@ const PROJECTS_TABLE = 'ag_catalog.projects';
 const V3_STATE_KEY = 'v3_state';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const V3_SCHEMA_CAS_RETRIES = 3;
-const RETIRED_CODEGRAPH_TOOL_GRANTS = new Set(['codegraph.status', 'codegraph.search']);
+const REQUIRED_CODEGRAPH_TOOL_GRANTS = ['codegraph.status', 'codegraph.search'] as const;
 
 function projectLookup(projectId: string): { clause: string; params: any[] } {
   if (UUID_REGEX.test(projectId)) {
@@ -360,13 +360,8 @@ function ensureMainChatControllerCard(deck: DeckDocument): DeckDocument {
   return { ...deck, promptTemplates, nodes, edges: finalEdges };
 }
 
-/**
- * One bounded saved-deck migration for the two retired CodeGraph façade
- * grants. It applies only to the canonical Main and Hermes runtime bindings,
- * preserves every other card field and tool name, and returns the original
- * object when no repair is needed so repeated normalization is a no-op.
- */
-export function repairRetiredCodeGraphToolGrants(deck: DeckDocument): DeckDocument {
+/** Restore the required app-facing CodeGraph grants on Main and Hermes cards. */
+export function repairCodeGraphToolGrants(deck: DeckDocument): DeckDocument {
   if (deck.id !== BUILDER_DECK_ID) return deck;
   let changed = false;
   const nodes = deck.nodes.map((node) => {
@@ -376,33 +371,17 @@ export function repairRetiredCodeGraphToolGrants(deck: DeckDocument): DeckDocume
     );
     if (binding !== 'main_chat' && binding !== 'hermes_steward') return node;
 
-    const selected = Array.isArray(node.runtimeOptions?.tools)
-      ? node.runtimeOptions.tools
-      : null;
-    const legacySelected = Array.isArray(node.tools) ? node.tools : null;
-    const filtered = selected?.filter((tool) => !RETIRED_CODEGRAPH_TOOL_GRANTS.has(tool)) ?? null;
-    const filteredLegacy =
-      legacySelected?.filter((tool) => !RETIRED_CODEGRAPH_TOOL_GRANTS.has(tool)) ?? null;
-    const runtimeChanged = Boolean(
-      selected && filtered && filtered.length !== selected.length,
-    );
-    const legacyChanged = Boolean(
-      legacySelected && filteredLegacy && filteredLegacy.length !== legacySelected.length,
-    );
-    if (!runtimeChanged && !legacyChanged) return node;
+    const selected = Array.isArray(node.runtimeOptions?.tools) ? node.runtimeOptions.tools : [];
+    const missing = REQUIRED_CODEGRAPH_TOOL_GRANTS.filter((tool) => !selected.includes(tool));
+    if (missing.length === 0) return node;
 
     changed = true;
     return {
       ...node,
-      ...(legacyChanged ? { tools: filteredLegacy?.length ? filteredLegacy : undefined } : {}),
-      ...(runtimeChanged
-        ? {
-            runtimeOptions: {
-              ...node.runtimeOptions,
-              tools: filtered?.length ? filtered : null,
-            },
-          }
-        : {}),
+      runtimeOptions: {
+        ...node.runtimeOptions,
+        tools: [...selected, ...missing],
+      },
     };
   });
   return changed ? { ...deck, nodes } : deck;
@@ -436,7 +415,7 @@ function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument
           .filter((edge: DeckEdge | null): edge is DeckEdge => Boolean(edge))
       : [],
   };
-  return repairRetiredCodeGraphToolGrants(ensureMainChatControllerCard(deck));
+  return repairCodeGraphToolGrants(ensureMainChatControllerCard(deck));
 }
 
 function hashRevision(value: unknown): string {
