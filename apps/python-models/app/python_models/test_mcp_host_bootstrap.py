@@ -55,7 +55,7 @@ async def check():
     by_name = {tool.name: tool for tool in tools}
     coder = by_name['run_coder_subagent']
     assert 'approvedPrompt' in coder.inputSchema['properties']
-    assert coder.inputSchema['properties']['adapter']['enum'] == ['claude_code', 'codex']
+    assert coder.inputSchema['properties']['adapter']['enum'] == ['claude_code']
     assert 'agentContextId' in by_name['card.run_assistant_agent'].inputSchema['properties']
     assert by_name['run_mag_one'].inputSchema['required'] == ['jobId', 'projectId', 'deckId']
     assert by_name['main.context'].inputSchema == {'type': 'object', 'properties': {}, 'required': []}
@@ -88,9 +88,9 @@ async def check():
         assert tool.model_dump() == native[tool.name].model_dump()
     combined = await mcp_host.list_tools()
     combined_names = [tool.name for tool in combined]
-    assert len(combined_names) == 64
-    assert len(set(combined_names)) == 64
-    assert len(set(combined_names) - set(native)) == 35
+    assert len(combined_names) == 66
+    assert len(set(combined_names)) == 66
+    assert len(set(combined_names) - set(native)) == 37
     print(json.dumps(sorted(native)))
 asyncio.run(check())
 """
@@ -259,7 +259,7 @@ async def check():
     mcp_host._bridge = bridge
     coder = {
         'parentRunId': 'main-run', 'projectId': 'project-1', 'deckId': 'deck_builder',
-        'conversationId': 'conversation-1', 'cardId': 'coder-card', 'adapter': 'codex',
+        'conversationId': 'conversation-1', 'cardId': 'coder-card', 'adapter': 'claude_code',
         'approvedPrompt': 'Main approved these exact instructions.'
     }
     mag = {'projectId': 'project-1', 'deckId': 'deck_builder', 'jobId': 'job-1'}
@@ -347,7 +347,7 @@ async def check():
             elapsed = time.perf_counter() - started
             assert actual == expected
             assert 'main.context' in actual
-            assert len(actual) == 64
+            assert len(actual) == 66
             assert sum(name.startswith('engraphis_') for name in actual) == 29
             assert elapsed < 10
             print(json.dumps({{'status': 'STDIO_OK', 'count': len(actual), 'elapsed': elapsed}}))
@@ -485,6 +485,7 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
     assert "parentRunId" not in by_name["run_coder_subagent"].inputSchema["properties"]
     assert "agentContextId" not in by_name["run_coder_subagent"].inputSchema["properties"]
     assert "agentContext" not in by_name["run_coder_subagent"].inputSchema["properties"]
+    assert by_name["run_coder_subagent"].inputSchema["properties"]["adapter"]["enum"] == ["claude_code"]
     assert by_name["engraphis_recall"].model_dump()["securitySchemes"] == [
         {"type": "oauth2", "scopes": ["liquidaity.main"]}
     ]
@@ -528,14 +529,14 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
     denied = asyncio.run(mcp_host.call_tool("run_coder_subagent", {
         "projectId": "spoofed",
         "cardId": "coder-card",
-        "adapter": "codex",
+        "adapter": "claude_code",
         "approvedPrompt": "Approved exact task.",
     }))
     assert "caller_identity_rejected: projectId" in denied[0].text
 
     asyncio.run(mcp_host.call_tool("run_coder_subagent", {
         "cardId": "coder-card",
-        "adapter": "codex",
+        "adapter": "claude_code",
         "approvedPrompt": "Approved exact task.",
     }))
     path, payload = calls[-1]

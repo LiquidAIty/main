@@ -53,21 +53,27 @@ const deckMocks = vi.hoisted(() => ({
 const coderRouterMocks = vi.hoisted(() => ({
   runCoderSubagent: vi.fn(async (request: { approvedPrompt: string }) => ({
     ok: true,
-    adapter: 'codex',
+    adapter: 'claude_code',
     parentRunId: 'parent-1',
     childRunId: 'child-1',
     correlationId: 'trace-1',
     promptHash: 'hash-1',
     sessionId: 'session-1',
+    terminalState: 'completed',
     processExitCode: null,
+    stopReason: null,
+    executionTimeoutMs: 300000,
     structuredEventCount: 0,
+    commandEvidence: null,
     exactCommand: null,
     stdout: '',
     stderr: '',
     commandExitStatus: null,
+    resultValidationStatus: 'valid',
     report: { status: 'completed', promptSeen: request.approvedPrompt },
     resultKind: 'coder_report',
     transcriptArtifact: 'coder-workspace/runs/child-1/transcript.txt',
+    artifactRefs: ['coder-workspace/runs/child-1/transcript.txt'],
     verification: null,
     error: null,
   })),
@@ -153,6 +159,7 @@ const graphViewMocks = vi.hoisted(() => ({
     views: Record<string, unknown>[];
     modelContext: string;
   }> => ({ ok: true, views: [], modelContext: '' })),
+  transitionGraphViewsOnPython: vi.fn(async () => ({ ok: true, views: [] })),
 }));
 
 const dbMocks = vi.hoisted(() => ({
@@ -230,21 +237,8 @@ function coderGraphView(overrides: Record<string, unknown> = {}) {
     conversationId: 'main',
     producingRole: 'main_chat',
     receivingRole: 'coder',
-    rootCanonicalNodeIds: ['symbol:one'],
-    includedCanonicalNodeIds: ['symbol:one'],
-    includedRelationships: [],
-    records: [{
-      canonicalId: 'symbol:one',
-      summary: 'Selected symbol',
-      selectionReason: 'Main selected this implementation boundary.',
-      provenanceRefs: ['one.ts'],
-      estimatedCharacters: 15,
-      estimatedTokens: 4,
-    }],
-    query: 'find implementation boundary',
-    filter: { nodeTypes: [], trustStates: [] },
-    hopDepth: 0,
-    provenanceRefs: ['one.ts'],
+    recordCount: 1,
+    relationshipCount: 0,
     omittedNeighborCount: 0,
     createdAt: '2026-07-23T00:00:00Z',
     updatedAt: '2026-07-23T00:00:00Z',
@@ -529,7 +523,7 @@ describe('coder routes', () => {
           deckId: 'deck_builder',
           conversationId: 'main',
           cardId: 'card_local_coder',
-          adapter: 'codex',
+          adapter: 'claude_code',
           authority: 'direct_main_audit',
           approvedPrompt: 'Inspect selected code.',
           graphViewIds: ['codegraph:selected-1'],
@@ -566,7 +560,7 @@ describe('coder routes', () => {
           deckId: 'deck_builder',
           conversationId: 'main',
           cardId: 'card_local_coder',
-          adapter: 'codex',
+          adapter: 'claude_code',
           authority: 'direct_main_audit',
           approvedPrompt: 'Inspect selected code.',
           graphViewIds: ['codegraph:selected-1'],
@@ -589,6 +583,7 @@ describe('coder routes', () => {
       views: [coderGraphView()],
       modelContext: '[LIQUIDAITY_GRAPH_CONTEXT]\n- symbol:one',
     });
+    graphViewMocks.transitionGraphViewsOnPython.mockClear();
     coderRouterMocks.runCoderSubagent.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
@@ -601,7 +596,7 @@ describe('coder routes', () => {
           deckId: 'deck_builder',
           conversationId: 'main',
           cardId: 'card_local_coder',
-          adapter: 'codex',
+          adapter: 'claude_code',
           authority: 'direct_main_audit',
           approvedPrompt: 'Inspect selected code.',
           graphViewIds: ['codegraph:selected-1'],
@@ -616,6 +611,57 @@ describe('coder routes', () => {
         'main',
         ['codegraph:selected-1'],
       );
+      expect(graphViewMocks.transitionGraphViewsOnPython).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        viewIds: ['codegraph:selected-1'],
+        status: 'active',
+      }));
+      expect(graphViewMocks.transitionGraphViewsOnPython).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        viewIds: ['codegraph:selected-1'],
+        status: 'consumed',
+      }));
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('preserves the exact order of multiple selected Graph View IDs without carrying view contents', async () => {
+    chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
+      doorwayDefinitions: [{ card_id: 'card_local_coder' }],
+    });
+    graphViewMocks.fetchDoorwayContext.mockResolvedValueOnce({
+      ok: true,
+      views: [
+        coderGraphView({ viewId: 'codegraph:selected-2', recordCount: 2 }),
+        coderGraphView({ viewId: 'thinkgraph:selected-1', authority: 'thinkgraph' }),
+      ],
+      modelContext: '[LIQUIDAITY_GRAPH_CONTEXT]\n- exact selected context',
+    });
+    coderRouterMocks.runCoderSubagent.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentRunId: 'parent-1',
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          conversationId: 'main',
+          cardId: 'card_local_coder',
+          adapter: 'claude_code',
+          authority: 'direct_main_audit',
+          approvedPrompt: 'Inspect selected code.',
+          graphViewIds: ['codegraph:selected-2', 'thinkgraph:selected-1'],
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect(graphViewMocks.fetchDoorwayContext).toHaveBeenCalledWith(
+        'project-1',
+        'main',
+        ['codegraph:selected-2', 'thinkgraph:selected-1'],
+      );
+      const doorwayViews = (await graphViewMocks.fetchDoorwayContext.mock.results.at(-1)?.value)?.views;
+      expect(doorwayViews?.every((view: Record<string, unknown>) => !('records' in view))).toBe(true);
     } finally {
       await closeServer(server);
     }

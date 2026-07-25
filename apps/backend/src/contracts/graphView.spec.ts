@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { attachGraphViewsToRuntime, completeGraphViews, parseGraphViews } from './graphView';
+import {
+  attachGraphViewsToRuntime,
+  completeGraphViews,
+  parseGraphViewIdentities,
+  parseGraphViews,
+} from './graphView';
 
 const candidate = {
   schemaVersion: 'graph-view.v1',
@@ -51,5 +56,30 @@ describe('Graph View contract', () => {
     expect(() => parseGraphViews([{ ...candidate, includedCanonicalNodeIds: [] }], {
       projectId: 'project-1', conversationId: 'conversation-1',
     })).toThrow('record_not_included');
+  });
+
+  it('parses identity/lifecycle transport without accepting membership content', () => {
+    const [identity] = parseGraphViewIdentities([{
+      schemaVersion: 'graph-view.v1',
+      viewId: 'candidate-1',
+      authority: 'codegraph',
+      status: 'attached',
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
+      producingRole: 'main_chat',
+      receivingRole: 'coder',
+      recordCount: 6,
+      relationshipCount: 4,
+      omittedNeighborCount: 2,
+      createdAt: '2026-07-15T00:00:00.000Z',
+      updatedAt: '2026-07-15T00:00:00.000Z',
+      records: [{ summary: 'must not cross this boundary' }],
+    }], { projectId: 'project-1', conversationId: 'conversation-1' });
+    expect(identity).toMatchObject({ viewId: 'candidate-1', recordCount: 6, relationshipCount: 4 });
+    expect(identity).not.toHaveProperty('records');
+    expect(() => parseGraphViewIdentities([{
+      ...identity,
+      projectId: 'other',
+    }], { projectId: 'project-1', conversationId: 'conversation-1' })).toThrow('graph_view_scope_mismatch');
   });
 });

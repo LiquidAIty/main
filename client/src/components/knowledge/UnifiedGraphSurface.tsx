@@ -21,6 +21,24 @@ export type UnifiedProjectionIdentity = {
 type UnifiedPayload = {
   schemaVersion: 'unified.context.v1';
   projectionId: string;
+  activeGraphViewId: string | null;
+  graphViews: Array<{
+    viewId: string;
+    authority: Layer;
+    status: string;
+    producingRole: string;
+    receivingRole: string;
+    recordCount: number;
+    relationshipCount: number;
+  }>;
+  lifecycle: {
+    available: string[];
+    selected: string[];
+    attached: string[];
+    consumed: string[];
+    returned: string[];
+    superseded: string[];
+  };
   nodes: CodeGraphNode[];
   edges: CodeGraphData['edges'];
   counts: {

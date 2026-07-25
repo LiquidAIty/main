@@ -51,11 +51,18 @@ import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantS
 import { runCoderSubagent } from '../coder/execution/coderRouter';
 import { setLatestCoderAuditView, getLatestCoderAuditView } from '../coder/execution/coderAuditView';
 import type { CodeGraphViewContractResult } from '../contracts/coderContracts';
-import { completeGraphViews, parseGraphViews, type GraphView } from '../contracts/graphView';
+import {
+  completeGraphViews,
+  parseGraphViewIdentities,
+  parseGraphViews,
+  type GraphView,
+  type GraphViewIdentity,
+} from '../contracts/graphView';
 import {
   fetchDoorwayContext,
   fetchUnifiedModelContext,
   persistGraphViewOnPython,
+  transitionGraphViewsOnPython,
 } from '../services/autogen/autogenOrchestratorClient';
 import {
   parseGraphObjectRefs,
@@ -260,14 +267,14 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
     const graphViewIds = (Array.isArray(body.graphViewIds) ? body.graphViewIds : [])
       .map((id: unknown) => String(id || '').trim())
       .filter(Boolean);
-    let attachedViews: GraphView[] = [];
+    let attachedViews: GraphViewIdentity[] = [];
     let doorwayGraphContext = '';
     if (graphViewIds.length > 0) {
       const doorway = (await fetchDoorwayContext(projectId, conversationId, graphViewIds)) as {
         views?: unknown;
         modelContext?: unknown;
       };
-      attachedViews = parseGraphViews(doorway?.views, { projectId, conversationId });
+      attachedViews = parseGraphViewIdentities(doorway?.views, { projectId, conversationId });
       // Honest role check: a view aimed at another role is an explicit error,
       // never silently dropped (the rendered text must match the attached set).
       const misdirected = attachedViews.filter(
@@ -281,36 +288,62 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
       }
       doorwayGraphContext = String(doorway?.modelContext || '');
     }
-    await Promise.all(attachedViews.map((view) => persistGraphViewOnPython({
-      ...view,
-      status: 'active',
-      invocationId: String(body.parentRunId || ''),
-      updatedAt: new Date().toISOString(),
-    })));
+    if (attachedViews.length) {
+      await transitionGraphViewsOnPython({
+        projectId,
+        conversationId,
+        viewIds: attachedViews.map((view) => view.viewId),
+        status: 'active',
+        invocationId: String(body.parentRunId || ''),
+      });
+    }
     const approvedPrompt = [
       String(body.approvedPrompt || ''),
       attachedViews.length ? doorwayGraphContext : '',
     ].filter(Boolean).join('\n\n');
-    const result = await runCoderSubagent({
-      parentRunId: String(body.parentRunId || ''),
-      projectId,
-      deckId,
-      conversationId,
-      cardId,
-      adapter: String(body.adapter || ''),
-      approvedPrompt,
-      authority,
-      model: model.providerModelId,
-      provider: model.provider,
+    const cancellation = new AbortController();
+    const cancel = () => cancellation.abort('coder_request_cancelled');
+    req.once('aborted', cancel);
+    res.once('close', () => {
+      if (!res.writableEnded) cancel();
     });
+    let result;
+    try {
+      result = await runCoderSubagent({
+        parentRunId: String(body.parentRunId || ''),
+        projectId,
+        deckId,
+        conversationId,
+        cardId,
+        adapter: String(body.adapter || ''),
+        approvedPrompt,
+        authority,
+        model: model.providerModelId,
+        provider: model.provider,
+        signal: cancellation.signal,
+      });
+    } catch (error) {
+      if (attachedViews.length) {
+        await transitionGraphViewsOnPython({
+          projectId,
+          conversationId,
+          viewIds: attachedViews.map((view) => view.viewId),
+          status: 'failed',
+          invocationId: String(body.parentRunId || ''),
+        });
+      }
+      throw error;
+    } finally {
+      req.off('aborted', cancel);
+    }
     if (attachedViews.length) {
-      const completedAt = new Date().toISOString();
-      await Promise.all(attachedViews.map((view) => persistGraphViewOnPython({
-        ...view,
+      await transitionGraphViewsOnPython({
+        projectId,
+        conversationId,
+        viewIds: attachedViews.map((view) => view.viewId),
         status: result.ok ? 'consumed' : 'failed',
         invocationId: result.correlationId,
-        updatedAt: completedAt,
-      })));
+      });
     }
     // Preserve the real audit result for the existing audit inspector. Native
     // CBM remains the source; no synthetic Graph View is minted from its refs.
@@ -331,7 +364,13 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
         transcriptArtifact: result.transcriptArtifact ?? null,
       });
     }
-    return res.status(result.ok ? 200 : 502).json(result);
+    if (res.destroyed) return undefined;
+    const failureStatus = result.terminalState === 'timed_out'
+      ? 408
+      : result.terminalState === 'cancelled'
+        ? 499
+        : 502;
+    return res.status(result.ok ? 200 : failureStatus).json(result);
   } catch (error) {
     return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'run_coder_subagent_failed' });
   }
@@ -877,7 +916,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
   // the SSE stream or browser behavior — it only makes the real Harness events
   // (already flowing to the browser) legible in the backend dev terminal.
   const correlationId = `req_${randomUUID().slice(0, 8)}`;
-  let graphViews: GraphView[] = [];
+  let graphViews: GraphViewIdentity[] = [];
   let graphContext = '';
   let graphContextMeasurements: unknown = null;
   let selectedGraphObjectRefs: ReturnType<typeof parseGraphObjectRefs>;
@@ -900,7 +939,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
         activeGraphViewId: activeGraphViewId || undefined,
         knowgraphScope: knowgraphScope || undefined,
       })) as { graphViews?: unknown; modelContext?: unknown; measurements?: unknown };
-      graphViews = parseGraphViews(resolved?.graphViews, { projectId, conversationId });
+      graphViews = parseGraphViewIdentities(resolved?.graphViews, { projectId, conversationId });
       graphContext = String(resolved?.modelContext || '');
       graphContextMeasurements = resolved?.measurements ?? null;
     } catch (error) {
@@ -937,7 +976,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
   // Compact Graph View lifecycle announcements for the browser: identity and
   // status ONLY — the UI discovers contents by refetching its server-owned
   // projection, never from event payloads (browser is not a membership carrier).
-  const compactGraphViewEvent = (views: GraphView[]) => ({
+  const compactGraphViewEvent = (views: Array<GraphView | GraphViewIdentity>) => ({
     views: views.map((view) => ({
       viewId: view.viewId,
       status: view.status,
@@ -990,7 +1029,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
   // a DB failure must never block or break the live SSE stream.
   void appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(() => null);
   let turnFinished = false;
-  let activeRuntimeViews: GraphView[] = [];
+  let activeRuntimeViews: GraphViewIdentity[] = [];
   const pendingGraphViewWrites: Promise<void>[] = [];
   const liquidaityToolUses = new Set<string>();
   try {
@@ -1033,7 +1072,14 @@ router.post('/openclaude/session/chat', async (req, res) => {
     });
     if (handle.runtimeGraphViews.length > 0) {
       activeRuntimeViews = handle.runtimeGraphViews;
-      await Promise.all(activeRuntimeViews.map((view) => persistGraphViewOnPython(view)));
+      await transitionGraphViewsOnPython({
+        projectId,
+        conversationId,
+        viewIds: activeRuntimeViews.map((view) => view.viewId),
+        status: 'active',
+        invocationId: correlationId,
+        runtime: activeRuntimeViews[0]?.runtime,
+      });
       writeSse('graph_view', compactGraphViewEvent(handle.runtimeGraphViews));
     }
     activeGrpcTurns.set(sessionId, handle);
@@ -1046,7 +1092,13 @@ router.post('/openclaude/session/chat', async (req, res) => {
     await Promise.all(pendingGraphViewWrites);
     if (activeRuntimeViews.length > 0) {
       const consumedViews = completeGraphViews(activeRuntimeViews);
-      await Promise.all(consumedViews.map((view) => persistGraphViewOnPython(view)));
+      await transitionGraphViewsOnPython({
+        projectId,
+        conversationId,
+        viewIds: consumedViews.map((view) => view.viewId),
+        status: 'consumed',
+        invocationId: correlationId,
+      });
       writeSse('graph_view', compactGraphViewEvent(consumedViews));
     }
     turnFinished = true;
@@ -1068,6 +1120,15 @@ router.post('/openclaude/session/chat', async (req, res) => {
     }
   } catch (error) {
     turnFinished = true;
+    if (activeRuntimeViews.length > 0) {
+      await transitionGraphViewsOnPython({
+        projectId,
+        conversationId,
+        viewIds: activeRuntimeViews.map((view) => view.viewId),
+        status: 'failed',
+        invocationId: correlationId,
+      }).catch(() => null);
+    }
     const reason = error instanceof Error ? error.message : 'grpc_turn_failed';
     logHarnessTrace(`[harness] request failed corr=${correlationId} reason=${redactTrace(reason)}`);
     writeSse('error', {

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -9,7 +9,17 @@ import { createApprovedCoderRun, type CoderAdapterId } from './coderExecution';
 // Transcript artifacts write under resolveRepoRoot()/coder-workspace/runs — point
 // that at a temp dir so tests never touch the real tree.
 const tmpRoot = mkdtempSync(path.join(tmpdir(), 'coder-console-'));
-beforeAll(() => vi.stubEnv('LIQUIDAITY_GRPC_CWD', tmpRoot));
+beforeAll(() => {
+  vi.stubEnv('LIQUIDAITY_GRPC_CWD', tmpRoot);
+  const config = JSON.parse(readFileSync(path.join(process.cwd(), '.mcp.json'), 'utf8')) as {
+    mcpServers: Record<string, { env?: Record<string, string> }>;
+  };
+  config.mcpServers['codebase-memory'].env = {
+    ...(config.mcpServers['codebase-memory'].env ?? {}),
+    CODEBASE_ROOT: tmpRoot,
+  };
+  writeFileSync(path.join(tmpRoot, '.mcp.json'), JSON.stringify(config), 'utf8');
+});
 afterAll(() => {
   vi.unstubAllEnvs();
   rmSync(tmpRoot, { recursive: true, force: true });
@@ -21,10 +31,32 @@ afterAll(() => {
  * failure, NO headless fallback). Live PTY behavior is proven only by a real model-backed run.
  */
 class FakeSession {
-  info: { id: string; state: string; exitCode: number | null; error: string | null };
+  info: {
+    id: string;
+    state: string;
+    exitCode: number | null;
+    error: string | null;
+    commandPath: string;
+    runtimeSource: string;
+    transportMode: string;
+    provider: string | null;
+    model: string | null;
+  };
   private listeners: Array<(e: { kind: string; info: unknown }) => void> = [];
+  stopCalls = 0;
+  private eventCount = 1;
   constructor(private readonly raw: string, id = 'occ_fake_1') {
-    this.info = { id, state: 'starting', exitCode: null, error: null };
+    this.info = {
+      id,
+      state: 'running',
+      exitCode: null,
+      error: null,
+      commandPath: 'C:/openclaude/openclaude.exe',
+      runtimeSource: 'installed',
+      transportMode: 'pipe',
+      provider: 'openrouter',
+      model: MODEL,
+    };
   }
   subscribe(listener: (e: { kind: string; info: unknown }) => void): () => void {
     this.listeners.push(listener);
@@ -38,9 +70,24 @@ class FakeSession {
   transcriptText(): string {
     return '<redacted transcript>';
   }
+  transcript() {
+    return this.raw
+      ? [{ seq: 1, stream: 'stdout', data: this.raw, at: '2026-07-25T00:00:00.000Z' }]
+      : [];
+  }
+  structuredEventCount(): number {
+    return this.eventCount;
+  }
+  stop(): boolean {
+    this.stopCalls += 1;
+    this.exitWith(143);
+    return true;
+  }
   exitWith(code: number): void {
+    if (this.info.state === 'exited') return;
     this.info.state = 'exited';
     this.info.exitCode = code;
+    this.eventCount += 1;
     for (const l of [...this.listeners]) l({ kind: 'lifecycle', info: this.info });
   }
 }
@@ -127,11 +174,19 @@ describe('runCoderConsoleSession (Console PTY bridge)', () => {
     expect(result.childRunId).toBe(p.runId);
     expect(result.correlationId).toBe(p.correlationId);
     expect(result.transcriptArtifact).toMatch(/coder-workspace\/runs\/.*\/transcript\.txt$/);
+    expect(result.terminalState).toBe('completed');
+    expect(result.processExitCode).toBe(0);
+    expect(result.structuredEventCount).toBe(2);
+    expect(result.commandEvidence?.commandPath).toBe('C:/openclaude/openclaude.exe');
+    expect(result.stdout).toContain('audited by console');
+    expect(result.stderr).toBeNull();
+    expect(result.resultValidationStatus).toBe('valid');
+    expect(result.artifactRefs).toContain(result.transcriptArtifact);
     // Read-only audit argv: plan mode + scoped allowlist (codegraph doorway + reads
     // only, no shell) + strict scoped MCP config.
     const args = capture.req?.args ?? [];
     expect(args[args.indexOf('--permission-mode') + 1]).toBe('plan');
-    expect(args[args.indexOf('--allowedTools') + 1]).toContain('mcp__codebase-memory__search_graph');
+    expect(args[args.indexOf('--allowedTools') + 1]).toContain('mcp__codebase-memory');
     expect(args[args.indexOf('--allowedTools') + 1]).not.toContain('Bash');
     expect(args[args.indexOf('--disallowedTools') + 1]).toContain('Edit');
     expect(args).toContain('--strict-mcp-config');
@@ -156,7 +211,10 @@ describe('runCoderConsoleSession (Console PTY bridge)', () => {
     const result = await promise;
     expect(result.ok).toBe(false);
     expect(result.report).toBeNull();
-    expect(result.error).toBe('console_coder_no_valid_result');
+    expect(result.terminalState).toBe('failed');
+    expect(result.processExitCode).toBe(1);
+    expect(result.resultValidationStatus).toBe('missing');
+    expect(result.error).toBe('console_coder_process_failed');
   });
 
   it('propagates a session start failure (runtime unavailable) fail-closed', async () => {
@@ -177,6 +235,53 @@ describe('runCoderConsoleSession (Console PTY bridge)', () => {
     expect(result.error).toBe('console_coder_model_unresolved');
     expect(started).toBe(false);
   });
+
+  it('cancels the existing visible session, retains transcript, and reports cancellation distinctly', async () => {
+    const session = new FakeSession('partial output');
+    const controller = new AbortController();
+    const promise = runCoderConsoleSession(packet('mag_one_execution'), {
+      manager: managerFor({ ok: true, session }),
+      model: MODEL,
+      signal: controller.signal,
+    });
+    controller.abort();
+    const result = await promise;
+    expect(session.stopCalls).toBe(1);
+    expect(result.terminalState).toBe('cancelled');
+    expect(result.stopReason).toBe('console_coder_cancelled');
+    expect(result.transcriptArtifact).toMatch(/transcript\.txt$/);
+    expect(result.resultValidationStatus).toBe('malformed');
+  });
+
+  it('times out once, stops the existing visible session, and reports timed_out distinctly', async () => {
+    const session = new FakeSession('still running');
+    const result = await runCoderConsoleSession(packet('mag_one_execution'), {
+      manager: managerFor({ ok: true, session }),
+      model: MODEL,
+      timeoutMs: 5,
+    });
+    expect(session.stopCalls).toBe(1);
+    expect(result.terminalState).toBe('timed_out');
+    expect(result.stopReason).toBe('console_coder_timed_out');
+    expect(result.executionTimeoutMs).toBe(5);
+    expect(result.transcriptArtifact).toMatch(/transcript\.txt$/);
+  });
+
+  it.each([
+    ['', 'missing', 'console_coder_result_missing'],
+    ['not json', 'malformed', 'console_coder_result_malformed'],
+  ])('distinguishes %s structured output after a clean process exit', async (raw, validation, error) => {
+    const session = new FakeSession(raw);
+    const promise = runCoderConsoleSession(packet('mag_one_execution'), {
+      manager: managerFor({ ok: true, session }),
+      model: MODEL,
+    });
+    session.exitWith(0);
+    const result = await promise;
+    expect(result.terminalState).toBe('failed');
+    expect(result.resultValidationStatus).toBe(validation);
+    expect(result.error).toBe(error);
+  });
 });
 
 describe('runCoderSubagent (canonical Console PTY runtime — no headless fallback)', () => {
@@ -195,6 +300,9 @@ describe('runCoderSubagent (canonical Console PTY runtime — no headless fallba
     expect(result.resultKind).toBe('coder_report');
     expect((result.report as { summary?: string } | null)?.summary).toBe('via router');
     expect(result.exactCommand).toBeNull();
+    expect(result.commandEvidence?.commandPath).toBe('C:/openclaude/openclaude.exe');
+    expect(result.processExitCode).toBe(0);
+    expect(result.commandExitStatus).toBe(0);
   });
 
   it('direct_main_audit: returns the audit result (with view contract) in report', async () => {
@@ -212,17 +320,14 @@ describe('runCoderSubagent (canonical Console PTY runtime — no headless fallba
     expect(result.transcriptArtifact).toMatch(/transcript\.txt$/);
   });
 
-  it('NEVER falls back to headless: a bogus adapter still runs via Console PTY and does not throw adapter_unsupported', async () => {
+  it.each(['codex', 'nope', ''])('rejects unsupported adapter %j before starting the visible console', async (adapter) => {
     const session = new FakeSession(validReportJson('console only'));
-    const promise = runCoderSubagent(
-      { parentRunId: 'rp', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter: 'nope', approvedPrompt: 'x', authority: 'mag_one_execution', model: MODEL },
+    const manager = managerFor({ ok: true, session });
+    await expect(runCoderSubagent(
+      { parentRunId: 'rp', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter, approvedPrompt: 'x', authority: 'mag_one_execution', model: MODEL },
       undefined,
-      { manager: managerFor({ ok: true, session }) },
-    );
-    session.exitWith(0);
-    const result = await promise;
-    expect(result.ok).toBe(true);
-    expect((result.report as { summary?: string } | null)?.summary).toBe('console only');
+      { manager },
+    )).rejects.toThrow(`coder_adapter_unsupported: ${adapter || 'missing'}`);
   });
 
   it('returns an honest failure when the Console runtime is unavailable (no hidden second coder)', async () => {

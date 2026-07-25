@@ -358,6 +358,7 @@ export class OpenClaudeConsoleSession {
   private readonly buffer: ConsoleOutputChunk[] = [];
   private bufferChars = 0;
   private seq = 0;
+  private eventCount = 0;
   private child: ConsoleChild | null = null;
   private killFallback: NodeJS.Timeout | null = null;
   // Raw (unredacted) stdout kept for structured-result parsing by the Console
@@ -397,6 +398,7 @@ export class OpenClaudeConsoleSession {
       if (dropped) this.bufferChars -= dropped.data.length;
     }
     this.emitter.emit('chunk', chunk);
+    this.eventCount += 1;
   }
 
   attachChild(child: ConsoleChild): void {
@@ -423,6 +425,7 @@ export class OpenClaudeConsoleSession {
     this.info.exitSignal = signal;
     this.info.exitedAt = this.now();
     this.emitOutput('system', `process exited (code=${String(code)} signal=${String(signal)})`);
+    this.eventCount += 1;
     this.emitter.emit('lifecycle', this.info);
   }
 
@@ -432,11 +435,13 @@ export class OpenClaudeConsoleSession {
     this.info.error = reason;
     this.info.exitedAt = this.now();
     this.emitOutput('system', reason);
+    this.eventCount += 1;
     this.emitter.emit('lifecycle', this.info);
   }
 
   markRunning(): void {
     this.info.state = 'running';
+    this.eventCount += 1;
     this.emitter.emit('lifecycle', this.info);
   }
 
@@ -506,6 +511,10 @@ export class OpenClaudeConsoleSession {
 
   transcript(): ConsoleOutputChunk[] {
     return [...this.buffer];
+  }
+
+  structuredEventCount(): number {
+    return this.eventCount;
   }
 
   transcriptText(): string {

@@ -1,11 +1,18 @@
 import { resolveRepoRoot } from '../workspaceRoot';
 import {
-  CODER_ADAPTER_IDS,
   createApprovedCoderRun,
   type CoderAdapterId,
 } from './coderExecution';
 import type { CoderAuthorityMode } from './coderRuntimeContract';
-import { runCoderConsoleSession, type ConsoleCoderDeps } from './coderConsoleRuntime';
+import {
+  runCoderConsoleSession,
+  type ConsoleCoderDeps,
+  type ConsoleCoderTerminalState,
+  type ConsoleCommandEvidence,
+  type StructuredResultValidationStatus,
+} from './coderConsoleRuntime';
+
+export const DIRECT_VISIBLE_CODER_ADAPTER = 'claude_code' as const;
 
 export type RunCoderSubagentRequest = {
   parentRunId: string;
@@ -18,6 +25,7 @@ export type RunCoderSubagentRequest = {
   authority?: CoderAuthorityMode;
   model?: string;
   provider?: string;
+  signal?: AbortSignal;
 };
 
 export type RunCoderSubagentResult = {
@@ -28,15 +36,21 @@ export type RunCoderSubagentResult = {
   correlationId: string;
   promptHash: string;
   sessionId: string;
+  terminalState: ConsoleCoderTerminalState;
   processExitCode: number | null;
+  stopReason: string | null;
+  executionTimeoutMs: number;
   structuredEventCount: number;
+  commandEvidence: ConsoleCommandEvidence | null;
   exactCommand: string | null;
-  stdout: string;
-  stderr: string;
+  stdout: string | null;
+  stderr: string | null;
   commandExitStatus: number | null;
+  resultValidationStatus: StructuredResultValidationStatus;
   report: Record<string, unknown> | null;
   resultKind?: 'audit' | 'coder_report';
   transcriptArtifact?: string | null;
+  artifactRefs: string[];
   verification: null;
   error: string | null;
 };
@@ -55,9 +69,10 @@ export async function runCoderSubagent(
   if (!request.parentRunId || !request.projectId || !request.deckId || !request.conversationId || !request.cardId) {
     throw new Error('coder_router_identity_incomplete');
   }
-  const adapterId: CoderAdapterId = (CODER_ADAPTER_IDS as readonly string[]).includes(request.adapter)
-    ? (request.adapter as CoderAdapterId)
-    : 'claude_code';
+  if (request.adapter !== DIRECT_VISIBLE_CODER_ADAPTER) {
+    throw new Error(`coder_adapter_unsupported: ${request.adapter || 'missing'}`);
+  }
+  const adapterId: CoderAdapterId = DIRECT_VISIBLE_CODER_ADAPTER;
   observer('coder_console_runtime', { authority: request.authority ?? null });
   const packet = createApprovedCoderRun({
     parentRunId: request.parentRunId,
@@ -86,6 +101,8 @@ export async function runCoderSubagent(
     model: request.model,
     provider: request.provider,
     manager: consoleDeps?.manager,
+    signal: request.signal ?? consoleDeps?.signal,
+    timeoutMs: consoleDeps?.timeoutMs,
   });
   observer('console_session_completed', {
     sessionId: consoleResult.sessionId,
@@ -100,15 +117,21 @@ export async function runCoderSubagent(
     correlationId: consoleResult.correlationId,
     promptHash: consoleResult.promptHash,
     sessionId: consoleResult.sessionId ?? '',
-    processExitCode: null,
-    structuredEventCount: 0,
+    terminalState: consoleResult.terminalState,
+    processExitCode: consoleResult.processExitCode,
+    stopReason: consoleResult.stopReason,
+    executionTimeoutMs: consoleResult.executionTimeoutMs,
+    structuredEventCount: consoleResult.structuredEventCount,
+    commandEvidence: consoleResult.commandEvidence,
     exactCommand: null,
-    stdout: '',
-    stderr: '',
-    commandExitStatus: null,
+    stdout: consoleResult.stdout,
+    stderr: consoleResult.stderr,
+    commandExitStatus: consoleResult.processExitCode,
+    resultValidationStatus: consoleResult.resultValidationStatus,
     report: (consoleResult.auditResult ?? consoleResult.report) as Record<string, unknown> | null,
     resultKind: consoleResult.resultKind,
     transcriptArtifact: consoleResult.transcriptArtifact,
+    artifactRefs: consoleResult.artifactRefs,
     verification: null,
     error: consoleResult.error,
   };

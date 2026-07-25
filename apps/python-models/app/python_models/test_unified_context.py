@@ -4,7 +4,16 @@ import time
 
 import pytest
 
-from app.python_models.unified_context import UnifiedContextRequest, build_graph_object_context, build_model_context, build_unified_context, render_model_context
+from app.python_models.unified_context import (
+    UnifiedContextRequest,
+    build_graph_object_context,
+    build_model_context,
+    build_unified_context,
+    render_graph_views,
+    render_model_context,
+    select_persisted_graph_views,
+    transition_persisted_graph_views,
+)
 
 
 class FakeThinkGraph:
@@ -151,9 +160,10 @@ def test_unified_object_selection_preserves_source_authority_and_rejects_stale_o
         )
 
 
-def test_model_context_is_bounded_to_role_views_never_the_projection_dump():
-    built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
-    delivered = build_model_context(built["projectionId"], request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
+def test_model_context_is_bounded_to_the_explicit_selected_view_never_the_projection_dump():
+    selected_request = request(active_view_id="thinkgraph:role-view")
+    built = build_unified_context(selected_request, graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
+    delivered = build_model_context(built["projectionId"], selected_request, graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
     text = delivered["modelContext"]
     # Reasoning state (structural ThinkGraph types) + this role's persisted views.
     assert "REASONING STATE" in text and "- Decision: Think two" in text
@@ -175,6 +185,131 @@ def test_model_context_is_bounded_to_role_views_never_the_projection_dump():
     # Bounded means bounded: the whole context stays tiny even though the
     # projection carries every authority record.
     assert measurements["estimatedTokens"] < 400
+
+
+def test_unselected_role_views_are_not_automatically_attached():
+    built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
+    delivered = build_model_context(
+        built["projectionId"],
+        request(),
+        graph=FakeThinkGraph(),
+        read_json=fake_read,
+        read_codegraph_json=fake_read,
+    )
+    assert delivered["graphViews"] == []
+    assert "thinkgraph:role-view" not in delivered["modelContext"]
+
+
+def test_unified_exposes_selected_identity_and_lifecycle_without_view_content():
+    result = build_unified_context(
+        request(active_view_id="thinkgraph:role-view"),
+        graph=FakeThinkGraph(),
+        read_json=fake_read,
+        read_codegraph_json=fake_read,
+    )
+    assert result["lifecycle"]["selected"] == ["thinkgraph:role-view"]
+    assert result["lifecycle"]["consumed"] == ["thinkgraph:spent"]
+    assert result["graphViews"][0]["recordCount"] == 1
+    assert "records" not in result["graphViews"][0]
+    assert {view["viewId"] for view in result["availableGraphViews"]} == {
+        "thinkgraph:role-view",
+        "codegraph:coder-only",
+        "thinkgraph:spent",
+    }
+
+
+def test_explicit_multiple_selection_preserves_order_and_bounded_rendering():
+    views = FakeThinkGraph().graph_views("project-1", "main")["views"]
+    selected = select_persisted_graph_views(
+        views,
+        ["codegraph:coder-only", "thinkgraph:role-view"],
+        project_id="project-1",
+        conversation_id="main",
+        receiving_roles={"coder", "main_chat"},
+    )
+    assert [view["viewId"] for view in selected] == [
+        "codegraph:coder-only",
+        "thinkgraph:role-view",
+    ]
+    rendered = render_graph_views(selected)
+    assert rendered["measurements"]["records"] == 2
+    assert rendered["measurements"]["estimatedTokens"] < 200
+
+
+@pytest.mark.parametrize(
+    ("view_id", "message"),
+    [
+        ("codegraph:coder-only", "graph_view_role_mismatch"),
+        ("thinkgraph:spent", "graph_view_lifecycle_invalid"),
+        ("missing", "graph_view_unknown"),
+    ],
+)
+def test_invalid_explicit_view_selection_fails_closed(view_id, message):
+    with pytest.raises(ValueError, match=message):
+        build_unified_context(
+            request(active_view_id=view_id),
+            graph=FakeThinkGraph(),
+            read_json=fake_read,
+            read_codegraph_json=fake_read,
+        )
+
+
+def test_view_scope_and_duplicate_selection_fail_closed():
+    views = FakeThinkGraph().graph_views("project-1", "main")["views"]
+    with pytest.raises(ValueError, match="graph_view_ids_duplicate"):
+        select_persisted_graph_views(
+            views,
+            ["thinkgraph:role-view", "thinkgraph:role-view"],
+            project_id="project-1",
+            conversation_id="main",
+            receiving_roles={"main_chat"},
+        )
+    wrong_scope = [{**views[0], "projectId": "other-project"}]
+    with pytest.raises(ValueError, match="graph_view_scope_mismatch"):
+        select_persisted_graph_views(
+            wrong_scope,
+            ["thinkgraph:role-view"],
+            project_id="project-1",
+            conversation_id="main",
+            receiving_roles={"main_chat"},
+        )
+
+
+def test_lifecycle_transition_updates_the_persisted_full_view_without_transporting_membership():
+    class PersistingThinkGraph(FakeThinkGraph):
+        def __init__(self):
+            self.saved = []
+
+        def persist_graph_view(self, view):
+            self.saved.append(view)
+            return {"ok": True, "view": view}
+
+    graph = PersistingThinkGraph()
+    identities = transition_persisted_graph_views(
+        graph,
+        project_id="project-1",
+        conversation_id="main",
+        view_ids=["thinkgraph:role-view"],
+        status="active",
+        invocation_id="run-1",
+        runtime={"provider": "openai"},
+    )
+    assert identities == [{
+        **identities[0],
+        "viewId": "thinkgraph:role-view",
+        "status": "active",
+        "recordCount": 1,
+    }]
+    assert graph.saved[0]["records"][0]["summary"] == "Decision Think two"
+    assert "records" not in identities[0]
+    with pytest.raises(ValueError, match="graph_view_transition_invalid"):
+        transition_persisted_graph_views(
+            graph,
+            project_id="project-1",
+            conversation_id="main",
+            view_ids=["thinkgraph:role-view"],
+            status="consumed",
+        )
 
 
 def test_render_model_context_with_no_role_views_is_honest_not_a_fallback_dump():

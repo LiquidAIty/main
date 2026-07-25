@@ -356,6 +356,21 @@ export async function persistGraphViewOnPython(view: unknown): Promise<unknown> 
   });
 }
 
+export async function transitionGraphViewsOnPython(params: {
+  projectId: string;
+  conversationId: string;
+  viewIds: string[];
+  status: 'active' | 'consumed' | 'failed';
+  invocationId?: string;
+  runtime?: unknown;
+}): Promise<unknown> {
+  return requestThinkGraphJson('/thinkgraph/graph-views/transition', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+}
+
 /** Resolve the compact model representation for a projection the user saw.
  * Python rebuilds deterministically from the persistent authorities and
  * requires content-hash equality with projectionId — an honest 409 when the

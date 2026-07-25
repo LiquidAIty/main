@@ -182,7 +182,11 @@ def unified_doorway_context(projectId: str, conversationId: str, viewIds: str):
     """Compact rendering of persisted Graph View records for a child doorway —
     resolved by id from the persistent store, never from caller-supplied JSON."""
     from app.python_models.thinkgraph_engraphis import get_thinkgraph
-    from app.python_models.unified_context import render_graph_views
+    from app.python_models.unified_context import (
+        graph_view_identities,
+        render_graph_views,
+        select_persisted_graph_views,
+    )
     requested = [view_id for view_id in (part.strip() for part in viewIds.split(",")) if view_id]
     if not requested:
         raise HTTPException(status_code=400, detail="view_ids_required")
@@ -190,14 +194,23 @@ def unified_doorway_context(projectId: str, conversationId: str, viewIds: str):
         persisted = get_thinkgraph().graph_views(projectId, conversationId).get("views") or []
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err
-    by_id = {str(view.get("viewId")): view for view in persisted}
-    missing = [view_id for view_id in requested if view_id not in by_id]
-    if missing:
-        raise HTTPException(status_code=404, detail=f"graph_view_unknown: {', '.join(missing)}")
-    views = [by_id[view_id] for view_id in requested]
+    try:
+        views = select_persisted_graph_views(
+            list(persisted),
+            requested,
+            project_id=projectId,
+            conversation_id=conversationId,
+            receiving_roles={"coder", "main_chat"},
+        )
+    except ValueError as err:
+        detail = str(err)
+        raise HTTPException(
+            status_code=404 if detail.startswith("graph_view_unknown:") else 409,
+            detail=detail,
+        ) from err
     rendered = render_graph_views(views)
     return {"ok": True, "projectId": projectId, "conversationId": conversationId,
-            "viewIds": requested, "views": views,
+              "viewIds": requested, "views": graph_view_identities(views),
             "modelContext": rendered["text"], "measurements": rendered["measurements"]}
 
 
@@ -235,6 +248,28 @@ def thinkgraph_store_graph_view(payload: dict):
     from app.python_models.thinkgraph_engraphis import get_thinkgraph
     try:
         return get_thinkgraph().persist_graph_view(payload.get("view") or {})
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.post("/thinkgraph/graph-views/transition")
+def thinkgraph_transition_graph_views(payload: dict):
+    """Update lifecycle for exact persisted IDs without moving view content."""
+    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+    from app.python_models.unified_context import transition_persisted_graph_views
+    try:
+        views = transition_persisted_graph_views(
+            get_thinkgraph(),
+            project_id=str(payload.get("projectId") or ""),
+            conversation_id=str(payload.get("conversationId") or ""),
+            view_ids=list(payload.get("viewIds") or []),
+            status=str(payload.get("status") or ""),
+            invocation_id=str(payload.get("invocationId") or "") or None,
+            runtime=dict(payload.get("runtime") or {}) if payload.get("runtime") is not None else None,
+        )
+        return {"ok": True, "views": views}
+    except ValueError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err
 

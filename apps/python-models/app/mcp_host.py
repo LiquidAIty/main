@@ -356,8 +356,8 @@ async def list_tools() -> list[Tool]:
             name="run_coder_subagent",
             description=(
                 "Main Chat only: run one approved coding assignment through the application-owned Coder Router. "
-                "The adapter must be named explicitly — claude_code (Claude Code CLI) or codex (OpenAI Codex CLI); "
-                "there is no fallback or substitution between adapters. Pass the exact active "
+                "The direct visible-console adapter must be named explicitly: claude_code. Unsupported adapters "
+                "fail closed; there is no fallback or substitution. Pass the exact active "
                 "project/deck/conversation/parentRunId from LIQUIDAITY_RUNTIME_CONTEXT, the saved Coder card id, "
                 "and approvedPrompt bytes. Returns the linked child run, the coder session/thread id, structured "
                 "command evidence, and the CoderReport verbatim."
@@ -370,7 +370,7 @@ async def list_tools() -> list[Tool]:
                     "deckId": {"type": "string"},
                     "conversationId": {"type": "string"},
                     "cardId": {"type": "string"},
-                    "adapter": {"type": "string", "enum": ["claude_code", "codex"]},
+                    "adapter": {"type": "string", "enum": ["claude_code"]},
                     "approvedPrompt": {"type": "string"},
                     "authority": {"type": "string", "enum": ["direct_main_audit", "mag_one_execution"]},
                     "graphViewIds": {

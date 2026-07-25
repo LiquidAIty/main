@@ -28,6 +28,8 @@ AUTHORITY = {
 }
 _INFLIGHT: dict[str, dict[str, Any]] = {}
 _INFLIGHT_LOCK = threading.Lock()
+SELECTABLE_GRAPH_VIEW_STATUSES = {"candidate", "attached", "active", "returned"}
+MAX_SELECTED_GRAPH_VIEWS = 6
 
 
 def _bounded(value: int, low: int, high: int) -> int:
@@ -79,6 +81,121 @@ class UnifiedContextRequest:
     code_limit: int = 50000
 
 
+def _graph_view_identity(view: dict[str, Any]) -> dict[str, Any]:
+    """Expose persisted identity and lifecycle without transporting membership."""
+    return {
+        key: view.get(key)
+        for key in (
+            "schemaVersion",
+            "viewId",
+            "authority",
+            "status",
+            "projectId",
+            "conversationId",
+            "goalId",
+            "episodeId",
+            "jobId",
+            "runId",
+            "invocationId",
+            "producingRole",
+            "receivingRole",
+            "parentViewId",
+            "omittedNeighborCount",
+            "createdAt",
+            "updatedAt",
+        )
+        if view.get(key) is not None
+    } | {
+        "recordCount": len(view.get("records") or []),
+        "relationshipCount": len(view.get("includedRelationships") or []),
+    }
+
+
+def graph_view_identities(views: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_graph_view_identity(view) for view in views]
+
+
+def select_persisted_graph_views(
+    persisted: list[dict[str, Any]],
+    requested_view_ids: list[str],
+    *,
+    project_id: str,
+    conversation_id: str,
+    receiving_roles: set[str],
+) -> list[dict[str, Any]]:
+    """Resolve an explicit ordered selection from persisted Graph Views.
+
+    The caller carries identities only. Python enforces scope, target role, and
+    lifecycle before any full view is rendered for a model.
+    """
+    requested = [str(view_id).strip() for view_id in requested_view_ids if str(view_id).strip()]
+    if len(requested) > MAX_SELECTED_GRAPH_VIEWS:
+        raise ValueError(f"graph_view_selection_limit_exceeded: {MAX_SELECTED_GRAPH_VIEWS}")
+    if len(set(requested)) != len(requested):
+        raise ValueError("graph_view_ids_duplicate")
+    by_id = {str(view.get("viewId") or ""): view for view in persisted}
+    missing = [view_id for view_id in requested if view_id not in by_id]
+    if missing:
+        raise ValueError(f"graph_view_unknown: {', '.join(missing)}")
+    selected: list[dict[str, Any]] = []
+    for view_id in requested:
+        view = by_id[view_id]
+        if (
+            str(view.get("projectId") or "") != project_id
+            or str(view.get("conversationId") or "") != conversation_id
+        ):
+            raise ValueError(f"graph_view_scope_mismatch: {view_id}")
+        if str(view.get("receivingRole") or "") not in receiving_roles:
+            raise ValueError(f"graph_view_role_mismatch: {view_id}")
+        status = str(view.get("status") or "")
+        if status not in SELECTABLE_GRAPH_VIEW_STATUSES:
+            raise ValueError(f"graph_view_lifecycle_invalid: {view_id} ({status or 'missing'})")
+        selected.append(view)
+    return selected
+
+
+def transition_persisted_graph_views(
+    graph: ThinkGraphEngraphis,
+    *,
+    project_id: str,
+    conversation_id: str,
+    view_ids: list[str],
+    status: str,
+    invocation_id: str | None = None,
+    runtime: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Transition exact persisted views without transporting their contents."""
+    if status not in {"active", "consumed", "failed"}:
+        raise ValueError(f"graph_view_transition_status_invalid: {status}")
+    persisted = list(graph.graph_views(project_id, conversation_id).get("views") or [])
+    selected = select_persisted_graph_views(
+        persisted,
+        view_ids,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        receiving_roles={"main_chat", "coder"},
+    )
+    updated: list[dict[str, Any]] = []
+    for view in selected:
+        source_status = str(view.get("status") or "")
+        if status in {"consumed", "failed"} and source_status != "active":
+            raise ValueError(
+                f"graph_view_transition_invalid: {view.get('viewId')} ({source_status}->{status})"
+            )
+        next_view = {
+            **view,
+            "status": status,
+            "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        if invocation_id:
+            next_view["invocationId"] = invocation_id
+        if runtime is not None:
+            next_view["runtime"] = runtime
+        graph.persist_graph_view(next_view)
+        updated.append(_graph_view_identity(next_view))
+    return updated
+
+
 def _build_unified_context(
     request: UnifiedContextRequest,
     *,
@@ -99,7 +216,18 @@ def _build_unified_context(
     think_started = time.perf_counter()
     think = graph.projection(request.project_id, limit=limits["thinkgraph"])
     think_ms = (time.perf_counter() - think_started) * 1000
-    graph_views: list[dict[str, Any]] = []
+    persisted_graph_views = list(
+        graph.graph_views(request.project_id, request.conversation_id).get("views") or []
+    )
+    selected_full_views = select_persisted_graph_views(
+        persisted_graph_views,
+        [request.active_view_id] if request.active_view_id else [],
+        project_id=request.project_id,
+        conversation_id=request.conversation_id,
+        receiving_roles={request.role},
+    )
+    graph_views = graph_view_identities(persisted_graph_views)
+    selected_views = graph_view_identities(selected_full_views)
     selected_view_id = request.active_view_id
     know_started = time.perf_counter()
     try:
@@ -123,12 +251,6 @@ def _build_unified_context(
         code = {"nodes": [], "edges": [], "projectId": None}
         warnings.append({"authority": "codegraph", "code": "authority_unavailable", "detail": str(error)})
     code_ms = (time.perf_counter() - code_started) * 1000
-
-    authority_views = {
-        "thinkgraph": None,
-        "knowgraph": None,
-        "codegraph": None,
-    }
 
     raw_nodes: dict[str, list[dict[str, Any]]] = {
         "thinkgraph": list(think.get("nodes") or []),
@@ -223,7 +345,7 @@ def _build_unified_context(
     configuration_hash = hashlib.sha256(json.dumps(configuration, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     content_identity = {
         "configurationHash": configuration_hash,
-        "authorityViewIds": [view.get("viewId") for view in authority_views.values() if view],
+        "selectedGraphViewIds": [view.get("viewId") for view in selected_views],
         "nodes": [(node["authority"], node["source_id"]) for node in nodes],
         "edges": [(edge["source"], edge["target"], edge["type"], edge["cross_authority"]) for edge in edges],
     }
@@ -244,20 +366,9 @@ def _build_unified_context(
     for mapping, value in identity.items():
         if value is None:
             warnings.append({"authority": "identity", "code": "missing_authority_mapping", "detail": mapping})
-    delivery_views = []
-    for authority in AUTHORITY:
-        authority_view = authority_views[authority]
-        if not authority_view:
-            continue
-        delivery_views.append({
-            **authority_view,
-            "status": "candidate",
-            "receivingRole": request.role,
-            "note": "; ".join(filter(None, [str(authority_view.get("note") or "").strip(), f"combinedProjectionId={projection_id}", f"configurationHash={configuration_hash}"])),
-        })
     lifecycle = {
-        "available": [view["viewId"] for view in graph_views] + [view["viewId"] for view in delivery_views],
-        "selected": [view["viewId"] for view in delivery_views],
+        "available": [view["viewId"] for view in graph_views],
+        "selected": [view["viewId"] for view in selected_views],
         "attached": [view["viewId"] for view in graph_views if view.get("status") in {"attached", "active", "consumed", "returned"}],
         "delivered": [],
         "consumed": [view["viewId"] for view in graph_views if view["status"] == "consumed"],
@@ -276,9 +387,9 @@ def _build_unified_context(
         "configurationHash": configuration_hash,
         "contentHash": content_hash,
         "activeGraphViewId": selected_view_id,
-        "graphViews": delivery_views,
+        "graphViews": selected_views,
         "availableGraphViews": graph_views,
-        "authorityGraphViews": delivery_views,
+        "authorityGraphViews": selected_views,
         "lifecycle": lifecycle,
         "nodes": nodes,
         "edges": edges,
@@ -674,14 +785,16 @@ def build_model_context(
     if str(rebuilt.get("projectionId")) != str(projection_id):
         raise ValueError(f"projection_superseded: current is {rebuilt.get('projectionId')}")
     resolved_graph = graph or get_thinkgraph()
-    persisted = resolved_graph.graph_views(request.project_id, request.conversation_id).get("views") or []
-    # Structural role addressing only: this role's live-lifecycle views. No
-    # relevance ranking, no classification — persisted membership decides.
-    role_views = [
-        view for view in persisted
-        if str(view.get("receivingRole")) == request.role
-        and str(view.get("status")) in {"candidate", "attached", "active", "returned"}
-    ]
+    persisted = list(
+        resolved_graph.graph_views(request.project_id, request.conversation_id).get("views") or []
+    )
+    role_views = select_persisted_graph_views(
+        persisted,
+        [request.active_view_id] if request.active_view_id else [],
+        project_id=request.project_id,
+        conversation_id=request.conversation_id,
+        receiving_roles={request.role},
+    )
     rendered = render_model_context(rebuilt, role_views)
     return {
         "ok": True,
@@ -690,6 +803,6 @@ def build_model_context(
         "activeGraphViewId": rebuilt.get("activeGraphViewId"),
         "modelContext": rendered["text"],
         "measurements": rendered["measurements"],
-        "graphViews": role_views,
+        "graphViews": graph_view_identities(role_views),
         "warnings": rebuilt.get("warnings") or [],
     }

@@ -24,7 +24,7 @@ import { logHarnessTrace } from '../../../services/harnessTrace';
 import type { HermesInvestigationContext } from '../../hermes/hermesReportArtifact';
 import {
   attachGraphViewsToRuntime,
-  type GraphView,
+  type GraphViewIdentity,
 } from '../../../contracts/graphView';
 
 export type GrpcSessionEvent =
@@ -98,7 +98,7 @@ export type GrpcTurnArgs = {
   investigationContext?: HermesInvestigationContext;
   /** Server-resolved delivery views for LIFECYCLE recording only — their JSON
    * never enters the model prompt. */
-  graphViews?: GraphView[];
+  graphViews?: GraphViewIdentity[];
   /** The compact model representation derived server-side from the same
    * projection the human saw — the ONLY graph text the model receives. */
   graphContext?: string;
@@ -116,7 +116,7 @@ export type GrpcTurnHandle = {
    * event metadata for the frontdoor telemetry, never a re-resolution. */
   resolved: { cardId: string; provider: string; modelKey: string; providerModelId: string };
   /** Exact Graph Views attached to the saved Main card invocation. */
-  runtimeGraphViews: GraphView[];
+  runtimeGraphViews: GraphViewIdentity[];
 };
 
 export function deriveSessionId(projectId: string, conversationId: string): string {

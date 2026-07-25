@@ -59,6 +59,31 @@ export type GraphView = {
   };
 };
 
+/** Persisted Graph View identity/lifecycle transported through TypeScript.
+ * Membership and record contents stay in Python and are rendered there. */
+export type GraphViewIdentity = {
+  schemaVersion: 'graph-view.v1';
+  viewId: string;
+  authority: GraphAuthority;
+  status: GraphViewStatus;
+  projectId: string;
+  conversationId: string;
+  goalId?: string;
+  episodeId?: string;
+  jobId?: string;
+  runId?: string;
+  invocationId?: string;
+  producingRole: string;
+  receivingRole: string;
+  parentViewId?: string;
+  omittedNeighborCount: number;
+  recordCount: number;
+  relationshipCount: number;
+  createdAt: string;
+  updatedAt: string;
+  runtime?: GraphView['runtime'];
+};
+
 const AUTHORITIES = new Set<GraphAuthority>(['thinkgraph', 'knowgraph', 'codegraph']);
 const STATUSES = new Set<GraphViewStatus>(['candidate', 'attached', 'active', 'consumed', 'returned', 'superseded', 'failed']);
 const text = (value: unknown, max: number): string => typeof value === 'string' ? value.trim().slice(0, max) : '';
@@ -146,8 +171,55 @@ export function parseGraphViews(
   });
 }
 
-export function attachGraphViewsToRuntime(
-  candidates: GraphView[],
+export function parseGraphViewIdentities(
+  value: unknown,
+  trusted: { projectId: string; conversationId: string },
+): GraphViewIdentity[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error('graph_view_identities_must_be_an_array');
+  if (value.length > 6) throw new Error('graph_view_identity_limit_exceeded');
+  return value.map((raw, index) => {
+    if (!raw || typeof raw !== 'object') throw new Error(`graph_view_identity_${index}_invalid`);
+    const input = raw as Record<string, unknown>;
+    const viewId = text(input.viewId, 200);
+    const authority = text(input.authority, 32) as GraphAuthority;
+    const status = text(input.status, 32) as GraphViewStatus;
+    const projectId = text(input.projectId, 200);
+    const conversationId = text(input.conversationId, 200);
+    const producingRole = text(input.producingRole, 100);
+    const receivingRole = text(input.receivingRole, 100);
+    if (!viewId || !AUTHORITIES.has(authority) || !STATUSES.has(status) || !producingRole || !receivingRole) {
+      throw new Error(`graph_view_identity_${index}_incomplete`);
+    }
+    if (projectId !== trusted.projectId || conversationId !== trusted.conversationId) {
+      throw new Error(`graph_view_scope_mismatch: ${viewId}`);
+    }
+    return {
+      schemaVersion: 'graph-view.v1',
+      viewId,
+      authority,
+      status,
+      projectId,
+      conversationId,
+      ...(optionalText(input.goalId, 160) ? { goalId: optionalText(input.goalId, 160) } : {}),
+      ...(optionalText(input.episodeId, 160) ? { episodeId: optionalText(input.episodeId, 160) } : {}),
+      ...(optionalText(input.jobId, 160) ? { jobId: optionalText(input.jobId, 160) } : {}),
+      ...(optionalText(input.runId, 160) ? { runId: optionalText(input.runId, 160) } : {}),
+      ...(optionalText(input.invocationId, 160) ? { invocationId: optionalText(input.invocationId, 160) } : {}),
+      producingRole,
+      receivingRole,
+      ...(optionalText(input.parentViewId, 200) ? { parentViewId: optionalText(input.parentViewId, 200) } : {}),
+      omittedNeighborCount: Math.max(0, Math.trunc(Number(input.omittedNeighborCount) || 0)),
+      recordCount: Math.max(0, Math.trunc(Number(input.recordCount) || 0)),
+      relationshipCount: Math.max(0, Math.trunc(Number(input.relationshipCount) || 0)),
+      createdAt: text(input.createdAt, 80),
+      updatedAt: text(input.updatedAt, 80),
+    };
+  });
+}
+
+export function attachGraphViewsToRuntime<T extends GraphView | GraphViewIdentity>(
+  candidates: T[],
   runtime: { provider: string; model: string; role: string; invocationId: string; attachedAt?: string },
   delivered?: {
     /** Characters of the compact server-rendered context the model actually
@@ -155,7 +227,7 @@ export function attachGraphViewsToRuntime(
      * so measuring JSON.stringify(view) here would be dishonest. */
     contextCharacters: number;
   },
-): GraphView[] {
+): Array<T & { status: 'active'; runtime: NonNullable<GraphView['runtime']> }> {
   const attachedAt = runtime.attachedAt || new Date().toISOString();
   const contextCharacters = Math.max(0, Math.trunc(delivered?.contextCharacters ?? 0));
   return candidates.map((candidate) => ({
@@ -169,15 +241,15 @@ export function attachGraphViewsToRuntime(
       role: runtime.role,
       invocationId: runtime.invocationId,
       attachedAt,
-      includedRecords: candidate.records.length,
+      includedRecords: 'records' in candidate ? candidate.records.length : candidate.recordCount,
       excludedRecords: candidate.omittedNeighborCount,
       contextCharacters,
       estimatedTokens: contextCharacters > 0 ? Math.max(1, Math.ceil(contextCharacters / 4)) : 0,
     },
-  }));
+  })) as Array<T & { status: 'active'; runtime: NonNullable<GraphView['runtime']> }>;
 }
 
-export function completeGraphViews(active: GraphView[], failed = false): GraphView[] {
+export function completeGraphViews<T extends GraphView | GraphViewIdentity>(active: T[], failed = false): T[] {
   const updatedAt = new Date().toISOString();
-  return active.map((view) => ({ ...view, status: failed ? 'failed' : 'consumed', updatedAt }));
+  return active.map((view) => ({ ...view, status: failed ? 'failed' : 'consumed', updatedAt })) as T[];
 }
