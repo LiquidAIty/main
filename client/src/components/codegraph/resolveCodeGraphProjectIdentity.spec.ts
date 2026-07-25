@@ -6,54 +6,119 @@ import {
 } from './resolveCodeGraphProjectIdentity';
 
 describe('CodeGraph authoritative CBM identity resolution', () => {
+  const ready = async (projectName: string) => ({
+    project: projectName,
+    status: 'ready',
+  });
+
   it('normalizes Windows repo paths to a comparable form', () => {
     expect(normalizeRepoPath('C:\\Projects\\main')).toBe('c:/projects/main');
     expect(normalizeRepoPath('C:/Projects/main/')).toBe('c:/projects/main');
   });
 
-  it('binds CodeGraph to the indexed project whose root_path is the active repo', async () => {
-    const list = async () => ({
-      projects: [
-        { name: 'C-Other-repo', root_path: 'C:/Other/repo', nodes: 10 },
-        { name: 'C-Projects-main', root_path: 'C:/Projects/main', nodes: 5674 },
-      ],
+  it('prefers a valid explicitly configured project', async () => {
+    const name = await resolveCbmProjectName('C:\\Projects\\main', {
+      configuredProjectName: 'C-Configured-main',
+      listProjects: async () => ({
+        projects: [
+          { name: 'C-Projects-main', root_path: 'C:/Projects/main' },
+          { name: 'C-Configured-main', root_path: 'C:/Configured/main' },
+        ],
+      }),
+      getProjectStatus: ready,
     });
-    const name = await resolveCbmProjectName('C:\\Projects\\main', list);
+    expect(name).toBe('C-Configured-main');
+  });
+
+  it('prefers the canonical project over an earlier stale same-root index', async () => {
+    const name = await resolveCbmProjectName('C:\\Projects\\main', {
+      listProjects: async () => ({
+        projects: [
+          {
+            name: 'C-Projects-main-2cf8608-validation',
+            root_path: 'C:/Projects/main',
+          },
+          { name: 'C-Projects-main', root_path: 'C:/Projects/main' },
+        ],
+      }),
+      getProjectStatus: ready,
+    });
     expect(name).toBe('C-Projects-main');
   });
 
-  it('never returns the stale hardcoded identity', async () => {
-    const list = async () => ({
-      projects: [{ name: 'C-Projects-main', root_path: 'C:/Projects/main' }],
+  it('chooses the canonical project regardless of list ordering', async () => {
+    const name = await resolveCbmProjectName('C:\\Projects\\main', {
+      listProjects: async () => ({
+        projects: [
+          { name: 'C-Projects-main', root_path: 'C:/Projects/main' },
+          {
+            name: 'C-Projects-main-validation',
+            root_path: 'C:/Projects/main',
+          },
+        ],
+      }),
+      getProjectStatus: ready,
     });
-    const name = await resolveCbmProjectName('C:\\Projects\\main', list);
-    expect(name).not.toBe('C-Projects-LiquidAIty-main');
     expect(name).toBe('C-Projects-main');
   });
 
-  it('accepts the single indexed project as the active workbench repo', async () => {
-    const list = async () => ({
-      projects: [{ name: 'C-Projects-main', root_path: 'C:/Projects/main' }],
+  it('uses the only ready exact-root project when the canonical identity is absent', async () => {
+    const name = await resolveCbmProjectName('C:\\Projects\\main', {
+      canonicalProjectName: 'C-Missing-canonical',
+      listProjects: async () => ({
+        projects: [
+          { name: 'C-Projects-main-stale', root_path: 'C:/Projects/main' },
+          { name: 'C-Projects-main-ready', root_path: 'C:/Projects/main' },
+        ],
+      }),
+      getProjectStatus: async (projectName) => ({
+        project: projectName,
+        status: projectName.endsWith('-ready') ? 'ready' : 'stale',
+      }),
     });
-    // path format differs but there is exactly one indexed repo
-    const name = await resolveCbmProjectName('/weird/unmatched/path', list);
-    expect(name).toBe('C-Projects-main');
+    expect(name).toBe('C-Projects-main-ready');
   });
 
-  it('returns null (honest unresolved) when no match and multiple projects exist', async () => {
-    const list = async () => ({
-      projects: [
-        { name: 'C-Other-a', root_path: 'C:/Other/a' },
-        { name: 'C-Other-b', root_path: 'C:/Other/b' },
-      ],
+  it('rejects ambiguous ready same-root projects and names every candidate', async () => {
+    const resolution = resolveCbmProjectName('C:\\Projects\\main', {
+      canonicalProjectName: 'C-Missing-canonical',
+      listProjects: async () => ({
+        projects: [
+          { name: 'C-Projects-main-a', root_path: 'C:/Projects/main' },
+          { name: 'C-Projects-main-b', root_path: 'C:/Projects/main' },
+        ],
+      }),
+      getProjectStatus: ready,
     });
-    const name = await resolveCbmProjectName('C:\\Projects\\main', list);
-    expect(name).toBeNull();
+    await expect(resolution).rejects.toThrow(
+      'CBM project identity is ambiguous for C:\\Projects\\main: C-Projects-main-a, C-Projects-main-b',
+    );
   });
 
-  it('returns null when CBM has no indexed projects (no fabricated identity)', async () => {
-    const list = async () => ({ projects: [] });
-    const name = await resolveCbmProjectName('C:\\Projects\\main', list);
-    expect(name).toBeNull();
+  it('rejects an indexed canonical project that is not ready', async () => {
+    const resolution = resolveCbmProjectName('C:\\Projects\\main', {
+      listProjects: async () => ({
+        projects: [{ name: 'C-Projects-main', root_path: 'C:/Projects/main' }],
+      }),
+      getProjectStatus: async (projectName) => ({
+        project: projectName,
+        status: 'stale',
+      }),
+    });
+    await expect(resolution).rejects.toThrow(
+      'CBM project is not ready: C-Projects-main (stale)',
+    );
+  });
+
+  it('rejects when the canonical project and exact-root candidates are absent', async () => {
+    const resolution = resolveCbmProjectName('C:\\Projects\\main', {
+      listProjects: async () => ({
+        projects: [{ name: 'C-Other-repo', root_path: 'C:/Other/repo' }],
+      }),
+      getProjectStatus: ready,
+    });
+    await expect(resolution).rejects.toThrow(
+      'CBM project is not indexed: C-Projects-main',
+    );
   });
 });

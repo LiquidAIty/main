@@ -22,6 +22,7 @@ class ResizeObserverStub { observe() {} disconnect() {} }
 vi.stubGlobal('ResizeObserver', ResizeObserverStub);
 
 import { NativeCodeGraphSurface, NativeThinkGraphSurface } from './NativeAuthorityGraphSurface';
+import KnowledgeGraphFramework from './KnowledgeGraphFramework';
 
 describe('native authority graph surfaces', () => {
   it('mounts the real CBM GraphTab with the resolved repository identity', () => {
@@ -34,5 +35,27 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByText('No entities in this project yet.')).toBeTruthy();
     expect(screen.getByTestId('graph-navigation-controls')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Open ThinkGraph Inspector' })).toBeTruthy();
+  });
+
+  it('shows the exact CodeGraph project-resolution failure instead of mounting an arbitrary index', () => {
+    const { container } = render(
+      <KnowledgeGraphFramework
+        projectId="p"
+        codeGraphProjectName={null}
+        codeGraphProjectError="CBM project identity is ambiguous: C-Projects-main-a, C-Projects-main-b"
+        conversationId="main"
+        kind="codegraph"
+        thinkGraphProjection={{ status: 'idle', projection: null, error: null }}
+        onKindChange={vi.fn()}
+        onProjectionChange={vi.fn()}
+        onAskMain={vi.fn()}
+        onSelectedObjectChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('alert').textContent).toContain(
+      'C-Projects-main-a, C-Projects-main-b',
+    );
+    expect(container.querySelector('[data-testid="cbm-graph-tab"]')).toBeNull();
   });
 });

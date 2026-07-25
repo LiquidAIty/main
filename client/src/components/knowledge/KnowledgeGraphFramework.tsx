@@ -29,6 +29,7 @@ const GRAPH_AUTHORITIES: readonly KnowledgeSurfaceKind[] = [
 type Props = {
   projectId: string | null;
   codeGraphProjectName: string | null;
+  codeGraphProjectError: string | null;
   conversationId: string | null;
   kind: KnowledgeSurfaceKind;
   minHeight?: number;
@@ -43,6 +44,7 @@ type Props = {
 export default function KnowledgeGraphFramework({
   projectId,
   codeGraphProjectName,
+  codeGraphProjectError,
   conversationId,
   kind,
   minHeight = 280,
@@ -100,7 +102,32 @@ export default function KnowledgeGraphFramework({
         }
       >
         {kind === 'codegraph' ? (
-          <NativeCodeGraphSurface project={codeGraphProjectName} onAskMain={onAskMain} onSelectedObjectChange={onSelectedObjectChange} />
+          codeGraphProjectError ? (
+            <div
+              data-testid="codegraph-project-error"
+              role="alert"
+              style={graphDrawerSectionStyle({
+                width: '100%',
+                height: '100%',
+                minHeight,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 24,
+                borderRadius: 8,
+                color: '#fda4af',
+                textAlign: 'center',
+              })}
+            >
+              {codeGraphProjectError}
+            </div>
+          ) : (
+            <NativeCodeGraphSurface
+              project={codeGraphProjectName}
+              onAskMain={onAskMain}
+              onSelectedObjectChange={onSelectedObjectChange}
+            />
+          )
         ) : kind === 'thinkgraph' ? (
           <NativeThinkGraphSurface
             projection={thinkGraphProjection.projection}

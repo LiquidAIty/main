@@ -213,7 +213,15 @@ excluded vendored files if detected
 fresh/stale/unknown/blocked status
 ```
 
-If a new file exists on disk but is absent from CBM indexed File nodes, treat freshness as stale or unverified.
+The canonical index tracks committed source. When the worktree is clean and
+`index_status.git.head_sha` / `base_sha` equal current `HEAD`, treat committed source as fresh; the
+local post-commit hook refreshes `C-Projects-main`.
+
+Dirty tracked edits and intentional untracked files are expected to diverge from that committed
+index. Do not call that divergence an index defect, ask to reindex it, or expect uncommitted files
+to have File/symbol nodes. Use the committed graph for structural anchors, then inspect the active
+diff and direct source for uncommitted work. Refresh only after commit or when the user explicitly
+requires a working-tree graph refresh.
 
 If node/edge counts do not change after expected new code, do not assume freshness. Confirm by file/symbol search and direct read.
 

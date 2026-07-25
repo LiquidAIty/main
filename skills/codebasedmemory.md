@@ -186,10 +186,15 @@ Note: Route nodes have empty `file_path`. Route→handler mapping requires readi
 
 ## Working-Tree Visibility
 
-`index_repository` walks eligible source files under the repository root; an eligible untracked file
-can therefore appear after a fresh index. `detect_changes` is Git-delta analysis and does not replace
-`git status --short` for untracked files. Never stage a file merely to make CBM see it. Verify
-coverage by searching for the specific file/symbol after indexing, and combine CBM with Git status.
+The canonical `C-Projects-main` index represents committed source and is refreshed by the local
+post-commit hook. A clean worktree plus matching `index_status.git.head_sha` / `base_sha` and Git
+`HEAD` is sufficient freshness proof for committed files.
+
+Dirty tracked edits and intentional untracked files are expected to be absent or outdated in CBM.
+Do not report that expected divergence as a coverage defect, ask to reindex it, or stage a file to
+make CBM see it. Use the committed graph for structural anchors, then use `git status --short`, the
+active diff, direct reads, and focused proof for uncommitted work. Refresh a dirty working tree only
+when the user explicitly requests it.
 
 ## Cold Start & Performance
 

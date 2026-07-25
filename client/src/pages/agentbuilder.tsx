@@ -330,17 +330,26 @@ export default function AgentBuilder(): React.ReactElement {
     workspaceView,
   });
 
-  // CodeGraph repository identity is resolved from the authoritative CBM index — the
-  // indexed project whose root_path is this repo — never a hardcoded project name.
+  // CodeGraph repository identity is resolved from the authoritative CBM index.
+  // The canonical ready project wins over stale same-root validation indexes.
   const [codeGraphProjectName, setCodeGraphProjectName] = useState<string>('');
+  const [codeGraphProjectError, setCodeGraphProjectError] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     void resolveCbmProjectName(DEFAULT_WORKSPACE_ROOT)
       .then((name) => {
-        if (!cancelled && name) setCodeGraphProjectName(name);
+        if (!cancelled) {
+          setCodeGraphProjectName(name);
+          setCodeGraphProjectError(null);
+        }
       })
-      .catch(() => {
-        /* CBM unreachable: leave unresolved so CodeGraph shows its honest empty state. */
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setCodeGraphProjectName('');
+          setCodeGraphProjectError(
+            error instanceof Error ? error.message : 'CBM project identity resolution failed',
+          );
+        }
       });
     return () => {
       cancelled = true;
@@ -965,6 +974,7 @@ export default function AgentBuilder(): React.ReactElement {
           <KnowledgeGraphFramework
             projectId={activeProject || null}
             codeGraphProjectName={codeGraphProjectName || null}
+            codeGraphProjectError={codeGraphProjectError}
             conversationId={conversationId || null}
             kind={knowledgeGraphKind}
             minHeight={minHeight}
