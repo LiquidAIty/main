@@ -169,15 +169,10 @@ class TestRunAssistantAgent:
     def test_trusted_inter_agent_call_creates_handoff_and_correlates_result(self, monkeypatch):
         calls = []
         created = []
-        recorded = []
 
         def create_context(**kwargs):
             created.append(kwargs)
             return {"ok": True, "contextId": "agentctx:hermes-search"}
-
-        def record_result(**kwargs):
-            recorded.append(kwargs)
-            return {"ok": True, "created": False}
 
         def backend(method, path, payload=None):
             calls.append((method, path, payload))
@@ -191,7 +186,6 @@ class TestRunAssistantAgent:
             }
 
         monkeypatch.setattr(cp.ag, "create_context", create_context)
-        monkeypatch.setattr(cp.ag, "record_result", record_result)
         monkeypatch.setattr(cp, "_backend_json", backend)
 
         response = asyncio.run(cp.card_run_assistant_agent({
@@ -215,25 +209,14 @@ class TestRunAssistantAgent:
             "producing_run_id": "main-turn-1",
         }]
         assert calls[0][2]["agentContextId"] == "agentctx:hermes-search"
-        assert recorded == [{
-            "context_id": "agentctx:hermes-search",
-            "project_id": "p",
-            "result_id": "result:search-run-1",
-            "run_id": "search-run-1",
-            "status": "completed",
-            "markdown": "bounded source packet",
-            "error": None,
-        }]
         assert response["agentContextId"] == "agentctx:hermes-search"
 
     def test_inter_agent_failure_records_backend_error(self, monkeypatch):
-        recorded = []
         monkeypatch.setattr(
             cp.ag,
             "create_context",
             lambda **_kwargs: {"ok": True, "contextId": "agentctx:failed"},
         )
-        monkeypatch.setattr(cp.ag, "record_result", lambda **kwargs: recorded.append(kwargs))
         monkeypatch.setattr(cp, "_backend_json", lambda *_args, **_kwargs: {
             "ok": False,
             "error": "configured_card_failed",
@@ -251,8 +234,8 @@ class TestRunAssistantAgent:
             "input": "Find one primary source.",
         }))
 
-        assert recorded[0]["status"] == "failed"
-        assert recorded[0]["error"] == "configured_card_failed"
+        # The Python saved-card runner is the one result writer. The doorway
+        # never copies or reinterprets the backend result.
 
     def test_plain_standalone_call_does_not_create_agentgraph_handoff(self, monkeypatch):
         monkeypatch.setattr(

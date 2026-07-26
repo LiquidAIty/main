@@ -57,6 +57,17 @@ def _context(
     return ContextPack(session=_session(orchestrator), userText=user_text, cardRuntime=card)
 
 
+@pytest.fixture(autouse=True)
+def _durable_outer_boundaries(monkeypatch):
+    monkeypatch.setattr(
+        mac.ra,
+        "begin_agent_assignment",
+        lambda **kwargs: f"assignment:{kwargs['correlation_id']}",
+    )
+    monkeypatch.setattr(mac.ra, "finish_agent_assignment", lambda **_kwargs: "agentresult:corr-1")
+    monkeypatch.setattr(mac.rq, "assigned_query_bindings", lambda **_kwargs: [])
+
+
 # --------------------------------------------------------------------------- #
 # structural guard — pure, honest, no model construction
 # --------------------------------------------------------------------------- #
@@ -189,3 +200,79 @@ class TestAgentGraphRuntimeContext:
 
         assert response.ok is False
         assert response.error == "agentgraph_context_scope_mismatch: agentctx:wrong"
+
+
+class TestRegisteredQueryContext:
+    def test_required_view_materializes_before_model_and_optional_stays_callable(
+        self, monkeypatch
+    ):
+        events: list[str] = []
+        tasks: list[str] = []
+        attached_tools: list[str] = []
+        required = mac.rq.QueryBinding(
+            project_id="p",
+            deck_id="deck_builder",
+            card_id="tg",
+            binding_id="required_context",
+            query_id="project.context",
+            query_version=2,
+            delivery_mode="required",
+            parameters={"project_id": "p"},
+        )
+        optional = mac.rq.QueryBinding(
+            project_id="p",
+            deck_id="deck_builder",
+            card_id="tg",
+            binding_id="optional_detail",
+            query_id="project.detail",
+            query_version=1,
+            delivery_mode="optional",
+            parameters={},
+        )
+        execution = mac.rq.QueryExecution(
+            execution_id="queryexec:one",
+            binding_id=required.binding_id,
+            query_id=required.query_id,
+            query_version=required.query_version,
+            parameters=required.parameters,
+            graph_view_id="graphview:query:one",
+            rows=[{"fact": "bounded"}],
+            truncated=False,
+        )
+
+        class FakeAgent:
+            async def run(self, *, task):
+                tasks.append(task)
+                return SimpleNamespace(messages=[SimpleNamespace(content="done")])
+
+        monkeypatch.setattr(
+            mac.rq,
+            "assigned_query_bindings",
+            lambda **_kwargs: [required, optional],
+        )
+        monkeypatch.setattr(
+            mac.rq,
+            "execute_binding",
+            lambda *_args, **_kwargs: (events.append("materialized") or execution),
+        )
+        monkeypatch.setattr(mac.rpe, "prepare", lambda **_kwargs: None)
+        monkeypatch.setattr(
+            mac,
+            "_build_model_client",
+            lambda _config: (events.append("model") or _FakeToolClient()),
+        )
+
+        def build(_context, _client, *, extra_tools=None):
+            attached_tools.extend(tool.name for tool in (extra_tools or []))
+            return [FakeAgent()]
+
+        monkeypatch.setattr(mac, "_build_participants", build)
+
+        response = asyncio.run(mac.run_configured_card(_context("Use registered context.")))
+
+        assert response.ok is True
+        assert events == ["materialized", "model"]
+        assert attached_tools == ["execute_registered_query"]
+        assert "graphview:query:one" in tasks[0]
+        assert '{"fact":"bounded"}' in tasks[0]
+        assert "optional_detail: project.detail@v1" in tasks[0]

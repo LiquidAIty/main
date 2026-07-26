@@ -131,64 +131,40 @@ def _run_cypher(
     return list(cursor.fetchall())
 
 
-def _ag_value(value: Any) -> Any:
-    if value is None or isinstance(value, (dict, list, bool, int, float)):
-        return value
-    try:
-        return json.loads(str(value))
-    except (TypeError, ValueError):
-        return value
-
-
-def _properties(value: Any) -> dict[str, Any]:
-    parsed = _ag_value(value)
-    return dict(parsed) if isinstance(parsed, dict) else {}
-
-
-def _property(properties: dict[str, Any], current: str, historical: str) -> Any:
-    return properties[current] if current in properties else properties.get(historical)
-
-
-def _read_context_properties(
+def _read_context_payload(
     cursor: Any,
     project_id: str,
     context_id: str,
 ) -> dict[str, Any] | None:
-    rows = _run_cypher(
-        cursor,
+    cursor.execute(
         """
-        MATCH (context:AgentContext)
-        WHERE
-          (context.contextId = $contextId OR context.context_id = $contextId)
-          AND (context.projectId = $projectId OR context.project_id = $projectId)
-        RETURN properties(context)
-        LIMIT 1
+        SELECT context_id, project_id, deck_id, conversation_id, sender_agent_id,
+               receiving_agent_id, markdown, producing_run_id, parent_context_id,
+               status, created_at, updated_at, completed_at
+        FROM ag_catalog.agent_context_payloads
+        WHERE project_id=%s AND context_id=%s
         """,
-        "properties agtype",
-        {"projectId": project_id, "contextId": context_id},
+        (project_id, context_id),
     )
-    return _properties(rows[0][0]) if rows else None
-
-
-def _read_parent_context_id(cursor: Any, project_id: str, context_id: str) -> str | None:
-    rows = _run_cypher(
-        cursor,
-        """
-        MATCH (context:AgentContext)-[:CHILD_OF]->(parent:AgentContext)
-        WHERE
-          (context.contextId = $contextId OR context.context_id = $contextId)
-          AND (context.projectId = $projectId OR context.project_id = $projectId)
-        RETURN properties(parent)
-        LIMIT 1
-        """,
-        "properties agtype",
-        {"projectId": project_id, "contextId": context_id},
-    )
-    if not rows:
+    row = cursor.fetchone()
+    if row is None:
         return None
-    properties = _properties(rows[0][0])
-    value = _property(properties, "contextId", "context_id")
-    return str(value) if value else None
+    keys = (
+        "context_id",
+        "project_id",
+        "deck_id",
+        "conversation_id",
+        "sender_agent_id",
+        "receiving_agent_id",
+        "markdown",
+        "producing_run_id",
+        "parent_context_id",
+        "status",
+        "created_at",
+        "updated_at",
+        "completed_at",
+    )
+    return dict(zip(keys, row))
 
 
 def create_context(
@@ -227,7 +203,6 @@ def create_context(
         "conversationId": conversation_id,
         "senderAgentId": sender_agent_id,
         "receivingAgentId": receiving_agent_id,
-        "markdown": markdown,
         "status": "pending",
         "createdAt": created_at,
     }
@@ -239,12 +214,34 @@ def create_context(
     with _connection_scope(connection) as conn, conn.cursor() as cursor:
         _prepare(cursor)
         if parent_context_id is not None:
-            parent = _read_context_properties(cursor, project_id, parent_context_id)
+            parent = _read_context_payload(cursor, project_id, parent_context_id)
             if parent is None:
                 raise AgentGraphError(
                     f"agentgraph_parent_context_not_found: {parent_context_id}"
                 )
 
+        cursor.execute(
+            """
+            INSERT INTO ag_catalog.agent_context_payloads
+              (context_id, project_id, deck_id, conversation_id, sender_agent_id,
+               receiving_agent_id, markdown, producing_run_id, parent_context_id,
+               status, created_at, updated_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s)
+            """,
+            (
+                context_id,
+                project_id,
+                deck_id,
+                conversation_id,
+                sender_agent_id,
+                receiving_agent_id,
+                markdown,
+                producing_run_id,
+                parent_context_id,
+                created_at,
+                created_at,
+            ),
+        )
         _run_cypher(
             cursor,
             f"""
@@ -265,7 +262,6 @@ def create_context(
               conversationId: $conversationId,
               senderAgentId: $senderAgentId,
               receivingAgentId: $receivingAgentId,
-              markdown: $markdown,
               status: $status,
               createdAt: $createdAt
               {producing_property}
@@ -321,39 +317,22 @@ def read_context(
     project_id = _required_text(project_id, "project_id")
     with _connection_scope(connection) as conn, conn.cursor() as cursor:
         _prepare(cursor)
-        properties = _read_context_properties(cursor, project_id, context_id)
+        properties = _read_context_payload(cursor, project_id, context_id)
         if properties is None:
             raise AgentGraphError(f"agentgraph_context_not_found: {context_id}")
-        parent_context_id = _read_parent_context_id(cursor, project_id, context_id)
-
-    markdown = (
-        properties.get("markdown")
-        if "markdown" in properties
-        else properties.get("prompt", "")
-    )
     return {
         "ok": True,
-        "contextId": str(_property(properties, "contextId", "context_id") or context_id),
-        "projectId": str(_property(properties, "projectId", "project_id") or ""),
-        "deckId": str(_property(properties, "deckId", "deck_id") or ""),
-        "conversationId": str(
-            _property(properties, "conversationId", "conversation_id") or ""
-        ),
-        "senderAgentId": str(
-            _property(properties, "senderAgentId", "sender_agent_id") or ""
-        ),
-        "receivingAgentId": str(
-            _property(properties, "receivingAgentId", "receiving_agent_id") or ""
-        ),
-        "markdown": str(markdown) if markdown is not None else "",
-        "producingRunId": _property(
-            properties,
-            "producingRunId",
-            "producing_run_id",
-        ),
-        "parentContextId": parent_context_id,
+        "contextId": str(properties["context_id"]),
+        "projectId": str(properties["project_id"]),
+        "deckId": str(properties["deck_id"]),
+        "conversationId": str(properties["conversation_id"]),
+        "senderAgentId": str(properties["sender_agent_id"] or ""),
+        "receivingAgentId": str(properties["receiving_agent_id"]),
+        "markdown": str(properties["markdown"]),
+        "producingRunId": properties["producing_run_id"],
+        "parentContextId": properties["parent_context_id"],
         "status": str(properties.get("status") or ""),
-        "createdAt": _property(properties, "createdAt", "created_at"),
+        "createdAt": str(properties["created_at"]),
     }
 
 
@@ -370,6 +349,17 @@ def mark_context_status(
     updated_at = _now()
     with _connection_scope(connection) as conn, conn.cursor() as cursor:
         _prepare(cursor)
+        cursor.execute(
+            """
+            UPDATE ag_catalog.agent_context_payloads
+            SET status=%s, updated_at=%s,
+                completed_at=CASE WHEN %s IN ('completed','failed','cancelled') THEN %s ELSE completed_at END
+            WHERE context_id=%s AND project_id=%s
+            """,
+            (status, updated_at, status, updated_at, context_id, project_id),
+        )
+        if cursor.rowcount != 1:
+            raise AgentGraphError(f"agentgraph_context_not_found: {context_id}")
         rows = _run_cypher(
             cursor,
             """
@@ -423,29 +413,19 @@ def record_result(
 
     with _connection_scope(connection) as conn, conn.cursor() as cursor:
         _prepare(cursor)
-        context = _read_context_properties(cursor, project_id, context_id)
+        context = _read_context_payload(cursor, project_id, context_id)
         if context is None:
             raise AgentGraphError(f"agentgraph_context_not_found: {context_id}")
 
-        existing = _run_cypher(
-            cursor,
+        cursor.execute(
             """
-            MATCH (context:AgentContext)-[:PRODUCED]->(result:Result)
-            WHERE
-              (context.contextId = $contextId OR context.context_id = $contextId)
-              AND (context.projectId = $projectId OR context.project_id = $projectId)
-              AND (result.resultId = $resultId OR result.result_id = $resultId)
-            RETURN properties(result)
-            LIMIT 1
+            SELECT result_id
+            FROM ag_catalog.agent_result_payloads
+            WHERE context_id=%s AND project_id=%s AND result_id=%s
             """,
-            "properties agtype",
-            {
-                "projectId": project_id,
-                "contextId": context_id,
-                "resultId": result_id,
-            },
+            (context_id, project_id, result_id),
         )
-        if existing:
+        if cursor.fetchone() is not None:
             return {
                 "ok": True,
                 "created": False,
@@ -455,37 +435,52 @@ def record_result(
 
         params: dict[str, Any] = {
             "projectId": project_id,
-            "conversationId": str(
-                _property(context, "conversationId", "conversation_id") or ""
-            ),
-            "receivingAgentId": str(
-                _property(context, "receivingAgentId", "receiving_agent_id") or ""
-            ),
+            "conversationId": str(context["conversation_id"]),
+            "receivingAgentId": str(context["receiving_agent_id"]),
             "contextId": context_id,
             "resultId": result_id,
             "runId": run_id,
             "status": status,
             "createdAt": created_at,
         }
-        optional_properties = ""
-        if markdown is not None:
-            params["markdown"] = markdown
-            optional_properties += ", markdown: $markdown"
-        if result_ref is not None:
-            params["resultRef"] = result_ref
-            optional_properties += ", resultRef: $resultRef"
-        if error is not None:
-            params["error"] = error
-            optional_properties += ", error: $error"
+        cursor.execute(
+            """
+            INSERT INTO ag_catalog.agent_result_payloads
+              (result_id, context_id, project_id, conversation_id, receiving_agent_id,
+               run_id, status, markdown, result_ref, error, created_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                result_id,
+                context_id,
+                project_id,
+                str(context["conversation_id"]),
+                str(context["receiving_agent_id"]),
+                run_id,
+                status,
+                markdown,
+                result_ref,
+                error,
+                created_at,
+            ),
+        )
+        cursor.execute(
+            """
+            UPDATE ag_catalog.agent_context_payloads
+            SET status=%s, completed_at=%s, updated_at=%s
+            WHERE context_id=%s AND project_id=%s
+            """,
+            (status, created_at, created_at, context_id, project_id),
+        )
 
         rows = _run_cypher(
             cursor,
-            f"""
+            """
             MATCH (context:AgentContext)
             WHERE
               (context.contextId = $contextId OR context.context_id = $contextId)
               AND (context.projectId = $projectId OR context.project_id = $projectId)
-            CREATE (result:Result {{
+            CREATE (result:Result {
               resultId: $resultId,
               contextId: $contextId,
               projectId: $projectId,
@@ -494,8 +489,7 @@ def record_result(
               runId: $runId,
               status: $status,
               createdAt: $createdAt
-              {optional_properties}
-            }})
+            })
             CREATE (context)-[:PRODUCED]->(result)
             SET context.status = $status,
                 context.completedAt = $createdAt

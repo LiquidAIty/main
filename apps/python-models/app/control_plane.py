@@ -428,32 +428,16 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
     except Exception as err:
         if agent_context_id and originating_agent_id:
             await asyncio.to_thread(
-                ag.record_result,
-                context_id=agent_context_id,
-                project_id=project_id,
-                result_id=f"result:{correlation_id}",
-                run_id=correlation_id,
-                status="failed",
-                error=str(err),
+                ag.mark_context_status,
+                agent_context_id,
+                project_id,
+                "failed",
             )
         raise
 
     if agent_context_id and originating_agent_id:
-        result = response.get("result") if isinstance(response.get("result"), dict) else {}
-        status = "completed" if str(result.get("status") or "") == "completed" else "failed"
-        error = (
-            str(result.get("error") or response.get("error") or "")
-            or ("card_run_failed_without_error" if status == "failed" else None)
-        )
-        await asyncio.to_thread(
-            ag.record_result,
-            context_id=agent_context_id,
-            project_id=project_id,
-            result_id=f"result:{correlation_id}",
-            run_id=correlation_id,
-            status=status,
-            markdown=str(result.get("output") or "") or None,
-            error=error,
-        )
+        # Python's saved-card runner is the single result writer. This doorway
+        # transports the context identity back to its caller and does not copy
+        # model output or author duplicate lineage.
         return {**response, "agentContextId": agent_context_id}
     return response

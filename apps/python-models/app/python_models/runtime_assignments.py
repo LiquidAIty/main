@@ -638,3 +638,277 @@ def get_run_traces(*, project_id: str, card_id: str | None = None, limit: int = 
         r["skill_versions"] = _as_list(r["skill_versions"])
         r["data_binding_refs"] = _as_list(r["data_binding_refs"])
     return rows
+
+
+def begin_agent_assignment(
+    *,
+    project_id: str,
+    correlation_id: str,
+    deck_id: str,
+    card_id: str,
+    conversation_id: str | None,
+    sender_card_id: str | None = None,
+    agent_context_id: str | None = None,
+    parent_correlation_id: str | None = None,
+    retry_of_correlation_id: str | None = None,
+    conn=None,
+) -> str:
+    """Create the durable outer assignment on the existing canonical run row."""
+    for name, value in (
+        ("project_id", project_id),
+        ("correlation_id", correlation_id),
+        ("card_id", card_id),
+    ):
+        if not str(value or "").strip():
+            raise ValueError(f"agent_assignment_{name}_required")
+    assignment_id = f"assignment:{correlation_id}"
+    own = conn is None
+    conn = conn or _connect(autocommit=False)
+    try:
+        ensure_tables(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT assignment_id, state
+                FROM ag_catalog.agent_assignments
+                WHERE project_id=%s AND correlation_id=%s
+                FOR UPDATE
+                """,
+                (project_id, correlation_id),
+            )
+            existing_assignment = cur.fetchone()
+            if existing_assignment and existing_assignment[1] in {
+                "completed",
+                "failed",
+                "cancelled",
+            }:
+                return str(existing_assignment[0])
+            cur.execute(
+                """
+                INSERT INTO ag_catalog.card_run_traces
+                  (project_id, correlation_id, deck_id, card_id, outcome,
+                   conversation_id, runtime, state, started_at, updated_at)
+                VALUES (%s,%s,%s,%s,'pending',%s,'autogen','running',now(),now())
+                ON CONFLICT (project_id, correlation_id) DO UPDATE SET
+                  deck_id=EXCLUDED.deck_id,
+                  card_id=EXCLUDED.card_id,
+                  conversation_id=COALESCE(EXCLUDED.conversation_id, card_run_traces.conversation_id),
+                  runtime='autogen',
+                  state='running',
+                  started_at=COALESCE(card_run_traces.started_at, now()),
+                  updated_at=now()
+                """,
+                (
+                    project_id,
+                    correlation_id,
+                    deck_id or "",
+                    card_id,
+                    str(conversation_id or "").strip() or None,
+                ),
+            )
+            parent_assignment_id = None
+            if parent_correlation_id:
+                cur.execute(
+                    """
+                    SELECT assignment_id
+                    FROM ag_catalog.agent_assignments
+                    WHERE project_id=%s AND correlation_id=%s
+                    """,
+                    (project_id, parent_correlation_id),
+                )
+                parent = cur.fetchone()
+                parent_assignment_id = parent[0] if parent else None
+            retry_of_assignment_id = None
+            if retry_of_correlation_id:
+                cur.execute(
+                    """
+                    SELECT assignment_id
+                    FROM ag_catalog.agent_assignments
+                    WHERE project_id=%s AND correlation_id=%s
+                    """,
+                    (project_id, retry_of_correlation_id),
+                )
+                retry = cur.fetchone()
+                if retry is None:
+                    raise LookupError(
+                        f"agent_assignment_retry_target_not_found: {retry_of_correlation_id}"
+                    )
+                retry_of_assignment_id = retry[0]
+            cur.execute(
+                """
+                INSERT INTO ag_catalog.agent_assignments
+                  (assignment_id, project_id, correlation_id, deck_id, conversation_id,
+                   sender_card_id, receiver_card_id, parent_assignment_id,
+                   retry_of_assignment_id, state, started_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',now())
+                ON CONFLICT (project_id, correlation_id) DO UPDATE SET
+                  sender_card_id=COALESCE(EXCLUDED.sender_card_id, agent_assignments.sender_card_id),
+                  parent_assignment_id=COALESCE(
+                    EXCLUDED.parent_assignment_id, agent_assignments.parent_assignment_id
+                  ),
+                  retry_of_assignment_id=COALESCE(
+                    EXCLUDED.retry_of_assignment_id, agent_assignments.retry_of_assignment_id
+                  ),
+                  state='running',
+                  started_at=COALESCE(agent_assignments.started_at, now()),
+                  updated_at=now()
+                """,
+                (
+                    assignment_id,
+                    project_id,
+                    correlation_id,
+                    deck_id or "",
+                    str(conversation_id or "").strip() or None,
+                    str(sender_card_id or "").strip() or None,
+                    card_id,
+                    parent_assignment_id,
+                    retry_of_assignment_id,
+                ),
+            )
+            if agent_context_id:
+                cur.execute(
+                    """
+                    INSERT INTO ag_catalog.agent_context_references
+                      (assignment_id, reference_id, reference_type, required)
+                    VALUES (%s,%s,'agent_context',true)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (assignment_id, agent_context_id),
+                )
+        if own:
+            conn.commit()
+        return assignment_id
+    except Exception:
+        if own:
+            conn.rollback()
+        raise
+    finally:
+        if own:
+            conn.close()
+
+
+def finish_agent_assignment(
+    *,
+    project_id: str,
+    correlation_id: str,
+    status: str,
+    output: str | None = None,
+    error_code: str | None = None,
+    error_detail: str | None = None,
+    artifacts: list[dict[str, str]] | None = None,
+    conn=None,
+) -> str:
+    """Persist one terminal result/failure and artifact references idempotently."""
+    terminal = str(status or "").strip().lower()
+    if terminal not in {"completed", "failed", "cancelled"}:
+        raise ValueError(f"agent_assignment_terminal_status_invalid: {terminal}")
+    assignment_id = f"assignment:{correlation_id}"
+    result_id = f"agentresult:{correlation_id}"
+    own = conn is None
+    conn = conn or _connect(autocommit=False)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT assignment_id, state
+                FROM ag_catalog.agent_assignments
+                WHERE assignment_id=%s AND project_id=%s AND correlation_id=%s
+                FOR UPDATE
+                """,
+                (assignment_id, project_id, correlation_id),
+            )
+            assignment = cur.fetchone()
+            if assignment is None:
+                raise LookupError(f"agent_assignment_not_found: {assignment_id}")
+            normalized_error_code = str(error_code or "").strip() or None
+            normalized_error_detail = str(error_detail or "")[:8000] or None
+            if assignment[1] in {"completed", "failed", "cancelled"}:
+                cur.execute(
+                    """
+                    SELECT result_id, status, output, error_code, error_detail
+                    FROM ag_catalog.agent_results
+                    WHERE assignment_id=%s
+                    """,
+                    (assignment_id,),
+                )
+                existing_result = cur.fetchone()
+                if existing_result == (
+                    result_id,
+                    terminal,
+                    output,
+                    normalized_error_code,
+                    normalized_error_detail,
+                ):
+                    return result_id
+                raise RuntimeError(
+                    f"agent_assignment_already_terminal: {assignment_id}:{assignment[1]}"
+                )
+            cur.execute(
+                """
+                INSERT INTO ag_catalog.agent_results
+                  (result_id, assignment_id, project_id, correlation_id, status,
+                   output, error_code, error_detail)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (assignment_id) DO NOTHING
+                """,
+                (
+                    result_id,
+                    assignment_id,
+                    project_id,
+                    correlation_id,
+                    terminal,
+                    output,
+                    normalized_error_code,
+                    normalized_error_detail,
+                ),
+            )
+            timestamp_column = "cancelled_at" if terminal == "cancelled" else "completed_at"
+            cur.execute(
+                f"""
+                UPDATE ag_catalog.agent_assignments
+                SET state=%s, {timestamp_column}=now(), updated_at=now()
+                WHERE assignment_id=%s
+                """,
+                (terminal, assignment_id),
+            )
+            cur.execute(
+                f"""
+                UPDATE ag_catalog.card_run_traces
+                SET outcome=%s, state=%s, detail=%s, error_code=%s,
+                    {timestamp_column}=now(), updated_at=now()
+                WHERE project_id=%s AND correlation_id=%s
+                """,
+                (
+                    terminal,
+                    terminal,
+                    str(error_detail or "")[:4000],
+                    normalized_error_code,
+                    project_id,
+                    correlation_id,
+                ),
+            )
+            for artifact in artifacts or []:
+                artifact_id = str(artifact.get("artifactId") or "").strip()
+                artifact_type = str(artifact.get("artifactType") or "").strip()
+                locator = str(artifact.get("locator") or "").strip()
+                if not artifact_id or not artifact_type or not locator:
+                    raise ValueError("agent_artifact_reference_invalid")
+                cur.execute(
+                    """
+                    INSERT INTO ag_catalog.agent_artifact_references
+                      (assignment_id, artifact_id, artifact_type, locator)
+                    VALUES (%s,%s,%s,%s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (assignment_id, artifact_id, artifact_type, locator),
+                )
+        if own:
+            conn.commit()
+        return result_id
+    except Exception:
+        if own:
+            conn.rollback()
+        raise
+    finally:
+        if own:
+            conn.close()

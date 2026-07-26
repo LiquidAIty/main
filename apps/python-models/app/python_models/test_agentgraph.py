@@ -123,12 +123,28 @@ def test_age_roundtrip_preserves_exact_markdown_and_minimal_lineage() -> None:
             rows = cursor.fetchall()
         assert len(rows) == 1
         properties = json.loads(str(rows[0][0]))
-        assert properties["markdown"] == result_markdown
+        assert "markdown" not in properties
+        assert "resultRef" not in properties
+        assert "error" not in properties
         assert properties["contextId"] == second["contextId"]
         assert properties["projectId"] == project_id
         assert properties["conversationId"] == conversation_id
         assert properties["receivingAgentId"] == "card_local_coder"
         assert json.loads(str(rows[0][1])) == 1
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT markdown, result_ref, status
+                FROM ag_catalog.agent_result_payloads
+                WHERE result_id='result-1'
+                """
+            )
+            relational_result = cursor.fetchone()
+        assert relational_result == (
+            result_markdown,
+            "coder-workspace/runs/result-1/transcript.txt",
+            "completed",
+        )
         assert read_context(
             second["contextId"],
             project_id,

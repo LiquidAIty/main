@@ -1,12 +1,17 @@
-"""Focused runtime-assignment coverage (pure validation — no DB, no network).
+"""Focused runtime-assignment coverage.
 
 Proves the database-backed assignment model's gates: promoted-only skill
 assignment with proof refs, runtime-binding compatibility, project scoping,
 bounded data bindings with structural query-injection rejection, and profile
-record validation. DB round-trips are covered by the live seed CLI.
+record validation, plus the canonical outer-run assignment/result boundary.
 """
 
+from uuid import uuid4
+
+import pytest
+
 from app.python_models import runtime_assignments as ra
+from app.python_models.postgres import connect_postgres
 
 
 def _skill(**overrides) -> ra.RuntimeSkill:
@@ -120,3 +125,129 @@ class TestProfileValidation:
             enabled=True, terminal_contract="",
         )
         assert ra.validate_profile(no_contract) is None
+
+
+def test_outer_assignment_reuses_canonical_run_and_persists_lineage_result_and_artifact():
+    project_id = f"assignment-test-{uuid4().hex}"
+    parent_correlation = f"parent-{uuid4().hex}"
+    child_correlation = f"child-{uuid4().hex}"
+    connection = connect_postgres(autocommit=False)
+    try:
+        parent_id = ra.begin_agent_assignment(
+            project_id=project_id,
+            correlation_id=parent_correlation,
+            deck_id="deck_builder",
+            card_id="card_main_chat",
+            conversation_id="main",
+            conn=connection,
+        )
+        child_id = ra.begin_agent_assignment(
+            project_id=project_id,
+            correlation_id=child_correlation,
+            deck_id="deck_builder",
+            card_id="card_research_agent",
+            conversation_id="main",
+            sender_card_id="card_main_chat",
+            agent_context_id="agentctx:test-context",
+            parent_correlation_id=parent_correlation,
+            conn=connection,
+        )
+        result_id = ra.finish_agent_assignment(
+            project_id=project_id,
+            correlation_id=child_correlation,
+            status="completed",
+            output="bounded result",
+            artifacts=[
+                {
+                    "artifactId": "artifact:test",
+                    "artifactType": "return_file",
+                    "locator": "returns/test/result.json",
+                }
+            ],
+            conn=connection,
+        )
+        assert ra.finish_agent_assignment(
+            project_id=project_id,
+            correlation_id=child_correlation,
+            status="completed",
+            output="bounded result",
+            artifacts=[
+                {
+                    "artifactId": "artifact:test",
+                    "artifactType": "return_file",
+                    "locator": "returns/test/result.json",
+                }
+            ],
+            conn=connection,
+        ) == result_id
+        assert ra.begin_agent_assignment(
+            project_id=project_id,
+            correlation_id=child_correlation,
+            deck_id="deck_builder",
+            card_id="card_research_agent",
+            conversation_id="main",
+            conn=connection,
+        ) == child_id
+        with pytest.raises(RuntimeError, match="agent_assignment_already_terminal"):
+            ra.finish_agent_assignment(
+                project_id=project_id,
+                correlation_id=child_correlation,
+                status="failed",
+                error_code="late_failure",
+                error_detail="duplicate terminal event",
+                conn=connection,
+            )
+        retry_correlation = f"retry-{uuid4().hex}"
+        retry_id = ra.begin_agent_assignment(
+            project_id=project_id,
+            correlation_id=retry_correlation,
+            deck_id="deck_builder",
+            card_id="card_research_agent",
+            conversation_id="main",
+            retry_of_correlation_id=child_correlation,
+            conn=connection,
+        )
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT run.state, assignment.parent_assignment_id, assignment.state,
+                       result.result_id, result.output, reference.reference_id,
+                       artifact.locator
+                FROM ag_catalog.card_run_traces run
+                JOIN ag_catalog.agent_assignments assignment
+                  ON assignment.project_id=run.project_id
+                 AND assignment.correlation_id=run.correlation_id
+                JOIN ag_catalog.agent_results result
+                  ON result.assignment_id=assignment.assignment_id
+                JOIN ag_catalog.agent_context_references reference
+                  ON reference.assignment_id=assignment.assignment_id
+                JOIN ag_catalog.agent_artifact_references artifact
+                  ON artifact.assignment_id=assignment.assignment_id
+                WHERE run.project_id=%s AND run.correlation_id=%s
+                """,
+                (project_id, child_correlation),
+            )
+            row = cursor.fetchone()
+            cursor.execute(
+                """
+                SELECT retry_of_assignment_id
+                FROM ag_catalog.agent_assignments
+                WHERE assignment_id=%s
+                """,
+                (retry_id,),
+            )
+            retry_of = cursor.fetchone()[0]
+        assert row == (
+            "completed",
+            parent_id,
+            "completed",
+            result_id,
+            "bounded result",
+            "agentctx:test-context",
+            "returns/test/result.json",
+        )
+        assert child_id == f"assignment:{child_correlation}"
+        assert retry_of == child_id
+    finally:
+        connection.rollback()
+        connection.close()
