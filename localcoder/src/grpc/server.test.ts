@@ -141,8 +141,11 @@ test('the actual gRPC serializers preserve UTF-8 request and progress bytes', ()
   const service = (grpc.loadPackageDefinition(definition) as any).openclaude.v1.AgentService.service.Chat
   const text = 'UTF-8 — café 漢字'
 
-  const request = service.requestDeserialize(service.requestSerialize({ request: { message: text } }))
+  const request = service.requestDeserialize(service.requestSerialize({
+    request: { message: text, originating_run_id: 'main-turn-1' },
+  }))
   assert.equal(request.request.message, text)
+  assert.equal(request.request.originating_run_id, 'main-turn-1')
 
   const response = service.responseDeserialize(service.responseSerialize({
     progress: { tool_use_id: 'child', parent_tool_use_id: 'parent', data_json: JSON.stringify({ text }) },
@@ -183,12 +186,20 @@ test('missingRequiredHarnessTools reports each absent tool exactly', () => {
 // neither pick another card nor forge project/conversation identity.
 test('resolveCardRunControlCall forces the bound card and injects trusted identity', () => {
   const resolved = resolveCardRunControlCall({
-    input: { cardId: 'card_thinkgraph_agent', input: 'do the task', projectId: 'forged' },
+    input: {
+      cardId: 'card_thinkgraph_agent',
+      input: 'do the task',
+      projectId: 'forged',
+      agentContextId: 'agentctx:forged',
+      originatingAgentId: 'card_attacker',
+      originatingRunId: 'forged-run',
+    },
     agentType: 'card_thinkgraph_agent',
     cardIdByAgentType: new Map([['card_thinkgraph_agent', 'card_thinkgraph_agent']]),
     projectId: 'proj-1',
     conversationId: 'conv-main',
     correlationId: 'corr-42',
+    originatingRunId: 'main-turn-1',
   })
   assert.ok('updatedInput' in resolved)
   assert.deepEqual((resolved as any).updatedInput, {
@@ -197,6 +208,8 @@ test('resolveCardRunControlCall forces the bound card and injects trusted identi
     projectId: 'proj-1',
     conversationId: 'conv-main',
     correlationId: 'corr-42',
+    originatingAgentId: 'card_thinkgraph_agent',
+    originatingRunId: 'main-turn-1',
   })
 })
 
@@ -208,6 +221,7 @@ test('resolveCardRunControlCall denies callers that are not a doorway child of t
     projectId: 'proj-1',
     conversationId: 'conv-main',
     correlationId: 'corr-42',
+    originatingRunId: 'main-turn-1',
   })
   assert.deepEqual(parentCall, { deny: 'card_run_requires_card_doorway_child' })
 
@@ -218,6 +232,7 @@ test('resolveCardRunControlCall denies callers that are not a doorway child of t
     projectId: 'proj-1',
     conversationId: 'conv-main',
     correlationId: 'corr-42',
+    originatingRunId: 'main-turn-1',
   })
   assert.deepEqual(unknownChild, { deny: 'card_run_requires_card_doorway_child' })
 })
@@ -229,11 +244,14 @@ test('resolveCardRunControlCall permits only the persisted orange child target',
     projectId: 'proj-1',
     conversationId: 'conv-main',
     correlationId: 'corr-42',
+    originatingRunId: 'main-turn-1',
     allowedCardRunIdsByAgentType: new Map([['card_hermes_steward', ['card_research_agent']]]),
   }
   const allowed = resolveCardRunControlCall({ ...base, input: { cardId: 'card_research_agent', input: 'research' } })
   assert.ok('updatedInput' in allowed)
   assert.equal((allowed as any).updatedInput.cardId, 'card_research_agent')
+  assert.equal((allowed as any).updatedInput.originatingAgentId, 'card_hermes_steward')
+  assert.equal((allowed as any).updatedInput.originatingRunId, 'main-turn-1')
   const rejected = resolveCardRunControlCall({ ...base, input: { cardId: 'card_local_coder', input: 'run' } })
   assert.deepEqual(rejected, { deny: 'card_run_target_not_authorized' })
 })
@@ -246,8 +264,22 @@ test('resolveCardRunControlCall denies when the session identity is unavailable'
     projectId: '',
     conversationId: '',
     correlationId: 'corr-42',
+    originatingRunId: 'main-turn-1',
   })
   assert.deepEqual(resolved, { deny: 'card_run_session_identity_unavailable' })
+})
+
+test('resolveCardRunControlCall denies when the parent Harness turn identity is unavailable', () => {
+  const resolved = resolveCardRunControlCall({
+    input: { input: 'task' },
+    agentType: 'card_thinkgraph_agent',
+    cardIdByAgentType: new Map([['card_thinkgraph_agent', 'card_thinkgraph_agent']]),
+    projectId: 'proj-1',
+    conversationId: 'conv-main',
+    correlationId: 'corr-42',
+    originatingRunId: '',
+  })
+  assert.deepEqual(resolved, { deny: 'card_run_originating_run_identity_unavailable' })
 })
 
 // The child worker pool boundary: the saved card's exact grants resolve

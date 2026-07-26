@@ -25,6 +25,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from app.python_models import agentgraph as ag
 from app.python_models import runtime_assignments as ra
 
 _BACKEND = os.environ.get("LIQUIDAITY_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -374,17 +375,85 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
     deck_id = str(args.get("deckId") or "").strip()
     conversation_id = str(args.get("conversationId") or "").strip()
     agent_context_id = str(args.get("agentContextId") or "").strip()
-    return await asyncio.to_thread(
-        _backend_json,
-        "POST",
-        "/api/coder/mcp-bridge/run_configured_card",
-        {
-            "projectId": str(args["projectId"]).strip(),
-            **({"deckId": deck_id} if deck_id else {}),
-            "cardId": str(args["cardId"]).strip(),
-            "correlationId": str(args["correlationId"]).strip(),
-            **({"conversationId": conversation_id} if conversation_id else {}),
-            **({"agentContextId": agent_context_id} if agent_context_id else {}),
-            "input": str(args["input"]),
-        },
-    )
+    originating_agent_id = str(args.get("originatingAgentId") or "").strip()
+    originating_run_id = str(args.get("originatingRunId") or "").strip()
+    project_id = str(args["projectId"]).strip()
+    card_id = str(args["cardId"]).strip()
+    correlation_id = str(args["correlationId"]).strip()
+    instruction = str(args["input"])
+
+    # A trusted doorway child creates one durable handoff before its target
+    # executes. Plain user-triggered standalone runs do not enter this branch
+    # and remain independent of AgentGraph.
+    if originating_agent_id:
+        if agent_context_id:
+            raise ControlPlaneError("agentgraph_context_override_rejected")
+        if not conversation_id:
+            raise ControlPlaneError("conversationId_required_for_agent_handoff")
+        if not originating_run_id:
+            raise ControlPlaneError("originatingRunId_required_for_agent_handoff")
+        deck_id = deck_id or "deck_builder"
+        try:
+            created = await asyncio.to_thread(
+                ag.create_context,
+                project_id=project_id,
+                deck_id=deck_id,
+                conversation_id=conversation_id,
+                sender_agent_id=originating_agent_id,
+                receiving_agent_id=card_id,
+                markdown=instruction,
+                producing_run_id=originating_run_id,
+            )
+        except Exception as err:
+            raise ControlPlaneError(f"agentgraph_handoff_create_failed: {err}") from err
+        agent_context_id = str(created["contextId"])
+
+    payload = {
+        "projectId": project_id,
+        **({"deckId": deck_id} if deck_id else {}),
+        "cardId": card_id,
+        "correlationId": correlation_id,
+        **({"conversationId": conversation_id} if conversation_id else {}),
+        **({"agentContextId": agent_context_id} if agent_context_id else {}),
+        "input": instruction,
+    }
+
+    try:
+        response = await asyncio.to_thread(
+            _backend_json,
+            "POST",
+            "/api/coder/mcp-bridge/run_configured_card",
+            payload,
+        )
+    except Exception as err:
+        if agent_context_id and originating_agent_id:
+            await asyncio.to_thread(
+                ag.record_result,
+                context_id=agent_context_id,
+                project_id=project_id,
+                result_id=f"result:{correlation_id}",
+                run_id=correlation_id,
+                status="failed",
+                error=str(err),
+            )
+        raise
+
+    if agent_context_id and originating_agent_id:
+        result = response.get("result") if isinstance(response.get("result"), dict) else {}
+        status = "completed" if str(result.get("status") or "") == "completed" else "failed"
+        error = (
+            str(result.get("error") or response.get("error") or "")
+            or ("card_run_failed_without_error" if status == "failed" else None)
+        )
+        await asyncio.to_thread(
+            ag.record_result,
+            context_id=agent_context_id,
+            project_id=project_id,
+            result_id=f"result:{correlation_id}",
+            run_id=correlation_id,
+            status=status,
+            markdown=str(result.get("output") or "") or None,
+            error=error,
+        )
+        return {**response, "agentContextId": agent_context_id}
+    return response

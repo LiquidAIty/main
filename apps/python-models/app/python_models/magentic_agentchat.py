@@ -382,6 +382,18 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                 f"agentgraph_context_empty: {agent_context_id}",
                 "agentgraph_context_empty",
             )
+        try:
+            await asyncio.to_thread(
+                ag.mark_context_status,
+                agent_context_id,
+                context.session.projectId,
+                "running",
+            )
+        except Exception as err:
+            return _fail(
+                f"agentgraph_context_claim_failed: {err}",
+                "agentgraph_context_claim_failed",
+            )
 
     # Deterministic assigned-profile resolution from the card's PERSISTED runtime
     # binding (never model judgment, never runtime-scope sniffing). No assigned
@@ -431,7 +443,11 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
 
     started = time.monotonic()
 
-    async def _record_agentgraph_result(status: str, markdown: str | None) -> str | None:
+    async def _record_agentgraph_result(
+        status: str,
+        markdown: str | None,
+        error: str | None = None,
+    ) -> str | None:
         if not agent_context_id:
             return None
         try:
@@ -448,6 +464,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                         if result_folder is not None
                         else None
                     ),
+                    error=error,
                 )
             )
             return None
@@ -459,9 +476,11 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         # The guard guarantees exactly one real configured participant, so the
         # default-"Assist" branch of _build_participants is unreachable here.
         agent = participants[0]
-        task_parts = [_as_text(context.userText)]
-        if agent_graph_markdown:
-            task_parts.append(agent_graph_markdown)
+        # An inter-agent handoff owns the exact target instruction. userText is
+        # still required by the transport guard, but is not duplicated into the
+        # model task when a durable handoff is present. Standalone calls without
+        # AgentGraph continue to use their ordinary userText unchanged.
+        task_parts = [agent_graph_markdown or _as_text(context.userText)]
         if plan is not None:
             task_parts.append(plan.packet)
         task = "\n\n".join(task_parts)
@@ -497,7 +516,11 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                 return _fail(f"runtime_post_hook_failed: {err}", "post_hook_failed")
 
             if verdict.outcome == "invalid":
-                link_error = await _record_agentgraph_result("failed", final_text)
+                link_error = await _record_agentgraph_result(
+                    "failed",
+                    final_text,
+                    contract.invalid_error,
+                )
                 if link_error:
                     return _fail(link_error, "agentgraph_result_link_failed")
                 return _fail(contract.invalid_error, "invalid_terminal_result")
@@ -533,7 +556,11 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         )
 
         if not final_text:
-            link_error = await _record_agentgraph_result("failed", None)
+            link_error = await _record_agentgraph_result(
+                "failed",
+                None,
+                "single_card_empty_response",
+            )
             if link_error:
                 return _fail(link_error, "agentgraph_result_link_failed")
             return OrchestratorRunResponse(
@@ -563,7 +590,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             **_returns_fields(),
         )
     except Exception as err:  # honest runtime failure — no retry, no fallback
-        link_error = await _record_agentgraph_result("failed", str(err))
+        link_error = await _record_agentgraph_result("failed", None, str(err))
         return OrchestratorRunResponse(
             ok=False,
             session=context.session,

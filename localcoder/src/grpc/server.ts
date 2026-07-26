@@ -59,6 +59,7 @@ export function resolveCardRunControlCall(params: {
   projectId: string
   conversationId: string
   correlationId: string
+  originatingRunId: string
   /** Per-child ORANGE-edge authority (backend-resolved): extra saved card ids
    * this child may run beyond its own bound card. Absent = own card only. */
   allowedCardRunIdsByAgentType?: Map<string, string[]>
@@ -73,6 +74,9 @@ export function resolveCardRunControlCall(params: {
   if (!boundCardId) return { deny: 'card_run_requires_card_doorway_child' }
   if (!params.projectId || !params.conversationId) {
     return { deny: 'card_run_session_identity_unavailable' }
+  }
+  if (!params.originatingRunId) {
+    return { deny: 'card_run_originating_run_identity_unavailable' }
   }
   const requestedCardId = String(params.input?.cardId || '').trim()
   let targetCardId = boundCardId
@@ -90,13 +94,19 @@ export function resolveCardRunControlCall(params: {
         + 'or target one of your authorized child cards.',
     }
   }
+  const modelInput = { ...params.input }
+  delete modelInput.agentContextId
+  delete modelInput.originatingAgentId
+  delete modelInput.originatingRunId
   return {
     updatedInput: {
-      ...params.input,
+      ...modelInput,
       cardId: targetCardId,
       projectId: params.projectId,
       conversationId: params.conversationId,
       correlationId: params.correlationId,
+      originatingAgentId: boundCardId,
+      originatingRunId: params.originatingRunId,
     },
   }
 }
@@ -490,6 +500,7 @@ export class GrpcServer {
                   projectId: sessionParts?.projectId ?? '',
                   conversationId: sessionParts?.conversationId ?? '',
                   correlationId: randomUUID(),
+                  originatingRunId: String(req.originating_run_id || ''),
                   allowedCardRunIdsByAgentType,
                   selfCardRunByAgentType,
                 })

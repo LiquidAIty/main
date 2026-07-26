@@ -46,8 +46,8 @@ const STALE_LOCAL_CODER_CARD = {
   runtimeOptions: { provider: 'openai', modelKey: 'gpt-5-mini', tools: ['run_local_coder'] },
 };
 
-function deckWith(nodes: any[]) {
-  return { deck: { id: 'deck_builder', nodes, edges: [] }, latestRun: null, runs: [], meta: { deckRevision: null, deckSavedAt: null } };
+function deckWith(nodes: any[], edges: any[] = []) {
+  return { deck: { id: 'deck_builder', nodes, edges }, latestRun: null, runs: [], meta: { deckRevision: null, deckSavedAt: null } };
 }
 
 const ARGS = {
@@ -138,6 +138,52 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     const raw = JSON.stringify(payload);
     expect(raw).not.toContain('taskIds');
     expect(raw).not.toContain('taskLedger');
+  });
+
+  it('runs connected and disconnected saved cards through the same standalone path without consulting bus edges', async () => {
+    const connected = {
+      ...AGENT_CARD,
+      id: 'card_research_agent',
+      title: 'Search Agent',
+      runtimeBinding: 'research_agent',
+    };
+    const disconnected = {
+      ...AGENT_CARD,
+      id: 'card_worldsignals_agent',
+      title: 'WorldSignals Agent',
+      runtimeBinding: 'worldsignals_agent',
+    };
+    mockGetDeck.mockResolvedValue(
+      deckWith(
+        [connected, disconnected, { id: 'card_magentic', kind: 'agent', runtimeType: 'magentic_one' }],
+        [{
+          id: 'edge-search-mag',
+          source: connected.id,
+          target: 'card_magentic',
+          edgeType: 'magentic_option',
+        }],
+      ),
+    );
+    mockRunCard
+      .mockResolvedValueOnce({ ok: true, finalResponseText: 'connected standalone' })
+      .mockResolvedValueOnce({ ok: true, finalResponseText: 'disconnected standalone' });
+
+    const connectedResult = await runConfiguredCard({
+      ...ARGS,
+      cardId: connected.id,
+      correlationId: 'connected-standalone',
+    });
+    const disconnectedResult = await runConfiguredCard({
+      ...ARGS,
+      cardId: disconnected.id,
+      correlationId: 'disconnected-standalone',
+    });
+
+    expect(connectedResult.output).toBe('connected standalone');
+    expect(disconnectedResult.output).toBe('disconnected standalone');
+    expect(mockRunCard).toHaveBeenCalledTimes(2);
+    expect(mockRunCard.mock.calls.map(([payload]) => payload.cardRuntime.participants[0].cardId))
+      .toEqual([connected.id, disconnected.id]);
   });
 
   it('transports an AgentGraph pointer and conversation identity to Python without resolving graph content in TypeScript', async () => {

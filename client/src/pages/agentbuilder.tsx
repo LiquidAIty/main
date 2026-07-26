@@ -47,7 +47,6 @@ import {
 } from '../components/graph/graphVisualTokens';
 import RightGlassDrawer from '../components/graph/RightGlassDrawer';
 import type { UnifiedProjectionIdentity } from '../components/knowledge/UnifiedGraphSurface';
-import type { StandaloneCardTestResult } from '../components/AgentManager';
 import {
   graphObjectRefKey,
   type GraphObjectRef,
@@ -194,7 +193,7 @@ class CardEditorErrorBoundary extends React.Component<
 }
 
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime', 'Test'] as const;
+const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
@@ -415,7 +414,6 @@ export default function AgentBuilder(): React.ReactElement {
     handleNativeSend,
     messages,
     nativeSessionBusy,
-    requestMainText,
     setMessages,
   } = useAgentBuilderMainChat({
     activeProjection,
@@ -587,9 +585,7 @@ export default function AgentBuilder(): React.ReactElement {
 
   const showDeckBuilder = workspaceView === 'canvas';
   const {
-    handleRenameSelectedCard,
     handleSaveSelectedCardConfig,
-    handleUpdateSelectedCardSubtext,
     selectedCard,
     selectedCardConfig,
   } = useAgentBuilderCardEditor({
@@ -599,86 +595,35 @@ export default function AgentBuilder(): React.ReactElement {
     setDeck,
   });
   const [standaloneTestPrompt, setStandaloneTestPrompt] = useState('');
-  const [standaloneTestBusyAction, setStandaloneTestBusyAction] = useState<
-    'improve' | 'write' | 'run' | null
-  >(null);
-  const [standaloneTestResult, setStandaloneTestResult] =
-    useState<StandaloneCardTestResult | null>(null);
+  const [standaloneTestBusy, setStandaloneTestBusy] = useState(false);
+  const standaloneTestRequestRef = useRef<string | null>(null);
   const standaloneTestUnavailableReason = useMemo(
     () => getStandaloneCardUnavailableReason(selectedCard),
     [selectedCard],
   );
+  const showStandaloneTestControls =
+    Boolean(selectedCard) && selectedCard?.runtimeBinding !== 'main_chat';
 
   useEffect(() => {
+    standaloneTestRequestRef.current = null;
     setStandaloneTestPrompt('');
-    setStandaloneTestBusyAction(null);
-    setStandaloneTestResult(null);
+    setStandaloneTestBusy(false);
   }, [selectedCardId]);
-
-  const requestStandalonePromptFromMain = useCallback(
-    async (mode: 'improve' | 'write') => {
-      if (!selectedCard || standaloneTestBusyAction) return;
-      setStandaloneTestBusyAction(mode);
-      setStandaloneTestResult(null);
-      const currentPrompt = standaloneTestPrompt.trim();
-      const instruction =
-        mode === 'improve'
-          ? [
-              `Improve this standalone test prompt for the saved card "${selectedCard.title}" (${selectedCard.id}).`,
-              'Preserve the user intent. Return only the revised test prompt, ready for the user to review and edit.',
-              'Do not run the card and do not rewrite or save the card configuration.',
-              '',
-              currentPrompt,
-            ].join('\n')
-          : [
-              `Write a small, read-only standalone test prompt for the saved card "${selectedCard.title}" (${selectedCard.id}).`,
-              'Return only the complete test prompt, ready for the user to review and edit.',
-              'Do not run the card and do not rewrite or save the card configuration.',
-              currentPrompt ? `The user supplied this starting intent:\n${currentPrompt}` : '',
-            ].filter(Boolean).join('\n');
-      try {
-        const nextPrompt = await requestMainText(instruction);
-        setStandaloneTestPrompt(nextPrompt);
-      } catch (error) {
-        setStandaloneTestResult({
-          status: 'failed',
-          output: '',
-          error:
-            error instanceof Error
-              ? error.message
-              : 'Main prompt assistance failed.',
-          toolCallCount: null,
-          tools: [],
-          provider: null,
-          model: null,
-          runtimeType: null,
-        });
-      } finally {
-        setStandaloneTestBusyAction(null);
-      }
-    },
-    [
-      requestMainText,
-      selectedCard,
-      standaloneTestBusyAction,
-      standaloneTestPrompt,
-    ],
-  );
 
   const runStandaloneCardTest = useCallback(async () => {
     if (
       !selectedCard ||
       !canvasProjectId ||
-      standaloneTestBusyAction ||
+      standaloneTestBusy ||
       standaloneTestUnavailableReason
     ) {
       return;
     }
     const input = standaloneTestPrompt.trim();
     if (!input) return;
-    setStandaloneTestBusyAction('run');
-    setStandaloneTestResult(null);
     const correlationId = `card-test-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    standaloneTestRequestRef.current = correlationId;
+    setStandaloneTestBusy(true);
     try {
       const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
         method: 'POST',
@@ -700,41 +645,30 @@ export default function AgentBuilder(): React.ReactElement {
           String(payload?.error || `standalone_card_test_http_${response.status}`),
         );
       }
-      setStandaloneTestResult({
-        status: String(result.status || (response.ok ? 'completed' : 'failed')),
-        output: String(result.output || ''),
-        error: result.error ? String(result.error) : null,
-        toolCallCount:
-          typeof result.toolCallCount === 'number' ? result.toolCallCount : null,
-        tools: Array.isArray(result.tools)
-          ? result.tools.map((tool: unknown) => String(tool))
-          : [],
-        provider: selectedCard.runtimeOptions?.provider || null,
-        model: selectedCard.runtimeOptions?.modelKey || null,
-        runtimeType: result.runtimeType
-          ? String(result.runtimeType)
-          : selectedCard.runtimeType || null,
-      });
+      if (standaloneTestRequestRef.current === correlationId) {
+        setDeckStatusMessage(
+          result.error
+            ? String(result.error)
+            : `${selectedCard.title} run ${String(result.status || 'completed')}.`,
+        );
+      }
     } catch (error) {
-      setStandaloneTestResult({
-        status: 'failed',
-        output: '',
-        error:
+      if (standaloneTestRequestRef.current === correlationId) {
+        setDeckStatusMessage(
           error instanceof Error ? error.message : 'Standalone card test failed.',
-        toolCallCount: null,
-        tools: [],
-        provider: selectedCard.runtimeOptions?.provider || null,
-        model: selectedCard.runtimeOptions?.modelKey || null,
-        runtimeType: selectedCard.runtimeType || null,
-      });
+        );
+      }
     } finally {
-      setStandaloneTestBusyAction(null);
+      if (standaloneTestRequestRef.current === correlationId) {
+        standaloneTestRequestRef.current = null;
+        setStandaloneTestBusy(false);
+      }
     }
   }, [
     canvasProjectId,
     conversationId,
     selectedCard,
-    standaloneTestBusyAction,
+    standaloneTestBusy,
     standaloneTestPrompt,
     standaloneTestUnavailableReason,
   ]);
@@ -920,10 +854,8 @@ export default function AgentBuilder(): React.ReactElement {
           tab === 'Prompt' ||
           tab === 'Knowledge' ||
           tab === 'Tools' ||
-          tab === 'Runtime' ||
-          tab === 'Test'
+          tab === 'Runtime'
         ) {
-          const showCardIdentityFields = tab === BUILDER_NODE_TABS[0];
           return (
             <>
               <CardEditorErrorBoundary
@@ -945,46 +877,21 @@ export default function AgentBuilder(): React.ReactElement {
                 >
                   <AgentManager
                     key={`deck-card:${selectedCard.id}:${tab}`}
+                    projectId={canvasProjectId || ''}
                     agentType="agent_builder"
                     activeTab={tab}
-                    selectedCardId={selectedCard.id}
                     localConfig={selectedCardConfig}
-                    cardName={
-                      showCardIdentityFields
-                        ? String(selectedCard.title || '')
-                        : undefined
-                    }
-                    cardSubtext={
-                      showCardIdentityFields
-                        ? String(selectedCard.subtitle || '')
-                        : undefined
-                    }
-                    onChangeCardName={
-                      showCardIdentityFields
-                        ? handleRenameSelectedCard
-                        : undefined
-                    }
-                    onChangeCardSubtext={
-                      showCardIdentityFields
-                        ? handleUpdateSelectedCardSubtext
-                        : undefined
-                    }
-                    standaloneTest={{
-                      prompt: standaloneTestPrompt,
-                      onChangePrompt: setStandaloneTestPrompt,
-                      onImprovePrompt: () => {
-                        void requestStandalonePromptFromMain('improve');
-                      },
-                      onWritePrompt: () => {
-                        void requestStandalonePromptFromMain('write');
-                      },
-                      onRun: () => {
-                        void runStandaloneCardTest();
-                      },
-                      busyAction: standaloneTestBusyAction,
-                      unavailableReason: standaloneTestUnavailableReason,
-                      result: standaloneTestResult,
+                    promptTestInput={standaloneTestPrompt}
+                    onChangePromptTestInput={setStandaloneTestPrompt}
+                    onRunPromptTest={() => {
+                      void runStandaloneCardTest();
                     }}
+                    promptTestBusy={standaloneTestBusy}
+                    promptTestDisabled={
+                      !showStandaloneTestControls ||
+                      Boolean(standaloneTestUnavailableReason) ||
+                      standaloneTestBusy
+                    }
                     onSaveLocalConfig={handleSaveSelectedCardConfig}
                     onGraphRefresh={() => {
                       // no-op

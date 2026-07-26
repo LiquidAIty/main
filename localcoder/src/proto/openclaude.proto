@@ -51,6 +51,9 @@ message ChatRequest {
   // Named child agents are unaffected: they assemble their own pool from the
   // full registry and their own allowed_tools (AgentTool.tsx workerTools).
   repeated string parent_allowed_native_tools = 9;
+  // Server-minted identity of the live parent Harness turn. Doorway child
+  // card calls use it as the originating run for durable AgentGraph handoffs.
+  optional string originating_run_id = 10;
 }
 
 // Structural saved-card configuration only — never graph data, conversation

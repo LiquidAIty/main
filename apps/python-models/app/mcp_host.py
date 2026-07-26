@@ -396,7 +396,7 @@ async def list_tools() -> list[Tool]:
                     "senderAgentId": {"type": "string"},
                     "receivingAgentId": {"type": "string"},
                     "markdown": {"type": "string"},
-                    "priorContextId": {"type": "string"},
+                    "parentContextId": {"type": "string"},
                     "producingRunId": {"type": "string"},
                 },
                 "required": [
@@ -936,6 +936,14 @@ async def list_tools() -> list[Tool]:
                             "The tool transports the id unchanged; Python resolves the stored Markdown."
                         ),
                     },
+                    "originatingAgentId": {
+                        "type": "string",
+                        "description": "Server-owned saved-card identity for an inter-agent doorway call.",
+                    },
+                    "originatingRunId": {
+                        "type": "string",
+                        "description": "Server-owned parent Harness turn identity for an inter-agent doorway call.",
+                    },
                     "input": {"type": "string"},
                 },
                 "required": ["cardId", "input"],
@@ -975,6 +983,8 @@ _SERVER_OWNED_ARGUMENTS = {
     "conversationId",
     "correlationId",
     "senderAgentId",
+    "originatingAgentId",
+    "originatingRunId",
 }
 
 
@@ -1058,7 +1068,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "senderAgentId",
         "receivingAgentId",
         "markdown",
-        "priorContextId",
+        "parentContextId",
         "producingRunId",
     },
     "agentgraph.read_context": {"projectId", "contextId"},
@@ -1087,7 +1097,17 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
     "card.assign_runtime_skill": {"projectId", "deckId", "cardId", "skillId", "skillVersion", "op"},
     "card.assign_data_binding": {"projectId", "deckId", "cardId", "bindingType", "bindingRef", "op"},
-    "card.run_assistant_agent": {"projectId", "deckId", "cardId", "correlationId", "conversationId", "agentContextId", "input"},
+    "card.run_assistant_agent": {
+        "projectId",
+        "deckId",
+        "cardId",
+        "correlationId",
+        "conversationId",
+        "agentContextId",
+        "originatingAgentId",
+        "originatingRunId",
+        "input",
+    },
     "thinkgraph.get_graph_slice": {"projectId", "limit"},
     "web_search": {"query", "max_results"},
     "worldsignals.capabilities": set(),
@@ -1257,7 +1277,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
                     sender_agent_id=str(args.get("senderAgentId") or ""),
                     receiving_agent_id=str(args.get("receivingAgentId") or ""),
                     markdown=args.get("markdown"),
-                    prior_context_id=args.get("priorContextId"),
+                    parent_context_id=args.get("parentContextId"),
                     producing_run_id=args.get("producingRunId"),
                 )
             else:

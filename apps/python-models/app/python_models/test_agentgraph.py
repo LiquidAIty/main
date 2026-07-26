@@ -9,6 +9,7 @@ import pytest
 from app.python_models.agentgraph import (
     AgentGraphError,
     create_context,
+    mark_context_status,
     read_context,
     record_result,
 )
@@ -42,8 +43,10 @@ def test_age_roundtrip_preserves_exact_markdown_and_minimal_lineage() -> None:
         assert first_read["markdown"] == input_markdown
         assert first_read["senderAgentId"] == "card_main_chat"
         assert first_read["receivingAgentId"] == "card_local_coder"
+        assert first_read["deckId"] == "deck_builder"
         assert first_read["producingRunId"] == "parent-run-1"
-        assert first_read["priorContextId"] is None
+        assert first_read["parentContextId"] is None
+        assert first_read["status"] == "pending"
 
         second = create_context(
             project_id=project_id,
@@ -52,12 +55,23 @@ def test_age_roundtrip_preserves_exact_markdown_and_minimal_lineage() -> None:
             sender_agent_id="card_main_chat",
             receiving_agent_id="card_local_coder",
             markdown="# Follow-up",
-            prior_context_id=first["contextId"],
+            parent_context_id=first["contextId"],
             agent_validator=lambda *_args: None,
             connection=conn,
         )
         second_read = read_context(second["contextId"], project_id, connection=conn)
-        assert second_read["priorContextId"] == first["contextId"]
+        assert second_read["parentContextId"] == first["contextId"]
+        mark_context_status(
+            second["contextId"],
+            project_id,
+            "running",
+            connection=conn,
+        )
+        assert read_context(
+            second["contextId"],
+            project_id,
+            connection=conn,
+        )["status"] == "running"
 
         stored = record_result(
             context_id=second["contextId"],
@@ -111,7 +125,42 @@ def test_age_roundtrip_preserves_exact_markdown_and_minimal_lineage() -> None:
         properties = json.loads(str(rows[0][0]))
         assert properties["markdown"] == result_markdown
         assert properties["contextId"] == second["contextId"]
+        assert properties["projectId"] == project_id
+        assert properties["conversationId"] == conversation_id
+        assert properties["receivingAgentId"] == "card_local_coder"
         assert json.loads(str(rows[0][1])) == 1
+        assert read_context(
+            second["contextId"],
+            project_id,
+            connection=conn,
+        )["status"] == "completed"
+
+        with conn.cursor() as cursor:
+            _prepare(cursor)
+            cursor.execute(
+                """
+                SELECT *
+                FROM cypher(
+                  'agentgraph',
+                  $$
+                  MATCH (child:AgentContext)-[lineage:CHILD_OF]->(parent:AgentContext)
+                  WHERE child.contextId = $childContextId
+                  RETURN parent.contextId, count(lineage)
+                  $$,
+                  %s::agtype
+                ) AS (parent_context_id agtype, lineage_count agtype)
+                """,
+                (
+                    json.dumps(
+                        {"childContextId": second["contextId"]},
+                        separators=(",", ":"),
+                    ),
+                ),
+            )
+            lineage_rows = cursor.fetchall()
+        assert len(lineage_rows) == 1
+        assert json.loads(str(lineage_rows[0][0])) == first["contextId"]
+        assert json.loads(str(lineage_rows[0][1])) == 1
     finally:
         conn.rollback()
         conn.close()
@@ -126,6 +175,19 @@ def test_validation_rejects_invalid_identity_before_age_access() -> None:
             sender_agent_id="not an id",
             receiving_agent_id="card_local_coder",
             markdown="# Handoff",
+            agent_validator=lambda *_args: None,
+        )
+
+
+def test_validation_rejects_oversized_handoff_before_age_access() -> None:
+    with pytest.raises(AgentGraphError, match="agentgraph_markdown_too_large"):
+        create_context(
+            project_id="project-1",
+            deck_id="deck_builder",
+            conversation_id="main",
+            sender_agent_id="card_main_chat",
+            receiving_agent_id="card_local_coder",
+            markdown="x" * 100_001,
             agent_validator=lambda *_args: None,
         )
 
@@ -146,3 +208,5 @@ def test_mcp_surface_accepts_markdown_and_has_no_reference_expander() -> None:
     }
     assert "context" not in create_schema["properties"]
     assert "references" not in create_schema["properties"]
+    assert "parentContextId" in create_schema["properties"]
+    assert "priorContextId" not in create_schema["properties"]

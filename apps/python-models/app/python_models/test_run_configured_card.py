@@ -148,6 +148,7 @@ class TestAgentGraphRuntimeContext:
             "markdown": "# Exact stored handoff\n\nUse source refs unchanged.",
         })
         monkeypatch.setattr(mac.ag, "record_result", lambda **kwargs: recorded.append(kwargs))
+        monkeypatch.setattr(mac.ag, "mark_context_status", lambda *_args: None)
         monkeypatch.setattr(mac.rpe, "prepare", lambda **_kwargs: None)
         monkeypatch.setattr(mac, "_build_model_client", lambda _config: _FakeToolClient())
         monkeypatch.setattr(mac, "_build_participants", lambda _context, _client: [FakeAgent()])
@@ -155,9 +156,7 @@ class TestAgentGraphRuntimeContext:
         response = asyncio.run(mac.run_configured_card(ctx))
 
         assert response.ok is True
-        assert tasks == [
-            "Approved task.\n\n# Exact stored handoff\n\nUse source refs unchanged."
-        ]
+        assert tasks == ["# Exact stored handoff\n\nUse source refs unchanged."]
         assert recorded == [{
             "context_id": "agentctx:one",
             "project_id": "p",
@@ -166,6 +165,7 @@ class TestAgentGraphRuntimeContext:
             "status": "completed",
             "markdown": "Completed from the stored handoff.",
             "result_ref": None,
+            "error": None,
         }]
 
     def test_scope_mismatch_fails_before_model_runtime(self, monkeypatch):

@@ -796,6 +796,7 @@ export async function startGrpcTurn(
       ...(mainChatConfig.parentAllowedNativeTools.length > 0
         ? { parent_allowed_native_tools: mainChatConfig.parentAllowedNativeTools }
         : {}),
+      ...(args.traceId ? { originating_run_id: args.traceId } : {}),
     },
   });
 
