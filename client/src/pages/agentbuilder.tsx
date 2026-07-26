@@ -47,6 +47,7 @@ import {
 } from '../components/graph/graphVisualTokens';
 import RightGlassDrawer from '../components/graph/RightGlassDrawer';
 import type { UnifiedProjectionIdentity } from '../components/knowledge/UnifiedGraphSurface';
+import type { StandaloneCardTestResult } from '../components/AgentManager';
 import {
   graphObjectRefKey,
   type GraphObjectRef,
@@ -165,8 +166,35 @@ class KnowledgeSurfaceErrorBoundary extends React.Component<
   }
 }
 
+class CardEditorErrorBoundary extends React.Component<
+  { cardTitle: string; children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div
+        role="alert"
+        data-testid="card-editor-error"
+        style={graphDrawerSectionStyle({
+          padding: '12px 14px',
+          color: 'rgba(255,162,162,0.95)',
+        })}
+      >
+        {this.props.cardTitle} configuration could not be rendered: {this.state.error.message}
+      </div>
+    );
+  }
+}
+
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime'] as const;
+const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime', 'Test'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
@@ -174,6 +202,34 @@ const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 type KnowledgeSurfaceKind = KnowledgeGraphKind | 'unified';
 const PROJECTS_API = '/api/projects';
 const EMPTY_PROJECT_MESSAGES: AgentBuilderChatMessage[] = [];
+
+export function getStandaloneCardUnavailableReason(
+  card: AgentCardInstance | null,
+): string | null {
+  if (!card) return 'Select a saved card before testing.';
+  if (card.runtimeType === 'magentic_one') {
+    return 'Magentic-One requires its saved team topology and is not a standalone card.';
+  }
+  if (card.runtimeBinding === 'main_chat') {
+    return 'Main uses the persistent Harness conversation and is not tested as an isolated card.';
+  }
+  if (card.runtimeBinding === 'hermes_steward') {
+    return 'Hermes uses its native foreground-agent and Code Console boundaries, not the saved-card test route.';
+  }
+  if (card.runtimeBinding === 'local_coder') {
+    return 'Coder uses the visible OpenClaude Code console and is not tested through the AutoGen single-card route.';
+  }
+  if (card.runtimeBinding === 'trading_agent') {
+    return 'Trading Agent is a workspace gateway; its saved configuration forbids a backend model run.';
+  }
+  if (card.runtimeBinding === 'worldsignals_agent') {
+    return 'WorldSignals Agent is a workspace gateway and is not runnable by itself.';
+  }
+  if (card.runtimeType !== 'assistant_agent') {
+    return `Standalone testing is unavailable for runtime ${card.runtimeType || 'unconfigured'}.`;
+  }
+  return null;
+}
 
 /** Mean synodic month in days (NASA/USNO convention). */
 export default function AgentBuilder(): React.ReactElement {
@@ -359,6 +415,7 @@ export default function AgentBuilder(): React.ReactElement {
     handleNativeSend,
     messages,
     nativeSessionBusy,
+    requestMainText,
     setMessages,
   } = useAgentBuilderMainChat({
     activeProjection,
@@ -541,6 +598,146 @@ export default function AgentBuilder(): React.ReactElement {
     selectedCardId,
     setDeck,
   });
+  const [standaloneTestPrompt, setStandaloneTestPrompt] = useState('');
+  const [standaloneTestBusyAction, setStandaloneTestBusyAction] = useState<
+    'improve' | 'write' | 'run' | null
+  >(null);
+  const [standaloneTestResult, setStandaloneTestResult] =
+    useState<StandaloneCardTestResult | null>(null);
+  const standaloneTestUnavailableReason = useMemo(
+    () => getStandaloneCardUnavailableReason(selectedCard),
+    [selectedCard],
+  );
+
+  useEffect(() => {
+    setStandaloneTestPrompt('');
+    setStandaloneTestBusyAction(null);
+    setStandaloneTestResult(null);
+  }, [selectedCardId]);
+
+  const requestStandalonePromptFromMain = useCallback(
+    async (mode: 'improve' | 'write') => {
+      if (!selectedCard || standaloneTestBusyAction) return;
+      setStandaloneTestBusyAction(mode);
+      setStandaloneTestResult(null);
+      const currentPrompt = standaloneTestPrompt.trim();
+      const instruction =
+        mode === 'improve'
+          ? [
+              `Improve this standalone test prompt for the saved card "${selectedCard.title}" (${selectedCard.id}).`,
+              'Preserve the user intent. Return only the revised test prompt, ready for the user to review and edit.',
+              'Do not run the card and do not rewrite or save the card configuration.',
+              '',
+              currentPrompt,
+            ].join('\n')
+          : [
+              `Write a small, read-only standalone test prompt for the saved card "${selectedCard.title}" (${selectedCard.id}).`,
+              'Return only the complete test prompt, ready for the user to review and edit.',
+              'Do not run the card and do not rewrite or save the card configuration.',
+              currentPrompt ? `The user supplied this starting intent:\n${currentPrompt}` : '',
+            ].filter(Boolean).join('\n');
+      try {
+        const nextPrompt = await requestMainText(instruction);
+        setStandaloneTestPrompt(nextPrompt);
+      } catch (error) {
+        setStandaloneTestResult({
+          status: 'failed',
+          output: '',
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Main prompt assistance failed.',
+          toolCallCount: null,
+          tools: [],
+          provider: null,
+          model: null,
+          runtimeType: null,
+        });
+      } finally {
+        setStandaloneTestBusyAction(null);
+      }
+    },
+    [
+      requestMainText,
+      selectedCard,
+      standaloneTestBusyAction,
+      standaloneTestPrompt,
+    ],
+  );
+
+  const runStandaloneCardTest = useCallback(async () => {
+    if (
+      !selectedCard ||
+      !canvasProjectId ||
+      standaloneTestBusyAction ||
+      standaloneTestUnavailableReason
+    ) {
+      return;
+    }
+    const input = standaloneTestPrompt.trim();
+    if (!input) return;
+    setStandaloneTestBusyAction('run');
+    setStandaloneTestResult(null);
+    const correlationId = `card-test-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    try {
+      const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: canvasProjectId,
+          deckId: BUILDER_DECK_ID,
+          cardId: selectedCard.id,
+          correlationId,
+          input,
+          conversationId,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      const result = payload?.result;
+      if (!result || typeof result !== 'object') {
+        throw new Error(
+          String(payload?.error || `standalone_card_test_http_${response.status}`),
+        );
+      }
+      setStandaloneTestResult({
+        status: String(result.status || (response.ok ? 'completed' : 'failed')),
+        output: String(result.output || ''),
+        error: result.error ? String(result.error) : null,
+        toolCallCount:
+          typeof result.toolCallCount === 'number' ? result.toolCallCount : null,
+        tools: Array.isArray(result.tools)
+          ? result.tools.map((tool: unknown) => String(tool))
+          : [],
+        provider: selectedCard.runtimeOptions?.provider || null,
+        model: selectedCard.runtimeOptions?.modelKey || null,
+        runtimeType: result.runtimeType
+          ? String(result.runtimeType)
+          : selectedCard.runtimeType || null,
+      });
+    } catch (error) {
+      setStandaloneTestResult({
+        status: 'failed',
+        output: '',
+        error:
+          error instanceof Error ? error.message : 'Standalone card test failed.',
+        toolCallCount: null,
+        tools: [],
+        provider: selectedCard.runtimeOptions?.provider || null,
+        model: selectedCard.runtimeOptions?.modelKey || null,
+        runtimeType: selectedCard.runtimeType || null,
+      });
+    } finally {
+      setStandaloneTestBusyAction(null);
+    }
+  }, [
+    canvasProjectId,
+    conversationId,
+    selectedCard,
+    standaloneTestBusyAction,
+    standaloneTestPrompt,
+    standaloneTestUnavailableReason,
+  ]);
   const builderTabs = useMemo(() => {
     if (selectedCard) return [...BUILDER_NODE_TABS];
     return [...BUILDER_PROJECT_TABS];
@@ -605,11 +802,10 @@ export default function AgentBuilder(): React.ReactElement {
       const selectedNode = cardId
         ? deck.nodes.find((node) => node.id === cardId) || null
         : null;
-      const isHermesSelection = isHermesStewardCard(selectedNode);
-      // Hermes owns its real hms_* terminal surface; every other card keeps the
-      // existing inspector behavior.
-      setHermesConsoleOpen(isHermesSelection);
-      setObjectDrawerOpen(Boolean(selectedNode) && !isHermesSelection);
+      // Canvas selection always opens the saved-card editor. Console ownership
+      // stays on the dedicated rail action below.
+      setHermesConsoleOpen(false);
+      setObjectDrawerOpen(Boolean(selectedNode));
       const isMagenticSelection = Boolean(
         selectedNode &&
           normalizeRuntimeType(selectedNode.runtimeType) === 'magentic_one',
@@ -639,8 +835,9 @@ export default function AgentBuilder(): React.ReactElement {
     const hermesCard = deck.nodes.find(isHermesStewardCard);
     if (!hermesCard) return;
     setWorkspaceView('canvas');
-    handleSelectCard(hermesCard.id);
-  }, [deck.nodes, handleSelectCard]);
+    setObjectDrawerOpen(false);
+    setHermesConsoleOpen(true);
+  }, [deck.nodes, setObjectDrawerOpen]);
 
   const handleSelectEdge = useCallback(
     (edgeId: string | null) => {
@@ -723,56 +920,78 @@ export default function AgentBuilder(): React.ReactElement {
           tab === 'Prompt' ||
           tab === 'Knowledge' ||
           tab === 'Tools' ||
-          tab === 'Runtime'
+          tab === 'Runtime' ||
+          tab === 'Test'
         ) {
           const showCardIdentityFields = tab === BUILDER_NODE_TABS[0];
           return (
             <>
-              <Suspense
-                fallback={
-                  <div
-                    style={graphDrawerSectionStyle({
-                      padding: '12px 14px',
-                      borderRadius: 8,
-                      color: GRAPH_THEME.drawer.inputMuted,
-                    })}
-                  >
-                    Loading card configuration…
-                  </div>
-                }
+              <CardEditorErrorBoundary
+                key={`card-editor-boundary:${selectedCard.id}`}
+                cardTitle={String(selectedCard.title || 'Selected card')}
               >
-                <AgentManager
-                  key={`deck-card:${selectedCard.id}:${tab}`}
-                  agentType="agent_builder"
-                  activeTab={tab}
-                  selectedCardId={selectedCard.id}
-                  localConfig={selectedCardConfig}
-                  cardName={
-                    showCardIdentityFields
-                      ? String(selectedCard.title || '')
-                      : undefined
+                <Suspense
+                  fallback={
+                    <div
+                      style={graphDrawerSectionStyle({
+                        padding: '12px 14px',
+                        borderRadius: 8,
+                        color: GRAPH_THEME.drawer.inputMuted,
+                      })}
+                    >
+                      Loading card configuration…
+                    </div>
                   }
-                  cardSubtext={
-                    showCardIdentityFields
-                      ? String(selectedCard.subtitle || '')
-                      : undefined
-                  }
-                  onChangeCardName={
-                    showCardIdentityFields
-                      ? handleRenameSelectedCard
-                      : undefined
-                  }
-                  onChangeCardSubtext={
-                    showCardIdentityFields
-                      ? handleUpdateSelectedCardSubtext
-                      : undefined
-                  }
-                  onSaveLocalConfig={handleSaveSelectedCardConfig}
-                  onGraphRefresh={() => {
-                    // no-op
-                  }}
-                />
-              </Suspense>
+                >
+                  <AgentManager
+                    key={`deck-card:${selectedCard.id}:${tab}`}
+                    agentType="agent_builder"
+                    activeTab={tab}
+                    selectedCardId={selectedCard.id}
+                    localConfig={selectedCardConfig}
+                    cardName={
+                      showCardIdentityFields
+                        ? String(selectedCard.title || '')
+                        : undefined
+                    }
+                    cardSubtext={
+                      showCardIdentityFields
+                        ? String(selectedCard.subtitle || '')
+                        : undefined
+                    }
+                    onChangeCardName={
+                      showCardIdentityFields
+                        ? handleRenameSelectedCard
+                        : undefined
+                    }
+                    onChangeCardSubtext={
+                      showCardIdentityFields
+                        ? handleUpdateSelectedCardSubtext
+                        : undefined
+                    }
+                    standaloneTest={{
+                      prompt: standaloneTestPrompt,
+                      onChangePrompt: setStandaloneTestPrompt,
+                      onImprovePrompt: () => {
+                        void requestStandalonePromptFromMain('improve');
+                      },
+                      onWritePrompt: () => {
+                        void requestStandalonePromptFromMain('write');
+                      },
+                      onRun: () => {
+                        void runStandaloneCardTest();
+                      },
+                      busyAction: standaloneTestBusyAction,
+                      unavailableReason: standaloneTestUnavailableReason,
+                      result: standaloneTestResult,
+                    }}
+                    onSaveLocalConfig={handleSaveSelectedCardConfig}
+                    onGraphRefresh={() => {
+                      // no-op
+                    }}
+                  />
+                </Suspense>
+              </CardEditorErrorBoundary>
             </>
           );
         }

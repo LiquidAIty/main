@@ -81,25 +81,33 @@ export default function useAgentBuilderCardEditor({
     [selectedCard],
   );
   const selectedCardConfig = useMemo<AgentManagerLocalConfig | null>(() => {
-    if (!effectiveAgent || !selectedCard) return null;
+    if (!selectedCard) return null;
+    const runtimeOptions = selectedCard.runtimeOptions || {};
+    const resolvedProvider =
+      runtimeOptions.provider ?? effectiveAgent?.provider ?? null;
     return {
       runtime_binding: selectedCard.runtimeBinding ?? null,
       runtime_type: selectedCard.runtimeType ?? 'assistant_agent',
-      runtime_options: selectedCard.runtimeOptions ?? null,
+      runtime_options: runtimeOptions,
       parent_graph_id: selectedCard.parentGraphId ?? null,
       provider:
-        effectiveAgent.provider === 'openai' ||
-        effectiveAgent.provider === 'openrouter' ||
-        effectiveAgent.provider === 'local_openai_compatible'
-          ? effectiveAgent.provider
+        resolvedProvider === 'openai' ||
+        resolvedProvider === 'openrouter' ||
+        resolvedProvider === 'local_openai_compatible'
+          ? resolvedProvider
           : '',
-      model_key: effectiveAgent.model || null,
-      temperature: effectiveAgent.temperature ?? null,
-      max_tokens: effectiveAgent.maxTokens ?? null,
+      model_key: runtimeOptions.modelKey ?? effectiveAgent?.model ?? null,
+      temperature:
+        runtimeOptions.temperature ?? effectiveAgent?.temperature ?? null,
+      max_tokens: runtimeOptions.maxTokens ?? effectiveAgent?.maxTokens ?? null,
       prompt_template: selectedCard.prompt || '',
-      tools: effectiveAgent.tools,
-      knowledge_sources: effectiveAgent.knowledgeSources || [],
-      response_format: effectiveAgent.ioSchema
+      tools: Array.isArray(runtimeOptions.tools)
+        ? runtimeOptions.tools
+        : Array.isArray(selectedCard.tools)
+          ? selectedCard.tools
+          : effectiveAgent?.tools || [],
+      knowledge_sources: effectiveAgent?.knowledgeSources || [],
+      response_format: effectiveAgent?.ioSchema
         ? {
             type: 'json_schema',
             name: 'card_schema',
@@ -111,7 +119,7 @@ export default function useAgentBuilderCardEditor({
 
   const handleSaveSelectedCardConfig = useCallback(
     (nextConfig: AgentManagerLocalConfig) => {
-      if (!selectedCard || !selectedTemplate) return;
+      if (!selectedCard) return;
 
       recordDeckWriteReason('card-editor');
       setDeck((currentDeck) => {
@@ -168,31 +176,35 @@ export default function useAgentBuilderCardEditor({
             : null;
 
         const nextOverrides = compactAgentOverrides({
+          ...(selectedCard.overrides || {}),
           provider:
+            !selectedTemplate ||
             nextProvider !== (selectedTemplate.provider ?? null)
               ? nextProvider
               : undefined,
           model:
-            nextModel !== (selectedTemplate.model ?? null)
+            !selectedTemplate || nextModel !== (selectedTemplate.model ?? null)
               ? nextModel
               : undefined,
           temperature:
+            !selectedTemplate ||
             nextTemperature !== (selectedTemplate.temperature ?? null)
               ? nextTemperature
               : undefined,
           maxTokens:
+            !selectedTemplate ||
             nextMaxTokens !== (selectedTemplate.maxTokens ?? null)
               ? nextMaxTokens
               : undefined,
           knowledgeSources: !sameStringArray(
             nextKnowledgeSources,
-            selectedTemplate.knowledgeSources,
+            selectedTemplate?.knowledgeSources,
           )
             ? nextKnowledgeSources
             : undefined,
           ioSchema: !sameObjectShape(
             nextIoSchema,
-            selectedTemplate.ioSchema,
+            selectedTemplate?.ioSchema,
           )
             ? nextIoSchema || undefined
             : undefined,

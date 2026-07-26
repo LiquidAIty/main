@@ -43,7 +43,30 @@ interface AgentManagerProps {
   }) => void;
   localConfig?: AgentManagerLocalConfig | null;
   onSaveLocalConfig?: (config: AgentManagerLocalConfig) => void | Promise<void>;
+  standaloneTest?: StandaloneCardTestView;
 }
+
+export type StandaloneCardTestResult = {
+  status: string;
+  output: string;
+  error: string | null;
+  toolCallCount: number | null;
+  tools: string[];
+  provider: string | null;
+  model: string | null;
+  runtimeType: string | null;
+};
+
+export type StandaloneCardTestView = {
+  prompt: string;
+  onChangePrompt: (value: string) => void;
+  onImprovePrompt: () => void;
+  onWritePrompt: () => void;
+  onRun: () => void;
+  busyAction: 'improve' | 'write' | 'run' | null;
+  unavailableReason: string | null;
+  result: StandaloneCardTestResult | null;
+};
 
 const ACTIVE_RUNTIME_TYPES: AgentCardRuntimeType[] = [
   'assistant_agent',
@@ -477,11 +500,16 @@ export function AgentManager({
   localConfig,
   selectedCardId,
   onSaveLocalConfig,
+  standaloneTest,
 }: AgentManagerProps) {
   const runtimeType = normalizeRuntimeType(localConfig?.runtime_type);
   const runtimeOptions = useMemo(() => deriveRuntimeOptions(localConfig), [localConfig]);
   const promptFields = useMemo(
     () => parsePromptTemplate(String(localConfig?.prompt_template || '')),
+    [localConfig?.prompt_template],
+  );
+  const hasStructuredPrompt = useMemo(
+    () => /\[ROLE\]/i.test(String(localConfig?.prompt_template || '')),
     [localConfig?.prompt_template],
   );
   const [promptText, setPromptText] = useState(String(localConfig?.prompt_template || ''));
@@ -958,21 +986,35 @@ export function AgentManager({
           </GlassInspectorSection>
         ) : null}
         <GlassInspectorSection title="Instructions" signal="model context">
-          <Field label="Role">
-            <textarea value={role} onChange={(event) => updatePromptFields('role', event.target.value)} rows={4} style={{ ...inputStyle, resize: 'vertical' }} />
-          </Field>
-          <Field label="Goal">
-            <textarea value={goal} onChange={(event) => updatePromptFields('goal', event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
-          </Field>
-          <Field label="Constraints">
-            <textarea value={constraints} onChange={(event) => updatePromptFields('constraints', event.target.value)} rows={4} style={{ ...inputStyle, resize: 'vertical' }} />
-          </Field>
-          <Field label="IO Schema">
-            <textarea value={ioSchema} onChange={(event) => updatePromptFields('ioSchema', event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
-          </Field>
-          <Field label="Memory Policy">
-            <textarea value={memoryPolicy} onChange={(event) => updatePromptFields('memoryPolicy', event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
-          </Field>
+          {hasStructuredPrompt ? (
+            <>
+              <Field label="Role">
+                <textarea value={role} onChange={(event) => updatePromptFields('role', event.target.value)} rows={4} style={{ ...inputStyle, resize: 'vertical' }} />
+              </Field>
+              <Field label="Goal">
+                <textarea value={goal} onChange={(event) => updatePromptFields('goal', event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
+              </Field>
+              <Field label="Constraints">
+                <textarea value={constraints} onChange={(event) => updatePromptFields('constraints', event.target.value)} rows={4} style={{ ...inputStyle, resize: 'vertical' }} />
+              </Field>
+              <Field label="IO Schema">
+                <textarea value={ioSchema} onChange={(event) => updatePromptFields('ioSchema', event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
+              </Field>
+              <Field label="Memory Policy">
+                <textarea value={memoryPolicy} onChange={(event) => updatePromptFields('memoryPolicy', event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
+              </Field>
+            </>
+          ) : (
+            <Field label="System / agent prompt">
+              <textarea
+                aria-label="System / agent prompt"
+                value={promptText}
+                onChange={(event) => setPromptText(event.target.value)}
+                rows={8}
+                style={{ ...inputStyle, resize: 'vertical' }}
+              />
+            </Field>
+          )}
         </GlassInspectorSection>
         <GlassInspectorSection title="Save">
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -980,6 +1022,77 @@ export function AgentManager({
           </div>
         </GlassInspectorSection>
         {renderSaveCardFeedback()}
+      </div>
+    );
+  }
+
+  if (activeTab === 'Test') {
+    const busy = standaloneTest?.busyAction ?? null;
+    const unavailable = standaloneTest?.unavailableReason || null;
+    return (
+      <div className={formScopeClassName} style={{ display: 'grid', gap: 8 }}>
+        <style>{scopedFocusStyles}</style>
+        <GlassInspectorSection title="Standalone test" signal="selected saved card only">
+          {unavailable ? (
+            <div
+              role="status"
+              data-testid="standalone-test-unavailable"
+              style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, lineHeight: 1.45 }}
+            >
+              {unavailable}
+            </div>
+          ) : (
+            <>
+              <Field label="Test prompt">
+                <textarea
+                  aria-label="Test prompt"
+                  value={standaloneTest?.prompt || ''}
+                  onChange={(event) => standaloneTest?.onChangePrompt(event.target.value)}
+                  rows={7}
+                  disabled={Boolean(busy)}
+                  style={{ ...inputStyle, resize: 'vertical' }}
+                />
+              </Field>
+              <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button type="button" onClick={standaloneTest?.onImprovePrompt} disabled={Boolean(busy) || !standaloneTest?.prompt.trim()} style={actionButtonStyle}>
+                  {busy === 'improve' ? 'Main is improving…' : 'Ask Main to improve'}
+                </button>
+                <button type="button" onClick={standaloneTest?.onWritePrompt} disabled={Boolean(busy)} style={actionButtonStyle}>
+                  {busy === 'write' ? 'Main is writing…' : 'Ask Main to write'}
+                </button>
+                <button type="button" onClick={standaloneTest?.onRun} disabled={Boolean(busy) || !standaloneTest?.prompt.trim()} style={actionButtonStyle}>
+                  {busy === 'run' ? 'Running card…' : 'Run selected card'}
+                </button>
+              </div>
+              <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 10.5, lineHeight: 1.4 }}>
+                Main assistance edits this test prompt only. It does not save the card or start a run.
+                Cancellation is not exposed by the canonical saved-card route.
+              </div>
+            </>
+          )}
+        </GlassInspectorSection>
+        {standaloneTest?.result ? (
+          <GlassInspectorSection title="Latest result" signal={standaloneTest.result.status}>
+            <div data-testid="standalone-test-result" style={{ display: 'grid', gap: 7, fontSize: 11.5 }}>
+              <div>
+                {standaloneTest.result.provider || 'Unknown provider'} · {standaloneTest.result.model || 'Unknown model'} · {standaloneTest.result.runtimeType || 'Unknown runtime'}
+              </div>
+              <div>
+                Tools granted: {standaloneTest.result.tools.length > 0 ? standaloneTest.result.tools.join(', ') : 'none'} · Calls recorded: {standaloneTest.result.toolCallCount ?? 'not reported'}
+              </div>
+              {standaloneTest.result.output ? (
+                <pre style={{ ...inputStyle, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', margin: 0, maxHeight: 260, overflowY: 'auto' }}>
+                  {standaloneTest.result.output}
+                </pre>
+              ) : null}
+              {standaloneTest.result.error ? (
+                <div role="alert" style={{ color: 'rgba(255,162,162,0.95)' }}>
+                  {standaloneTest.result.error}
+                </div>
+              ) : null}
+            </div>
+          </GlassInspectorSection>
+        ) : null}
       </div>
     );
   }

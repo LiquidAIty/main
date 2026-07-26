@@ -2,6 +2,7 @@
 
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import { fireEvent } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentCardRuntimeType } from '../types/agentgraph';
@@ -48,6 +49,7 @@ function renderManager(options?: {
   activeTab?: string;
   localConfig?: AgentManagerLocalConfig;
   onSaveLocalConfig?: ReturnType<typeof vi.fn>;
+  standaloneTest?: React.ComponentProps<typeof AgentManager>['standaloneTest'];
 }) {
   const onSaveLocalConfig = options?.onSaveLocalConfig || vi.fn();
   const container = document.createElement('div');
@@ -61,6 +63,7 @@ function renderManager(options?: {
         activeTab: options?.activeTab || 'Runtime',
         localConfig: options?.localConfig || createLocalConfig('assistant_agent'),
         onSaveLocalConfig,
+        standaloneTest: options?.standaloneTest,
       }),
     );
   });
@@ -315,6 +318,7 @@ describe('AgentManager runtime editor', () => {
     if (!saveButton) throw new Error('missing_save_button');
 
     expect(container.textContent).not.toContain('Prompt Template (Raw)');
+    expect(container.textContent).toContain('System / agent prompt');
 
     act(() => {
       saveButton.click();
@@ -325,6 +329,114 @@ describe('AgentManager runtime editor', () => {
         prompt_template: 'RAW PROMPT THAT SHOULD STAY AS-IS',
       }),
     );
+  });
+
+  it('maps a structured saved prompt into its canonical sections', () => {
+    const { container } = renderManager({
+      activeTab: 'Prompt',
+      localConfig: createLocalConfig('assistant_agent', {
+        prompt_template: [
+          '# LIQUIDAITY_PROMPT_V1',
+          '[ROLE]',
+          'Saved role',
+          '[GOAL]',
+          'Saved goal',
+          '[CONSTRAINTS]',
+          'Saved constraints',
+          '[IO_SCHEMA]',
+          'Saved IO',
+          '[MEMORY_POLICY]',
+          'Saved memory',
+        ].join('\n'),
+      }),
+    });
+
+    const values = Array.from(container.querySelectorAll('textarea')).map(
+      (textarea) => textarea.value,
+    );
+    expect(values).toEqual([
+      'Saved role',
+      'Saved goal',
+      'Saved constraints',
+      'Saved IO',
+      'Saved memory',
+    ]);
+    expect(container.textContent).not.toContain('System / agent prompt');
+  });
+
+  it('keeps manual, Main-improve, Main-write, and run actions distinct', () => {
+    const onImprovePrompt = vi.fn();
+    const onWritePrompt = vi.fn();
+    const onRun = vi.fn();
+    const onChangePrompt = vi.fn();
+    const { container } = renderManager({
+      activeTab: 'Test',
+      standaloneTest: {
+        prompt: 'Read-only test',
+        onChangePrompt,
+        onImprovePrompt,
+        onWritePrompt,
+        onRun,
+        busyAction: null,
+        unavailableReason: null,
+        result: {
+          status: 'completed',
+          output: 'Card response',
+          error: null,
+          toolCallCount: 1,
+          tools: ['web_search'],
+          provider: 'openrouter',
+          model: 'z-ai/glm-5.2',
+          runtimeType: 'assistant_agent',
+        },
+      },
+    });
+
+    const button = (label: string) =>
+      Array.from(container.querySelectorAll('button')).find(
+        (entry) => entry.textContent?.trim() === label,
+      );
+    act(() => button('Ask Main to improve')?.click());
+    expect(onImprovePrompt).toHaveBeenCalledTimes(1);
+    expect(onWritePrompt).not.toHaveBeenCalled();
+    expect(onRun).not.toHaveBeenCalled();
+
+    act(() => button('Ask Main to write')?.click());
+    act(() => button('Run selected card')?.click());
+    expect(onWritePrompt).toHaveBeenCalledTimes(1);
+    expect(onRun).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('Card response');
+    expect(container.textContent).toContain('Calls recorded: 1');
+
+    const prompt = container.querySelector(
+      'textarea[aria-label="Test prompt"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      fireEvent.change(prompt, { target: { value: 'Edited manually' } });
+    });
+    expect(onChangePrompt).toHaveBeenCalledWith('Edited manually');
+  });
+
+  it('shows a precise inline explanation for a non-runnable card', () => {
+    const { container } = renderManager({
+      activeTab: 'Test',
+      standaloneTest: {
+        prompt: '',
+        onChangePrompt: vi.fn(),
+        onImprovePrompt: vi.fn(),
+        onWritePrompt: vi.fn(),
+        onRun: vi.fn(),
+        busyAction: null,
+        unavailableReason:
+          'Trading Agent is a workspace gateway; its saved configuration forbids a backend model run.',
+        result: null,
+      },
+    });
+    expect(
+      container.querySelector('[data-testid="standalone-test-unavailable"]')
+        ?.textContent,
+    ).toContain('workspace gateway');
+    expect(container.querySelector('textarea[aria-label="Test prompt"]')).toBeNull();
   });
 
   it('renders the Knowledge tab as honest config only — no placeholder graph surface', () => {

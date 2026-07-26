@@ -83,10 +83,10 @@ export default function useAgentBuilderMainChat({
     };
   }, [canvasProjectId, conversationId]);
 
-  const handleNativeSend = useCallback(
-    (text: string) => {
+  const requestMainText = useCallback(
+    async (text: string): Promise<string> => {
       const trimmed = text.trim();
-      if (!trimmed) return;
+      if (!trimmed) throw new Error('main_prompt_empty');
       if (!canvasProjectId) {
         setMessages((current) => [
           ...current,
@@ -95,9 +95,9 @@ export default function useAgentBuilderMainChat({
             text: 'Select or create a project before chatting.',
           },
         ]);
-        return;
+        throw new Error('main_project_required');
       }
-      if (nativeSessionBusy) return;
+      if (nativeSessionBusy) throw new Error('main_session_busy');
 
       const sentGraphObjectRef = pendingGraphObjectRef;
       setMessages((current) => [
@@ -107,9 +107,11 @@ export default function useAgentBuilderMainChat({
       setNativeSessionBusy(true);
 
       let assistantStarted = false;
+      let assistantText = '';
       const appendAssistantText = (chunk: string) => {
         if (!chunk) return;
         assistantStarted = true;
+        assistantText += chunk;
         setMessages((current) => {
           const copy = [...current];
           const last = copy[copy.length - 1];
@@ -125,80 +127,82 @@ export default function useAgentBuilderMainChat({
         });
       };
 
-      void streamSession({
-        projectId: canvasProjectId,
-        conversationId,
-        message: trimmed,
-        mode: workspaceView === 'canvas' ? 'canvas' : 'chat',
-        ...(activeProjection?.role === 'main_chat'
-          ? {
-              projectionId: activeProjection.projectionId,
-              ...(activeProjection.activeGraphViewId
-                ? { activeGraphViewId: activeProjection.activeGraphViewId }
-                : {}),
-              ...(activeProjection.knowgraphScope
-                ? { knowgraphScope: activeProjection.knowgraphScope }
-                : {}),
+      try {
+        const { finalText } = await streamSession({
+          projectId: canvasProjectId,
+          conversationId,
+          message: trimmed,
+          mode: workspaceView === 'canvas' ? 'canvas' : 'chat',
+          ...(activeProjection?.role === 'main_chat'
+            ? {
+                projectionId: activeProjection.projectionId,
+                ...(activeProjection.activeGraphViewId
+                  ? { activeGraphViewId: activeProjection.activeGraphViewId }
+                  : {}),
+                ...(activeProjection.knowgraphScope
+                  ? { knowgraphScope: activeProjection.knowgraphScope }
+                  : {}),
+              }
+            : {}),
+          ...(sentGraphObjectRef
+            ? { selectedGraphObjectRefs: [sentGraphObjectRef] }
+            : {}),
+          onEvent: (event) => {
+            setHermesTerminal((current) =>
+              reduceHermesTerminalEvent(current, event),
+            );
+            if (event.kind === 'text') {
+              appendAssistantText(
+                String((event as { text?: unknown }).text || ''),
+              );
             }
-          : {}),
-        ...(sentGraphObjectRef
-          ? { selectedGraphObjectRefs: [sentGraphObjectRef] }
-          : {}),
-        onEvent: (event) => {
-          setHermesTerminal((current) =>
-            reduceHermesTerminalEvent(current, event),
+          },
+        });
+        if (sentGraphObjectRef) {
+          setPendingGraphObjectRef((current) =>
+            current &&
+            graphObjectRefKey(current) ===
+              graphObjectRefKey(sentGraphObjectRef)
+              ? null
+              : current,
           );
-          if (event.kind === 'text') {
-            appendAssistantText(
-              String((event as { text?: unknown }).text || ''),
-            );
-          }
-        },
-      })
-        .then(({ finalText }) => {
-          setNativeSessionBusy(false);
-          if (sentGraphObjectRef) {
-            setPendingGraphObjectRef((current) =>
-              current &&
-              graphObjectRefKey(current) ===
-                graphObjectRefKey(sentGraphObjectRef)
-                ? null
-                : current,
-            );
-          }
-          const completedText = finalText.trim();
-          if (!assistantStarted && completedText) {
-            appendAssistantText(completedText);
-          } else if (!assistantStarted) {
-            appendAssistantText(
-              'The chat completed without an assistant response. Please try again.',
-            );
-          }
-        })
-        .catch((error: unknown) => {
-          setNativeSessionBusy(false);
-          setHermesTerminal((current) =>
-            reduceHermesTerminalEvent(current, {
-              kind: 'error',
-              message:
-                error instanceof Error
-                  ? error.message
-                  : 'Hermes stream cancelled.',
-            }),
+        }
+        const completedText = finalText.trim();
+        if (!assistantStarted && completedText) {
+          appendAssistantText(completedText);
+        } else if (!assistantStarted) {
+          const emptyMessage =
+            'The chat completed without an assistant response. Please try again.';
+          appendAssistantText(emptyMessage);
+          throw new Error('main_empty_response');
+        }
+        return completedText || assistantText.trim();
+      } catch (error: unknown) {
+        setHermesTerminal((current) =>
+          reduceHermesTerminalEvent(current, {
+            kind: 'error',
+            message:
+              error instanceof Error
+                ? error.message
+                : 'Hermes stream cancelled.',
+          }),
+        );
+        if (error instanceof SessionStreamError) {
+          const correlation = error.correlationId
+            ? ` Correlation: ${error.correlationId}.`
+            : '';
+          appendAssistantText(
+            `Chat failed (${error.code}).${correlation}`,
           );
-          if (error instanceof SessionStreamError) {
-            const correlation = error.correlationId
-              ? ` Correlation: ${error.correlationId}.`
-              : '';
-            appendAssistantText(
-              `Chat failed (${error.code}).${correlation}`,
-            );
-            return;
-          }
+        } else if (!(error instanceof Error && error.message === 'main_empty_response')) {
           appendAssistantText(
             'Chat request failed before the stream opened. Route: /api/coder/openclaude/session/chat.',
           );
-        });
+        }
+        throw error;
+      } finally {
+        setNativeSessionBusy(false);
+      }
     },
     [
       activeProjection,
@@ -211,11 +215,21 @@ export default function useAgentBuilderMainChat({
     ],
   );
 
+  const handleNativeSend = useCallback(
+    (text: string) => {
+      void requestMainText(text).catch(() => {
+        // requestMainText already renders the canonical chat error.
+      });
+    },
+    [requestMainText],
+  );
+
   return {
     handleNativeSend,
     hermesTerminal,
     messages,
     nativeSessionBusy,
+    requestMainText,
     setMessages,
   };
 }
