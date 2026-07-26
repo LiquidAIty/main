@@ -43,11 +43,6 @@ vi.mock('../cards/runtime', () => ({
   runConfiguredCard: vi.fn(),
 }));
 
-vi.mock('../conversations/store', () => ({
-  appendMessage: vi.fn(),
-  getConversationMessages: vi.fn(async () => []),
-}));
-
 vi.mock('../coder/openclaude/session/grpcChatClient', () => ({
   deriveSessionId: (projectId: string, conversationId: string) => `${projectId}:${conversationId}`,
   startGrpcTurn: vi.fn(),

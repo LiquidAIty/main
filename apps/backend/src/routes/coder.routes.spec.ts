@@ -103,10 +103,16 @@ const chatSessionMocks = vi.hoisted(() => {
     contextBreakdownJson: '',
   };
   const mocks = {
-    appendMessage: vi.fn(async (msg: { role: string }) => ({
-      messageId: `${msg.role}-msg-1`,
+    beginConversationRun: vi.fn(async (input: { runId: string }) => ({
+      runId: input.runId,
+      userMessage: { messageId: 'user-msg-1' },
     })),
+    markConversationRunRunning: vi.fn(async () => undefined),
+    completeConversationRun: vi.fn(async () => ({ resultMessageId: 'assistant-msg-1' })),
+    failConversationRun: vi.fn(async () => undefined),
+    cancelConversationRun: vi.fn(async () => undefined),
     getConversationMessages: vi.fn(async () => []),
+    listConversations: vi.fn(async () => []),
     lastCancel: vi.fn(),
     startGrpcTurn: vi.fn(),
     resolveExternalMainRuntimeContext: vi.fn(),
@@ -188,8 +194,13 @@ vi.mock('../coder/execution/coderConsoleRuntime', () => ({
 }));
 
 vi.mock('../conversations/store', () => ({
-  appendMessage: chatSessionMocks.appendMessage,
+  beginConversationRun: chatSessionMocks.beginConversationRun,
+  markConversationRunRunning: chatSessionMocks.markConversationRunRunning,
+  completeConversationRun: chatSessionMocks.completeConversationRun,
+  failConversationRun: chatSessionMocks.failConversationRun,
+  cancelConversationRun: chatSessionMocks.cancelConversationRun,
   getConversationMessages: chatSessionMocks.getConversationMessages,
+  listConversations: chatSessionMocks.listConversations,
 }));
 
 vi.mock('../coder/openclaude/session/grpcChatClient', () => ({
@@ -870,8 +881,10 @@ describe('coder routes', () => {
       }
     });
 
-    it('persists the user and assistant messages and never dispatches the old post-chat ThinkGraph pair handoff', async () => {
-      chatSessionMocks.appendMessage.mockClear();
+    it('persists one durable conversation run and never dispatches the old post-chat ThinkGraph pair handoff', async () => {
+      chatSessionMocks.beginConversationRun.mockClear();
+      chatSessionMocks.markConversationRunRunning.mockClear();
+      chatSessionMocks.completeConversationRun.mockClear();
       chatSessionMocks.startGrpcTurn.mockClear();
       chatSessionMocks.lastCancel.mockClear();
       mcpClientMocks.callPythonAgentMcpTool.mockClear();
@@ -886,18 +899,29 @@ describe('coder routes', () => {
         // Drain the SSE stream to completion.
         await response.text();
 
-        // Real chat turn still runs and both messages are still persisted.
+        // The user message + pending run are atomic, then the resolved saved
+        // card metadata and final assistant result complete the same run.
         expect(chatSessionMocks.startGrpcTurn).toHaveBeenCalledTimes(1);
         expect((chatSessionMocks.startGrpcTurn.mock.calls[0][0] as any).investigationContext).toEqual({
           projectId: 'project-1', conversationId: 'main', focusNodeIds: [], requestedOutcome: null,
         });
-        const appendedRoles = chatSessionMocks.appendMessage.mock.calls.map((call) => (call[0] as any).role);
-        expect(appendedRoles).toContain('user');
-        expect(appendedRoles).toContain('assistant');
-        const appendedAssistantContent = chatSessionMocks.appendMessage.mock.calls.find(
-          (call) => (call[0] as any).role === 'assistant',
-        )?.[0] as any;
-        expect(appendedAssistantContent.content).toBe('Real assistant reply.');
+        expect(chatSessionMocks.beginConversationRun).toHaveBeenCalledWith(expect.objectContaining({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          conversationId: 'main',
+          userContent: 'hello',
+          runId: expect.stringMatching(/^req_/),
+        }));
+        expect(chatSessionMocks.markConversationRunRunning).toHaveBeenCalledWith(expect.objectContaining({
+          runId: expect.stringMatching(/^req_/),
+          invokingCardId: 'card_main_chat',
+          provider: 'openai',
+          providerModelId: 'gpt-5.1-chat-latest',
+        }));
+        expect(chatSessionMocks.completeConversationRun).toHaveBeenCalledWith(expect.objectContaining({
+          runId: expect.stringMatching(/^req_/),
+          assistantContent: 'Real assistant reply.',
+        }));
 
         // The obsolete post-chat pair handoff must never fire from this route.
         expect(mcpClientMocks.callPythonAgentMcpTool).not.toHaveBeenCalled();
@@ -908,7 +932,8 @@ describe('coder routes', () => {
     });
 
     it('ignores late gRPC events after the SSE turn has completed', async () => {
-      chatSessionMocks.appendMessage.mockClear();
+      chatSessionMocks.beginConversationRun.mockClear();
+      chatSessionMocks.completeConversationRun.mockClear();
       chatSessionMocks.lastCancel.mockClear();
       chatSessionMocks.startGrpcTurn.mockImplementationOnce(async (_params: unknown, onEvent: (event: any) => void) => {
         const done = Promise.resolve({ finalText: 'Finished before late event.', usage: chatSessionMocks.usage });
@@ -964,6 +989,52 @@ describe('coder routes', () => {
         expect(body).toContain('"correlationId":"req_');
         expect(body).toContain('/api/coder/openclaude/session/chat');
         expect(body).not.toContain('provider credential leaked');
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('does not call the model when the user message and pending run cannot be persisted', async () => {
+      chatSessionMocks.beginConversationRun.mockRejectedValueOnce(new Error('database unavailable'));
+      chatSessionMocks.startGrpcTurn.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'no-db', message: 'hello' }),
+        });
+        expect(response.status).toBe(503);
+        await expect(response.json()).resolves.toMatchObject({
+          ok: false,
+          error: 'conversation_persistence_unavailable',
+          correlationId: expect.stringMatching(/^req_/),
+        });
+        expect(chatSessionMocks.startGrpcTurn).not.toHaveBeenCalled();
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('withholds the done event and records failure when final result persistence fails', async () => {
+      chatSessionMocks.completeConversationRun.mockRejectedValueOnce(new Error('write failed'));
+      chatSessionMocks.failConversationRun.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'result-db-failure', message: 'hello' }),
+        });
+        const body = await response.text();
+        expect(response.status).toBe(200);
+        expect(body).toContain('harness_run_persistence_failed');
+        expect(body).not.toContain('event: done');
+        expect(chatSessionMocks.failConversationRun).toHaveBeenCalledWith(
+          expect.stringMatching(/^req_/),
+          'harness_run_persistence_failed',
+          expect.stringContaining('write failed'),
+        );
       } finally {
         await closeServer(server);
       }

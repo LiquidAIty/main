@@ -20,6 +20,7 @@ import {
   resolveExternalMainRuntimeContext,
   resolveMainChatRuntimeConfig,
   startGrpcTurn,
+  type GrpcSessionEvent,
   type GrpcTurnHandle,
 } from '../coder/openclaude/session/grpcChatClient';
 import {
@@ -32,9 +33,13 @@ import {
   type HermesInvestigationContext,
 } from '../coder/hermes/hermesReportArtifact';
 import {
-  appendMessage,
+  beginConversationRun,
+  cancelConversationRun,
+  completeConversationRun,
+  failConversationRun,
   getConversationMessages,
   listConversations,
+  markConversationRunRunning,
 } from '../conversations/store';
 import { callPythonAgentMcpTool } from '../services/mcp/pythonAgentMcpClient';
 import { createCodebaseMemoryMcpCaller } from '../services/graphContext/cbmMcpCaller';
@@ -986,6 +991,26 @@ router.post('/openclaude/session/chat', async (req, res) => {
       ...(view.parentViewId ? { parentViewId: view.parentViewId } : {}),
     })),
   });
+  try {
+    await beginConversationRun({
+      runId: correlationId,
+      projectId,
+      deckId: BUILDER_DECK_ID,
+      conversationId,
+      sessionId,
+      userContent: message,
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'conversation_run_begin_failed';
+    logHarnessTrace(
+      `[harness] request rejected corr=${correlationId} reason=${redactTrace(reason)}`,
+    );
+    return res.status(503).json({
+      ok: false,
+      error: 'conversation_persistence_unavailable',
+      correlationId,
+    });
+  }
   // Bind this turn's Hermes report lifecycle to the run (parentRunId = correlationId)
   // so a mid-turn hermes.write_report attaches to THIS focused branch — the 0-caller
   // lifecycle is now driven. Best-effort: a lifecycle hiccup never breaks the stream.
@@ -1024,10 +1049,9 @@ router.post('/openclaude/session/chat', async (req, res) => {
       measurements: graphContextMeasurements,
     });
   }
-  // Durable project-scoped transcript persistence (conversations/store.ts). Best-effort:
-  // a DB failure must never block or break the live SSE stream.
-  void appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(() => null);
   let turnFinished = false;
+  let runCancelled = false;
+  let terminalDoneEvent: Extract<GrpcSessionEvent, { kind: 'done' }> | null = null;
   let activeRuntimeViews: GraphViewIdentity[] = [];
   const pendingGraphViewWrites: Promise<void>[] = [];
   const liquidaityToolUses = new Set<string>();
@@ -1043,6 +1067,10 @@ router.post('/openclaude/session/chat', async (req, res) => {
       graphContext,
     }, async (event) => {
       if (turnFinished) return;
+      if (event.kind === 'done') {
+        terminalDoneEvent = event;
+        return;
+      }
       if (event.kind === 'tool_start' && event.toolName.startsWith('mcp__liquidaity__')) {
         liquidaityToolUses.add(event.toolUseId);
       } else if (event.kind === 'tool_result' && liquidaityToolUses.has(event.toolUseId)) {
@@ -1069,6 +1097,20 @@ router.post('/openclaude/session/chat', async (req, res) => {
       if (traceLine) logHarnessTrace(traceLine);
       writeSse(event.kind, event);
     });
+    try {
+      await markConversationRunRunning({
+        runId: correlationId,
+        invokingCardId: handle.resolved.cardId,
+        provider: handle.resolved.provider,
+        modelKey: handle.resolved.modelKey,
+        providerModelId: handle.resolved.providerModelId,
+      });
+    } catch (error) {
+      handle.cancel();
+      throw new Error(
+        `harness_run_persistence_failed:${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     if (handle.runtimeGraphViews.length > 0) {
       activeRuntimeViews = handle.runtimeGraphViews;
       await transitionGraphViewsOnPython({
@@ -1084,8 +1126,14 @@ router.post('/openclaude/session/chat', async (req, res) => {
     activeGrpcTurns.set(sessionId, handle);
     req.on('close', () => {
       if (turnFinished) return;
+      runCancelled = true;
       handle.cancel();
       activeGrpcTurns.delete(sessionId);
+      void cancelConversationRun(correlationId).catch((error) => {
+        logHarnessTrace(
+          `[harness] run cancellation persistence failed corr=${correlationId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
+        );
+      });
     });
     const { finalText, usage } = await handle.done;
     await Promise.all(pendingGraphViewWrites);
@@ -1100,23 +1148,25 @@ router.post('/openclaude/session/chat', async (req, res) => {
       });
       writeSse('graph_view', compactGraphViewEvent(consumedViews));
     }
+    try {
+      await completeConversationRun({
+        runId: correlationId,
+        assistantContent: String(finalText || ''),
+        usage,
+      });
+    } catch (error) {
+      throw new Error(
+        `harness_run_persistence_failed:${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const doneEvent = terminalDoneEvent || { kind: 'done', fullText: finalText, usage };
+    const doneTrace = formatHarnessTrace(doneEvent, correlationId);
+    if (doneTrace) logHarnessTrace(doneTrace);
+    writeSse('done', doneEvent);
     turnFinished = true;
     logHarnessTrace(
       `[harness] request completed corr=${correlationId} providerUsage=${usage.usageAvailable ? `${usage.providerInputTokens}in/${usage.providerOutputTokens}out (${usage.usageSource})` : 'unavailable'} cost=${usage.totalCostUsd ?? 'unavailable'} contextBreakdown=${usage.contextBreakdownJson ? 'present' : 'unavailable'}`,
     );
-    // Save the assistant reply only when real text was produced — never an empty
-    // bubble (mirrors the frontend's "no text → no bubble" contract). Best-effort,
-    // same as the user message: a DB failure must never block or break the live
-    // SSE stream, which has already delivered the final result.
-    const assistantText = String(finalText || '').trim();
-    if (assistantText) {
-      void appendMessage({
-        projectId,
-        conversationId,
-        role: 'assistant',
-        content: assistantText,
-      }).catch(() => null);
-    }
   } catch (error) {
     turnFinished = true;
     if (activeRuntimeViews.length > 0) {
@@ -1129,10 +1179,27 @@ router.post('/openclaude/session/chat', async (req, res) => {
       }).catch(() => null);
     }
     const reason = error instanceof Error ? error.message : 'grpc_turn_failed';
+    if (!runCancelled) {
+      await failConversationRun(
+        correlationId,
+        reason.startsWith('harness_run_persistence_failed')
+          ? 'harness_run_persistence_failed'
+          : 'harness_turn_failed',
+        reason,
+      ).catch((persistenceError) => {
+        logHarnessTrace(
+          `[harness] failure persistence failed corr=${correlationId} reason=${redactTrace(persistenceError instanceof Error ? persistenceError.message : String(persistenceError))}`,
+        );
+      });
+    }
     logHarnessTrace(`[harness] request failed corr=${correlationId} reason=${redactTrace(reason)}`);
     writeSse('error', {
-      code: 'harness_turn_failed',
-      message: 'The chat run failed. Check the correlation ID in the backend logs.',
+      code: reason.startsWith('harness_run_persistence_failed')
+        ? 'harness_run_persistence_failed'
+        : 'harness_turn_failed',
+      message: reason.startsWith('harness_run_persistence_failed')
+        ? 'The model finished, but its durable run record could not be completed.'
+        : 'The chat run failed. Check the correlation ID in the backend logs.',
       correlationId,
       route: '/api/coder/openclaude/session/chat',
       status: 502,
