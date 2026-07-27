@@ -46,7 +46,7 @@ const deckMocks = vi.hoisted(() => ({
     deck: {
       nodes: [{ id: 'card_local_coder', kind: 'agent', runtimeType: 'local_coder' }],
       edges: [],
-    },
+    } as any,
   })),
 }));
 
@@ -416,6 +416,7 @@ describe('coder routes', () => {
           instructionId: 'instruction:one',
           senderCardId: 'card_main_chat',
           parentRunId: 'req_1234abcd',
+          graphViewIds: ['graphview:one'],
           input: 'Use the stored handoff.',
         }),
       });
@@ -429,6 +430,7 @@ describe('coder routes', () => {
         instructionId: 'instruction:one',
         senderCardId: 'card_main_chat',
         parentRunId: 'req_1234abcd',
+        graphViewIds: ['graphview:one'],
         input: 'Use the stored handoff.',
       });
     } finally {

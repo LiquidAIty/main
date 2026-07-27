@@ -476,3 +476,143 @@ def test_optional_tool_failure_does_not_finish_the_assignment(monkeypatch) -> No
         asyncio.run(tool._func("operation-ref:1"))
 
     assert finished == []
+
+
+def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
+    monkeypatch,
+) -> None:
+    from app import control_plane
+    from app.python_models import agentgraph
+    from app.python_models import thinkgraph_engraphis
+
+    assignment = {
+        "assignmentId": "assignment:one",
+        "instructionId": "instruction:one",
+        "instruction": "Use the selected bounded context.",
+        "instructionSha256": "sha256:one",
+        "correlationId": "correlation:one",
+        "deckId": "deck_builder",
+        "conversationId": "main",
+        "receiverCardId": "card_agent",
+        "contextReferences": [],
+        "operationReferences": [],
+        "parentContinuity": None,
+    }
+    view = {
+        "viewId": "graphview:one",
+        "displayLabel": "Selected project context",
+        "authority": "mixed",
+        "receivingRole": "card_agent",
+        "records": [
+            {
+                "canonicalId": "thinkgraph:decision:one",
+                "authority": "thinkgraph",
+                "summary": "Use the canonical AgentGraph assignment.",
+            }
+        ],
+        "provenanceRefs": [
+            "thinkgraph:decision:one",
+            "codegraph:symbol:one",
+        ],
+    }
+    references: list[dict] = []
+    monkeypatch.setattr(agentgraph, "read_assignment", lambda **_kwargs: dict(assignment))
+    monkeypatch.setattr(
+        agentgraph,
+        "add_assignment_references",
+        lambda **kwargs: references.extend(kwargs["references"]),
+    )
+    monkeypatch.setattr(
+        agentgraph,
+        "claim_assignment",
+        lambda **_kwargs: {
+            "instructionId": "instruction:one",
+            "instructionSha256": "sha256:one",
+            "correlationId": "correlation:one",
+            "instruction": "Use the selected bounded context.",
+            "leaseToken": "lease:one",
+            "leaseExpiresAt": "later",
+            "attempt": 1,
+        },
+    )
+    monkeypatch.setattr(
+        control_plane,
+        "_load_deck",
+        lambda *_args: (
+            {
+                "nodes": [
+                    {
+                        "id": "card_agent",
+                        "kind": "agent",
+                        "runtimeOptions": {"tools": []},
+                    }
+                ]
+            },
+            "revision",
+        ),
+    )
+    monkeypatch.setattr(
+        control_plane,
+        "resolve_saved_card_reference",
+        lambda *_args, **_kwargs: {
+            "cardId": "card_agent",
+            "role": "research",
+            "runtimeType": "assistant_agent",
+            "runtimeBinding": "research_agent",
+            "tools": [],
+            "skills": [],
+            "dataBindings": [],
+            "profile": None,
+        },
+    )
+    monkeypatch.setattr(
+        thinkgraph_engraphis,
+        "get_thinkgraph",
+        lambda: type(
+            "ThinkGraph",
+            (),
+            {
+                "graph_views": lambda _self, _project, _conversation: {
+                    "views": [view]
+                }
+            },
+        )(),
+    )
+    monkeypatch.setattr(rq, "assigned_query_bindings", lambda **_kwargs: [])
+    monkeypatch.setattr(rq, "bindings_from_operation_references", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        rq,
+        "partition_operation_bindings",
+        lambda *_args, **_kwargs: ([], []),
+    )
+
+    hydrated = rq.hydrate_assignment_context(
+        project_id="project-one",
+        assignment_id="assignment:one",
+        receiver_card_id="card_agent",
+        graph_view_ids=["graphview:one"],
+    )
+
+    assert hydrated.selected_graph_view_ids == ("graphview:one",)
+    assert hydrated.graph_view_ids == ("graphview:one",)
+    assert hydrated.saved_card_reference["cardId"] == "card_agent"
+    assert "[SAVED_CARD_REFERENCE]" in hydrated.model_context
+    assert "graphview:one" in hydrated.model_context
+    assert "Use the canonical AgentGraph assignment." in hydrated.model_context
+    assert references == [
+        {
+            "referenceId": "graphview:one",
+            "referenceType": "graph_view",
+            "required": True,
+        },
+        {
+            "referenceId": "thinkgraph:decision:one",
+            "referenceType": "thinkgraph",
+            "required": False,
+        },
+        {
+            "referenceId": "codegraph:symbol:one",
+            "referenceType": "codegraph",
+            "required": False,
+        },
+    ]

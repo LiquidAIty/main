@@ -62,6 +62,7 @@ from urllib.request import Request, urlopen
 from mcp.server import Server
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
+from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
@@ -197,8 +198,15 @@ def _authenticated_main_context() -> dict[str, Any] | None:
 
 
 class LiquidAItyServer(Server):
-    def create_initialization_options(self, *args: Any, **kwargs: Any):
-        options = super().create_initialization_options(*args, **kwargs)
+    def create_initialization_options(
+        self,
+        notification_options: NotificationOptions | None = None,
+        experimental_capabilities: dict[str, dict[str, Any]] | None = None,
+    ):
+        options = super().create_initialization_options(
+            notification_options or NotificationOptions(tools_changed=True),
+            experimental_capabilities,
+        )
         context = _authenticated_main_context()
         if context is not None:
             options.instructions = str(context.get("instructions") or "") or None
@@ -320,7 +328,13 @@ def _resolve_external_main_context_sync(issuer: str, subject: str) -> dict[str, 
     except (TypeError, ValueError):
         return None
     context = payload.get("context") if isinstance(payload, dict) and payload.get("ok") is True else None
-    required = {"projectId", "deckId", "conversationId", "mainCardId"}
+    required = {
+        "projectId",
+        "deckId",
+        "conversationId",
+        "parentRunId",
+        "mainCardId",
+    }
     return context if isinstance(context, dict) and required.issubset(context) else None
 
 
@@ -411,6 +425,15 @@ async def _bridge(path: str, payload: dict[str, Any]) -> list[TextContent]:
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     tools = [
+        Tool(
+            name="main.context",
+            description=(
+                "Read the compact server-owned Main entry context for this authenticated "
+                "LiquidAIty connection: project, deck, conversation, parent run, and saved "
+                "Main-card identities. Accepts no caller-supplied identity or context payload."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
         Tool(
             name="agentgraph.inspect",
             description=(
@@ -1044,6 +1067,15 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Server-owned parent Harness turn identity for an inter-agent doorway call.",
                     },
+                    "graphViewIds": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 16,
+                        "description": (
+                            "Stable persisted Graph View identities selected for this assignment. "
+                            "Python resolves their bounded payloads from the canonical Graph View store."
+                        ),
+                    },
                     "input": {"type": "string"},
                 },
                 "required": ["cardId", "input"],
@@ -1067,6 +1099,7 @@ async def list_tools() -> list[Tool]:
 
 
 _READ_ONLY_TOOLS = {
+    "main.context",
     "agentgraph.inspect",
     "graphview.list",
     "graphview.get",
@@ -1117,6 +1150,13 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
                 properties.pop("parentRunId", None)
             if isinstance(schema.get("required"), list):
                 schema["required"] = [field for field in schema["required"] if field != "parentRunId"]
+        if tool.name == "card.run_assistant_agent":
+            if isinstance(properties, dict):
+                properties.pop("instructionId", None)
+            if isinstance(schema.get("required"), list):
+                schema["required"] = [
+                    field for field in schema["required"] if field != "instructionId"
+                ]
         payload = tool.model_dump(by_alias=True, exclude_none=True)
         payload["inputSchema"] = schema
         payload["securitySchemes"] = security_schemes
@@ -1134,6 +1174,7 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
 # Structural allow-list per tool: unexpected keys are rejected honestly, never
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
+    "main.context": set(),
     "agentgraph.inspect": {
         "projectId",
         "deckId",
@@ -1197,6 +1238,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "instructionId",
         "originatingAgentId",
         "originatingRunId",
+        "graphViewIds",
         "input",
     },
     "thinkgraph.get_graph_slice": {"projectId", "limit"},
@@ -1288,6 +1330,9 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                 args["senderAgentId"] = str(context["mainCardId"])
             if "correlationId" in allowed:
                 args["correlationId"] = f"external-mcp:{uuid4()}"
+            if name == "card.run_assistant_agent":
+                args["originatingAgentId"] = str(context["mainCardId"])
+                args["originatingRunId"] = str(context["parentRunId"])
             if name == "run_coder_subagent":
                 args["parentRunId"] = f"req_external_main_{uuid4()}"
         except (KeyError, RuntimeError, ValueError) as err:
@@ -1318,6 +1363,31 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
             return [TextContent(type="text", text=json.dumps(result))]
         except agentgraph.AgentGraphError as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
+    if name == "main.context":
+        if context is None:
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps({"ok": False, "error": "main_context_unavailable"}),
+                )
+            ]
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "ok": True,
+                        "context": {
+                            "projectId": str(context["projectId"]),
+                            "deckId": str(context["deckId"]),
+                            "conversationId": str(context["conversationId"]),
+                            "parentRunId": str(context["parentRunId"]),
+                            "mainCardId": str(context["mainCardId"]),
+                        },
+                    }
+                ),
+            )
+        ]
     if name == "knowgraph.query":
         # Direct in-process reuse of the ONE proven hybrid retrieval
         # (services/knowgraph via tool_registry) — read-only; honest error when

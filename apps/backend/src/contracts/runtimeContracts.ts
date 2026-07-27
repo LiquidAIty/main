@@ -6,6 +6,8 @@ export type CoderTaskDeliveryStatus = 'accepted' | 'queued' | 'blocked';
 // verbatim from Python rails.
 export type AgentAssignmentRunResult = {
   assignmentId: string;
+  instructionId?: string;
+  resultId?: string;
   artifactLocators: string[];
 };
 

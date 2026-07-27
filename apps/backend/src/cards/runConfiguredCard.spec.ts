@@ -197,6 +197,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
       conversationId: 'conv-7',
       instructionId: 'instruction:one',
       senderCardId: 'card_main_chat',
+      graphViewIds: ['graphview:one', 'graphview:two'],
     });
 
     const payload = mockRunCard.mock.calls[0][0];
@@ -205,6 +206,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
       instructionId: 'instruction:one',
       senderCardId: 'card_main_chat',
       receiverCardId: 'card_thinkgraph_agent',
+      graphViewIds: ['graphview:one', 'graphview:two'],
     });
     expect(JSON.stringify(payload)).not.toContain('stored Markdown');
   });

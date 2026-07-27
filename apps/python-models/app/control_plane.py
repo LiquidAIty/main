@@ -97,6 +97,77 @@ def _find_card(deck: dict, card_id: str) -> dict[str, Any]:
     raise ControlPlaneError(f"card_not_found: {card_id}")
 
 
+def resolve_saved_card_reference(
+    project_id: str,
+    deck_id: str,
+    card_id: str,
+    *,
+    deck: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resolve compact run configuration by saved card identity.
+
+    Prompt text and configuration payloads stay in the saved deck and runtime
+    assignment stores; AgentGraph carries this stable reference and the pinned
+    versions used for the run.
+    """
+    if deck is None:
+        deck, _revision = _load_deck(project_id, deck_id)
+    card = _find_card(deck, card_id)
+    runtime_options = (
+        card.get("runtimeOptions")
+        if isinstance(card.get("runtimeOptions"), dict)
+        else {}
+    )
+    skills = ra.assigned_skills(
+        project_id=project_id,
+        deck_id=deck_id,
+        card_id=card_id,
+    )
+    data_bindings = ra.assigned_data_bindings(
+        project_id=project_id,
+        deck_id=deck_id,
+        card_id=card_id,
+    )
+    binding = str(card.get("runtimeBinding") or runtime_options.get("binding") or "")
+    try:
+        profile = ra.resolve_profile(binding) if binding else None
+    except LookupError:
+        profile = None
+    return {
+        "cardId": card_id,
+        "title": str(card.get("title") or ""),
+        "role": str(card.get("role") or runtime_options.get("role") or ""),
+        "runtimeType": str(card.get("runtimeType") or ""),
+        "runtimeBinding": binding,
+        "provider": str(runtime_options.get("provider") or card.get("provider") or ""),
+        "modelKey": str(runtime_options.get("modelKey") or ""),
+        "providerModelId": str(
+            runtime_options.get("providerModelId")
+            or card.get("providerModelId")
+            or ""
+        ),
+        "tools": [
+            str(value)
+            for value in (runtime_options.get("tools") or card.get("tools") or [])
+            if str(value).strip()
+        ],
+        "profile": (
+            {"profileId": profile.profile_id, "version": profile.version}
+            if profile
+            else None
+        ),
+        "skills": [
+            {
+                "skillId": skill.skill_id,
+                "version": skill.version,
+                "status": skill.status,
+            }
+            for skill in skills
+        ],
+        "dataBindings": data_bindings,
+    }
+
+
 # ---------------------------------------------------------------------------
 # canvas.inspect
 # ---------------------------------------------------------------------------
@@ -475,7 +546,7 @@ async def agentgraph_inspect(args: dict[str, Any]) -> dict[str, Any]:
     _require(args, "projectId", "deckId", "conversationId")
     project_wide = args.get("projectWide") is True
     try:
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             ag.inspect_assignments,
             project_id=str(args["projectId"]).strip(),
             deck_id=str(args["deckId"]).strip(),
@@ -484,6 +555,14 @@ async def agentgraph_inspect(args: dict[str, Any]) -> dict[str, Any]:
             assignment_id=str(args.get("assignmentId") or "").strip() or None,
             limit=args.get("limit") if isinstance(args.get("limit"), int) else 20,
         )
+        if str(args.get("assignmentId") or "").strip():
+            result["savedCardReference"] = await asyncio.to_thread(
+                resolve_saved_card_reference,
+                str(args["projectId"]).strip(),
+                str(args["deckId"]).strip(),
+                str(result["receiverCardId"]),
+            )
+        return result
     except ag.AgentGraphError as err:
         raise ControlPlaneError(str(err)) from err
 
@@ -504,6 +583,13 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
     instruction_id = str(args.get("instructionId") or "").strip()
     originating_agent_id = str(args.get("originatingAgentId") or "").strip()
     originating_run_id = str(args.get("originatingRunId") or "").strip()
+    graph_view_ids = [
+        str(value).strip()
+        for value in (args.get("graphViewIds") or [])
+        if str(value).strip()
+    ]
+    if len(graph_view_ids) > 16 or len(graph_view_ids) != len(set(graph_view_ids)):
+        raise ControlPlaneError("agentgraph_graph_view_ids_invalid")
     project_id = str(args["projectId"]).strip()
     card_id = str(args["cardId"]).strip()
     correlation_id = str(args["correlationId"]).strip()
@@ -541,6 +627,7 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
         **({"instructionId": instruction_id} if instruction_id else {}),
         **({"senderCardId": originating_agent_id} if instruction_id else {}),
         **({"parentRunId": originating_run_id} if originating_run_id else {}),
+        **({"graphViewIds": graph_view_ids} if graph_view_ids else {}),
         "input": instruction,
     }
 

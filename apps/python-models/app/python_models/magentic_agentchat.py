@@ -378,6 +378,46 @@ def _final_text_from_result(result: Any) -> str:
     return ""
 
 
+def _tool_evidence_from_result(result: Any) -> list[dict[str, str]]:
+    """Keep compact tool-call identity/status evidence, never args or outputs."""
+    evidence: list[dict[str, str]] = []
+    names_by_call_id: dict[str, str] = {}
+    for message in getattr(result, "messages", []) or []:
+        event = type(message).__name__
+        content = getattr(message, "content", None)
+        items = content if isinstance(content, list) else []
+        for item in items:
+            call_id = str(
+                getattr(item, "id", None)
+                or getattr(item, "call_id", None)
+                or ""
+            ).strip()
+            tool_name = str(getattr(item, "name", None) or "").strip()
+            if call_id and tool_name:
+                names_by_call_id[call_id] = tool_name
+            if not call_id and not tool_name:
+                continue
+            is_error = getattr(item, "is_error", None)
+            record = {
+                "event": event,
+                **({"callId": call_id} if call_id else {}),
+                **(
+                    {"toolName": tool_name or names_by_call_id.get(call_id, "")}
+                    if tool_name or names_by_call_id.get(call_id)
+                    else {}
+                ),
+                **(
+                    {"status": "failed" if is_error else "completed"}
+                    if isinstance(is_error, bool)
+                    else {}
+                ),
+            }
+            evidence.append(record)
+            if len(evidence) >= 64:
+                return evidence
+    return evidence
+
+
 async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     """Run ONE configured canvas card as a single AssistantAgent.
 
@@ -394,6 +434,8 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     execution and owns no card-specific policy here.
     """
     assignment_id: str | None = None
+    instruction_id: str | None = None
+    result_id: str | None = None
     lease_token: str | None = None
     hydrated_assignment: rq.HydratedAssignmentContext | None = None
     terminal_artifacts: list[dict[str, Any]] = []
@@ -446,6 +488,8 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     def _assignment_fields() -> dict:
         return {
             "assignmentId": assignment_id,
+            "instructionId": instruction_id,
+            "resultId": result_id,
             "artifactLocators": [
                 str(item.get("locator") or "") for item in terminal_artifacts
             ],
@@ -490,6 +534,11 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             project_id=context.session.projectId,
             assignment_id=assignment_id,
             receiver_card_id=single.cardId,
+            graph_view_ids=request.graphViewIds if request is not None else None,
+            runtime_type="assistant_agent",
+            runtime_provider=context.session.modelProvider,
+            runtime_model_key=context.session.modelKey,
+            runtime_provider_model_id=context.session.providerModelId,
         )
         lease_token = hydrated_assignment.lease_token
         instruction_body = hydrated_assignment.instruction
@@ -599,11 +648,9 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         # still required by the transport guard, but is not duplicated into the
         # model task when a durable handoff is present. Standalone calls without
         # AgentGraph continue to use their ordinary userText unchanged.
-        task_parts = [instruction_body]
+        task_parts = [hydrated_assignment.model_context]
         if plan is not None:
             task_parts.append(plan.packet)
-        if query_bindings:
-            task_parts.append(rq.build_query_context(query_executions, optional_bindings))
         task = "\n\n".join(task_parts)
         result = await agent.run(task=task)
 
@@ -686,7 +733,9 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             lease_token=lease_token,
             status="completed",
             output=final_text,
+            tool_evidence=_tool_evidence_from_result(result),
         )
+        result_id = str(completed.get("resultId") or "") or None
         terminal_artifacts = list(completed.get("artifacts") or [])
         assignment_fields = _assignment_fields()
 

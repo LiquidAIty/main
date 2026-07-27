@@ -61,7 +61,7 @@ async def check():
     operation_refs = by_name['write_mag_one_instructions'].inputSchema['properties']['operationReferences']
     assert operation_refs['items']['properties']['executionRole']['enum'] == ['required_context', 'optional_tool']
     assert by_name['run_mag_one'].inputSchema['required'] == ['instructionId', 'projectId', 'deckId']
-    assert 'main.context' not in by_name
+    assert 'main.context' in by_name
     assert 'agentgraph.inspect' in by_name
     assert 'graphview.list' in by_name
     assert 'graphview.get' in by_name
@@ -71,7 +71,9 @@ asyncio.run(check())
 """
     result = _run_in_script_launch_context(code)
     assert result.returncode == 0, result.stderr
-    assert len(json.loads(result.stdout)) != 14
+    catalog = json.loads(result.stdout)
+    assert len(catalog) == 67
+    assert len(catalog) == len(set(catalog))
     host = open(os.path.join(_APP_DIR, "mcp_host.py"), encoding="utf-8").read()
     assert "CHATGPT_MAIN" not in host
     assert "LIQUIDAITY_MAIN_PROJECT_ID" not in host
@@ -141,9 +143,9 @@ async def check():
         assert tool.model_dump() == native[tool.name].model_dump()
     combined = await mcp_host.list_tools()
     combined_names = [tool.name for tool in combined]
-    assert len(combined_names) == 66
-    assert len(set(combined_names)) == 66
-    assert len(set(combined_names) - set(native)) == 37
+    assert len(combined_names) == 67
+    assert len(set(combined_names)) == 67
+    assert len(set(combined_names) - set(native)) == 38
     print(json.dumps(sorted(native)))
 asyncio.run(check())
 """
@@ -363,7 +365,7 @@ async def check():
                     await session.initialize()
                     actual = sorted(tool.name for tool in (await session.list_tools()).tools)
                     assert actual == expected
-                    assert 'main.context' not in actual
+                    assert 'main.context' in actual
                     assert 'agentgraph.inspect' in actual
                     print('STREAMABLE_HTTP_OK')
                     return
@@ -408,9 +410,9 @@ async def check():
             actual = sorted(tool.name for tool in (await session.list_tools()).tools)
             elapsed = time.perf_counter() - started
             assert actual == expected
-            assert 'main.context' not in actual
+            assert 'main.context' in actual
             assert 'agentgraph.inspect' in actual
-            assert len(actual) == 66
+            assert len(actual) == 67
             assert sum(name.startswith('engraphis_') for name in actual) == 29
             assert elapsed < 10
             print(json.dumps({{'status': 'STDIO_OK', 'count': len(actual), 'elapsed': elapsed}}))
@@ -455,6 +457,7 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
             "projectId": "project-1",
             "deckId": "deck_builder",
             "conversationId": "external-mcp:grant-1",
+            "parentRunId": "external-main:grant-1",
             "mainCardId": "card_main_chat",
             "instructions": "Persisted Main instructions.",
         } if issuer == config.issuer_url and subject == "auth0|jeremiah" else None,
@@ -494,12 +497,14 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
 def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(monkeypatch):
     import asyncio
     import mcp_host
+    from app import control_plane
     from mcp.server.auth.provider import AccessToken
 
     context = {
         "projectId": "project-1",
         "deckId": "deck_builder",
         "conversationId": "external-mcp:grant-1",
+        "parentRunId": "external-main:grant-1",
         "mainCardId": "card_main_chat",
         "instructions": "Persisted Main instructions.",
     }
@@ -516,7 +521,9 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     )
     tools = asyncio.run(mcp_host.list_tools())
     by_name = {tool.name: tool for tool in tools}
-    assert "main.context" not in by_name
+    assert len(tools) == 67
+    assert len(by_name) == 67
+    assert "main.context" in by_name
     assert "agentgraph.inspect" in by_name
     assert "graphview.list" in by_name
     assert "graphview.get" in by_name
@@ -533,6 +540,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "agentContextId" not in by_name["run_coder_subagent"].inputSchema["properties"]
     assert "agentContext" not in by_name["run_coder_subagent"].inputSchema["properties"]
     assert "adapter" not in by_name["run_coder_subagent"].inputSchema["properties"]
+    assert "instructionId" not in by_name["card.run_assistant_agent"].inputSchema["properties"]
+    assert "graphViewIds" in by_name["card.run_assistant_agent"].inputSchema["properties"]
     assert by_name["engraphis_recall"].model_dump()["securitySchemes"] == [
         {"type": "oauth2", "scopes": ["liquidaity.main"]}
     ]
@@ -559,6 +568,11 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
     monkeypatch.setattr(mcp_host, "_bridge", bridge)
 
+    async def run_saved_card(payload):
+        calls.append(("card_run_assistant_agent", payload))
+        return {"ok": True}
+    monkeypatch.setattr(control_plane, "card_run_assistant_agent", run_saved_card)
+
     asyncio.run(mcp_host.call_tool("engraphis_recall", {"query": "Main", "limit": 3}))
     assert calls[-1] == ("engraphis_recall", {"query": "Main", "limit": 3})
 
@@ -572,6 +586,26 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
             "limit": 3,
         },
     )
+
+    main_context = asyncio.run(mcp_host.call_tool("main.context", {}))
+    assert json.loads(main_context[0].text)["context"] == {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "external-mcp:grant-1",
+        "parentRunId": "external-main:grant-1",
+        "mainCardId": "card_main_chat",
+    }
+
+    asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
+        "cardId": "card_agent",
+        "graphViewIds": ["graphview:one"],
+        "input": "Use the bounded context.",
+    }))
+    path, payload = calls[-1]
+    assert path == "card_run_assistant_agent"
+    assert payload["originatingAgentId"] == "card_main_chat"
+    assert payload["originatingRunId"] == "external-main:grant-1"
+    assert payload["graphViewIds"] == ["graphview:one"]
 
     denied = asyncio.run(mcp_host.call_tool("run_coder_subagent", {
         "projectId": "spoofed",
@@ -617,6 +651,7 @@ def test_oauth_principal_context_is_reused_within_one_verified_session(monkeypat
                 "projectId": "project-1",
                 "deckId": "deck_builder",
                 "conversationId": "external-mcp:grant-1",
+                "parentRunId": "external-main:grant-1",
                 "mainCardId": "card_main_chat",
             }
         ),

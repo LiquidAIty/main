@@ -552,7 +552,7 @@ export function buildPythonAutoGenCardRuntimePayload(
 // resolvers the Mag One path uses (resolveCardModelStrict / resolveCardTools /
 // serializeCardParticipant). No fallback model, no substitute card, no plain completion.
 
-const SINGLE_CARD_RUN_ARG_KEYS = ['projectId', 'deckId', 'cardId', 'correlationId', 'input', 'conversationId', 'instructionId', 'senderCardId', 'parentRunId', 'runAuthority'] as const;
+const SINGLE_CARD_RUN_ARG_KEYS = ['projectId', 'deckId', 'cardId', 'correlationId', 'input', 'conversationId', 'instructionId', 'senderCardId', 'parentRunId', 'graphViewIds', 'runAuthority'] as const;
 
 export type ConfiguredCardRunArgs = {
   projectId: string;
@@ -568,6 +568,9 @@ export type ConfiguredCardRunArgs = {
   instructionId?: string;
   senderCardId?: string;
   parentRunId?: string;
+  /** Stable persisted Graph View identities selected for this assignment.
+   * Python resolves their bounded payloads from ThinkGraph. */
+  graphViewIds?: string[];
   /** Server-authored trusted run context (e.g. ThinkGraph source-pair authority),
    * transported to the Python runtime via cardRuntime.runtimeScope. Never
    * browser-supplied — callers of this function are backend control-plane code. */
@@ -651,6 +654,9 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
   const instructionId = String(args?.instructionId || '').trim();
   const senderCardId = String(args?.senderCardId || '').trim();
   const parentRunId = String(args?.parentRunId || '').trim();
+  const graphViewIds = (Array.isArray(args?.graphViewIds) ? args.graphViewIds : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
   if (!projectId || !deckId || !cardId || !correlationId || !input) {
     return done({ status: 'failed', error: 'card_run_args_incomplete' });
   }
@@ -720,6 +726,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
             instructionId,
             senderCardId: senderCardId || cardId,
             receiverCardId: cardId,
+            ...(graphViewIds.length ? { graphViewIds } : {}),
           },
         }
       : {}),
@@ -768,6 +775,12 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         assignmentId
           ? {
               assignmentId,
+              ...(String((response as any).instructionId || '').trim()
+                ? { instructionId: String((response as any).instructionId).trim() }
+                : {}),
+              ...(String((response as any).resultId || '').trim()
+                ? { resultId: String((response as any).resultId).trim() }
+                : {}),
               artifactLocators: Array.isArray((response as any).artifactLocators)
                 ? ((response as any).artifactLocators as string[])
                 : [],
@@ -852,6 +865,12 @@ export async function runCardWithContract(
         if (assignmentId) {
           agentAssignmentResult = {
             assignmentId,
+            ...(String((sidecarResponse as any).instructionId || '').trim()
+              ? { instructionId: String((sidecarResponse as any).instructionId).trim() }
+              : {}),
+            ...(String((sidecarResponse as any).resultId || '').trim()
+              ? { resultId: String((sidecarResponse as any).resultId).trim() }
+              : {}),
             artifactLocators: Array.isArray((sidecarResponse as any).artifactLocators)
               ? ((sidecarResponse as any).artifactLocators as string[])
               : [],

@@ -26,6 +26,7 @@ _MAX_RESULT_CHARS = 100_000
 _MAX_ERROR_CHARS = 8_000
 _MAX_INSTRUCTION_CHARS = 200_000
 _MAX_OPERATION_REFERENCES = 16
+_MAX_TOOL_EVIDENCE = 64
 
 
 class AgentGraphError(ValueError):
@@ -83,6 +84,27 @@ def _optional_error(value: Any) -> str | None:
     if len(value) > _MAX_ERROR_CHARS:
         raise AgentGraphError("agentgraph_result_error_too_large")
     return value
+
+
+def _tool_evidence(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > _MAX_TOOL_EVIDENCE:
+        raise AgentGraphError("agentgraph_tool_evidence_invalid")
+    allowed = {"callId", "toolName", "event", "status"}
+    normalized: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) - allowed:
+            raise AgentGraphError("agentgraph_tool_evidence_invalid")
+        record = {
+            key: str(item.get(key) or "").strip()[:500]
+            for key in allowed
+            if str(item.get(key) or "").strip()
+        }
+        if not record:
+            raise AgentGraphError("agentgraph_tool_evidence_invalid")
+        normalized.append(record)
+    return normalized
 
 
 @contextmanager
@@ -767,6 +789,7 @@ def finish_assignment(
     summary: str | None = None,
     error_code: str | None = None,
     error_detail: str | None = None,
+    tool_evidence: list[dict[str, Any]] | None = None,
     connection: Any | None = None,
 ) -> dict[str, Any]:
     """Attach exact terminal result and artifact identities to the claimed run."""
@@ -782,6 +805,7 @@ def finish_assignment(
     summary = _optional_text(summary, "result_summary")
     error_code = _optional_text(error_code, "error_code")
     error_detail = _optional_error(error_detail)
+    tool_evidence = _tool_evidence(tool_evidence)
     result_id = f"agentresult:{assignment_id.split(':', 1)[-1]}"
     created_at = _now()
     with _connection_scope(connection) as conn, conn.cursor() as cursor:
@@ -804,20 +828,26 @@ def finish_assignment(
         if prior_state in {"completed", "failed", "cancelled"}:
             cursor.execute(
                 """
-                SELECT result_id, status, output, summary, error_code, error_detail
+                SELECT result_id, status, output, summary, error_code, error_detail,
+                       tool_evidence
                 FROM ag_catalog.agent_results
                 WHERE assignment_id=%s
                 """,
                 (assignment_id,),
             )
             existing = cursor.fetchone()
-            if existing == (
-                result_id,
-                terminal,
-                output,
-                summary,
-                error_code,
-                error_detail,
+            if (
+                existing is not None
+                and existing[:6]
+                == (
+                    result_id,
+                    terminal,
+                    output,
+                    summary,
+                    error_code,
+                    error_detail,
+                )
+                and list(existing[6] or []) == tool_evidence
             ):
                 return {
                     "ok": True,
@@ -837,8 +867,8 @@ def finish_assignment(
             """
             INSERT INTO ag_catalog.agent_results
               (result_id, assignment_id, project_id, correlation_id, status,
-               output, summary, error_code, error_detail)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               output, summary, error_code, error_detail, tool_evidence)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
             """,
             (
                 result_id,
@@ -850,6 +880,7 @@ def finish_assignment(
                 summary,
                 error_code,
                 error_detail,
+                json.dumps(tool_evidence, ensure_ascii=False),
             ),
         )
         timestamp_column = "cancelled_at" if terminal == "cancelled" else "completed_at"
@@ -966,7 +997,72 @@ def finish_assignment(
         "resultId": result_id,
         "status": terminal,
         "artifacts": artifact_rows,
+        "toolEvidence": tool_evidence,
     }
+
+
+def record_assignment_runtime_context(
+    *,
+    project_id: str,
+    assignment_id: str,
+    runtime: str,
+    provider: str,
+    model_key: str,
+    provider_model_id: str,
+    profile_id: str | None,
+    profile_version: int | None,
+    skill_versions: list[str],
+    data_binding_refs: list[dict[str, Any]],
+    connection: Any | None = None,
+) -> None:
+    """Pin run bindings on the existing canonical run trace.
+
+    Permanent card configuration remains in the saved deck and assignment
+    stores. This records only the exact bindings used by this run.
+    """
+    project_id = _required_text(project_id, "project_id")
+    assignment_id = _required_id(assignment_id, "assignment_id")
+    runtime = _required_text(runtime, "runtime")
+    provider = _required_text(provider, "provider")
+    model_key = _required_text(model_key, "model_key")
+    provider_model_id = _required_text(provider_model_id, "provider_model_id")
+    if profile_id is not None:
+        profile_id = _required_id(profile_id, "profile_id")
+    if profile_version is not None and (
+        not isinstance(profile_version, int) or profile_version < 1
+    ):
+        raise AgentGraphError("agentgraph_profile_version_invalid")
+    with _connection_scope(connection) as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE ag_catalog.card_run_traces trace
+            SET runtime=%s, provider=%s, model_key=%s, provider_model_id=%s,
+                profile_id=%s, profile_version=%s,
+                skill_versions=%s::jsonb, data_binding_refs=%s::jsonb,
+                outcome='running', state='running', updated_at=now()
+            FROM ag_catalog.agent_assignments assignment
+            WHERE assignment.project_id=%s
+              AND assignment.assignment_id=%s
+              AND trace.project_id=assignment.project_id
+              AND trace.correlation_id=assignment.correlation_id
+            """,
+            (
+                runtime,
+                provider,
+                model_key,
+                provider_model_id,
+                profile_id,
+                profile_version,
+                json.dumps(skill_versions, ensure_ascii=False),
+                json.dumps(data_binding_refs, ensure_ascii=False),
+                project_id,
+                assignment_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise AgentGraphError(
+                f"agentgraph_run_trace_not_found: {assignment_id}"
+            )
 
 
 def cancel_assignment(
@@ -1252,8 +1348,13 @@ def add_assignment_references(
         "native_session",
         "worldsignals",
     }
+    if not isinstance(references, list) or len(references) > 128:
+        raise AgentGraphError("agentgraph_context_references_invalid")
     normalized: list[tuple[str, str, bool]] = []
+    seen: set[tuple[str, str]] = set()
     for reference in references:
+        if not isinstance(reference, dict):
+            raise AgentGraphError("agentgraph_context_reference_invalid")
         reference_id = _required_text(reference.get("referenceId"), "reference_id")
         reference_type = _required_text(
             reference.get("referenceType"), "reference_type"
@@ -1262,6 +1363,10 @@ def add_assignment_references(
             raise AgentGraphError(
                 f"agentgraph_reference_type_invalid: {reference_type}"
             )
+        identity = (reference_type, reference_id)
+        if identity in seen:
+            continue
+        seen.add(identity)
         normalized.append(
             (reference_id, reference_type, bool(reference.get("required", False)))
         )
@@ -1345,14 +1450,21 @@ def read_assignment(
                    a.sender_card_id, a.receiver_card_id, a.parent_assignment_id,
                    a.state, a.attempt, a.instruction_id, i.body, i.body_sha256,
                    r.result_id, r.status, r.output, r.summary, r.error_code, r.error_detail,
+                   r.tool_evidence, r.review_state,
                    a.parent_run_id, a.claimed_by_card_id, a.lease_expires_at,
-                   a.heartbeat_at, parent_run.session_id
+                   a.heartbeat_at, parent_run.session_id,
+                   run.runtime, run.provider, run.model_key, run.provider_model_id,
+                   run.profile_id, run.profile_version, run.skill_versions,
+                   run.data_binding_refs, run.outcome, run.state, run.error_code
             FROM ag_catalog.agent_assignments a
             JOIN ag_catalog.agent_instructions i ON i.instruction_id=a.instruction_id
             LEFT JOIN ag_catalog.agent_results r ON r.assignment_id=a.assignment_id
             LEFT JOIN ag_catalog.card_run_traces parent_run
               ON parent_run.project_id=a.project_id
              AND parent_run.correlation_id=a.parent_run_id
+            LEFT JOIN ag_catalog.card_run_traces run
+              ON run.project_id=a.project_id
+             AND run.correlation_id=a.correlation_id
             WHERE a.project_id=%s AND a.assignment_id=%s
               AND a.receiver_card_id=%s
             """,
@@ -1426,6 +1538,20 @@ def read_assignment(
             }
             for item in cursor.fetchall()
         ]
+        cursor.execute(
+            """
+            SELECT parent.assignment_id, parent.instruction_id, result.result_id,
+                   result.status, result.summary
+            FROM ag_catalog.agent_assignments current
+            JOIN ag_catalog.agent_assignments parent
+              ON parent.assignment_id=current.parent_assignment_id
+            LEFT JOIN ag_catalog.agent_results result
+              ON result.assignment_id=parent.assignment_id
+            WHERE current.project_id=%s AND current.assignment_id=%s
+            """,
+            (project_id, assignment_id),
+        )
+        parent_row = cursor.fetchone()
     return {
         "ok": True,
         "assignmentId": row[0],
@@ -1435,13 +1561,13 @@ def read_assignment(
         "senderCardId": row[4],
         "receiverCardId": row[5],
         "parentAssignmentId": row[6],
-        "parentRunId": row[18],
+        "parentRunId": row[20],
         "state": row[7],
         "attempt": row[8],
-        "claimedByCardId": row[19],
-        "leaseExpiresAt": row[20].isoformat() if row[20] else None,
-        "heartbeatAt": row[21].isoformat() if row[21] else None,
-        "nativeSessionId": row[22],
+        "claimedByCardId": row[21],
+        "leaseExpiresAt": row[22].isoformat() if row[22] else None,
+        "heartbeatAt": row[23].isoformat() if row[23] else None,
+        "nativeSessionId": row[24],
         "instructionId": row[9],
         "instruction": row[10],
         "instructionSha256": row[11],
@@ -1453,6 +1579,8 @@ def read_assignment(
                 "summary": row[15],
                 "errorCode": row[16],
                 "errorDetail": row[17],
+                "toolEvidence": list(row[18] or []),
+                "reviewState": row[19],
             }
             if row[12]
             else None
@@ -1460,6 +1588,30 @@ def read_assignment(
         "artifacts": artifacts,
         "contextReferences": context_references,
         "operationReferences": operations,
+        "parentContinuity": (
+            {
+                "assignmentId": parent_row[0],
+                "instructionId": parent_row[1],
+                "resultId": parent_row[2],
+                "resultStatus": parent_row[3],
+                "resultSummary": parent_row[4],
+            }
+            if parent_row
+            else None
+        ),
+        "runTrace": {
+            "runtime": row[25],
+            "provider": row[26],
+            "modelKey": row[27],
+            "providerModelId": row[28],
+            "profileId": row[29],
+            "profileVersion": row[30],
+            "skillVersions": list(row[31] or []),
+            "dataBindingRefs": list(row[32] or []),
+            "outcome": row[33],
+            "state": row[34],
+            "errorCode": row[35],
+        },
         "ageIdentity": {
             "assignment": json.loads(str(identity_rows[0][0])),
             "instruction": json.loads(str(identity_rows[0][1])),

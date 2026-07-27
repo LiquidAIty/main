@@ -38,6 +38,8 @@ _MAX_PARAMETER_TEXT = 500
 _MAX_RESULT_COLUMNS = 64
 _MAX_RESULT_CELL_CHARS = 4000
 _MAX_GRAPH_VIEW_RESULT_CHARS = 64_000
+_MAX_SELECTED_GRAPH_VIEWS = 16
+_MAX_SELECTED_GRAPH_VIEW_CONTEXT_CHARS = 64_000
 
 
 @dataclass(frozen=True)
@@ -107,6 +109,8 @@ class HydratedAssignmentContext:
     query_execution_ids: tuple[str, ...]
     card_grants: tuple[str, ...]
     model_context: str
+    selected_graph_view_ids: tuple[str, ...] = ()
+    saved_card_reference: dict[str, Any] | None = None
 
 
 _GRAPH_GRANTS: dict[tuple[str, str], frozenset[str]] = {
@@ -1157,12 +1161,119 @@ def build_query_context(
     return "\n".join(lines)
 
 
+def _resolve_selected_graph_views(
+    *,
+    project_id: str,
+    conversation_id: str,
+    receiver_card_id: str,
+    graph_view_ids: list[str] | tuple[str, ...],
+) -> list[dict[str, Any]]:
+    identities = [str(value or "").strip() for value in graph_view_ids]
+    if (
+        len(identities) > _MAX_SELECTED_GRAPH_VIEWS
+        or any(not _IDENTITY.fullmatch(value) for value in identities)
+        or len(identities) != len(set(identities))
+    ):
+        raise ValueError("agentgraph_selected_graph_view_ids_invalid")
+    if not identities:
+        return []
+    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+
+    available = get_thinkgraph().graph_views(project_id, conversation_id).get("views") or []
+    resolved: list[dict[str, Any]] = []
+    for view_id in identities:
+        matches = [
+            view
+            for view in available
+            if str(view.get("viewId") or "") == view_id
+        ]
+        if len(matches) != 1:
+            raise LookupError(
+                f"agentgraph_graph_view_not_found_in_runtime_context: {view_id}"
+            )
+        view = matches[0]
+        receiving_role = str(view.get("receivingRole") or "").strip()
+        if receiving_role not in {"", receiver_card_id}:
+            raise PermissionError(
+                f"agentgraph_graph_view_receiver_mismatch: {view_id}"
+            )
+        resolved.append(view)
+    return resolved
+
+
+def _attach_selected_graph_view_references(
+    *,
+    project_id: str,
+    assignment_id: str,
+    receiver_card_id: str,
+    views: list[dict[str, Any]],
+) -> None:
+    if not views:
+        return
+    from app.python_models import agentgraph as ag
+
+    references: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(reference_id: str, reference_type: str, required: bool) -> None:
+        identity = (reference_type, reference_id)
+        if not reference_id or identity in seen:
+            return
+        seen.add(identity)
+        references.append(
+            {
+                "referenceId": reference_id,
+                "referenceType": reference_type,
+                "required": required,
+            }
+        )
+
+    for view in views:
+        add(str(view.get("viewId") or ""), "graph_view", True)
+        authority = str(view.get("authority") or "").strip().lower()
+        for raw_reference in view.get("provenanceRefs") or []:
+            reference_id = str(raw_reference or "").strip()
+            prefix = reference_id.split(":", 1)[0].lower()
+            reference_type = (
+                prefix
+                if prefix in {"thinkgraph", "knowgraph", "codegraph"}
+                else authority
+            )
+            if reference_type in {"thinkgraph", "knowgraph", "codegraph"}:
+                add(reference_id, reference_type, False)
+    ag.add_assignment_references(
+        project_id=project_id,
+        assignment_id=assignment_id,
+        receiver_card_id=receiver_card_id,
+        references=references,
+    )
+
+
+def _render_selected_graph_views(views: list[dict[str, Any]]) -> str:
+    if not views:
+        return "[SELECTED_GRAPH_VIEWS]\n- none"
+    from app.python_models.unified_context import _render_view_lines
+
+    lines = ["[SELECTED_GRAPH_VIEWS]"]
+    for view in views:
+        lines.extend(_render_view_lines(view))
+    text = "\n".join(lines)
+    if len(text) > _MAX_SELECTED_GRAPH_VIEW_CONTEXT_CHARS:
+        raise ValueError("agentgraph_selected_graph_view_context_too_large")
+    return text
+
+
 def hydrate_assignment_context(
     *,
     project_id: str,
     assignment_id: str,
     receiver_card_id: str,
     lease_seconds: int = 120,
+    graph_view_ids: list[str] | tuple[str, ...] | None = None,
+    runtime_type: str = "",
+    runtime_provider: str = "",
+    runtime_model_key: str = "",
+    runtime_provider_model_id: str = "",
 ) -> HydratedAssignmentContext:
     """Claim and hydrate one AgentGraph assignment before any model is built.
 
@@ -1197,6 +1308,39 @@ def hydrate_assignment_context(
         for grant in raw_grants
         if isinstance(grant, str) and str(grant).strip()
     ]
+    saved_card_reference = control_plane.resolve_saved_card_reference(
+        project_id,
+        assignment["deckId"],
+        receiver_card_id,
+        deck=deck,
+    )
+    selected_ids = (
+        list(graph_view_ids)
+        if graph_view_ids is not None
+        else [
+            str(reference.get("referenceId") or "")
+            for reference in assignment.get("contextReferences") or []
+            if reference.get("referenceType") == "graph_view"
+        ]
+    )
+    selected_views = _resolve_selected_graph_views(
+        project_id=project_id,
+        conversation_id=assignment["conversationId"],
+        receiver_card_id=receiver_card_id,
+        graph_view_ids=selected_ids,
+    )
+    if graph_view_ids is not None:
+        _attach_selected_graph_view_references(
+            project_id=project_id,
+            assignment_id=assignment_id,
+            receiver_card_id=receiver_card_id,
+            views=selected_views,
+        )
+        assignment = ag.read_assignment(
+            project_id=project_id,
+            assignment_id=assignment_id,
+            receiving_card_id=receiver_card_id,
+        )
 
     saved_bindings = assigned_query_bindings(
         project_id=project_id,
@@ -1225,6 +1369,36 @@ def hydrate_assignment_context(
         receiver_card_id=receiver_card_id,
         lease_seconds=lease_seconds,
     )
+    if all(
+        (
+            runtime_type,
+            runtime_provider,
+            runtime_model_key,
+            runtime_provider_model_id,
+        )
+    ):
+        profile = saved_card_reference.get("profile") or {}
+        ag.record_assignment_runtime_context(
+            project_id=project_id,
+            assignment_id=assignment_id,
+            runtime=runtime_type,
+            provider=runtime_provider,
+            model_key=runtime_model_key,
+            provider_model_id=runtime_provider_model_id,
+            profile_id=str(profile.get("profileId") or "") or None,
+            profile_version=(
+                int(profile["version"])
+                if isinstance(profile.get("version"), int)
+                else None
+            ),
+            skill_versions=[
+                f"{skill['skillId']}@v{skill['version']}"
+                for skill in saved_card_reference.get("skills") or []
+            ],
+            data_binding_refs=list(
+                saved_card_reference.get("dataBindings") or []
+            ),
+        )
     required_reads = [
         binding
         for binding in materializable
@@ -1265,6 +1439,31 @@ def hydrate_assignment_context(
             f"registered_operation_materialization_failed: {error}"
         ) from error
     operation_context = build_query_context(executions, optional_operations)
+    parent_continuity = assignment.get("parentContinuity")
+    continuity_context = (
+        "\n".join(
+            [
+                "[PARENT_AGENTGRAPH_CONTINUITY]",
+                f"assignmentId: {parent_continuity.get('assignmentId')}",
+                f"instructionId: {parent_continuity.get('instructionId')}",
+                f"resultId: {parent_continuity.get('resultId')}",
+                f"resultStatus: {parent_continuity.get('resultStatus')}",
+                f"resultSummary: {str(parent_continuity.get('resultSummary') or '')[:2000]}",
+            ]
+        )
+        if isinstance(parent_continuity, dict)
+        else "[PARENT_AGENTGRAPH_CONTINUITY]\n- none"
+    )
+    reference_context = "\n".join(
+        [
+            "[AGENTGRAPH_CONTEXT_REFERENCES]",
+            *[
+                f"- {reference['referenceType']}:{reference['referenceId']}"
+                + (" [required]" if reference.get("required") else "")
+                for reference in assignment.get("contextReferences") or []
+            ],
+        ]
+    )
     model_context = "\n\n".join(
         [
             "[AGENTGRAPH_ASSIGNMENT]",
@@ -1273,6 +1472,16 @@ def hydrate_assignment_context(
             f"correlationId: {claimed['correlationId']}",
             "Exact instruction:",
             claimed["instruction"],
+            "[SAVED_CARD_REFERENCE]\n"
+            + json.dumps(
+                saved_card_reference,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            reference_context,
+            _render_selected_graph_views(selected_views),
+            continuity_context,
             operation_context,
         ]
     )
@@ -1290,13 +1499,22 @@ def hydrate_assignment_context(
         optional_bindings=tuple(optional_operations),
         executions=tuple(executions),
         graph_view_ids=tuple(
-            execution.graph_view_id for execution in executions
+            dict.fromkeys(
+                [
+                    *(str(view.get("viewId") or "") for view in selected_views),
+                    *(execution.graph_view_id for execution in executions),
+                ]
+            )
         ),
         query_execution_ids=tuple(
             execution.execution_id for execution in executions
         ),
         card_grants=tuple(card_grants),
         model_context=model_context,
+        selected_graph_view_ids=tuple(
+            str(view.get("viewId") or "") for view in selected_views
+        ),
+        saved_card_reference=saved_card_reference,
     )
 
 

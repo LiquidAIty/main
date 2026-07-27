@@ -220,8 +220,13 @@ class TestGraphInspection:
     def test_agentgraph_inspection_uses_exact_server_scope(self, monkeypatch):
         calls = []
         monkeypatch.setattr(cp.ag, "inspect_assignments", lambda **kwargs: calls.append(kwargs) or {
-            "ok": True, "assignments": [],
+            "ok": True, "receiverCardId": "card_agent",
         })
+        monkeypatch.setattr(
+            cp,
+            "resolve_saved_card_reference",
+            lambda *_args, **_kwargs: {"cardId": "card_agent"},
+        )
         result = asyncio.run(cp.agentgraph_inspect({
             "projectId": "p",
             "deckId": "deck_builder",
@@ -230,6 +235,7 @@ class TestGraphInspection:
             "limit": 5,
         }))
         assert result["ok"] is True
+        assert result["savedCardReference"] == {"cardId": "card_agent"}
         assert calls == [{
             "project_id": "p",
             "deck_id": "deck_builder",
@@ -330,6 +336,36 @@ class TestRunAssistantAgent:
         assert calls[0][2]["instructionId"] == "instruction:hermes-search"
         assert calls[0][2]["senderCardId"] == "card_hermes_steward"
         assert response["instructionId"] == "instruction:hermes-search"
+
+    def test_trusted_inter_agent_call_forwards_selected_graph_view_ids(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            cp.ag,
+            "create_instruction",
+            lambda **_kwargs: {"instructionId": "instruction:main-agent"},
+        )
+        monkeypatch.setattr(
+            cp,
+            "_backend_json",
+            lambda method, path, payload=None: (
+                calls.append((method, path, payload))
+                or {"ok": True, "result": {"status": "completed"}}
+            ),
+        )
+
+        asyncio.run(cp.card_run_assistant_agent({
+            "projectId": "p",
+            "deckId": "deck_builder",
+            "cardId": "card_agent",
+            "correlationId": "run-one",
+            "conversationId": "conv-1",
+            "originatingAgentId": "card_main_chat",
+            "originatingRunId": "main-run-1",
+            "graphViewIds": ["graphview:one", "graphview:two"],
+            "input": "Use the selected bounded context.",
+        }))
+
+        assert calls[0][2]["graphViewIds"] == ["graphview:one", "graphview:two"]
 
     def test_inter_agent_failure_records_backend_error(self, monkeypatch):
         monkeypatch.setattr(

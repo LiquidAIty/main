@@ -59,12 +59,34 @@ def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
             lease_seconds=30,
             connection=connection,
         )["attempt"] == 1
+        ag.record_assignment_runtime_context(
+            project_id=PROJECT_ID,
+            assignment_id=assignment["assignmentId"],
+            runtime="assistant_agent",
+            provider="openrouter",
+            model_key="model-key",
+            provider_model_id="provider/model",
+            profile_id=None,
+            profile_version=None,
+            skill_versions=["skill-one@v2"],
+            data_binding_refs=[{"bindingType": "database", "bindingRef": "db:one"}],
+            connection=connection,
+        )
+        tool_evidence = [
+            {
+                "callId": "call-one",
+                "toolName": "agentgraph.inspect",
+                "event": "ToolCallExecutionEvent",
+                "status": "completed",
+            }
+        ]
         first = ag.finish_assignment(
             project_id=PROJECT_ID,
             assignment_id=assignment["assignmentId"],
             lease_token=claim["leaseToken"],
             status="completed",
             output="Exact result.",
+            tool_evidence=tool_evidence,
             connection=connection,
         )
         assert first["created"] is True
@@ -74,6 +96,7 @@ def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
             lease_token=claim["leaseToken"],
             status="completed",
             output="Exact result.",
+            tool_evidence=tool_evidence,
             connection=connection,
         )["created"] is False
         with pytest.raises(ag.AgentGraphError, match="already_terminal"):
@@ -94,6 +117,15 @@ def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
         )
         assert hydrated["instruction"] == "  Exact instruction bytes.\n"
         assert hydrated["result"]["output"] == "Exact result."
+        assert hydrated["result"]["toolEvidence"] == tool_evidence
+        assert hydrated["result"]["reviewState"] == "unreviewed"
+        assert hydrated["runTrace"]["runtime"] == "assistant_agent"
+        assert hydrated["runTrace"]["provider"] == "openrouter"
+        assert hydrated["runTrace"]["providerModelId"] == "provider/model"
+        assert hydrated["runTrace"]["skillVersions"] == ["skill-one@v2"]
+        assert hydrated["runTrace"]["dataBindingRefs"] == [
+            {"bindingRef": "db:one", "bindingType": "database"}
+        ]
         assert hydrated["operationReferences"][0]["operationId"] == "agentgraph.active_context_identities"
         assert hydrated["operationReferences"][0]["executionRole"] == "optional_tool"
         assert "body" not in hydrated["ageIdentity"]["instruction"]

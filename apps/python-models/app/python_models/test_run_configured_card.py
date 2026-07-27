@@ -239,7 +239,12 @@ class TestRegisteredQueryContext:
                 graph_view_ids=(execution.graph_view_id,),
                 query_execution_ids=(execution.execution_id,),
                 card_grants=(),
-                model_context="materialized context",
+                model_context=(
+                    "materialized context\n"
+                    "graphview:query:one\n"
+                    '{"fact":"bounded"}\n'
+                    "optional_detail: project.detail@v1"
+                ),
             )
 
         monkeypatch.setattr(mac.rq, "hydrate_assignment_context", hydrate)

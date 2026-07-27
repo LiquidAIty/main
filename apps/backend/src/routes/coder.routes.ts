@@ -138,6 +138,7 @@ router.post('/mcp-bridge/external_main_context', async (req, res) => {
     if (!grant) return res.status(403).json({ ok: false, error: 'external_identity_grant_required' });
 
     const conversationId = `external-mcp:${grant.grantId}`;
+    const parentRunId = `external-main:${grant.grantId}`;
     const mainCardId = await resolveMainChatCardId(grant.projectId, BUILDER_DECK_ID);
     if (!mainCardId) {
       return res.status(409).json({ ok: false, error: 'persisted_main_chat_unavailable' });
@@ -149,6 +150,7 @@ router.post('/mcp-bridge/external_main_context', async (req, res) => {
         projectName: grant.projectName,
         deckId: BUILDER_DECK_ID,
         conversationId,
+        parentRunId,
         mainCardId,
       },
     });
@@ -743,6 +745,9 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     // conversationId is a structural reference to the real live conversation
     // (the Harness injects it server-side for doorway calls). Card-specific authority is minted inside
     // runConfiguredCard itself — never accepted from the caller.
+    const graphViewIds = (Array.isArray(body.graphViewIds) ? body.graphViewIds : [])
+      .map((value: unknown) => String(value || '').trim())
+      .filter(Boolean);
     const result = await runConfiguredCard({
       projectId: String(body.projectId || ''),
       deckId: String(body.deckId || BUILDER_DECK_ID),
@@ -753,6 +758,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       instructionId: String(body.instructionId || ''),
       senderCardId: String(body.senderCardId || ''),
       parentRunId: String(body.parentRunId || ''),
+      ...(graphViewIds.length ? { graphViewIds } : {}),
     });
     return res.json({ ok: result.status === 'completed', result });
   } catch (error) {

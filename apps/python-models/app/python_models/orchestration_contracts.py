@@ -367,6 +367,7 @@ class AgentAssignmentRequest(BaseModel):
     instructionId: RequiredRuntimeString
     senderCardId: RequiredRuntimeString
     receiverCardId: RequiredRuntimeString
+    graphViewIds: list[RequiredRuntimeString] = Field(default_factory=list, max_length=16)
 
 
 class ContextPack(BaseModel):
@@ -454,6 +455,8 @@ class OrchestratorRunResponse(BaseModel):
     ok: bool
     session: ProjectSession
     assignmentId: str | None = None
+    instructionId: str | None = None
+    resultId: str | None = None
     ledgerTrace: LedgerTrace = Field(default_factory=LedgerTrace)
     stopReason: str | None = None
     # finalResponseText is the real last AutoGen message text (never an app-authored
