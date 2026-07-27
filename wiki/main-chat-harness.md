@@ -63,9 +63,10 @@ card is selected only through its authorized Main→Hermes edge; its prompt/mode
 generic inherited-context Agent definition. Actual Hermes process execution, its own terminal/UI,
 and runtime evidence remain to be wired.
 
-**Mag One**: the job-folder and worker-card execution mechanics exist. The intended flow is that
-actual Hermes prepares `prompt.md` when Main requests a Run Plan, Main presents it, and
-`run_mag_one` is allowed only after user acceptance through Main's live `magentic_control` edge.
+**Mag One**: the AgentGraph instruction/assignment and worker-card execution mechanics exist. The
+intended flow is that actual Hermes persists an exact instruction when Main requests a Run Plan,
+Main presents it, and `run_mag_one` is allowed only after user acceptance through Main's live
+`magentic_control` edge.
 The complete Main→actual-Hermes→approved-Mag-One path is not yet runtime-proven.
 
 ## How it works
@@ -97,7 +98,8 @@ Mag One (separate MCP-bridge endpoints):
     → returns only magentic_option-connected cards
   run_mag_one
     → require exactly one live Main magentic_control edge
-    → read the existing handoff/<jobId>/prompt.md
+    → pass the stable instructionId to Python
+    → create/claim the AgentGraph assignment and hydrate the exact instruction
     → resolve live worker options → runCardWithContract
     → orchestrateWithAutoGen
 ```

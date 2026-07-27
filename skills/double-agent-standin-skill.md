@@ -34,9 +34,9 @@ The leak inspection rides along; it never becomes the Goal unless Main deliberat
 | Coder/CodeGraph | code inspector | **CBM** (`search_graph`/`get_code_snippet`/`search_code`) | CodeFindings (+ freshness) |
 | Hermes | memory/report | real ThinkGraph read + `hermes_memory_write` / report writer | evidence selection + recommendation |
 | KnowGraph | research/retrieval | real hybrid retrieval over existing project scope | trusted-Claim evidence packet |
-| Mag One | worker orchestrator | job folder `handoff/<id>/prompt.md` | task ledger / approved prompt |
-| Coder-impl | implementer | rung-4 job claim → real edit + `returns/<id>/` | CoderReport + real files |
-| Reviewer | reviewer | read returns + ThinkGraph ReviewResult | review verdict |
+| Mag One | worker orchestrator | AgentGraph instruction + claimed assignment | native task ledger / approved instruction |
+| Coder-impl | implementer | correlated AgentGraph assignment → real edit | CoderReport + registered artifact references |
+| Reviewer | reviewer | correlated result + ThinkGraph ReviewResult | review verdict |
 
 **Input contract (required):** every job's inputs MUST include `{project, conversation, goal}` — not
 just the goal — so the position can scope its writes without guessing. A missing scope block is a

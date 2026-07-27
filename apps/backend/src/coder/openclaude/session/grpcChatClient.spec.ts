@@ -15,7 +15,6 @@ import {
   buildHarnessRuntimeContext,
   decodeGrpcProgressEvent,
   deriveSessionId,
-  resolveExternalMainRuntimeContext,
   resolveCardDoorwayDefinitions,
   resolveHarnessTimeoutDeadline,
   resolveMainChatRuntimeConfig,
@@ -119,7 +118,9 @@ describe('native Main / Hermes / Search doorways', () => {
   });
 
   it('registers Search as a native inherited-context agent with web_search only', () => {
-    const definition = buildHarnessAgentDefinition(search) as any;
+    const definition = buildHarnessAgentDefinition(search, null, {
+      availableMcpTools: ['web_search'],
+    }) as any;
     expect(definition.system_prompt).toBe('Search prompt');
     expect(definition.allowed_tools).toEqual(['mcp__liquidaity__web_search']);
     expect(definition.when_to_use).toMatch(/URLs.*titles.*domains/i);
@@ -147,39 +148,6 @@ describe('native Main / Hermes / Search doorways', () => {
     // the parent's native schemas before serialization.
     expect(config?.parentAllowedNativeTools).toEqual(['Agent']);
     expect(config?.doorwayDefinitions.map((entry: any) => entry.card_id)).toEqual([hermes.id]);
-  });
-
-  it('resolves external Main context after authentication without opening the stdio catalog', async () => {
-    deckMocks.getDeckDocument.mockResolvedValue(doc(
-      [main, hermes, search],
-      [flow(main.id, hermes.id), flow(hermes.id, search.id)],
-    ));
-    const context = await resolveExternalMainRuntimeContext(
-      deriveSessionId('p1', 'external-mcp:grant-1'),
-      'chat',
-    );
-    expect(context).toEqual({
-      mainCardId: main.id,
-      instructions: 'Main prompt',
-      savedMainToolGrants: [
-        'thinkgraph.get_graph_slice',
-        'thinkgraph.submit_update',
-        'knowgraph.query',
-        'codegraph.search',
-        'codegraph.status',
-        'engraphis_recall',
-      ],
-      availableActionPaths: [
-        { kind: 'tool', grant: 'thinkgraph.get_graph_slice' },
-        { kind: 'tool', grant: 'thinkgraph.submit_update' },
-        { kind: 'tool', grant: 'knowgraph.query' },
-        { kind: 'tool', grant: 'codegraph.search' },
-        { kind: 'tool', grant: 'codegraph.status' },
-        { kind: 'tool', grant: 'engraphis_recall' },
-        { kind: 'agent', cardId: hermes.id, runtimeBinding: 'hermes_steward' },
-      ],
-    });
-    expect(mcpMocks.listPythonAgentMcpTools).not.toHaveBeenCalled();
   });
 
   it('accepts restored CodeGraph grants as part of the live Main MCP catalog', async () => {

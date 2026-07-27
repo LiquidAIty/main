@@ -8,6 +8,8 @@ import sys
 import threading
 import time
 
+import pytest
+
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
@@ -57,7 +59,11 @@ async def check():
     assert 'adapter' not in coder.inputSchema['properties']
     assert 'instructionId' in by_name['card.run_assistant_agent'].inputSchema['properties']
     assert by_name['run_mag_one'].inputSchema['required'] == ['instructionId', 'projectId', 'deckId']
-    assert by_name['main.context'].inputSchema == {'type': 'object', 'properties': {}, 'required': []}
+    assert 'main.context' not in by_name
+    assert 'agentgraph.inspect' in by_name
+    assert 'graphview.list' in by_name
+    assert 'graphview.get' in by_name
+    assert 'graphview.create' in by_name
     print(json.dumps({name: tool.model_dump() for name, tool in by_name.items()}, sort_keys=True))
 asyncio.run(check())
 """
@@ -87,9 +93,9 @@ async def check():
         assert tool.model_dump() == native[tool.name].model_dump()
     combined = await mcp_host.list_tools()
     combined_names = [tool.name for tool in combined]
-    assert len(combined_names) == 63
-    assert len(set(combined_names)) == 63
-    assert len(set(combined_names) - set(native)) == 34
+    assert len(combined_names) == 66
+    assert len(set(combined_names)) == 66
+    assert len(set(combined_names) - set(native)) == 37
     print(json.dumps(sorted(native)))
 asyncio.run(check())
 """
@@ -301,7 +307,8 @@ async def check():
                     await session.initialize()
                     actual = sorted(tool.name for tool in (await session.list_tools()).tools)
                     assert actual == expected
-                    assert 'main.context' in actual
+                    assert 'main.context' not in actual
+                    assert 'agentgraph.inspect' in actual
                     print('STREAMABLE_HTTP_OK')
                     return
         except Exception as exc:
@@ -345,8 +352,9 @@ async def check():
             actual = sorted(tool.name for tool in (await session.list_tools()).tools)
             elapsed = time.perf_counter() - started
             assert actual == expected
-            assert 'main.context' in actual
-            assert len(actual) == 63
+            assert 'main.context' not in actual
+            assert 'agentgraph.inspect' in actual
+            assert len(actual) == 66
             assert sum(name.startswith('engraphis_') for name in actual) == 29
             assert elapsed < 10
             print(json.dumps({{'status': 'STDIO_OK', 'count': len(actual), 'elapsed': elapsed}}))
@@ -387,10 +395,13 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
     monkeypatch.setattr(
         mcp_host,
         "_resolve_external_main_context_sync",
-        lambda issuer, subject, **_kwargs: {
+        lambda issuer, subject: {
             "projectId": "project-1",
             "deckId": "deck_builder",
             "conversationId": "external-mcp:grant-1",
+            "mainCardId": "card_main_chat",
+            "instructions": "Persisted Main instructions.",
+            "savedMainToolGrants": ["mcp__liquidaity__codegraph_search"],
         } if issuer == config.issuer_url and subject == "auth0|jeremiah" else None,
     )
     now = int(time.time())
@@ -411,7 +422,7 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
     assert verified is not None
     assert verified.subject == "auth0|jeremiah"
     assert verified.claims["liquidaity"]["projectId"] == "project-1"
-    assert "mainCardId" not in verified.claims["liquidaity"]
+    assert verified.claims["liquidaity"]["mainCardId"] == "card_main_chat"
 
     invalid_claims = [
         {**base, "iss": "https://wrong.auth0.com/"},
@@ -440,6 +451,7 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
             "mcp__liquidaity__codegraph_search",
             "mcp__liquidaity__engraphis_recall",
             "mcp__liquidaity__run_coder_subagent",
+            "mcp__liquidaity__graphview_create",
         ],
     }
     monkeypatch.setattr(
@@ -450,30 +462,17 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
             client_id="chatgpt-client",
             scopes=["liquidaity.main"],
             subject="auth0|jeremiah",
-            claims={
-                "iss": "https://tenant.auth0.com/",
-                "liquidaity": {
-                    "projectId": "project-1",
-                    "deckId": "deck_builder",
-                    "conversationId": "external-mcp:grant-1",
-                },
-            },
-        ),
-    )
-    monkeypatch.setattr(
-        mcp_host,
-        "_resolve_external_main_context_sync",
-        lambda issuer, subject, *, resolve_runtime=False: (
-            context
-            if resolve_runtime
-            and issuer == "https://tenant.auth0.com/"
-            and subject == "auth0|jeremiah"
-            else None
+            claims={"liquidaity": context},
         ),
     )
     tools = asyncio.run(mcp_host.list_tools())
     by_name = {tool.name: tool for tool in tools}
-    assert "main.context" in by_name
+    assert "main.context" not in by_name
+    assert "agentgraph.inspect" in by_name
+    assert "graphview.list" in by_name
+    assert "graphview.get" in by_name
+    assert "graphview.create" in by_name
+    assert {tool.name for tool in asyncio.run(mcp_host._native_engraphis_tools())}.issubset(by_name)
     assert "engraphis_recall" in by_name
     assert "codegraph.status" in by_name
     assert "codegraph.search" in by_name
@@ -545,7 +544,7 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
     assert "agentContextId" not in payload
 
 
-def test_post_auth_unknown_saved_grant_is_configuration_error_not_authentication(monkeypatch):
+def test_post_auth_unknown_saved_grant_fails_the_catalog_honestly(monkeypatch):
     import asyncio
     import mcp_host
     from mcp.server.auth.provider import AccessToken
@@ -559,38 +558,22 @@ def test_post_auth_unknown_saved_grant_is_configuration_error_not_authentication
             scopes=["liquidaity.main"],
             subject="auth0|jeremiah",
             claims={
-                "iss": "https://tenant.auth0.com/",
                 "liquidaity": {
                     "projectId": "project-1",
                     "deckId": "deck_builder",
                     "conversationId": "external-mcp:grant-1",
+                    "mainCardId": "card_main_chat",
+                    "instructions": "Persisted Main instructions.",
+                    "savedMainToolGrants": ["missing.tool"],
                 },
             },
         ),
     )
-    monkeypatch.setattr(
-        mcp_host,
-        "_resolve_external_main_context_sync",
-        lambda _issuer, _subject, *, resolve_runtime=False: {
-            "projectId": "project-1",
-            "deckId": "deck_builder",
-            "conversationId": "external-mcp:grant-1",
-            "mainCardId": "card_main_chat",
-            "instructions": "Persisted Main instructions.",
-            "savedMainToolGrants": ["missing.tool"],
-            "availableActionPaths": [{"kind": "tool", "grant": "missing.tool"}],
-        } if resolve_runtime else None,
-    )
-
-    result = asyncio.run(mcp_host.call_tool("main.context", {}))
-    payload = json.loads(result[0].text)
-    assert payload == {
-        "ok": False,
-        "error": (
-            "main_runtime_configuration_error:"
-            "harness_mcp_tool_unknown:missing.tool"
-        ),
-    }
+    with pytest.raises(
+        RuntimeError,
+        match="saved_main_tool_not_in_canonical_catalog: missing.tool",
+    ):
+        asyncio.run(mcp_host.list_tools())
 
 
 def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp():

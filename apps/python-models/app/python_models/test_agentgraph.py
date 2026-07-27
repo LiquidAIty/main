@@ -96,6 +96,30 @@ def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
         assert hydrated["result"]["output"] == "Exact result."
         assert hydrated["operationReferences"][0]["operationId"] == "agentgraph.active_context_identities"
         assert "body" not in hydrated["ageIdentity"]["instruction"]
+        scoped = ag.inspect_assignments(
+            project_id=PROJECT_ID,
+            deck_id=DECK_ID,
+            conversation_id="main",
+            connection=connection,
+        )
+        assert any(
+            row["assignmentId"] == assignment["assignmentId"]
+            for row in scoped["assignments"]
+        )
+        project_wide = ag.inspect_assignments(
+            project_id=PROJECT_ID,
+            deck_id=DECK_ID,
+            conversation_id=None,
+            project_wide=True,
+            connection=connection,
+        )
+        inspected = next(
+            row
+            for row in project_wide["assignments"]
+            if row["assignmentId"] == assignment["assignmentId"]
+        )
+        assert project_wide["readScope"] == "project"
+        assert inspected["conversationId"] == "main"
     finally:
         connection.rollback()
         connection.close()

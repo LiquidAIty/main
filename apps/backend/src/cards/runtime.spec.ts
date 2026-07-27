@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { RUNTIME_TOOL_SPECS } from '../contracts/runtimeContracts';
 import {
   resolvedMagenticOptions,
   resolvedMagenticControllers,
@@ -222,14 +221,6 @@ describe('Canonical Cards Runtime', () => {
     expect(payload.cardRuntime.runtimeOptions.maxTokens).toBeUndefined();
   });
 
-  it('RUNTIME_TOOL_SPECS exposes retrieve_knowgraph_context for transport validation', () => {
-    const spec = RUNTIME_TOOL_SPECS.find((entry) => entry.name === 'retrieve_knowgraph_context');
-    expect(spec).toBeTruthy();
-    expect(spec?.enabled).toBe(true);
-    expect(spec?.inputSchema?.type).toBe('object');
-    expect((spec?.inputSchema as any)?.required).toEqual(['project_id', 'query']);
-  });
-
   it('transports a card-selected KnowGraph retrieval tool to the Python participant set', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const research = {
@@ -328,22 +319,6 @@ describe('Canonical Cards Runtime', () => {
     expect(raw).not.toContain('trading');
     expect(raw).not.toContain('EDGAR');
     expect(raw).not.toContain('liquidity');
-  });
-
-  it('rejects an unknown card tool id honestly (not silently dropped)', () => {
-    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
-    const research = {
-      id: 'research', kind: 'agent', runtimeType: 'assistant_agent',
-      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['does_not_exist_tool'] },
-    };
-    const allCards = [cardM, research];
-    const allEdges = [{ id: 'e', source: research.id, target: cardM.id, edgeType: 'magentic_option' }];
-    const callable = resolvedMagenticOptions(cardM.id, allCards, allEdges);
-    expect(() =>
-      buildPythonAutoGenCardRuntimePayload(
-        cardM, {}, 'x', { projectId: 'p', deckId: 'd', allCards, allEdges }, {}, callable, '2026',
-      ),
-    ).toThrow(/card_tool_unknown/);
   });
 
   it('Python payload compatibility matches expected shape', () => {
@@ -673,18 +648,16 @@ describe('Canonical Cards Runtime', () => {
     ).toThrow('card_model_config_missing');
   });
 
-  // T001 — ToolSpec: only known enabled card tools pass into the payload.
-
-  it('unknown card tool fails loudly with card_tool_unknown', () => {
+  it('transports selected tool ids to the canonical Python registry unchanged', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const cardA = {
       id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent',
       runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['made_up_tool'] },
     };
 
-    expect(() =>
-      buildPythonAutoGenCardRuntimePayload(cardM, {}, 'test', {}, {}, [cardA], '2026'),
-    ).toThrow('card_tool_unknown: made_up_tool');
+    const payload = buildPythonAutoGenCardRuntimePayload(cardM, {}, 'test', {}, {}, [cardA], '2026');
+    const participant = payload.cardRuntime.participants.find((entry) => entry.cardId === 'agentA');
+    expect(participant?.tools).toEqual(['made_up_tool']);
   });
 
   it('empty card tool name fails loudly with card_tool_name_empty', () => {

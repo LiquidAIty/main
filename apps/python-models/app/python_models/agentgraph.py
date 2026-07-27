@@ -1078,40 +1078,6 @@ def add_assignment_references(
     }
 
 
-def assignment_id_for_parent_run(
-    *,
-    project_id: str,
-    parent_run_id: str,
-    receiver_card_id: str,
-    connection: Any | None = None,
-) -> str:
-    """Resolve one exact child assignment; never select a latest result."""
-    project_id = _required_text(project_id, "project_id")
-    parent_run_id = _required_id(parent_run_id, "parent_run_id")
-    receiver_card_id = _required_id(receiver_card_id, "receiver_card_id")
-    with _connection_scope(connection) as conn, conn.cursor() as cursor:
-        _prepare(cursor)
-        cursor.execute(
-            """
-            SELECT assignment_id
-            FROM ag_catalog.agent_assignments
-            WHERE project_id=%s AND parent_run_id=%s AND receiver_card_id=%s
-            ORDER BY assignment_id
-            """,
-            (project_id, parent_run_id, receiver_card_id),
-        )
-        rows = cursor.fetchall()
-    if not rows:
-        raise AgentGraphError(
-            f"agentgraph_parent_assignment_not_found: {parent_run_id}"
-        )
-    if len(rows) != 1:
-        raise AgentGraphError(
-            f"agentgraph_parent_assignment_ambiguous: {parent_run_id}"
-        )
-    return str(rows[0][0])
-
-
 def read_assignment(
     *,
     project_id: str,
@@ -1272,4 +1238,104 @@ def read_assignment(
             "instruction": json.loads(str(identity_rows[0][1])),
             "results": json.loads(str(identity_rows[0][2])),
         },
+    }
+
+
+def inspect_assignments(
+    *,
+    project_id: str,
+    deck_id: str,
+    conversation_id: str | None,
+    project_wide: bool = False,
+    assignment_id: str | None = None,
+    limit: int = 20,
+    connection: Any | None = None,
+) -> dict[str, Any]:
+    """Read one exact assignment or a bounded assignment summary.
+
+    Normal callers remain conversation-scoped. The authenticated private
+    developer/operator entrance may request a project-wide read; it still
+    cannot select another project or deck. Exact assignment identity never
+    falls back to a latest run.
+    """
+    project_id = _required_text(project_id, "project_id")
+    deck_id = _required_id(deck_id, "deck_id")
+    scoped_conversation_id = (
+        None
+        if project_wide
+        else _required_id(conversation_id, "conversation_id")
+    )
+    exact_id = (
+        _required_id(assignment_id, "assignment_id")
+        if assignment_id is not None
+        else None
+    )
+    bounded_limit = max(1, min(int(limit), 50))
+    with _connection_scope(connection) as conn:
+        with conn.cursor() as cursor:
+            _prepare(cursor)
+            cursor.execute(
+                """
+                SELECT a.assignment_id, a.correlation_id, a.sender_card_id,
+                       a.receiver_card_id, a.parent_assignment_id, a.parent_run_id,
+                       a.state, a.attempt, a.instruction_id, a.created_at, a.updated_at,
+                       r.result_id, r.status, r.summary, a.conversation_id
+                FROM ag_catalog.agent_assignments a
+                LEFT JOIN ag_catalog.agent_results r
+                  ON r.assignment_id=a.assignment_id
+                WHERE a.project_id=%s
+                  AND a.deck_id=%s
+                  AND (%s::boolean OR a.conversation_id=%s)
+                  AND (%s::text IS NULL OR a.assignment_id=%s)
+                ORDER BY a.updated_at DESC, a.assignment_id
+                LIMIT %s
+                """,
+                (
+                    project_id,
+                    deck_id,
+                    project_wide,
+                    scoped_conversation_id,
+                    exact_id,
+                    exact_id,
+                    bounded_limit,
+                ),
+            )
+            rows = list(cursor.fetchall())
+        if exact_id:
+            if not rows:
+                raise AgentGraphError(
+                    f"agentgraph_assignment_not_found_in_runtime_context: {exact_id}"
+                )
+            return read_assignment(
+                project_id=project_id,
+                assignment_id=exact_id,
+                receiving_card_id=str(rows[0][3]),
+                connection=conn,
+            )
+    return {
+        "ok": True,
+        "projectId": project_id,
+        "deckId": deck_id,
+        "conversationId": scoped_conversation_id,
+        "readScope": "project" if project_wide else "conversation",
+        "assignments": [
+            {
+                "assignmentId": row[0],
+                "correlationId": row[1],
+                "senderCardId": row[2],
+                "receiverCardId": row[3],
+                "parentAssignmentId": row[4],
+                "parentRunId": row[5],
+                "state": row[6],
+                "attempt": row[7],
+                "instructionId": row[8],
+                "createdAt": row[9].isoformat() if row[9] else None,
+                "updatedAt": row[10].isoformat() if row[10] else None,
+                "resultId": row[11],
+                "resultStatus": row[12],
+                "resultSummary": row[13],
+                "conversationId": row[14],
+            }
+            for row in rows
+        ],
     }

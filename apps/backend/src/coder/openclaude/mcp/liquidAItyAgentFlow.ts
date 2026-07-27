@@ -6,13 +6,13 @@
 // QueryEngine session:
 //   - describe_connected_agents : read the connected, bus-eligible (magentic_option)
 //                                 Mag One Agent Cards + their capabilities for Run Plan review
-//   - run_mag_one               : run regular native Mag One from a Hermes-prepared,
-//                                 Main-presented, user-accepted
-//                                 Markdown orchestration prompt (used verbatim — no
-//                                 plan, no task object, no approval/visible-flow gate)
+//   - run_mag_one               : transport a Hermes-prepared, Main-presented,
+//                                 user-accepted AgentGraph instruction identity to
+//                                 regular native Mag One
 //
-// All handlers read authoritative current state, never mutate the deck, never
-// write graph memory, and never fabricate agents/tools/outputs.
+// These handlers read authoritative saved topology and never mutate the deck or
+// fabricate agents/tools/outputs. Python owns instruction hydration, assignment
+// lifecycle, registered Graph Views, and AgentGraph result lineage.
 
 import { getDeckDocument } from '../../../decks/store';
 import { resolvedMagenticControllers, resolvedMagenticOptions, runCardWithContract } from '../../../cards/runtime';
@@ -100,13 +100,12 @@ export async function describeConnectedAgents(
 }
 
 // ── run_mag_one ───────────────────────────────────────────────────────────────
-// The ONE Mag One entrypoint: a Hermes-prepared, Main-presented, user-accepted Markdown prompt
-// runs regular native Mag One. No structured plan, no plan.objective, no
-// prompt-to-plan adapter, no task ledger gate, no approval gate, no visible-flow
-// task-by-task wrapper. The Markdown string IS Mag One's job; Mag One reasons
-// over it, selects among the connected bus-eligible workers itself, runs them,
-// and returns its own result (its native internal task ledger may exist, but is
-// never forced/exposed/gated here).
+// The ONE Mag One entrypoint: a Hermes-prepared, Main-presented, user-accepted
+// AgentGraph instruction identity runs regular native Mag One. Python claims the
+// assignment and hydrates the exact instruction plus bounded registered Graph
+// Views. There is no TS prompt-to-plan adapter, task-ledger gate, approval gate,
+// or visible-flow wrapper. Mag One reasons over the hydrated job, selects among
+// the connected bus-eligible workers itself, and returns its native result.
 export type RunMagOneInput = {
   // Stable identity only. Python claims the AgentGraph assignment and hydrates
   // the exact relational instruction; TypeScript never carries task text.
@@ -114,8 +113,6 @@ export type RunMagOneInput = {
   projectId: string;
   deckId: string;
   conversationId?: string;
-  /** Main Chat context for Hermes post-run review only; never forwarded to Mag One. */
-  parentContext?: { objective?: string; acceptanceCriteria?: string[]; reviewInstruction?: string };
 };
 
 export type RunMagOneResult = {
@@ -128,9 +125,7 @@ export type RunMagOneResult = {
   // live deck's magentic_option edges at run time) — the same set Mag One saw.
   // Disconnected cards are structurally absent, never filtered downstream.
   connectedParticipants: string[];
-  parentRunId: string | null;
   conversationId: string | null;
-  objective: string;
   assignmentId: string | null;
   artifactLocators: string[];
 };
@@ -146,8 +141,6 @@ export async function runMagOne(
   const projectId = asString(input?.projectId).trim();
   const deckId = asString(input?.deckId).trim();
   const conversationId = asString(input?.conversationId).trim();
-  const parentRunId = null;
-  const objective = '';
   const route = 'liquidaity_mcp(run_mag_one) -> cards/runtime -> autogen rails -> magentic-one';
   const runId = `mag_one_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -176,8 +169,8 @@ export async function runMagOne(
     throw new Error('run_mag_one_main_control_not_authorized: exactly one live main_chat magentic_control edge is required');
   }
   // The eligible worker roster resolves ONLY from the live blue side
-  // connections — the same resolution the runtime uses. The job folder never
-  // carries a roster; Main Chat and Hermes are structurally excluded.
+  // connections — the same resolution the runtime uses. The assignment carries
+  // stable identities, not a copied roster; Main Chat and Hermes are structurally excluded.
   const connectedParticipants = resolvedMagenticOptions(asString(orchestrator.id), nodes, edges).map(
     (card: any) => asString(card?.id),
   );
@@ -203,9 +196,7 @@ export async function runMagOne(
     failure: failed ? asString(result?.error) || 'run_mag_one_failed' : null,
     provenance: { route },
     connectedParticipants,
-    parentRunId,
     conversationId: conversationId || null,
-    objective,
     assignmentId: assignment?.assignmentId ?? null,
     artifactLocators: Array.isArray(assignment?.artifactLocators)
       ? assignment.artifactLocators

@@ -115,7 +115,10 @@ class TestPythonMcpHost:
         tools = asyncio.run(mcp_host.list_tools())
         names = sorted(t.name for t in tools)
         assert names == sorted([
-            "main.context",
+            "agentgraph.inspect",
+            "graphview.list",
+            "graphview.get",
+            "graphview.create",
             "run_coder_subagent",
             "mag_one.describe_connected_agents",
             "run_mag_one",
@@ -206,40 +209,6 @@ class TestPythonMcpHost:
         assert properties["resources"]["items"]["properties"]["properties"]["additionalProperties"] == scalar_contract
         assert properties["statements"]["items"]["properties"]["properties"]["additionalProperties"] == scalar_contract
         assert "Minimal valid example" in update.description
-
-    def test_main_context_is_compact_and_server_owned(self, monkeypatch):
-        from app import mcp_host
-
-        context = {
-            "projectId": "project-1",
-            "projectName": "Project",
-            "deckId": "deck_builder",
-            "conversationId": "conversation-1",
-            "mainCardId": "card_main_chat",
-            "savedMainToolGrants": ["thinkgraph.get_graph_slice"],
-            "availableActionPaths": [
-                {"kind": "agent", "cardId": "card_hermes_steward", "runtimeBinding": "hermes_steward"}
-            ],
-            "instructions": "must not be returned",
-        }
-        monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: context)
-
-        result = asyncio.run(mcp_host.call_tool("main.context", {}))
-        payload = json.loads(result[0].text)
-
-        assert payload == {
-            "ok": True,
-            "context": {
-                "projectId": "project-1",
-                "deckId": "deck_builder",
-                "conversationId": "conversation-1",
-                "mainCardId": "card_main_chat",
-                "grants": ["thinkgraph.get_graph_slice"],
-                "availableActionPaths": [
-                    {"kind": "agent", "cardId": "card_hermes_steward", "runtimeBinding": "hermes_steward"}
-                ],
-            },
-        }
 
     def test_knowgraph_query_is_compact_by_default_and_explicitly_expandable(self, monkeypatch):
         from app import mcp_host

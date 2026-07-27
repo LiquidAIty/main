@@ -25,7 +25,6 @@ const deckStoreMocks = vi.hoisted(() => ({
 vi.mock('../services/autogen/autogenOrchestratorClient', () => ({
   orchestrateWithAutoGen: vi.fn(),
   runSingleCardWithAutoGen: vi.fn(),
-  fetchToolManifest: vi.fn(),
   fetchThinkGraphProjection: vi.fn(),
 }));
 

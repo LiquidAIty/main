@@ -135,6 +135,127 @@ class TestAssignments:
             }))
 
 
+class TestGraphInspection:
+    def test_graph_view_list_and_exact_get_stay_in_runtime_conversation(self, monkeypatch):
+        class ThinkGraph:
+            def graph_views(self, project_id, conversation_id):
+                assert (project_id, conversation_id) == ("p", "conv")
+                return {
+                    "ok": True,
+                    "views": [
+                        {"viewId": "graphview:one", "conversationId": "conv"},
+                        {"viewId": "graphview:two", "conversationId": "conv"},
+                    ],
+                }
+
+        monkeypatch.setattr(cp, "get_thinkgraph", lambda: ThinkGraph())
+        listed = asyncio.run(cp.graph_view_list({
+            "projectId": "p", "conversationId": "conv", "limit": 1,
+        }))
+        assert [view["viewId"] for view in listed["views"]] == ["graphview:one"]
+        exact = asyncio.run(cp.graph_view_get({
+            "projectId": "p", "conversationId": "conv", "viewId": "graphview:two",
+        }))
+        assert exact["view"]["viewId"] == "graphview:two"
+        with pytest.raises(cp.ControlPlaneError, match="not_found_in_runtime_context"):
+            asyncio.run(cp.graph_view_get({
+                "projectId": "p", "conversationId": "conv", "viewId": "graphview:missing",
+            }))
+
+    def test_operator_graph_view_reads_span_project_conversations(self, monkeypatch):
+        calls = []
+
+        class ThinkGraph:
+            def graph_views(self, project_id, conversation_id):
+                calls.append((project_id, conversation_id))
+                return {
+                    "ok": True,
+                    "views": [
+                        {"viewId": "graphview:main", "conversationId": "main"},
+                        {"viewId": "graphview:external", "conversationId": "external"},
+                    ],
+                }
+
+        monkeypatch.setattr(cp, "get_thinkgraph", lambda: ThinkGraph())
+        listed = asyncio.run(cp.graph_view_list({
+            "projectId": "p",
+            "conversationId": "external",
+            "projectWide": True,
+        }))
+        exact = asyncio.run(cp.graph_view_get({
+            "projectId": "p",
+            "conversationId": "external",
+            "projectWide": True,
+            "viewId": "graphview:main",
+        }))
+        assert listed["readScope"] == "project"
+        assert len(listed["views"]) == 2
+        assert exact["view"]["conversationId"] == "main"
+        assert calls == [("p", None), ("p", None)]
+
+    def test_graph_view_create_mints_identity_and_persists_existing_contract(self, monkeypatch):
+        saved = []
+
+        class ThinkGraph:
+            def persist_graph_view(self, view):
+                saved.append(view)
+                return {"ok": True, "view": view}
+
+        monkeypatch.setattr(cp, "get_thinkgraph", lambda: ThinkGraph())
+        result = asyncio.run(cp.graph_view_create({
+            "projectId": "p",
+            "conversationId": "conv",
+            "correlationId": "run:1",
+            "displayLabel": "Organizing principle",
+            "authority": "mixed",
+            "includedCanonicalNodeIds": ["decision:one"],
+            "records": [{"canonicalId": "decision:one", "authority": "thinkgraph"}],
+        }))
+        assert result["view"]["viewId"].startswith("graphview:external:")
+        assert result["view"]["status"] == "candidate"
+        assert result["view"]["producingRole"] == "main_chat"
+        assert result["view"]["projectId"] == "p"
+        assert saved == [result["view"]]
+
+    def test_agentgraph_inspection_uses_exact_server_scope(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(cp.ag, "inspect_assignments", lambda **kwargs: calls.append(kwargs) or {
+            "ok": True, "assignments": [],
+        })
+        result = asyncio.run(cp.agentgraph_inspect({
+            "projectId": "p",
+            "deckId": "deck_builder",
+            "conversationId": "conv",
+            "assignmentId": "assignment:one",
+            "limit": 5,
+        }))
+        assert result["ok"] is True
+        assert calls == [{
+            "project_id": "p",
+            "deck_id": "deck_builder",
+            "conversation_id": "conv",
+            "project_wide": False,
+            "assignment_id": "assignment:one",
+            "limit": 5,
+        }]
+
+    def test_agentgraph_operator_read_is_project_wide(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(cp.ag, "inspect_assignments", lambda **kwargs: calls.append(kwargs) or {
+            "ok": True,
+            "readScope": "project",
+            "assignments": [],
+        })
+        result = asyncio.run(cp.agentgraph_inspect({
+            "projectId": "p",
+            "deckId": "deck_builder",
+            "conversationId": "external",
+            "projectWide": True,
+        }))
+        assert result["readScope"] == "project"
+        assert calls[0]["project_wide"] is True
+
+
 class TestRunAssistantAgent:
     def test_all_structural_references_required(self):
         with pytest.raises(cp.ControlPlaneError, match="input_required"):

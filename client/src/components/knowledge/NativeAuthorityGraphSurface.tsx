@@ -101,9 +101,17 @@ export function NativeCodeGraphSurface({
 
 type NativeNode = {
   id: string;
+  canonicalId: string;
   label: string;
   fullLabel: string;
   etype: string;
+  authority: string;
+  currentState?: string;
+  trustState?: string;
+  qualityState?: string;
+  codeGraphRef?: string;
+  knowGraphRef?: string;
+  provenance: Record<string, unknown>;
   degree: number;
   val: number;
   properties: Record<string, unknown>;
@@ -175,7 +183,7 @@ export function NativeThinkGraphSurface({
   useEffect(() => {
     onSelectedObjectChange?.(selected ? {
       authority: 'thinkgraph',
-      canonicalId: selected.id,
+      canonicalId: selected.canonicalId,
       selectedThrough: 'thinkgraph',
       displayLabel: selected.fullLabel,
     } : null);
@@ -193,9 +201,17 @@ export function NativeThinkGraphSurface({
     const visibleNodes: NativeNode[] = nodes
       .map((node) => ({
         id: node.id,
+        canonicalId: String(node.canonicalId || node.id),
         label: shortNodeLabel(node),
         fullLabel: String(node.label || node.title || node.id),
         etype: node.type || 'person_or_concept',
+        authority: String(node.authority || projection?.authority || 'thinkgraph'),
+        currentState: node.currentState,
+        trustState: node.trustState,
+        qualityState: node.qualityState,
+        codeGraphRef: node.codeGraphRef,
+        knowGraphRef: node.knowGraphRef,
+        provenance: node.provenance || {},
         degree: degree.get(node.id) || 0,
         val: 1 + (degree.get(node.id) || 0),
         properties: node.properties || {},
@@ -399,7 +415,7 @@ export function NativeThinkGraphSurface({
         zIndex={6}
       >
       <div className="engraphis-native-controls">
-        {selected ? <section data-testid="thinkgraph-node-inspector"><h3>Identity</h3><h4>{selected.fullLabel}</h4><p>{selected.label} · {selected.etype} · {selected.degree} connections</p><AskMainAction reference={{ authority: 'thinkgraph', canonicalId: selected.id, selectedThrough: 'thinkgraph', displayLabel: selected.fullLabel }} onAskMain={onAskMain} /></section> : null}
+        {selected ? <section data-testid="thinkgraph-node-inspector"><h3>Identity</h3><h4>{selected.fullLabel}</h4><p>{selected.authority} · {selected.etype} · {selected.degree} connections</p><p>{selected.canonicalId}{selected.currentState ? ` · ${selected.currentState}` : ''}{selected.trustState ? ` · ${selected.trustState}` : ''}{selected.qualityState ? ` · ${selected.qualityState}` : ''}</p>{selected.codeGraphRef ? <p>CodeGraph: {selected.codeGraphRef}</p> : null}{selected.knowGraphRef ? <p>KnowGraph: {selected.knowGraphRef}</p> : null}<AskMainAction reference={{ authority: 'thinkgraph', canonicalId: selected.canonicalId, selectedThrough: 'thinkgraph', displayLabel: selected.fullLabel }} onAskMain={onAskMain} /></section> : null}
         <section>
           <h3>Controls</h3>
           <div className="engraphis-native-actions">
@@ -430,6 +446,7 @@ export function NativeThinkGraphSurface({
           <h3>Graph stats</h3>
           <dl className="engraphis-native-stats"><div><dt>Entities</dt><dd>{allNodes}</dd></div><div><dt>Relations</dt><dd>{allEdges}</dd></div><div><dt>Connected</dt><dd>{connectedCount}</dd></div><div><dt>Isolated</dt><dd>{Math.max(0, allNodes - connectedCount)}</dd></div></dl>
         </section>
+        {selected && Object.keys(selected.provenance).length > 0 ? <section><h3>Provenance</h3><pre>{JSON.stringify(selected.provenance, null, 2)}</pre></section> : null}
         {selected ? <section><h3>Technical details</h3><pre>{JSON.stringify(selected.properties, null, 2)}</pre></section> : null}
       </div>
       </RightGlassDrawer>

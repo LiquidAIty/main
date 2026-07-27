@@ -17,7 +17,6 @@ import {
 } from '../coder/openclaude/mcp/liquidAItyAgentFlow';
 import {
   deriveSessionId,
-  resolveExternalMainRuntimeContext,
   resolveMainChatRuntimeConfig,
   startGrpcTurn,
   type GrpcSessionEvent,
@@ -139,29 +138,23 @@ router.post('/mcp-bridge/external_main_context', async (req, res) => {
     if (!grant) return res.status(403).json({ ok: false, error: 'external_identity_grant_required' });
 
     const conversationId = `external-mcp:${grant.grantId}`;
-    const authorizedContext = {
-      projectId: grant.projectId,
-      projectName: grant.projectName,
-      deckId: BUILDER_DECK_ID,
-      conversationId,
-    };
-    if (req.body?.resolveRuntime !== true) {
-      return res.json({ ok: true, context: authorizedContext });
-    }
-
-    const main = await resolveExternalMainRuntimeContext(
+    const main = await resolveMainChatRuntimeConfig(
       deriveSessionId(grant.projectId, conversationId),
       'chat',
     );
-    if (!main) return res.status(409).json({
-      ok: false,
-      error: 'persisted_main_chat_unavailable',
-    });
+    if (!main) {
+      return res.status(409).json({ ok: false, error: 'persisted_main_chat_unavailable' });
+    }
     return res.json({
       ok: true,
       context: {
-        ...authorizedContext,
-        ...main,
+        projectId: grant.projectId,
+        projectName: grant.projectName,
+        deckId: BUILDER_DECK_ID,
+        conversationId,
+        mainCardId: main.cardId,
+        instructions: main.prompt,
+        savedMainToolGrants: main.parentAllowedMcpTools,
       },
     });
   } catch (error) {

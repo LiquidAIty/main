@@ -18,7 +18,6 @@ import { BUILDER_DECK_ID, getDeckDocument } from '../../../decks/store';
 import { resolveRuntimeBinding } from '../../../contracts/runtimeBinding';
 import { resolveDirectSubagents } from '../../../cards/runtime';
 import { resolveModel } from '../../../llm/models.config';
-import { HARNESS_MCP_TOOL_SPECS } from '../../../contracts/runtimeContracts';
 import { listPythonAgentMcpTools } from '../../../services/mcp/pythonAgentMcpClient';
 import { logHarnessTrace } from '../../../services/harnessTrace';
 import type { HermesInvestigationContext } from '../../hermes/hermesReportArtifact';
@@ -218,11 +217,9 @@ export function resolveHarnessTimeoutDeadline(
  * REAL per-card MCP grant (enforced as the child's allowed_tools / the
  * parent's pool filter). No card selection → no MCP tools; never a hidden
  * default grant. */
-function cardMcpToolGrants(card: any, availableToolNames?: readonly string[]): string[] {
+function cardMcpToolGrants(card: any, availableToolNames: readonly string[]): string[] {
   const raw = Array.isArray(card?.runtimeOptions?.tools) ? card.runtimeOptions.tools : [];
-  const known = new Set(
-    availableToolNames ?? HARNESS_MCP_TOOL_SPECS.map((spec) => spec.name),
-  );
+  const known = new Set(availableToolNames);
   return raw
     .map((tool: unknown) => String(tool || '').trim())
     .filter(Boolean)
@@ -314,6 +311,9 @@ export function buildHarnessAgentDefinition(
     const modelKey = String(card?.runtimeOptions?.modelKey || '').trim();
     const model = modelKey ? resolveModel(modelKey).id : '';
     const allowedCardRunIds = (opts?.allowedCardRunIds || []).map(String).filter(Boolean);
+    if (!opts?.availableMcpTools) {
+      throw new Error('harness_mcp_catalog_unavailable');
+    }
     return {
       agent_type: cardId,
       card_id: cardId,
@@ -323,7 +323,7 @@ export function buildHarnessAgentDefinition(
       // bytes and exact MCP grants execute directly in the Harness.
       system_prompt: [systemPrompt, runtimeContext].filter(Boolean).join('\n\n'),
       // The card's Tools selection IS the grant — no hidden defaults.
-      allowed_tools: cardMcpToolGrants(card, opts?.availableMcpTools),
+      allowed_tools: cardMcpToolGrants(card, opts.availableMcpTools),
       context_mode_inherit_parent: true,
       ...(allowedCardRunIds.length > 0 ? { allowed_card_run_ids: allowedCardRunIds } : {}),
       ...(model ? { model } : {}),
@@ -438,16 +438,6 @@ export type MainChatRuntimeConfig = {
   parentAllowedNativeTools: string[];
 };
 
-export type ExternalMainRuntimeContext = {
-  mainCardId: string;
-  instructions: string | null;
-  savedMainToolGrants: string[];
-  availableActionPaths: Array<
-    | { kind: 'tool'; grant: string }
-    | { kind: 'agent'; cardId: string; runtimeBinding: string }
-  >;
-};
-
 /** The saved card's assigned native tools (runtimeOptions.nativeTools).
  * Pure transport: verbatim strings, no name validation here — the engine owns
  * its native registry and reports grant names missing from the pool. */
@@ -467,49 +457,6 @@ function resolveMainChatCardFromDeck(nodes: any[]): { ok: true; card: any } | { 
   );
   if (matches.length !== 1) return { ok: false };
   return { ok: true, card: matches[0] };
-}
-
-/**
- * Resolve the persisted Main connector configuration after authentication,
- * without opening another stdio MCP client. The authenticated Python host owns
- * the live catalog and validates these exact saved grant strings against it.
- */
-export async function resolveExternalMainRuntimeContext(
-  sessionId: string,
-  mode: HarnessMode,
-): Promise<ExternalMainRuntimeContext | null> {
-  const parsed = parseSessionId(sessionId);
-  if (!parsed) return null;
-  const doc = await getDeckDocument(parsed.projectId, BUILDER_DECK_ID);
-  const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
-  const edges: any[] = Array.isArray((doc?.deck as any)?.edges) ? (doc!.deck as any).edges : [];
-  const resolution = resolveMainChatCardFromDeck(nodes);
-  if (!resolution.ok) return null;
-  const card = resolution.card;
-  const savedMainToolGrants: string[] = (
-    Array.isArray(card?.runtimeOptions?.tools) ? card.runtimeOptions.tools : []
-  )
-    .map((tool: unknown) => String(tool || '').trim())
-    .filter(Boolean);
-  const agentPaths = selectDoorwayCards(nodes, edges, mode).map((node) => ({
-    kind: 'agent' as const,
-    cardId: String(node?.id || ''),
-    runtimeBinding: String(
-      resolveRuntimeBinding(
-        node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
-        node?.id,
-      ) || '',
-    ),
-  }));
-  return {
-    mainCardId: String(card?.id || ''),
-    instructions: String(card?.prompt || '').trim() || null,
-    savedMainToolGrants,
-    availableActionPaths: [
-      ...savedMainToolGrants.map((grant: string) => ({ kind: 'tool' as const, grant })),
-      ...agentPaths,
-    ],
-  };
 }
 
 export async function resolveMainChatRuntimeConfig(

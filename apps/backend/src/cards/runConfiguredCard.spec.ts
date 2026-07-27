@@ -95,12 +95,14 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(mockRunCard).not.toHaveBeenCalled();
   });
 
-  it('fails honestly on an unknown configured tool — tool list is never silently filtered', async () => {
+  it('transports an unknown configured tool to Python and returns its canonical rejection', async () => {
     mockGetDeck.mockResolvedValue(deckWith([{ ...AGENT_CARD, runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['not_a_real_tool'] } }]));
+    mockRunCard.mockRejectedValue(new Error('card_tool_unknown: not_a_real_tool'));
     const result = await runConfiguredCard(ARGS);
     expect(result.status).toBe('failed');
     expect(result.error).toContain('card_tool_unknown');
-    expect(mockRunCard).not.toHaveBeenCalled();
+    expect(mockRunCard).toHaveBeenCalledOnce();
+    expect(mockRunCard.mock.calls[0][0].cardRuntime.participants[0].tools).toEqual(['not_a_real_tool']);
   });
 
   it('rejects caller-supplied runtime overrides instead of applying or ignoring them', async () => {

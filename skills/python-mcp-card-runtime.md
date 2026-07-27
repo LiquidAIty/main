@@ -39,11 +39,13 @@ canvas card (deck_builder)            ← identity, prompt, model, enabled, tool
 
 ## Runtime split
 
-- Native Main, Hermes, and Search grants come only from `HARNESS_MCP_TOOL_SPECS`
-  and the live `mcp_host.py` manifest. Native names include
+- Native Main, Hermes, and Search grants are selected on saved cards and
+  validated against the live `mcp_host.py` catalog before the Harness turn.
+  TypeScript does not maintain a fallback tool catalog. Native names include
   `thinkgraph.get_graph_slice`, `thinkgraph.submit_update`, `knowgraph.query`,
   `knowgraph.ingest`, `codegraph.search`, and `web_search`.
-- AutoGen/Mag One cards resolve only `AUTOGEN_CARD_TOOL_SPECS`; names such as
+- AutoGen/Mag One card tool ids pass through TypeScript unchanged and resolve
+  only in Python's canonical `tool_registry.py`; names such as
   `read_thinkgraph_scope`, `apply_thinkgraph_patch`, and
   `retrieve_knowgraph_context` never belong on native Harness cards.
 - ThinkGraph, KnowGraph, and CodeGraph are authorities, never agent cards.

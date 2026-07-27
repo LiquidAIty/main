@@ -2,7 +2,6 @@ import {
   CardRunResult,
   AgentAssignmentRunResult,
   PythonAutoGenPayloadShape,
-  AUTOGEN_CARD_TOOL_SPECS,
   RuntimeGraph,
   RuntimeGraphEdge,
   RuntimeGraphNode,
@@ -239,46 +238,17 @@ export function resolveCardModelStrict(card: any): {
   return { provider: resolved.provider, providerModelId: resolved.id };
 }
 
-/** Exported for the dev agent harness (dev.routes.ts) — same strict tool
- * validation (unknown/disabled tools throw) the real run path uses. */
+/** Transport the saved card's selected Python tool ids without maintaining a
+ * second TypeScript registry. Python resolves and validates every id before
+ * model execution. */
 export function resolveCardTools(card: any): string[] {
   card = normalizeLocalCoderControllerCard(card);
   const fromOptions = card.runtimeOptions?.tools;
   const raw = Array.isArray(fromOptions) ? fromOptions : Array.isArray(card.tools) ? card.tools : [];
-  // The card Tools tab is the only allowed source, and only known enabled
-  // ToolSpecs pass through. No role inference and no auto-injected tools —
-  // a card runs exactly the tools its saved configuration selects.
   return raw.map((tool: any) => {
-    const rawName = String(tool ?? '').trim();
-    const legacyAlias = rawName.startsWith('mcp__liquidaity__')
-      ? rawName.slice('mcp__liquidaity__'.length)
-      : rawName;
-    const name = ({
-      thinkgraph_get_graph_slice: 'thinkgraph.get_graph_slice',
-      thinkgraph_submit_update: 'thinkgraph.submit_update',
-      knowgraph_query: 'knowgraph.query',
-      knowgraph_ingest: 'knowgraph.ingest',
-      codegraph_status: 'codegraph.status',
-      codegraph_search: 'codegraph.search',
-      hermes_memory_read: 'hermes.memory_read',
-      hermes_memory_write: 'hermes.memory_write',
-      mag_one_describe_connected_agents: 'mag_one.describe_connected_agents',
-      run_mag_one: 'run_mag_one',
-      run_coder_subagent: 'run_coder_subagent',
-      canvas_inspect: 'canvas.inspect',
-      card_run_assistant_agent: 'card.run_assistant_agent',
-    } as Record<string, string>)[legacyAlias] || rawName;
+    const name = String(tool ?? '').trim();
     if (!name) {
       throw new Error(`card_tool_name_empty: cardId=${card.id}`);
-    }
-    const spec = AUTOGEN_CARD_TOOL_SPECS.find((candidate) => candidate.name === name);
-    if (!spec) {
-      throw new Error(
-        `autogen_card_tool_unknown: ${name} (cardId=${card.id}, known: ${AUTOGEN_CARD_TOOL_SPECS.map((s) => s.name).join(',')})`,
-      );
-    }
-    if (!spec.enabled) {
-      throw new Error(`card_tool_disabled: ${name} (cardId=${card.id})`);
     }
     return name;
   });
@@ -708,8 +678,8 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
   let privateParticipant: Record<string, unknown>;
   let model: { provider: string; providerModelId: string };
   try {
-    // Same strict resolution the Mag One path uses — throws honest
-    // card_model_config_missing / card_tool_unknown / card_tool_disabled errors.
+    // TypeScript resolves only saved card/model structure. Python's canonical
+    // registry validates the transported tool ids before model execution.
     model = resolveCardModelStrict(effectiveCard);
     participant = serializeCardParticipant(effectiveCard, nodes);
     privateParticipant = serializeCardPrivateParticipant(effectiveCard);

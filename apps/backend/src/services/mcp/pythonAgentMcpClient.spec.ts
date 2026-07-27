@@ -22,6 +22,7 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
     // report surface (2), and web_search. Each is a documented, additive
     // capability — the failure was this expectation, not the host.
     expect(names).toEqual([
+      'agentgraph.inspect',
       'canvas.inspect',
       'canvas.upsert_wire',
       'card.assign_data_binding',
@@ -59,6 +60,9 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'engraphis_timeline',
       'engraphis_verify_receipts',
       'engraphis_why',
+      'graphview.create',
+      'graphview.get',
+      'graphview.list',
       'hermes.memory_read',
       'hermes.memory_write',
       'hermes.read_report',
@@ -73,7 +77,6 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'knowgraph_get_gateways',
       'knowgraph_get_topics',
       'mag_one.describe_connected_agents',
-      'main.context',
       'run_coder_subagent',
       'run_mag_one',
       'thinkgraph.get_graph_slice',

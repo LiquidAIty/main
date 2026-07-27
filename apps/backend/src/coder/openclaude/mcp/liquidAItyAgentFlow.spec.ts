@@ -45,14 +45,16 @@ describe('AgentGraph-native Mag One flow', () => {
   });
 
   it('transports only stable assignment identities to the Python-owned runtime', async () => {
-    const runCard = vi.fn(async () => ({
+    const runCard = vi.fn(
+      async (_card: any, _agent: any, _taskText: string, _context: any) => ({
       status: 'success',
       output: 'done',
       agentAssignmentResult: {
         assignmentId: 'assignment:run-1',
         artifactLocators: ['artifacts/a/report.md'],
       },
-    }));
+      }),
+    );
     const result = await runMagOne(
       {
         projectId: 'project-1',

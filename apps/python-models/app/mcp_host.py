@@ -126,20 +126,8 @@ def _oauth_config() -> OAuthConfig:
 
 def _authenticated_main_context() -> dict[str, Any] | None:
     access_token = get_access_token()
-    claims = access_token.claims or {} if access_token else {}
-    authorized = claims.get("liquidaity") if isinstance(claims, dict) else None
-    if not isinstance(authorized, dict):
-        return None
-    issuer = str(claims.get("iss") or "").strip()
-    subject = str(access_token.subject or "").strip()
-    try:
-        return _resolve_external_main_context_sync(
-            issuer,
-            subject,
-            resolve_runtime=True,
-        )
-    except RuntimeError as err:
-        raise RuntimeError(f"main_runtime_configuration_error:{err}") from None
+    context = (access_token.claims or {}).get("liquidaity") if access_token else None
+    return context if isinstance(context, dict) else None
 
 
 class LiquidAItyServer(Server):
@@ -242,38 +230,13 @@ def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
         return json.dumps({"ok": False, "error": f"backend_unreachable: {err.reason}"})
 
 
-def _resolve_external_main_context_sync(
-    issuer: str,
-    subject: str,
-    *,
-    resolve_runtime: bool = False,
-) -> dict[str, Any] | None:
+def _resolve_external_main_context_sync(issuer: str, subject: str) -> dict[str, Any] | None:
     try:
-        payload = json.loads(
-            _bridge_sync(
-                "external_main_context",
-                {
-                    "issuer": issuer,
-                    "subject": subject,
-                    **({"resolveRuntime": True} if resolve_runtime else {}),
-                },
-            )
-        )
+        payload = json.loads(_bridge_sync("external_main_context", {"issuer": issuer, "subject": subject}))
     except (TypeError, ValueError):
-        if resolve_runtime:
-            raise RuntimeError("external_main_context_invalid_json") from None
         return None
-    if not isinstance(payload, dict) or payload.get("ok") is not True:
-        if resolve_runtime:
-            error = payload.get("error") if isinstance(payload, dict) else None
-            raise RuntimeError(str(error or "external_main_runtime_unavailable"))
-        return None
-    context = payload.get("context")
-    required = {"projectId", "deckId", "conversationId"}
-    if resolve_runtime:
-        required |= {"mainCardId", "savedMainToolGrants", "availableActionPaths"}
-    if resolve_runtime and not (isinstance(context, dict) and required.issubset(context)):
-        raise RuntimeError("external_main_runtime_context_invalid")
+    context = payload.get("context") if isinstance(payload, dict) and payload.get("ok") is True else None
+    required = {"projectId", "deckId", "conversationId", "mainCardId", "savedMainToolGrants"}
     return context if isinstance(context, dict) and required.issubset(context) else None
 
 
@@ -343,13 +306,97 @@ async def _bridge(path: str, payload: dict[str, Any]) -> list[TextContent]:
 async def list_tools() -> list[Tool]:
     tools = [
         Tool(
-            name="main.context",
+            name="agentgraph.inspect",
             description=(
-                "READ-ONLY compact server-owned Main context: project, deck, conversation, "
-                "Main card, saved grants, and currently available action paths. Identity is "
-                "resolved by the authenticated server and accepts no caller-supplied fields."
+                "Read AgentGraph assignments and correlated results from the existing PostgreSQL/AGE "
+                "runtime fabric. Returns one exact assignment when assignmentId is supplied, otherwise "
+                "a bounded conversation or project summary. Project, deck, and conversation identity "
+                "are supplied by the authenticated server."
             ),
-            inputSchema={"type": "object", "properties": {}, "required": []},
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "assignmentId": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+                    "projectWide": {"type": "boolean", "default": False},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="graphview.list",
+            description=(
+                "List bounded persisted Graph Views for the current project and conversation. "
+                "Returns stable view identities and their stored bounded records; it does not "
+                "scan folders or reconstruct views from chat text."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "conversationId": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+                    "projectWide": {"type": "boolean", "default": False},
+                },
+                "required": ["projectId", "conversationId"],
+            },
+        ),
+        Tool(
+            name="graphview.get",
+            description=(
+                "Read one exact persisted Graph View by stable viewId within the current runtime "
+                "scope. Fails honestly when the identity is absent or ambiguous."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "conversationId": {"type": "string"},
+                    "viewId": {"type": "string"},
+                    "projectWide": {"type": "boolean", "default": False},
+                },
+                "required": ["projectId", "conversationId", "viewId"],
+            },
+        ),
+        Tool(
+            name="graphview.create",
+            description=(
+                "Persist one bounded candidate Graph View using the existing Python Graph View "
+                "contract. The server mints its stable identity; callers provide structured "
+                "records and references, never raw SQL/Cypher execution."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "conversationId": {"type": "string"},
+                    "correlationId": {"type": "string"},
+                    "displayLabel": {"type": "string"},
+                    "authority": {
+                        "type": "string",
+                        "enum": ["thinkgraph", "knowgraph", "codegraph", "mixed"],
+                    },
+                    "receivingRole": {"type": "string"},
+                    "rootCanonicalNodeIds": {"type": "array", "items": {"type": "string"}},
+                    "includedCanonicalNodeIds": {"type": "array", "items": {"type": "string"}},
+                    "includedRelationships": {"type": "array", "items": {"type": "object"}},
+                    "records": {"type": "array", "items": {"type": "object"}},
+                    "filter": {"type": "object"},
+                    "hopDepth": {"type": "integer", "minimum": 0, "maximum": 4},
+                    "query": {"type": "string"},
+                    "note": {"type": "string"},
+                    "provenanceRefs": {"type": "array", "items": {"type": "string"}},
+                    "parentViewId": {"type": "string"},
+                    "omittedNeighborCount": {"type": "integer", "minimum": 0},
+                },
+                "required": [
+                    "projectId",
+                    "conversationId",
+                    "correlationId",
+                    "displayLabel",
+                    "authority",
+                ],
+            },
         ),
         Tool(
             name="run_coder_subagent",
@@ -414,10 +461,6 @@ async def list_tools() -> list[Tool]:
                     "deckId": {"type": "string"},
                     "instructionId": {"type": "string"},
                     "conversationId": {"type": "string"},
-                    "parentContext": {
-                        "type": "object",
-                        "description": "Inherited Main Chat review context for Hermes only; never Mag One task input.",
-                    },
                 },
                 "required": ["instructionId", "projectId", "deckId"],
             },
@@ -881,14 +924,13 @@ async def list_tools() -> list[Tool]:
     context = _authenticated_main_context()
     if context is None:
         return tools
-    try:
-        return _external_tool_catalog(tools, context)
-    except RuntimeError as err:
-        raise RuntimeError(_main_runtime_configuration_error(err)) from None
+    return _external_tool_catalog(tools, context)
 
 
 _EXTERNAL_READ_ONLY_TOOLS = {
-    "main.context",
+    "agentgraph.inspect",
+    "graphview.list",
+    "graphview.get",
     "mag_one.describe_connected_agents",
     "canvas.inspect",
     "thinkgraph.get_graph_slice",
@@ -924,26 +966,16 @@ def _saved_main_tool_names(context: dict[str, Any], known_names: set[str]) -> se
         grant = str(raw or "").strip()
         name = grant if grant in known_names else by_qualified.get(grant)
         if not name:
-            canonical = (
-                grant.removeprefix("mcp__liquidaity__")
-                if grant.startswith("mcp__liquidaity__")
-                else grant
-            )
-            raise RuntimeError(f"harness_mcp_tool_unknown:{canonical}")
+            raise RuntimeError(f"saved_main_tool_not_in_canonical_catalog: {grant}")
         result.add(name)
     return result
 
 
 def _external_tool_names(context: dict[str, Any], known_names: set[str]) -> set[str]:
-    return (_EXTERNAL_READ_ONLY_TOOLS & known_names) | _saved_main_tool_names(context, known_names)
-
-
-def _main_runtime_configuration_error(error: Exception) -> str:
-    message = str(error)
     return (
-        message
-        if message.startswith("main_runtime_configuration_error:")
-        else f"main_runtime_configuration_error:{message}"
+        (_EXTERNAL_READ_ONLY_TOOLS & known_names)
+        | (_NATIVE_ENGRAPHIS_NAMES & known_names)
+        | _saved_main_tool_names(context, known_names)
     )
 
 
@@ -985,10 +1017,38 @@ def _external_tool_catalog(tools: list[Tool], context: dict[str, Any]) -> list[T
 # Structural allow-list per tool: unexpected keys are rejected honestly, never
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
-    "main.context": set(),
+    "agentgraph.inspect": {
+        "projectId",
+        "deckId",
+        "conversationId",
+        "assignmentId",
+        "limit",
+        "projectWide",
+    },
+    "graphview.list": {"projectId", "conversationId", "limit", "projectWide"},
+    "graphview.get": {"projectId", "conversationId", "viewId", "projectWide"},
+    "graphview.create": {
+        "projectId",
+        "conversationId",
+        "correlationId",
+        "displayLabel",
+        "authority",
+        "receivingRole",
+        "rootCanonicalNodeIds",
+        "includedCanonicalNodeIds",
+        "includedRelationships",
+        "records",
+        "filter",
+        "hopDepth",
+        "query",
+        "note",
+        "provenanceRefs",
+        "parentViewId",
+        "omittedNeighborCount",
+    },
     "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "approvedPrompt", "authority", "graphViewIds"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
-    "run_mag_one": {"projectId", "deckId", "instructionId", "conversationId", "parentContext"},
+    "run_mag_one": {"projectId", "deckId", "instructionId", "conversationId"},
     "thinkgraph.submit_update": {"projectId", "conversationId", "resources", "relations", "statements"},
     "knowgraph.query": {"projectId", "conversationId", "query", "anchors", "maxResults", "parentViewId", "includeFullText"},
     "knowgraph.ingest": {"projectId", "documents", "researchFocus"},
@@ -1055,6 +1115,10 @@ _BRIDGE_PATHS: dict[str, str] = {
 # Control tools dispatch to the Python control-plane handlers (app/control_plane.py).
 # Imported lazily so bridge-only usage never requires the psycopg dependency chain.
 _CONTROL_HANDLER_NAMES: dict[str, str] = {
+    "agentgraph.inspect": "agentgraph_inspect",
+    "graphview.list": "graph_view_list",
+    "graphview.get": "graph_view_get",
+    "graphview.create": "graph_view_create",
     "canvas.inspect": "canvas_inspect",
     "card.update_configuration": "card_update_configuration",
     "canvas.upsert_wire": "canvas_upsert_wire",
@@ -1069,18 +1133,7 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
 async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     await _initialize_native_engraphis()
     native_engraphis = _NATIVE_ENGRAPHIS_NAMES
-    try:
-        context = _authenticated_main_context()
-    except RuntimeError as err:
-        return [
-            TextContent(
-                type="text",
-                text=json.dumps({
-                    "ok": False,
-                    "error": _main_runtime_configuration_error(err),
-                }),
-            )
-        ]
+    context = _authenticated_main_context()
     if name in native_engraphis:
         if context is not None:
             try:
@@ -1093,10 +1146,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
                 return [
                     TextContent(
                         type="text",
-                        text=json.dumps({
-                            "ok": False,
-                            "error": _main_runtime_configuration_error(err),
-                        }),
+                        text=json.dumps({"ok": False, "error": str(err)}),
                     )
                 ]
             if name not in effective:
@@ -1150,17 +1200,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
                 args["correlationId"] = f"external-mcp:{uuid4()}"
             if name == "run_coder_subagent":
                 args["parentRunId"] = f"req_external_main_{uuid4()}"
-        except RuntimeError as err:
-            return [
-                TextContent(
-                    type="text",
-                    text=json.dumps({
-                        "ok": False,
-                        "error": _main_runtime_configuration_error(err),
-                    }),
-                )
-            ]
-        except (KeyError, ValueError) as err:
+        except (KeyError, RuntimeError, ValueError) as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
     extra = [k for k in args.keys() if k not in allowed]
     if extra:
@@ -1187,18 +1227,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             return [TextContent(type="text", text=json.dumps(result))]
         except agentgraph.AgentGraphError as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
-    if name == "main.context":
-        if context is None:
-            return [TextContent(type="text", text=json.dumps({"ok": False, "error": "main_context_unavailable"}))]
-        compact = {
-            "projectId": str(context.get("projectId") or ""),
-            "deckId": str(context.get("deckId") or ""),
-            "conversationId": str(context.get("conversationId") or ""),
-            "mainCardId": str(context.get("mainCardId") or ""),
-            "grants": [str(value) for value in (context.get("savedMainToolGrants") or [])],
-            "availableActionPaths": list(context.get("availableActionPaths") or []),
-        }
-        return [TextContent(type="text", text=json.dumps({"ok": True, "context": compact}))]
     if name == "knowgraph.query":
         # Direct in-process reuse of the ONE proven hybrid retrieval
         # (services/knowgraph via tool_registry) — read-only; honest error when

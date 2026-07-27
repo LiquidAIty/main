@@ -94,10 +94,7 @@ _GRAPH_GRANTS: dict[tuple[str, str], frozenset[str]] = {
     ("knowgraph", "write"): frozenset({"knowgraph.ingest"}),
     ("codegraph", "read"): frozenset({"codegraph.status", "codegraph.search"}),
     ("codegraph", "write"): frozenset(),
-    # Existing saved cards grant the legacy-named AgentGraph read capability.
-    # The operation engine uses it only as authority; the removed context tool
-    # is not dispatched or retained as a second data path.
-    ("agentgraph", "read"): frozenset({"agentgraph.create_context"}),
+    ("agentgraph", "read"): frozenset({"agentgraph.inspect"}),
     ("agentgraph", "write"): frozenset(),
 }
 _WRITE_CAPABILITIES = {

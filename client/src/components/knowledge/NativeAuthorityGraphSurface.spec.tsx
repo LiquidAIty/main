@@ -1,15 +1,17 @@
 // @vitest-environment jsdom
 
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../vendor/codebase-memory-ui/src/components/GraphTab', () => ({
   GraphTab: ({ project }: { project: string | null }) => <div data-testid="cbm-graph-tab">{project}</div>,
 }));
 
+const forceGraphState = vi.hoisted(() => ({ onNodeClick: null as null | ((node: unknown) => void) }));
+
 vi.mock('force-graph', () => ({ default: function ForceGraphMock() { return {
   backgroundColor() { return this; }, cooldownTime() { return this; }, warmupTicks() { return this; },
-  nodeRelSize() { return this; }, autoPauseRedraw() { return this; }, onNodeClick() { return this; },
+  nodeRelSize() { return this; }, autoPauseRedraw() { return this; }, onNodeClick(handler: (node: unknown) => void) { forceGraphState.onNodeClick = handler; return this; },
   onNodeHover() { return this; }, nodeCanvasObject() { return this; }, nodePointerAreaPaint() { return this; },
   linkColor() { return this; }, linkWidth() { return this; }, linkDirectionalArrowLength() { return this; },
   linkDirectionalArrowRelPos() { return this; }, linkCanvasObjectMode() { return this; }, linkCanvasObject() { return this; },
@@ -35,6 +37,52 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByText('No entities in this project yet.')).toBeTruthy();
     expect(screen.getByTestId('graph-navigation-controls')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Open ThinkGraph Inspector' })).toBeTruthy();
+  });
+
+  it('keeps canonical identity, authority, graph references, and provenance in the inspector', () => {
+    render(<NativeThinkGraphSurface projection={{
+      schemaVersion: 'thinkgraph.projection.v1',
+      authority: 'thinkgraph',
+      projectId: 'p',
+      nodes: [
+        {
+          id: 'physical:decision:1',
+          canonicalId: 'decision:organizing-principle',
+          label: 'Organizing principle',
+          type: 'Decision',
+          authority: 'thinkgraph',
+          currentState: 'provisional',
+          trustState: 'reviewed',
+          codeGraphRef: 'C-Projects-main.apps.python-models.app.mcp_host',
+          provenance: { source: 'main', correlationId: 'run:1' },
+          properties: { summary: 'Organize by authority, then bounded view.' },
+          mentionCount: 1,
+        },
+        { id: 'question:1', label: 'Unresolved question', type: 'Question', mentionCount: 1 },
+      ],
+      edges: [{ id: 'e1', source: 'physical:decision:1', target: 'question:1', predicate: 'HAS_OPEN_QUESTION', mentionCount: 1 }],
+    }} status="ready" error={null} />);
+
+    act(() => forceGraphState.onNodeClick?.({
+      id: 'physical:decision:1',
+      canonicalId: 'decision:organizing-principle',
+      label: 'Organizing principle',
+      fullLabel: 'Organizing principle',
+      etype: 'Decision',
+      authority: 'thinkgraph',
+      currentState: 'provisional',
+      trustState: 'reviewed',
+      codeGraphRef: 'C-Projects-main.apps.python-models.app.mcp_host',
+      provenance: { source: 'main', correlationId: 'run:1' },
+      properties: { summary: 'Organize by authority, then bounded view.' },
+      degree: 1,
+      val: 2,
+    }));
+
+    expect(screen.getByTestId('thinkgraph-node-inspector').textContent).toContain('decision:organizing-principle');
+    expect(screen.getByTestId('thinkgraph-node-inspector').textContent).toContain('CodeGraph: C-Projects-main');
+    expect(screen.getByText('Provenance')).toBeTruthy();
+    expect(screen.getByText(/correlationId/)).toBeTruthy();
   });
 
   it('shows the exact CodeGraph project-resolution failure instead of mounting an arbitrary index', () => {

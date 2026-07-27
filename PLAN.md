@@ -66,11 +66,12 @@ There is **no TS MCP server** — TS is only the client. Each tool bridges to a 
 
 ### 3. Orchestrator (Mag One) — the team run
 
-The intended path is: actual Hermes prepares the existing
-`coder-workspace/handoff/<jobId>/prompt.md`; Main presents the plan; only after explicit user acceptance
-may Main call `run_mag_one({jobId, projectId, deckId})`. The Mag One executor and worker-card paths
-exist and are tested independently. A full Main → actual Hermes → approved Mag One runtime proof has
-not yet happened, so documentation must not present it as complete.
+The intended path is: Hermes persists the exact proposed instruction in AgentGraph; Main presents
+that instruction; only after explicit user acceptance may Main call
+`run_mag_one({instructionId, projectId, deckId})`. Python creates and claims the correlated
+assignment, hydrates the relational instruction, and runs native Mag One with the live worker-card
+topology. A full Main → actual Hermes → approved Mag One runtime proof has not yet happened, so
+documentation must not present it as complete.
 
 ### 4. Agent cards + the bus
 

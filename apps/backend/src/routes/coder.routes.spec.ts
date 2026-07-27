@@ -115,7 +115,6 @@ const chatSessionMocks = vi.hoisted(() => {
     listConversations: vi.fn(async () => []),
     lastCancel: vi.fn(),
     startGrpcTurn: vi.fn(),
-    resolveExternalMainRuntimeContext: vi.fn(),
     resolveMainChatRuntimeConfig: vi.fn(),
     usage,
   };
@@ -214,7 +213,6 @@ vi.mock('../conversations/store', () => ({
 
 vi.mock('../coder/openclaude/session/grpcChatClient', () => ({
   deriveSessionId: (projectId: string, conversationId: string) => `${projectId}:${conversationId}`,
-  resolveExternalMainRuntimeContext: chatSessionMocks.resolveExternalMainRuntimeContext,
   resolveMainChatRuntimeConfig: chatSessionMocks.resolveMainChatRuntimeConfig,
   startGrpcTurn: chatSessionMocks.startGrpcTurn,
 }));
@@ -438,7 +436,7 @@ describe('coder routes', () => {
     }
   });
 
-  it('establishes external identity/project authorization before resolving persisted Main runtime', async () => {
+  it('resolves the original OAuth identity grant and saved Main context once', async () => {
     dbMocks.query.mockResolvedValueOnce({
       rows: [{
         grant_id: '70f63a4d-1a67-4dcc-a8ee-cce267572747',
@@ -447,18 +445,10 @@ describe('coder routes', () => {
         project_name: 'Main Chat',
       }],
     });
-    chatSessionMocks.resolveExternalMainRuntimeContext.mockResolvedValueOnce({
-      mainCardId: 'card_main_chat',
-      instructions: 'Persisted Main instructions.',
-      savedMainToolGrants: ['engraphis_recall'],
-      availableActionPaths: [
-        { kind: 'tool', grant: 'engraphis_recall' },
-        {
-          kind: 'agent',
-          cardId: 'card_hermes_steward',
-          runtimeBinding: 'hermes_steward',
-        },
-      ],
+    chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
+      cardId: 'card_main_chat',
+      prompt: 'Persisted Main instructions.',
+      parentAllowedMcpTools: ['engraphis_recall'],
     });
     const { server, baseUrl } = await createApiServer();
     try {
@@ -474,57 +464,19 @@ describe('coder routes', () => {
           projectId: '20ac92da-01fd-4cf6-97cc-0672421e751a',
           deckId: 'deck_builder',
           conversationId: 'external-mcp:70f63a4d-1a67-4dcc-a8ee-cce267572747',
-        },
-      });
-      expect(chatSessionMocks.resolveExternalMainRuntimeContext).not.toHaveBeenCalled();
-      expect(chatSessionMocks.resolveMainChatRuntimeConfig).not.toHaveBeenCalled();
-
-      dbMocks.query.mockResolvedValueOnce({
-        rows: [{
-          grant_id: '70f63a4d-1a67-4dcc-a8ee-cce267572747',
-          user_id: 'user-1',
-          project_id: '20ac92da-01fd-4cf6-97cc-0672421e751a',
-          project_name: 'Main Chat',
-        }],
-      });
-      const runtimeResponse = await fetch(`${baseUrl}/mcp-bridge/external_main_context`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          issuer: 'https://tenant.auth0.com/',
-          subject: 'auth0|jeremiah',
-          resolveRuntime: true,
-        }),
-      });
-      expect(runtimeResponse.status).toBe(200);
-      await expect(runtimeResponse.json()).resolves.toMatchObject({
-        ok: true,
-        context: {
-          projectId: '20ac92da-01fd-4cf6-97cc-0672421e751a',
-          deckId: 'deck_builder',
-          conversationId: 'external-mcp:70f63a4d-1a67-4dcc-a8ee-cce267572747',
           mainCardId: 'card_main_chat',
           instructions: 'Persisted Main instructions.',
           savedMainToolGrants: ['engraphis_recall'],
-          availableActionPaths: [
-            { kind: 'tool', grant: 'engraphis_recall' },
-            {
-              kind: 'agent',
-              cardId: 'card_hermes_steward',
-              runtimeBinding: 'hermes_steward',
-            },
-          ],
         },
       });
       expect(dbMocks.query).toHaveBeenCalledWith(
         expect.stringContaining('p.owner_user_id = g.user_id'),
         ['https://tenant.auth0.com', 'auth0|jeremiah'],
       );
-      expect(chatSessionMocks.resolveExternalMainRuntimeContext).toHaveBeenCalledWith(
+      expect(chatSessionMocks.resolveMainChatRuntimeConfig).toHaveBeenCalledWith(
         '20ac92da-01fd-4cf6-97cc-0672421e751a:external-mcp:70f63a4d-1a67-4dcc-a8ee-cce267572747',
         'chat',
       );
-      expect(chatSessionMocks.resolveMainChatRuntimeConfig).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }
