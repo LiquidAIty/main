@@ -7,12 +7,14 @@ attached as real AutoGen FunctionTools only when selected (without executing).
 """
 import asyncio
 import sys
+from types import SimpleNamespace
 
 import pytest
 from autogen_core.tools import FunctionTool
 
 from app.python_models import magentic_agentchat as mac
 from app.python_models.orchestration_contracts import (
+    AgentAssignmentRequest,
     CardRuntimeConfig,
     CardRuntimeParticipant,
     ContextPack,
@@ -84,6 +86,118 @@ def test_mag_one_without_agentgraph_assignment_fails_before_a_model_call():
     assert res.finalResponseText == ""
 
 
+def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_tool(
+    monkeypatch,
+):
+    events: list[str] = []
+    tasks: list[str] = []
+    attached_tools: list[str] = []
+    context = _context_pack("transport placeholder")
+    context.cardRuntime.runtimeScope = {"deckId": "deck_builder"}
+    context.agentAssignment = AgentAssignmentRequest(
+        instructionId="instruction:one",
+        senderCardId="card_main_chat",
+        receiverCardId="orch",
+    )
+    required = mac.rq.QueryBinding(
+        project_id="p",
+        deck_id="deck_builder",
+        card_id="orch",
+        binding_id="required_context",
+        query_id="agentgraph.context",
+        query_version=2,
+        delivery_mode="required",
+        parameters={},
+    )
+    optional = mac.rq.QueryBinding(
+        project_id="p",
+        deck_id="deck_builder",
+        card_id="orch",
+        binding_id="optional_detail",
+        query_id="agentgraph.detail",
+        query_version=1,
+        delivery_mode="optional",
+        parameters={},
+    )
+    execution = mac.rq.QueryExecution(
+        execution_id="queryexec:one",
+        binding_id=required.binding_id,
+        query_id=required.query_id,
+        query_version=required.query_version,
+        parameters={},
+        graph_view_id="graphview:query:one",
+        rows=[{"fact": "bounded"}],
+        truncated=False,
+    )
+
+    monkeypatch.setattr(
+        mac.ag,
+        "create_assignment",
+        lambda **_kwargs: {"assignmentId": "assignment:t"},
+    )
+
+    def hydrate(**kwargs):
+        events.append("hydrated")
+        return mac.rq.HydratedAssignmentContext(
+            assignment_id=kwargs["assignment_id"],
+            instruction_id="instruction:one",
+            instruction_sha256="sha256:one",
+            correlation_id="t",
+            receiver_card_id=kwargs["receiver_card_id"],
+            instruction="Approved task.",
+            lease_token="lease:one",
+            lease_expires_at="later",
+            attempt=1,
+            required_bindings=(required,),
+            optional_bindings=(optional,),
+            executions=(execution,),
+            graph_view_ids=(execution.graph_view_id,),
+            query_execution_ids=(execution.execution_id,),
+            card_grants=("agentgraph.inspect",),
+            model_context="Approved task.\n\ngraphview:query:one",
+        )
+
+    monkeypatch.setattr(mac.rq, "hydrate_assignment_context", hydrate)
+    monkeypatch.setattr(
+        mac,
+        "_build_model_client",
+        lambda _config: (events.append("model") or SimpleNamespace()),
+    )
+
+    def build(_context, _client, *, extra_tools=None):
+        attached_tools.extend(tool.name for tool in (extra_tools or []))
+        return [SimpleNamespace()]
+
+    monkeypatch.setattr(mac, "_build_participants", build)
+
+    class FakeTeam:
+        orchestrator_instance = None
+
+        def __init__(self, **_kwargs):
+            pass
+
+        async def run_stream(self, *, task):
+            tasks.append(task)
+            yield SimpleNamespace(
+                messages=[SimpleNamespace(content="done")],
+                stop_reason="complete",
+            )
+
+    monkeypatch.setattr(mac, "_CapturingMagenticOneGroupChat", FakeTeam)
+    monkeypatch.setattr(
+        mac.ag,
+        "finish_assignment",
+        lambda **_kwargs: {"artifacts": []},
+    )
+
+    response = asyncio.run(mac.run_native_magentic_mission(context))
+
+    assert response.ok is True
+    assert events == ["hydrated", "model"]
+    assert tasks == ["Approved task.\n\ngraphview:query:one"]
+    assert attached_tools == ["execute_registered_query"]
+
+
 def test_app_authored_scaffold_runtime_is_gone_but_real_task_ledger_artifact_allowed():
     # Removed: app-authored scaffold / fake local Task Ledger classes.
     # Allowed: real AutoGen adapter helpers that expose the real taskLedgerArtifact.
@@ -122,58 +236,11 @@ def test_building_participants_attaches_without_executing_retrieval():
     assert "hybrid_retrieval" not in sys.modules
 
 
-def test_magentic_success_requires_declared_durable_output():
-    ok, error = mac._magentic_completion_status(
-        "The work is complete.",
-        durable_output_required=True,
-        returned_files=[],
-    )
+def test_magentic_success_requires_a_model_result():
+    ok, error = mac._magentic_completion_status("Here is the answer.")
+    assert ok is True
+    assert error is None
+
+    ok, error = mac._magentic_completion_status("")
     assert ok is False
-    assert error == "declared_durable_output_missing"
-
-
-def test_magentic_success_accepts_real_return_file():
-    ok, error = mac._magentic_completion_status(
-        "The work is complete.",
-        durable_output_required=True,
-        returned_files=["coder-report.json"],
-    )
-    assert ok is True
-    assert error is None
-
-
-def test_magentic_success_rejects_only_empty_return_files():
-    # PL-1: a file exists but has 0 bytes (failed write). Not durable output.
-    ok, error = mac._magentic_completion_status(
-        "The work is complete.",
-        durable_output_required=True,
-        returned_files=["coder-report.json"],
-        nonempty_returned_files=[],
-    )
-    assert ok is False
-    assert error == "declared_durable_output_empty"
-
-
-def test_magentic_success_on_partial_real_output():
-    # Some workers wrote real files, some wrote empty ones: the real ones satisfy
-    # the durable contract; the empty ones are surfaced via return_status, not ok.
-    ok, error = mac._magentic_completion_status(
-        "The work is complete.",
-        durable_output_required=True,
-        returned_files=["a/real.json", "b/empty.txt"],
-        nonempty_returned_files=["a/real.json"],
-    )
-    assert ok is True
-    assert error is None
-
-
-def test_magentic_no_durable_contract_succeeds_on_text():
-    # A chat-driven run (no job folder) has no durable contract — the response
-    # text IS the deliverable.
-    ok, error = mac._magentic_completion_status(
-        "Here is the answer.",
-        durable_output_required=False,
-        returned_files=[],
-    )
-    assert ok is True
-    assert error is None
+    assert error == "no_model_output"

@@ -25,6 +25,7 @@ _MAX_HANDOFF_CHARS = 100_000
 _MAX_RESULT_CHARS = 100_000
 _MAX_ERROR_CHARS = 8_000
 _MAX_INSTRUCTION_CHARS = 200_000
+_MAX_OPERATION_REFERENCES = 16
 
 
 class AgentGraphError(ValueError):
@@ -111,6 +112,101 @@ def _run_cypher(
     return list(cursor.fetchall())
 
 
+def _validate_instruction_operation_references(
+    *,
+    project_id: str,
+    references: list[dict[str, Any]] | None,
+    connection: Any,
+) -> list[dict[str, Any]]:
+    """Resolve exact operation versions while the instruction is authored."""
+    from app.python_models import registered_queries as rq
+
+    if references is None:
+        return []
+    if not isinstance(references, list):
+        raise AgentGraphError("agentgraph_operation_references_invalid")
+    if len(references) > _MAX_OPERATION_REFERENCES:
+        raise AgentGraphError("agentgraph_operation_references_too_many")
+
+    approved: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
+    allowed_keys = {
+        "operationId",
+        "version",
+        "executionRole",
+        "parameters",
+        "explanation",
+    }
+    for index, raw_reference in enumerate(references):
+        if not isinstance(raw_reference, dict):
+            raise AgentGraphError("agentgraph_operation_reference_invalid")
+        unknown = set(raw_reference) - allowed_keys
+        if unknown:
+            raise AgentGraphError(
+                "agentgraph_operation_reference_keys_unknown: "
+                + ",".join(sorted(unknown))
+            )
+        operation_id = _required_id(
+            raw_reference.get("operationId"), "operation_id"
+        )
+        try:
+            version = int(raw_reference.get("version"))
+        except (TypeError, ValueError) as error:
+            raise AgentGraphError("agentgraph_operation_version_invalid") from error
+        if version < 1:
+            raise AgentGraphError("agentgraph_operation_version_invalid")
+        identity = (operation_id, version)
+        if identity in seen:
+            raise AgentGraphError(
+                f"agentgraph_operation_reference_duplicate: {operation_id}@v{version}"
+            )
+        seen.add(identity)
+        role = str(raw_reference.get("executionRole") or "").strip()
+        if role not in {"required_context", "optional_tool"}:
+            raise AgentGraphError("agentgraph_operation_execution_role_invalid")
+        try:
+            operation = rq.resolve_registered_version(
+                project_id,
+                operation_id,
+                version,
+                connection=connection,
+            )
+            parameters = rq.validate_parameters(
+                operation.parameter_schema,
+                raw_reference.get("parameters") or {},
+            )
+        except (LookupError, PermissionError, ValueError) as error:
+            raise AgentGraphError(str(error)) from error
+        expected_authority = {
+            "sql": "postgresql",
+            "cypher": "agentgraph_age",
+        }.get(operation.language)
+        if expected_authority is None or operation.database_authority != expected_authority:
+            raise AgentGraphError(
+                f"agentgraph_operation_engine_incompatible: {operation_id}@v{version}"
+            )
+        if operation.operation_class != "read":
+            raise AgentGraphError(
+                f"agentgraph_operation_reference_not_read_only: {operation_id}@v{version}"
+            )
+        explanation = _optional_text(
+            raw_reference.get("explanation"), "operation_explanation"
+        )
+        if explanation is not None and len(explanation) > 4000:
+            raise AgentGraphError("agentgraph_operation_explanation_too_large")
+        approved.append(
+            {
+                "referenceId": f"operation-ref:{index + 1}",
+                "operationId": operation_id,
+                "version": version,
+                "executionRole": role,
+                "parameters": parameters,
+                "explanation": explanation,
+            }
+        )
+    return approved
+
+
 def create_instruction(
     *,
     project_id: str,
@@ -118,6 +214,7 @@ def create_instruction(
     conversation_id: str,
     body: str,
     prepared_by_card_id: str | None = None,
+    operation_references: list[dict[str, Any]] | None = None,
     connection: Any | None = None,
 ) -> dict[str, Any]:
     """Persist exact reusable instruction bytes; no filesystem queue or scan."""
@@ -138,6 +235,11 @@ def create_instruction(
     created_at = _now()
     with _connection_scope(connection) as conn, conn.cursor() as cursor:
         _prepare(cursor)
+        references = _validate_instruction_operation_references(
+            project_id=project_id,
+            references=operation_references,
+            connection=conn,
+        )
         cursor.execute(
             """
             INSERT INTO ag_catalog.agent_instructions
@@ -156,6 +258,25 @@ def create_instruction(
                 created_at,
             ),
         )
+        for reference in references:
+            cursor.execute(
+                """
+                INSERT INTO ag_catalog.agent_instruction_operation_references
+                  (instruction_id, reference_id, project_id, operation_id,
+                   operation_version, execution_role, parameters, explanation)
+                VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
+                """,
+                (
+                    instruction_id,
+                    reference["referenceId"],
+                    project_id,
+                    reference["operationId"],
+                    reference["version"],
+                    reference["executionRole"],
+                    json.dumps(reference["parameters"], ensure_ascii=False),
+                    reference["explanation"],
+                ),
+            )
         _run_cypher(
             cursor,
             """
@@ -179,6 +300,34 @@ def create_instruction(
                 "createdAt": created_at,
             },
         )
+        for reference in references:
+            _run_cypher(
+                cursor,
+                """
+                MATCH (instruction:Instruction)
+                WHERE instruction.instructionId = $instructionId
+                  AND instruction.projectId = $projectId
+                MERGE (operation:OperationVersion {
+                  projectId: $projectId,
+                  operationId: $operationId,
+                  version: $operationVersion
+                })
+                MERGE (instruction)-[link:REFERENCES_OPERATION {
+                  referenceId: $referenceId
+                }]->(operation)
+                SET link.executionRole = $executionRole
+                RETURN operation.operationId
+                """,
+                "operation_id agtype",
+                {
+                    "instructionId": instruction_id,
+                    "projectId": project_id,
+                    "referenceId": reference["referenceId"],
+                    "operationId": reference["operationId"],
+                    "operationVersion": reference["version"],
+                    "executionRole": reference["executionRole"],
+                },
+            )
     return {
         "ok": True,
         "instructionId": instruction_id,
@@ -186,6 +335,7 @@ def create_instruction(
         "deckId": deck_id,
         "conversationId": conversation_id,
         "bodySha256": digest,
+        "operationReferences": references,
         "createdAt": created_at,
     }
 
@@ -200,7 +350,6 @@ def create_assignment(
     receiver_card_id: str,
     instruction_id: str,
     parent_correlation_id: str | None = None,
-    operation_references: list[dict[str, Any]] | None = None,
     connection: Any | None = None,
 ) -> dict[str, Any]:
     """Create one pending AgentGraph assignment on the canonical run identity."""
@@ -217,7 +366,6 @@ def create_assignment(
         else None
     )
     assignment_id = f"assignment:{correlation_id}"
-    references = list(operation_references or [])
     created_at = _now()
     with _connection_scope(connection) as conn, conn.cursor() as cursor:
         _prepare(cursor)
@@ -324,36 +472,19 @@ def create_assignment(
                 "state": "existing",
                 "receiverCardId": receiver_card_id,
             }
-        for reference in references:
-            operation_id = _required_id(
-                reference.get("operationId"), "operation_id"
-            )
-            try:
-                operation_version = int(reference.get("version"))
-            except (TypeError, ValueError):
-                raise AgentGraphError("agentgraph_operation_version_invalid")
-            if operation_version < 1:
-                raise AgentGraphError("agentgraph_operation_version_invalid")
-            parameters = reference.get("parameters") or {}
-            if not isinstance(parameters, dict):
-                raise AgentGraphError("agentgraph_operation_parameters_invalid")
-            cursor.execute(
-                """
-                INSERT INTO ag_catalog.agent_assignment_operation_references
-                  (assignment_id, project_id, operation_id, operation_version,
-                   parameters, explanation, required)
-                VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s)
-                """,
-                (
-                    assignment_id,
-                    project_id,
-                    operation_id,
-                    operation_version,
-                    json.dumps(parameters, ensure_ascii=False),
-                    str(reference.get("explanation") or "").strip() or None,
-                    bool(reference.get("required", False)),
-                ),
-            )
+        cursor.execute(
+            """
+            INSERT INTO ag_catalog.agent_assignment_operation_references
+              (assignment_id, reference_id, project_id, operation_id,
+               operation_version, execution_role, parameters, explanation)
+            SELECT %s, reference_id, project_id, operation_id,
+                   operation_version, execution_role, parameters, explanation
+            FROM ag_catalog.agent_instruction_operation_references
+            WHERE instruction_id=%s
+            ORDER BY reference_id
+            """,
+            (assignment_id, instruction_id),
+        )
         _run_cypher(
             cursor,
             """
@@ -412,6 +543,43 @@ def create_assignment(
                 {
                     "assignmentId": assignment_id,
                     "parentAssignmentId": parent_assignment_id,
+                },
+            )
+        cursor.execute(
+            """
+            SELECT reference_id, operation_id, operation_version, execution_role
+            FROM ag_catalog.agent_assignment_operation_references
+            WHERE assignment_id=%s
+            ORDER BY reference_id
+            """,
+            (assignment_id,),
+        )
+        for reference_id, operation_id, operation_version, execution_role in cursor.fetchall():
+            _run_cypher(
+                cursor,
+                """
+                MATCH (assignment:Assignment)
+                WHERE assignment.assignmentId = $assignmentId
+                  AND assignment.projectId = $projectId
+                MERGE (operation:OperationVersion {
+                  projectId: $projectId,
+                  operationId: $operationId,
+                  version: $operationVersion
+                })
+                MERGE (assignment)-[link:USES_OPERATION {
+                  referenceId: $referenceId
+                }]->(operation)
+                SET link.executionRole = $executionRole
+                RETURN operation.operationId
+                """,
+                "operation_id agtype",
+                {
+                    "assignmentId": assignment_id,
+                    "projectId": project_id,
+                    "referenceId": str(reference_id),
+                    "operationId": str(operation_id),
+                    "operationVersion": int(operation_version),
+                    "executionRole": str(execution_role),
                 },
             )
     return {
@@ -1005,6 +1173,62 @@ def register_assignment_artifact(
     }
 
 
+def register_operation_execution_lineage(
+    *,
+    project_id: str,
+    assignment_id: str,
+    execution_id: str,
+    operation_id: str,
+    operation_version: int,
+    graph_view_id: str,
+    connection: Any | None = None,
+) -> None:
+    """Attach compact operation execution and Graph View identities in AGE."""
+    project_id = _required_text(project_id, "project_id")
+    assignment_id = _required_id(assignment_id, "assignment_id")
+    execution_id = _required_id(execution_id, "execution_id")
+    operation_id = _required_id(operation_id, "operation_id")
+    graph_view_id = _required_id(graph_view_id, "graph_view_id")
+    if not isinstance(operation_version, int) or operation_version < 1:
+        raise AgentGraphError("agentgraph_operation_version_invalid")
+    with _connection_scope(connection) as conn, conn.cursor() as cursor:
+        _prepare(cursor)
+        _run_cypher(
+            cursor,
+            """
+            MATCH (assignment:Assignment)
+            WHERE assignment.assignmentId = $assignmentId
+              AND assignment.projectId = $projectId
+            MERGE (operation:OperationVersion {
+              projectId: $projectId,
+              operationId: $operationId,
+              version: $operationVersion
+            })
+            MERGE (execution:OperationExecution {
+              projectId: $projectId,
+              executionId: $executionId
+            })
+            MERGE (view:GraphView {
+              projectId: $projectId,
+              viewId: $graphViewId
+            })
+            MERGE (assignment)-[:EXECUTED_OPERATION]->(execution)
+            MERGE (execution)-[:OF_VERSION]->(operation)
+            MERGE (execution)-[:MATERIALIZED]->(view)
+            RETURN execution.executionId
+            """,
+            "execution_id agtype",
+            {
+                "projectId": project_id,
+                "assignmentId": assignment_id,
+                "executionId": execution_id,
+                "operationId": operation_id,
+                "operationVersion": operation_version,
+                "graphViewId": graph_view_id,
+            },
+        )
+
+
 def add_assignment_references(
     *,
     project_id: str,
@@ -1161,24 +1385,26 @@ def read_assignment(
         ]
         cursor.execute(
             """
-            SELECT operation_id, operation_version, parameters, explanation, required
+            SELECT reference_id, operation_id, operation_version, parameters,
+                   explanation, execution_role
             FROM ag_catalog.agent_assignment_operation_references
             WHERE assignment_id=%s
-            ORDER BY operation_id, operation_version
+            ORDER BY reference_id
             """,
             (assignment_id,),
         )
         operations = [
             {
-                "operationId": item[0],
-                "version": item[1],
+                "referenceId": item[0],
+                "operationId": item[1],
+                "version": item[2],
                 "parameters": (
-                    item[2]
-                    if isinstance(item[2], dict)
-                    else json.loads(str(item[2]))
+                    item[3]
+                    if isinstance(item[3], dict)
+                    else json.loads(str(item[3]))
                 ),
-                "explanation": item[3],
-                "required": item[4],
+                "explanation": item[4],
+                "executionRole": item[5],
             }
             for item in cursor.fetchall()
         ]

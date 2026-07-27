@@ -283,24 +283,6 @@ def thinkgraph_graph_views(projectId: str, conversationId: str | None = None):
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
-@app.post("/agentgraph/assignments/prepare-context")
-def agentgraph_prepare_assignment_context(payload: dict[str, Any]):
-    """Prepare one exact saved-card assignment and stop before model execution."""
-    from app.python_models.registered_queries import prepare_assignment_context
-
-    try:
-        return prepare_assignment_context(
-            project_id=str(payload.get("projectId") or ""),
-            assignment_id=str(payload.get("assignmentId") or ""),
-            receiver_card_id=str(payload.get("receiverCardId") or ""),
-            lease_seconds=int(payload.get("leaseSeconds") or 120),
-        )
-    except (ValueError, LookupError, PermissionError) as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err)) from err
-
-
 @app.get("/agentgraph/assignments/{assignment_id:path}")
 def agentgraph_read_assignment(
     assignment_id: str,

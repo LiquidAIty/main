@@ -69,13 +69,26 @@ def _durable_outer_boundaries(monkeypatch):
         lambda **kwargs: {"assignmentId": f"assignment:{kwargs['correlation_id']}"},
     )
     monkeypatch.setattr(
-        mac.ag,
-        "claim_assignment",
-        lambda **kwargs: {
-            "assignmentId": kwargs["assignment_id"],
-            "leaseToken": "lease:test",
-            "instruction": "run",
-        },
+        mac.rq,
+        "hydrate_assignment_context",
+        lambda **kwargs: mac.rq.HydratedAssignmentContext(
+            assignment_id=kwargs["assignment_id"],
+            instruction_id="instruction:test",
+            instruction_sha256="sha256:test",
+            correlation_id="corr-1",
+            receiver_card_id=kwargs["receiver_card_id"],
+            instruction="run",
+            lease_token="lease:test",
+            lease_expires_at="later",
+            attempt=1,
+            required_bindings=(),
+            optional_bindings=(),
+            executions=(),
+            graph_view_ids=(),
+            query_execution_ids=(),
+            card_grants=(),
+            model_context="run",
+        ),
     )
     monkeypatch.setattr(
         mac.ag,
@@ -85,7 +98,6 @@ def _durable_outer_boundaries(monkeypatch):
             "artifacts": [],
         },
     )
-    monkeypatch.setattr(mac.rq, "assigned_query_bindings", lambda **_kwargs: [])
 
 
 # --------------------------------------------------------------------------- #
@@ -129,6 +141,27 @@ class TestGuardFailureResponse:
         assert response.finalResponseText == ""
         assert response.taskLedgerArtifact is None
         assert response.session.turnId == "corr-1"  # correlation preserved
+
+    def test_assignment_hydration_failure_starts_no_model(self, monkeypatch):
+        model_calls: list[str] = []
+        monkeypatch.setattr(
+            mac.rq,
+            "hydrate_assignment_context",
+            lambda **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("registered_operation_materialization_failed")
+            ),
+        )
+        monkeypatch.setattr(
+            mac,
+            "_build_model_client",
+            lambda _config: model_calls.append("model"),
+        )
+
+        response = asyncio.run(mac.run_configured_card(_context()))
+
+        assert response.ok is False
+        assert "registered_operation_materialization_failed" in (response.error or "")
+        assert model_calls == []
 
 # --------------------------------------------------------------------------- #
 # shared builder reuse — the SAME code path Mag One participants use
@@ -188,16 +221,28 @@ class TestRegisteredQueryContext:
                 tasks.append(task)
                 return SimpleNamespace(messages=[SimpleNamespace(content="done")])
 
-        monkeypatch.setattr(
-            mac.rq,
-            "assigned_query_bindings",
-            lambda **_kwargs: [required, optional],
-        )
-        monkeypatch.setattr(
-            mac.rq,
-            "execute_binding",
-            lambda *_args, **_kwargs: (events.append("materialized") or execution),
-        )
+        def hydrate(**kwargs):
+            events.append("materialized")
+            return mac.rq.HydratedAssignmentContext(
+                assignment_id=kwargs["assignment_id"],
+                instruction_id="instruction:test",
+                instruction_sha256="sha256:test",
+                correlation_id="corr-1",
+                receiver_card_id=kwargs["receiver_card_id"],
+                instruction="Use registered context.",
+                lease_token="lease:test",
+                lease_expires_at="later",
+                attempt=1,
+                required_bindings=(required,),
+                optional_bindings=(optional,),
+                executions=(execution,),
+                graph_view_ids=(execution.graph_view_id,),
+                query_execution_ids=(execution.execution_id,),
+                card_grants=(),
+                model_context="materialized context",
+            )
+
+        monkeypatch.setattr(mac.rq, "hydrate_assignment_context", hydrate)
         monkeypatch.setattr(mac.rpe, "prepare", lambda **_kwargs: None)
         monkeypatch.setattr(
             mac,

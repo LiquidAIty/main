@@ -22,6 +22,14 @@ def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
             conversation_id="main",
             body="  Exact instruction bytes.\n",
             prepared_by_card_id="card_main_chat",
+            operation_references=[
+                {
+                    "operationId": "agentgraph.active_context_identities",
+                    "version": 2,
+                    "parameters": {"project_id": PROJECT_ID},
+                    "executionRole": "optional_tool",
+                }
+            ],
             connection=connection,
         )
         kwargs = dict(
@@ -32,14 +40,6 @@ def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
             sender_card_id="card_main_chat",
             receiver_card_id="card_magentic",
             instruction_id=instruction["instructionId"],
-            operation_references=[
-                {
-                        "operationId": "agentgraph.active_context_identities",
-                        "version": 2,
-                        "parameters": {"project_id": PROJECT_ID},
-                    "required": False,
-                }
-            ],
             connection=connection,
         )
         assignment = ag.create_assignment(**kwargs)
@@ -95,6 +95,7 @@ def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
         assert hydrated["instruction"] == "  Exact instruction bytes.\n"
         assert hydrated["result"]["output"] == "Exact result."
         assert hydrated["operationReferences"][0]["operationId"] == "agentgraph.active_context_identities"
+        assert hydrated["operationReferences"][0]["executionRole"] == "optional_tool"
         assert "body" not in hydrated["ageIdentity"]["instruction"]
         scoped = ag.inspect_assignments(
             project_id=PROJECT_ID,
@@ -162,6 +163,73 @@ def test_sender_can_cancel_pending_assignment_idempotently() -> None:
             reason="User cancelled.",
             connection=connection,
         )["created"] is False
+    finally:
+        connection.rollback()
+        connection.close()
+
+
+def test_instruction_references_reject_raw_query_unknown_and_disabled_versions() -> None:
+    connection = connect_postgres(autocommit=False)
+    try:
+        with pytest.raises(ag.AgentGraphError, match="keys_unknown"):
+            ag.create_instruction(
+                project_id=PROJECT_ID,
+                deck_id=DECK_ID,
+                conversation_id="main",
+                body="Invalid raw statement.",
+                operation_references=[
+                    {
+                        "operationId": "agentgraph.active_context_identities",
+                        "version": 2,
+                        "executionRole": "required_context",
+                        "parameters": {"project_id": PROJECT_ID},
+                        "sql": "SELECT 1",
+                    }
+                ],
+                connection=connection,
+            )
+        with pytest.raises(ag.AgentGraphError, match="registered_query_not_found"):
+            ag.create_instruction(
+                project_id=PROJECT_ID,
+                deck_id=DECK_ID,
+                conversation_id="main",
+                body="Unknown operation.",
+                operation_references=[
+                    {
+                        "operationId": "agentgraph.missing",
+                        "version": 1,
+                        "executionRole": "required_context",
+                        "parameters": {},
+                    }
+                ],
+                connection=connection,
+            )
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE ag_catalog.registered_queries
+                SET disabled_at=now()
+                WHERE project_id=%s
+                  AND query_id='agentgraph.active_context_identities'
+                """,
+                (PROJECT_ID,),
+            )
+        with pytest.raises(ag.AgentGraphError, match="registered_query_disabled"):
+            ag.create_instruction(
+                project_id=PROJECT_ID,
+                deck_id=DECK_ID,
+                conversation_id="main",
+                body="Disabled operation.",
+                operation_references=[
+                    {
+                        "operationId": "agentgraph.active_context_identities",
+                        "version": 2,
+                        "executionRole": "required_context",
+                        "parameters": {"project_id": PROJECT_ID},
+                    }
+                ],
+                connection=connection,
+            )
     finally:
         connection.rollback()
         connection.close()

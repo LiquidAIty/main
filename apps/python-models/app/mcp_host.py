@@ -477,8 +477,32 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "instructions": {"type": "string"},
+                    "operationReferences": {
+                        "type": "array",
+                        "maxItems": 16,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "operationId": {"type": "string"},
+                                "version": {"type": "integer", "minimum": 1},
+                                "executionRole": {
+                                    "type": "string",
+                                    "enum": ["required_context", "optional_tool"],
+                                },
+                                "parameters": {"type": "object"},
+                                "explanation": {"type": "string"},
+                            },
+                            "required": [
+                                "operationId",
+                                "version",
+                                "executionRole",
+                            ],
+                            "additionalProperties": False,
+                        },
+                    },
                 },
                 "required": ["instructions"],
+                "additionalProperties": False,
             },
         ),
         Tool(
@@ -1065,7 +1089,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "hermes.memory_write": {"projectId", "key", "value"},
     "hermes.read_report": {"parentRunId"},
     "hermes.write_report": {"parentRunId", "reportMarkdown", "summary", "thinkGraphNodeIds", "knowGraphRefs", "codeGraphRefs"},
-    "write_mag_one_instructions": {"instructions"},
+    "write_mag_one_instructions": {"instructions", "operationReferences"},
     "canvas.inspect": {"projectId", "deckId"},
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
@@ -1223,6 +1247,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
                 conversation_id=str(context["conversationId"]),
                 body=args.get("instructions"),
                 prepared_by_card_id=str(context["mainCardId"]),
+                operation_references=args.get("operationReferences"),
             )
             return [TextContent(type="text", text=json.dumps(result))]
         except agentgraph.AgentGraphError as err:

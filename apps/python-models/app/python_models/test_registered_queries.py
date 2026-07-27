@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from uuid import uuid4
 
 import numpy as np
 import pytest
 
+from app import control_plane
 from app.python_models import registered_queries as rq
 from app.python_models.postgres import connect_postgres
 from app.python_models.thinkgraph_engraphis import ThinkGraphEngraphis
@@ -201,3 +203,276 @@ def test_materialized_registered_query_view_uses_canonical_graph_view_store(tmp_
     assert stored[0]["query"] == "agentgraph.context_count@v1"
     assert stored[0]["records"][0]["properties"] == {"context_count": 4}
     assert stored[0]["runtime"]["queryExecutionId"] == "queryexec:test"
+
+
+def test_assignment_hydrator_materializes_required_and_keeps_optional_scoped(
+    monkeypatch,
+) -> None:
+    events: list[str] = []
+    required = rq.QueryBinding(
+        project_id=PROJECT_ID,
+        deck_id="deck_builder",
+        card_id="card_magentic",
+        binding_id="operation-ref:1",
+        query_id="agentgraph.active_context_identities",
+        query_version=2,
+        delivery_mode="required",
+        parameters={"project_id": PROJECT_ID},
+    )
+    optional = rq.QueryBinding(
+        project_id=PROJECT_ID,
+        deck_id="deck_builder",
+        card_id="card_magentic",
+        binding_id="operation-ref:2",
+        query_id="agentgraph.active_context_identities",
+        query_version=2,
+        delivery_mode="optional",
+        parameters={"project_id": PROJECT_ID},
+    )
+    execution = rq.QueryExecution(
+        execution_id="queryexec:one",
+        binding_id=required.binding_id,
+        query_id=required.query_id,
+        query_version=required.query_version,
+        parameters=required.parameters,
+        graph_view_id="graphview:query:one",
+        rows=[{"assignment_id": "assignment:one"}],
+        truncated=False,
+    )
+    assignment = {
+        "assignmentId": "assignment:one",
+        "instructionId": "instruction:one",
+        "instruction": "Approved task.",
+        "instructionSha256": "sha256:one",
+        "correlationId": "run:one",
+        "conversationId": "main",
+        "deckId": "deck_builder",
+        "operationReferences": [
+            {
+                "referenceId": "operation-ref:1",
+                "operationId": required.query_id,
+                "version": 2,
+                "executionRole": "required_context",
+                "parameters": required.parameters,
+            },
+            {
+                "referenceId": "operation-ref:2",
+                "operationId": optional.query_id,
+                "version": 2,
+                "executionRole": "optional_tool",
+                "parameters": optional.parameters,
+            },
+        ],
+    }
+    monkeypatch.setattr(rq, "assigned_query_bindings", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        rq,
+        "bindings_from_operation_references",
+        lambda **_kwargs: [required, optional],
+    )
+    monkeypatch.setattr(
+        rq,
+        "partition_operation_bindings",
+        lambda _bindings, **_kwargs: ([required, optional], []),
+    )
+    monkeypatch.setattr(control_plane, "_load_deck", lambda *_args: ({}, None))
+    monkeypatch.setattr(
+        control_plane,
+        "_find_card",
+        lambda *_args: {
+            "kind": "agent",
+            "enabled": True,
+            "runtimeOptions": {"tools": ["agentgraph.inspect"]},
+        },
+    )
+    monkeypatch.setattr(
+        "app.python_models.agentgraph.read_assignment",
+        lambda **_kwargs: assignment,
+    )
+    monkeypatch.setattr(
+        "app.python_models.agentgraph.claim_assignment",
+        lambda **_kwargs: {
+            "instructionId": "instruction:one",
+            "instructionSha256": "sha256:one",
+            "correlationId": "run:one",
+            "instruction": "Approved task.",
+            "leaseToken": "lease:one",
+            "leaseExpiresAt": "later",
+            "attempt": 1,
+        },
+    )
+    monkeypatch.setattr(
+        rq,
+        "execute_binding",
+        lambda *_args, **_kwargs: (events.append("required") or execution),
+    )
+
+    hydrated = rq.hydrate_assignment_context(
+        project_id=PROJECT_ID,
+        assignment_id="assignment:one",
+        receiver_card_id="card_magentic",
+    )
+
+    assert events == ["required"]
+    assert hydrated.graph_view_ids == ("graphview:query:one",)
+    assert hydrated.optional_bindings == (optional,)
+    assert "graphview:query:one" in hydrated.model_context
+
+
+def test_required_hydration_failure_finishes_only_the_assignment(
+    monkeypatch,
+) -> None:
+    required = rq.QueryBinding(
+        project_id=PROJECT_ID,
+        deck_id="deck_builder",
+        card_id="card_magentic",
+        binding_id="operation-ref:1",
+        query_id="agentgraph.active_context_identities",
+        query_version=2,
+        delivery_mode="required",
+        parameters={"project_id": PROJECT_ID},
+    )
+    finished: list[dict] = []
+    monkeypatch.setattr(
+        "app.python_models.agentgraph.read_assignment",
+        lambda **_kwargs: {
+            "assignmentId": "assignment:one",
+            "instructionId": "instruction:one",
+            "instruction": "Approved task.",
+            "instructionSha256": "sha256:one",
+            "correlationId": "run:one",
+            "conversationId": "main",
+            "deckId": "deck_builder",
+            "operationReferences": [],
+        },
+    )
+    monkeypatch.setattr(control_plane, "_load_deck", lambda *_args: ({}, None))
+    monkeypatch.setattr(
+        control_plane,
+        "_find_card",
+        lambda *_args: {
+            "kind": "agent",
+            "enabled": True,
+            "runtimeOptions": {"tools": ["agentgraph.inspect"]},
+        },
+    )
+    monkeypatch.setattr(rq, "assigned_query_bindings", lambda **_kwargs: [required])
+    monkeypatch.setattr(
+        rq,
+        "partition_operation_bindings",
+        lambda _bindings, **_kwargs: ([required], []),
+    )
+    monkeypatch.setattr(
+        "app.python_models.agentgraph.claim_assignment",
+        lambda **_kwargs: {
+            "instructionId": "instruction:one",
+            "instructionSha256": "sha256:one",
+            "correlationId": "run:one",
+            "instruction": "Approved task.",
+            "leaseToken": "lease:one",
+            "leaseExpiresAt": "later",
+            "attempt": 1,
+        },
+    )
+    monkeypatch.setattr(
+        rq,
+        "execute_binding",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("database down")),
+    )
+    monkeypatch.setattr(
+        "app.python_models.agentgraph.finish_assignment",
+        lambda **kwargs: finished.append(kwargs),
+    )
+
+    with pytest.raises(RuntimeError, match="registered_operation_materialization_failed"):
+        rq.hydrate_assignment_context(
+            project_id=PROJECT_ID,
+            assignment_id="assignment:one",
+            receiver_card_id="card_magentic",
+        )
+
+    assert finished[0]["assignment_id"] == "assignment:one"
+    assert finished[0]["status"] == "failed"
+    assert finished[0]["error_code"] == "registered_operation_materialization_failed"
+
+
+def test_optional_tool_cannot_execute_another_assignments_binding(monkeypatch) -> None:
+    binding = rq.QueryBinding(
+        project_id=PROJECT_ID,
+        deck_id="deck_builder",
+        card_id="card_magentic",
+        binding_id="operation-ref:1",
+        query_id="agentgraph.active_context_identities",
+        query_version=2,
+        delivery_mode="optional",
+        parameters={"project_id": PROJECT_ID},
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        rq,
+        "execute_binding",
+        lambda selected, **_kwargs: (
+            calls.append(selected.binding_id)
+            or rq.QueryExecution(
+                execution_id="queryexec:optional",
+                binding_id=selected.binding_id,
+                query_id=selected.query_id,
+                query_version=selected.query_version,
+                parameters=selected.parameters,
+                graph_view_id="graphview:query:optional",
+                rows=[],
+                truncated=False,
+            )
+        ),
+    )
+    tool = rq.build_bound_query_tool(
+        [binding],
+        correlation_id="run:one",
+        assignment_id="assignment:one",
+        conversation_id="main",
+        card_grants=["agentgraph.inspect"],
+    )
+
+    with pytest.raises(ValueError, match="binding_not_assigned"):
+        asyncio.run(tool._func("operation-ref:other"))
+    result = asyncio.run(tool._func("operation-ref:1"))
+
+    assert calls == ["operation-ref:1"]
+    assert result["graphViewId"] == "graphview:query:optional"
+
+
+def test_optional_tool_failure_does_not_finish_the_assignment(monkeypatch) -> None:
+    binding = rq.QueryBinding(
+        project_id=PROJECT_ID,
+        deck_id="deck_builder",
+        card_id="card_search",
+        binding_id="operation-ref:1",
+        query_id="agentgraph.active_context_identities",
+        query_version=2,
+        delivery_mode="optional",
+        parameters={"project_id": PROJECT_ID},
+    )
+    finished: list[dict] = []
+    monkeypatch.setattr(
+        rq,
+        "execute_binding",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("optional operation unavailable")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.python_models.agentgraph.finish_assignment",
+        lambda **kwargs: finished.append(kwargs),
+    )
+    tool = rq.build_bound_query_tool(
+        [binding],
+        correlation_id="run:one",
+        assignment_id="assignment:one",
+        conversation_id="main",
+        card_grants=[],
+    )
+
+    with pytest.raises(RuntimeError, match="optional operation unavailable"):
+        asyncio.run(tool._func("operation-ref:1"))
+
+    assert finished == []

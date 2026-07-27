@@ -58,6 +58,8 @@ async def check():
     assert 'approvedPrompt' in coder.inputSchema['properties']
     assert 'adapter' not in coder.inputSchema['properties']
     assert 'instructionId' in by_name['card.run_assistant_agent'].inputSchema['properties']
+    operation_refs = by_name['write_mag_one_instructions'].inputSchema['properties']['operationReferences']
+    assert operation_refs['items']['properties']['executionRole']['enum'] == ['required_context', 'optional_tool']
     assert by_name['run_mag_one'].inputSchema['required'] == ['instructionId', 'projectId', 'deckId']
     assert 'main.context' not in by_name
     assert 'agentgraph.inspect' in by_name
@@ -75,6 +77,53 @@ asyncio.run(check())
     assert "LIQUIDAITY_MAIN_PROJECT_ID" not in host
     assert "LIQUIDAITY_MAIN_DECK_ID" not in host
     assert "LIQUIDAITY_MAIN_CONVERSATION_ID" not in host
+
+
+def test_mag_one_instruction_authoring_persists_operation_references(monkeypatch):
+    import asyncio
+    import json
+    import mcp_host
+    from app.python_models import agentgraph
+
+    context = {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "main",
+        "mainCardId": "card_main_chat",
+        "savedMainToolGrants": ["write_mag_one_instructions"],
+    }
+    captured = []
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: context)
+    monkeypatch.setattr(mcp_host, "_native_engraphis_tools", lambda: asyncio.sleep(0, result=[]))
+    monkeypatch.setattr(
+        agentgraph,
+        "create_instruction",
+        lambda **kwargs: (
+            captured.append(kwargs)
+            or {"ok": True, "instructionId": "instruction:one"}
+        ),
+    )
+
+    result = asyncio.run(
+        mcp_host.call_tool(
+            "write_mag_one_instructions",
+            {
+                "instructions": "Approved task.",
+                "operationReferences": [
+                    {
+                        "operationId": "agentgraph.active_context_identities",
+                        "version": 2,
+                        "executionRole": "required_context",
+                        "parameters": {"project_id": "project-1"},
+                    }
+                ],
+            },
+        )
+    )
+
+    assert json.loads(result[0].text)["instructionId"] == "instruction:one"
+    assert captured[0]["operation_references"][0]["version"] == 2
+    assert captured[0]["operation_references"][0]["executionRole"] == "required_context"
 
 
 def test_native_engraphis_registry_is_initialized_once_without_schema_adaptation():

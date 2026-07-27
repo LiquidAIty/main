@@ -60,6 +60,7 @@ class RegisteredQueryVersion:
     timeout_ms: int
     authored_by: str
     audit_note: str
+    disabled_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,7 @@ class QueryBinding:
     delivery_mode: str
     parameters: dict[str, Any]
     explanation: str | None = None
+    authorization_source: str = "card_grant"
 
 
 @dataclass(frozen=True)
@@ -85,6 +87,26 @@ class QueryExecution:
     graph_view_id: str
     rows: list[dict[str, Any]]
     truncated: bool
+
+
+@dataclass(frozen=True)
+class HydratedAssignmentContext:
+    assignment_id: str
+    instruction_id: str
+    instruction_sha256: str
+    correlation_id: str
+    receiver_card_id: str
+    instruction: str
+    lease_token: str
+    lease_expires_at: str
+    attempt: int
+    required_bindings: tuple[QueryBinding, ...]
+    optional_bindings: tuple[QueryBinding, ...]
+    executions: tuple[QueryExecution, ...]
+    graph_view_ids: tuple[str, ...]
+    query_execution_ids: tuple[str, ...]
+    card_grants: tuple[str, ...]
+    model_context: str
 
 
 _GRAPH_GRANTS: dict[tuple[str, str], frozenset[str]] = {
@@ -580,7 +602,7 @@ def resolve_registered_version(
                        q.operation_class, q.capability_id, q.database_authority,
                        q.database_name, q.owner_id, q.title, q.description,
                        v.language, v.statement, v.parameter_schema, v.row_limit,
-                       v.timeout_ms, v.authored_by, v.audit_note
+                       v.timeout_ms, v.authored_by, v.audit_note, q.disabled_at
                 FROM ag_catalog.registered_queries q
                 JOIN ag_catalog.registered_query_versions v
                   ON v.project_id=q.project_id AND v.query_id=q.query_id
@@ -598,6 +620,8 @@ def resolve_registered_version(
             connection.close()
     if row is None:
         raise LookupError(f"registered_query_not_found: {query_id}@v{version}")
+    if row[18] is not None:
+        raise PermissionError(f"registered_query_disabled: {query_id}@v{version}")
     schema = row[13] if isinstance(row[13], dict) else json.loads(str(row[13]))
     language = str(row[11])
     statement = (
@@ -624,6 +648,7 @@ def resolve_registered_version(
         timeout_ms=row[15],
         authored_by=row[16],
         audit_note=row[17],
+        disabled_at=row[18],
     )
 
 
@@ -737,21 +762,21 @@ def bindings_from_operation_references(
     deck_id: str,
     card_id: str,
     references: list[dict[str, Any]],
-    card_grants: list[str] | tuple[str, ...] | set[str] | frozenset[str],
 ) -> list[QueryBinding]:
-    """Hydrate handoff handles under the receiving card's grants."""
+    """Hydrate exact instruction-approved handles for this assignment."""
     bindings: list[QueryBinding] = []
     for index, reference in enumerate(references):
         query_id = _required_identity(reference.get("operationId"), "query_id")
         version = int(reference.get("version") or 0)
         operation = resolve_registered_version(project_id, query_id, version)
-        authorize_registered_operation(operation, card_grants)
         parameters = validate_parameters(
             operation.parameter_schema,
             reference.get("parameters") or {},
         )
-        required = bool(reference.get("required", False))
-        if required and operation.operation_class != "read":
+        execution_role = str(reference.get("executionRole") or "").strip()
+        if execution_role not in {"required_context", "optional_tool"}:
+            raise ValueError("registered_operation_execution_role_invalid")
+        if execution_role == "required_context" and operation.operation_class != "read":
             raise ValueError(
                 f"registered_operation_write_cannot_be_preexecuted: {query_id}@v{version}"
             )
@@ -761,12 +786,18 @@ def bindings_from_operation_references(
                 project_id=project_id,
                 deck_id=deck_id,
                 card_id=card_id,
-                binding_id=f"handoff_operation_{index + 1}",
+                binding_id=_required_identity(
+                    reference.get("referenceId") or f"operation-ref:{index + 1}",
+                    "binding_id",
+                ),
                 query_id=query_id,
                 query_version=version,
-                delivery_mode="required" if required else "optional",
+                delivery_mode=(
+                    "required" if execution_role == "required_context" else "optional"
+                ),
                 parameters=parameters,
                 explanation=explanation,
+                authorization_source="assignment_reference",
             )
         )
     return bindings
@@ -786,7 +817,10 @@ def partition_operation_bindings(
             binding.query_id,
             binding.query_version,
         )
-        authorize_registered_operation(operation, card_grants)
+        if binding.authorization_source == "card_grant":
+            authorize_registered_operation(operation, card_grants)
+        elif binding.authorization_source != "assignment_reference":
+            raise PermissionError("registered_operation_authorization_source_invalid")
         if operation.operation_class == "write":
             capabilities.append(binding)
         else:
@@ -932,7 +966,10 @@ def execute_binding(
         binding.query_id,
         binding.query_version,
     )
-    authorize_registered_operation(query, card_grants)
+    if binding.authorization_source == "card_grant":
+        authorize_registered_operation(query, card_grants)
+    elif binding.authorization_source != "assignment_reference":
+        raise PermissionError("registered_operation_authorization_source_invalid")
     if query.operation_class != "read" or query.language == "capability":
         raise ValueError(
             f"registered_operation_materialization_invalid: {query.query_id}@v{query.version}"
@@ -946,16 +983,36 @@ def execute_binding(
         cursor.execute(
             """
             SELECT 1
-            FROM ag_catalog.agent_assignments
-            WHERE assignment_id=%s AND project_id=%s AND correlation_id=%s
-              AND receiver_card_id=%s AND state='running'
-              AND lease_expires_at > now()
+            FROM ag_catalog.agent_assignments assignment
+            WHERE assignment.assignment_id=%s
+              AND assignment.project_id=%s
+              AND assignment.correlation_id=%s
+              AND assignment.receiver_card_id=%s
+              AND assignment.state='running'
+              AND assignment.lease_expires_at > now()
+              AND (
+                %s = 'card_grant'
+                OR EXISTS (
+                  SELECT 1
+                  FROM ag_catalog.agent_assignment_operation_references reference
+                  WHERE reference.assignment_id=assignment.assignment_id
+                    AND reference.reference_id=%s
+                    AND reference.operation_id=%s
+                    AND reference.operation_version=%s
+                    AND reference.parameters=%s::jsonb
+                )
+              )
             """,
             (
                 assignment_id,
                 binding.project_id,
                 correlation_id,
                 binding.card_id,
+                binding.authorization_source,
+                binding.binding_id,
+                binding.query_id,
+                binding.query_version,
+                json.dumps(binding.parameters, ensure_ascii=False),
             ),
         )
         if cursor.fetchone() is None:
@@ -1012,6 +1069,17 @@ def execute_binding(
                 ON CONFLICT DO NOTHING
                 """,
                 (assignment_id, view_id, binding.delivery_mode == "required"),
+            )
+            from app.python_models import agentgraph as ag
+
+            ag.register_operation_execution_lineage(
+                project_id=query.project_id,
+                assignment_id=assignment_id,
+                execution_id=execution_id,
+                operation_id=query.query_id,
+                operation_version=query.version,
+                graph_view_id=view_id,
+                connection=connection,
             )
             _audit(
                 cursor,
@@ -1089,14 +1157,14 @@ def build_query_context(
     return "\n".join(lines)
 
 
-def prepare_assignment_context(
+def hydrate_assignment_context(
     *,
     project_id: str,
     assignment_id: str,
     receiver_card_id: str,
     lease_seconds: int = 120,
-) -> dict[str, Any]:
-    """Authorize and prepare one saved-card assignment without calling a model.
+) -> HydratedAssignmentContext:
+    """Claim and hydrate one AgentGraph assignment before any model is built.
 
     The request carries identities only. Python hydrates the exact instruction,
     receiving saved card, grants, registered-operation versions, parameters,
@@ -1130,13 +1198,21 @@ def prepare_assignment_context(
         if isinstance(grant, str) and str(grant).strip()
     ]
 
-    bindings = bindings_from_operation_references(
+    saved_bindings = assigned_query_bindings(
+        project_id=project_id,
+        deck_id=assignment["deckId"],
+        card_id=receiver_card_id,
+    )
+    referenced_bindings = bindings_from_operation_references(
         project_id=project_id,
         deck_id=assignment["deckId"],
         card_id=receiver_card_id,
         references=assignment["operationReferences"],
-        card_grants=card_grants,
     )
+    bindings = [*saved_bindings, *referenced_bindings]
+    binding_ids = [binding.binding_id for binding in bindings]
+    if len(binding_ids) != len(set(binding_ids)):
+        raise ValueError("registered_operation_binding_identity_conflict")
     materializable, _callable_operations = partition_operation_bindings(
         bindings,
         card_grants=card_grants,
@@ -1159,16 +1235,35 @@ def prepare_assignment_context(
         for binding in bindings
         if binding.delivery_mode == "optional"
     ]
-    executions = [
-        execute_binding(
-            binding,
-            correlation_id=assignment["correlationId"],
-            assignment_id=assignment_id,
-            conversation_id=assignment["conversationId"],
-            card_grants=card_grants,
-        )
-        for binding in required_reads
-    ]
+    try:
+        executions = [
+            execute_binding(
+                binding,
+                correlation_id=assignment["correlationId"],
+                assignment_id=assignment_id,
+                conversation_id=assignment["conversationId"],
+                card_grants=card_grants,
+            )
+            for binding in required_reads
+        ]
+    except Exception as error:
+        try:
+            ag.finish_assignment(
+                project_id=project_id,
+                assignment_id=assignment_id,
+                lease_token=claimed["leaseToken"],
+                status="failed",
+                error_code="registered_operation_materialization_failed",
+                error_detail=str(error),
+            )
+        except Exception as persistence_error:
+            raise RuntimeError(
+                "registered_operation_materialization_failed: "
+                f"{error}; assignment_failure_persist_failed: {persistence_error}"
+            ) from error
+        raise RuntimeError(
+            f"registered_operation_materialization_failed: {error}"
+        ) from error
     operation_context = build_query_context(executions, optional_operations)
     model_context = "\n\n".join(
         [
@@ -1181,29 +1276,28 @@ def prepare_assignment_context(
             operation_context,
         ]
     )
-    return {
-        "ok": True,
-        "assignmentId": assignment_id,
-        "instructionId": claimed["instructionId"],
-        "instructionSha256": claimed["instructionSha256"],
-        "correlationId": claimed["correlationId"],
-        "receiverCardId": receiver_card_id,
-        "leaseToken": claimed["leaseToken"],
-        "leaseExpiresAt": claimed["leaseExpiresAt"],
-        "attempt": claimed["attempt"],
-        "graphViewIds": [execution.graph_view_id for execution in executions],
-        "queryExecutionIds": [execution.execution_id for execution in executions],
-        "optionalOperationBindings": [
-            {
-                "bindingId": binding.binding_id,
-                "operationId": binding.query_id,
-                "version": binding.query_version,
-            }
-            for binding in optional_operations
-        ],
-        "modelContext": model_context,
-        "modelCalled": False,
-    }
+    return HydratedAssignmentContext(
+        assignment_id=assignment_id,
+        instruction_id=claimed["instructionId"],
+        instruction_sha256=claimed["instructionSha256"],
+        correlation_id=claimed["correlationId"],
+        receiver_card_id=receiver_card_id,
+        instruction=claimed["instruction"],
+        lease_token=claimed["leaseToken"],
+        lease_expires_at=claimed["leaseExpiresAt"],
+        attempt=claimed["attempt"],
+        required_bindings=tuple(required_reads),
+        optional_bindings=tuple(optional_operations),
+        executions=tuple(executions),
+        graph_view_ids=tuple(
+            execution.graph_view_id for execution in executions
+        ),
+        query_execution_ids=tuple(
+            execution.execution_id for execution in executions
+        ),
+        card_grants=tuple(card_grants),
+        model_context=model_context,
+    )
 
 
 def build_bound_query_tool(

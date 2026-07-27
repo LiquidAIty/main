@@ -310,6 +310,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     """
     assignment_id: str | None = None
     lease_token: str | None = None
+    hydrated_assignment: rq.HydratedAssignmentContext | None = None
     terminal_artifacts: list[dict[str, Any]] = []
 
     guard = _validate_single_card_context(context)
@@ -399,14 +400,14 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             parent_correlation_id=_as_text(context.session.runId) or None,
         )
         assignment_id = assignment["assignmentId"]
-        claimed = await asyncio.to_thread(
-            ag.claim_assignment,
+        hydrated_assignment = await asyncio.to_thread(
+            rq.hydrate_assignment_context,
             project_id=context.session.projectId,
             assignment_id=assignment_id,
             receiver_card_id=single.cardId,
         )
-        lease_token = claimed["leaseToken"]
-        instruction_body = claimed["instruction"]
+        lease_token = hydrated_assignment.lease_token
+        instruction_body = hydrated_assignment.instruction
     except Exception as err:
         return OrchestratorRunResponse(
             ok=False,
@@ -446,32 +447,11 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             f"runtime_profile_prehook_failed: {err}", "profile_prehook_failed"
         )
 
-    query_bindings: list[rq.QueryBinding] = []
-    query_executions: list[rq.QueryExecution] = []
-    try:
-        query_bindings = await asyncio.to_thread(
-            rq.assigned_query_bindings,
-            project_id=context.session.projectId,
-            deck_id=deck_id,
-            card_id=single.cardId,
-        )
-        for binding in query_bindings:
-            if binding.delivery_mode == "required":
-                query_executions.append(
-                    await asyncio.to_thread(
-                        rq.execute_binding,
-                        binding,
-                        correlation_id=context.session.turnId,
-                        assignment_id=assignment_id,
-                        conversation_id=_as_text(context.conversationId),
-                        card_grants=selected_tools,
-                    )
-                )
-    except Exception as err:
-        return await _fail(
-            f"registered_query_materialization_failed: {err}",
-            "registered_query_materialization_failed",
-        )
+    query_bindings = [
+        *hydrated_assignment.required_bindings,
+        *hydrated_assignment.optional_bindings,
+    ]
+    query_executions = list(hydrated_assignment.executions)
 
     client = _build_model_client(
         AutoGenAgentConfig(
@@ -515,7 +495,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                     correlation_id=context.session.turnId,
                     assignment_id=assignment_id,
                     conversation_id=_as_text(context.conversationId),
-                    card_grants=selected_tools,
+                    card_grants=hydrated_assignment.card_grants,
                 )
             ]
             if optional_bindings
@@ -659,28 +639,10 @@ def _read_max_turns(context: ContextPack) -> int:
 
 def _magentic_completion_status(
     final_response_text: str,
-    *,
-    durable_output_required: bool,
-    returned_files: list[str],
-    nonempty_returned_files: list[str] | None = None,
 ) -> tuple[bool, str | None]:
-    """Derive success from model output plus the declared durable contract.
-
-    A job that declared a durable contract (a return folder) is NOT successful on
-    model text alone: it must have produced real, non-empty deliverables. A file
-    that exists but is empty is a failed write, not durable output — counting it
-    would re-open the PL-1 "success without durable output" hole.
-    """
+    """Derive completion from the result persisted through AgentGraph."""
     if not _as_text(final_response_text):
         return False, "no_model_output"
-    if durable_output_required:
-        durable = returned_files if nonempty_returned_files is None else nonempty_returned_files
-        if not durable:
-            # Distinguish "wrote nothing" from "wrote only empty files" so the
-            # failure is actionable rather than a bare "missing".
-            if returned_files:
-                return False, "declared_durable_output_empty"
-            return False, "declared_durable_output_missing"
     return True, None
 
 
@@ -714,8 +676,8 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             instruction_id=request.instructionId,
             parent_correlation_id=_as_text(context.session.runId) or None,
         )
-        claimed = await asyncio.to_thread(
-            ag.claim_assignment,
+        hydrated_assignment = await asyncio.to_thread(
+            rq.hydrate_assignment_context,
             project_id=context.session.projectId,
             assignment_id=assignment["assignmentId"],
             receiver_card_id=request.receiverCardId,
@@ -730,7 +692,7 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             thinkGraph=context.thinkGraph,
             knowGraph=KnowGraphUpdateReport(sourceAgent="magentic_one", summary="no_run"),
         )
-    task = str(claimed["instruction"])
+    task = hydrated_assignment.model_context
 
     client = _build_model_client(
         AutoGenAgentConfig(
@@ -743,13 +705,30 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
         {
             "projectId": context.session.projectId,
             "assignmentId": assignment["assignmentId"],
-            "leaseToken": claimed["leaseToken"],
+            "leaseToken": hydrated_assignment.lease_token,
             "workspaceRoot": aa.resolve_workspace_root(),
         }
     )
 
     try:
-        participants = _build_participants(context, client)
+        query_tools = (
+            [
+                rq.build_bound_query_tool(
+                    list(hydrated_assignment.optional_bindings),
+                    correlation_id=hydrated_assignment.correlation_id,
+                    assignment_id=hydrated_assignment.assignment_id,
+                    conversation_id=_as_text(context.conversationId),
+                    card_grants=hydrated_assignment.card_grants,
+                )
+            ]
+            if hydrated_assignment.optional_bindings
+            else []
+        )
+        participants = _build_participants(
+            context,
+            client,
+            extra_tools=query_tools,
+        )
         team = _CapturingMagenticOneGroupChat(
             participants=participants,
             model_client=client,
@@ -815,16 +794,12 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             },
         )
 
-        ok, completion_error = _magentic_completion_status(
-            final_response_text,
-            durable_output_required=False,
-            returned_files=[],
-        )
+        ok, completion_error = _magentic_completion_status(final_response_text)
         completed = await asyncio.to_thread(
             ag.finish_assignment,
             project_id=context.session.projectId,
             assignment_id=assignment["assignmentId"],
-            lease_token=claimed["leaseToken"],
+            lease_token=hydrated_assignment.lease_token,
             status="completed" if ok else "failed",
             output=final_response_text or None,
             error_code=completion_error,
@@ -872,7 +847,7 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             ag.finish_assignment,
             project_id=context.session.projectId,
             assignment_id=assignment["assignmentId"],
-            lease_token=claimed["leaseToken"],
+            lease_token=hydrated_assignment.lease_token,
             status="failed",
             error_code="magentic_run_failed",
             error_detail=str(err),
