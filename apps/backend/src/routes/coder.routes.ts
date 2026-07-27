@@ -154,7 +154,6 @@ router.post('/mcp-bridge/external_main_context', async (req, res) => {
         conversationId,
         mainCardId: main.cardId,
         instructions: main.prompt,
-        savedMainToolGrants: main.parentAllowedMcpTools,
       },
     });
   } catch (error) {

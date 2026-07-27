@@ -96,7 +96,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       'Hard rules:',
       '- Never claim a run, graph write, code change, or tool execution that a real returned result does not show. No result → say it failed or is blocked, and why.',
       '- Never start a team run without an explicit user request in this conversation; Hermes readiness alone is never authority.',
-      '- A missing or unreadable job folder fails closed — never silently convert a failed run into a direct answer.',
+      '- A missing or unreadable AgentGraph assignment or result fails closed — never silently convert a failed run into a direct answer.',
       '- Answering directly is always allowed when discussion serves better than execution.',
     ].join('\n'),
   },
@@ -177,7 +177,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       memoryPolicy: [
         'ThinkGraph = shared evolving project reasoning (objectives, decisions, constraints, uncertainty, questions, provenance links) — read it for context; Main Chat alone decides and writes what persists.',
         'KnowGraph = grounded sourced knowledge — enters only through real ingestion of real sources.',
-        'SQL memory = your private continuity, separate from ThinkGraph. The job folder = the project\'s working execution files and final prompt.',
+        'SQL memory = your private continuity, separate from ThinkGraph. AgentGraph assignments and stable references carry delegated work and results; files are artifacts, not execution authority.',
         'Return concise analysis and stable pointers when useful; never copy whole graphs into chat.',
       ].join('\n'),
     }),

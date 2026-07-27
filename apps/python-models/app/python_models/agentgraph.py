@@ -1250,6 +1250,7 @@ def add_assignment_references(
         "knowgraph",
         "codegraph",
         "native_session",
+        "worldsignals",
     }
     normalized: list[tuple[str, str, bool]] = []
     for reference in references:

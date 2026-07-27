@@ -466,7 +466,6 @@ describe('coder routes', () => {
           conversationId: 'external-mcp:70f63a4d-1a67-4dcc-a8ee-cce267572747',
           mainCardId: 'card_main_chat',
           instructions: 'Persisted Main instructions.',
-          savedMainToolGrants: ['engraphis_recall'],
         },
       });
       expect(dbMocks.query).toHaveBeenCalledWith(

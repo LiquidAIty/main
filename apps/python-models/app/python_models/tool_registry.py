@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import hashlib
 import json
 import operator
 import os
@@ -459,6 +460,72 @@ AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY: ContextVar[dict[str, str] | None] = Context
 )
 
 
+def _record_worldsignals_reference(operation: str, result: dict[str, Any]) -> dict[str, Any]:
+    """Attach only a stable result identity; WorldSignals retains its payload."""
+    authority = AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY.get()
+    if authority is None:
+        return result
+    encoded = json.dumps(
+        result,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    reference_id = (
+        f"worldsignals:{operation}:"
+        f"{hashlib.sha256(encoded.encode('utf-8')).hexdigest()[:32]}"
+    )
+    from app.python_models import agentgraph
+
+    agentgraph.add_assignment_references(
+        project_id=authority["projectId"],
+        assignment_id=authority["assignmentId"],
+        receiver_card_id=authority["receiverCardId"],
+        references=[
+            {
+                "referenceId": reference_id,
+                "referenceType": "worldsignals",
+                "required": False,
+            }
+        ],
+    )
+    return result
+
+
+def assignment_worldsignals_command(
+    command: str,
+    arguments: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return _record_worldsignals_reference(
+        "command",
+        worldsignals_command(command, arguments),
+    )
+
+
+def assignment_worldsignals_batch(
+    commands: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return _record_worldsignals_reference(
+        "batch",
+        worldsignals_batch(commands),
+    )
+
+
+def assignment_worldsignals_poll() -> dict[str, Any]:
+    return _record_worldsignals_reference("poll", worldsignals_poll())
+
+
+def assignment_worldsignals_stream_events(
+    max_events: int = 1,
+    timeout_seconds: int = 15,
+) -> dict[str, Any]:
+    return _record_worldsignals_reference(
+        "events",
+        worldsignals_stream_events(max_events, timeout_seconds),
+    )
+
+
 async def write_assignment_artifact_tool(card_id: str, path: str, content: str) -> str:
     """Write and immediately register one assignment-scoped artifact."""
     authority = AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY.get()
@@ -691,10 +758,10 @@ def build_default_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
     for spec, adapter in [
         (ToolSpec(name="worldsignals.capabilities", description="Read the live WorldSignals capability and command manifests.", enabled=True, inputSchema={"type": "object", "properties": {}, "required": []}, outputSchema={"type": "object"}), worldsignals_capabilities),
-        (ToolSpec(name="worldsignals.command", description="Run one real command from the WorldSignals command manifest.", enabled=True, inputSchema={"type": "object", "properties": {"command": {"type": "string"}, "arguments": {"type": "object"}}, "required": ["command"]}, outputSchema={"type": "object"}), worldsignals_command),
-        (ToolSpec(name="worldsignals.batch", description="Run up to twenty real WorldSignals commands through its batch channel.", enabled=True, inputSchema={"type": "object", "properties": {"commands": {"type": "array", "items": {"type": "object"}, "maxItems": 20}}, "required": ["commands"]}, outputSchema={"type": "object"}), worldsignals_batch),
-        (ToolSpec(name="worldsignals.poll", description="Poll completed command results and pending WorldSignals tasks.", enabled=True, inputSchema={"type": "object", "properties": {}, "required": []}, outputSchema={"type": "object"}), worldsignals_poll),
-        (ToolSpec(name="worldsignals.stream_events", description="Read a bounded set of real-time events from the WorldSignals SSE channel.", enabled=True, inputSchema={"type": "object", "properties": {"max_events": {"type": "integer", "default": 1}, "timeout_seconds": {"type": "integer", "default": 15}}, "required": []}, outputSchema={"type": "object"}), worldsignals_stream_events),
+        (ToolSpec(name="worldsignals.command", description="Run one real command from the WorldSignals command manifest.", enabled=True, inputSchema={"type": "object", "properties": {"command": {"type": "string"}, "arguments": {"type": "object"}}, "required": ["command"]}, outputSchema={"type": "object"}), assignment_worldsignals_command),
+        (ToolSpec(name="worldsignals.batch", description="Run up to twenty real WorldSignals commands through its batch channel.", enabled=True, inputSchema={"type": "object", "properties": {"commands": {"type": "array", "items": {"type": "object"}, "maxItems": 20}}, "required": ["commands"]}, outputSchema={"type": "object"}), assignment_worldsignals_batch),
+        (ToolSpec(name="worldsignals.poll", description="Poll completed command results and pending WorldSignals tasks.", enabled=True, inputSchema={"type": "object", "properties": {}, "required": []}, outputSchema={"type": "object"}), assignment_worldsignals_poll),
+        (ToolSpec(name="worldsignals.stream_events", description="Read a bounded set of real-time events from the WorldSignals SSE channel.", enabled=True, inputSchema={"type": "object", "properties": {"max_events": {"type": "integer", "default": 1}, "timeout_seconds": {"type": "integer", "default": 15}}, "required": []}, outputSchema={"type": "object"}), assignment_worldsignals_stream_events),
     ]:
         registry.register(spec, adapter)
     registry.register(

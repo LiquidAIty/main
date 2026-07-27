@@ -158,13 +158,21 @@ def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_to
         )
 
     monkeypatch.setattr(mac.rq, "hydrate_assignment_context", hydrate)
+    async def prepare_children(*_args, **_kwargs):
+        return []
+
+    async def close_children(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(mac, "_prepare_magentic_children", prepare_children)
+    monkeypatch.setattr(mac, "_close_magentic_children", close_children)
     monkeypatch.setattr(
         mac,
         "_build_model_client",
         lambda _config: (events.append("model") or SimpleNamespace()),
     )
 
-    def build(_context, _client, *, extra_tools=None):
+    def build(_context, _client, *, extra_tools=None, assignment_contexts=None):
         attached_tools.extend(tool.name for tool in (extra_tools or []))
         return [SimpleNamespace()]
 
@@ -195,7 +203,123 @@ def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_to
     assert response.ok is True
     assert events == ["hydrated", "model"]
     assert tasks == ["Approved task.\n\ngraphview:query:one"]
-    assert attached_tools == ["execute_registered_query"]
+    assert attached_tools == []
+
+
+def test_mag_one_prepares_one_hydrated_child_per_connected_saved_worker(monkeypatch):
+    context = _context_pack("approved")
+    context.cardRuntime.runtimeScope = {"deckId": "deck_builder"}
+    context.conversationId = "main"
+    created: list[dict[str, object]] = []
+    hydrated_calls: list[dict[str, object]] = []
+
+    def create_assignment(**kwargs):
+        created.append(kwargs)
+        return {"assignmentId": f"assignment:{kwargs['receiver_card_id']}"}
+
+    def hydrate(**kwargs):
+        hydrated_calls.append(kwargs)
+        receiver = str(kwargs["receiver_card_id"])
+        return mac.rq.HydratedAssignmentContext(
+            assignment_id=str(kwargs["assignment_id"]),
+            instruction_id="instruction:root",
+            instruction_sha256="sha256:root",
+            correlation_id=f"child:{receiver}",
+            receiver_card_id=receiver,
+            instruction="Approved task.",
+            lease_token=f"lease:{receiver}",
+            lease_expires_at="later",
+            attempt=1,
+            required_bindings=(),
+            optional_bindings=(),
+            executions=(),
+            graph_view_ids=(),
+            query_execution_ids=(),
+            card_grants=(),
+            model_context=f"child context for {receiver}",
+        )
+
+    monkeypatch.setattr(mac.ag, "create_assignment", create_assignment)
+    monkeypatch.setattr(mac.rq, "hydrate_assignment_context", hydrate)
+    root = hydrate(
+        assignment_id="assignment:root",
+        receiver_card_id="orch",
+    )
+    root = root.__class__(
+        **{
+            **root.__dict__,
+            "instruction_id": "instruction:root",
+            "correlation_id": "root-run",
+        }
+    )
+
+    children = asyncio.run(
+        mac._prepare_magentic_children(context, root_context=root)
+    )
+
+    assert [child["cardId"] for child in children] == ["r", "t"]
+    assert [child["agentName"] for child in children] == [
+        "Research_Agent",
+        "Trading_Agent",
+    ]
+    assert all(call["parent_correlation_id"] == "root-run" for call in created)
+    assert all(call["instruction_id"] == "instruction:root" for call in created)
+    assert all(call["lease_seconds"] == 3600 for call in hydrated_calls[-2:])
+
+
+def test_mag_one_persists_used_child_and_cancels_unselected_child(monkeypatch):
+    context = _context_pack("approved")
+    completed: list[dict[str, object]] = []
+    cancelled: list[dict[str, object]] = []
+
+    def child(card_id: str, agent_name: str):
+        return {
+            "agentName": agent_name,
+            "cardId": card_id,
+            "assignment": {"assignmentId": f"assignment:{card_id}"},
+            "hydrated": SimpleNamespace(
+                assignment_id=f"assignment:{card_id}",
+                lease_token=f"lease:{card_id}",
+            ),
+            "closed": False,
+        }
+
+    monkeypatch.setattr(
+        mac.ag,
+        "finish_assignment",
+        lambda **kwargs: completed.append(kwargs) or {"ok": True},
+    )
+    monkeypatch.setattr(
+        mac.ag,
+        "cancel_assignment",
+        lambda **kwargs: cancelled.append(kwargs) or {"ok": True},
+    )
+    children = [
+        child("r", "Research_Agent"),
+        child("t", "Trading_Agent"),
+    ]
+
+    asyncio.run(
+        mac._close_magentic_children(
+            context,
+            children,
+            messages=[
+                {
+                    "source": "Research_Agent",
+                    "type": "TextMessage",
+                    "content": "bounded finding",
+                }
+            ],
+            events=[],
+            root_ok=True,
+            root_error=None,
+        )
+    )
+
+    assert completed[0]["assignment_id"] == "assignment:r"
+    assert completed[0]["output"] == "[TextMessage]\nbounded finding"
+    assert cancelled[0]["assignment_id"] == "assignment:t"
+    assert cancelled[0]["reason"] == "not_selected_by_magentic_one"
 
 
 def test_app_authored_scaffold_runtime_is_gone_but_real_task_ledger_artifact_allowed():

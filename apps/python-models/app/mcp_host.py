@@ -35,11 +35,14 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import os
 import sys
 import threading
+import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from uuid import uuid4
 
 # Bootstrap the package root onto sys.path. The gRPC harness launches this host as a
@@ -79,6 +82,69 @@ AUTH0_REQUIRED_SCOPE = os.environ.get("LIQUIDAITY_AUTH0_REQUIRED_SCOPE", "liquid
 OAUTH_ENFORCED = os.environ.get("LIQUIDAITY_MCP_OAUTH_ENFORCED", "false").strip().lower() in {
     "1", "true", "yes", "on",
 }
+_STARTUP_ID = uuid4().hex
+_STARTUP_PROCESS_ID = os.getpid()
+_TRACE_LOCK = threading.Lock()
+
+
+def _safe_hash(value: Any) -> str:
+    text = str(value or "").strip()
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16] if text else ""
+
+
+def _trace(event: str, **fields: Any) -> None:
+    """Emit bounded MCP diagnostics to stderr without request or product data."""
+    allowed = {
+        "catalog_count",
+        "catalog_hash",
+        "client_hash",
+        "completed",
+        "exception_class",
+        "http_method",
+        "mcp_method",
+        "response_status",
+        "result_category",
+        "session_hash",
+        "subject_hash",
+        "tool_name",
+        "user_agent",
+    }
+    payload = {
+        "utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "startupId": _STARTUP_ID,
+        "processId": _STARTUP_PROCESS_ID,
+        "event": event,
+        **{
+            key: value
+            for key, value in fields.items()
+            if key in allowed and value not in (None, "")
+        },
+    }
+    with _TRACE_LOCK:
+        print(
+            "[liquidaity-mcp-trace] "
+            + json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+def _oauth_trace_fields() -> dict[str, str]:
+    access_token = get_access_token()
+    if access_token is None:
+        return {}
+    return {
+        "subject_hash": _safe_hash(access_token.subject),
+        "client_hash": _safe_hash(access_token.client_id),
+    }
+
+
+def _catalog_identity(tools: list[Tool]) -> tuple[int, str]:
+    names = sorted(tool.name for tool in tools)
+    digest = hashlib.sha256(
+        json.dumps(names, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return len(names), digest
 
 
 @dataclass(frozen=True)
@@ -145,6 +211,19 @@ _NATIVE_ENGRAPHIS_MCP: Any | None = None
 _NATIVE_ENGRAPHIS_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_ENGRAPHIS_NAMES: frozenset[str] = frozenset()
 _NATIVE_ENGRAPHIS_CALL_LOCK = threading.Lock()
+
+
+@server.list_resources()
+async def list_resources() -> list[Any]:
+    _trace(
+        "resources_list",
+        mcp_method="resources/list",
+        response_status=200,
+        result_category="empty_catalog",
+        completed=True,
+        **_oauth_trace_fields(),
+    )
+    return []
 
 
 def _load_native_engraphis_mcp():
@@ -236,7 +315,7 @@ def _resolve_external_main_context_sync(issuer: str, subject: str) -> dict[str, 
     except (TypeError, ValueError):
         return None
     context = payload.get("context") if isinstance(payload, dict) and payload.get("ok") is True else None
-    required = {"projectId", "deckId", "conversationId", "mainCardId", "savedMainToolGrants"}
+    required = {"projectId", "deckId", "conversationId", "mainCardId"}
     return context if isinstance(context, dict) and required.issubset(context) else None
 
 
@@ -248,6 +327,28 @@ class Auth0TokenVerifier:
 
         self.config = config
         self.jwk_client = jwk_client or PyJWKClient(f"{config.issuer_url}.well-known/jwks.json")
+        self._context_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+        self._context_cache_lock = threading.Lock()
+
+    def _principal_context(
+        self,
+        subject: str,
+        *,
+        token_expires_at: int,
+    ) -> dict[str, Any] | None:
+        key = (self.config.issuer_url, subject)
+        now = time.time()
+        with self._context_cache_lock:
+            cached = self._context_cache.get(key)
+            if cached is not None and cached[0] > now:
+                return dict(cached[1])
+        context = _resolve_external_main_context_sync(*key)
+        if context is None:
+            return None
+        expires_at = min(float(token_expires_at), now + 300.0)
+        with self._context_cache_lock:
+            self._context_cache[key] = (expires_at, dict(context))
+        return context
 
     def _verify_sync(self, token: str) -> AccessToken | None:
         import jwt
@@ -275,9 +376,9 @@ class Auth0TokenVerifier:
             subject = str(claims.get("sub") or "").strip()
             if not subject:
                 return None
-            context = _resolve_external_main_context_sync(
-                self.config.issuer_url,
+            context = self._principal_context(
                 subject,
+                token_expires_at=int(claims["exp"]),
             )
             if context is None:
                 return None
@@ -946,12 +1047,21 @@ async def list_tools() -> list[Tool]:
     ]
     tools.extend(await _native_engraphis_tools())
     context = _authenticated_main_context()
-    if context is None:
-        return tools
-    return _external_tool_catalog(tools, context)
+    published = tools if context is None else _bind_authenticated_catalog(tools)
+    catalog_count, catalog_hash = _catalog_identity(published)
+    _trace(
+        "catalog",
+        mcp_method="tools/list",
+        catalog_count=catalog_count,
+        catalog_hash=catalog_hash,
+        response_status=200,
+        completed=True,
+        **_oauth_trace_fields(),
+    )
+    return published
 
 
-_EXTERNAL_READ_ONLY_TOOLS = {
+_READ_ONLY_TOOLS = {
     "agentgraph.inspect",
     "graphview.list",
     "graphview.get",
@@ -980,37 +1090,16 @@ _SERVER_OWNED_ARGUMENTS = {
 }
 
 
-def _saved_main_tool_names(context: dict[str, Any], known_names: set[str]) -> set[str]:
-    by_qualified = {
-        f"mcp__liquidaity__{name.replace('.', '_')}": name
-        for name in known_names
-    }
-    result: set[str] = set()
-    for raw in context.get("savedMainToolGrants") or []:
-        grant = str(raw or "").strip()
-        name = grant if grant in known_names else by_qualified.get(grant)
-        if not name:
-            raise RuntimeError(f"saved_main_tool_not_in_canonical_catalog: {grant}")
-        result.add(name)
-    return result
+def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
+    """Bind OAuth metadata and hide only identities owned by the server.
 
-
-def _external_tool_names(context: dict[str, Any], known_names: set[str]) -> set[str]:
-    return (
-        (_EXTERNAL_READ_ONLY_TOOLS & known_names)
-        | (_NATIVE_ENGRAPHIS_NAMES & known_names)
-        | _saved_main_tool_names(context, known_names)
-    )
-
-
-def _external_tool_catalog(tools: list[Tool], context: dict[str, Any]) -> list[Tool]:
-    known_names = {tool.name for tool in tools}
-    allowed = _external_tool_names(context, known_names)
+    Tool names, handlers, and native Engraphis schemas still come from the one
+    canonical catalog assembled by ``list_tools``. Saved Main card grants apply
+    inside card runs; they do not create a second external operator catalog.
+    """
     security_schemes = [{"type": "oauth2", "scopes": [AUTH0_REQUIRED_SCOPE]}]
     result: list[Tool] = []
     for tool in tools:
-        if tool.name not in allowed:
-            continue
         schema = copy.deepcopy(tool.inputSchema)
         properties = schema.get("properties")
         if isinstance(properties, dict):
@@ -1027,7 +1116,7 @@ def _external_tool_catalog(tools: list[Tool], context: dict[str, Any]) -> list[T
         payload = tool.model_dump(by_alias=True, exclude_none=True)
         payload["inputSchema"] = schema
         payload["securitySchemes"] = security_schemes
-        if tool.name in _EXTERNAL_READ_ONLY_TOOLS:
+        if tool.name in _READ_ONLY_TOOLS:
             annotations = dict(payload.get("annotations") or {})
             annotations["readOnlyHint"] = True
             payload["annotations"] = annotations
@@ -1153,33 +1242,11 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
 }
 
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
+async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
     await _initialize_native_engraphis()
     native_engraphis = _NATIVE_ENGRAPHIS_NAMES
     context = _authenticated_main_context()
     if name in native_engraphis:
-        if context is not None:
-            try:
-                known_names = set(_ALLOWED_KEYS) | native_engraphis
-                effective = (_EXTERNAL_READ_ONLY_TOOLS & known_names) | _saved_main_tool_names(
-                    context,
-                    known_names,
-                )
-            except RuntimeError as err:
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps({"ok": False, "error": str(err)}),
-                    )
-                ]
-            if name not in effective:
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps({"ok": False, "error": f"external_tool_not_granted: {name}"}),
-                    )
-                ]
         try:
             result = await asyncio.to_thread(
                 _call_native_engraphis,
@@ -1205,11 +1272,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     args = dict(arguments or {})
     if context is not None:
         try:
-            known_names = set(_ALLOWED_KEYS) | native_engraphis
-            saved = _saved_main_tool_names(context, known_names)
-            effective = (_EXTERNAL_READ_ONLY_TOOLS & known_names) | saved
-            if name not in effective:
-                raise ValueError(f"external_tool_not_granted: {name}")
             supplied_identity = sorted(_SERVER_OWNED_ARGUMENTS & args.keys())
             if name == "run_coder_subagent" and "parentRunId" in args:
                 supplied_identity.append("parentRunId")
@@ -1380,9 +1442,115 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     return await _bridge(_BRIDGE_PATHS[name], args)
 
 
+def _tool_result_category(result: Any) -> str:
+    try:
+        blocks = result if isinstance(result, list) else []
+        for block in blocks:
+            text = getattr(block, "text", "")
+            if isinstance(text, str) and text:
+                payload = json.loads(text)
+                if isinstance(payload, dict) and payload.get("ok") is False:
+                    return "tool_error"
+    except Exception:
+        return "success"
+    return "success"
+
+
+@server.call_tool()
+async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
+    trace_fields = {
+        "mcp_method": "tools/call",
+        "tool_name": str(name or "")[:160],
+        **_oauth_trace_fields(),
+    }
+    _trace("tool_call_started", **trace_fields)
+    try:
+        result = await _dispatch_tool(name, arguments)
+        _trace(
+            "tool_call_completed",
+            **trace_fields,
+            response_status=200,
+            result_category=_tool_result_category(result),
+            completed=True,
+        )
+        return result
+    except Exception as error:
+        _trace(
+            "tool_call_failed",
+            **trace_fields,
+            response_status=500,
+            result_category="tool_error",
+            exception_class=error.__class__.__name__,
+            completed=True,
+        )
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "ok": False,
+                        "error": f"tool_handler_failed:{error.__class__.__name__}",
+                    }
+                ),
+            )
+        ]
+
+
 async def _run_stdio() -> None:
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
+
+
+def _safe_request_header(scope: dict[str, Any], name: bytes) -> str:
+    for key, value in scope.get("headers") or []:
+        if key.lower() == name:
+            return value.decode("utf-8", errors="replace")
+    return ""
+
+
+class _SafeRequestTraceMiddleware:
+    """Trace HTTP completion without reading bodies, auth headers, or arguments."""
+
+    def __init__(self, app: Any):
+        self.app = app
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        status = 500
+        completed = False
+
+        async def traced_send(message: dict[str, Any]) -> None:
+            nonlocal status, completed
+            if message.get("type") == "http.response.start":
+                status = int(message.get("status") or 500)
+            if (
+                message.get("type") == "http.response.body"
+                and not message.get("more_body", False)
+            ):
+                completed = True
+            await send(message)
+
+        exception_class = ""
+        try:
+            await self.app(scope, receive, traced_send)
+        except Exception as error:
+            exception_class = error.__class__.__name__
+            raise
+        finally:
+            _trace(
+                "http_request",
+                http_method=str(scope.get("method") or ""),
+                session_hash=_safe_hash(
+                    _safe_request_header(scope, b"mcp-session-id")
+                ),
+                user_agent=_safe_request_header(scope, b"user-agent")[:240],
+                response_status=status,
+                result_category="http_error" if status >= 400 else "http_success",
+                exception_class=exception_class,
+                completed=completed,
+            )
 
 
 async def _run_streamable_http() -> None:
@@ -1441,7 +1609,9 @@ async def _run_streamable_http() -> None:
         ]
     else:
         routes = [Mount("/", app=endpoint)]
-    http_app = Starlette(routes=routes, lifespan=lifespan)
+    http_app = _SafeRequestTraceMiddleware(
+        Starlette(routes=routes, lifespan=lifespan)
+    )
     config = uvicorn.Config(
         http_app,
         host=HTTP_MCP_HOST,

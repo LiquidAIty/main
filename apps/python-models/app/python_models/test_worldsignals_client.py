@@ -5,6 +5,7 @@ import json
 import pytest
 
 from app.python_models import worldsignals_client as wsc
+from app.python_models import tool_registry as tr
 from app.python_models.worldsignals_client import (
     WORLDSIGNALS_RESTRICTED_COMMANDS,
     WorldSignalsClient,
@@ -138,3 +139,46 @@ def test_long_descriptions_are_bounded(monkeypatch) -> None:
     described = worldsignals_capabilities()["tools"]["tools"][0]["description"]
     assert len(described) <= wsc._TOOL_DESCRIPTION_MAX
     assert described.endswith("…")
+
+
+def test_assignment_worldsignals_result_persists_only_a_stable_reference(monkeypatch) -> None:
+    from app.python_models import agentgraph
+
+    recorded: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        tr,
+        "worldsignals_command",
+        lambda command, arguments: {
+            "command": command,
+            "taskId": "world-task-1",
+            "status": "completed",
+            "payload": {"bounded": True},
+        },
+    )
+    monkeypatch.setattr(
+        agentgraph,
+        "add_assignment_references",
+        lambda **kwargs: recorded.append(kwargs) or {"ok": True},
+    )
+    token = tr.AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY.set(
+        {
+            "projectId": "project-1",
+            "assignmentId": "assignment:one",
+            "receiverCardId": "card_worldsignals",
+            "leaseToken": "lease:one",
+            "workspaceRoot": "unused",
+        }
+    )
+    try:
+        result = tr.assignment_worldsignals_command(
+            "get_summary",
+            {"topic": "markets"},
+        )
+    finally:
+        tr.AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY.reset(token)
+
+    assert result["taskId"] == "world-task-1"
+    reference = recorded[0]["references"][0]
+    assert reference["referenceType"] == "worldsignals"
+    assert str(reference["referenceId"]).startswith("worldsignals:command:")
+    assert "payload" not in reference

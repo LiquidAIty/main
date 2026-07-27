@@ -17,9 +17,11 @@ import asyncio
 import json
 import re
 import time
+from hashlib import sha256
 from typing import Any
 
 from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.messages import TextMessage
 from autogen_agentchat.teams import MagenticOneGroupChat
 
 from app.python_models import agentgraph as ag
@@ -66,6 +68,67 @@ class _CapturingMagenticOneGroupChat(MagenticOneGroupChat):
             return instance
 
         return factory
+
+
+class _AssignmentBackedAssistantAgent(AssistantAgent):
+    """Run one real Mag One worker inside its claimed AgentGraph assignment.
+
+    AutoGen still owns selection, orchestration, messages, tools, and model
+    execution. This wrapper only loads the already-hydrated child context before
+    the worker's first model call, renews its lease, and scopes artifact writes to
+    that child assignment.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        agentgraph_context: rq.HydratedAssignmentContext,
+        project_id: str,
+        workspace_root: str,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._agentgraph_context = agentgraph_context
+        self._agentgraph_project_id = project_id
+        self._agentgraph_workspace_root = workspace_root
+        self._agentgraph_context_loaded = False
+
+    async def on_messages_stream(self, messages: Any, cancellation_token: Any):
+        hydrated = self._agentgraph_context
+        await asyncio.to_thread(
+            ag.heartbeat_assignment,
+            project_id=self._agentgraph_project_id,
+            assignment_id=hydrated.assignment_id,
+            lease_token=hydrated.lease_token,
+            lease_seconds=3600,
+        )
+        incoming = list(messages)
+        if not self._agentgraph_context_loaded:
+            incoming.insert(
+                0,
+                TextMessage(
+                    source="agentgraph",
+                    content=hydrated.model_context,
+                ),
+            )
+            self._agentgraph_context_loaded = True
+        token = AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY.set(
+            {
+                "projectId": self._agentgraph_project_id,
+                "assignmentId": hydrated.assignment_id,
+                "leaseToken": hydrated.lease_token,
+                "receiverCardId": hydrated.receiver_card_id,
+                "workspaceRoot": self._agentgraph_workspace_root,
+            }
+        )
+        try:
+            async for emitted in super().on_messages_stream(
+                incoming,
+                cancellation_token,
+            ):
+                yield emitted
+        finally:
+            AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY.reset(token)
 
 
 def _real_task_ledger_artifact(orchestrator: Any) -> TaskLedgerArtifact | None:
@@ -197,6 +260,7 @@ def _build_participants(
     model_client: Any,
     *,
     extra_tools: list[Any] | None = None,
+    assignment_contexts: dict[str, rq.HydratedAssignmentContext] | None = None,
 ) -> list[AssistantAgent]:
     card = context.cardRuntime
     if card is None:
@@ -243,7 +307,18 @@ def _build_participants(
         # Each active assignment gets a writer scoped to that assignment and
         # producer card. The tool registers every real artifact in AgentGraph.
         tools = [*tools, build_assignment_artifact_tool(card_id or name)]
-        if extra_tools:
+        child_context = (assignment_contexts or {}).get(card_id)
+        if child_context is not None and child_context.optional_bindings:
+            tools.append(
+                rq.build_bound_query_tool(
+                    list(child_context.optional_bindings),
+                    correlation_id=child_context.correlation_id,
+                    assignment_id=child_context.assignment_id,
+                    conversation_id=_as_text(context.conversationId),
+                    card_grants=child_context.card_grants,
+                )
+            )
+        elif extra_tools:
             tools = [*tools, *extra_tools]
         if tools:
             kwargs["tools"] = tools
@@ -253,12 +328,22 @@ def _build_participants(
             if context.session.orchestrator == "assistant_agent":
                 kwargs["max_tool_iterations"] = 5
 
-        participants.append(AssistantAgent(**kwargs))
+        if child_context is None:
+            participants.append(AssistantAgent(**kwargs))
+        else:
+            participants.append(
+                _AssignmentBackedAssistantAgent(
+                    **kwargs,
+                    agentgraph_context=child_context,
+                    project_id=context.session.projectId,
+                    workspace_root=aa.resolve_workspace_root(),
+                )
+            )
 
     if participants:
         return participants
 
-    return [AssistantAgent(name="Assist", model_client=model_client)]
+    raise RuntimeError("card_runtime_participants_required")
 
 
 def _validate_single_card_context(context: ContextPack) -> str | None:
@@ -472,6 +557,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             "projectId": context.session.projectId,
             "assignmentId": assignment_id,
             "leaseToken": lease_token,
+            "receiverCardId": single.cardId,
             "workspaceRoot": aa.resolve_workspace_root(),
         }
     )
@@ -646,6 +732,151 @@ def _magentic_completion_status(
     return True, None
 
 
+async def _prepare_magentic_children(
+    context: ContextPack,
+    *,
+    root_context: rq.HydratedAssignmentContext,
+) -> list[dict[str, Any]]:
+    """Create and hydrate one durable child assignment per connected saved worker."""
+    card = context.cardRuntime
+    if card is None or not card.participants:
+        raise RuntimeError("magentic_connected_workers_required")
+    identities = _participant_identity_by_agent_name(context)
+    agent_name_by_card_id = {
+        identity["cardId"]: agent_name
+        for agent_name, identity in identities.items()
+        if agent_name != "MagenticOneOrchestrator" and identity.get("cardId")
+    }
+    children: list[dict[str, Any]] = []
+    try:
+        for index, participant in enumerate(card.participants):
+            card_id = _as_text(getattr(participant, "cardId", ""))
+            if not card_id:
+                raise RuntimeError("magentic_worker_card_id_required")
+            child_correlation = (
+                "magchild:"
+                + sha256(
+                    f"{root_context.correlation_id}:{index}:{card_id}".encode("utf-8")
+                ).hexdigest()[:32]
+            )
+            assignment = await asyncio.to_thread(
+                ag.create_assignment,
+                project_id=context.session.projectId,
+                deck_id=_as_text((getattr(card, "runtimeScope", None) or {}).get("deckId")),
+                conversation_id=_as_text(context.conversationId) or "main",
+                correlation_id=child_correlation,
+                sender_card_id=_as_text(getattr(card, "cardId", "")),
+                receiver_card_id=card_id,
+                instruction_id=root_context.instruction_id,
+                parent_correlation_id=root_context.correlation_id,
+            )
+            child = {
+                "agentName": agent_name_by_card_id[card_id],
+                "cardId": card_id,
+                "assignment": assignment,
+                "hydrated": None,
+                "closed": False,
+            }
+            children.append(child)
+            hydrated = await asyncio.to_thread(
+                rq.hydrate_assignment_context,
+                project_id=context.session.projectId,
+                assignment_id=assignment["assignmentId"],
+                receiver_card_id=card_id,
+                lease_seconds=3600,
+            )
+            child["hydrated"] = hydrated
+    except Exception:
+        for child in children:
+            try:
+                hydrated = child["hydrated"]
+                if hydrated is None:
+                    await asyncio.to_thread(
+                        ag.cancel_assignment,
+                        project_id=context.session.projectId,
+                        assignment_id=child["assignment"]["assignmentId"],
+                        requested_by_card_id=_as_text(context.cardRuntime.cardId),
+                        reason="magentic_child_preparation_failed",
+                    )
+                else:
+                    await asyncio.to_thread(
+                        ag.finish_assignment,
+                        project_id=context.session.projectId,
+                        assignment_id=hydrated.assignment_id,
+                        lease_token=hydrated.lease_token,
+                        status="failed",
+                        error_code="magentic_child_preparation_failed",
+                        error_detail="Another connected worker could not be prepared.",
+                    )
+                child["closed"] = True
+            except Exception:
+                pass
+        raise
+    return children
+
+
+async def _close_magentic_children(
+    context: ContextPack,
+    children: list[dict[str, Any]],
+    *,
+    messages: list[dict[str, str]],
+    events: list[dict[str, str]],
+    root_ok: bool,
+    root_error: str | None,
+) -> None:
+    """Persist actual worker outputs and close every selected or unused child."""
+    payloads = [*messages, *events]
+    close_errors: list[str] = []
+    for child in children:
+        if child["closed"]:
+            continue
+        try:
+            agent_name = child["agentName"]
+            emitted = [
+                item
+                for item in payloads
+                if _as_text(item.get("source")) == agent_name
+                and _as_text(item.get("content"))
+            ]
+            hydrated: rq.HydratedAssignmentContext = child["hydrated"]
+            if hydrated is None:
+                raise RuntimeError("magentic_child_not_hydrated")
+            if not emitted and root_ok:
+                await asyncio.to_thread(
+                    ag.cancel_assignment,
+                    project_id=context.session.projectId,
+                    assignment_id=hydrated.assignment_id,
+                    requested_by_card_id=_as_text(context.cardRuntime.cardId),
+                    reason="not_selected_by_magentic_one",
+                )
+                child["closed"] = True
+                continue
+            output = "\n\n".join(
+                f"[{item['type']}]\n{item['content']}" for item in emitted
+            )[:100_000]
+            await asyncio.to_thread(
+                ag.finish_assignment,
+                project_id=context.session.projectId,
+                assignment_id=hydrated.assignment_id,
+                lease_token=hydrated.lease_token,
+                status="completed" if root_ok else "failed",
+                output=output or None,
+                summary=(
+                    f"{agent_name} produced {len(emitted)} persisted AutoGen "
+                    f"message/event record{'s' if len(emitted) != 1 else ''}."
+                ),
+                error_code=None if root_ok else "magentic_parent_failed",
+                error_detail=None if root_ok else root_error or "magentic_parent_failed",
+            )
+            child["closed"] = True
+        except Exception as error:
+            close_errors.append(f"{child['cardId']}:{error}")
+    if close_errors:
+        raise RuntimeError(
+            "magentic_child_close_failed: " + "; ".join(close_errors)
+        )
+
+
 async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunResponse:
     if context.cardRuntime is None:
         raise RuntimeError("card_runtime_missing")
@@ -681,6 +912,7 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             project_id=context.session.projectId,
             assignment_id=assignment["assignmentId"],
             receiver_card_id=request.receiverCardId,
+            lease_seconds=3600,
         )
     except Exception as err:
         return OrchestratorRunResponse(
@@ -706,28 +938,25 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             "projectId": context.session.projectId,
             "assignmentId": assignment["assignmentId"],
             "leaseToken": hydrated_assignment.lease_token,
+            "receiverCardId": request.receiverCardId,
             "workspaceRoot": aa.resolve_workspace_root(),
         }
     )
 
+    children: list[dict[str, Any]] = []
     try:
-        query_tools = (
-            [
-                rq.build_bound_query_tool(
-                    list(hydrated_assignment.optional_bindings),
-                    correlation_id=hydrated_assignment.correlation_id,
-                    assignment_id=hydrated_assignment.assignment_id,
-                    conversation_id=_as_text(context.conversationId),
-                    card_grants=hydrated_assignment.card_grants,
-                )
-            ]
-            if hydrated_assignment.optional_bindings
-            else []
+        children = await _prepare_magentic_children(
+            context,
+            root_context=hydrated_assignment,
         )
+        child_contexts = {
+            child["cardId"]: child["hydrated"]
+            for child in children
+        }
         participants = _build_participants(
             context,
             client,
-            extra_tools=query_tools,
+            assignment_contexts=child_contexts,
         )
         team = _CapturingMagenticOneGroupChat(
             participants=participants,
@@ -795,6 +1024,14 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
         )
 
         ok, completion_error = _magentic_completion_status(final_response_text)
+        await _close_magentic_children(
+            context,
+            children,
+            messages=autogen_messages,
+            events=autogen_events,
+            root_ok=ok,
+            root_error=completion_error,
+        )
         completed = await asyncio.to_thread(
             ag.finish_assignment,
             project_id=context.session.projectId,
@@ -843,6 +1080,18 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             ),
         )
     except Exception as err:
+        child_close_error: Exception | None = None
+        try:
+            await _close_magentic_children(
+                context,
+                children,
+                messages=[],
+                events=[],
+                root_ok=False,
+                root_error=str(err),
+            )
+        except Exception as close_error:
+            child_close_error = close_error
         await asyncio.to_thread(
             ag.finish_assignment,
             project_id=context.session.projectId,
@@ -850,7 +1099,11 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             lease_token=hydrated_assignment.lease_token,
             status="failed",
             error_code="magentic_run_failed",
-            error_detail=str(err),
+            error_detail=(
+                f"{err}; {child_close_error}"
+                if child_close_error is not None
+                else str(err)
+            ),
         )
         raise
     finally:

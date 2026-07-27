@@ -485,7 +485,7 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
     assert all(verifier._verify_sync(encoded(claims)) is None for claims in invalid_claims)
 
 
-def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_identity(monkeypatch):
+def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(monkeypatch):
     import asyncio
     import mcp_host
     from mcp.server.auth.provider import AccessToken
@@ -527,7 +527,7 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
     assert "codegraph.search" in by_name
     assert "thinkgraph.persist_graph_view" not in by_name
     assert "run_coder_subagent" in by_name
-    assert "run_mag_one" not in by_name
+    assert "run_mag_one" in by_name
     assert "projectId" not in by_name["run_coder_subagent"].inputSchema["properties"]
     assert "parentRunId" not in by_name["run_coder_subagent"].inputSchema["properties"]
     assert "agentContextId" not in by_name["run_coder_subagent"].inputSchema["properties"]
@@ -593,7 +593,7 @@ def test_authenticated_catalog_and_dispatch_use_saved_main_grants_and_server_ide
     assert "agentContextId" not in payload
 
 
-def test_post_auth_unknown_saved_grant_fails_the_catalog_honestly(monkeypatch):
+def test_saved_main_grants_do_not_filter_the_operator_catalog(monkeypatch):
     import asyncio
     import mcp_host
     from mcp.server.auth.provider import AccessToken
@@ -618,11 +618,77 @@ def test_post_auth_unknown_saved_grant_fails_the_catalog_honestly(monkeypatch):
             },
         ),
     )
-    with pytest.raises(
-        RuntimeError,
-        match="saved_main_tool_not_in_canonical_catalog: missing.tool",
-    ):
-        asyncio.run(mcp_host.list_tools())
+    names = {tool.name for tool in asyncio.run(mcp_host.list_tools())}
+    assert "run_mag_one" in names
+    assert "canvas.inspect" in names
+    assert "engraphis_recall" in names
+
+
+def test_oauth_principal_context_is_reused_within_one_verified_session(monkeypatch):
+    import mcp_host
+
+    calls: list[tuple[str, str]] = []
+    config = mcp_host.OAuthConfig(
+        resource_url="https://example.test/mcp",
+        issuer_url="https://tenant.example/",
+        audience="https://example.test/mcp",
+        client_id="client",
+        required_scope="liquidaity.main",
+    )
+    verifier = mcp_host.Auth0TokenVerifier(
+        config,
+        type("JwkClient", (), {})(),
+    )
+    monkeypatch.setattr(
+        mcp_host,
+        "_resolve_external_main_context_sync",
+        lambda issuer, subject: (
+            calls.append((issuer, subject))
+            or {
+                "projectId": "project-1",
+                "deckId": "deck_builder",
+                "conversationId": "external-mcp:grant-1",
+                "mainCardId": "card_main_chat",
+            }
+        ),
+    )
+
+    first = verifier._principal_context("auth0|jeremiah", token_expires_at=int(time.time()) + 600)
+    second = verifier._principal_context("auth0|jeremiah", token_expires_at=int(time.time()) + 600)
+
+    assert first == second
+    assert calls == [("https://tenant.example/", "auth0|jeremiah")]
+
+
+def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(monkeypatch):
+    import asyncio
+    import mcp_host
+    from app import control_plane
+
+    async def initialized():
+        mcp_host._NATIVE_ENGRAPHIS_NAMES = frozenset()
+
+    attempts = 0
+
+    async def inspect(_args):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("database_connection_lost")
+        return {"ok": True, "cards": []}
+
+    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
+    monkeypatch.setattr(control_plane, "canvas_inspect", inspect)
+
+    failed = asyncio.run(mcp_host.call_tool("canvas.inspect", {}))
+    succeeded = asyncio.run(mcp_host.call_tool("canvas.inspect", {}))
+
+    assert json.loads(failed[0].text) == {
+        "ok": False,
+        "error": "tool_handler_failed:RuntimeError",
+    }
+    assert json.loads(succeeded[0].text) == {"ok": True, "cards": []}
 
 
 def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp():
