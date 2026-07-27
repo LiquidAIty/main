@@ -436,7 +436,7 @@ describe('coder routes', () => {
     }
   });
 
-  it('resolves the original OAuth identity grant and saved Main context once', async () => {
+  it('resolves the OAuth identity grant and saved Main card without loading its runtime grants', async () => {
     dbMocks.query.mockResolvedValueOnce({
       rows: [{
         grant_id: '70f63a4d-1a67-4dcc-a8ee-cce267572747',
@@ -445,11 +445,17 @@ describe('coder routes', () => {
         project_name: 'Main Chat',
       }],
     });
-    chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
-      cardId: 'card_main_chat',
-      prompt: 'Persisted Main instructions.',
-      parentAllowedMcpTools: ['engraphis_recall'],
+    deckMocks.getDeckDocument.mockResolvedValueOnce({
+      deck: {
+        nodes: [{
+          id: 'card_main_chat',
+          runtimeOptions: { binding: 'main_chat' },
+        }],
+        edges: [],
+      },
     });
+    const runtimeResolutionCallsBefore =
+      chatSessionMocks.resolveMainChatRuntimeConfig.mock.calls.length;
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/external_main_context`, {
@@ -465,17 +471,14 @@ describe('coder routes', () => {
           deckId: 'deck_builder',
           conversationId: 'external-mcp:70f63a4d-1a67-4dcc-a8ee-cce267572747',
           mainCardId: 'card_main_chat',
-          instructions: 'Persisted Main instructions.',
         },
       });
       expect(dbMocks.query).toHaveBeenCalledWith(
         expect.stringContaining('p.owner_user_id = g.user_id'),
         ['https://tenant.auth0.com', 'auth0|jeremiah'],
       );
-      expect(chatSessionMocks.resolveMainChatRuntimeConfig).toHaveBeenCalledWith(
-        '20ac92da-01fd-4cf6-97cc-0672421e751a:external-mcp:70f63a4d-1a67-4dcc-a8ee-cce267572747',
-        'chat',
-      );
+      expect(chatSessionMocks.resolveMainChatRuntimeConfig.mock.calls.length)
+        .toBe(runtimeResolutionCallsBefore);
     } finally {
       await closeServer(server);
     }

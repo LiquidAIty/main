@@ -229,6 +229,11 @@ async def list_resources() -> list[Any]:
 def _load_native_engraphis_mcp():
     """Import Engraphis' FastMCP registry after binding ThinkGraph's database."""
     repo_root = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
+    # This host is the local LiquidAIty workbench boundary. The configured
+    # SentenceTransformer model is already cached locally; allowing Hugging Face
+    # metadata requests here can leave the first external MCP tool call waiting on
+    # the network long enough for ChatGPT to disable the otherwise healthy connector.
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault(
         "ENGRAPHIS_DB_PATH",
         os.environ.get(
@@ -1093,9 +1098,8 @@ _SERVER_OWNED_ARGUMENTS = {
 def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
     """Bind OAuth metadata and hide only identities owned by the server.
 
-    Tool names, handlers, and native Engraphis schemas still come from the one
-    canonical catalog assembled by ``list_tools``. Saved Main card grants apply
-    inside card runs; they do not create a second external operator catalog.
+    Tool names and handlers still come from the one canonical catalog assembled
+    by ``list_tools``.
     """
     security_schemes = [{"type": "oauth2", "scopes": [AUTH0_REQUIRED_SCOPE]}]
     result: list[Tool] = []

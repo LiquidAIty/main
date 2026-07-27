@@ -138,11 +138,8 @@ router.post('/mcp-bridge/external_main_context', async (req, res) => {
     if (!grant) return res.status(403).json({ ok: false, error: 'external_identity_grant_required' });
 
     const conversationId = `external-mcp:${grant.grantId}`;
-    const main = await resolveMainChatRuntimeConfig(
-      deriveSessionId(grant.projectId, conversationId),
-      'chat',
-    );
-    if (!main) {
+    const mainCardId = await resolveMainChatCardId(grant.projectId, BUILDER_DECK_ID);
+    if (!mainCardId) {
       return res.status(409).json({ ok: false, error: 'persisted_main_chat_unavailable' });
     }
     return res.json({
@@ -152,8 +149,7 @@ router.post('/mcp-bridge/external_main_context', async (req, res) => {
         projectName: grant.projectName,
         deckId: BUILDER_DECK_ID,
         conversationId,
-        mainCardId: main.cardId,
-        instructions: main.prompt,
+        mainCardId,
       },
     });
   } catch (error) {

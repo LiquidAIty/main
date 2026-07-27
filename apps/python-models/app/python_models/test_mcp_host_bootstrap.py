@@ -90,7 +90,6 @@ def test_mag_one_instruction_authoring_persists_operation_references(monkeypatch
         "deckId": "deck_builder",
         "conversationId": "main",
         "mainCardId": "card_main_chat",
-        "savedMainToolGrants": ["write_mag_one_instructions"],
     }
     captured = []
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: context)
@@ -151,6 +150,14 @@ asyncio.run(check())
     result = _run_in_script_launch_context(code)
     assert result.returncode == 0, result.stderr
     assert len(json.loads(result.stdout)) == 29
+
+
+def test_native_engraphis_uses_the_cached_local_embedding_model(monkeypatch):
+    import mcp_host
+
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    mcp_host._load_native_engraphis_mcp()
+    assert os.environ["HF_HUB_OFFLINE"] == "1"
 
 
 def test_native_engraphis_dispatch_keeps_sync_handlers_off_the_outer_event_loop(monkeypatch):
@@ -450,7 +457,6 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
             "conversationId": "external-mcp:grant-1",
             "mainCardId": "card_main_chat",
             "instructions": "Persisted Main instructions.",
-            "savedMainToolGrants": ["mcp__liquidaity__codegraph_search"],
         } if issuer == config.issuer_url and subject == "auth0|jeremiah" else None,
     )
     now = int(time.time())
@@ -496,12 +502,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "conversationId": "external-mcp:grant-1",
         "mainCardId": "card_main_chat",
         "instructions": "Persisted Main instructions.",
-        "savedMainToolGrants": [
-            "mcp__liquidaity__codegraph_search",
-            "mcp__liquidaity__engraphis_recall",
-            "mcp__liquidaity__run_coder_subagent",
-            "mcp__liquidaity__graphview_create",
-        ],
     }
     monkeypatch.setattr(
         mcp_host,
@@ -591,37 +591,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert payload["conversationId"] == "external-mcp:grant-1"
     assert payload["parentRunId"].startswith("req_external_main_")
     assert "agentContextId" not in payload
-
-
-def test_saved_main_grants_do_not_filter_the_operator_catalog(monkeypatch):
-    import asyncio
-    import mcp_host
-    from mcp.server.auth.provider import AccessToken
-
-    monkeypatch.setattr(
-        mcp_host,
-        "get_access_token",
-        lambda: AccessToken(
-            token="verified",
-            client_id="chatgpt-client",
-            scopes=["liquidaity.main"],
-            subject="auth0|jeremiah",
-            claims={
-                "liquidaity": {
-                    "projectId": "project-1",
-                    "deckId": "deck_builder",
-                    "conversationId": "external-mcp:grant-1",
-                    "mainCardId": "card_main_chat",
-                    "instructions": "Persisted Main instructions.",
-                    "savedMainToolGrants": ["missing.tool"],
-                },
-            },
-        ),
-    )
-    names = {tool.name for tool in asyncio.run(mcp_host.list_tools())}
-    assert "run_mag_one" in names
-    assert "canvas.inspect" in names
-    assert "engraphis_recall" in names
 
 
 def test_oauth_principal_context_is_reused_within_one_verified_session(monkeypatch):
