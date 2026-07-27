@@ -1,8 +1,8 @@
 """Database-owned registered queries and bounded Graph View materialization.
 
 Prompts and tool calls may select only a saved binding identity plus typed
-parameters. Raw SQL/Cypher is accepted only when an immutable query version is
-authored, and execution is allowed only after a separate promotion record.
+parameters. Raw SQL/Cypher is accepted only while an immutable operation version
+is authored; prompts can pass only stable operation/version references.
 """
 
 from __future__ import annotations
@@ -60,7 +60,6 @@ class RegisteredQueryVersion:
     timeout_ms: int
     authored_by: str
     audit_note: str
-    promoted_by: str
 
 
 @dataclass(frozen=True)
@@ -95,10 +94,11 @@ _GRAPH_GRANTS: dict[tuple[str, str], frozenset[str]] = {
     ("knowgraph", "write"): frozenset({"knowgraph.ingest"}),
     ("codegraph", "read"): frozenset({"codegraph.status", "codegraph.search"}),
     ("codegraph", "write"): frozenset(),
-    ("agentgraph", "read"): frozenset(
-        {"agentgraph.read_context", "agentgraph.create_context"}
-    ),
-    ("agentgraph", "write"): frozenset({"agentgraph.create_context"}),
+    # Existing saved cards grant the legacy-named AgentGraph read capability.
+    # The operation engine uses it only as authority; the removed context tool
+    # is not dispatched or retained as a second data path.
+    ("agentgraph", "read"): frozenset({"agentgraph.create_context"}),
+    ("agentgraph", "write"): frozenset(),
 }
 _WRITE_CAPABILITIES = {
     ("thinkgraph", "write"): "thinkgraph.submit_update",
@@ -566,67 +566,6 @@ def create_version(
             connection.close()
 
 
-def promote_version(
-    *,
-    project_id: str,
-    query_id: str,
-    version: int,
-    promoted_by: str,
-    audit_note: str,
-    connection: Any | None = None,
-) -> None:
-    project_id = _required_identity(project_id, "project_id")
-    query_id = _required_identity(query_id, "query_id")
-    promoted_by = _required_identity(promoted_by, "promoted_by")
-    note = _required_text(audit_note, "promotion_audit_note", maximum=4000)
-    own = connection is None
-    connection = connection or connect_postgres(autocommit=False)
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT language, statement, parameter_schema
-                FROM ag_catalog.registered_query_versions
-                WHERE project_id=%s AND query_id=%s AND version=%s
-                """,
-                (project_id, query_id, version),
-            )
-            row = cursor.fetchone()
-            if row is None:
-                raise LookupError(f"registered_query_version_not_found: {query_id}@v{version}")
-            if str(row[0]) == "capability":
-                _required_identity(row[1], "capability_statement")
-            else:
-                validate_read_only_statement(str(row[0]), str(row[1]))
-            validate_parameter_schema(row[2])
-            cursor.execute(
-                """
-                INSERT INTO ag_catalog.registered_query_promotions
-                  (project_id, query_id, version, promoted_by, audit_note)
-                VALUES (%s,%s,%s,%s,%s)
-                """,
-                (project_id, query_id, version, promoted_by, note),
-            )
-            _audit(
-                cursor,
-                project_id=project_id,
-                query_id=query_id,
-                version=version,
-                action="promoted",
-                actor_id=promoted_by,
-                detail={"auditNote": note},
-            )
-        if own:
-            connection.commit()
-    except Exception:
-        if own:
-            connection.rollback()
-        raise
-    finally:
-        if own:
-            connection.close()
-
-
 def resolve_registered_version(
     project_id: str,
     query_id: str,
@@ -644,12 +583,10 @@ def resolve_registered_version(
                        q.operation_class, q.capability_id, q.database_authority,
                        q.database_name, q.owner_id, q.title, q.description,
                        v.language, v.statement, v.parameter_schema, v.row_limit,
-                       v.timeout_ms, v.authored_by, v.audit_note, p.promoted_by
+                       v.timeout_ms, v.authored_by, v.audit_note
                 FROM ag_catalog.registered_queries q
                 JOIN ag_catalog.registered_query_versions v
                   ON v.project_id=q.project_id AND v.query_id=q.query_id
-                LEFT JOIN ag_catalog.registered_query_promotions p
-                  ON p.project_id=v.project_id AND p.query_id=v.query_id AND p.version=v.version
                 WHERE q.project_id=%s AND q.query_id=%s AND v.version=%s
                 """,
                 (
@@ -690,26 +627,7 @@ def resolve_registered_version(
         timeout_ms=row[15],
         authored_by=row[16],
         audit_note=row[17],
-        promoted_by=str(row[18]) if row[18] else "",
     )
-
-
-def resolve_promoted_version(
-    project_id: str,
-    query_id: str,
-    version: int,
-    *,
-    connection: Any | None = None,
-) -> RegisteredQueryVersion:
-    operation = resolve_registered_version(
-        project_id,
-        query_id,
-        version,
-        connection=connection,
-    )
-    if not operation.promoted_by:
-        raise LookupError(f"registered_query_not_promoted: {query_id}@v{version}")
-    return operation
 
 
 def assign_query_binding(
@@ -1028,6 +946,23 @@ def execute_binding(
     )
     execution_id = f"queryexec:{uuid4().hex}"
     with connect_postgres() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT 1
+            FROM ag_catalog.agent_assignments
+            WHERE assignment_id=%s AND project_id=%s AND correlation_id=%s
+              AND receiver_card_id=%s AND state='running'
+              AND lease_expires_at > now()
+            """,
+            (
+                assignment_id,
+                binding.project_id,
+                correlation_id,
+                binding.card_id,
+            ),
+        )
+        if cursor.fetchone() is None:
+            raise PermissionError("registered_operation_assignment_not_active")
         cursor.execute(
             """
             INSERT INTO ag_catalog.registered_query_executions

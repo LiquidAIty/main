@@ -204,8 +204,6 @@ export const HARNESS_MCP_TOOL_SPECS: ToolSpec[] = [];
 for (const name of [
   'thinkgraph.get_graph_slice',
   'thinkgraph.submit_update',
-  'agentgraph.create_context',
-  'agentgraph.read_context',
   'knowgraph.query',
   'knowgraph.ingest',
   'codegraph.status',
@@ -216,7 +214,6 @@ for (const name of [
   'hermes.write_report',
   'mag_one.describe_connected_agents',
   'write_mag_one_instructions',
-  'read_model_results',
   'run_mag_one',
   'run_coder_subagent',
   'canvas.inspect',
@@ -242,10 +239,10 @@ export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
   ...HARNESS_MCP_TOOL_SPECS,
 ];
 
-// Job-folder handoff run outputs, threaded verbatim from the Python rails.
-// Present only for a handoff run (a jobId was supplied); null otherwise.
-export type JobHandoffRunResult = {
-  returnsDir: string | null;
+// AgentGraph assignment identity and registered artifact locators, transported
+// verbatim from Python rails.
+export type AgentAssignmentRunResult = {
+  assignmentId: string;
   returnedFiles: string[];
   returnStatus: 'return_files_created' | 'no_return_files_created' | null;
 };
@@ -262,7 +259,7 @@ export type CardRunResult = {
   inputSummary?: string;
   outputSummary?: string;
   magenticTrace?: Record<string, unknown> | null;
-  jobHandoffResult?: JobHandoffRunResult | null;
+  agentAssignmentResult?: AgentAssignmentRunResult | null;
 };
 
 export type RuntimeScope = {
@@ -324,10 +321,9 @@ export type PythonAutoGenPayloadShape = {
   knowGraph?: Record<string, any>;
   blackboard?: Record<string, any>;
   workspaceObjectContext?: Record<string, any>;
-  // Coder job-folder handoff: server-forced workspace root + shared job id. When
-  // present, the Python run reads handoff/<jobId>/prompt.md as the exact Magnetic
-  // One variable context packet and writes deliverables into returns/<jobId>/.
-  jobHandoff?: { workspaceRoot: string; jobId: string };
+  // Stable identities only. Python creates/claims the assignment and hydrates
+  // the exact relational instruction.
+  agentAssignment?: { instructionId: string; senderCardId: string; receiverCardId: string };
   cardRuntime: {
     cardId: string;
     title: string;

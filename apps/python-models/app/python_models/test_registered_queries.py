@@ -35,6 +35,9 @@ def _query(**overrides) -> rq.RegisteredQueryVersion:
         "project_id": PROJECT_ID,
         "query_id": "agentgraph.context_count",
         "version": 1,
+        "target_graph": "agentgraph",
+        "operation_class": "read",
+        "capability_id": None,
         "database_authority": "postgresql",
         "database_name": "liquidaity",
         "owner_id": "card_main_chat",
@@ -43,7 +46,7 @@ def _query(**overrides) -> rq.RegisteredQueryVersion:
         "language": "sql",
         "statement": (
             "SELECT count(*)::int AS context_count "
-            "FROM ag_catalog.agent_context_payloads WHERE project_id=%(project_id)s"
+            "FROM ag_catalog.agent_assignments WHERE project_id=%(project_id)s"
         ),
         "parameter_schema": {
             "project_id": {"type": "string", "required": True, "maxLength": 100}
@@ -52,7 +55,6 @@ def _query(**overrides) -> rq.RegisteredQueryVersion:
         "timeout_ms": 2000,
         "authored_by": "card_main_chat",
         "audit_note": "focused test",
-        "promoted_by": "card_main_chat",
     }
     values.update(overrides)
     return rq.RegisteredQueryVersion(**values)
@@ -88,7 +90,7 @@ def test_typed_parameters_are_bounded_and_unknown_values_fail() -> None:
         rq.validate_parameters(schema, {"symbol": "TOO-LONG-1"})
 
 
-def test_registry_versions_are_draft_until_promoted_and_immutable() -> None:
+def test_registry_versions_are_immediately_referenceable_and_immutable() -> None:
     query_id = f"test.query.{uuid4().hex}"
     connection = connect_postgres(autocommit=False)
     try:
@@ -116,25 +118,13 @@ def test_registry_versions_are_draft_until_promoted_and_immutable() -> None:
             audit_note="draft proof",
             connection=connection,
         )
-        with pytest.raises(LookupError, match="not_promoted"):
-            rq.resolve_promoted_version(PROJECT_ID, query_id, 1, connection=connection)
-
-        rq.promote_version(
-            project_id=PROJECT_ID,
-            query_id=query_id,
-            version=1,
-            promoted_by="card_main_chat",
-            audit_note="promotion proof",
-            connection=connection,
-        )
-        promoted = rq.resolve_promoted_version(
+        registered = rq.resolve_registered_version(
             PROJECT_ID,
             query_id,
             1,
             connection=connection,
         )
-        assert promoted.query_id == query_id
-        assert promoted.promoted_by == "card_main_chat"
+        assert registered.query_id == query_id
 
         with connection.cursor() as cursor:
             cursor.execute("SAVEPOINT immutable_check")

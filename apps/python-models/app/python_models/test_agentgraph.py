@@ -1,228 +1,143 @@
 from __future__ import annotations
 
-import asyncio
-import json
 from uuid import uuid4
 
 import pytest
 
-from app.python_models.agentgraph import (
-    AgentGraphError,
-    create_context,
-    mark_context_status,
-    read_context,
-    record_result,
-)
+from app.python_models import agentgraph as ag
 from app.python_models.postgres import connect_postgres
 
 
-def _prepare(cursor) -> None:
-    cursor.execute("LOAD 'age'")
-    cursor.execute('SET search_path = ag_catalog, "$user", public')
+PROJECT_ID = "20ac92da-01fd-4cf6-97cc-0672421e751a"
+DECK_ID = "deck_builder"
 
 
-def test_age_roundtrip_preserves_exact_markdown_and_minimal_lineage() -> None:
-    project_id = f"agentgraph-test-{uuid4().hex}"
-    conversation_id = f"conversation-{uuid4().hex}"
-    input_markdown = "  # Exact handoff\n\nKeep **all** spacing.\n\n"
-    result_markdown = "# Exact result\n\nReturned unchanged.\n"
-    conn = connect_postgres(autocommit=False)
+def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
+    correlation = f"agentgraph-test-{uuid4().hex}"
+    connection = connect_postgres(autocommit=False)
     try:
-        first = create_context(
-            project_id=project_id,
-            deck_id="deck_builder",
-            conversation_id=conversation_id,
-            sender_agent_id="card_main_chat",
-            receiving_agent_id="card_local_coder",
-            markdown=input_markdown,
-            producing_run_id="parent-run-1",
-            agent_validator=lambda *_args: None,
-            connection=conn,
+        instruction = ag.create_instruction(
+            project_id=PROJECT_ID,
+            deck_id=DECK_ID,
+            conversation_id="main",
+            body="  Exact instruction bytes.\n",
+            prepared_by_card_id="card_main_chat",
+            connection=connection,
         )
-        first_read = read_context(first["contextId"], project_id, connection=conn)
-        assert first_read["markdown"] == input_markdown
-        assert first_read["senderAgentId"] == "card_main_chat"
-        assert first_read["receivingAgentId"] == "card_local_coder"
-        assert first_read["deckId"] == "deck_builder"
-        assert first_read["producingRunId"] == "parent-run-1"
-        assert first_read["parentContextId"] is None
-        assert first_read["status"] == "pending"
-
-        second = create_context(
-            project_id=project_id,
-            deck_id="deck_builder",
-            conversation_id=conversation_id,
-            sender_agent_id="card_main_chat",
-            receiving_agent_id="card_local_coder",
-            markdown="# Follow-up",
-            parent_context_id=first["contextId"],
-            agent_validator=lambda *_args: None,
-            connection=conn,
+        kwargs = dict(
+            project_id=PROJECT_ID,
+            deck_id=DECK_ID,
+            conversation_id="main",
+            correlation_id=correlation,
+            sender_card_id="card_main_chat",
+            receiver_card_id="card_magentic",
+            instruction_id=instruction["instructionId"],
+            operation_references=[
+                {
+                    "operationId": "agentgraph.active_context_identities",
+                    "version": 1,
+                    "parameters": {},
+                    "required": False,
+                }
+            ],
+            connection=connection,
         )
-        second_read = read_context(second["contextId"], project_id, connection=conn)
-        assert second_read["parentContextId"] == first["contextId"]
-        mark_context_status(
-            second["contextId"],
-            project_id,
-            "running",
-            connection=conn,
+        assignment = ag.create_assignment(**kwargs)
+        assert ag.create_assignment(**kwargs)["state"] == "existing"
+        claim = ag.claim_assignment(
+            project_id=PROJECT_ID,
+            assignment_id=assignment["assignmentId"],
+            receiver_card_id="card_magentic",
+            lease_seconds=30,
+            connection=connection,
         )
-        assert read_context(
-            second["contextId"],
-            project_id,
-            connection=conn,
-        )["status"] == "running"
-
-        stored = record_result(
-            context_id=second["contextId"],
-            project_id=project_id,
-            result_id="result-1",
-            run_id="run-1",
+        assert claim["instruction"] == "  Exact instruction bytes.\n"
+        assert ag.heartbeat_assignment(
+            project_id=PROJECT_ID,
+            assignment_id=assignment["assignmentId"],
+            lease_token=claim["leaseToken"],
+            lease_seconds=30,
+            connection=connection,
+        )["attempt"] == 1
+        first = ag.finish_assignment(
+            project_id=PROJECT_ID,
+            assignment_id=assignment["assignmentId"],
+            lease_token=claim["leaseToken"],
             status="completed",
-            markdown=result_markdown,
-            result_ref="coder-workspace/runs/result-1/transcript.txt",
-            connection=conn,
+            output="Exact result.",
+            connection=connection,
         )
-        assert stored["created"] is True
-        assert stored["markdown"] == result_markdown
-
-        duplicate = record_result(
-            context_id=second["contextId"],
-            project_id=project_id,
-            result_id="result-1",
-            run_id="run-1",
+        assert first["created"] is True
+        assert ag.finish_assignment(
+            project_id=PROJECT_ID,
+            assignment_id=assignment["assignmentId"],
+            lease_token=claim["leaseToken"],
             status="completed",
-            markdown=result_markdown,
-            result_ref="coder-workspace/runs/result-1/transcript.txt",
-            connection=conn,
+            output="Exact result.",
+            connection=connection,
+        )["created"] is False
+        with pytest.raises(ag.AgentGraphError, match="already_terminal"):
+            ag.finish_assignment(
+                project_id=PROJECT_ID,
+                assignment_id=assignment["assignmentId"],
+                lease_token=claim["leaseToken"],
+                status="failed",
+                error_code="late",
+                error_detail="late",
+                connection=connection,
+            )
+        hydrated = ag.read_assignment(
+            project_id=PROJECT_ID,
+            assignment_id=assignment["assignmentId"],
+            receiving_card_id="card_magentic",
+            connection=connection,
         )
-        assert duplicate["created"] is False
-
-        with conn.cursor() as cursor:
-            _prepare(cursor)
-            cursor.execute(
-                """
-                SELECT *
-                FROM cypher(
-                  'agentgraph',
-                  $$
-                  MATCH (context:AgentContext)-[produced:PRODUCED]->(result:Result)
-                  WHERE context.contextId = $contextId
-                  RETURN properties(result), count(produced)
-                  $$,
-                  %s::agtype
-                ) AS (result_properties agtype, produced_count agtype)
-                """,
-                (
-                    json.dumps(
-                        {"contextId": second["contextId"]},
-                        separators=(",", ":"),
-                    ),
-                ),
-            )
-            rows = cursor.fetchall()
-        assert len(rows) == 1
-        properties = json.loads(str(rows[0][0]))
-        assert "markdown" not in properties
-        assert "resultRef" not in properties
-        assert "error" not in properties
-        assert properties["contextId"] == second["contextId"]
-        assert properties["projectId"] == project_id
-        assert properties["conversationId"] == conversation_id
-        assert properties["receivingAgentId"] == "card_local_coder"
-        assert json.loads(str(rows[0][1])) == 1
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT markdown, result_ref, status
-                FROM ag_catalog.agent_result_payloads
-                WHERE result_id='result-1'
-                """
-            )
-            relational_result = cursor.fetchone()
-        assert relational_result == (
-            result_markdown,
-            "coder-workspace/runs/result-1/transcript.txt",
-            "completed",
-        )
-        assert read_context(
-            second["contextId"],
-            project_id,
-            connection=conn,
-        )["status"] == "completed"
-
-        with conn.cursor() as cursor:
-            _prepare(cursor)
-            cursor.execute(
-                """
-                SELECT *
-                FROM cypher(
-                  'agentgraph',
-                  $$
-                  MATCH (child:AgentContext)-[lineage:CHILD_OF]->(parent:AgentContext)
-                  WHERE child.contextId = $childContextId
-                  RETURN parent.contextId, count(lineage)
-                  $$,
-                  %s::agtype
-                ) AS (parent_context_id agtype, lineage_count agtype)
-                """,
-                (
-                    json.dumps(
-                        {"childContextId": second["contextId"]},
-                        separators=(",", ":"),
-                    ),
-                ),
-            )
-            lineage_rows = cursor.fetchall()
-        assert len(lineage_rows) == 1
-        assert json.loads(str(lineage_rows[0][0])) == first["contextId"]
-        assert json.loads(str(lineage_rows[0][1])) == 1
+        assert hydrated["instruction"] == "  Exact instruction bytes.\n"
+        assert hydrated["result"]["output"] == "Exact result."
+        assert hydrated["operationReferences"][0]["operationId"] == "agentgraph.active_context_identities"
+        assert "body" not in hydrated["ageIdentity"]["instruction"]
     finally:
-        conn.rollback()
-        conn.close()
+        connection.rollback()
+        connection.close()
 
 
-def test_validation_rejects_invalid_identity_before_age_access() -> None:
-    with pytest.raises(AgentGraphError, match="agentgraph_sender_agent_id_invalid"):
-        create_context(
-            project_id="project-1",
-            deck_id="deck_builder",
+def test_sender_can_cancel_pending_assignment_idempotently() -> None:
+    correlation = f"agentgraph-cancel-{uuid4().hex}"
+    connection = connect_postgres(autocommit=False)
+    try:
+        instruction = ag.create_instruction(
+            project_id=PROJECT_ID,
+            deck_id=DECK_ID,
             conversation_id="main",
-            sender_agent_id="not an id",
-            receiving_agent_id="card_local_coder",
-            markdown="# Handoff",
-            agent_validator=lambda *_args: None,
+            body="Cancel this pending work.",
+            prepared_by_card_id="card_main_chat",
+            connection=connection,
         )
-
-
-def test_validation_rejects_oversized_handoff_before_age_access() -> None:
-    with pytest.raises(AgentGraphError, match="agentgraph_markdown_too_large"):
-        create_context(
-            project_id="project-1",
-            deck_id="deck_builder",
+        assignment = ag.create_assignment(
+            project_id=PROJECT_ID,
+            deck_id=DECK_ID,
             conversation_id="main",
-            sender_agent_id="card_main_chat",
-            receiving_agent_id="card_local_coder",
-            markdown="x" * 100_001,
-            agent_validator=lambda *_args: None,
+            correlation_id=correlation,
+            sender_card_id="card_main_chat",
+            receiver_card_id="card_magentic",
+            instruction_id=instruction["instructionId"],
+            connection=connection,
         )
-
-
-def test_mcp_surface_accepts_markdown_and_has_no_reference_expander() -> None:
-    from app import mcp_host
-
-    tools = {tool.name: tool for tool in asyncio.run(mcp_host.list_tools())}
-    assert "agentgraph.expand_reference" not in tools
-    create_schema = tools["agentgraph.create_context"].inputSchema
-    assert set(create_schema["required"]) == {
-        "projectId",
-        "deckId",
-        "conversationId",
-        "senderAgentId",
-        "receivingAgentId",
-        "markdown",
-    }
-    assert "context" not in create_schema["properties"]
-    assert "references" not in create_schema["properties"]
-    assert "parentContextId" in create_schema["properties"]
-    assert "priorContextId" not in create_schema["properties"]
+        cancelled = ag.cancel_assignment(
+            project_id=PROJECT_ID,
+            assignment_id=assignment["assignmentId"],
+            requested_by_card_id="card_main_chat",
+            reason="User cancelled.",
+            connection=connection,
+        )
+        assert cancelled["created"] is True
+        assert ag.cancel_assignment(
+            project_id=PROJECT_ID,
+            assignment_id=assignment["assignmentId"],
+            requested_by_card_id="card_main_chat",
+            reason="User cancelled.",
+            connection=connection,
+        )["created"] is False
+    finally:
+        connection.rollback()
+        connection.close()

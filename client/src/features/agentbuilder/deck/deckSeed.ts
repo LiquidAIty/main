@@ -90,8 +90,8 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       'Never expand a bounded Hermes request into a research plan, candidate list, tool checklist, or worker specification. Preserve the requested count and stop condition exactly.',
       'When a meaningful turn changes project state, apply one coherent ThinkGraph update before your final response. It may include multiple entities, questions, corrections, requirements, relationships, decisions, investigations, and planned actions. Preserve compact labels; never store transcripts, raw tool output, hidden reasoning, or unchanged summaries.',
       '',
-      'When the project is mature enough and the user asks to prepare a team run, ask Hermes to prepare the existing Mag One prompt.md from the project graph and relevant evidence. Review that returned prompt with the user; only Main may seek run approval.',
-      'Execution happens ONLY when the user explicitly accepts the prepared Run Plan in this conversation. Then call mcp__liquidaity__run_mag_one with its existing jobId, projectId, and deckId. Do not rewrite prompt.md: Hermes prepared the exact reviewed plan. The backend requires your live magentic_control connection and resolves the worker roster from blue side edges — never type a roster by hand. Mag One reads prompt.md and referenced files, plans its own team decomposition, and writes results under returns/<jobId>/<cardId>/.',
+      'When the project is mature enough and the user asks to prepare a team run, ask Hermes to prepare the exact Mag One instruction from the project graph and relevant evidence. Review that returned instruction with the user; only Main may seek run approval.',
+      'Execution happens ONLY when the user explicitly accepts the prepared Run Plan in this conversation. Then call mcp__liquidaity__run_mag_one with its existing instructionId, projectId, and deckId. Do not rewrite the instruction: Hermes prepared the exact reviewed text in AgentGraph. The backend requires your live magentic_control connection and resolves the worker roster from blue side edges — never type a roster by hand. Python claims the assignment, hydrates the exact instruction, and native Mag One plans its own team decomposition.',
       '',
       'Hard rules:',
       '- Never claim a run, graph write, code change, or tool execution that a real returned result does not show. No result → say it failed or is blocked, and why.',
@@ -165,7 +165,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Your native Hermes runtime is already active: never call card.run_assistant_agent with card_hermes_steward. For external research, invoke only your orange-connected Search child card_research_agent once with one bounded task; interpret its returned sources yourself.',
       ].join('\n'),
       constraints: [
-        'You never call thinkgraph.submit_update, never call run_mag_one, and never treat your own readiness as user approval. Main Chat owns project-state writes, review, and execution. Only when Main explicitly asks to prepare an agent run may you call write_mag_one_instructions to write the existing prompt.md; preparation never authorizes a Mag One run.',
+        'You never call thinkgraph.submit_update, never call run_mag_one, and never treat your own readiness as user approval. Main Chat owns project-state writes, review, and execution. Only when Main explicitly asks to prepare an agent run may you call write_mag_one_instructions to store the exact AgentGraph instruction; preparation never authorizes a Mag One run.',
         'Model judgment decides which tools a turn needs; there is no required checklist and no tool you must call every turn.',
         'Never fabricate graph data, sources, or results. KnowGraph ingestion requires real source material. A failed read or tool call is reported honestly, never papered over.',
         'Identity (projectId, deckId, conversationId, parentRunId) comes from LIQUIDAITY_RUNTIME_CONTEXT exactly — never invented.',
@@ -389,7 +389,7 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeType: 'assistant_agent',
       // Main Chat's Tools selection is its REAL harness MCP surface: ThinkGraph
       // read/write, read-only evidence/repository access, canvas metadata, the
-      // Mag One roster read/submission control. Hermes alone prepares prompt.md.
+      // Mag One roster read/submission control. Hermes prepares the instruction.
       // No ingestion or web search.
       runtimeOptions: {
         provider: DEFAULT_CARD_PROVIDER,

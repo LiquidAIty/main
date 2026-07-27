@@ -361,36 +361,18 @@ class AttachmentInput(BaseModel):
     fileName: str
 
 
-class JobHandoff(BaseModel):
-    """Coder job-folder handoff into one existing Mag One run.
+class AgentAssignmentRequest(BaseModel):
+    """Stable identities needed for Python to create and claim one assignment."""
 
-    ``workspaceRoot`` is the server-forced trusted root (never model-supplied);
-    ``jobId`` is the one opaque id shared across handoff/, prompt.md, this run,
-    and returns/. When present, the run's task is the EXACT bytes of the Magnetic
-    One variable context packet at ``handoff/<jobId>/prompt.md`` and its return
-    surface is ``returns/<jobId>/``.
-    """
-
-    workspaceRoot: RequiredRuntimeString
-    jobId: RequiredRuntimeString
-
-
-class ResultFolder(BaseModel):
-    """Assigned returns/<runId>/ result folder for any run that is NOT a Coder
-    handoff (e.g. a standalone single-agent run). Unlike JobHandoff it does not
-    change the run's task — it only assigns a return surface. workspaceRoot is the
-    server-forced trusted root; runId is the run's existing identity.
-    """
-
-    workspaceRoot: RequiredRuntimeString
-    runId: RequiredRuntimeString
+    instructionId: RequiredRuntimeString
+    senderCardId: RequiredRuntimeString
+    receiverCardId: RequiredRuntimeString
 
 
 class ContextPack(BaseModel):
     session: ProjectSession
     userText: str
     conversationId: str = ""
-    agentContextId: str | None = None
     priorAssistantText: str = ""
     systemPrompt: str = ""
     blackboard: BlackboardSnapshot = Field(default_factory=BlackboardSnapshot)
@@ -400,8 +382,7 @@ class ContextPack(BaseModel):
     attachments: list[AttachmentInput] = Field(default_factory=list)
     maxResearchTasks: int = 6
     workspaceObjectContext: WorkspaceObjectContext | None = None
-    jobHandoff: JobHandoff | None = None
-    resultFolder: ResultFolder | None = None
+    agentAssignment: AgentAssignmentRequest | None = None
     cardRuntime: CardRuntimeConfig | None = None
 
 
@@ -472,6 +453,7 @@ class LedgerTrace(BaseModel):
 class OrchestratorRunResponse(BaseModel):
     ok: bool
     session: ProjectSession
+    assignmentId: str | None = None
     ledgerTrace: LedgerTrace = Field(default_factory=LedgerTrace)
     stopReason: str | None = None
     # finalResponseText is the real last AutoGen message text (never an app-authored
@@ -487,10 +469,7 @@ class OrchestratorRunResponse(BaseModel):
     # Progress Ledger is identify-only in this scope: referenced, never started.
     progressLedgerReference: ProgressLedgerReference | None = None
     # Job-folder handoff run outputs (None for a normal, non-handoff run). The
-    # workspace-relative returns dir, the paths of files the run actually wrote
-    # there, and an honest status — "no_return_files_created" is a valid outcome
-    # and never triggers a fabricated result file.
-    returnsDir: str | None = None
+    # Registered artifact locators from the canonical AgentGraph result.
     returnedFiles: list[str] = Field(default_factory=list)
     returnStatus: Literal["return_files_created", "no_return_files_created"] | None = None
     error: str | None = None

@@ -7,7 +7,6 @@ import {
   type EpisodeArtifactRef,
   type UserJudgmentLabel,
 } from './episodeContract';
-import { getPromptDraft, promptRecordToEpisodeNodes } from '../prompt/promptLifecycle';
 import {
   applyThinkGraphPatch,
   type ThinkGraphPatchAuthority,
@@ -31,8 +30,6 @@ export type EpisodeCloseContext = {
   goalText: string;
   goalId?: string;
   provenance: EpisodeProvenance;
-  /** Prompt lineage is pulled from the lifecycle store for this job, if present. */
-  jobId?: string;
   /** Compact per-step summaries; only supplied steps become episode nodes. */
   steps?: Partial<Record<EpisodeNodeKind, string>>;
   graphRefs?: { codeGraph?: string[]; knowGraph?: string[]; thinkGraph?: string[] };
@@ -48,11 +45,6 @@ export function buildEpisodeCloseInput(context: EpisodeCloseContext): EpisodeInp
   }
   if (context.goalId) {
     nodes.Goal = { summary: context.goalText, properties: { goal_id: context.goalId } };
-  }
-  // Prompt lineage from the lifecycle store (authored there, not here).
-  if (context.jobId) {
-    const record = getPromptDraft(context.jobId);
-    if (record) Object.assign(nodes, promptRecordToEpisodeNodes(record));
   }
   return {
     episodeId: context.episodeId,

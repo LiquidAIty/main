@@ -33,7 +33,7 @@ def test_mcp_host_bootstrap_makes_app_and_control_handlers_importable():
     result = _run_in_script_launch_context(
         "import mcp_host;"
         "from app import control_plane;"
-        "from app.python_models import coder_job_tools;"
+        "from app.python_models import agentgraph;"
         "print('APP_IMPORT_OK')"
     )
     assert "APP_IMPORT_OK" in result.stdout, result.stderr
@@ -42,9 +42,8 @@ def test_mcp_host_bootstrap_makes_app_and_control_handlers_importable():
 def test_app_bootstrap_lives_once_at_the_host_boundary():
     host = open(os.path.join(_APP_DIR, "mcp_host.py"), encoding="utf-8").read()
     assert host.count("sys.path.insert") == 1
-    for name in ("coder_job_tools.py", "job_folder.py"):
-        text = open(os.path.join(_APP_DIR, "python_models", name), encoding="utf-8").read()
-        assert "sys.path.insert" not in text, f"{name} must not carry the app bootstrap"
+    text = open(os.path.join(_APP_DIR, "python_models", "agentgraph.py"), encoding="utf-8").read()
+    assert "sys.path.insert" not in text
 
 
 def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
@@ -56,8 +55,8 @@ async def check():
     coder = by_name['run_coder_subagent']
     assert 'approvedPrompt' in coder.inputSchema['properties']
     assert 'adapter' not in coder.inputSchema['properties']
-    assert 'agentContextId' in by_name['card.run_assistant_agent'].inputSchema['properties']
-    assert by_name['run_mag_one'].inputSchema['required'] == ['jobId', 'projectId', 'deckId']
+    assert 'instructionId' in by_name['card.run_assistant_agent'].inputSchema['properties']
+    assert by_name['run_mag_one'].inputSchema['required'] == ['instructionId', 'projectId', 'deckId']
     assert by_name['main.context'].inputSchema == {'type': 'object', 'properties': {}, 'required': []}
     print(json.dumps({name: tool.model_dump() for name, tool in by_name.items()}, sort_keys=True))
 asyncio.run(check())
@@ -88,9 +87,9 @@ async def check():
         assert tool.model_dump() == native[tool.name].model_dump()
     combined = await mcp_host.list_tools()
     combined_names = [tool.name for tool in combined]
-    assert len(combined_names) == 66
-    assert len(set(combined_names)) == 66
-    assert len(set(combined_names) - set(native)) == 37
+    assert len(combined_names) == 63
+    assert len(set(combined_names)) == 63
+    assert len(set(combined_names) - set(native)) == 34
     print(json.dumps(sorted(native)))
 asyncio.run(check())
 """
@@ -262,7 +261,7 @@ async def check():
         'conversationId': 'conversation-1', 'cardId': 'coder-card',
         'approvedPrompt': 'Main approved these exact instructions.'
     }
-    mag = {'projectId': 'project-1', 'deckId': 'deck_builder', 'jobId': 'job-1'}
+    mag = {'projectId': 'project-1', 'deckId': 'deck_builder', 'instructionId': 'instruction:one'}
     await mcp_host.call_tool('run_coder_subagent', coder)
     await mcp_host.call_tool('run_mag_one', mag)
     assert calls == [
@@ -347,7 +346,7 @@ async def check():
             elapsed = time.perf_counter() - started
             assert actual == expected
             assert 'main.context' in actual
-            assert len(actual) == 66
+            assert len(actual) == 63
             assert sum(name.startswith('engraphis_') for name in actual) == 29
             assert elapsed < 10
             print(json.dumps({{'status': 'STDIO_OK', 'count': len(actual), 'elapsed': elapsed}}))

@@ -374,7 +374,7 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
     _require(args, "projectId", "cardId", "correlationId", "input")
     deck_id = str(args.get("deckId") or "").strip()
     conversation_id = str(args.get("conversationId") or "").strip()
-    agent_context_id = str(args.get("agentContextId") or "").strip()
+    instruction_id = str(args.get("instructionId") or "").strip()
     originating_agent_id = str(args.get("originatingAgentId") or "").strip()
     originating_run_id = str(args.get("originatingRunId") or "").strip()
     project_id = str(args["projectId"]).strip()
@@ -382,12 +382,11 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
     correlation_id = str(args["correlationId"]).strip()
     instruction = str(args["input"])
 
-    # A trusted doorway child creates one durable handoff before its target
-    # executes. Plain user-triggered standalone runs do not enter this branch
-    # and remain independent of AgentGraph.
+    # A trusted doorway creates the exact relational instruction. The saved-card
+    # runner creates and claims the one canonical assignment.
     if originating_agent_id:
-        if agent_context_id:
-            raise ControlPlaneError("agentgraph_context_override_rejected")
+        if instruction_id:
+            raise ControlPlaneError("agentgraph_instruction_override_rejected")
         if not conversation_id:
             raise ControlPlaneError("conversationId_required_for_agent_handoff")
         if not originating_run_id:
@@ -395,18 +394,16 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
         deck_id = deck_id or "deck_builder"
         try:
             created = await asyncio.to_thread(
-                ag.create_context,
+                ag.create_instruction,
                 project_id=project_id,
                 deck_id=deck_id,
                 conversation_id=conversation_id,
-                sender_agent_id=originating_agent_id,
-                receiving_agent_id=card_id,
-                markdown=instruction,
-                producing_run_id=originating_run_id,
+                body=instruction,
+                prepared_by_card_id=originating_agent_id,
             )
         except Exception as err:
-            raise ControlPlaneError(f"agentgraph_handoff_create_failed: {err}") from err
-        agent_context_id = str(created["contextId"])
+            raise ControlPlaneError(f"agentgraph_instruction_create_failed: {err}") from err
+        instruction_id = str(created["instructionId"])
 
     payload = {
         "projectId": project_id,
@@ -414,7 +411,9 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
         "cardId": card_id,
         "correlationId": correlation_id,
         **({"conversationId": conversation_id} if conversation_id else {}),
-        **({"agentContextId": agent_context_id} if agent_context_id else {}),
+        **({"instructionId": instruction_id} if instruction_id else {}),
+        **({"senderCardId": originating_agent_id} if instruction_id else {}),
+        **({"parentRunId": originating_run_id} if originating_run_id else {}),
         "input": instruction,
     }
 
@@ -425,19 +424,7 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
             "/api/coder/mcp-bridge/run_configured_card",
             payload,
         )
-    except Exception as err:
-        if agent_context_id and originating_agent_id:
-            await asyncio.to_thread(
-                ag.mark_context_status,
-                agent_context_id,
-                project_id,
-                "failed",
-            )
+    except Exception:
         raise
 
-    if agent_context_id and originating_agent_id:
-        # Python's saved-card runner is the single result writer. This doorway
-        # transports the context identity back to its caller and does not copy
-        # model output or author duplicate lineage.
-        return {**response, "agentContextId": agent_context_id}
-    return response
+    return {**response, **({"instructionId": instruction_id} if instruction_id else {})}

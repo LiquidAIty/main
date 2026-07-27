@@ -30,7 +30,7 @@ from uuid import uuid4
 
 from autogen_core.tools import FunctionTool
 
-from app.python_models import job_folder as jf
+from app.python_models import assignment_artifacts as aa
 from app.python_models.web_search import web_search
 from app.python_models.orchestration_contracts import ContextPack, ToolSpec
 from app.python_models.sec_filing_signals import (
@@ -450,52 +450,53 @@ async def apply_thinkgraph_patch_tool(
 
 
 # ---------------------------------------------------------------------------
-# Job-folder return writer (run-scoped, NOT a card-selectable tool).
-#
-# Available ONLY inside an explicit Coder job-folder handoff run: the single-run
-# writable surface is the server-assigned returns/<job-id>/ directory. Authority
-# (the resolved JobFolder) is injected by run_native_magentic_mission via this
-# ContextVar — never from the model. A call outside an authorized handoff run
-# fails honestly. This never writes into the source working tree and is not
-# registered in the card tool registry, so no saved card/deck is affected.
+# AgentGraph assignment artifact writer (run-scoped, not card-selectable).
 # ---------------------------------------------------------------------------
 
-JOB_RETURN_ROOT: ContextVar[jf.JobFolder | None] = ContextVar("job_return_root", default=None)
+AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY: ContextVar[dict[str, str] | None] = ContextVar(
+    "agent_assignment_artifact_authority",
+    default=None,
+)
 
 
 async def write_return_file_tool(card_id: str, path: str, content: str) -> str:
-    """Create a real deliverable file under THIS agent's returns/<run-id>/<card-id>/.
-
-    ``card_id`` is the fixed trusted card of the calling agent (injected per tool,
-    never a model argument); ``path`` is RELATIVE beneath that agent's own subdir.
-    Absolute paths, traversal, symlink escapes, and writes into another agent's
-    folder are rejected. Returns JSON with the actual workspace-relative path.
-    """
-    folder = JOB_RETURN_ROOT.get()
-    if folder is None:
+    """Write and immediately register one assignment-scoped artifact."""
+    authority = AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY.get()
+    if authority is None:
         return json.dumps(
             {
                 "ok": False,
-                "error": "job_return_authority_missing: write_return_file is only available inside a job-folder run",
+                "error": "agent_assignment_artifact_authority_missing",
             }
         )
     try:
-        written = await asyncio.to_thread(
-            jf.write_return_file, folder, str(card_id or ""), str(path or ""), str(content or "")
+        scope = aa.resolve_scope(
+            authority["workspaceRoot"],
+            authority["assignmentId"],
+            str(card_id or ""),
+        )
+        artifact = await asyncio.to_thread(
+            aa.write_artifact,
+            scope,
+            str(path or ""),
+            str(content or ""),
+        )
+        from app.python_models import agentgraph
+
+        await asyncio.to_thread(
+            agentgraph.register_assignment_artifact,
+            project_id=authority["projectId"],
+            assignment_id=authority["assignmentId"],
+            lease_token=authority["leaseToken"],
+            artifact=artifact,
         )
     except (ValueError, OSError) as err:
         return json.dumps({"ok": False, "error": str(err)})
-    return json.dumps({"ok": True, "path": written})
+    return json.dumps({"ok": True, **artifact})
 
 
 def build_return_writer_tool(card_id: str) -> FunctionTool:
-    """Fresh run-scoped return-writer FunctionTool bound to ONE agent's card id.
-
-    Attached per participant by ``_build_participants``, so each agent can only write
-    beneath returns/<run-id>/<its-own-card-id>/. The model supplies only path +
-    content — the card id is fixed here (trusted run context), so an agent can never
-    target another agent's folder. NOT in the card tool registry/manifest.
-    """
+    """Fresh assignment-scoped artifact tool bound to one saved card."""
     async def _adapter(path: str, content: str) -> str:
         return await write_return_file_tool(card_id, path, content)
 
@@ -503,13 +504,9 @@ def build_return_writer_tool(card_id: str) -> FunctionTool:
         _adapter,
         name="write_return_file",
         description=(
-            "Job-folder run only: create a real deliverable file under THIS agent's assigned "
-            "returns/<run-id>/<your-card-id>/ directory. Arguments: path (a RELATIVE path under your "
-            "own return subdir, e.g. 'proposed/example.patch') and content (the file's full text). "
-            "Needed subdirectories are created. Absolute paths, traversal, and any path escaping your "
-            "subdir are rejected; it never writes into the source tree or another agent's folder. Use "
-            "it to place proposed patches, changed-file copies, reports, or generated files for the "
-            "Coder to inspect. Returns the workspace-relative path written."
+            "Create one real file artifact for the active AgentGraph assignment. "
+            "The model supplies only a relative path and content; assignment, run, "
+            "producer, hash, and storage authority are injected by Python."
         ),
     )
 

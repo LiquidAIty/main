@@ -267,8 +267,8 @@ function doorwayWhenToUse(binding: string, title: string): string {
       'wait for it; omit the prompt only for pure inherited-context preparation. ' +
       'Either way Hermes inherits the complete live parent conversation, works its ' +
       'graph/memory tools and its own direct agents, then returns its normal useful response. ' +
-      'Only when explicitly asked for a Run Plan, Hermes writes the existing ' +
-      'handoff/<jobId>/prompt.md and returns its path/job metadata for Main to present. ' +
+      'Only when explicitly asked for a Run Plan, Hermes stores the exact proposed instruction ' +
+      'in AgentGraph and returns its stable instructionId for Main to present. ' +
       'Hermes never runs Mag One and never becomes a worker; Main launches the reviewed ' +
       'job only after explicit user acceptance. Model judgment decides when to invoke; ' +
       'no fixed cadence.'

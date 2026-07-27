@@ -491,7 +491,7 @@ def record_result(
               runId: $runId,
               status: $status,
               createdAt: $createdAt
-            })
+            }
             CREATE (context)-[:PRODUCED]->(result)
             SET context.status = $status,
                 context.completedAt = $createdAt
@@ -606,6 +606,7 @@ def create_assignment(
     receiver_card_id: str,
     instruction_id: str,
     parent_correlation_id: str | None = None,
+    operation_references: list[dict[str, Any]] | None = None,
     connection: Any | None = None,
 ) -> dict[str, Any]:
     """Create one pending AgentGraph assignment on the canonical run identity."""
@@ -622,6 +623,7 @@ def create_assignment(
         else None
     )
     assignment_id = f"assignment:{correlation_id}"
+    references = list(operation_references or [])
     created_at = _now()
     with _connection_scope(connection) as conn, conn.cursor() as cursor:
         _prepare(cursor)
@@ -653,11 +655,7 @@ def create_assignment(
                 (project_id, parent_correlation_id),
             )
             parent = cursor.fetchone()
-            if parent is None:
-                raise AgentGraphError(
-                    f"agentgraph_parent_assignment_not_found: {parent_correlation_id}"
-                )
-            parent_assignment_id = str(parent[0])
+            parent_assignment_id = str(parent[0]) if parent else None
         cursor.execute(
             """
             INSERT INTO ag_catalog.card_run_traces
@@ -679,8 +677,10 @@ def create_assignment(
             INSERT INTO ag_catalog.agent_assignments
               (assignment_id, project_id, correlation_id, deck_id, conversation_id,
                sender_card_id, receiver_card_id, parent_assignment_id, state,
-               instruction_id, created_at, updated_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s)
+               instruction_id, parent_run_id, created_at, updated_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s)
+            ON CONFLICT (project_id, correlation_id) DO NOTHING
+            RETURNING assignment_id
             """,
             (
                 assignment_id,
@@ -692,10 +692,74 @@ def create_assignment(
                 receiver_card_id,
                 parent_assignment_id,
                 instruction_id,
+                parent_correlation_id,
                 created_at,
                 created_at,
             ),
         )
+        inserted = cursor.fetchone()
+        if inserted is None:
+            cursor.execute(
+                """
+                SELECT assignment_id, deck_id, conversation_id, sender_card_id,
+                       receiver_card_id, instruction_id, parent_run_id
+                FROM ag_catalog.agent_assignments
+                WHERE project_id=%s AND correlation_id=%s
+                """,
+                (project_id, correlation_id),
+            )
+            existing = cursor.fetchone()
+            expected = (
+                assignment_id,
+                deck_id,
+                conversation_id,
+                sender_card_id,
+                receiver_card_id,
+                instruction_id,
+                parent_correlation_id,
+            )
+            if existing != expected:
+                raise AgentGraphError(
+                    f"agentgraph_assignment_idempotency_conflict: {correlation_id}"
+                )
+            return {
+                "ok": True,
+                "assignmentId": assignment_id,
+                "correlationId": correlation_id,
+                "instructionId": instruction_id,
+                "state": "existing",
+                "receiverCardId": receiver_card_id,
+            }
+        for reference in references:
+            operation_id = _required_id(
+                reference.get("operationId"), "operation_id"
+            )
+            try:
+                operation_version = int(reference.get("version"))
+            except (TypeError, ValueError):
+                raise AgentGraphError("agentgraph_operation_version_invalid")
+            if operation_version < 1:
+                raise AgentGraphError("agentgraph_operation_version_invalid")
+            parameters = reference.get("parameters") or {}
+            if not isinstance(parameters, dict):
+                raise AgentGraphError("agentgraph_operation_parameters_invalid")
+            cursor.execute(
+                """
+                INSERT INTO ag_catalog.agent_assignment_operation_references
+                  (assignment_id, project_id, operation_id, operation_version,
+                   parameters, explanation, required)
+                VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s)
+                """,
+                (
+                    assignment_id,
+                    project_id,
+                    operation_id,
+                    operation_version,
+                    json.dumps(parameters, ensure_ascii=False),
+                    str(reference.get("explanation") or "").strip() or None,
+                    bool(reference.get("required", False)),
+                ),
+            )
         _run_cypher(
             cursor,
             """
@@ -708,9 +772,11 @@ def create_assignment(
             MERGE (receiver:Agent {
               project_id: $projectId, deck_id: $deckId, agent_id: $receiverCardId
             })
-            CREATE (assignment:Assignment {
+            MERGE (assignment:Assignment {
               assignmentId: $assignmentId,
-              projectId: $projectId,
+              projectId: $projectId
+            })
+            SET assignment += {
               correlationId: $correlationId,
               conversationId: $conversationId,
               senderCardId: $senderCardId,
@@ -719,10 +785,10 @@ def create_assignment(
               state: 'pending',
               attempt: 0,
               createdAt: $createdAt
-            })
-            CREATE (assignment)-[:HAS_INSTRUCTION]->(instruction)
-            CREATE (assignment)-[:CREATED_BY]->(sender)
-            CREATE (assignment)-[:ASSIGNED_TO]->(receiver)
+            }
+            MERGE (assignment)-[:HAS_INSTRUCTION]->(instruction)
+            MERGE (assignment)-[:CREATED_BY]->(sender)
+            MERGE (assignment)-[:ASSIGNED_TO]->(receiver)
             RETURN assignment.assignmentId
             """,
             "assignment_id agtype",
@@ -745,7 +811,7 @@ def create_assignment(
                 MATCH (child:Assignment), (parent:Assignment)
                 WHERE child.assignmentId = $assignmentId
                   AND parent.assignmentId = $parentAssignmentId
-                CREATE (child)-[:CHILD_OF]->(parent)
+                MERGE (child)-[:CHILD_OF]->(parent)
                 RETURN child.assignmentId
                 """,
                 "assignment_id agtype",
@@ -872,6 +938,63 @@ def claim_assignment(
     }
 
 
+def heartbeat_assignment(
+    *,
+    project_id: str,
+    assignment_id: str,
+    lease_token: str,
+    lease_seconds: int = 120,
+    connection: Any | None = None,
+) -> dict[str, Any]:
+    """Atomically extend only the current, unexpired assignment lease."""
+    project_id = _required_text(project_id, "project_id")
+    assignment_id = _required_id(assignment_id, "assignment_id")
+    lease_token = _required_id(lease_token, "lease_token")
+    if not isinstance(lease_seconds, int) or not 10 <= lease_seconds <= 3600:
+        raise AgentGraphError("agentgraph_assignment_lease_invalid")
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(seconds=lease_seconds)
+    with _connection_scope(connection) as conn, conn.cursor() as cursor:
+        _prepare(cursor)
+        cursor.execute(
+            """
+            UPDATE ag_catalog.agent_assignments
+            SET heartbeat_at=%s, lease_expires_at=%s, updated_at=%s
+            WHERE project_id=%s AND assignment_id=%s AND lease_token=%s
+              AND state='running' AND lease_expires_at > %s
+            RETURNING correlation_id, attempt
+            """,
+            (now, expires, now, project_id, assignment_id, lease_token, now),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise AgentGraphError(
+                f"agentgraph_assignment_lease_mismatch: {assignment_id}"
+            )
+        _run_cypher(
+            cursor,
+            """
+            MATCH (assignment:Assignment)
+            WHERE assignment.assignmentId=$assignmentId
+              AND assignment.projectId=$projectId
+            SET assignment.leaseExpiresAt=$leaseExpiresAt
+            RETURN assignment.assignmentId
+            """,
+            "assignment_id agtype",
+            {
+                "assignmentId": assignment_id,
+                "projectId": project_id,
+                "leaseExpiresAt": expires.isoformat(),
+            },
+        )
+    return {
+        "ok": True,
+        "assignmentId": assignment_id,
+        "leaseExpiresAt": expires.isoformat(),
+        "attempt": int(row[1]),
+    }
+
+
 def finish_assignment(
     *,
     project_id: str,
@@ -881,7 +1004,6 @@ def finish_assignment(
     output: str | None = None,
     error_code: str | None = None,
     error_detail: str | None = None,
-    artifacts: list[dict[str, Any]] | None = None,
     connection: Any | None = None,
 ) -> dict[str, Any]:
     """Attach exact terminal result and artifact identities to the claimed run."""
@@ -893,13 +1015,16 @@ def finish_assignment(
         raise AgentGraphError(
             f"agentgraph_assignment_terminal_status_invalid: {terminal}"
         )
+    output = _optional_markdown(output)
+    error_code = _optional_text(error_code, "error_code")
+    error_detail = _optional_error(error_detail)
     result_id = f"agentresult:{assignment_id.split(':', 1)[-1]}"
     created_at = _now()
     with _connection_scope(connection) as conn, conn.cursor() as cursor:
         _prepare(cursor)
         cursor.execute(
             """
-            SELECT correlation_id, receiver_card_id, state
+            SELECT correlation_id, receiver_card_id, state, lease_expires_at
             FROM ag_catalog.agent_assignments
             WHERE project_id=%s AND assignment_id=%s AND lease_token=%s
             FOR UPDATE
@@ -911,18 +1036,18 @@ def finish_assignment(
             raise AgentGraphError(
                 f"agentgraph_assignment_lease_mismatch: {assignment_id}"
             )
-        correlation_id, receiver_card_id, prior_state = assignment
+        correlation_id, receiver_card_id, prior_state, lease_expires_at = assignment
         if prior_state in {"completed", "failed", "cancelled"}:
             cursor.execute(
                 """
-                SELECT result_id, status
+                SELECT result_id, status, output, error_code, error_detail
                 FROM ag_catalog.agent_results
                 WHERE assignment_id=%s
                 """,
                 (assignment_id,),
             )
             existing = cursor.fetchone()
-            if existing == (result_id, terminal):
+            if existing == (result_id, terminal, output, error_code, error_detail):
                 return {
                     "ok": True,
                     "created": False,
@@ -932,6 +1057,10 @@ def finish_assignment(
                 }
             raise AgentGraphError(
                 f"agentgraph_assignment_already_terminal: {assignment_id}"
+            )
+        if lease_expires_at is None or lease_expires_at <= datetime.now(timezone.utc):
+            raise AgentGraphError(
+                f"agentgraph_assignment_lease_expired: {assignment_id}"
             )
         cursor.execute(
             """
@@ -947,8 +1076,8 @@ def finish_assignment(
                 correlation_id,
                 terminal,
                 output,
-                str(error_code or "").strip() or None,
-                str(error_detail or "")[:8000] or None,
+                error_code,
+                error_detail,
             ),
         )
         timestamp_column = "cancelled_at" if terminal == "cancelled" else "completed_at"
@@ -972,55 +1101,40 @@ def finish_assignment(
                 terminal,
                 terminal,
                 str(error_detail or "")[:4000],
-                str(error_code or "").strip() or None,
+                error_code,
                 project_id,
                 correlation_id,
             ),
         )
-        artifact_rows: list[dict[str, Any]] = []
-        for artifact in artifacts or []:
-            artifact_id = _required_id(artifact.get("artifactId"), "artifact_id")
-            artifact_type = _required_text(
-                artifact.get("artifactType"), "artifact_type"
-            )
-            locator = _required_text(artifact.get("locator"), "artifact_locator")
-            digest = _required_text(artifact.get("sha256"), "artifact_sha256")
-            byte_count = int(artifact.get("byteCount"))
-            if byte_count < 0:
-                raise AgentGraphError("agentgraph_artifact_byte_count_invalid")
-            producer = _required_id(
-                artifact.get("producerCardId") or receiver_card_id,
-                "artifact_producer_card_id",
-            )
-            cursor.execute(
-                """
-                INSERT INTO ag_catalog.agent_artifact_references
-                  (assignment_id, artifact_id, artifact_type, locator, result_id,
-                   run_id, producer_card_id, sha256, byte_count)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """,
-                (
-                    assignment_id,
-                    artifact_id,
-                    artifact_type,
-                    locator,
-                    result_id,
-                    correlation_id,
-                    producer,
-                    digest,
-                    byte_count,
-                ),
-            )
-            artifact_rows.append(
-                {
-                    "artifactId": artifact_id,
-                    "artifactType": artifact_type,
-                    "locator": locator,
-                    "producerCardId": producer,
-                    "sha256": digest,
-                    "byteCount": byte_count,
-                }
-            )
+        cursor.execute(
+            """
+            UPDATE ag_catalog.agent_artifact_references
+            SET result_id=%s
+            WHERE assignment_id=%s AND result_id IS NULL
+            """,
+            (result_id, assignment_id),
+        )
+        cursor.execute(
+            """
+            SELECT artifact_id, artifact_type, locator, producer_card_id,
+                   sha256, byte_count
+            FROM ag_catalog.agent_artifact_references
+            WHERE assignment_id=%s
+            ORDER BY artifact_id
+            """,
+            (assignment_id,),
+        )
+        artifact_rows = [
+            {
+                "artifactId": row[0],
+                "artifactType": row[1],
+                "locator": row[2],
+                "producerCardId": row[3],
+                "sha256": row[4],
+                "byteCount": row[5],
+            }
+            for row in cursor.fetchall()
+        ]
         _run_cypher(
             cursor,
             """
@@ -1056,19 +1170,12 @@ def finish_assignment(
             _run_cypher(
                 cursor,
                 """
-                MATCH (assignment:Assignment), (result:Result)
+                MATCH (assignment:Assignment), (result:Result), (artifact:Artifact)
                 WHERE assignment.assignmentId=$assignmentId
                   AND result.resultId=$resultId
-                CREATE (artifact:Artifact {
-                  artifactId: $artifactId,
-                  assignmentId: $assignmentId,
-                  resultId: $resultId,
-                  projectId: $projectId,
-                  producerCardId: $producerCardId,
-                  sha256: $sha256,
-                  byteCount: $byteCount
-                })
-                CREATE (assignment)-[:HAS_ARTIFACT]->(artifact)
+                  AND artifact.artifactId=$artifactId
+                  AND artifact.assignmentId=$assignmentId
+                SET artifact.resultId=$resultId
                 CREATE (result)-[:HAS_ARTIFACT]->(artifact)
                 RETURN artifact.artifactId
                 """,
@@ -1087,6 +1194,210 @@ def finish_assignment(
         "resultId": result_id,
         "status": terminal,
         "artifacts": artifact_rows,
+    }
+
+
+def cancel_assignment(
+    *,
+    project_id: str,
+    assignment_id: str,
+    requested_by_card_id: str,
+    reason: str,
+    connection: Any | None = None,
+) -> dict[str, Any]:
+    """Cancel pending work as its sender without manufacturing a worker lease."""
+    project_id = _required_text(project_id, "project_id")
+    assignment_id = _required_id(assignment_id, "assignment_id")
+    requested_by = _required_id(requested_by_card_id, "requested_by_card_id")
+    reason = _required_text(reason, "cancellation_reason")[:_MAX_ERROR_CHARS]
+    result_id = f"agentresult:{assignment_id.split(':', 1)[-1]}"
+    with _connection_scope(connection) as conn, conn.cursor() as cursor:
+        _prepare(cursor)
+        cursor.execute(
+            """
+            SELECT correlation_id, sender_card_id, state
+            FROM ag_catalog.agent_assignments
+            WHERE project_id=%s AND assignment_id=%s
+            FOR UPDATE
+            """,
+            (project_id, assignment_id),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise AgentGraphError(f"agentgraph_assignment_not_found: {assignment_id}")
+        correlation_id, sender_card_id, state = row
+        if sender_card_id != requested_by:
+            raise AgentGraphError(
+                f"agentgraph_assignment_cancel_unauthorized: {assignment_id}"
+            )
+        if state in {"completed", "failed", "cancelled"}:
+            if state == "cancelled":
+                return {
+                    "ok": True,
+                    "created": False,
+                    "assignmentId": assignment_id,
+                    "resultId": result_id,
+                    "status": "cancelled",
+                }
+            raise AgentGraphError(
+                f"agentgraph_assignment_already_terminal: {assignment_id}"
+            )
+        cursor.execute(
+            """
+            INSERT INTO ag_catalog.agent_results
+              (result_id, assignment_id, project_id, correlation_id, status,
+               error_code, error_detail)
+            VALUES (%s,%s,%s,%s,'cancelled','cancelled',%s)
+            """,
+            (result_id, assignment_id, project_id, correlation_id, reason),
+        )
+        cursor.execute(
+            """
+            UPDATE ag_catalog.agent_assignments
+            SET state='cancelled', cancelled_at=now(), lease_token=NULL,
+                lease_expires_at=NULL, updated_at=now()
+            WHERE assignment_id=%s
+            """,
+            (assignment_id,),
+        )
+        cursor.execute(
+            """
+            UPDATE ag_catalog.card_run_traces
+            SET outcome='cancelled', state='cancelled', detail=%s,
+                error_code='cancelled', cancelled_at=now(), updated_at=now()
+            WHERE project_id=%s AND correlation_id=%s
+            """,
+            (reason, project_id, correlation_id),
+        )
+        _run_cypher(
+            cursor,
+            """
+            MATCH (assignment:Assignment)
+            WHERE assignment.assignmentId=$assignmentId
+              AND assignment.projectId=$projectId
+            CREATE (result:Result {
+              resultId:$resultId, assignmentId:$assignmentId,
+              projectId:$projectId, correlationId:$correlationId,
+              status:'cancelled'
+            })
+            CREATE (assignment)-[:PRODUCED]->(result)
+            SET assignment.state='cancelled'
+            RETURN result.resultId
+            """,
+            "result_id agtype",
+            {
+                "assignmentId": assignment_id,
+                "projectId": project_id,
+                "resultId": result_id,
+                "correlationId": str(correlation_id),
+            },
+        )
+    return {
+        "ok": True,
+        "created": True,
+        "assignmentId": assignment_id,
+        "resultId": result_id,
+        "status": "cancelled",
+    }
+
+
+def register_assignment_artifact(
+    *,
+    project_id: str,
+    assignment_id: str,
+    lease_token: str,
+    artifact: dict[str, Any],
+    connection: Any | None = None,
+) -> dict[str, Any]:
+    """Register one real file immediately against its active assignment lease."""
+    project_id = _required_text(project_id, "project_id")
+    assignment_id = _required_id(assignment_id, "assignment_id")
+    lease_token = _required_id(lease_token, "lease_token")
+    artifact_id = _required_id(artifact.get("artifactId"), "artifact_id")
+    artifact_type = _required_text(artifact.get("artifactType"), "artifact_type")
+    locator = _required_text(artifact.get("locator"), "artifact_locator")
+    producer = _required_id(
+        artifact.get("producerCardId"), "artifact_producer_card_id"
+    )
+    digest = _required_text(artifact.get("sha256"), "artifact_sha256")
+    byte_count = int(artifact.get("byteCount"))
+    if byte_count < 0:
+        raise AgentGraphError("agentgraph_artifact_byte_count_invalid")
+    with _connection_scope(connection) as conn, conn.cursor() as cursor:
+        _prepare(cursor)
+        cursor.execute(
+            """
+            SELECT correlation_id, receiver_card_id
+            FROM ag_catalog.agent_assignments
+            WHERE project_id=%s AND assignment_id=%s AND lease_token=%s
+              AND state='running' AND lease_expires_at > now()
+            FOR UPDATE
+            """,
+            (project_id, assignment_id, lease_token),
+        )
+        assignment = cursor.fetchone()
+        if assignment is None:
+            raise AgentGraphError(
+                f"agentgraph_assignment_lease_mismatch: {assignment_id}"
+            )
+        correlation_id, receiver_card_id = assignment
+        if producer != receiver_card_id:
+            raise AgentGraphError(
+                f"agentgraph_artifact_producer_mismatch: {producer}"
+            )
+        cursor.execute(
+            """
+            INSERT INTO ag_catalog.agent_artifact_references
+              (assignment_id, artifact_id, artifact_type, locator, run_id,
+               producer_card_id, sha256, byte_count)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (assignment_id, artifact_id) DO NOTHING
+            """,
+            (
+                assignment_id,
+                artifact_id,
+                artifact_type,
+                locator,
+                correlation_id,
+                producer,
+                digest,
+                byte_count,
+            ),
+        )
+        created = cursor.rowcount == 1
+        if created:
+            _run_cypher(
+                cursor,
+                """
+                MATCH (assignment:Assignment)
+                WHERE assignment.assignmentId=$assignmentId
+                  AND assignment.projectId=$projectId
+                CREATE (artifact:Artifact {
+                  artifactId: $artifactId,
+                  assignmentId: $assignmentId,
+                  projectId: $projectId,
+                  producerCardId: $producerCardId,
+                  sha256: $sha256,
+                  byteCount: $byteCount
+                })
+                CREATE (assignment)-[:HAS_ARTIFACT]->(artifact)
+                RETURN artifact.artifactId
+                """,
+                "artifact_id agtype",
+                {
+                    "assignmentId": assignment_id,
+                    "projectId": project_id,
+                    "artifactId": artifact_id,
+                    "producerCardId": producer,
+                    "sha256": digest,
+                    "byteCount": byte_count,
+                },
+            )
+    return {
+        "ok": True,
+        "created": created,
+        "assignmentId": assignment_id,
+        **artifact,
     }
 
 
@@ -1131,7 +1442,9 @@ def read_assignment(
             SELECT a.assignment_id, a.correlation_id, a.deck_id, a.conversation_id,
                    a.sender_card_id, a.receiver_card_id, a.parent_assignment_id,
                    a.state, a.attempt, a.instruction_id, i.body, i.body_sha256,
-                   r.result_id, r.status, r.output, r.error_code, r.error_detail
+                   r.result_id, r.status, r.output, r.error_code, r.error_detail,
+                   a.parent_run_id, a.claimed_by_card_id, a.lease_expires_at,
+                   a.heartbeat_at
             FROM ag_catalog.agent_assignments a
             JOIN ag_catalog.agent_instructions i ON i.instruction_id=a.instruction_id
             LEFT JOIN ag_catalog.agent_results r ON r.assignment_id=a.assignment_id
@@ -1166,6 +1479,29 @@ def read_assignment(
             }
             for item in cursor.fetchall()
         ]
+        cursor.execute(
+            """
+            SELECT operation_id, operation_version, parameters, explanation, required
+            FROM ag_catalog.agent_assignment_operation_references
+            WHERE assignment_id=%s
+            ORDER BY operation_id, operation_version
+            """,
+            (assignment_id,),
+        )
+        operations = [
+            {
+                "operationId": item[0],
+                "version": item[1],
+                "parameters": (
+                    item[2]
+                    if isinstance(item[2], dict)
+                    else json.loads(str(item[2]))
+                ),
+                "explanation": item[3],
+                "required": item[4],
+            }
+            for item in cursor.fetchall()
+        ]
     return {
         "ok": True,
         "assignmentId": row[0],
@@ -1175,8 +1511,12 @@ def read_assignment(
         "senderCardId": row[4],
         "receiverCardId": row[5],
         "parentAssignmentId": row[6],
+        "parentRunId": row[17],
         "state": row[7],
         "attempt": row[8],
+        "claimedByCardId": row[18],
+        "leaseExpiresAt": row[19].isoformat() if row[19] else None,
+        "heartbeatAt": row[20].isoformat() if row[20] else None,
         "instructionId": row[9],
         "instruction": row[10],
         "instructionSha256": row[11],
@@ -1192,6 +1532,7 @@ def read_assignment(
             else None
         ),
         "artifacts": artifacts,
+        "operationReferences": operations,
         "ageIdentity": {
             "assignment": json.loads(str(identity_rows[0][0])),
             "instruction": json.loads(str(identity_rows[0][1])),

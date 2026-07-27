@@ -35,8 +35,7 @@ export type AutoGenOrchestratorRequest = {
   attachments?: Array<Record<string, unknown>>;
   maxResearchTasks?: number;
   workspaceObjectContext?: Record<string, unknown> | null;
-  jobHandoff?: { workspaceRoot: string; jobId: string };
-  resultFolder?: { workspaceRoot: string; runId: string };
+  agentAssignment?: { instructionId: string; senderCardId: string; receiverCardId: string };
   cardRuntime?: Record<string, unknown>;
 };
 
@@ -59,6 +58,7 @@ export type AutoGenMessage = {
 
 export type AutoGenOrchestratorResponse = {
   ok: boolean;
+  assignmentId?: string | null;
   // Honest per-stage trace from the real Python Magentic-One path.
   ledgerTrace?: LedgerTrace;
   // Real last AutoGen message text (transport invariant only; not rendered in chat).

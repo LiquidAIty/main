@@ -1,7 +1,7 @@
--- Complete registered graph-operation identity and handoff references.
--- Existing payload/run authorities remain unchanged. SQL/Cypher definitions are
--- still immutable; canonical graph-write capabilities are referenced, not
--- reimplemented as free-form database mutations.
+-- Complete the single AgentGraph assignment authority. Migration 005's
+-- short-lived context/result payload and promotion workflows contained only
+-- implementation proof records; active callers now use instructions,
+-- assignments, registered operations, and canonical results directly.
 
 BEGIN;
 
@@ -53,9 +53,9 @@ ALTER TABLE ag_catalog.registered_query_versions
   ADD CONSTRAINT registered_query_versions_language_check
   CHECK (language IN ('sql', 'cypher', 'capability'));
 
-CREATE TABLE IF NOT EXISTS ag_catalog.agent_context_operation_references (
-  context_id TEXT NOT NULL
-    REFERENCES ag_catalog.agent_context_payloads(context_id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS ag_catalog.agent_assignment_operation_references (
+  assignment_id TEXT NOT NULL
+    REFERENCES ag_catalog.agent_assignments(assignment_id) ON DELETE CASCADE,
   project_id TEXT NOT NULL,
   operation_id TEXT NOT NULL,
   operation_version INTEGER NOT NULL CHECK (operation_version > 0),
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS ag_catalog.agent_context_operation_references (
   explanation TEXT,
   required BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (context_id, operation_id, operation_version),
+  PRIMARY KEY (assignment_id, operation_id, operation_version),
   FOREIGN KEY (project_id, operation_id, operation_version)
     REFERENCES ag_catalog.registered_query_versions(project_id, query_id, version)
     ON DELETE RESTRICT
@@ -94,6 +94,14 @@ ALTER TABLE ag_catalog.agent_assignments
   ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
 ALTER TABLE ag_catalog.agent_assignments
   ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+ALTER TABLE ag_catalog.agent_assignments
+  ADD COLUMN IF NOT EXISTS parent_run_id TEXT;
+
+ALTER TABLE ag_catalog.agent_assignments
+  DROP CONSTRAINT IF EXISTS agent_assignments_state_check;
+ALTER TABLE ag_catalog.agent_assignments
+  ADD CONSTRAINT agent_assignments_state_check
+  CHECK (state IN ('pending', 'running', 'completed', 'failed', 'cancelled'));
 
 ALTER TABLE ag_catalog.agent_artifact_references
   ADD COLUMN IF NOT EXISTS result_id TEXT
@@ -107,8 +115,30 @@ ALTER TABLE ag_catalog.agent_artifact_references
 ALTER TABLE ag_catalog.agent_artifact_references
   ADD COLUMN IF NOT EXISTS byte_count BIGINT;
 
+-- Promotion was a document-approval workflow and is not an execution gate.
+DROP TRIGGER IF EXISTS registered_query_promotions_immutable
+  ON ag_catalog.registered_query_promotions;
+DROP TABLE IF EXISTS ag_catalog.registered_query_promotions;
+DROP TRIGGER IF EXISTS registered_query_audit_immutable
+  ON ag_catalog.registered_query_audit;
+DELETE FROM ag_catalog.registered_query_audit WHERE action = 'promoted';
+ALTER TABLE ag_catalog.registered_query_audit
+  DROP CONSTRAINT IF EXISTS registered_query_audit_action_check;
+ALTER TABLE ag_catalog.registered_query_audit
+  ADD CONSTRAINT registered_query_audit_action_check
+  CHECK (action IN ('created', 'version_created', 'executed', 'rejected'));
+CREATE TRIGGER registered_query_audit_immutable
+BEFORE UPDATE OR DELETE ON ag_catalog.registered_query_audit
+FOR EACH ROW EXECUTE FUNCTION ag_catalog.reject_registered_query_mutation();
+
+-- Obsolete context/result payload authorities. Exact instruction/result bodies
+-- now live on agent_instructions and agent_results.
+DROP TABLE IF EXISTS ag_catalog.agent_context_operation_references;
+DROP TABLE IF EXISTS ag_catalog.agent_result_payloads;
+DROP TABLE IF EXISTS ag_catalog.agent_context_payloads;
+
 GRANT SELECT, INSERT, UPDATE, DELETE
-  ON ag_catalog.agent_context_operation_references,
+  ON ag_catalog.agent_assignment_operation_references,
      ag_catalog.agent_instructions
   TO "liquidaity-user";
 

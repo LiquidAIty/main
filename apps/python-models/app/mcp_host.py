@@ -9,8 +9,7 @@ env vars, no .env, no per-turn spawn, no fallback host.
 Exposes this application tool surface plus the complete installed Engraphis
 FastMCP registry:
   * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
-  * run_mag_one                      (Main-only approved submission of an existing
-                                      canonical prompt.md through magentic_control)
+  * run_mag_one                      (Main-only approved AgentGraph assignment)
   * thinkgraph.get_graph_slice       (bounded product projection)
   * web_search                       (real Tavily search; Search Agent only by grant)
   * canvas.inspect / card.update_configuration / canvas.upsert_wire /
@@ -381,50 +380,6 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="agentgraph.create_context",
-            description=(
-                "Store one exact Markdown agent-to-agent handoff in PostgreSQL AGE. "
-                "AgentGraph records only sender, receiver, optional prior/run lineage, "
-                "and the Markdown bytes; it does not parse or expand graph references."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                    "conversationId": {"type": "string"},
-                    "senderAgentId": {"type": "string"},
-                    "receivingAgentId": {"type": "string"},
-                    "markdown": {"type": "string"},
-                    "parentContextId": {"type": "string"},
-                    "producingRunId": {"type": "string"},
-                },
-                "required": [
-                    "projectId",
-                    "deckId",
-                    "conversationId",
-                    "senderAgentId",
-                    "receivingAgentId",
-                    "markdown",
-                ],
-            },
-        ),
-        Tool(
-            name="agentgraph.read_context",
-            description=(
-                "Read one project-scoped PostgreSQL AGE handoff. Returns the exact "
-                "stored Markdown unchanged with minimal sender/receiver/run metadata."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "contextId": {"type": "string"},
-                },
-                "required": ["projectId", "contextId"],
-            },
-        ),
-        Tool(
             name="mag_one.describe_connected_agents",
             description=(
                 "Read the currently connected, bus-eligible (magentic_option) Mag One Agent Cards and "
@@ -446,10 +401,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="run_mag_one",
             description=(
-                "Main Chat only: submit an existing finalized job folder through the bus control input. "
-                "The job is identified by jobId/projectId/deckId; Mag One reads the exact bytes of "
-                "handoff/<jobId>/prompt.md and writes real artifacts under returns/<jobId>/. "
-                "Supporting files may accompany prompt.md. The prompt file is the final start signal. "
+                "Main Chat only: submit one existing AgentGraph instruction identity. "
+                "Python creates and transactionally claims the assignment, hydrates the exact "
+                "relational instruction, and gives that text to native MagenticOneGroupChat. "
                 "The backend resolves the live worker roster from blue SIDE connections; never type "
                 "a roster. Execute only on an explicit user request — Hermes never launches Mag One."
             ),
@@ -458,54 +412,30 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "projectId": {"type": "string"},
                     "deckId": {"type": "string"},
-                    "jobId": {"type": "string"},
+                    "instructionId": {"type": "string"},
                     "conversationId": {"type": "string"},
                     "parentContext": {
                         "type": "object",
                         "description": "Inherited Main Chat review context for Hermes only; never Mag One task input.",
                     },
                 },
-                "required": ["jobId", "projectId", "deckId"],
+                "required": ["instructionId", "projectId", "deckId"],
             },
         ),
         Tool(
             name="write_mag_one_instructions",
             description=(
-                "Hermes Run Plan preparation: write the EXACT proposed Mag One task into handoff/<run-id>/prompt.md "
-                "in the trusted active Coder workspace, and assign returns/<run-id>/ as the run's "
-                "result folder. Supply `instructions` (the exact run-specific text Mag One receives — not "
-                "summarized/wrapped/rewritten, and not durable card constants) and optionally `runId` to reuse an existing handoff. "
-                "Hermes may call this tool only when Main explicitly asks it to prepare the existing prompt. Main Chat owns presentation, review, and run approval; writing prompt.md never starts Mag One. "
-                "Returns runId + workspace-relative handoff and returns paths. Run run_mag_one with "
-                "that runId as jobId to have Mag One read those exact bytes as its task."
+                "Hermes Run Plan preparation: persist the exact proposed Mag One task as "
+                "an AgentGraph instruction. Main owns presentation, review, and approval; "
+                "creating the instruction never starts Mag One. Returns the stable instructionId "
+                "for Main to pass to run_mag_one."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "instructions": {"type": "string"},
-                    "runId": {"type": "string"},
                 },
                 "required": ["instructions"],
-            },
-        ),
-        Tool(
-            name="read_model_results",
-            description=(
-                "Local Coder: discover and read model-produced result files under returns/<run-id>/ "
-                "in the trusted active Coder workspace. With no runId, lists available return runs. "
-                "With a runId and no path, lists that run's actual artifacts. With a runId and a "
-                "workspace-return-relative path, reads one artifact — text/code/reports inline; "
-                "images/video/PDFs/other binaries as a reference + metadata (never corrupted, never "
-                "base64-dumped). Absolute paths and traversal are rejected. Honest empty states: "
-                "no_return_runs_found / no_return_files_created / artifact_not_found."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "runId": {"type": "string"},
-                    "path": {"type": "string"},
-                },
-                "required": [],
             },
         ),
         Tool(
@@ -916,10 +846,8 @@ async def list_tools() -> list[Tool]:
                 "the canonical Agent Canvas deck. On the Harness saved-card doorway path, the "
                 "server injects projectId/correlationId/conversationId; the model supplies the "
                 "bound cardId plus the task input only. conversationId is the real live "
-                "conversation this run belongs to, when one exists — card-scoped authority is "
-                "minted server-side from it; never invent one. agentContextId may reference one "
-                "existing AgentGraph handoff addressed to this card; PostgreSQL/AGE resolves and "
-                "tracks it inside the Python run."
+                "conversation this run belongs to, when one exists. Inter-agent doorway calls "
+                "create an exact AgentGraph instruction and transport only its identity."
             ),
             inputSchema={
                 "type": "object",
@@ -929,11 +857,11 @@ async def list_tools() -> list[Tool]:
                     "cardId": {"type": "string"},
                     "correlationId": {"type": "string"},
                     "conversationId": {"type": "string"},
-                    "agentContextId": {
+                    "instructionId": {
                         "type": "string",
                         "description": (
-                            "Existing canonical AgentGraph context id addressed to this card. "
-                            "The tool transports the id unchanged; Python resolves the stored Markdown."
+                            "Existing canonical AgentGraph instruction identity. "
+                            "The tool transports the id unchanged."
                         ),
                     },
                     "originatingAgentId": {
@@ -963,7 +891,6 @@ async def list_tools() -> list[Tool]:
 _EXTERNAL_READ_ONLY_TOOLS = {
     "main.context",
     "mag_one.describe_connected_agents",
-    "read_model_results",
     "canvas.inspect",
     "thinkgraph.get_graph_slice",
     "knowgraph.query",
@@ -1061,19 +988,8 @@ def _external_tool_catalog(tools: list[Tool], context: dict[str, Any]) -> list[T
 _ALLOWED_KEYS: dict[str, set[str]] = {
     "main.context": set(),
     "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "approvedPrompt", "authority", "graphViewIds"},
-    "agentgraph.create_context": {
-        "projectId",
-        "deckId",
-        "conversationId",
-        "senderAgentId",
-        "receivingAgentId",
-        "markdown",
-        "parentContextId",
-        "producingRunId",
-    },
-    "agentgraph.read_context": {"projectId", "contextId"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
-    "run_mag_one": {"projectId", "deckId", "jobId", "conversationId", "parentContext"},
+    "run_mag_one": {"projectId", "deckId", "instructionId", "conversationId", "parentContext"},
     "thinkgraph.submit_update": {"projectId", "conversationId", "resources", "relations", "statements"},
     "knowgraph.query": {"projectId", "conversationId", "query", "anchors", "maxResults", "parentViewId", "includeFullText"},
     "knowgraph.ingest": {"projectId", "documents", "researchFocus"},
@@ -1090,8 +1006,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "hermes.memory_write": {"projectId", "key", "value"},
     "hermes.read_report": {"parentRunId"},
     "hermes.write_report": {"parentRunId", "reportMarkdown", "summary", "thinkGraphNodeIds", "knowGraphRefs", "codeGraphRefs"},
-    "write_mag_one_instructions": {"instructions", "runId"},
-    "read_model_results": {"runId", "path"},
+    "write_mag_one_instructions": {"instructions"},
     "canvas.inspect": {"projectId", "deckId"},
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
@@ -1103,7 +1018,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "cardId",
         "correlationId",
         "conversationId",
-        "agentContextId",
+        "instructionId",
         "originatingAgentId",
         "originatingRunId",
         "input",
@@ -1136,14 +1051,6 @@ _BRIDGE_PATHS: dict[str, str] = {
     "hermes.memory_write": "hermes_memory_write",
     "hermes.read_report": "hermes_read_report",
     "hermes.write_report": "hermes_write_report",
-}
-
-# Coder job-folder tools dispatch to the ONE shared Python implementation
-# (app.python_models.coder_job_tools) — pure filesystem over the trusted
-# workspace, no backend/psycopg dependency. Same functions for both Coder surfaces.
-_JOB_TOOL_HANDLERS: dict[str, str] = {
-    "write_mag_one_instructions": "write_mag_one_instructions",
-    "read_model_results": "read_model_results",
 }
 
 # Control tools dispatch to the Python control-plane handlers (app/control_plane.py).
@@ -1264,33 +1171,23 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
                 text=json.dumps({"ok": False, "error": f"tool_arguments_rejected: {','.join(sorted(extra))}"}),
             )
         ]
-    if name.startswith("agentgraph."):
+    if name == "write_mag_one_instructions":
+        if context is None:
+            return [TextContent(type="text", text=json.dumps({"ok": False, "error": "main_context_unavailable"}))]
         from app.python_models import agentgraph
 
         try:
-            if name == "agentgraph.create_context":
-                result = await asyncio.to_thread(
-                    agentgraph.create_context,
-                    project_id=str(args.get("projectId") or ""),
-                    deck_id=str(args.get("deckId") or ""),
-                    conversation_id=str(args.get("conversationId") or ""),
-                    sender_agent_id=str(args.get("senderAgentId") or ""),
-                    receiving_agent_id=str(args.get("receivingAgentId") or ""),
-                    markdown=args.get("markdown"),
-                    parent_context_id=args.get("parentContextId"),
-                    producing_run_id=args.get("producingRunId"),
-                )
-            else:
-                result = await asyncio.to_thread(
-                    agentgraph.read_context,
-                    str(args.get("contextId") or ""),
-                    str(args.get("projectId") or ""),
-                )
+            result = await asyncio.to_thread(
+                agentgraph.create_instruction,
+                project_id=str(context["projectId"]),
+                deck_id=str(context["deckId"]),
+                conversation_id=str(context["conversationId"]),
+                body=args.get("instructions"),
+                prepared_by_card_id=str(context["mainCardId"]),
+            )
             return [TextContent(type="text", text=json.dumps(result))]
         except agentgraph.AgentGraphError as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
-        except Exception as err:  # noqa: BLE001 - honest tool-level failure
-            return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"agentgraph_failed: {err}"}))]
     if name == "main.context":
         if context is None:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": "main_context_unavailable"}))]
@@ -1428,12 +1325,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             return [TextContent(type="text", text=json.dumps(result))]
         except control_plane.ControlPlaneError as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
-    job_handler = _JOB_TOOL_HANDLERS.get(name)
-    if job_handler is not None:
-        from app.python_models import coder_job_tools
-
-        result = await asyncio.to_thread(getattr(coder_job_tools, job_handler), args)
-        return [TextContent(type="text", text=json.dumps(result))]
     return await _bridge(_BRIDGE_PATHS[name], args)
 
 

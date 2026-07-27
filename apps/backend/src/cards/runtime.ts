@@ -1,6 +1,6 @@
 import {
   CardRunResult,
-  JobHandoffRunResult,
+  AgentAssignmentRunResult,
   PythonAutoGenPayloadShape,
   AUTOGEN_CARD_TOOL_SPECS,
   RuntimeGraph,
@@ -10,7 +10,6 @@ import {
 import { orchestrateWithAutoGen, runSingleCardWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
 import { getDeckDocument } from '../decks/store';
 import { resolveModel } from '../llm/models.config';
-import { resolveCoderWorkspaceRoot } from '../coder/workspaceRoot';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
 import { logHarnessTrace, redactTrace } from '../services/harnessTrace';
 import { normalizeLocalCoderControllerCard } from './localCoderController';
@@ -547,11 +546,8 @@ export function buildPythonAutoGenCardRuntimePayload(
       findings: [],
     },
     workspaceObjectContext: context.workspaceObjectContext ?? undefined,
-    // Coder job-folder handoff (server-forced workspace root + job id), when this
-    // run was triggered from a handoff. Python reads handoff/<jobId>/prompt.md as
-    // the Magnetic One variable context packet and writes deliverables into
-    // returns/<jobId>/.
-    jobHandoff: context.jobHandoff ?? undefined,
+    // Stable assignment identities only; Python owns claim and hydration.
+    agentAssignment: context.agentAssignment ?? undefined,
     cardRuntime: {
       cardId: String(card.id || ''),
       title: String(card.title || 'Magentic Agent'),
@@ -586,7 +582,7 @@ export function buildPythonAutoGenCardRuntimePayload(
 // resolvers the Mag One path uses (resolveCardModelStrict / resolveCardTools /
 // serializeCardParticipant). No fallback model, no substitute card, no plain completion.
 
-const SINGLE_CARD_RUN_ARG_KEYS = ['projectId', 'deckId', 'cardId', 'correlationId', 'input', 'conversationId', 'agentContextId', 'runAuthority'] as const;
+const SINGLE_CARD_RUN_ARG_KEYS = ['projectId', 'deckId', 'cardId', 'correlationId', 'input', 'conversationId', 'instructionId', 'senderCardId', 'parentRunId', 'runAuthority'] as const;
 
 export type ConfiguredCardRunArgs = {
   projectId: string;
@@ -598,9 +594,10 @@ export type ConfiguredCardRunArgs = {
    * doorway invocation has one). Used ONLY for card-specific authority
    * minting below — never fabricated. */
   conversationId?: string;
-  /** Stable pointer to one existing PostgreSQL/AGE handoff addressed to this
-   * card. TypeScript transports the id only; Python resolves and records it. */
-  agentContextId?: string;
+  /** Optional existing AgentGraph instruction identity for inter-agent work. */
+  instructionId?: string;
+  senderCardId?: string;
+  parentRunId?: string;
   /** Server-authored trusted run context (e.g. ThinkGraph source-pair authority),
    * transported to the Python runtime via cardRuntime.runtimeScope. Never
    * browser-supplied — callers of this function are backend control-plane code. */
@@ -623,7 +620,7 @@ export type ConfiguredCardRunResult = {
   toolCallCount: number | null;
   /** This run's assigned returns/<run-id>/ folder + the files the run actually
    * wrote there (a standalone single-agent run gets one; null otherwise). */
-  returnFolder: JobHandoffRunResult | null;
+  returnFolder: AgentAssignmentRunResult | null;
 };
 
 function parseToolCallCount(transcript: unknown): number | null {
@@ -682,7 +679,9 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
   const correlationId = String(args?.correlationId || '').trim();
   const input = String(args?.input || '').trim();
   const conversationId = String(args?.conversationId || '').trim();
-  const agentContextId = String(args?.agentContextId || '').trim();
+  const instructionId = String(args?.instructionId || '').trim();
+  const senderCardId = String(args?.senderCardId || '').trim();
+  const parentRunId = String(args?.parentRunId || '').trim();
   if (!projectId || !deckId || !cardId || !correlationId || !input) {
     return done({ status: 'failed', error: 'card_run_args_incomplete' });
   }
@@ -736,6 +735,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       sessionId: `${deckId}:${cardId}:${correlationId}`,
       projectId,
       turnId: correlationId,
+      ...(parentRunId ? { runId: parentRunId } : {}),
       route: 'single_card',
       orchestrator: 'assistant_agent' as const,
       modelProvider: model.provider,
@@ -745,15 +745,15 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     },
     userText: input,
     conversationId,
-    ...(agentContextId ? { agentContextId } : {}),
-    // Every standalone single-agent run receives its own returns/<run-id>/<card-id>/
-    // folder (run-id = correlationId) under the default owned Coder workspace
-    // (<repo-root>/coder-workspace) — never a client path. This is only the job-folder
-    // result root; it does NOT restrict the coder's wider filesystem access.
-    resultFolder: {
-      workspaceRoot: resolveCoderWorkspaceRoot(),
-      runId: correlationId,
-    },
+    ...(instructionId
+      ? {
+          agentAssignment: {
+            instructionId,
+            senderCardId: senderCardId || cardId,
+            receiverCardId: cardId,
+          },
+        }
+      : {}),
     cardRuntime: {
       cardId,
       title: String(effectiveCard.title || 'Agent'),
@@ -788,7 +788,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         error: String(response.error || 'single_card_run_failed'),
       });
     }
-    const returnsDir = (response as any).returnsDir ?? null;
+    const assignmentId = String((response as any).assignmentId || '').trim();
     return done({
       status: 'completed',
       runtimeType,
@@ -796,9 +796,9 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       output: String(response.finalResponseText || ''),
       toolCallCount: parseToolCallCount((response as any).transcript),
       returnFolder:
-        returnsDir || Array.isArray((response as any).returnedFiles)
+        assignmentId
           ? {
-              returnsDir: returnsDir ?? null,
+              assignmentId,
               returnedFiles: Array.isArray((response as any).returnedFiles)
                 ? ((response as any).returnedFiles as string[])
                 : [],
@@ -849,7 +849,7 @@ export async function runCardWithContract(
     let magenticPlan: Record<string, unknown> | null = null;
     // Honest TaskLedger trace from the real Python Magentic-One path.
     let ledgerTrace: Record<string, unknown> | undefined;
-    let jobHandoffResult: JobHandoffRunResult | null = null;
+    let agentAssignmentResult: AgentAssignmentRunResult | null = null;
     try {
         console.log('[runCardWithContract] executing Python AutoGen rails route.');
         const sidecarResponse = await orchestrateWithAutoGen(payload as any);
@@ -880,12 +880,10 @@ export async function runCardWithContract(
           sidecarResponse.ledgerTrace && typeof sidecarResponse.ledgerTrace === 'object'
             ? (sidecarResponse.ledgerTrace as Record<string, unknown>)
             : undefined;
-        // Job-folder handoff outputs (present only for a handoff run) — threaded
-        // verbatim from the Python rails, never authored here.
-        const returnsDir = (sidecarResponse as any).returnsDir ?? null;
-        if (returnsDir || Array.isArray((sidecarResponse as any).returnedFiles)) {
-          jobHandoffResult = {
-            returnsDir: returnsDir ?? null,
+        const assignmentId = String((sidecarResponse as any).assignmentId || '').trim();
+        if (assignmentId) {
+          agentAssignmentResult = {
+            assignmentId,
             returnedFiles: Array.isArray((sidecarResponse as any).returnedFiles)
               ? ((sidecarResponse as any).returnedFiles as string[])
               : [],
@@ -919,7 +917,7 @@ export async function runCardWithContract(
               ...(ledgerTrace ? { ledgerTrace } : {}),
             }
           : null,
-      jobHandoffResult,
+      agentAssignmentResult,
     };
   }
   

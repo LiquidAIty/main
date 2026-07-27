@@ -23,14 +23,13 @@ from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.teams import MagenticOneGroupChat
 
 from app.python_models import agentgraph as ag
-from app.python_models import job_folder as jf
+from app.python_models import assignment_artifacts as aa
 from app.python_models import registered_queries as rq
-from app.python_models import runtime_assignments as ra
 from app.python_models import runtime_profile_executor as rpe
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
 from app.python_models.tool_registry import (
+    AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY,
     DEFAULT_TOOL_REGISTRY,
-    JOB_RETURN_ROOT,
     THINKGRAPH_PATCH_EVENTS,
     THINKGRAPH_RUN_AUTHORITY,
     build_local_coder_tool,
@@ -245,8 +244,7 @@ def _build_participants(
         # single-agent run) additionally gets a return writer scoped to THIS agent's
         # own returns/<run-id>/<card-id>/ subdir (card id from trusted participant
         # context — no agent-name branch, no shared folder).
-        if context.jobHandoff is not None or context.resultFolder is not None:
-            tools = [*tools, build_return_writer_tool(card_id or name)]
+        tools = [*tools, build_return_writer_tool(card_id or name)]
         if extra_tools:
             tools = [*tools, *extra_tools]
         if tools:
@@ -317,6 +315,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         return OrchestratorRunResponse(
             ok=False,
             session=context.session,
+            assignmentId=assignment_id,
             finalResponseText="",
             error=guard,
             plan=context.plan,
@@ -325,15 +324,18 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         )
 
     assignment_id: str | None = None
+    lease_token: str | None = None
+    terminal_artifacts: list[dict[str, Any]] = []
 
     async def _fail(error: str, summary: str) -> OrchestratorRunResponse:
         durable_error = ""
-        if assignment_id is not None:
+        if assignment_id is not None and lease_token is not None:
             try:
                 await asyncio.to_thread(
-                    ra.finish_agent_assignment,
+                    ag.finish_assignment,
                     project_id=context.session.projectId,
-                    correlation_id=context.session.turnId,
+                    assignment_id=assignment_id,
+                    lease_token=lease_token,
                     status="failed",
                     error_code=summary,
                     error_detail=error,
@@ -350,10 +352,6 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary=summary),
         )
 
-    # Standalone single-agent run: assign returns/<run-id>/ (the run's own identity),
-    # WITHOUT changing its task or turning it into a Mag One run. A bad/invalid
-    # result folder fails honestly rather than silently writing somewhere else.
-    result_folder: jf.JobFolder | None = None
     runtime_scope = getattr(context.cardRuntime, "runtimeScope", None)
     runtime_options = getattr(context.cardRuntime, "runtimeOptions", None) or {}
     single = context.cardRuntime.participants[0]
@@ -361,101 +359,69 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         (runtime_options.get("deckId") if isinstance(runtime_options, dict) else "")
         or (runtime_scope.get("deckId") if isinstance(runtime_scope, dict) else "")
     )
-    try:
-        assignment_id = await asyncio.to_thread(
-            ra.begin_agent_assignment,
-            project_id=context.session.projectId,
-            correlation_id=context.session.turnId,
-            deck_id=deck_id,
-            card_id=single.cardId,
-            conversation_id=_as_text(context.conversationId) or None,
-        )
-    except Exception as err:
-        return OrchestratorRunResponse(
-            ok=False,
-            session=context.session,
-            finalResponseText="",
-            error=f"outer_assignment_begin_failed: {err}",
-            plan=context.plan,
-            thinkGraph=context.thinkGraph,
-            knowGraph=KnowGraphUpdateReport(
-                sourceAgent="single_card", summary="outer_assignment_begin_failed"
-            ),
-        )
-    if context.resultFolder is not None:
-        try:
-            result_folder = jf.resolve_job_folder(
-                context.resultFolder.workspaceRoot, context.resultFolder.runId
-            )
-            jf.ensure_returns_dir(result_folder)
-        except (ValueError, OSError) as err:
-            return await _fail(
-                f"result_folder_unresolved: {err}", "result_folder_unresolved"
-            )
-
     def _returns_fields() -> dict:
-        if result_folder is None:
-            return {}
-        files = jf.list_return_files(result_folder)
+        files = [str(item.get("locator") or "") for item in terminal_artifacts]
         return {
-            "returnsDir": f"{result_folder.returns_rel}/",
+            "assignmentId": assignment_id,
             "returnedFiles": files,
             "returnStatus": "return_files_created" if files else "no_return_files_created",
         }
 
     selected_tools = [_as_text(t) for t in (single.tools or []) if _as_text(t)]
-    agent_context_id = _as_text(context.agentContextId)
-    agent_graph_markdown = ""
-    if agent_context_id:
-        try:
-            stored_context = await asyncio.to_thread(
-                ag.read_context,
-                agent_context_id,
-                context.session.projectId,
-            )
-        except Exception as err:
-            return await _fail(
-                f"agentgraph_context_read_failed: {err}",
-                "agentgraph_context_read_failed",
-            )
-        if (
-            _as_text(stored_context.get("projectId")) != context.session.projectId
-            or _as_text(stored_context.get("conversationId")) != _as_text(context.conversationId)
-            or _as_text(stored_context.get("receivingAgentId")) != single.cardId
-        ):
-            return await _fail(
-                f"agentgraph_context_scope_mismatch: {agent_context_id}",
-                "agentgraph_context_scope_mismatch",
-            )
-        agent_graph_markdown = str(stored_context.get("markdown") or "")
-        if not agent_graph_markdown.strip():
-            return await _fail(
-                f"agentgraph_context_empty: {agent_context_id}",
-                "agentgraph_context_empty",
-            )
-        try:
-            assignment_id = await asyncio.to_thread(
-                ra.begin_agent_assignment,
+    request = context.agentAssignment
+    if request is not None and request.receiverCardId != single.cardId:
+        return await _fail(
+            "agentgraph_assignment_receiver_mismatch",
+            "agentgraph_assignment_receiver_mismatch",
+        )
+    instruction_body = _as_text(context.userText)
+    sender_card_id = request.senderCardId if request is not None else single.cardId
+    try:
+        if request is None:
+            instruction = await asyncio.to_thread(
+                ag.create_instruction,
                 project_id=context.session.projectId,
-                correlation_id=context.session.turnId,
                 deck_id=deck_id,
-                card_id=single.cardId,
-                conversation_id=_as_text(context.conversationId) or None,
-                sender_card_id=_as_text(stored_context.get("senderAgentId")) or None,
-                agent_context_id=agent_context_id,
-                parent_correlation_id=_as_text(stored_context.get("producingRunId")) or None,
+                conversation_id=_as_text(context.conversationId) or "main",
+                body=instruction_body,
+                prepared_by_card_id=sender_card_id,
             )
-            await asyncio.to_thread(
-                ag.mark_context_status,
-                agent_context_id,
-                context.session.projectId,
-                "running",
-            )
-        except Exception as err:
-            return await _fail(
-                f"agentgraph_context_claim_failed: {err}",
-                "agentgraph_context_claim_failed",
-            )
+            instruction_id = instruction["instructionId"]
+        else:
+            instruction_id = request.instructionId
+        assignment = await asyncio.to_thread(
+            ag.create_assignment,
+            project_id=context.session.projectId,
+            deck_id=deck_id,
+            conversation_id=_as_text(context.conversationId) or "main",
+            correlation_id=context.session.turnId,
+            sender_card_id=sender_card_id,
+            receiver_card_id=single.cardId,
+            instruction_id=instruction_id,
+            parent_correlation_id=_as_text(context.session.runId) or None,
+        )
+        assignment_id = assignment["assignmentId"]
+        claimed = await asyncio.to_thread(
+            ag.claim_assignment,
+            project_id=context.session.projectId,
+            assignment_id=assignment_id,
+            receiver_card_id=single.cardId,
+        )
+        lease_token = claimed["leaseToken"]
+        instruction_body = claimed["instruction"]
+    except Exception as err:
+        return OrchestratorRunResponse(
+            ok=False,
+            session=context.session,
+            finalResponseText="",
+            error=f"agentgraph_assignment_begin_failed: {err}",
+            plan=context.plan,
+            thinkGraph=context.thinkGraph,
+            knowGraph=KnowGraphUpdateReport(
+                sourceAgent="single_card",
+                summary="agentgraph_assignment_begin_failed",
+            ),
+        )
 
     # Deterministic assigned-profile resolution from the card's PERSISTED runtime
     # binding (never model judgment, never runtime-scope sniffing). No assigned
@@ -500,6 +466,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                         correlation_id=context.session.turnId,
                         assignment_id=assignment_id,
                         conversation_id=_as_text(context.conversationId),
+                        card_grants=selected_tools,
                     )
                 )
     except Exception as err:
@@ -522,8 +489,14 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     # what the authorized tools actually did.
     authority_token = None
     patch_events_token = None
-    # Arm the run-scoped return writer for this single-card run's assigned folder.
-    return_root_token = JOB_RETURN_ROOT.set(result_folder) if result_folder is not None else None
+    artifact_authority_token = AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY.set(
+        {
+            "projectId": context.session.projectId,
+            "assignmentId": assignment_id,
+            "leaseToken": lease_token,
+            "workspaceRoot": aa.resolve_workspace_root(),
+        }
+    )
     if isinstance(runtime_scope, dict) and runtime_scope.get("kind") == "thinkgraph_card_run":
         authority_token = THINKGRAPH_RUN_AUTHORITY.set(
             {str(k): str(v) for k, v in runtime_scope.items()}
@@ -532,34 +505,6 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         patch_events_token = THINKGRAPH_PATCH_EVENTS.set([])
 
     started = time.monotonic()
-
-    async def _record_agentgraph_result(
-        status: str,
-        markdown: str | None,
-        error: str | None = None,
-    ) -> str | None:
-        if not agent_context_id:
-            return None
-        try:
-            await asyncio.to_thread(
-                lambda: ag.record_result(
-                    context_id=agent_context_id,
-                    project_id=context.session.projectId,
-                    result_id=f"result:{context.session.turnId}",
-                    run_id=context.session.turnId,
-                    status=status,
-                    markdown=markdown,
-                    result_ref=(
-                        f"{result_folder.returns_rel}/"
-                        if result_folder is not None
-                        else None
-                    ),
-                    error=error,
-                )
-            )
-            return None
-        except Exception as err:
-            return f"agentgraph_result_link_failed: {err}"
 
     try:
         optional_bindings = [
@@ -572,6 +517,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                     correlation_id=context.session.turnId,
                     assignment_id=assignment_id,
                     conversation_id=_as_text(context.conversationId),
+                    card_grants=selected_tools,
                 )
             ]
             if optional_bindings
@@ -589,7 +535,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         # still required by the transport guard, but is not duplicated into the
         # model task when a durable handoff is present. Standalone calls without
         # AgentGraph continue to use their ordinary userText unchanged.
-        task_parts = [agent_graph_markdown or _as_text(context.userText)]
+        task_parts = [instruction_body]
         if plan is not None:
             task_parts.append(plan.packet)
         if query_bindings:
@@ -629,13 +575,6 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                 )
 
             if verdict.outcome == "invalid":
-                link_error = await _record_agentgraph_result(
-                    "failed",
-                    final_text,
-                    contract.invalid_error,
-                )
-                if link_error:
-                    return await _fail(link_error, "agentgraph_result_link_failed")
                 return await _fail(contract.invalid_error, "invalid_terminal_result")
             if verdict.record == "patched" and not final_text:
                 final_text = json.dumps({"outcome": "patch", "storedRefs": verdict.stored_refs})
@@ -671,39 +610,21 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         )
 
         if not final_text:
-            link_error = await _record_agentgraph_result(
-                "failed",
-                None,
-                "single_card_empty_response",
-            )
-            if link_error:
-                return await _fail(link_error, "agentgraph_result_link_failed")
             return await _fail(
                 "single_card_empty_response",
                 "empty_response",
             )
 
-        link_error = await _record_agentgraph_result("completed", final_text)
-        if link_error:
-            return await _fail(link_error, "agentgraph_result_link_failed")
-
-        return_fields = _returns_fields()
-        artifacts = [
-            {
-                "artifactId": f"return:{context.session.turnId}:{path}",
-                "artifactType": "return_file",
-                "locator": path,
-            }
-            for path in return_fields.get("returnedFiles", [])
-        ]
-        await asyncio.to_thread(
-            ra.finish_agent_assignment,
+        completed = await asyncio.to_thread(
+            ag.finish_assignment,
             project_id=context.session.projectId,
-            correlation_id=context.session.turnId,
+            assignment_id=assignment_id,
+            lease_token=lease_token,
             status="completed",
             output=final_text,
-            artifacts=artifacts,
         )
+        terminal_artifacts = list(completed.get("artifacts") or [])
+        return_fields = _returns_fields()
 
         return OrchestratorRunResponse(
             ok=True,
@@ -716,28 +637,16 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             **return_fields,
         )
     except Exception as err:  # honest runtime failure — no retry, no fallback
-        link_error = await _record_agentgraph_result("failed", None, str(err))
         return await _fail(
-            link_error or f"single_card_run_failed: {err}",
-            "agentgraph_result_link_failed" if link_error else "run_failed",
+            f"single_card_run_failed: {err}",
+            "run_failed",
         )
     finally:
-        if return_root_token is not None:
-            JOB_RETURN_ROOT.reset(return_root_token)
+        AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY.reset(artifact_authority_token)
         if authority_token is not None:
             THINKGRAPH_RUN_AUTHORITY.reset(authority_token)
         if patch_events_token is not None:
             THINKGRAPH_PATCH_EVENTS.reset(patch_events_token)
-
-
-def _read_magentic_handoff_task(context: ContextPack) -> tuple[jf.JobFolder | None, str | None]:
-    """Mag One's sole task-entrypoint reader: exact handoff/prompt.md bytes."""
-    if context.jobHandoff is None:
-        return None, None
-    folder = jf.resolve_job_folder(context.jobHandoff.workspaceRoot, context.jobHandoff.jobId)
-    task = jf.read_handoff_prompt(folder)
-    jf.ensure_returns_dir(folder)
-    return folder, task
 
 
 def _read_max_turns(context: ContextPack) -> int:
@@ -781,37 +690,49 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
     if context.cardRuntime is None:
         raise RuntimeError("card_runtime_missing")
 
-    # Coder job-folder handoff: the run's task is the EXACT bytes of the Magnetic
-    # One variable context packet at handoff/<jobId>/prompt.md (never chat text, a
-    # wrapper, or userText), and returns/<jobId>/ is its assigned return surface.
-    # The workspace root is the server-forced trusted root carried in the contract,
-    # re-validated here.
-    folder: jf.JobFolder | None = None
-    if context.jobHandoff is not None:
-        try:
-            folder, task = _read_magentic_handoff_task(context)
-        except (ValueError, FileNotFoundError, OSError) as err:
-            return OrchestratorRunResponse(
-                ok=False,
-                session=context.session,
-                finalResponseText="",
-                error=f"job_handoff_unresolved: {err}",
-                plan=context.plan,
-                thinkGraph=context.thinkGraph,
-                knowGraph=KnowGraphUpdateReport(sourceAgent="magentic_one", summary="no_run"),
-            )
-    else:
-        task = _as_text(context.userText)
-    if not task:
+    request = context.agentAssignment
+    if request is None:
         return OrchestratorRunResponse(
             ok=False,
             session=context.session,
+            assignmentId=assignment["assignmentId"] if "assignment" in locals() else None,
             finalResponseText="",
-            error="empty_user_message",
+            error="agentgraph_assignment_required",
             plan=context.plan,
             thinkGraph=context.thinkGraph,
             knowGraph=KnowGraphUpdateReport(sourceAgent="magentic_one", summary="no_run"),
         )
+    runtime_scope = getattr(context.cardRuntime, "runtimeScope", None) or {}
+    deck_id = _as_text(runtime_scope.get("deckId"))
+    try:
+        assignment = await asyncio.to_thread(
+            ag.create_assignment,
+            project_id=context.session.projectId,
+            deck_id=deck_id,
+            conversation_id=_as_text(context.conversationId) or "main",
+            correlation_id=context.session.turnId,
+            sender_card_id=request.senderCardId,
+            receiver_card_id=request.receiverCardId,
+            instruction_id=request.instructionId,
+            parent_correlation_id=_as_text(context.session.runId) or None,
+        )
+        claimed = await asyncio.to_thread(
+            ag.claim_assignment,
+            project_id=context.session.projectId,
+            assignment_id=assignment["assignmentId"],
+            receiver_card_id=request.receiverCardId,
+        )
+    except Exception as err:
+        return OrchestratorRunResponse(
+            ok=False,
+            session=context.session,
+            finalResponseText="",
+            error=f"agentgraph_assignment_claim_failed: {err}",
+            plan=context.plan,
+            thinkGraph=context.thinkGraph,
+            knowGraph=KnowGraphUpdateReport(sourceAgent="magentic_one", summary="no_run"),
+        )
+    task = str(claimed["instruction"])
 
     client = _build_model_client(
         AutoGenAgentConfig(
@@ -820,10 +741,14 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
         )
     )
 
-    # Arm the run-scoped return writer for a handoff run: participants' write_return_file
-    # tool resolves against THIS folder's returns/<job-id>/ only. Always reset below so
-    # no return authority leaks across runs.
-    return_root_token = JOB_RETURN_ROOT.set(folder) if folder is not None else None
+    artifact_authority_token = AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY.set(
+        {
+            "projectId": context.session.projectId,
+            "assignmentId": assignment["assignmentId"],
+            "leaseToken": claimed["leaseToken"],
+            "workspaceRoot": aa.resolve_workspace_root(),
+        }
+    )
 
     try:
         participants = _build_participants(context, client)
@@ -892,35 +817,31 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             },
         )
 
-        # Job-folder handoff: report the assigned returns dir and the files the run
-        # actually wrote there. Empty is honest ("no_return_files_created") — the
-        # normal final text is preserved as text and no result file is fabricated.
-        returns_rel: str | None = None
-        returned_files: list[str] = []
-        nonempty_files: list[str] = []
-        return_status: str | None = None
-        if folder is not None:
-            returned_files = jf.list_return_files(folder)
-            nonempty_files = jf.nonempty_return_files(folder)
-            returns_rel = f"{folder.returns_rel}/"
-            if not returned_files:
-                return_status = "no_return_files_created"
-            elif not nonempty_files:
-                return_status = "return_files_empty"  # written but 0 bytes = failed write
-            elif len(nonempty_files) < len(returned_files):
-                return_status = "return_files_partial"  # some real, some empty
-            else:
-                return_status = "return_files_created"
-
         ok, completion_error = _magentic_completion_status(
             final_response_text,
-            durable_output_required=folder is not None,
-            returned_files=returned_files,
-            nonempty_returned_files=nonempty_files,
+            durable_output_required=False,
+            returned_files=[],
+        )
+        completed = await asyncio.to_thread(
+            ag.finish_assignment,
+            project_id=context.session.projectId,
+            assignment_id=assignment["assignmentId"],
+            lease_token=claimed["leaseToken"],
+            status="completed" if ok else "failed",
+            output=final_response_text or None,
+            error_code=completion_error,
+            error_detail=completion_error,
+        )
+        returned_files = [
+            str(item.get("locator") or "") for item in completed.get("artifacts") or []
+        ]
+        return_status = (
+            "return_files_created" if returned_files else "no_return_files_created"
         )
         return OrchestratorRunResponse(
             ok=ok,
             session=context.session,
+            assignmentId=assignment["assignmentId"],
             ledgerTrace=LedgerTrace(
                 source="python_magone",
                 referenceFiles=[
@@ -937,7 +858,6 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             autogenEvents=autogen_events,
             taskLedgerArtifact=task_ledger_artifact,
             progressLedgerReference=None,
-            returnsDir=returns_rel,
             returnedFiles=returned_files,
             returnStatus=return_status,
             error=completion_error,
@@ -953,9 +873,19 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
                 reportBackCount=len(autogen_messages),
             ),
         )
+    except Exception as err:
+        await asyncio.to_thread(
+            ag.finish_assignment,
+            project_id=context.session.projectId,
+            assignment_id=assignment["assignmentId"],
+            lease_token=claimed["leaseToken"],
+            status="failed",
+            error_code="magentic_run_failed",
+            error_detail=str(err),
+        )
+        raise
     finally:
-        if return_root_token is not None:
-            JOB_RETURN_ROOT.reset(return_root_token)
+        AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY.reset(artifact_authority_token)
         close = getattr(client, "close", None)
         if callable(close):
             try:
