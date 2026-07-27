@@ -45,6 +45,9 @@ class RegisteredQueryVersion:
     project_id: str
     query_id: str
     version: int
+    target_graph: str
+    operation_class: str
+    capability_id: str | None
     database_authority: str
     database_name: str
     owner_id: str
@@ -70,6 +73,7 @@ class QueryBinding:
     query_version: int
     delivery_mode: str
     parameters: dict[str, Any]
+    explanation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +86,24 @@ class QueryExecution:
     graph_view_id: str
     rows: list[dict[str, Any]]
     truncated: bool
+
+
+_GRAPH_GRANTS: dict[tuple[str, str], frozenset[str]] = {
+    ("thinkgraph", "read"): frozenset({"thinkgraph.get_graph_slice"}),
+    ("thinkgraph", "write"): frozenset({"thinkgraph.submit_update"}),
+    ("knowgraph", "read"): frozenset({"knowgraph.query"}),
+    ("knowgraph", "write"): frozenset({"knowgraph.ingest"}),
+    ("codegraph", "read"): frozenset({"codegraph.status", "codegraph.search"}),
+    ("codegraph", "write"): frozenset(),
+    ("agentgraph", "read"): frozenset(
+        {"agentgraph.read_context", "agentgraph.create_context"}
+    ),
+    ("agentgraph", "write"): frozenset({"agentgraph.create_context"}),
+}
+_WRITE_CAPABILITIES = {
+    ("thinkgraph", "write"): "thinkgraph.submit_update",
+    ("knowgraph", "write"): "knowgraph.ingest",
+}
 
 
 def _required_identity(value: Any, field: str) -> str:
@@ -102,6 +124,49 @@ def _json_object(value: Any, field: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"registered_query_{field}_must_be_object")
     return dict(value)
+
+
+def _graph_identity(value: Any) -> str:
+    graph = str(value or "").strip().lower()
+    if graph not in {"thinkgraph", "knowgraph", "codegraph", "agentgraph"}:
+        raise ValueError(f"registered_operation_target_graph_invalid: {graph}")
+    return graph
+
+
+def _operation_class(value: Any) -> str:
+    operation_class = str(value or "").strip().lower()
+    if operation_class not in {"read", "write"}:
+        raise ValueError(
+            f"registered_operation_class_invalid: {operation_class}"
+        )
+    return operation_class
+
+
+def authorize_registered_operation(
+    operation: RegisteredQueryVersion,
+    card_grants: list[str] | tuple[str, ...] | set[str] | frozenset[str],
+) -> str:
+    """Authorize an operation from the receiving saved card's current grants."""
+    target_graph = _graph_identity(operation.target_graph)
+    operation_class = _operation_class(operation.operation_class)
+    if target_graph == "codegraph" and operation_class == "write":
+        raise PermissionError("registered_operation_codegraph_write_owned_by_cbm")
+    required = _GRAPH_GRANTS[(target_graph, operation_class)]
+    granted = {str(value).strip() for value in card_grants if str(value).strip()}
+    matched = sorted(required & granted)
+    if not matched:
+        raise PermissionError(
+            "registered_operation_not_granted: "
+            f"{target_graph}:{operation_class}"
+        )
+    if operation_class == "write":
+        canonical = _WRITE_CAPABILITIES.get((target_graph, operation_class))
+        if operation.capability_id != canonical or canonical not in granted:
+            raise PermissionError(
+                "registered_operation_write_capability_mismatch: "
+                f"{operation.capability_id or 'none'}"
+            )
+    return matched[0]
 
 
 def _rows(cursor: Any) -> list[dict[str, Any]]:
@@ -330,6 +395,9 @@ def create_query(
     owner_id: str,
     title: str,
     description: str = "",
+    target_graph: str = "agentgraph",
+    operation_class: str = "read",
+    capability_id: str | None = None,
     connection: Any | None = None,
 ) -> None:
     project_id = _required_identity(project_id, "project_id")
@@ -339,6 +407,23 @@ def create_query(
     if authority not in {"postgresql", "agentgraph_age"}:
         raise ValueError("registered_query_database_authority_invalid")
     database_name = _required_identity(database_name, "database_name")
+    target_graph = _graph_identity(target_graph)
+    operation_class = _operation_class(operation_class)
+    capability_id = (
+        _required_identity(capability_id, "capability_id")
+        if capability_id is not None
+        else None
+    )
+    if target_graph == "codegraph" and operation_class == "write":
+        raise ValueError("registered_operation_codegraph_write_owned_by_cbm")
+    expected_capability = _WRITE_CAPABILITIES.get((target_graph, operation_class))
+    if operation_class == "read" and capability_id is not None:
+        raise ValueError("registered_operation_read_capability_invalid")
+    if operation_class == "write" and capability_id != expected_capability:
+        raise ValueError(
+            "registered_operation_write_capability_invalid: "
+            f"{target_graph}:{capability_id or 'none'}"
+        )
     own = connection is None
     connection = connection or connect_postgres(autocommit=False)
     try:
@@ -346,8 +431,9 @@ def create_query(
             cursor.execute(
                 """
                 INSERT INTO ag_catalog.registered_queries
-                  (project_id, query_id, database_authority, database_name, owner_id, title, description)
-                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                  (project_id, query_id, database_authority, database_name, owner_id,
+                   title, description, target_graph, operation_class, capability_id)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
                 (
                     project_id,
@@ -357,6 +443,9 @@ def create_query(
                     owner_id,
                     _required_text(title, "title", maximum=500),
                     str(description or "")[:4000],
+                    target_graph,
+                    operation_class,
+                    capability_id,
                 ),
             )
             _audit(
@@ -366,7 +455,13 @@ def create_query(
                 version=None,
                 action="created",
                 actor_id=owner_id,
-                detail={"databaseAuthority": authority, "databaseName": database_name},
+                detail={
+                    "databaseAuthority": authority,
+                    "databaseName": database_name,
+                    "targetGraph": target_graph,
+                    "operationClass": operation_class,
+                    "capabilityId": capability_id,
+                },
             )
         if own:
             connection.commit()
@@ -399,7 +494,10 @@ def create_version(
     if not isinstance(version, int) or version < 1:
         raise ValueError("registered_query_version_invalid")
     language = str(language or "").strip().lower()
-    statement = validate_read_only_statement(language, statement)
+    if language == "capability":
+        statement = _required_identity(statement, "capability_statement")
+    else:
+        statement = validate_read_only_statement(language, statement)
     schema = validate_parameter_schema(parameter_schema)
     if not isinstance(row_limit, int) or not 1 <= row_limit <= 1000:
         raise ValueError("registered_query_row_limit_invalid")
@@ -410,6 +508,24 @@ def create_version(
     connection = connection or connect_postgres(autocommit=False)
     try:
         with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT operation_class, capability_id
+                FROM ag_catalog.registered_queries
+                WHERE project_id=%s AND query_id=%s
+                """,
+                (project_id, query_id),
+            )
+            operation_row = cursor.fetchone()
+            if operation_row is None:
+                raise LookupError(f"registered_query_not_found: {query_id}")
+            operation_class_value, capability_id = operation_row
+            if operation_class_value == "read" and language == "capability":
+                raise ValueError("registered_operation_read_definition_invalid")
+            if operation_class_value == "write" and (
+                language != "capability" or statement != capability_id
+            ):
+                raise ValueError("registered_operation_write_definition_invalid")
             cursor.execute(
                 """
                 INSERT INTO ag_catalog.registered_query_versions
@@ -478,7 +594,10 @@ def promote_version(
             row = cursor.fetchone()
             if row is None:
                 raise LookupError(f"registered_query_version_not_found: {query_id}@v{version}")
-            validate_read_only_statement(str(row[0]), str(row[1]))
+            if str(row[0]) == "capability":
+                _required_identity(row[1], "capability_statement")
+            else:
+                validate_read_only_statement(str(row[0]), str(row[1]))
             validate_parameter_schema(row[2])
             cursor.execute(
                 """
@@ -508,7 +627,7 @@ def promote_version(
             connection.close()
 
 
-def resolve_promoted_version(
+def resolve_registered_version(
     project_id: str,
     query_id: str,
     version: int,
@@ -521,14 +640,15 @@ def resolve_promoted_version(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT q.project_id, q.query_id, v.version, q.database_authority,
+                SELECT q.project_id, q.query_id, v.version, q.target_graph,
+                       q.operation_class, q.capability_id, q.database_authority,
                        q.database_name, q.owner_id, q.title, q.description,
                        v.language, v.statement, v.parameter_schema, v.row_limit,
                        v.timeout_ms, v.authored_by, v.audit_note, p.promoted_by
                 FROM ag_catalog.registered_queries q
                 JOIN ag_catalog.registered_query_versions v
                   ON v.project_id=q.project_id AND v.query_id=q.query_id
-                JOIN ag_catalog.registered_query_promotions p
+                LEFT JOIN ag_catalog.registered_query_promotions p
                   ON p.project_id=v.project_id AND p.query_id=v.query_id AND p.version=v.version
                 WHERE q.project_id=%s AND q.query_id=%s AND v.version=%s
                 """,
@@ -543,26 +663,53 @@ def resolve_promoted_version(
         if own:
             connection.close()
     if row is None:
-        raise LookupError(f"registered_query_not_promoted: {query_id}@v{version}")
-    schema = row[10] if isinstance(row[10], dict) else json.loads(str(row[10]))
+        raise LookupError(f"registered_query_not_found: {query_id}@v{version}")
+    schema = row[13] if isinstance(row[13], dict) else json.loads(str(row[13]))
+    language = str(row[11])
+    statement = (
+        _required_identity(row[12], "capability_statement")
+        if language == "capability"
+        else validate_read_only_statement(language, row[12])
+    )
     return RegisteredQueryVersion(
         project_id=row[0],
         query_id=row[1],
         version=row[2],
-        database_authority=row[3],
-        database_name=row[4],
-        owner_id=row[5],
-        title=row[6],
-        description=row[7],
-        language=row[8],
-        statement=validate_read_only_statement(row[8], row[9]),
+        target_graph=_graph_identity(row[3]),
+        operation_class=_operation_class(row[4]),
+        capability_id=str(row[5]) if row[5] else None,
+        database_authority=row[6],
+        database_name=row[7],
+        owner_id=row[8],
+        title=row[9],
+        description=row[10],
+        language=language,
+        statement=statement,
         parameter_schema=validate_parameter_schema(schema),
-        row_limit=row[11],
-        timeout_ms=row[12],
-        authored_by=row[13],
-        audit_note=row[14],
-        promoted_by=row[15],
+        row_limit=row[14],
+        timeout_ms=row[15],
+        authored_by=row[16],
+        audit_note=row[17],
+        promoted_by=str(row[18]) if row[18] else "",
     )
+
+
+def resolve_promoted_version(
+    project_id: str,
+    query_id: str,
+    version: int,
+    *,
+    connection: Any | None = None,
+) -> RegisteredQueryVersion:
+    operation = resolve_registered_version(
+        project_id,
+        query_id,
+        version,
+        connection=connection,
+    )
+    if not operation.promoted_by:
+        raise LookupError(f"registered_query_not_promoted: {query_id}@v{version}")
+    return operation
 
 
 def assign_query_binding(
@@ -584,7 +731,7 @@ def assign_query_binding(
     own = connection is None
     connection = connection or connect_postgres(autocommit=False)
     try:
-        query = resolve_promoted_version(
+        query = resolve_registered_version(
             project_id,
             query_id,
             query_version,
@@ -667,6 +814,69 @@ def assigned_query_bindings(
         )
         for row in rows
     ]
+
+
+def bindings_from_operation_references(
+    *,
+    project_id: str,
+    deck_id: str,
+    card_id: str,
+    references: list[dict[str, Any]],
+    card_grants: list[str] | tuple[str, ...] | set[str] | frozenset[str],
+) -> list[QueryBinding]:
+    """Hydrate handoff handles under the receiving card's grants."""
+    bindings: list[QueryBinding] = []
+    for index, reference in enumerate(references):
+        query_id = _required_identity(reference.get("operationId"), "query_id")
+        version = int(reference.get("version") or 0)
+        operation = resolve_registered_version(project_id, query_id, version)
+        authorize_registered_operation(operation, card_grants)
+        parameters = validate_parameters(
+            operation.parameter_schema,
+            reference.get("parameters") or {},
+        )
+        required = bool(reference.get("required", False))
+        if required and operation.operation_class != "read":
+            raise ValueError(
+                f"registered_operation_write_cannot_be_preexecuted: {query_id}@v{version}"
+            )
+        explanation = str(reference.get("explanation") or "").strip() or None
+        bindings.append(
+            QueryBinding(
+                project_id=project_id,
+                deck_id=deck_id,
+                card_id=card_id,
+                binding_id=f"handoff_operation_{index + 1}",
+                query_id=query_id,
+                query_version=version,
+                delivery_mode="required" if required else "optional",
+                parameters=parameters,
+                explanation=explanation,
+            )
+        )
+    return bindings
+
+
+def partition_operation_bindings(
+    bindings: list[QueryBinding],
+    *,
+    card_grants: list[str] | tuple[str, ...] | set[str] | frozenset[str],
+) -> tuple[list[QueryBinding], list[QueryBinding]]:
+    """Return (materializable reads, canonical capability handles)."""
+    reads: list[QueryBinding] = []
+    capabilities: list[QueryBinding] = []
+    for binding in bindings:
+        operation = resolve_registered_version(
+            binding.project_id,
+            binding.query_id,
+            binding.query_version,
+        )
+        authorize_registered_operation(operation, card_grants)
+        if operation.operation_class == "write":
+            capabilities.append(binding)
+        else:
+            reads.append(binding)
+    return reads, capabilities
 
 
 def _execute_read_only(
@@ -799,13 +1009,19 @@ def execute_binding(
     correlation_id: str,
     assignment_id: str,
     conversation_id: str,
+    card_grants: list[str] | tuple[str, ...] | set[str] | frozenset[str],
     parameter_overrides: dict[str, Any] | None = None,
 ) -> QueryExecution:
-    query = resolve_promoted_version(
+    query = resolve_registered_version(
         binding.project_id,
         binding.query_id,
         binding.query_version,
     )
+    authorize_registered_operation(query, card_grants)
+    if query.operation_class != "read" or query.language == "capability":
+        raise ValueError(
+            f"registered_operation_materialization_invalid: {query.query_id}@v{query.version}"
+        )
     parameters = validate_parameters(
         query.parameter_schema,
         {**binding.parameters, **(parameter_overrides or {})},
@@ -947,6 +1163,7 @@ def build_bound_query_tool(
     correlation_id: str,
     assignment_id: str,
     conversation_id: str,
+    card_grants: list[str] | tuple[str, ...] | set[str] | frozenset[str],
 ) -> FunctionTool:
     allowed = {binding.binding_id: binding for binding in bindings if binding.delivery_mode == "optional"}
 
@@ -964,6 +1181,7 @@ def build_bound_query_tool(
             correlation_id=correlation_id,
             assignment_id=assignment_id,
             conversation_id=conversation_id,
+            card_grants=card_grants,
             parameter_overrides=parameters or {},
         )
         return {
