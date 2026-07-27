@@ -618,9 +618,8 @@ export type ConfiguredCardRunResult = {
    * (null when the run has no profile/terminal reporting for this). Parsed from
    * the real transcript line, never inferred from the final response text. */
   toolCallCount: number | null;
-  /** This run's assigned returns/<run-id>/ folder + the files the run actually
-   * wrote there (a standalone single-agent run gets one; null otherwise). */
-  returnFolder: AgentAssignmentRunResult | null;
+  /** Canonical AgentGraph assignment and its registered artifact locators. */
+  assignmentResult: AgentAssignmentRunResult | null;
 };
 
 function parseToolCallCount(transcript: unknown): number | null {
@@ -653,7 +652,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       startedAt,
       endedAt: new Date().toISOString(),
       toolCallCount: null,
-      returnFolder: null,
+      assignmentResult: null,
       ...partial,
     };
     logHarnessTrace(
@@ -795,14 +794,13 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       tools,
       output: String(response.finalResponseText || ''),
       toolCallCount: parseToolCallCount((response as any).transcript),
-      returnFolder:
+      assignmentResult:
         assignmentId
           ? {
               assignmentId,
-              returnedFiles: Array.isArray((response as any).returnedFiles)
-                ? ((response as any).returnedFiles as string[])
+              artifactLocators: Array.isArray((response as any).artifactLocators)
+                ? ((response as any).artifactLocators as string[])
                 : [],
-              returnStatus: (response as any).returnStatus ?? null,
             }
           : null,
     });
@@ -884,10 +882,9 @@ export async function runCardWithContract(
         if (assignmentId) {
           agentAssignmentResult = {
             assignmentId,
-            returnedFiles: Array.isArray((sidecarResponse as any).returnedFiles)
-              ? ((sidecarResponse as any).returnedFiles as string[])
+            artifactLocators: Array.isArray((sidecarResponse as any).artifactLocators)
+              ? ((sidecarResponse as any).artifactLocators as string[])
               : [],
-            returnStatus: (sidecarResponse as any).returnStatus ?? null,
           };
         }
     } catch (e: any) {

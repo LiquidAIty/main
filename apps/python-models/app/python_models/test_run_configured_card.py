@@ -17,7 +17,6 @@ from app.python_models.orchestration_contracts import (
     CardRuntimeParticipant,
     ContextPack,
     ProjectSession,
-    ResultFolder,
 )
 
 MODEL = "openai/gpt-5.1-chat"
@@ -60,11 +59,32 @@ def _context(
 @pytest.fixture(autouse=True)
 def _durable_outer_boundaries(monkeypatch):
     monkeypatch.setattr(
-        mac.ra,
-        "begin_agent_assignment",
-        lambda **kwargs: f"assignment:{kwargs['correlation_id']}",
+        mac.ag,
+        "create_instruction",
+        lambda **_kwargs: {"instructionId": "instruction:test"},
     )
-    monkeypatch.setattr(mac.ra, "finish_agent_assignment", lambda **_kwargs: "agentresult:corr-1")
+    monkeypatch.setattr(
+        mac.ag,
+        "create_assignment",
+        lambda **kwargs: {"assignmentId": f"assignment:{kwargs['correlation_id']}"},
+    )
+    monkeypatch.setattr(
+        mac.ag,
+        "claim_assignment",
+        lambda **kwargs: {
+            "assignmentId": kwargs["assignment_id"],
+            "leaseToken": "lease:test",
+            "instruction": "run",
+        },
+    )
+    monkeypatch.setattr(
+        mac.ag,
+        "finish_assignment",
+        lambda **kwargs: {
+            "resultId": f"agentresult:{kwargs['assignment_id']}",
+            "artifacts": [],
+        },
+    )
     monkeypatch.setattr(mac.rq, "assigned_query_bindings", lambda **_kwargs: [])
 
 
@@ -110,16 +130,6 @@ class TestGuardFailureResponse:
         assert response.taskLedgerArtifact is None
         assert response.session.turnId == "corr-1"  # correlation preserved
 
-    def test_invalid_result_folder_fails_honestly_before_any_model_call(self):
-        # A standalone run assigned a returns folder it cannot resolve fails honestly
-        # (never silently writes elsewhere). This runs before the model client is built.
-        ctx = _context()
-        ctx.resultFolder = ResultFolder(workspaceRoot="C:/does/not/exist/xyz123", runId="run_x")
-        response = asyncio.run(mac.run_configured_card(ctx))
-        assert response.ok is False
-        assert "result_folder_unresolved" in (response.error or "")
-
-
 # --------------------------------------------------------------------------- #
 # shared builder reuse — the SAME code path Mag One participants use
 # --------------------------------------------------------------------------- #
@@ -133,73 +143,6 @@ class TestSharedBuilderReuse:
         ctx = _context(participants=[_participant(tools=["not_a_real_tool"])])
         with pytest.raises(RuntimeError):
             mac._build_participants(ctx, _FakeToolClient())
-
-
-class TestAgentGraphRuntimeContext:
-    def test_python_resolves_exact_handoff_into_task_and_records_result(self, monkeypatch):
-        tasks: list[str] = []
-        recorded: list[dict] = []
-
-        class FakeAgent:
-            async def run(self, *, task):
-                tasks.append(task)
-                return SimpleNamespace(
-                    messages=[SimpleNamespace(content="Completed from the stored handoff.")]
-                )
-
-        ctx = _context(user_text="Approved task.")
-        ctx.conversationId = "conv-1"
-        ctx.agentContextId = "agentctx:one"
-
-        monkeypatch.setattr(mac.ag, "read_context", lambda context_id, project_id: {
-            "contextId": context_id,
-            "projectId": project_id,
-            "conversationId": "conv-1",
-            "receivingAgentId": "tg",
-            "markdown": "# Exact stored handoff\n\nUse source refs unchanged.",
-        })
-        monkeypatch.setattr(mac.ag, "record_result", lambda **kwargs: recorded.append(kwargs))
-        monkeypatch.setattr(mac.ag, "mark_context_status", lambda *_args: None)
-        monkeypatch.setattr(mac.rpe, "prepare", lambda **_kwargs: None)
-        monkeypatch.setattr(mac, "_build_model_client", lambda _config: _FakeToolClient())
-        monkeypatch.setattr(mac, "_build_participants", lambda _context, _client: [FakeAgent()])
-
-        response = asyncio.run(mac.run_configured_card(ctx))
-
-        assert response.ok is True
-        assert tasks == ["# Exact stored handoff\n\nUse source refs unchanged."]
-        assert recorded == [{
-            "context_id": "agentctx:one",
-            "project_id": "p",
-            "result_id": "result:corr-1",
-            "run_id": "corr-1",
-            "status": "completed",
-            "markdown": "Completed from the stored handoff.",
-            "result_ref": None,
-            "error": None,
-        }]
-
-    def test_scope_mismatch_fails_before_model_runtime(self, monkeypatch):
-        ctx = _context(user_text="Approved task.")
-        ctx.conversationId = "conv-1"
-        ctx.agentContextId = "agentctx:wrong"
-
-        monkeypatch.setattr(mac.ag, "read_context", lambda _context_id, project_id: {
-            "projectId": project_id,
-            "conversationId": "another-conversation",
-            "receivingAgentId": "tg",
-            "markdown": "Misdirected.",
-        })
-        monkeypatch.setattr(
-            mac,
-            "_build_model_client",
-            lambda _config: pytest.fail("model runtime must not start for a misdirected context"),
-        )
-
-        response = asyncio.run(mac.run_configured_card(ctx))
-
-        assert response.ok is False
-        assert response.error == "agentgraph_context_scope_mismatch: agentctx:wrong"
 
 
 class TestRegisteredQueryContext:

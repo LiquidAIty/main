@@ -34,9 +34,9 @@ def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
             instruction_id=instruction["instructionId"],
             operation_references=[
                 {
-                    "operationId": "agentgraph.active_context_identities",
-                    "version": 1,
-                    "parameters": {},
+                        "operationId": "agentgraph.active_context_identities",
+                        "version": 2,
+                        "parameters": {"project_id": PROJECT_ID},
                     "required": False,
                 }
             ],

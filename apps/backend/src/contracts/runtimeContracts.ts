@@ -243,8 +243,7 @@ export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
 // verbatim from Python rails.
 export type AgentAssignmentRunResult = {
   assignmentId: string;
-  returnedFiles: string[];
-  returnStatus: 'return_files_created' | 'no_return_files_created' | null;
+  artifactLocators: string[];
 };
 
 export type CardRunResult = {

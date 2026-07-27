@@ -132,8 +132,7 @@ export type RunMagOneResult = {
   conversationId: string | null;
   objective: string;
   assignmentId: string | null;
-  returnedFiles: string[];
-  returnStatus: 'return_files_created' | 'no_return_files_created' | null;
+  artifactLocators: string[];
 };
 
 export async function runMagOne(
@@ -208,7 +207,8 @@ export async function runMagOne(
     conversationId: conversationId || null,
     objective,
     assignmentId: assignment?.assignmentId ?? null,
-    returnedFiles: Array.isArray(assignment?.returnedFiles) ? assignment.returnedFiles : [],
-    returnStatus: assignment?.returnStatus ?? null,
+    artifactLocators: Array.isArray(assignment?.artifactLocators)
+      ? assignment.artifactLocators
+      : [],
   };
 }

@@ -70,10 +70,8 @@ export type AutoGenOrchestratorResponse = {
   taskLedgerArtifact?: unknown;
   // Progress Ledger is identify-only in this scope: referenced, never started.
   progressLedgerReference?: unknown;
-  // Job-folder handoff run outputs (present only for a handoff run).
-  returnsDir?: string | null;
-  returnedFiles?: string[];
-  returnStatus?: 'return_files_created' | 'no_return_files_created' | null;
+  // Exact artifact locators registered on the canonical AgentGraph assignment.
+  artifactLocators?: string[];
   error?: string;
   stopReason?: string | null;
   transcript?: string[];
@@ -295,6 +293,14 @@ async function requestThinkGraphJson(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** Transport-only request to the long-lived Python rails service. */
+export async function requestPythonRailsJson(
+  endpointPath: string,
+  init: RequestInit,
+): Promise<unknown> {
+  return requestThinkGraphJson(endpointPath, init);
 }
 
 /**

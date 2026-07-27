@@ -186,19 +186,24 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
       .toEqual([connected.id, disconnected.id]);
   });
 
-  it('transports an AgentGraph pointer and conversation identity to Python without resolving graph content in TypeScript', async () => {
+  it('transports an AgentGraph instruction identity and conversation to Python without resolving graph content in TypeScript', async () => {
     mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
     mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'used stored handoff' });
 
     await runConfiguredCard({
       ...ARGS,
       conversationId: 'conv-7',
-      agentContextId: 'agentctx:one',
+      instructionId: 'instruction:one',
+      senderCardId: 'card_main_chat',
     });
 
     const payload = mockRunCard.mock.calls[0][0];
     expect(payload.conversationId).toBe('conv-7');
-    expect(payload.agentContextId).toBe('agentctx:one');
+    expect(payload.agentAssignment).toEqual({
+      instructionId: 'instruction:one',
+      senderCardId: 'card_main_chat',
+      receiverCardId: 'card_thinkgraph_agent',
+    });
     expect(JSON.stringify(payload)).not.toContain('stored Markdown');
   });
 
@@ -245,42 +250,35 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.cardRuntime.privateParticipants[0].providerModelId).toBe('gpt-5-mini');
   });
 
-  it('assigns a standalone run a returns folder under the default coder-workspace, and threads returned files back', async () => {
+  it('threads the canonical assignment identity and registered artifact locators back', async () => {
     mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
     mockRunCard.mockResolvedValue({
       ok: true,
       finalResponseText: 'ok',
-      returnsDir: 'returns/corr-123/card_thinkgraph_agent/',
-      returnedFiles: ['returns/corr-123/card_thinkgraph_agent/report.md'],
-      returnStatus: 'return_files_created',
+      assignmentId: 'assignment:corr-123',
+      artifactLocators: ['artifacts/abc/card_thinkgraph_agent/report.md'],
     });
     const result = await runConfiguredCard(ARGS);
-    const payload = mockRunCard.mock.calls[0][0];
-    // Result root is the default owned Coder workspace, not the repo root, and it is
-    // NOT a Mag One handoff.
-    expect(payload.resultFolder.runId).toBe('corr-123');
-    expect(payload.resultFolder.workspaceRoot).toContain('coder-workspace');
-    expect(payload.jobHandoff).toBeUndefined();
-    // Real created files threaded back to the caller for read_model_results.
-    expect(result.returnFolder).toEqual({
-      returnsDir: 'returns/corr-123/card_thinkgraph_agent/',
-      returnedFiles: ['returns/corr-123/card_thinkgraph_agent/report.md'],
-      returnStatus: 'return_files_created',
+    expect(result.assignmentResult).toEqual({
+      assignmentId: 'assignment:corr-123',
+      artifactLocators: ['artifacts/abc/card_thinkgraph_agent/report.md'],
     });
   });
 
-  it('reports an empty standalone returns folder honestly (no fake report.md)', async () => {
+  it('reports an assignment with no registered artifacts honestly', async () => {
     mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
     mockRunCard.mockResolvedValue({
       ok: true,
       finalResponseText: 'text only',
-      returnsDir: 'returns/corr-123/',
-      returnedFiles: [],
-      returnStatus: 'no_return_files_created',
+      assignmentId: 'assignment:corr-123',
+      artifactLocators: [],
     });
     const result = await runConfiguredCard(ARGS);
     expect(result.output).toBe('text only');
-    expect(result.returnFolder?.returnStatus).toBe('no_return_files_created');
+    expect(result.assignmentResult).toEqual({
+      assignmentId: 'assignment:corr-123',
+      artifactLocators: [],
+    });
     expect(JSON.stringify(result)).not.toContain('report.md');
     expect(JSON.stringify(result)).not.toContain('result.md');
   });

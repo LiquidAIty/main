@@ -283,6 +283,91 @@ def thinkgraph_graph_views(projectId: str, conversationId: str | None = None):
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
+@app.post("/agentgraph/assignments/prepare-context")
+def agentgraph_prepare_assignment_context(payload: dict[str, Any]):
+    """Prepare one exact saved-card assignment and stop before model execution."""
+    from app.python_models.registered_queries import prepare_assignment_context
+
+    try:
+        return prepare_assignment_context(
+            project_id=str(payload.get("projectId") or ""),
+            assignment_id=str(payload.get("assignmentId") or ""),
+            receiver_card_id=str(payload.get("receiverCardId") or ""),
+            lease_seconds=int(payload.get("leaseSeconds") or 120),
+        )
+    except (ValueError, LookupError, PermissionError) as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.get("/agentgraph/assignments/{assignment_id:path}")
+def agentgraph_read_assignment(
+    assignment_id: str,
+    projectId: str,
+    receiverCardId: str,
+):
+    """Read one exact assignment by identity; no latest selection or scan."""
+    from app.python_models.agentgraph import read_assignment
+
+    try:
+        return read_assignment(
+            project_id=projectId,
+            assignment_id=assignment_id,
+            receiving_card_id=receiverCardId,
+        )
+    except (ValueError, LookupError, PermissionError) as err:
+        raise HTTPException(status_code=404, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.post("/agentgraph/hermes/reports")
+def agentgraph_write_hermes_report(payload: dict[str, Any]):
+    from app.python_models.hermes_agentgraph import write_hermes_report
+
+    try:
+        return write_hermes_report(
+            parent_run_id=str(payload.get("parentRunId") or ""),
+            receiver_card_id=str(payload.get("receiverCardId") or ""),
+            report_markdown=str(payload.get("reportMarkdown") or ""),
+            summary=str(payload.get("summary") or ""),
+            thinkgraph_ids=[
+                str(value) for value in (payload.get("thinkGraphNodeIds") or [])
+            ],
+            knowgraph_refs=[
+                str(value) for value in (payload.get("knowGraphRefs") or [])
+            ],
+            codegraph_refs=[
+                str(value) for value in (payload.get("codeGraphRefs") or [])
+            ],
+        )
+    except (ValueError, LookupError, PermissionError) as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.get("/agentgraph/hermes/reports/{parent_run_id}")
+def agentgraph_read_hermes_report(parent_run_id: str, receiverCardId: str):
+    from app.python_models.hermes_agentgraph import read_hermes_report
+
+    try:
+        report = read_hermes_report(
+            parent_run_id=parent_run_id,
+            receiver_card_id=receiverCardId,
+        )
+        if report is None:
+            raise HTTPException(status_code=404, detail="hermes_report_not_found")
+        return {"ok": True, "report": report}
+    except HTTPException:
+        raise
+    except (ValueError, LookupError, PermissionError) as err:
+        raise HTTPException(status_code=404, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
 @app.get("/thinkgraph/scope")
 def thinkgraph_scope(projectId: str, limit: int | None = None):
     from app.python_models.thinkgraph_engraphis import get_thinkgraph

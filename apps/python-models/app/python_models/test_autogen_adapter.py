@@ -7,7 +7,6 @@ attached as real AutoGen FunctionTools only when selected (without executing).
 """
 import asyncio
 import sys
-from pathlib import Path
 
 import pytest
 from autogen_core.tools import FunctionTool
@@ -17,7 +16,6 @@ from app.python_models.orchestration_contracts import (
     CardRuntimeConfig,
     CardRuntimeParticipant,
     ContextPack,
-    JobHandoff,
     ProjectSession,
 )
 
@@ -79,27 +77,11 @@ def test_connected_agents_are_plain_names_only():
     assert names == ["Research Agent", "Trading Agent"]
 
 
-def test_empty_message_is_honest_error_not_a_call():
+def test_mag_one_without_agentgraph_assignment_fails_before_a_model_call():
     res = asyncio.run(mac.run_native_magentic_mission(_context_pack("")))
     assert res.ok is False
-    assert res.error == "empty_user_message"
+    assert res.error == "agentgraph_assignment_required"
     assert res.finalResponseText == ""
-
-
-def test_mag_one_is_the_only_prompt_entrypoint_reader(tmp_path: Path):
-    workspace = tmp_path / "coder-workspace"
-    handoff = workspace / "handoff" / "job_exact"
-    handoff.mkdir(parents=True)
-    expected = "# finalized Main Chat task\nkeep bytes ✓\n"
-    (handoff / "prompt.md").write_bytes(expected.encode("utf-8"))
-    context = _context_pack("")
-    context.jobHandoff = JobHandoff(workspaceRoot=str(workspace), jobId="job_exact")
-
-    folder, task = mac._read_magentic_handoff_task(context)
-
-    assert folder is not None
-    assert task == expected
-    assert (workspace / "returns" / "job_exact").is_dir()
 
 
 def test_app_authored_scaffold_runtime_is_gone_but_real_task_ledger_artifact_allowed():
@@ -124,7 +106,7 @@ def test_selected_tool_attaches_real_functiontool_to_that_participant():
     research_tool_names = [tool.name for tool in research._tools]
     assert "retrieve_knowgraph_context" in research_tool_names
     assert all(isinstance(tool, FunctionTool) for tool in research._tools)
-    assert plain._tools == []  # unselected participant gets no tools
+    assert [tool.name for tool in plain._tools] == ["write_assignment_artifact"]
 
 
 def test_unknown_tool_id_fails_loudly_not_silently_dropped():

@@ -1082,14 +1082,131 @@ def build_query_context(
     else:
         lines.append("- required: none")
     if optional_bindings:
-        lines.append("OPTIONAL REGISTERED QUERIES (call by binding_id only):")
+        lines.append("OPTIONAL REGISTERED OPERATIONS (call by binding_id only):")
         for binding in optional_bindings:
             lines.append(
                 f"- {binding.binding_id}: {binding.query_id}@v{binding.query_version}"
             )
     else:
-        lines.append("OPTIONAL REGISTERED QUERIES: none")
+        lines.append("OPTIONAL REGISTERED OPERATIONS: none")
     return "\n".join(lines)
+
+
+def prepare_assignment_context(
+    *,
+    project_id: str,
+    assignment_id: str,
+    receiver_card_id: str,
+    lease_seconds: int = 120,
+) -> dict[str, Any]:
+    """Authorize and prepare one saved-card assignment without calling a model.
+
+    The request carries identities only. Python hydrates the exact instruction,
+    receiving saved card, grants, registered-operation versions, parameters,
+    and persisted Graph Views from their canonical stores.
+    """
+    from app import control_plane
+    from app.python_models import agentgraph as ag
+
+    assignment = ag.read_assignment(
+        project_id=project_id,
+        assignment_id=assignment_id,
+        receiving_card_id=receiver_card_id,
+    )
+    deck, _revision = control_plane._load_deck(project_id, assignment["deckId"])
+    card = control_plane._find_card(deck, receiver_card_id)
+    if str(card.get("kind") or "") != "agent" or card.get("enabled") is False:
+        raise PermissionError(
+            f"registered_operation_receiver_card_invalid: {receiver_card_id}"
+        )
+    runtime_options = card.get("runtimeOptions") or {}
+    raw_grants = (
+        runtime_options.get("tools")
+        if isinstance(runtime_options, dict)
+        else None
+    )
+    if not isinstance(raw_grants, list):
+        raw_grants = card.get("tools") or []
+    card_grants = [
+        str(grant).strip()
+        for grant in raw_grants
+        if isinstance(grant, str) and str(grant).strip()
+    ]
+
+    bindings = bindings_from_operation_references(
+        project_id=project_id,
+        deck_id=assignment["deckId"],
+        card_id=receiver_card_id,
+        references=assignment["operationReferences"],
+        card_grants=card_grants,
+    )
+    materializable, _callable_operations = partition_operation_bindings(
+        bindings,
+        card_grants=card_grants,
+    )
+    # A missing saved-card grant must fail closed without consuming a lease or
+    # advancing the attempt counter.
+    claimed = ag.claim_assignment(
+        project_id=project_id,
+        assignment_id=assignment_id,
+        receiver_card_id=receiver_card_id,
+        lease_seconds=lease_seconds,
+    )
+    required_reads = [
+        binding
+        for binding in materializable
+        if binding.delivery_mode == "required"
+    ]
+    optional_operations = [
+        binding
+        for binding in bindings
+        if binding.delivery_mode == "optional"
+    ]
+    executions = [
+        execute_binding(
+            binding,
+            correlation_id=assignment["correlationId"],
+            assignment_id=assignment_id,
+            conversation_id=assignment["conversationId"],
+            card_grants=card_grants,
+        )
+        for binding in required_reads
+    ]
+    operation_context = build_query_context(executions, optional_operations)
+    model_context = "\n\n".join(
+        [
+            "[AGENTGRAPH_ASSIGNMENT]",
+            f"assignmentId: {assignment_id}",
+            f"instructionId: {claimed['instructionId']}",
+            f"correlationId: {claimed['correlationId']}",
+            "Exact instruction:",
+            claimed["instruction"],
+            operation_context,
+        ]
+    )
+    return {
+        "ok": True,
+        "assignmentId": assignment_id,
+        "instructionId": claimed["instructionId"],
+        "instructionSha256": claimed["instructionSha256"],
+        "correlationId": claimed["correlationId"],
+        "receiverCardId": receiver_card_id,
+        "leaseToken": claimed["leaseToken"],
+        "leaseExpiresAt": claimed["leaseExpiresAt"],
+        "attempt": claimed["attempt"],
+        "graphViewIds": [execution.graph_view_id for execution in executions],
+        "queryExecutionIds": [execution.execution_id for execution in executions],
+        "optionalOperationBindings": [
+            {
+                "bindingId": binding.binding_id,
+                "operationId": binding.query_id,
+                "version": binding.query_version,
+            }
+            for binding in optional_operations
+        ],
+        "modelContext": model_context,
+        "modelCalled": False,
+    }
 
 
 def build_bound_query_tool(
@@ -1131,7 +1248,7 @@ def build_bound_query_tool(
         execute_registered_query,
         name="execute_registered_query",
         description=(
-            "Execute one promoted, read-only query already assigned to this card. "
+            "Execute one immutable, read-only registered operation already assigned to this card. "
             "Pass only its binding_id and typed parameters; raw SQL/Cypher is never accepted."
         ),
     )

@@ -142,7 +142,7 @@ class TestRunAssistantAgent:
                 "projectId": "p", "deckId": "d", "cardId": "c", "correlationId": "x",
             }))
 
-    def test_forwards_only_saved_references_and_optional_agent_context_id(self, monkeypatch):
+    def test_forwards_only_saved_references_and_optional_instruction_id(self, monkeypatch):
         calls = []
 
         def backend(method, path, payload=None):
@@ -160,19 +160,19 @@ class TestRunAssistantAgent:
         asyncio.run(cp.card_run_assistant_agent({
             "projectId": "p", "deckId": "d", "cardId": "c",
             "correlationId": "y", "conversationId": "conv-1",
-            "agentContextId": "agentctx:one", "input": "use the handoff",
+            "instructionId": "instruction:one", "input": "use the handoff",
         }))
         forwarded = calls[1][2]
         assert forwarded["conversationId"] == "conv-1"
-        assert forwarded["agentContextId"] == "agentctx:one"
+        assert forwarded["instructionId"] == "instruction:one"
 
     def test_trusted_inter_agent_call_creates_handoff_and_correlates_result(self, monkeypatch):
         calls = []
         created = []
 
-        def create_context(**kwargs):
+        def create_instruction(**kwargs):
             created.append(kwargs)
-            return {"ok": True, "contextId": "agentctx:hermes-search"}
+            return {"ok": True, "instructionId": "instruction:hermes-search"}
 
         def backend(method, path, payload=None):
             calls.append((method, path, payload))
@@ -185,7 +185,7 @@ class TestRunAssistantAgent:
                 },
             }
 
-        monkeypatch.setattr(cp.ag, "create_context", create_context)
+        monkeypatch.setattr(cp.ag, "create_instruction", create_instruction)
         monkeypatch.setattr(cp, "_backend_json", backend)
 
         response = asyncio.run(cp.card_run_assistant_agent({
@@ -203,19 +203,18 @@ class TestRunAssistantAgent:
             "project_id": "p",
             "deck_id": "deck_builder",
             "conversation_id": "conv-1",
-            "sender_agent_id": "card_hermes_steward",
-            "receiving_agent_id": "card_research_agent",
-            "markdown": "Find one primary source.",
-            "producing_run_id": "main-turn-1",
+            "body": "Find one primary source.",
+            "prepared_by_card_id": "card_hermes_steward",
         }]
-        assert calls[0][2]["agentContextId"] == "agentctx:hermes-search"
-        assert response["agentContextId"] == "agentctx:hermes-search"
+        assert calls[0][2]["instructionId"] == "instruction:hermes-search"
+        assert calls[0][2]["senderCardId"] == "card_hermes_steward"
+        assert response["instructionId"] == "instruction:hermes-search"
 
     def test_inter_agent_failure_records_backend_error(self, monkeypatch):
         monkeypatch.setattr(
             cp.ag,
-            "create_context",
-            lambda **_kwargs: {"ok": True, "contextId": "agentctx:failed"},
+            "create_instruction",
+            lambda **_kwargs: {"ok": True, "instructionId": "instruction:failed"},
         )
         monkeypatch.setattr(cp, "_backend_json", lambda *_args, **_kwargs: {
             "ok": False,
@@ -240,7 +239,7 @@ class TestRunAssistantAgent:
     def test_plain_standalone_call_does_not_create_agentgraph_handoff(self, monkeypatch):
         monkeypatch.setattr(
             cp.ag,
-            "create_context",
+            "create_instruction",
             lambda **_kwargs: pytest.fail("standalone runs must not create AgentGraph handoffs"),
         )
         monkeypatch.setattr(cp, "_backend_json", lambda *_args, **_kwargs: {
@@ -256,10 +255,10 @@ class TestRunAssistantAgent:
             "input": "Run independently.",
         }))
         assert response["result"]["status"] == "completed"
-        assert "agentContextId" not in response
+        assert "instructionId" not in response
 
     def test_inter_agent_call_rejects_context_override(self):
-        with pytest.raises(cp.ControlPlaneError, match="agentgraph_context_override_rejected"):
+        with pytest.raises(cp.ControlPlaneError, match="agentgraph_instruction_override_rejected"):
             asyncio.run(cp.card_run_assistant_agent({
                 "projectId": "p",
                 "deckId": "deck_builder",
@@ -268,6 +267,6 @@ class TestRunAssistantAgent:
                 "conversationId": "conv-1",
                 "originatingAgentId": "card_hermes_steward",
                 "originatingRunId": "main-turn-1",
-                "agentContextId": "agentctx:forged",
+                "instructionId": "instruction:forged",
                 "input": "Find one source.",
             }))

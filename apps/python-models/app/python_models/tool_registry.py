@@ -459,7 +459,7 @@ AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY: ContextVar[dict[str, str] | None] = Context
 )
 
 
-async def write_return_file_tool(card_id: str, path: str, content: str) -> str:
+async def write_assignment_artifact_tool(card_id: str, path: str, content: str) -> str:
     """Write and immediately register one assignment-scoped artifact."""
     authority = AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY.get()
     if authority is None:
@@ -495,14 +495,14 @@ async def write_return_file_tool(card_id: str, path: str, content: str) -> str:
     return json.dumps({"ok": True, **artifact})
 
 
-def build_return_writer_tool(card_id: str) -> FunctionTool:
+def build_assignment_artifact_tool(card_id: str) -> FunctionTool:
     """Fresh assignment-scoped artifact tool bound to one saved card."""
     async def _adapter(path: str, content: str) -> str:
-        return await write_return_file_tool(card_id, path, content)
+        return await write_assignment_artifact_tool(card_id, path, content)
 
     return FunctionTool(
         _adapter,
-        name="write_return_file",
+        name="write_assignment_artifact",
         description=(
             "Create one real file artifact for the active AgentGraph assignment. "
             "The model supplies only a relative path and content; assignment, run, "

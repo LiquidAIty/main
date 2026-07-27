@@ -12,7 +12,7 @@ import re
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from typing import Any, Callable, Iterator
+from typing import Any, Iterator
 from uuid import uuid4
 
 from app.python_models.postgres import connect_postgres
@@ -47,14 +47,6 @@ def _required_text(value: Any, field: str) -> str:
     if not text:
         raise AgentGraphError(f"agentgraph_{field}_invalid")
     return text
-
-
-def _required_markdown(value: Any, field: str = "markdown") -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise AgentGraphError(f"agentgraph_{field}_invalid")
-    if len(value) > _MAX_HANDOFF_CHARS:
-        raise AgentGraphError(f"agentgraph_{field}_too_large")
-    return value
 
 
 def _optional_markdown(value: Any) -> str | None:
@@ -92,20 +84,6 @@ def _optional_error(value: Any) -> str | None:
     return value
 
 
-def _default_agent_validator(project_id: str, deck_id: str, agent_id: str) -> None:
-    from app import control_plane
-
-    deck, _revision = control_plane._load_deck(project_id, deck_id)
-    card = next(
-        (node for node in deck.get("nodes") or [] if str(node.get("id") or "") == agent_id),
-        None,
-    )
-    if not isinstance(card, dict):
-        raise AgentGraphError(f"agentgraph_agent_not_found: {agent_id}")
-    if str(card.get("kind") or "") != "agent" or card.get("enabled") is False:
-        raise AgentGraphError(f"agentgraph_agent_invalid: {agent_id}")
-
-
 @contextmanager
 def _connection_scope(connection: Any | None) -> Iterator[Any]:
     if connection is not None:
@@ -131,390 +109,6 @@ def _run_cypher(
         (json.dumps(params, ensure_ascii=False, separators=(",", ":")),),
     )
     return list(cursor.fetchall())
-
-
-def _read_context_payload(
-    cursor: Any,
-    project_id: str,
-    context_id: str,
-) -> dict[str, Any] | None:
-    cursor.execute(
-        """
-        SELECT context_id, project_id, deck_id, conversation_id, sender_agent_id,
-               receiving_agent_id, markdown, producing_run_id, parent_context_id,
-               status, created_at, updated_at, completed_at
-        FROM ag_catalog.agent_context_payloads
-        WHERE project_id=%s AND context_id=%s
-        """,
-        (project_id, context_id),
-    )
-    row = cursor.fetchone()
-    if row is None:
-        return None
-    keys = (
-        "context_id",
-        "project_id",
-        "deck_id",
-        "conversation_id",
-        "sender_agent_id",
-        "receiving_agent_id",
-        "markdown",
-        "producing_run_id",
-        "parent_context_id",
-        "status",
-        "created_at",
-        "updated_at",
-        "completed_at",
-    )
-    return dict(zip(keys, row))
-
-
-def create_context(
-    *,
-    project_id: str,
-    deck_id: str,
-    conversation_id: str,
-    sender_agent_id: str,
-    receiving_agent_id: str,
-    markdown: str,
-    parent_context_id: str | None = None,
-    producing_run_id: str | None = None,
-    agent_validator: Callable[[str, str, str], None] = _default_agent_validator,
-    connection: Any | None = None,
-) -> dict[str, Any]:
-    project_id = _required_text(project_id, "project_id")
-    deck_id = _required_text(deck_id, "deck_id")
-    conversation_id = _required_text(conversation_id, "conversation_id")
-    sender_agent_id = _required_id(sender_agent_id, "sender_agent_id")
-    receiving_agent_id = _required_id(receiving_agent_id, "receiving_agent_id")
-    markdown = _required_markdown(markdown)
-    parent_context_id = (
-        _required_id(parent_context_id, "parent_context_id") if parent_context_id else None
-    )
-    producing_run_id = _optional_text(producing_run_id, "producing_run_id")
-
-    agent_validator(project_id, deck_id, sender_agent_id)
-    agent_validator(project_id, deck_id, receiving_agent_id)
-
-    context_id = f"agentctx:{uuid4().hex[:24]}"
-    created_at = _now()
-    params: dict[str, Any] = {
-        "contextId": context_id,
-        "projectId": project_id,
-        "deckId": deck_id,
-        "conversationId": conversation_id,
-        "senderAgentId": sender_agent_id,
-        "receivingAgentId": receiving_agent_id,
-        "status": "pending",
-        "createdAt": created_at,
-    }
-    producing_property = ""
-    if producing_run_id is not None:
-        params["producingRunId"] = producing_run_id
-        producing_property = ", producingRunId: $producingRunId"
-
-    with _connection_scope(connection) as conn, conn.cursor() as cursor:
-        _prepare(cursor)
-        if parent_context_id is not None:
-            parent = _read_context_payload(cursor, project_id, parent_context_id)
-            if parent is None:
-                raise AgentGraphError(
-                    f"agentgraph_parent_context_not_found: {parent_context_id}"
-                )
-
-        cursor.execute(
-            """
-            INSERT INTO ag_catalog.agent_context_payloads
-              (context_id, project_id, deck_id, conversation_id, sender_agent_id,
-               receiving_agent_id, markdown, producing_run_id, parent_context_id,
-               status, created_at, updated_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s)
-            """,
-            (
-                context_id,
-                project_id,
-                deck_id,
-                conversation_id,
-                sender_agent_id,
-                receiving_agent_id,
-                markdown,
-                producing_run_id,
-                parent_context_id,
-                created_at,
-                created_at,
-            ),
-        )
-        _run_cypher(
-            cursor,
-            f"""
-            MERGE (sender:Agent {{
-              project_id: $projectId,
-              deck_id: $deckId,
-              agent_id: $senderAgentId
-            }})
-            MERGE (receiver:Agent {{
-              project_id: $projectId,
-              deck_id: $deckId,
-              agent_id: $receivingAgentId
-            }})
-            CREATE (context:AgentContext {{
-              contextId: $contextId,
-              projectId: $projectId,
-              deckId: $deckId,
-              conversationId: $conversationId,
-              senderAgentId: $senderAgentId,
-              receivingAgentId: $receivingAgentId,
-              status: $status,
-              createdAt: $createdAt
-              {producing_property}
-            }})
-            CREATE (context)-[:SENT_BY]->(sender)
-            CREATE (context)-[:SENT_TO]->(receiver)
-            RETURN context.contextId
-            """,
-            "context_id agtype",
-            params,
-        )
-        if parent_context_id is not None:
-            _run_cypher(
-                cursor,
-                """
-                MATCH (context:AgentContext), (parent:AgentContext)
-                WHERE
-                  context.contextId = $contextId
-                  AND context.projectId = $projectId
-                  AND (parent.contextId = $parentContextId OR parent.context_id = $parentContextId)
-                  AND (parent.projectId = $projectId OR parent.project_id = $projectId)
-                CREATE (context)-[:CHILD_OF]->(parent)
-                RETURN context.contextId
-                """,
-                "context_id agtype",
-                {
-                    "projectId": project_id,
-                    "contextId": context_id,
-                    "parentContextId": parent_context_id,
-                },
-            )
-
-    return {
-        "ok": True,
-        "contextId": context_id,
-        "projectId": project_id,
-        "deckId": deck_id,
-        "conversationId": conversation_id,
-        "senderAgentId": sender_agent_id,
-        "receivingAgentId": receiving_agent_id,
-        "status": "pending",
-        "parentContextId": parent_context_id,
-    }
-
-
-def read_context(
-    context_id: str,
-    project_id: str,
-    *,
-    connection: Any | None = None,
-) -> dict[str, Any]:
-    context_id = _required_id(context_id, "context_id")
-    project_id = _required_text(project_id, "project_id")
-    with _connection_scope(connection) as conn, conn.cursor() as cursor:
-        _prepare(cursor)
-        properties = _read_context_payload(cursor, project_id, context_id)
-        if properties is None:
-            raise AgentGraphError(f"agentgraph_context_not_found: {context_id}")
-    return {
-        "ok": True,
-        "contextId": str(properties["context_id"]),
-        "projectId": str(properties["project_id"]),
-        "deckId": str(properties["deck_id"]),
-        "conversationId": str(properties["conversation_id"]),
-        "senderAgentId": str(properties["sender_agent_id"] or ""),
-        "receivingAgentId": str(properties["receiving_agent_id"]),
-        "markdown": str(properties["markdown"]),
-        "producingRunId": properties["producing_run_id"],
-        "parentContextId": properties["parent_context_id"],
-        "status": str(properties.get("status") or ""),
-        "createdAt": str(properties["created_at"]),
-    }
-
-
-def mark_context_status(
-    context_id: str,
-    project_id: str,
-    status: str,
-    *,
-    connection: Any | None = None,
-) -> dict[str, Any]:
-    context_id = _required_id(context_id, "context_id")
-    project_id = _required_text(project_id, "project_id")
-    status = _status(status)
-    updated_at = _now()
-    with _connection_scope(connection) as conn, conn.cursor() as cursor:
-        _prepare(cursor)
-        cursor.execute(
-            """
-            UPDATE ag_catalog.agent_context_payloads
-            SET status=%s, updated_at=%s,
-                completed_at=CASE WHEN %s IN ('completed','failed','cancelled') THEN %s ELSE completed_at END
-            WHERE context_id=%s AND project_id=%s
-            """,
-            (status, updated_at, status, updated_at, context_id, project_id),
-        )
-        if cursor.rowcount != 1:
-            raise AgentGraphError(f"agentgraph_context_not_found: {context_id}")
-        rows = _run_cypher(
-            cursor,
-            """
-            MATCH (context:AgentContext)
-            WHERE
-              (context.contextId = $contextId OR context.context_id = $contextId)
-              AND (context.projectId = $projectId OR context.project_id = $projectId)
-            SET context.status = $status, context.updatedAt = $updatedAt
-            RETURN context.contextId
-            """,
-            "context_id agtype",
-            {
-                "contextId": context_id,
-                "projectId": project_id,
-                "status": status,
-                "updatedAt": updated_at,
-            },
-        )
-        if not rows:
-            raise AgentGraphError(f"agentgraph_context_not_found: {context_id}")
-    return {
-        "ok": True,
-        "contextId": context_id,
-        "projectId": project_id,
-        "status": status,
-        "updatedAt": updated_at,
-    }
-
-
-def record_result(
-    *,
-    context_id: str,
-    project_id: str,
-    result_id: str,
-    run_id: str,
-    status: str,
-    markdown: str | None = None,
-    result_ref: str | None = None,
-    error: str | None = None,
-    connection: Any | None = None,
-) -> dict[str, Any]:
-    context_id = _required_id(context_id, "context_id")
-    project_id = _required_text(project_id, "project_id")
-    result_id = _required_id(result_id, "result_id")
-    run_id = _required_id(run_id, "run_id")
-    status = _status(status)
-    markdown = _optional_markdown(markdown)
-    result_ref = _optional_text(result_ref, "result_ref")
-    error = _optional_error(error)
-    created_at = _now()
-
-    with _connection_scope(connection) as conn, conn.cursor() as cursor:
-        _prepare(cursor)
-        context = _read_context_payload(cursor, project_id, context_id)
-        if context is None:
-            raise AgentGraphError(f"agentgraph_context_not_found: {context_id}")
-
-        cursor.execute(
-            """
-            SELECT result_id
-            FROM ag_catalog.agent_result_payloads
-            WHERE context_id=%s AND project_id=%s AND result_id=%s
-            """,
-            (context_id, project_id, result_id),
-        )
-        if cursor.fetchone() is not None:
-            return {
-                "ok": True,
-                "created": False,
-                "contextId": context_id,
-                "resultId": result_id,
-            }
-
-        params: dict[str, Any] = {
-            "projectId": project_id,
-            "conversationId": str(context["conversation_id"]),
-            "receivingAgentId": str(context["receiving_agent_id"]),
-            "contextId": context_id,
-            "resultId": result_id,
-            "runId": run_id,
-            "status": status,
-            "createdAt": created_at,
-        }
-        cursor.execute(
-            """
-            INSERT INTO ag_catalog.agent_result_payloads
-              (result_id, context_id, project_id, conversation_id, receiving_agent_id,
-               run_id, status, markdown, result_ref, error, created_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """,
-            (
-                result_id,
-                context_id,
-                project_id,
-                str(context["conversation_id"]),
-                str(context["receiving_agent_id"]),
-                run_id,
-                status,
-                markdown,
-                result_ref,
-                error,
-                created_at,
-            ),
-        )
-        cursor.execute(
-            """
-            UPDATE ag_catalog.agent_context_payloads
-            SET status=%s, completed_at=%s, updated_at=%s
-            WHERE context_id=%s AND project_id=%s
-            """,
-            (status, created_at, created_at, context_id, project_id),
-        )
-
-        rows = _run_cypher(
-            cursor,
-            """
-            MATCH (context:AgentContext)
-            WHERE
-              (context.contextId = $contextId OR context.context_id = $contextId)
-              AND (context.projectId = $projectId OR context.project_id = $projectId)
-            CREATE (result:Result {
-              resultId: $resultId,
-              contextId: $contextId,
-              projectId: $projectId,
-              conversationId: $conversationId,
-              receivingAgentId: $receivingAgentId,
-              runId: $runId,
-              status: $status,
-              createdAt: $createdAt
-            }
-            CREATE (context)-[:PRODUCED]->(result)
-            SET context.status = $status,
-                context.completedAt = $createdAt
-            RETURN properties(result)
-            """,
-            "properties agtype",
-            params,
-        )
-        if not rows:
-            raise AgentGraphError(f"agentgraph_context_not_found: {context_id}")
-
-    return {
-        "ok": True,
-        "created": True,
-        "contextId": context_id,
-        "resultId": result_id,
-        "runId": run_id,
-        "status": status,
-        "markdown": markdown,
-        "resultRef": result_ref,
-        "error": error,
-        "createdAt": created_at,
-    }
 
 
 def create_instruction(
@@ -1002,6 +596,7 @@ def finish_assignment(
     lease_token: str,
     status: str,
     output: str | None = None,
+    summary: str | None = None,
     error_code: str | None = None,
     error_detail: str | None = None,
     connection: Any | None = None,
@@ -1016,6 +611,7 @@ def finish_assignment(
             f"agentgraph_assignment_terminal_status_invalid: {terminal}"
         )
     output = _optional_markdown(output)
+    summary = _optional_text(summary, "result_summary")
     error_code = _optional_text(error_code, "error_code")
     error_detail = _optional_error(error_detail)
     result_id = f"agentresult:{assignment_id.split(':', 1)[-1]}"
@@ -1040,14 +636,21 @@ def finish_assignment(
         if prior_state in {"completed", "failed", "cancelled"}:
             cursor.execute(
                 """
-                SELECT result_id, status, output, error_code, error_detail
+                SELECT result_id, status, output, summary, error_code, error_detail
                 FROM ag_catalog.agent_results
                 WHERE assignment_id=%s
                 """,
                 (assignment_id,),
             )
             existing = cursor.fetchone()
-            if existing == (result_id, terminal, output, error_code, error_detail):
+            if existing == (
+                result_id,
+                terminal,
+                output,
+                summary,
+                error_code,
+                error_detail,
+            ):
                 return {
                     "ok": True,
                     "created": False,
@@ -1066,8 +669,8 @@ def finish_assignment(
             """
             INSERT INTO ag_catalog.agent_results
               (result_id, assignment_id, project_id, correlation_id, status,
-               output, error_code, error_detail)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+               output, summary, error_code, error_detail)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             (
                 result_id,
@@ -1076,6 +679,7 @@ def finish_assignment(
                 correlation_id,
                 terminal,
                 output,
+                summary,
                 error_code,
                 error_detail,
             ),
@@ -1401,6 +1005,113 @@ def register_assignment_artifact(
     }
 
 
+def add_assignment_references(
+    *,
+    project_id: str,
+    assignment_id: str,
+    receiver_card_id: str,
+    references: list[dict[str, Any]],
+    connection: Any | None = None,
+) -> dict[str, Any]:
+    """Attach bounded stable references; never copy referenced store payloads."""
+    project_id = _required_text(project_id, "project_id")
+    assignment_id = _required_id(assignment_id, "assignment_id")
+    receiver_card_id = _required_id(receiver_card_id, "receiver_card_id")
+    allowed_types = {
+        "graph_view",
+        "registered_query",
+        "conversation_message",
+        "database",
+        "thinkgraph",
+        "knowgraph",
+        "codegraph",
+        "native_session",
+    }
+    normalized: list[tuple[str, str, bool]] = []
+    for reference in references:
+        reference_id = _required_text(reference.get("referenceId"), "reference_id")
+        reference_type = _required_text(
+            reference.get("referenceType"), "reference_type"
+        ).lower()
+        if reference_type not in allowed_types:
+            raise AgentGraphError(
+                f"agentgraph_reference_type_invalid: {reference_type}"
+            )
+        normalized.append(
+            (reference_id, reference_type, bool(reference.get("required", False)))
+        )
+    with _connection_scope(connection) as conn, conn.cursor() as cursor:
+        _prepare(cursor)
+        cursor.execute(
+            """
+            SELECT 1
+            FROM ag_catalog.agent_assignments
+            WHERE project_id=%s AND assignment_id=%s AND receiver_card_id=%s
+            """,
+            (project_id, assignment_id, receiver_card_id),
+        )
+        if cursor.fetchone() is None:
+            raise AgentGraphError(
+                f"agentgraph_assignment_not_found_or_unauthorized: {assignment_id}"
+            )
+        for reference_id, reference_type, required in normalized:
+            cursor.execute(
+                """
+                INSERT INTO ag_catalog.agent_context_references
+                  (assignment_id, reference_id, reference_type, required)
+                VALUES (%s,%s,%s,%s)
+                ON CONFLICT DO NOTHING
+                """,
+                (assignment_id, reference_id, reference_type, required),
+            )
+    return {
+        "ok": True,
+        "assignmentId": assignment_id,
+        "references": [
+            {
+                "referenceId": reference_id,
+                "referenceType": reference_type,
+                "required": required,
+            }
+            for reference_id, reference_type, required in normalized
+        ],
+    }
+
+
+def assignment_id_for_parent_run(
+    *,
+    project_id: str,
+    parent_run_id: str,
+    receiver_card_id: str,
+    connection: Any | None = None,
+) -> str:
+    """Resolve one exact child assignment; never select a latest result."""
+    project_id = _required_text(project_id, "project_id")
+    parent_run_id = _required_id(parent_run_id, "parent_run_id")
+    receiver_card_id = _required_id(receiver_card_id, "receiver_card_id")
+    with _connection_scope(connection) as conn, conn.cursor() as cursor:
+        _prepare(cursor)
+        cursor.execute(
+            """
+            SELECT assignment_id
+            FROM ag_catalog.agent_assignments
+            WHERE project_id=%s AND parent_run_id=%s AND receiver_card_id=%s
+            ORDER BY assignment_id
+            """,
+            (project_id, parent_run_id, receiver_card_id),
+        )
+        rows = cursor.fetchall()
+    if not rows:
+        raise AgentGraphError(
+            f"agentgraph_parent_assignment_not_found: {parent_run_id}"
+        )
+    if len(rows) != 1:
+        raise AgentGraphError(
+            f"agentgraph_parent_assignment_ambiguous: {parent_run_id}"
+        )
+    return str(rows[0][0])
+
+
 def read_assignment(
     *,
     project_id: str,
@@ -1442,12 +1153,15 @@ def read_assignment(
             SELECT a.assignment_id, a.correlation_id, a.deck_id, a.conversation_id,
                    a.sender_card_id, a.receiver_card_id, a.parent_assignment_id,
                    a.state, a.attempt, a.instruction_id, i.body, i.body_sha256,
-                   r.result_id, r.status, r.output, r.error_code, r.error_detail,
+                   r.result_id, r.status, r.output, r.summary, r.error_code, r.error_detail,
                    a.parent_run_id, a.claimed_by_card_id, a.lease_expires_at,
-                   a.heartbeat_at
+                   a.heartbeat_at, parent_run.session_id
             FROM ag_catalog.agent_assignments a
             JOIN ag_catalog.agent_instructions i ON i.instruction_id=a.instruction_id
             LEFT JOIN ag_catalog.agent_results r ON r.assignment_id=a.assignment_id
+            LEFT JOIN ag_catalog.card_run_traces parent_run
+              ON parent_run.project_id=a.project_id
+             AND parent_run.correlation_id=a.parent_run_id
             WHERE a.project_id=%s AND a.assignment_id=%s
               AND a.receiver_card_id=%s
             """,
@@ -1502,6 +1216,23 @@ def read_assignment(
             }
             for item in cursor.fetchall()
         ]
+        cursor.execute(
+            """
+            SELECT reference_id, reference_type, required
+            FROM ag_catalog.agent_context_references
+            WHERE assignment_id=%s
+            ORDER BY reference_type, reference_id
+            """,
+            (assignment_id,),
+        )
+        context_references = [
+            {
+                "referenceId": item[0],
+                "referenceType": item[1],
+                "required": item[2],
+            }
+            for item in cursor.fetchall()
+        ]
     return {
         "ok": True,
         "assignmentId": row[0],
@@ -1511,12 +1242,13 @@ def read_assignment(
         "senderCardId": row[4],
         "receiverCardId": row[5],
         "parentAssignmentId": row[6],
-        "parentRunId": row[17],
+        "parentRunId": row[18],
         "state": row[7],
         "attempt": row[8],
-        "claimedByCardId": row[18],
-        "leaseExpiresAt": row[19].isoformat() if row[19] else None,
-        "heartbeatAt": row[20].isoformat() if row[20] else None,
+        "claimedByCardId": row[19],
+        "leaseExpiresAt": row[20].isoformat() if row[20] else None,
+        "heartbeatAt": row[21].isoformat() if row[21] else None,
+        "nativeSessionId": row[22],
         "instructionId": row[9],
         "instruction": row[10],
         "instructionSha256": row[11],
@@ -1525,13 +1257,15 @@ def read_assignment(
                 "resultId": row[12],
                 "status": row[13],
                 "output": row[14],
-                "errorCode": row[15],
-                "errorDetail": row[16],
+                "summary": row[15],
+                "errorCode": row[16],
+                "errorDetail": row[17],
             }
             if row[12]
             else None
         ),
         "artifacts": artifacts,
+        "contextReferences": context_references,
         "operationReferences": operations,
         "ageIdentity": {
             "assignment": json.loads(str(identity_rows[0][0])),

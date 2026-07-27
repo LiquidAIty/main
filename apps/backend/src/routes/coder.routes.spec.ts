@@ -165,6 +165,15 @@ const graphViewMocks = vi.hoisted(() => ({
     modelContext: string;
   }> => ({ ok: true, views: [], modelContext: '' })),
   transitionGraphViewsOnPython: vi.fn(async () => ({ ok: true, views: [] })),
+  requestPythonRailsJson: vi.fn(async (path: string) => (
+    path.includes('/agentgraph/hermes/reports/')
+      ? { ok: true, report: null }
+      : {
+          ok: true,
+          reportId: 'agentresult:hermes:req_not_active',
+          assignmentId: 'assignment:hermes:req_not_active',
+        }
+  )),
 }));
 
 const dbMocks = vi.hoisted(() => ({
@@ -393,7 +402,7 @@ describe('coder routes', () => {
     }
   });
 
-  it('forwards only the AgentGraph pointer on the configured-card bridge', async () => {
+  it('forwards only AgentGraph assignment identities on the configured-card bridge', async () => {
     runtimeMocks.runConfiguredCard.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
@@ -406,7 +415,9 @@ describe('coder routes', () => {
           cardId: 'card_worker',
           correlationId: 'corr-1',
           conversationId: 'conv-1',
-          agentContextId: 'agentctx:one',
+          instructionId: 'instruction:one',
+          senderCardId: 'card_main_chat',
+          parentRunId: 'req_1234abcd',
           input: 'Use the stored handoff.',
         }),
       });
@@ -417,7 +428,9 @@ describe('coder routes', () => {
         cardId: 'card_worker',
         correlationId: 'corr-1',
         conversationId: 'conv-1',
-        agentContextId: 'agentctx:one',
+        instructionId: 'instruction:one',
+        senderCardId: 'card_main_chat',
+        parentRunId: 'req_1234abcd',
         input: 'Use the stored handoff.',
       });
     } finally {
@@ -684,29 +697,30 @@ describe('coder routes', () => {
     }
   }
 
-  it('keeps the Hermes report bridge closed outside an active native investigation', async () => {
+  it('transports Hermes report reads and writes to exact AgentGraph parent-run paths', async () => {
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/hermes_write_report`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parentRunId: 'req_not_active', reportMarkdown: '# Report', summary: 'No active turn.' }),
+        body: JSON.stringify({ parentRunId: 'req_1234abcd', reportMarkdown: '# Report', summary: 'Exact run.' }),
       });
-      await expect(response.json()).resolves.toEqual({
-        ok: false,
-        error: 'hermes_investigation_context_not_active',
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        assignmentId: 'assignment:hermes:req_not_active',
       });
-      expect(response.status).toBe(409);
+      expect(response.status).toBe(200);
       const readResponse = await fetch(`${baseUrl}/mcp-bridge/hermes_read_report`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parentRunId: 'req_not_active' }),
+        body: JSON.stringify({ parentRunId: 'req_1234abcd' }),
       });
-      await expect(readResponse.json()).resolves.toEqual({
-        ok: false,
-        error: 'hermes_investigation_context_not_active',
-      });
-      expect(readResponse.status).toBe(409);
+      await expect(readResponse.json()).resolves.toEqual({ ok: true, report: null });
+      expect(readResponse.status).toBe(200);
+      expect(graphViewMocks.requestPythonRailsJson).toHaveBeenCalledWith(
+        expect.stringContaining('/agentgraph/hermes/reports/req_1234abcd'),
+        { method: 'GET' },
+      );
     } finally {
       await closeServer(server);
     }

@@ -25,11 +25,8 @@ import {
 } from '../coder/openclaude/session/grpcChatClient';
 import {
   parseHermesInvestigationContext,
-  beginHermesInvestigation,
-  endHermesInvestigation,
-  readLatestHermesReport,
-  readActiveHermesReport,
-  writeActiveHermesReport,
+  readHermesReport,
+  writeHermesReport,
   type HermesInvestigationContext,
 } from '../coder/hermes/hermesReportArtifact';
 import {
@@ -208,8 +205,7 @@ router.post('/mcp-bridge/run_mag_one', async (req, res) => {
         assignmentId: result.assignmentId,
         conversationId: result.conversationId,
         connectedParticipants: result.connectedParticipants,
-        returnedFiles: result.returnedFiles,
-        returnStatus: result.returnStatus,
+        artifactLocators: result.artifactLocators,
         failure: result.failure,
       },
     });
@@ -781,33 +777,26 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
 // id per (projectId, conversationId). The browser never touches gRPC.
 const activeGrpcTurns = new Map<string, GrpcTurnHandle>();
 
-router.post('/mcp-bridge/hermes_write_report', (req, res) => {
+router.post('/mcp-bridge/hermes_write_report', async (req, res) => {
   try {
-    const completion = writeActiveHermesReport(req.body || {});
+    const completion = await writeHermesReport(req.body || {});
     return res.json({ ok: true, ...completion });
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'hermes_report_write_failed';
-    return res.status(reason === 'hermes_investigation_context_not_active' ? 409 : 400).json({
+    return res.status(reason.includes('http_409') ? 409 : 400).json({
       ok: false,
       error: reason,
     });
   }
 });
 
-router.post('/mcp-bridge/hermes_read_report', (req, res) => {
+router.post('/mcp-bridge/hermes_read_report', async (req, res) => {
   try {
-    return res.json({ ok: true, report: readActiveHermesReport(String(req.body?.parentRunId || '')) });
+    return res.json({ ok: true, report: await readHermesReport(String(req.body?.parentRunId || '')) });
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'hermes_report_read_failed';
-    return res.status(reason === 'hermes_investigation_context_not_active' ? 409 : 400).json({ ok: false, error: reason });
+    return res.status(reason.includes('http_404') ? 404 : 400).json({ ok: false, error: reason });
   }
-});
-
-router.get('/hermes/report', (req, res) => {
-  const projectId = String(req.query?.projectId || '').trim();
-  const conversationId = String(req.query?.conversationId || 'main').trim();
-  if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-  return res.json({ ok: true, report: readLatestHermesReport(projectId, conversationId) });
 });
 
 // Latest filtered CodeGraph view from a direct_main_audit run, for the frontend
@@ -960,16 +949,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
       error: 'conversation_persistence_unavailable',
       correlationId,
     });
-  }
-  // Bind this turn's Hermes report lifecycle to the run (parentRunId = correlationId)
-  // so a mid-turn hermes.write_report attaches to THIS focused branch — the 0-caller
-  // lifecycle is now driven. Best-effort: a lifecycle hiccup never breaks the stream.
-  try {
-    beginHermesInvestigation(correlationId, investigationContext);
-  } catch (error) {
-    logHarnessTrace(
-      `[harness] hermes investigation begin skipped corr=${correlationId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
-    );
   }
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -1157,11 +1136,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
   } finally {
     turnFinished = true;
     activeGrpcTurns.delete(sessionId);
-    try {
-      endHermesInvestigation(correlationId);
-    } catch {
-      /* investigation already cleared — never block turn teardown */
-    }
     writeSse('end', {});
     if (!res.destroyed && !res.writableEnded) res.end();
   }

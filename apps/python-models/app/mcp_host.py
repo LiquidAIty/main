@@ -753,9 +753,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="hermes.read_report",
             description=(
-                "Hermes only: read the current full durable investigation report for the active native "
-                "parentRunId before revising it. The server resolves project and conversation identity; "
-                "Main Chat receives only the separate bounded report context."
+                "Hermes only: read the exact durable result linked to this native parentRunId. "
+                "The server resolves its AgentGraph assignment directly; no latest-report scan."
             ),
             inputSchema={
                 "type": "object",
@@ -766,9 +765,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="hermes.write_report",
             description=(
-                "Hermes only: create or revise the one durable human-readable investigation report for "
-                "the active project conversation. The server resolves project and conversation "
-                "identity from parentRunId; never supply them. Include only real stable "
+                "Hermes only: finish one exact AgentGraph assignment with a durable report result. "
+                "The server resolves project, conversation, instruction, and native session identity "
+                "from parentRunId; never supply them. Include only real stable "
                 "ThinkGraph node ids, KnowGraph refs, and CodeGraph refs. On success, return "
                 "the completion metadata exactly; do not repeat the report body to Main Chat."
             ),

@@ -33,7 +33,7 @@ from app.python_models.tool_registry import (
     THINKGRAPH_PATCH_EVENTS,
     THINKGRAPH_RUN_AUTHORITY,
     build_local_coder_tool,
-    build_return_writer_tool,
+    build_assignment_artifact_tool,
 )
 from app.python_models.orchestration_contracts import (
     ContextPack,
@@ -240,11 +240,9 @@ def _build_participants(
                 else tool
                 for tool in tools
             ]
-        # Any run with an assigned result folder (a Coder handoff OR a standalone
-        # single-agent run) additionally gets a return writer scoped to THIS agent's
-        # own returns/<run-id>/<card-id>/ subdir (card id from trusted participant
-        # context — no agent-name branch, no shared folder).
-        tools = [*tools, build_return_writer_tool(card_id or name)]
+        # Each active assignment gets a writer scoped to that assignment and
+        # producer card. The tool registers every real artifact in AgentGraph.
+        tools = [*tools, build_assignment_artifact_tool(card_id or name)]
         if extra_tools:
             tools = [*tools, *extra_tools]
         if tools:
@@ -310,6 +308,10 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     profile and hook chain come from saved assignment only; Python hosts the
     execution and owns no card-specific policy here.
     """
+    assignment_id: str | None = None
+    lease_token: str | None = None
+    terminal_artifacts: list[dict[str, Any]] = []
+
     guard = _validate_single_card_context(context)
     if guard:
         return OrchestratorRunResponse(
@@ -322,10 +324,6 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             thinkGraph=context.thinkGraph,
             knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary="no_run"),
         )
-
-    assignment_id: str | None = None
-    lease_token: str | None = None
-    terminal_artifacts: list[dict[str, Any]] = []
 
     async def _fail(error: str, summary: str) -> OrchestratorRunResponse:
         durable_error = ""
@@ -359,12 +357,12 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         (runtime_options.get("deckId") if isinstance(runtime_options, dict) else "")
         or (runtime_scope.get("deckId") if isinstance(runtime_scope, dict) else "")
     )
-    def _returns_fields() -> dict:
-        files = [str(item.get("locator") or "") for item in terminal_artifacts]
+    def _assignment_fields() -> dict:
         return {
             "assignmentId": assignment_id,
-            "returnedFiles": files,
-            "returnStatus": "return_files_created" if files else "no_return_files_created",
+            "artifactLocators": [
+                str(item.get("locator") or "") for item in terminal_artifacts
+            ],
         }
 
     selected_tools = [_as_text(t) for t in (single.tools or []) if _as_text(t)]
@@ -624,7 +622,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             output=final_text,
         )
         terminal_artifacts = list(completed.get("artifacts") or [])
-        return_fields = _returns_fields()
+        assignment_fields = _assignment_fields()
 
         return OrchestratorRunResponse(
             ok=True,
@@ -634,7 +632,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             thinkGraph=context.thinkGraph,
             knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary="single_card_run"),
             transcript=[run_info],
-            **return_fields,
+            **assignment_fields,
         )
     except Exception as err:  # honest runtime failure — no retry, no fallback
         return await _fail(
@@ -832,12 +830,9 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             error_code=completion_error,
             error_detail=completion_error,
         )
-        returned_files = [
+        artifact_locators = [
             str(item.get("locator") or "") for item in completed.get("artifacts") or []
         ]
-        return_status = (
-            "return_files_created" if returned_files else "no_return_files_created"
-        )
         return OrchestratorRunResponse(
             ok=ok,
             session=context.session,
@@ -858,8 +853,7 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             autogenEvents=autogen_events,
             taskLedgerArtifact=task_ledger_artifact,
             progressLedgerReference=None,
-            returnedFiles=returned_files,
-            returnStatus=return_status,
+            artifactLocators=artifact_locators,
             error=completion_error,
             plan=context.plan,
             thinkGraph=context.thinkGraph,

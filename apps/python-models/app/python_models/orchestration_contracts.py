@@ -468,10 +468,8 @@ class OrchestratorRunResponse(BaseModel):
     taskLedgerArtifact: TaskLedgerArtifact | None = None
     # Progress Ledger is identify-only in this scope: referenced, never started.
     progressLedgerReference: ProgressLedgerReference | None = None
-    # Job-folder handoff run outputs (None for a normal, non-handoff run). The
-    # Registered artifact locators from the canonical AgentGraph result.
-    returnedFiles: list[str] = Field(default_factory=list)
-    returnStatus: Literal["return_files_created", "no_return_files_created"] | None = None
+    # Registered artifact locators from the canonical AgentGraph assignment.
+    artifactLocators: list[str] = Field(default_factory=list)
     error: str | None = None
     blackboardEntries: list[BlackboardEntry] = Field(default_factory=list)
     plan: PlanContext
