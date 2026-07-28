@@ -1166,6 +1166,7 @@ def _resolve_selected_graph_views(
     project_id: str,
     conversation_id: str,
     receiver_card_id: str,
+    receiver_role: str,
     graph_view_ids: list[str] | tuple[str, ...],
 ) -> list[dict[str, Any]]:
     identities = [str(value or "").strip() for value in graph_view_ids]
@@ -1180,6 +1181,11 @@ def _resolve_selected_graph_views(
     from app.python_models.thinkgraph_engraphis import get_thinkgraph
 
     available = get_thinkgraph().graph_views(project_id, conversation_id).get("views") or []
+    allowed_receivers = {
+        value
+        for value in (receiver_card_id, receiver_role)
+        if value
+    }
     resolved: list[dict[str, Any]] = []
     for view_id in identities:
         matches = [
@@ -1193,7 +1199,7 @@ def _resolve_selected_graph_views(
             )
         view = matches[0]
         receiving_role = str(view.get("receivingRole") or "").strip()
-        if receiving_role not in {"", receiver_card_id}:
+        if receiving_role and receiving_role not in allowed_receivers:
             raise PermissionError(
                 f"agentgraph_graph_view_receiver_mismatch: {view_id}"
             )
@@ -1327,6 +1333,7 @@ def hydrate_assignment_context(
         project_id=project_id,
         conversation_id=assignment["conversationId"],
         receiver_card_id=receiver_card_id,
+        receiver_role=str(saved_card_reference.get("role") or "").strip(),
         graph_view_ids=selected_ids,
     )
     if graph_view_ids is not None:

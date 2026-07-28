@@ -153,6 +153,20 @@ describe('isLiquidAItyOwnedDevProcess — fresh stops ONLY grounded LiquidAIty o
     };
     expect(isLiquidAItyOwnedDevProcess(p, REPO)).toEqual({ owned: true, role: 'mcp' });
   });
+  it('owns only the exact public LiquidAIty ngrok tunnel', () => {
+    const p = {
+      pid: 16,
+      name: 'ngrok.exe',
+      commandLine: 'ngrok http --domain=exemption-unstable-wolverine.ngrok-free.dev 8765',
+    };
+    expect(isLiquidAItyOwnedDevProcess(p, REPO)).toEqual({ owned: true, role: 'tunnel' });
+    expect(
+      isLiquidAItyOwnedDevProcess(
+        { ...p, commandLine: 'ngrok http --domain=another-domain.ngrok-free.dev 8765' },
+        REPO,
+      ).owned,
+    ).toBe(false);
+  });
   it('owns the concurrently supervisor under the repo', () => {
     const p = {
       pid: 13, name: 'node.exe',
@@ -166,6 +180,7 @@ describe('isLiquidAItyOwnedDevProcess — fresh stops ONLY grounded LiquidAIty o
       'bun run some-other-thing.ts',
       'node C:\\OtherApp\\server.js',
       'python.exe -m http.server 9000',
+      'ngrok http 9999',
       'C:\\Projects\\main\\apps\\python-models\\.venv\\Scripts\\python.exe C:\\Projects\\main\\apps\\python-models\\app\\other_host.py',
       'C:\\Program Files\\PostgreSQL\\bin\\postgres.exe',
       'node C:\\Projects\\main\\node_modules\\.bin\\eslint.js src', // in-repo but not a dev role

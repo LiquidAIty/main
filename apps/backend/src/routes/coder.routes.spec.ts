@@ -274,14 +274,8 @@ describe('coder routes', () => {
     process.env.LIQUIDAITY_CODEGRAPH_PROJECT = 'C-Projects-main';
     try {
       expect(
-        resolveCodeGraphProjectName([
-          { name: 'C-Projects-kaiwiki-site' },
-          { name: 'C-Projects-main' },
-        ]),
+        resolveCodeGraphProjectName(),
       ).toBe('C-Projects-main');
-      expect(() =>
-        resolveCodeGraphProjectName([{ name: 'C-Projects-kaiwiki-site' }]),
-      ).toThrow('cbm_project_not_indexed: C-Projects-main');
     } finally {
       if (previous === undefined) delete process.env.LIQUIDAITY_CODEGRAPH_PROJECT;
       else process.env.LIQUIDAITY_CODEGRAPH_PROJECT = previous;
@@ -305,17 +299,13 @@ describe('coder routes', () => {
       callTool: cbmCallerMocks.callTool,
       close: cbmCallerMocks.close,
     });
-    cbmCallerMocks.callTool
-      .mockResolvedValueOnce({
-        projects: [{ name: 'C-Projects-main', root_path: 'C:/Projects/main' }],
-      })
-      .mockResolvedValueOnce({
-        project: 'C-Projects-main',
-        root_path: 'C:/Projects/main',
-        nodes: 5283,
-        edges: 17347,
-        status: 'ready',
-      });
+    cbmCallerMocks.callTool.mockResolvedValueOnce({
+      project: 'C-Projects-main',
+      root_path: 'C:/Projects/main',
+      nodes: 5283,
+      edges: 17347,
+      status: 'ready',
+    });
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/codegraph_status`, {
@@ -332,8 +322,8 @@ describe('coder routes', () => {
           status: 'ready',
         },
       });
-      expect(cbmCallerMocks.callTool).toHaveBeenNthCalledWith(1, 'list_projects', {});
-      expect(cbmCallerMocks.callTool).toHaveBeenNthCalledWith(2, 'index_status', {
+      expect(cbmCallerMocks.callTool).toHaveBeenCalledOnce();
+      expect(cbmCallerMocks.callTool).toHaveBeenCalledWith('index_status', {
         project: 'C-Projects-main',
       });
       expect(cbmCallerMocks.close).toHaveBeenCalledOnce();
@@ -349,21 +339,19 @@ describe('coder routes', () => {
       callTool: cbmCallerMocks.callTool,
       close: cbmCallerMocks.close,
     });
-    cbmCallerMocks.callTool
-      .mockResolvedValueOnce({ projects: [{ name: 'C-Projects-main' }] })
-      .mockResolvedValueOnce({
-        total: 1,
-        results: [
-          {
-            name: 'useBuilderDeckPersistenceActions',
-            qualified_name:
-              'C-Projects-main.client.src.components.builder.useBuilderDeckPersistenceActions.useBuilderDeckPersistenceActions',
-            label: 'Function',
-            file_path:
-              'client/src/components/builder/useBuilderDeckPersistenceActions.ts',
-          },
-        ],
-      });
+    cbmCallerMocks.callTool.mockResolvedValueOnce({
+      total: 1,
+      results: [
+        {
+          name: 'useBuilderDeckPersistenceActions',
+          qualified_name:
+            'C-Projects-main.client.src.components.builder.useBuilderDeckPersistenceActions.useBuilderDeckPersistenceActions',
+          label: 'Function',
+          file_path:
+            'client/src/components/builder/useBuilderDeckPersistenceActions.ts',
+        },
+      ],
+    });
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/codegraph_search`, {

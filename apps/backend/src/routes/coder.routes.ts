@@ -72,16 +72,11 @@ import {
 
 const router = Router();
 
-export function resolveCodeGraphProjectName(projects: unknown[]): string {
+export function resolveCodeGraphProjectName(): string {
   const configuredProject = String(
     process.env.LIQUIDAITY_CODEGRAPH_PROJECT || 'C-Projects-main',
   ).trim();
-  const availableProjects = projects
-    .map((project) => String((project as { name?: unknown })?.name || '').trim())
-    .filter(Boolean);
-  if (!availableProjects.includes(configuredProject)) {
-    throw new Error(`cbm_project_not_indexed: ${configuredProject}`);
-  }
+  if (!configuredProject) throw new Error('cbm_project_not_configured');
   return configuredProject;
 }
 
@@ -392,9 +387,7 @@ router.post('/mcp-bridge/codegraph_status', async (_req, res) => {
   let session: Awaited<ReturnType<typeof createCodebaseMemoryMcpCaller>> | null = null;
   try {
     session = await createCodebaseMemoryMcpCaller(process.cwd());
-    const projectList = await session.callTool('list_projects', {});
-    const projects = Array.isArray(projectList.projects) ? projectList.projects : [];
-    const cbmProject = resolveCodeGraphProjectName(projects);
+    const cbmProject = resolveCodeGraphProjectName();
     const status = await session.callTool('index_status', { project: cbmProject });
     return res.json({
       ok: true,
@@ -430,9 +423,7 @@ router.post('/mcp-bridge/codegraph_search', async (req, res) => {
     if (!query) return res.status(400).json({ ok: false, error: 'query_required' });
     const limit = Math.min(Math.max(Number(req.body?.limit) || 15, 1), 50);
     session = await createCodebaseMemoryMcpCaller(process.cwd());
-    const projectList = await session.callTool('list_projects', {});
-    const projects = Array.isArray(projectList.projects) ? projectList.projects : [];
-    const cbmProject = resolveCodeGraphProjectName(projects);
+    const cbmProject = resolveCodeGraphProjectName();
     const exactQualifiedNames =
       canonicalRefs.length > 0
         ? `^(?:${canonicalRefs

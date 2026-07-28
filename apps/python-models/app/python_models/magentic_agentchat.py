@@ -454,10 +454,11 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         )
 
     async def _fail(error: str, summary: str) -> OrchestratorRunResponse:
+        nonlocal result_id, terminal_artifacts
         durable_error = ""
         if assignment_id is not None and lease_token is not None:
             try:
-                await asyncio.to_thread(
+                completed = await asyncio.to_thread(
                     ag.finish_assignment,
                     project_id=context.session.projectId,
                     assignment_id=assignment_id,
@@ -466,11 +467,14 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                     error_code=summary,
                     error_detail=error,
                 )
+                result_id = str(completed.get("resultId") or "") or None
+                terminal_artifacts = list(completed.get("artifacts") or [])
             except Exception as persistence_error:
                 durable_error = f"; outer_assignment_persist_failed: {persistence_error}"
         return OrchestratorRunResponse(
             ok=False,
             session=context.session,
+            **_assignment_fields(),
             finalResponseText="",
             error=error + durable_error,
             plan=context.plan,
@@ -543,11 +547,27 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         lease_token = hydrated_assignment.lease_token
         instruction_body = hydrated_assignment.instruction
     except Exception as err:
+        durable_error = ""
+        if assignment_id is not None:
+            try:
+                cancelled = await asyncio.to_thread(
+                    ag.cancel_assignment,
+                    project_id=context.session.projectId,
+                    assignment_id=assignment_id,
+                    requested_by_card_id=sender_card_id,
+                    reason=f"agentgraph_assignment_begin_failed: {err}",
+                )
+                result_id = str(cancelled.get("resultId") or "") or None
+            except Exception as persistence_error:
+                durable_error = (
+                    f"; outer_assignment_cancel_failed: {persistence_error}"
+                )
         return OrchestratorRunResponse(
             ok=False,
             session=context.session,
+            **_assignment_fields(),
             finalResponseText="",
-            error=f"agentgraph_assignment_begin_failed: {err}",
+            error=f"agentgraph_assignment_begin_failed: {err}{durable_error}",
             plan=context.plan,
             thinkGraph=context.thinkGraph,
             knowGraph=KnowGraphUpdateReport(
@@ -587,12 +607,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     ]
     query_executions = list(hydrated_assignment.executions)
 
-    client = _build_model_client(
-        AutoGenAgentConfig(
-            provider=context.session.modelProvider,
-            provider_model_id=context.session.providerModelId,
-        )
-    )
+    client = None
 
     # Trusted run authority for scoped card tools (e.g. ThinkGraph): server-authored
     # runtimeScope only — the model never supplies authority. Set for the duration of
@@ -620,6 +635,12 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     started = time.monotonic()
 
     try:
+        client = _build_model_client(
+            AutoGenAgentConfig(
+                provider=context.session.modelProvider,
+                provider_model_id=context.session.providerModelId,
+            )
+        )
         optional_bindings = [
             binding for binding in query_bindings if binding.delivery_mode == "optional"
         ]
@@ -760,6 +781,13 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             THINKGRAPH_RUN_AUTHORITY.reset(authority_token)
         if patch_events_token is not None:
             THINKGRAPH_PATCH_EVENTS.reset(patch_events_token)
+        if client is not None:
+            close = getattr(client, "close", None)
+            if callable(close):
+                try:
+                    await close()
+                except Exception:
+                    pass
 
 
 def _read_max_turns(context: ContextPack) -> int:

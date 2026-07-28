@@ -102,17 +102,14 @@ class ThinkGraphEngraphis:
     def __init__(self, db_path: str | Path, *, embedder: Any | None = None) -> None:
         self.db_path = str(db_path)
         self.store = Store(self.db_path)
-        self.embedder = embedder or SentenceTransformerEmbedder(EMBED_MODEL)
-        if int(self.embedder.dim) != 384:
-            raise RuntimeError(f"thinkgraph_embedding_dimension_mismatch: {self.embedder.dim}")
-        self.index = NumpyVectorIndex(self.store)
-        self.engine = MemoryEngine(
-            self.store,
-            self.embedder,
-            self.index,
-            IdentityReranker(),
-            auto_evolve=False,
-        )
+        self._embedder = embedder
+        if self._embedder is not None and int(self._embedder.dim) != 384:
+            raise RuntimeError(
+                f"thinkgraph_embedding_dimension_mismatch: {self._embedder.dim}"
+            )
+        self._index: NumpyVectorIndex | None = None
+        self._engine: MemoryEngine | None = None
+        self._embedding_lock = RLock()
         self.lock = RLock()
         self.store.conn.executescript(
             """
@@ -128,13 +125,46 @@ class ThinkGraphEngraphis:
         )
         self.store.conn.commit()
 
+    def _ensure_embedding_runtime(self) -> None:
+        if self._engine is not None:
+            return
+        with self._embedding_lock:
+            if self._engine is not None:
+                return
+            if self._embedder is None:
+                self._embedder = SentenceTransformerEmbedder(EMBED_MODEL)
+            if int(self._embedder.dim) != 384:
+                raise RuntimeError(
+                    f"thinkgraph_embedding_dimension_mismatch: {self._embedder.dim}"
+                )
+            self._index = NumpyVectorIndex(self.store)
+            self._engine = MemoryEngine(
+                self.store,
+                self._embedder,
+                self._index,
+                IdentityReranker(),
+                auto_evolve=False,
+            )
+
+    @property
+    def embedder(self) -> Any:
+        self._ensure_embedding_runtime()
+        return self._embedder
+
+    @property
+    def engine(self) -> MemoryEngine:
+        self._ensure_embedding_runtime()
+        if self._engine is None:  # pragma: no cover - guarded above
+            raise RuntimeError("thinkgraph_embedding_runtime_unavailable")
+        return self._engine
+
     @property
     def model_info(self) -> dict[str, Any]:
         return {
             "engine": "engraphis-v2",
             "engraphisSchemaVersion": self.store.schema_version,
             "embeddingModel": EMBED_MODEL,
-            "embeddingDimension": int(self.embedder.dim),
+            "embeddingDimension": 384,
             "normalized": True,
             "storage": self.db_path,
             "remoteEmbeddingFallback": False,

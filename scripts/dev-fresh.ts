@@ -9,6 +9,8 @@
  */
 
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   GRPC_PORT,
   decideGrpcAction,
@@ -17,6 +19,59 @@ import {
   isLiquidAItyOwnedDevProcess,
   stopProcessTree,
 } from './devStack';
+
+type CommandResult = { code: number; output: string };
+
+function runCommand(command: string, args: string[]): Promise<CommandResult> {
+  return new Promise((resolve) => {
+    let output = '';
+    const child = spawn(command, args, { windowsHide: true });
+    child.stdout?.on('data', (data) => (output += String(data)));
+    child.stderr?.on('data', (data) => (output += String(data)));
+    child.on('error', (error) => resolve({ code: -1, output: error.message }));
+    child.on('close', (code) => resolve({ code: code ?? -1, output: output.trim() }));
+  });
+}
+
+async function dockerIsReady(): Promise<boolean> {
+  return (await runCommand('docker', ['info', '--format', '{{.ServerVersion}}'])).code === 0;
+}
+
+async function ensureGraphDatabases(): Promise<void> {
+  if (!(await dockerIsReady())) {
+    if (process.platform !== 'win32') {
+      throw new Error('Docker is not running; start the Docker engine and retry.');
+    }
+    const dockerDesktop = join(
+      process.env.ProgramFiles || 'C:\\Program Files',
+      'Docker',
+      'Docker',
+      'Docker Desktop.exe',
+    );
+    if (!existsSync(dockerDesktop)) {
+      throw new Error(`Docker Desktop was not found at ${dockerDesktop}`);
+    }
+    console.log('[fresh] starting Docker Desktop');
+    const docker = spawn(dockerDesktop, [], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    docker.unref();
+    for (let attempt = 0; attempt < 20 && !(await dockerIsReady()); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+    }
+    if (!(await dockerIsReady())) {
+      throw new Error('Docker Desktop did not become ready within 50 seconds.');
+    }
+  }
+
+  const started = await runCommand('docker', ['start', 'sim-pg', 'neo4j']);
+  if (started.code !== 0) {
+    throw new Error(`failed to start graph databases: ${started.output}`);
+  }
+  console.log('[fresh] PostgreSQL/AGE and Neo4j are running');
+}
 
 async function main(): Promise<void> {
   const repoRoot = process.cwd();
@@ -43,7 +98,12 @@ async function main(): Promise<void> {
     stopProcessTree(p.pid);
   }
 
-  // 3) Let them exit, then start one clean stack (dev:grpc is guarded, so exactly
+  // 3) Bring up the two existing graph database containers. They are persistent
+  // stores, not children of the app supervisor, so a reboot must start them
+  // before the application stack.
+  await ensureGraphDatabases();
+
+  // 4) Let owned processes exit, then start one clean stack (dev:grpc is guarded, so exactly
   // one gRPC server comes up).
   if (owned.length > 0) await new Promise((r) => setTimeout(r, 1500));
   console.log('[fresh] starting one clean stack: npm run dev:all');

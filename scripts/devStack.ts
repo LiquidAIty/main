@@ -118,7 +118,7 @@ export function decideAutogenAction(listener: PortListener | null): UvicornActio
   return decideUvicornAction(listener, 'app.main:app', AUTOGEN_PORT);
 }
 
-export type OwnedRole = 'grpc' | 'autogen' | 'backend' | 'frontend' | 'mcp' | 'supervisor';
+export type OwnedRole = 'grpc' | 'autogen' | 'backend' | 'frontend' | 'mcp' | 'tunnel' | 'supervisor';
 
 /**
  * May `dev:fresh` stop this process? ONLY when its command line carries a grounded
@@ -138,6 +138,18 @@ export function isLiquidAItyOwnedDevProcess(
   // include the repo path, but bun + scripts/start-grpc.ts is unambiguous).
   if (norm(proc.name).includes('bun') && /(^|[\s/])scripts\/start-grpc\.ts(\s|$)/.test(cmd)) {
     return { owned: true, role: 'grpc' };
+  }
+
+  // Public MCP tunnel: the reserved LiquidAIty ngrok domain targeting the
+  // official HTTP MCP port is unambiguous even though ngrok's child command
+  // line does not carry the repository root.
+  if (
+    norm(proc.name).includes('ngrok') &&
+    /\bhttp\b/.test(cmd) &&
+    /--domain(?:=|\s+)exemption-unstable-wolverine\.ngrok-free\.dev\b/.test(cmd) &&
+    /\b8765\b/.test(cmd)
+  ) {
+    return { owned: true, role: 'tunnel' };
   }
 
   // Everything else must be grounded in the repo root path to be ownable.
@@ -204,13 +216,13 @@ export async function inspectPort(port: number): Promise<PortListener | null> {
   return { pid, name, commandLine: cmd };
 }
 
-/** Enumerate candidate dev processes (bun/node/python/powershell) with command
+/** Enumerate candidate dev processes (bun/node/python/powershell/ngrok) with command
  * lines, so dev-fresh can match ONLY grounded LiquidAIty owners. */
 export async function enumerateProcesses(): Promise<ProcInfo[]> {
   if (process.platform === 'win32') {
     const ps = [
       '-NoProfile', '-Command',
-      `Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'bun|node|python|powershell' } |` +
+      `Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'bun|node|python|powershell|ngrok' } |` +
       ` ForEach-Object { [pscustomobject]@{ pid=$_.ProcessId; name=$_.Name; commandLine=$_.CommandLine } } | ConvertTo-Json -Compress`,
     ];
     const raw = (await runCapture('powershell.exe', ps)).trim();

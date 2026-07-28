@@ -5,6 +5,7 @@ import hashlib
 import numpy as np
 import pytest
 
+from app.python_models import thinkgraph_engraphis as thinkgraph_module
 from app.python_models.thinkgraph_engraphis import ThinkGraphEngraphis
 
 
@@ -168,6 +169,23 @@ def test_same_canonical_id_is_isolated_across_projects_and_conversations(tmp_pat
     assert admin["id"] != other["id"]
     assert admin["conversationId"] == "kg-self-01"
     assert other["conversationId"] == "other-conversation"
+
+
+def test_graph_view_reads_do_not_load_the_embedding_model(tmp_path, monkeypatch):
+    def unexpected_embedding_load(*_args, **_kwargs):
+        raise AssertionError("Graph View reads must not load the embedding model")
+
+    monkeypatch.setattr(
+        thinkgraph_module,
+        "SentenceTransformerEmbedder",
+        unexpected_embedding_load,
+    )
+    graph = ThinkGraphEngraphis(tmp_path / "thinkgraph.sqlite")
+
+    result = graph.graph_views("ADMIN", "kg-self-01")
+    assert result["ok"] is True
+    assert result["views"] == []
+    assert graph._engine is None
 
 
 def test_graph_views_are_durable_versioned_and_keep_lineage(tmp_path):

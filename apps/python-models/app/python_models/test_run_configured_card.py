@@ -144,6 +144,7 @@ class TestGuardFailureResponse:
 
     def test_assignment_hydration_failure_starts_no_model(self, monkeypatch):
         model_calls: list[str] = []
+        cancelled: list[dict[str, object]] = []
         monkeypatch.setattr(
             mac.rq,
             "hydrate_assignment_context",
@@ -156,12 +157,74 @@ class TestGuardFailureResponse:
             "_build_model_client",
             lambda _config: model_calls.append("model"),
         )
+        monkeypatch.setattr(
+            mac.ag,
+            "cancel_assignment",
+            lambda **kwargs: (
+                cancelled.append(kwargs)
+                or {
+                    "resultId": f"agentresult:{kwargs['assignment_id']}",
+                    "status": "cancelled",
+                }
+            ),
+        )
 
         response = asyncio.run(mac.run_configured_card(_context()))
 
         assert response.ok is False
         assert "registered_operation_materialization_failed" in (response.error or "")
         assert model_calls == []
+        assert response.assignmentId == "assignment:corr-1"
+        assert response.resultId == "agentresult:assignment:corr-1"
+        assert cancelled == [
+            {
+                "project_id": "p",
+                "assignment_id": "assignment:corr-1",
+                "requested_by_card_id": "tg",
+                "reason": (
+                    "agentgraph_assignment_begin_failed: "
+                    "registered_operation_materialization_failed"
+                ),
+            }
+        ]
+
+    def test_model_client_construction_failure_finishes_assignment(self, monkeypatch):
+        finished: list[dict[str, object]] = []
+        monkeypatch.setattr(mac.rpe, "prepare", lambda **_kwargs: None)
+        monkeypatch.setattr(
+            mac,
+            "_build_model_client",
+            lambda _config: (_ for _ in ()).throw(RuntimeError("provider config invalid")),
+        )
+        monkeypatch.setattr(
+            mac.ag,
+            "finish_assignment",
+            lambda **kwargs: (
+                finished.append(kwargs)
+                or {
+                    "resultId": f"agentresult:{kwargs['assignment_id']}",
+                    "artifacts": [],
+                }
+            ),
+        )
+
+        response = asyncio.run(mac.run_configured_card(_context()))
+
+        assert response.ok is False
+        assert "provider config invalid" in (response.error or "")
+        assert response.assignmentId == "assignment:corr-1"
+        assert response.instructionId == "instruction:test"
+        assert response.resultId == "agentresult:assignment:corr-1"
+        assert finished == [
+            {
+                "project_id": "p",
+                "assignment_id": "assignment:corr-1",
+                "lease_token": "lease:test",
+                "status": "failed",
+                "error_code": "run_failed",
+                "error_detail": "single_card_run_failed: provider config invalid",
+            }
+        ]
 
 # --------------------------------------------------------------------------- #
 # shared builder reuse — the SAME code path Mag One participants use

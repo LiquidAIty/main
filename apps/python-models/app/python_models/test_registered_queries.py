@@ -502,7 +502,7 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
         "viewId": "graphview:one",
         "displayLabel": "Selected project context",
         "authority": "mixed",
-        "receivingRole": "card_agent",
+        "receivingRole": "research",
         "records": [
             {
                 "canonicalId": "thinkgraph:decision:one",
