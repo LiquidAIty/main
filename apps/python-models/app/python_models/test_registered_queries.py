@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from uuid import uuid4
 
 import numpy as np
 import pytest
 
 from app import control_plane
 from app.python_models import registered_queries as rq
-from app.python_models.postgres import connect_postgres
 from app.python_models.thinkgraph_engraphis import ThinkGraphEngraphis
 
 
@@ -37,14 +35,9 @@ def _query(**overrides) -> rq.RegisteredQueryVersion:
         "project_id": PROJECT_ID,
         "query_id": "agentgraph.context_count",
         "version": 1,
-        "target_graph": "agentgraph",
-        "operation_class": "read",
-        "capability_id": None,
         "database_authority": "postgresql",
         "database_name": "liquidaity",
-        "owner_id": "card_main_chat",
         "title": "AgentGraph context count",
-        "description": "Bounded count by project.",
         "language": "sql",
         "statement": (
             "SELECT count(*)::int AS context_count "
@@ -55,8 +48,6 @@ def _query(**overrides) -> rq.RegisteredQueryVersion:
         },
         "row_limit": 10,
         "timeout_ms": 2000,
-        "authored_by": "card_main_chat",
-        "audit_note": "focused test",
     }
     values.update(overrides)
     return rq.RegisteredQueryVersion(**values)
@@ -92,59 +83,6 @@ def test_typed_parameters_are_bounded_and_unknown_values_fail() -> None:
         rq.validate_parameters(schema, {"symbol": "TOO-LONG-1"})
 
 
-def test_registry_versions_are_immediately_referenceable_and_immutable() -> None:
-    query_id = f"test.query.{uuid4().hex}"
-    connection = connect_postgres(autocommit=False)
-    try:
-        rq.create_query(
-            project_id=PROJECT_ID,
-            query_id=query_id,
-            database_authority="postgresql",
-            database_name="liquidaity",
-            owner_id="card_main_chat",
-            title="Transactional registry test",
-            connection=connection,
-        )
-        rq.create_version(
-            project_id=PROJECT_ID,
-            query_id=query_id,
-            version=1,
-            language="sql",
-            statement="SELECT %(value)s::int AS value",
-            parameter_schema={
-                "value": {"type": "integer", "required": True, "minimum": 0, "maximum": 10}
-            },
-            row_limit=1,
-            timeout_ms=1000,
-            authored_by="card_main_chat",
-            audit_note="draft proof",
-            connection=connection,
-        )
-        registered = rq.resolve_registered_version(
-            PROJECT_ID,
-            query_id,
-            1,
-            connection=connection,
-        )
-        assert registered.query_id == query_id
-
-        with connection.cursor() as cursor:
-            cursor.execute("SAVEPOINT immutable_check")
-            with pytest.raises(Exception, match="registered_query_records_are_immutable"):
-                cursor.execute(
-                    """
-                    UPDATE ag_catalog.registered_query_versions
-                    SET statement='SELECT 2'
-                    WHERE project_id=%s AND query_id=%s AND version=1
-                    """,
-                    (PROJECT_ID, query_id),
-                )
-            cursor.execute("ROLLBACK TO SAVEPOINT immutable_check")
-    finally:
-        connection.rollback()
-        connection.close()
-
-
 def test_sql_and_age_execution_are_database_read_only_and_bounded() -> None:
     rows, truncated = rq._execute_read_only(
         _query(),
@@ -174,7 +112,6 @@ def test_materialized_registered_query_view_uses_canonical_graph_view_store(tmp_
     query = _query()
     binding = rq.QueryBinding(
         project_id=PROJECT_ID,
-        deck_id="deck_builder",
         card_id="card_main_chat",
         binding_id="required_context",
         query_id=query.query_id,
@@ -211,7 +148,6 @@ def test_assignment_hydrator_materializes_required_and_keeps_optional_scoped(
     events: list[str] = []
     required = rq.QueryBinding(
         project_id=PROJECT_ID,
-        deck_id="deck_builder",
         card_id="card_magentic",
         binding_id="operation-ref:1",
         query_id="agentgraph.active_context_identities",
@@ -221,7 +157,6 @@ def test_assignment_hydrator_materializes_required_and_keeps_optional_scoped(
     )
     optional = rq.QueryBinding(
         project_id=PROJECT_ID,
-        deck_id="deck_builder",
         card_id="card_magentic",
         binding_id="operation-ref:2",
         query_id="agentgraph.active_context_identities",
@@ -264,16 +199,10 @@ def test_assignment_hydrator_materializes_required_and_keeps_optional_scoped(
             },
         ],
     }
-    monkeypatch.setattr(rq, "assigned_query_bindings", lambda **_kwargs: [])
     monkeypatch.setattr(
         rq,
         "bindings_from_operation_references",
         lambda **_kwargs: [required, optional],
-    )
-    monkeypatch.setattr(
-        rq,
-        "partition_operation_bindings",
-        lambda _bindings, **_kwargs: ([required, optional], []),
     )
     monkeypatch.setattr(control_plane, "_load_deck", lambda *_args: ({}, None))
     monkeypatch.setattr(
@@ -314,7 +243,6 @@ def test_assignment_hydrator_materializes_required_and_keeps_optional_scoped(
     )
 
     assert events == ["required"]
-    assert hydrated.graph_view_ids == ("graphview:query:one",)
     assert hydrated.optional_bindings == (optional,)
     assert "graphview:query:one" in hydrated.model_context
 
@@ -324,7 +252,6 @@ def test_required_hydration_failure_finishes_only_the_assignment(
 ) -> None:
     required = rq.QueryBinding(
         project_id=PROJECT_ID,
-        deck_id="deck_builder",
         card_id="card_magentic",
         binding_id="operation-ref:1",
         query_id="agentgraph.active_context_identities",
@@ -343,7 +270,15 @@ def test_required_hydration_failure_finishes_only_the_assignment(
             "correlationId": "run:one",
             "conversationId": "main",
             "deckId": "deck_builder",
-            "operationReferences": [],
+            "operationReferences": [
+                {
+                    "referenceId": "operation-ref:1",
+                    "operationId": required.query_id,
+                    "version": required.query_version,
+                    "executionRole": "required_context",
+                    "parameters": required.parameters,
+                }
+            ],
         },
     )
     monkeypatch.setattr(control_plane, "_load_deck", lambda *_args: ({}, None))
@@ -356,11 +291,10 @@ def test_required_hydration_failure_finishes_only_the_assignment(
             "runtimeOptions": {"tools": ["agentgraph.inspect"]},
         },
     )
-    monkeypatch.setattr(rq, "assigned_query_bindings", lambda **_kwargs: [required])
     monkeypatch.setattr(
         rq,
-        "partition_operation_bindings",
-        lambda _bindings, **_kwargs: ([required], []),
+        "bindings_from_operation_references",
+        lambda **_kwargs: [required],
     )
     monkeypatch.setattr(
         "app.python_models.agentgraph.claim_assignment",
@@ -399,7 +333,6 @@ def test_required_hydration_failure_finishes_only_the_assignment(
 def test_optional_tool_cannot_execute_another_assignments_binding(monkeypatch) -> None:
     binding = rq.QueryBinding(
         project_id=PROJECT_ID,
-        deck_id="deck_builder",
         card_id="card_magentic",
         binding_id="operation-ref:1",
         query_id="agentgraph.active_context_identities",
@@ -430,7 +363,6 @@ def test_optional_tool_cannot_execute_another_assignments_binding(monkeypatch) -
         correlation_id="run:one",
         assignment_id="assignment:one",
         conversation_id="main",
-        card_grants=["agentgraph.inspect"],
     )
 
     with pytest.raises(ValueError, match="binding_not_assigned"):
@@ -444,7 +376,6 @@ def test_optional_tool_cannot_execute_another_assignments_binding(monkeypatch) -
 def test_optional_tool_failure_does_not_finish_the_assignment(monkeypatch) -> None:
     binding = rq.QueryBinding(
         project_id=PROJECT_ID,
-        deck_id="deck_builder",
         card_id="card_search",
         binding_id="operation-ref:1",
         query_id="agentgraph.active_context_identities",
@@ -469,7 +400,6 @@ def test_optional_tool_failure_does_not_finish_the_assignment(monkeypatch) -> No
         correlation_id="run:one",
         assignment_id="assignment:one",
         conversation_id="main",
-        card_grants=[],
     )
 
     with pytest.raises(RuntimeError, match="optional operation unavailable"):
@@ -560,9 +490,6 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
             "runtimeType": "assistant_agent",
             "runtimeBinding": "research_agent",
             "tools": [],
-            "skills": [],
-            "dataBindings": [],
-            "profile": None,
         },
     )
     monkeypatch.setattr(
@@ -578,13 +505,7 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
             },
         )(),
     )
-    monkeypatch.setattr(rq, "assigned_query_bindings", lambda **_kwargs: [])
     monkeypatch.setattr(rq, "bindings_from_operation_references", lambda **_kwargs: [])
-    monkeypatch.setattr(
-        rq,
-        "partition_operation_bindings",
-        lambda *_args, **_kwargs: ([], []),
-    )
 
     hydrated = rq.hydrate_assignment_context(
         project_id="project-one",
@@ -593,9 +514,6 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
         graph_view_ids=["graphview:one"],
     )
 
-    assert hydrated.selected_graph_view_ids == ("graphview:one",)
-    assert hydrated.graph_view_ids == ("graphview:one",)
-    assert hydrated.saved_card_reference["cardId"] == "card_agent"
     assert "graphview:one" in hydrated.model_context
     assert "Use the canonical AgentGraph assignment." in hydrated.model_context
     assert references == [

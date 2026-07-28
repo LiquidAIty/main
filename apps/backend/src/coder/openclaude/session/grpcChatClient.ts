@@ -283,7 +283,7 @@ function doorwayWhenToUse(binding: string, title: string): string {
 
 /** A thin native doorway definition bound to ONE saved card. Pure transport:
  * it carries no card prompt, no card tool grants, no model configuration and
- * no data bindings — Python resolves ALL of those from the saved card when
+ * no assignment context — Python resolves the saved card and pass-specific references when
  * runConfiguredCard executes it. The doorway only relays the task and returns
  * the structured result. */
 export function buildHarnessAgentDefinition(

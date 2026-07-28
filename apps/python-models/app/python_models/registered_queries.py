@@ -47,36 +47,25 @@ class RegisteredQueryVersion:
     project_id: str
     query_id: str
     version: int
-    target_graph: str
-    operation_class: str
-    capability_id: str | None
     database_authority: str
     database_name: str
-    owner_id: str
     title: str
-    description: str
     language: str
     statement: str
     parameter_schema: dict[str, dict[str, Any]]
     row_limit: int
     timeout_ms: int
-    authored_by: str
-    audit_note: str
-    disabled_at: datetime | None = None
 
 
 @dataclass(frozen=True)
 class QueryBinding:
     project_id: str
-    deck_id: str
     card_id: str
     binding_id: str
     query_id: str
     query_version: int
     delivery_mode: str
     parameters: dict[str, Any]
-    explanation: str | None = None
-    authorization_source: str = "card_grant"
 
 
 @dataclass(frozen=True)
@@ -93,40 +82,10 @@ class QueryExecution:
 
 @dataclass(frozen=True)
 class HydratedAssignmentContext:
-    assignment_id: str
-    instruction_id: str
-    instruction_sha256: str
-    correlation_id: str
-    receiver_card_id: str
     instruction: str
     lease_token: str
-    lease_expires_at: str
-    attempt: int
-    required_bindings: tuple[QueryBinding, ...]
     optional_bindings: tuple[QueryBinding, ...]
-    executions: tuple[QueryExecution, ...]
-    graph_view_ids: tuple[str, ...]
-    query_execution_ids: tuple[str, ...]
-    card_grants: tuple[str, ...]
     model_context: str
-    selected_graph_view_ids: tuple[str, ...] = ()
-    saved_card_reference: dict[str, Any] | None = None
-
-
-_GRAPH_GRANTS: dict[tuple[str, str], frozenset[str]] = {
-    ("thinkgraph", "read"): frozenset({"thinkgraph.get_graph_slice"}),
-    ("thinkgraph", "write"): frozenset({"thinkgraph.submit_update"}),
-    ("knowgraph", "read"): frozenset({"knowgraph.query"}),
-    ("knowgraph", "write"): frozenset({"knowgraph.ingest"}),
-    ("codegraph", "read"): frozenset({"codegraph.status", "codegraph.search"}),
-    ("codegraph", "write"): frozenset(),
-    ("agentgraph", "read"): frozenset({"agentgraph.inspect"}),
-    ("agentgraph", "write"): frozenset(),
-}
-_WRITE_CAPABILITIES = {
-    ("thinkgraph", "write"): "thinkgraph.submit_update",
-    ("knowgraph", "write"): "knowgraph.ingest",
-}
 
 
 def _required_identity(value: Any, field: str) -> str:
@@ -147,49 +106,6 @@ def _json_object(value: Any, field: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"registered_query_{field}_must_be_object")
     return dict(value)
-
-
-def _graph_identity(value: Any) -> str:
-    graph = str(value or "").strip().lower()
-    if graph not in {"thinkgraph", "knowgraph", "codegraph", "agentgraph"}:
-        raise ValueError(f"registered_operation_target_graph_invalid: {graph}")
-    return graph
-
-
-def _operation_class(value: Any) -> str:
-    operation_class = str(value or "").strip().lower()
-    if operation_class not in {"read", "write"}:
-        raise ValueError(
-            f"registered_operation_class_invalid: {operation_class}"
-        )
-    return operation_class
-
-
-def authorize_registered_operation(
-    operation: RegisteredQueryVersion,
-    card_grants: list[str] | tuple[str, ...] | set[str] | frozenset[str],
-) -> str:
-    """Authorize an operation from the receiving saved card's current grants."""
-    target_graph = _graph_identity(operation.target_graph)
-    operation_class = _operation_class(operation.operation_class)
-    if target_graph == "codegraph" and operation_class == "write":
-        raise PermissionError("registered_operation_codegraph_write_owned_by_cbm")
-    required = _GRAPH_GRANTS[(target_graph, operation_class)]
-    granted = {str(value).strip() for value in card_grants if str(value).strip()}
-    matched = sorted(required & granted)
-    if not matched:
-        raise PermissionError(
-            "registered_operation_not_granted: "
-            f"{target_graph}:{operation_class}"
-        )
-    if operation_class == "write":
-        canonical = _WRITE_CAPABILITIES.get((target_graph, operation_class))
-        if operation.capability_id != canonical or canonical not in granted:
-            raise PermissionError(
-                "registered_operation_write_capability_mismatch: "
-                f"{operation.capability_id or 'none'}"
-            )
-    return matched[0]
 
 
 def _rows(cursor: Any) -> list[dict[str, Any]]:
@@ -381,214 +297,6 @@ def validate_read_only_statement(language: str, statement: Any) -> str:
     return text
 
 
-def _audit(
-    cursor: Any,
-    *,
-    project_id: str,
-    query_id: str,
-    version: int | None,
-    action: str,
-    actor_id: str,
-    detail: dict[str, Any],
-) -> None:
-    cursor.execute(
-        """
-        INSERT INTO ag_catalog.registered_query_audit
-          (audit_id, project_id, query_id, version, action, actor_id, detail)
-        VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb)
-        """,
-        (
-            f"queryaudit:{uuid4().hex}",
-            project_id,
-            query_id,
-            version,
-            action,
-            actor_id,
-            json.dumps(detail, ensure_ascii=False),
-        ),
-    )
-
-
-def create_query(
-    *,
-    project_id: str,
-    query_id: str,
-    database_authority: str,
-    database_name: str,
-    owner_id: str,
-    title: str,
-    description: str = "",
-    target_graph: str = "agentgraph",
-    operation_class: str = "read",
-    capability_id: str | None = None,
-    connection: Any | None = None,
-) -> None:
-    project_id = _required_identity(project_id, "project_id")
-    query_id = _required_identity(query_id, "query_id")
-    owner_id = _required_identity(owner_id, "owner_id")
-    authority = str(database_authority or "").strip()
-    if authority not in {"postgresql", "agentgraph_age"}:
-        raise ValueError("registered_query_database_authority_invalid")
-    database_name = _required_identity(database_name, "database_name")
-    target_graph = _graph_identity(target_graph)
-    operation_class = _operation_class(operation_class)
-    capability_id = (
-        _required_identity(capability_id, "capability_id")
-        if capability_id is not None
-        else None
-    )
-    if target_graph == "codegraph" and operation_class == "write":
-        raise ValueError("registered_operation_codegraph_write_owned_by_cbm")
-    expected_capability = _WRITE_CAPABILITIES.get((target_graph, operation_class))
-    if operation_class == "read" and capability_id is not None:
-        raise ValueError("registered_operation_read_capability_invalid")
-    if operation_class == "write" and capability_id != expected_capability:
-        raise ValueError(
-            "registered_operation_write_capability_invalid: "
-            f"{target_graph}:{capability_id or 'none'}"
-        )
-    own = connection is None
-    connection = connection or connect_postgres(autocommit=False)
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO ag_catalog.registered_queries
-                  (project_id, query_id, database_authority, database_name, owner_id,
-                   title, description, target_graph, operation_class, capability_id)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """,
-                (
-                    project_id,
-                    query_id,
-                    authority,
-                    database_name,
-                    owner_id,
-                    _required_text(title, "title", maximum=500),
-                    str(description or "")[:4000],
-                    target_graph,
-                    operation_class,
-                    capability_id,
-                ),
-            )
-            _audit(
-                cursor,
-                project_id=project_id,
-                query_id=query_id,
-                version=None,
-                action="created",
-                actor_id=owner_id,
-                detail={
-                    "databaseAuthority": authority,
-                    "databaseName": database_name,
-                    "targetGraph": target_graph,
-                    "operationClass": operation_class,
-                    "capabilityId": capability_id,
-                },
-            )
-        if own:
-            connection.commit()
-    except Exception:
-        if own:
-            connection.rollback()
-        raise
-    finally:
-        if own:
-            connection.close()
-
-
-def create_version(
-    *,
-    project_id: str,
-    query_id: str,
-    version: int,
-    language: str,
-    statement: str,
-    parameter_schema: dict[str, Any],
-    row_limit: int,
-    timeout_ms: int,
-    authored_by: str,
-    audit_note: str,
-    connection: Any | None = None,
-) -> None:
-    project_id = _required_identity(project_id, "project_id")
-    query_id = _required_identity(query_id, "query_id")
-    authored_by = _required_identity(authored_by, "authored_by")
-    if not isinstance(version, int) or version < 1:
-        raise ValueError("registered_query_version_invalid")
-    language = str(language or "").strip().lower()
-    if language == "capability":
-        statement = _required_identity(statement, "capability_statement")
-    else:
-        statement = validate_read_only_statement(language, statement)
-    schema = validate_parameter_schema(parameter_schema)
-    if not isinstance(row_limit, int) or not 1 <= row_limit <= 1000:
-        raise ValueError("registered_query_row_limit_invalid")
-    if not isinstance(timeout_ms, int) or not 100 <= timeout_ms <= 30000:
-        raise ValueError("registered_query_timeout_invalid")
-    note = _required_text(audit_note, "audit_note", maximum=4000)
-    own = connection is None
-    connection = connection or connect_postgres(autocommit=False)
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT operation_class, capability_id
-                FROM ag_catalog.registered_queries
-                WHERE project_id=%s AND query_id=%s
-                """,
-                (project_id, query_id),
-            )
-            operation_row = cursor.fetchone()
-            if operation_row is None:
-                raise LookupError(f"registered_query_not_found: {query_id}")
-            operation_class_value, capability_id = operation_row
-            if operation_class_value == "read" and language == "capability":
-                raise ValueError("registered_operation_read_definition_invalid")
-            if operation_class_value == "write" and (
-                language != "capability" or statement != capability_id
-            ):
-                raise ValueError("registered_operation_write_definition_invalid")
-            cursor.execute(
-                """
-                INSERT INTO ag_catalog.registered_query_versions
-                  (project_id, query_id, version, language, statement, parameter_schema,
-                   row_limit, timeout_ms, authored_by, audit_note)
-                VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s)
-                """,
-                (
-                    project_id,
-                    query_id,
-                    version,
-                    language,
-                    statement,
-                    json.dumps(schema, ensure_ascii=False),
-                    row_limit,
-                    timeout_ms,
-                    authored_by,
-                    note,
-                ),
-            )
-            _audit(
-                cursor,
-                project_id=project_id,
-                query_id=query_id,
-                version=version,
-                action="version_created",
-                actor_id=authored_by,
-                detail={"language": language, "rowLimit": row_limit, "timeoutMs": timeout_ms},
-            )
-        if own:
-            connection.commit()
-    except Exception:
-        if own:
-            connection.rollback()
-        raise
-    finally:
-        if own:
-            connection.close()
-
-
 def resolve_registered_version(
     project_id: str,
     query_id: str,
@@ -602,11 +310,10 @@ def resolve_registered_version(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT q.project_id, q.query_id, v.version, q.target_graph,
-                       q.operation_class, q.capability_id, q.database_authority,
-                       q.database_name, q.owner_id, q.title, q.description,
-                       v.language, v.statement, v.parameter_schema, v.row_limit,
-                       v.timeout_ms, v.authored_by, v.audit_note, q.disabled_at
+                SELECT q.project_id, q.query_id, v.version, q.operation_class,
+                       q.database_authority, q.database_name, q.title, v.language,
+                       v.statement, v.parameter_schema, v.row_limit, v.timeout_ms,
+                       q.disabled_at
                 FROM ag_catalog.registered_queries q
                 JOIN ag_catalog.registered_query_versions v
                   ON v.project_id=q.project_id AND v.query_id=q.query_id
@@ -624,146 +331,33 @@ def resolve_registered_version(
             connection.close()
     if row is None:
         raise LookupError(f"registered_query_not_found: {query_id}@v{version}")
-    if row[18] is not None:
+    if row[12] is not None:
         raise PermissionError(f"registered_query_disabled: {query_id}@v{version}")
-    schema = row[13] if isinstance(row[13], dict) else json.loads(str(row[13]))
-    language = str(row[11])
-    statement = (
-        _required_identity(row[12], "capability_statement")
-        if language == "capability"
-        else validate_read_only_statement(language, row[12])
-    )
+    if str(row[3]).strip().lower() != "read":
+        raise PermissionError(
+            f"registered_query_write_operation_not_supported: {query_id}@v{version}"
+        )
+    schema = row[9] if isinstance(row[9], dict) else json.loads(str(row[9]))
+    language = str(row[7])
+    statement = validate_read_only_statement(language, row[8])
     return RegisteredQueryVersion(
         project_id=row[0],
         query_id=row[1],
         version=row[2],
-        target_graph=_graph_identity(row[3]),
-        operation_class=_operation_class(row[4]),
-        capability_id=str(row[5]) if row[5] else None,
-        database_authority=row[6],
-        database_name=row[7],
-        owner_id=row[8],
-        title=row[9],
-        description=row[10],
+        database_authority=row[4],
+        database_name=row[5],
+        title=row[6],
         language=language,
         statement=statement,
         parameter_schema=validate_parameter_schema(schema),
-        row_limit=row[14],
-        timeout_ms=row[15],
-        authored_by=row[16],
-        audit_note=row[17],
-        disabled_at=row[18],
+        row_limit=row[10],
+        timeout_ms=row[11],
     )
-
-
-def assign_query_binding(
-    *,
-    project_id: str,
-    deck_id: str,
-    card_id: str,
-    binding_id: str,
-    query_id: str,
-    query_version: int,
-    delivery_mode: str,
-    parameters: dict[str, Any],
-    assigned_by: str,
-    connection: Any | None = None,
-) -> None:
-    delivery_mode = str(delivery_mode or "").strip()
-    if delivery_mode not in {"required", "optional"}:
-        raise ValueError("registered_query_delivery_mode_invalid")
-    own = connection is None
-    connection = connection or connect_postgres(autocommit=False)
-    try:
-        query = resolve_registered_version(
-            project_id,
-            query_id,
-            query_version,
-            connection=connection,
-        )
-        bounded = validate_parameters(query.parameter_schema, parameters)
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO ag_catalog.card_registered_query_bindings
-                  (project_id, deck_id, card_id, binding_id, query_id, query_version,
-                   delivery_mode, parameters, assigned_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
-                ON CONFLICT (project_id, deck_id, card_id, binding_id) DO UPDATE SET
-                  query_id=EXCLUDED.query_id,
-                  query_version=EXCLUDED.query_version,
-                  delivery_mode=EXCLUDED.delivery_mode,
-                  parameters=EXCLUDED.parameters,
-                  assigned_by=EXCLUDED.assigned_by,
-                  created_at=now()
-                """,
-                (
-                    _required_identity(project_id, "project_id"),
-                    _required_identity(deck_id, "deck_id"),
-                    _required_identity(card_id, "card_id"),
-                    _required_identity(binding_id, "binding_id"),
-                    query.query_id,
-                    query.version,
-                    delivery_mode,
-                    json.dumps(bounded, ensure_ascii=False),
-                    _required_identity(assigned_by, "assigned_by"),
-                ),
-            )
-        if own:
-            connection.commit()
-    except Exception:
-        if own:
-            connection.rollback()
-        raise
-    finally:
-        if own:
-            connection.close()
-
-
-def assigned_query_bindings(
-    *,
-    project_id: str,
-    deck_id: str,
-    card_id: str,
-    connection: Any | None = None,
-) -> list[QueryBinding]:
-    own = connection is None
-    connection = connection or connect_postgres()
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT project_id, deck_id, card_id, binding_id, query_id,
-                       query_version, delivery_mode, parameters
-                FROM ag_catalog.card_registered_query_bindings
-                WHERE project_id=%s AND deck_id=%s AND card_id=%s
-                ORDER BY delivery_mode, binding_id
-                """,
-                (project_id, deck_id, card_id),
-            )
-            rows = cursor.fetchall()
-    finally:
-        if own:
-            connection.close()
-    return [
-        QueryBinding(
-            project_id=row[0],
-            deck_id=row[1],
-            card_id=row[2],
-            binding_id=row[3],
-            query_id=row[4],
-            query_version=row[5],
-            delivery_mode=row[6],
-            parameters=row[7] if isinstance(row[7], dict) else json.loads(str(row[7])),
-        )
-        for row in rows
-    ]
 
 
 def bindings_from_operation_references(
     *,
     project_id: str,
-    deck_id: str,
     card_id: str,
     references: list[dict[str, Any]],
 ) -> list[QueryBinding]:
@@ -780,15 +374,9 @@ def bindings_from_operation_references(
         execution_role = str(reference.get("executionRole") or "").strip()
         if execution_role not in {"required_context", "optional_tool"}:
             raise ValueError("registered_operation_execution_role_invalid")
-        if execution_role == "required_context" and operation.operation_class != "read":
-            raise ValueError(
-                f"registered_operation_write_cannot_be_preexecuted: {query_id}@v{version}"
-            )
-        explanation = str(reference.get("explanation") or "").strip() or None
         bindings.append(
             QueryBinding(
                 project_id=project_id,
-                deck_id=deck_id,
                 card_id=card_id,
                 binding_id=_required_identity(
                     reference.get("referenceId") or f"operation-ref:{index + 1}",
@@ -800,36 +388,9 @@ def bindings_from_operation_references(
                     "required" if execution_role == "required_context" else "optional"
                 ),
                 parameters=parameters,
-                explanation=explanation,
-                authorization_source="assignment_reference",
             )
         )
     return bindings
-
-
-def partition_operation_bindings(
-    bindings: list[QueryBinding],
-    *,
-    card_grants: list[str] | tuple[str, ...] | set[str] | frozenset[str],
-) -> tuple[list[QueryBinding], list[QueryBinding]]:
-    """Return (materializable reads, canonical capability handles)."""
-    reads: list[QueryBinding] = []
-    capabilities: list[QueryBinding] = []
-    for binding in bindings:
-        operation = resolve_registered_version(
-            binding.project_id,
-            binding.query_id,
-            binding.query_version,
-        )
-        if binding.authorization_source == "card_grant":
-            authorize_registered_operation(operation, card_grants)
-        elif binding.authorization_source != "assignment_reference":
-            raise PermissionError("registered_operation_authorization_source_invalid")
-        if operation.operation_class == "write":
-            capabilities.append(binding)
-        else:
-            reads.append(binding)
-    return reads, capabilities
 
 
 def _execute_read_only(
@@ -962,7 +523,6 @@ def execute_binding(
     correlation_id: str,
     assignment_id: str,
     conversation_id: str,
-    card_grants: list[str] | tuple[str, ...] | set[str] | frozenset[str],
     parameter_overrides: dict[str, Any] | None = None,
 ) -> QueryExecution:
     query = resolve_registered_version(
@@ -970,14 +530,6 @@ def execute_binding(
         binding.query_id,
         binding.query_version,
     )
-    if binding.authorization_source == "card_grant":
-        authorize_registered_operation(query, card_grants)
-    elif binding.authorization_source != "assignment_reference":
-        raise PermissionError("registered_operation_authorization_source_invalid")
-    if query.operation_class != "read" or query.language == "capability":
-        raise ValueError(
-            f"registered_operation_materialization_invalid: {query.query_id}@v{query.version}"
-        )
     parameters = validate_parameters(
         query.parameter_schema,
         {**binding.parameters, **(parameter_overrides or {})},
@@ -994,17 +546,14 @@ def execute_binding(
               AND assignment.receiver_card_id=%s
               AND assignment.state='running'
               AND assignment.lease_expires_at > now()
-              AND (
-                %s = 'card_grant'
-                OR EXISTS (
-                  SELECT 1
-                  FROM ag_catalog.agent_assignment_operation_references reference
-                  WHERE reference.assignment_id=assignment.assignment_id
-                    AND reference.reference_id=%s
-                    AND reference.operation_id=%s
-                    AND reference.operation_version=%s
-                    AND reference.parameters=%s::jsonb
-                )
+              AND EXISTS (
+                SELECT 1
+                FROM ag_catalog.agent_assignment_operation_references reference
+                WHERE reference.assignment_id=assignment.assignment_id
+                  AND reference.reference_id=%s
+                  AND reference.operation_id=%s
+                  AND reference.operation_version=%s
+                  AND reference.parameters=%s::jsonb
               )
             """,
             (
@@ -1012,7 +561,6 @@ def execute_binding(
                 binding.project_id,
                 correlation_id,
                 binding.card_id,
-                binding.authorization_source,
                 binding.binding_id,
                 binding.query_id,
                 binding.query_version,
@@ -1085,21 +633,6 @@ def execute_binding(
                 graph_view_id=view_id,
                 connection=connection,
             )
-            _audit(
-                cursor,
-                project_id=query.project_id,
-                query_id=query.query_id,
-                version=query.version,
-                action="executed",
-                actor_id=binding.card_id,
-                detail={
-                    "executionId": execution_id,
-                    "graphViewId": view_id,
-                    "correlationId": correlation_id,
-                    "resultCount": len(rows),
-                    "truncated": truncated,
-                },
-            )
         return QueryExecution(
             execution_id=execution_id,
             binding_id=binding.binding_id,
@@ -1119,15 +652,6 @@ def execute_binding(
                 WHERE execution_id=%s
                 """,
                 (str(error)[:500], execution_id),
-            )
-            _audit(
-                cursor,
-                project_id=query.project_id,
-                query_id=query.query_id,
-                version=query.version,
-                action="rejected",
-                actor_id=binding.card_id,
-                detail={"executionId": execution_id, "error": str(error)[:1000]},
             )
         raise
 
@@ -1301,19 +825,6 @@ def hydrate_assignment_context(
         raise PermissionError(
             f"registered_operation_receiver_card_invalid: {receiver_card_id}"
         )
-    runtime_options = card.get("runtimeOptions") or {}
-    raw_grants = (
-        runtime_options.get("tools")
-        if isinstance(runtime_options, dict)
-        else None
-    )
-    if not isinstance(raw_grants, list):
-        raw_grants = card.get("tools") or []
-    card_grants = [
-        str(grant).strip()
-        for grant in raw_grants
-        if isinstance(grant, str) and str(grant).strip()
-    ]
     saved_card_reference = control_plane.resolve_saved_card_reference(
         project_id,
         assignment["deckId"],
@@ -1349,27 +860,14 @@ def hydrate_assignment_context(
             receiving_card_id=receiver_card_id,
         )
 
-    saved_bindings = assigned_query_bindings(
+    bindings = bindings_from_operation_references(
         project_id=project_id,
-        deck_id=assignment["deckId"],
-        card_id=receiver_card_id,
-    )
-    referenced_bindings = bindings_from_operation_references(
-        project_id=project_id,
-        deck_id=assignment["deckId"],
         card_id=receiver_card_id,
         references=assignment["operationReferences"],
     )
-    bindings = [*saved_bindings, *referenced_bindings]
     binding_ids = [binding.binding_id for binding in bindings]
     if len(binding_ids) != len(set(binding_ids)):
         raise ValueError("registered_operation_binding_identity_conflict")
-    materializable, _callable_operations = partition_operation_bindings(
-        bindings,
-        card_grants=card_grants,
-    )
-    # A missing saved-card grant must fail closed without consuming a lease or
-    # advancing the attempt counter.
     claimed = ag.claim_assignment(
         project_id=project_id,
         assignment_id=assignment_id,
@@ -1384,7 +882,6 @@ def hydrate_assignment_context(
             runtime_provider_model_id,
         )
     ):
-        profile = saved_card_reference.get("profile") or {}
         ag.record_assignment_runtime_context(
             project_id=project_id,
             assignment_id=assignment_id,
@@ -1392,23 +889,10 @@ def hydrate_assignment_context(
             provider=runtime_provider,
             model_key=runtime_model_key,
             provider_model_id=runtime_provider_model_id,
-            profile_id=str(profile.get("profileId") or "") or None,
-            profile_version=(
-                int(profile["version"])
-                if isinstance(profile.get("version"), int)
-                else None
-            ),
-            skill_versions=[
-                f"{skill['skillId']}@v{skill['version']}"
-                for skill in saved_card_reference.get("skills") or []
-            ],
-            data_binding_refs=list(
-                saved_card_reference.get("dataBindings") or []
-            ),
         )
     required_reads = [
         binding
-        for binding in materializable
+        for binding in bindings
         if binding.delivery_mode == "required"
     ]
     optional_operations = [
@@ -1423,7 +907,6 @@ def hydrate_assignment_context(
                 correlation_id=assignment["correlationId"],
                 assignment_id=assignment_id,
                 conversation_id=assignment["conversationId"],
-                card_grants=card_grants,
             )
             for binding in required_reads
         ]
@@ -1486,35 +969,10 @@ def hydrate_assignment_context(
         ]
     )
     return HydratedAssignmentContext(
-        assignment_id=assignment_id,
-        instruction_id=claimed["instructionId"],
-        instruction_sha256=claimed["instructionSha256"],
-        correlation_id=claimed["correlationId"],
-        receiver_card_id=receiver_card_id,
         instruction=claimed["instruction"],
         lease_token=claimed["leaseToken"],
-        lease_expires_at=claimed["leaseExpiresAt"],
-        attempt=claimed["attempt"],
-        required_bindings=tuple(required_reads),
         optional_bindings=tuple(optional_operations),
-        executions=tuple(executions),
-        graph_view_ids=tuple(
-            dict.fromkeys(
-                [
-                    *(str(view.get("viewId") or "") for view in selected_views),
-                    *(execution.graph_view_id for execution in executions),
-                ]
-            )
-        ),
-        query_execution_ids=tuple(
-            execution.execution_id for execution in executions
-        ),
-        card_grants=tuple(card_grants),
         model_context=model_context,
-        selected_graph_view_ids=tuple(
-            str(view.get("viewId") or "") for view in selected_views
-        ),
-        saved_card_reference=saved_card_reference,
     )
 
 
@@ -1524,7 +982,6 @@ def build_bound_query_tool(
     correlation_id: str,
     assignment_id: str,
     conversation_id: str,
-    card_grants: list[str] | tuple[str, ...] | set[str] | frozenset[str],
 ) -> FunctionTool:
     allowed = {binding.binding_id: binding for binding in bindings if binding.delivery_mode == "optional"}
 
@@ -1542,7 +999,6 @@ def build_bound_query_tool(
             correlation_id=correlation_id,
             assignment_id=assignment_id,
             conversation_id=conversation_id,
-            card_grants=card_grants,
             parameter_overrides=parameters or {},
         )
         return {

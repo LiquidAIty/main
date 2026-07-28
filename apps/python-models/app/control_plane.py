@@ -2,18 +2,15 @@
 
 The minimum user-directed MCP control surface over ACTUAL saved state:
 
-  * canvas.inspect             — bounded saved deck view + DB-backed assignments
+  * canvas.inspect             — bounded saved deck view
   * card.update_configuration  — strict allowlist edits of persisted card config
   * canvas.upsert_wire         — supported wire types only (flow / magentic_option)
-  * card.assign_runtime_skill  — promoted, compatible, version-pinned assignment
-  * card.assign_data_binding   — bounded pointer/scope records, no raw queries
   * card.run_assistant_agent   — run ONE saved enabled card (no overrides possible)
 
 Policy/validation lives HERE (Python). Saved-deck persistence stays with the
-existing backend deck routes on loopback (single deck authority — not replaced);
-runtime assignments live in the Python-owned Postgres tables
-(runtime_assignments). No Task Ledger, no Mag One worker selection, no graph
-write authority is exposed. Failures are honest; there is no fallback path.
+existing backend deck routes on loopback (single deck authority — not replaced).
+No Task Ledger, no Mag One worker selection, no graph write authority is exposed.
+Failures are honest; there is no fallback path.
 """
 
 from __future__ import annotations
@@ -27,7 +24,6 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from app.python_models import agentgraph as ag
-from app.python_models import runtime_assignments as ra
 from app.python_models.thinkgraph_engraphis import get_thinkgraph
 
 _BACKEND = os.environ.get("LIQUIDAITY_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -106,9 +102,8 @@ def resolve_saved_card_reference(
 ) -> dict[str, Any]:
     """Resolve compact run configuration by saved card identity.
 
-    Prompt text and configuration payloads stay in the saved deck and runtime
-    assignment stores; AgentGraph carries this stable reference and the pinned
-    versions used for the run.
+    Prompt text and configuration payloads stay in the saved deck; AgentGraph
+    carries the stable card identity used for the run.
     """
     if deck is None:
         deck, _revision = _load_deck(project_id, deck_id)
@@ -118,21 +113,7 @@ def resolve_saved_card_reference(
         if isinstance(card.get("runtimeOptions"), dict)
         else {}
     )
-    skills = ra.assigned_skills(
-        project_id=project_id,
-        deck_id=deck_id,
-        card_id=card_id,
-    )
-    data_bindings = ra.assigned_data_bindings(
-        project_id=project_id,
-        deck_id=deck_id,
-        card_id=card_id,
-    )
     binding = str(card.get("runtimeBinding") or runtime_options.get("binding") or "")
-    try:
-        profile = ra.resolve_profile(binding) if binding else None
-    except LookupError:
-        profile = None
     return {
         "cardId": card_id,
         "title": str(card.get("title") or ""),
@@ -151,20 +132,6 @@ def resolve_saved_card_reference(
             for value in (runtime_options.get("tools") or card.get("tools") or [])
             if str(value).strip()
         ],
-        "profile": (
-            {"profileId": profile.profile_id, "version": profile.version}
-            if profile
-            else None
-        ),
-        "skills": [
-            {
-                "skillId": skill.skill_id,
-                "version": skill.version,
-                "status": skill.status,
-            }
-            for skill in skills
-        ],
-        "dataBindings": data_bindings,
     }
 
 
@@ -179,32 +146,6 @@ async def canvas_inspect(args: dict[str, Any]) -> dict[str, Any]:
     deck_id = str(args["deckId"]).strip()
     deck, revision = await asyncio.to_thread(_load_deck, project_id, deck_id)
 
-    def _assignments() -> tuple[dict, dict, list, dict]:
-        skills: dict[str, list] = {}
-        data: dict[str, list] = {}
-        profiles: dict[str, dict | None] = {}
-        for node in deck.get("nodes") or []:
-            card_id = str(node.get("id") or "")
-            skills[card_id] = [
-                {"skillId": s.skill_id, "version": s.version, "status": s.status}
-                for s in ra.assigned_skills(project_id=project_id, deck_id=deck_id, card_id=card_id)
-            ]
-            data[card_id] = ra.assigned_data_bindings(
-                project_id=project_id, deck_id=deck_id, card_id=card_id
-            )
-            binding = str(node.get("runtimeBinding") or "")
-            try:
-                profile = ra.resolve_profile(binding) if binding else None
-            except LookupError:
-                profile = None
-            profiles[card_id] = (
-                {"profileId": profile.profile_id, "version": profile.version} if profile else None
-            )
-        traces = ra.get_run_traces(project_id=project_id, limit=10)
-        return skills, data, traces, profiles
-
-    skills, data, traces, profiles = await asyncio.to_thread(_assignments)
-
     cards = [
         {
             "id": str(node.get("id") or ""),
@@ -213,9 +154,6 @@ async def canvas_inspect(args: dict[str, Any]) -> dict[str, Any]:
             "runtimeType": node.get("runtimeType"),
             "prompt": str(node.get("prompt") or "")[:500],
             "tools": ((node.get("runtimeOptions") or {}).get("tools")) or node.get("tools") or [],
-            "assignedProfile": profiles.get(str(node.get("id") or "")),
-            "assignedSkills": skills.get(str(node.get("id") or ""), []),
-            "assignedDataBindings": data.get(str(node.get("id") or ""), []),
         }
         for node in deck.get("nodes") or []
     ]
@@ -235,7 +173,6 @@ async def canvas_inspect(args: dict[str, Any]) -> dict[str, Any]:
         "deckRevision": revision,
         "cards": cards,
         "wires": wires,
-        "recentRunTraces": traces,
     }
 
 
@@ -343,75 +280,6 @@ async def canvas_upsert_wire(args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, "op": op, "wireId": wire_id, "edgeType": edge_type}
 
     return await asyncio.to_thread(_apply)
-
-
-# ---------------------------------------------------------------------------
-# card.assign_runtime_skill / card.assign_data_binding
-# ---------------------------------------------------------------------------
-
-
-async def card_assign_runtime_skill(args: dict[str, Any]) -> dict[str, Any]:
-    _require(args, "projectId", "deckId", "cardId", "skillId", "op")
-    op = str(args["op"]).strip()
-    if op not in ("assign", "remove"):
-        raise ControlPlaneError(f"skill_op_invalid: {op}")
-    project_id = str(args["projectId"]).strip()
-    deck_id = str(args["deckId"]).strip()
-    card_id = str(args["cardId"]).strip()
-    skill_id = str(args["skillId"]).strip()
-
-    def _apply() -> dict[str, Any]:
-        deck, _ = _load_deck(project_id, deck_id)
-        card = _find_card(deck, card_id)  # card must actually exist in the saved deck
-        if op == "assign":
-            version = args.get("skillVersion")
-            if not isinstance(version, int) or version < 1:
-                raise ControlPlaneError("skill_version_required_for_pinning")
-            ra.assign_skill(
-                project_id=project_id, deck_id=deck_id, card_id=card_id,
-                skill_id=skill_id, skill_version=version,
-                card_runtime_binding=str(card.get("runtimeBinding") or ""),
-            )
-            return {"ok": True, "op": op, "skillId": skill_id, "pinnedVersion": version}
-        ra.remove_skill_assignment(
-            project_id=project_id, deck_id=deck_id, card_id=card_id, skill_id=skill_id
-        )
-        return {"ok": True, "op": op, "skillId": skill_id}
-
-    try:
-        return await asyncio.to_thread(_apply)
-    except ValueError as err:
-        raise ControlPlaneError(str(err)) from err
-
-
-async def card_assign_data_binding(args: dict[str, Any]) -> dict[str, Any]:
-    _require(args, "projectId", "deckId", "cardId", "bindingType", "op")
-    op = str(args["op"]).strip()
-    if op not in ("assign", "remove"):
-        raise ControlPlaneError(f"data_binding_op_invalid: {op}")
-    project_id = str(args["projectId"]).strip()
-    deck_id = str(args["deckId"]).strip()
-    card_id = str(args["cardId"]).strip()
-    binding_type = str(args["bindingType"]).strip()
-
-    def _apply() -> dict[str, Any]:
-        deck, _ = _load_deck(project_id, deck_id)
-        _find_card(deck, card_id)
-        if op == "assign":
-            ra.assign_data_binding(
-                project_id=project_id, deck_id=deck_id, card_id=card_id,
-                binding_type=binding_type, binding_ref=args.get("bindingRef"),
-            )
-            return {"ok": True, "op": op, "bindingType": binding_type}
-        ra.remove_data_binding(
-            project_id=project_id, deck_id=deck_id, card_id=card_id, binding_type=binding_type
-        )
-        return {"ok": True, "op": op, "bindingType": binding_type}
-
-    try:
-        return await asyncio.to_thread(_apply)
-    except ValueError as err:
-        raise ControlPlaneError(str(err)) from err
 
 
 # ---------------------------------------------------------------------------

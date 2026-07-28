@@ -1,8 +1,6 @@
 export type DeckRunStatus = 'idle' | 'running' | 'success' | 'error' | 'skipped';
-export type CoderTaskStatus = 'started' | 'queued' | 'running' | 'completed' | 'failed' | 'blocked';
-export type CoderTaskDeliveryStatus = 'accepted' | 'queued' | 'blocked';
 
-// AgentGraph assignment identity and registered artifact locators, transported
+// AgentGraph assignment, instruction, and result identities transported
 // verbatim from Python rails.
 export type AgentAssignmentRunResult = {
   assignmentId: string;

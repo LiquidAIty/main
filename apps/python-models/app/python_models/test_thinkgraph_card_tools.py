@@ -126,8 +126,6 @@ class TestPythonMcpHost:
             "canvas.inspect",
             "card.update_configuration",
             "canvas.upsert_wire",
-            "card.assign_runtime_skill",
-            "card.assign_data_binding",
             "card.run_assistant_agent",
             "engraphis_answer",
             "engraphis_check_update",

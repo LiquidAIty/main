@@ -178,6 +178,34 @@ The items below are the major deletion events. Every one "worked" before it was 
   Lesson: an editor option, contract, route, or test does not prove a runtime. Keep one execution
   authority and delete the full connected compatibility cluster when its producer/executor is gone.
 
+- **2026-07-28 — AgentGraph overbuild deletion: 28 tracked files changed, 3 files
+  deleted, 2,835 lines removed (2,284 production + 540 test + 11 docs), with one
+  26-line unapplied forward-removal migration.**
+  - Deleted the 640-line runtime-assignment store, 266-line runtime-profile executor, and their
+    121-line life-support test. Removed their post-hooks, terminal-result contract and repair call,
+    profile packets, permanent skill/data/query bindings, routes, MCP operations, schemas, catalog
+    claims, canvas projections, tests, and database objects.
+  - Deleted eager Mag One child reservations and the wrapped AssistantAgent that falsely recorded
+    every eligible worker as delegated work before Mag One selected it. Native Mag One, saved
+    worker eligibility, real parent/child lineage, and ordinary AutoGen agents remain.
+  - Deleted automatic WorldSignals-to-assignment context injection and its process-local authority.
+    WorldSignals remains a normal useful tool; a tool result is not retroactively a reference that
+    arrived with the original pass.
+  - Preserved the narrow system: exact instruction + pass-specific SQL/Cypher/Graph View references,
+    saved-card execution, PostgreSQL lifecycle payloads, AGE lineage, Hermes SQL memory/report
+    correlation, Main, native Mag One, and OpenClaude/Coder.
+  - Traversed both this deletion set and the preceding artifact cleanup through CBM, then checked
+    current dirty source. No deleted module, import, export, route, tool registration, artifact
+    locator, runtime-profile symbol, or assignment-binding writer survived. One stale transport
+    comment and one stale AssistantAgent docstring were the only connected residue found and removed.
+    LocalCoder's unrelated pull-request `reviewState` and the complete assignment
+    lease/heartbeat/claim-token cluster were preserved.
+  Lesson: the request was a durable inter-agent envelope, but the implementation grew into a second
+  runtime/configuration/policy product. Permanent bindings, output contracts, retrying repair calls,
+  fake worker reservations, duplicate traces, and post-hoc context overlays made every transport
+  seam look load-bearing. Build the pass and result ledger; do not build another agent platform
+  around it.
+
 - **2026-06-01 through 2026-07-05 (full audit from git log) — running tally from the actual commit
   record: 5,963 files changed, +175,192 / -182,915 lines across ~90 commits.** The DONT.md entries above
   come from studying every deletion commit >500 lines to extract reusable anti-patterns. Major deletion

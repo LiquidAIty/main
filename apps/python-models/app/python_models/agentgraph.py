@@ -207,10 +207,6 @@ def _validate_instruction_operation_references(
             raise AgentGraphError(
                 f"agentgraph_operation_engine_incompatible: {operation_id}@v{version}"
             )
-        if operation.operation_class != "read":
-            raise AgentGraphError(
-                f"agentgraph_operation_reference_not_read_only: {operation_id}@v{version}"
-            )
         explanation = _optional_text(
             raw_reference.get("explanation"), "operation_explanation"
         )
@@ -958,36 +954,20 @@ def record_assignment_runtime_context(
     provider: str,
     model_key: str,
     provider_model_id: str,
-    profile_id: str | None,
-    profile_version: int | None,
-    skill_versions: list[str],
-    data_binding_refs: list[dict[str, Any]],
     connection: Any | None = None,
 ) -> None:
-    """Pin run bindings on the existing canonical run trace.
-
-    Permanent card configuration remains in the saved deck and assignment
-    stores. This records only the exact bindings used by this run.
-    """
+    """Record the exact saved-card runtime/provider/model used by this run."""
     project_id = _required_text(project_id, "project_id")
     assignment_id = _required_id(assignment_id, "assignment_id")
     runtime = _required_text(runtime, "runtime")
     provider = _required_text(provider, "provider")
     model_key = _required_text(model_key, "model_key")
     provider_model_id = _required_text(provider_model_id, "provider_model_id")
-    if profile_id is not None:
-        profile_id = _required_id(profile_id, "profile_id")
-    if profile_version is not None and (
-        not isinstance(profile_version, int) or profile_version < 1
-    ):
-        raise AgentGraphError("agentgraph_profile_version_invalid")
     with _connection_scope(connection) as conn, conn.cursor() as cursor:
         cursor.execute(
             """
             UPDATE ag_catalog.card_run_traces trace
             SET runtime=%s, provider=%s, model_key=%s, provider_model_id=%s,
-                profile_id=%s, profile_version=%s,
-                skill_versions=%s::jsonb, data_binding_refs=%s::jsonb,
                 outcome='running', state='running', updated_at=now()
             FROM ag_catalog.agent_assignments assignment
             WHERE assignment.project_id=%s
@@ -1000,10 +980,6 @@ def record_assignment_runtime_context(
                 provider,
                 model_key,
                 provider_model_id,
-                profile_id,
-                profile_version,
-                json.dumps(skill_versions, ensure_ascii=False),
-                json.dumps(data_binding_refs, ensure_ascii=False),
                 project_id,
                 assignment_id,
             ),
@@ -1303,8 +1279,7 @@ def read_assignment(
                    a.parent_run_id, a.claimed_by_card_id, a.lease_expires_at,
                    a.heartbeat_at, parent_run.session_id,
                    run.runtime, run.provider, run.model_key, run.provider_model_id,
-                   run.profile_id, run.profile_version, run.skill_versions,
-                   run.data_binding_refs, run.outcome, run.state, run.error_code
+                   run.outcome, run.state, run.error_code
             FROM ag_catalog.agent_assignments a
             JOIN ag_catalog.agent_instructions i ON i.instruction_id=a.instruction_id
             LEFT JOIN ag_catalog.agent_results r ON r.assignment_id=a.assignment_id
@@ -1430,13 +1405,9 @@ def read_assignment(
             "provider": row[25],
             "modelKey": row[26],
             "providerModelId": row[27],
-            "profileId": row[28],
-            "profileVersion": row[29],
-            "skillVersions": list(row[30] or []),
-            "dataBindingRefs": list(row[31] or []),
-            "outcome": row[32],
-            "state": row[33],
-            "errorCode": row[34],
+            "outcome": row[28],
+            "state": row[29],
+            "errorCode": row[30],
         },
         "ageIdentity": {
             "assignment": json.loads(str(identity_rows[0][0])),

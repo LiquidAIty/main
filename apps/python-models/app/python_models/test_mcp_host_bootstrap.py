@@ -72,7 +72,7 @@ asyncio.run(check())
     result = _run_in_script_launch_context(code)
     assert result.returncode == 0, result.stderr
     catalog = json.loads(result.stdout)
-    assert len(catalog) == 67
+    assert len(catalog) == 65
     assert len(catalog) == len(set(catalog))
     host = open(os.path.join(_APP_DIR, "mcp_host.py"), encoding="utf-8").read()
     assert "CHATGPT_MAIN" not in host
@@ -143,9 +143,9 @@ async def check():
         assert tool.model_dump() == native[tool.name].model_dump()
     combined = await mcp_host.list_tools()
     combined_names = [tool.name for tool in combined]
-    assert len(combined_names) == 67
-    assert len(set(combined_names)) == 67
-    assert len(set(combined_names) - set(native)) == 38
+    assert len(combined_names) == 65
+    assert len(set(combined_names)) == 65
+    assert len(set(combined_names) - set(native)) == 36
     print(json.dumps(sorted(native)))
 asyncio.run(check())
 """
@@ -412,7 +412,7 @@ async def check():
             assert actual == expected
             assert 'main.context' in actual
             assert 'agentgraph.inspect' in actual
-            assert len(actual) == 67
+            assert len(actual) == 65
             assert sum(name.startswith('engraphis_') for name in actual) == 29
             assert elapsed < 10
             print(json.dumps({{'status': 'STDIO_OK', 'count': len(actual), 'elapsed': elapsed}}))
@@ -521,8 +521,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     )
     tools = asyncio.run(mcp_host.list_tools())
     by_name = {tool.name: tool for tool in tools}
-    assert len(tools) == 67
-    assert len(by_name) == 67
+    assert len(tools) == 65
+    assert len(by_name) == 65
     assert "main.context" in by_name
     assert "agentgraph.inspect" in by_name
     assert "graphview.list" in by_name

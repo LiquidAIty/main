@@ -59,8 +59,8 @@ is a known bounded UI mismatch, not the intended product boundary.
 
 `apps/python-models/app/mcp_host.py` (Python) is the single MCP server. Spawned over stdio by backend
 `services/mcp/pythonAgentMcpClient.ts`, consumed by the gRPC harness. Tools: `canvas.inspect`,
-`card.update_configuration`, `card.assign_runtime_skill`, `card.assign_data_binding`, `canvas.upsert_wire`,
-`card.run_assistant_agent`, `run_mag_one`, `mag_one.describe_connected_agents`, `thinkgraph.get_graph_slice`.
+`card.update_configuration`, `canvas.upsert_wire`, `card.run_assistant_agent`, `run_mag_one`,
+`mag_one.describe_connected_agents`, `thinkgraph.get_graph_slice`.
 There is **no TS MCP server** — TS is only the client. Each tool bridges to a backend
 `/api/coder/mcp-bridge/*` handler, so state has one authority.
 

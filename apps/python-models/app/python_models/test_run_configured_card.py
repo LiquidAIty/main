@@ -72,21 +72,9 @@ def _durable_outer_boundaries(monkeypatch):
         mac.rq,
         "hydrate_assignment_context",
         lambda **kwargs: mac.rq.HydratedAssignmentContext(
-            assignment_id=kwargs["assignment_id"],
-            instruction_id="instruction:test",
-            instruction_sha256="sha256:test",
-            correlation_id="corr-1",
-            receiver_card_id=kwargs["receiver_card_id"],
             instruction="run",
             lease_token="lease:test",
-            lease_expires_at="later",
-            attempt=1,
-            required_bindings=(),
             optional_bindings=(),
-            executions=(),
-            graph_view_ids=(),
-            query_execution_ids=(),
-            card_grants=(),
             model_context="run",
         ),
     )
@@ -248,19 +236,8 @@ class TestRegisteredQueryContext:
         events: list[str] = []
         tasks: list[str] = []
         attached_tools: list[str] = []
-        required = mac.rq.QueryBinding(
-            project_id="p",
-            deck_id="deck_builder",
-            card_id="tg",
-            binding_id="required_context",
-            query_id="project.context",
-            query_version=2,
-            delivery_mode="required",
-            parameters={"project_id": "p"},
-        )
         optional = mac.rq.QueryBinding(
             project_id="p",
-            deck_id="deck_builder",
             card_id="tg",
             binding_id="optional_detail",
             query_id="project.detail",
@@ -268,17 +245,6 @@ class TestRegisteredQueryContext:
             delivery_mode="optional",
             parameters={},
         )
-        execution = mac.rq.QueryExecution(
-            execution_id="queryexec:one",
-            binding_id=required.binding_id,
-            query_id=required.query_id,
-            query_version=required.query_version,
-            parameters=required.parameters,
-            graph_view_id="graphview:query:one",
-            rows=[{"fact": "bounded"}],
-            truncated=False,
-        )
-
         class FakeAgent:
             async def run(self, *, task):
                 tasks.append(task)
@@ -287,21 +253,9 @@ class TestRegisteredQueryContext:
         def hydrate(**kwargs):
             events.append("materialized")
             return mac.rq.HydratedAssignmentContext(
-                assignment_id=kwargs["assignment_id"],
-                instruction_id="instruction:test",
-                instruction_sha256="sha256:test",
-                correlation_id="corr-1",
-                receiver_card_id=kwargs["receiver_card_id"],
                 instruction="Use registered context.",
                 lease_token="lease:test",
-                lease_expires_at="later",
-                attempt=1,
-                required_bindings=(required,),
                 optional_bindings=(optional,),
-                executions=(execution,),
-                graph_view_ids=(execution.graph_view_id,),
-                query_execution_ids=(execution.execution_id,),
-                card_grants=(),
                 model_context=(
                     "materialized context\n"
                     "graphview:query:one\n"

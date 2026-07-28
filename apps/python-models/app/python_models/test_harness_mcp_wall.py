@@ -114,25 +114,9 @@ class TestPythonMcpHostIsThin:
         assert 'name="web_search"' in source
 
 
-class TestNoMarkdownRuntimeSkills:
-    def test_runtime_skill_chain_never_reads_markdown_or_scans_folders(self):
-        for relative in (
-            "apps/python-models/app/python_models/runtime_assignments.py",
-            "apps/python-models/app/python_models/runtime_profile_executor.py",
-        ):
-            source = _read(relative)
-            assert ".md" not in source, f"{relative} references Markdown"
-            for forbidden in ("glob(", "iglob", "listdir", "scandir", "rglob", "walk("):
-                assert forbidden not in source, f"{relative} scans the filesystem: {forbidden}"
-
-
 class TestNoTaskLedgerOnNewPaths:
     def test_new_runtime_modules_never_touch_task_ledger_state(self):
-        for relative in (
-            "apps/python-models/app/python_models/runtime_assignments.py",
-            "apps/python-models/app/python_models/runtime_profile_executor.py",
-            "apps/python-models/app/control_plane.py",
-        ):
+        for relative in ("apps/python-models/app/control_plane.py",):
             source = _read(relative)
             for forbidden in ("taskLedger", "TaskLedger", "taskIds", "task_ledger"):
                 assert forbidden not in source, f"{relative} references Task Ledger state: {forbidden}"

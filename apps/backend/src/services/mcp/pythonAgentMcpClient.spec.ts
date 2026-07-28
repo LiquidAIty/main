@@ -25,8 +25,6 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'agentgraph.inspect',
       'canvas.inspect',
       'canvas.upsert_wire',
-      'card.assign_data_binding',
-      'card.assign_runtime_skill',
       'card.run_assistant_agent',
       'card.update_configuration',
       'codegraph.search',

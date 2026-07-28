@@ -587,22 +587,9 @@ export type ConfiguredCardRunResult = {
   error: string | null;
   startedAt: string;
   endedAt: string;
-  /** Mechanical count of authorized tool calls actually recorded during the run
-   * (null when the run has no profile/terminal reporting for this). Parsed from
-   * the real transcript line, never inferred from the final response text. */
-  toolCallCount: number | null;
-  /** Canonical AgentGraph assignment and its registered artifact locators. */
+  /** Canonical AgentGraph assignment and result identities. */
   assignmentResult: AgentAssignmentRunResult | null;
 };
-
-function parseToolCallCount(transcript: unknown): number | null {
-  const lines = Array.isArray(transcript) ? transcript.map((t) => String(t ?? '')) : [];
-  for (const line of lines) {
-    const match = /toolCallCount=(\d+)/.exec(line);
-    if (match) return Number(match[1]);
-  }
-  return null;
-}
 
 export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<ConfiguredCardRunResult> {
   const startedAt = new Date().toISOString();
@@ -624,7 +611,6 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       error: null,
       startedAt,
       endedAt: new Date().toISOString(),
-      toolCallCount: null,
       assignmentResult: null,
       ...partial,
     };
@@ -736,7 +722,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       runtimeType: 'assistant_agent' as const,
       prompt: '',
       // deckId is a persisted structural reference only — the Python runtime uses it
-      // to resolve DB-backed card assignments (profile/skills/data bindings).
+      // to resolve the saved card and its assignment-specific context.
       runtimeOptions: { deckId },
       participants: [participant],
       privateParticipants: [privateParticipant],
@@ -770,7 +756,6 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       runtimeType,
       tools,
       output: String(response.finalResponseText || ''),
-      toolCallCount: parseToolCallCount((response as any).transcript),
       assignmentResult:
         assignmentId
           ? {

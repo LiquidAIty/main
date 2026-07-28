@@ -13,7 +13,6 @@ FastMCP registry:
   * thinkgraph.get_graph_slice       (bounded product projection)
   * web_search                       (real Tavily search; Search Agent only by grant)
   * canvas.inspect / card.update_configuration / canvas.upsert_wire /
-    card.assign_runtime_skill / card.assign_data_binding /
     card.run_assistant_agent         (user-directed Harness control surface;
                                       handlers live in app.control_plane — Python)
 
@@ -21,7 +20,7 @@ Bridge tools are thin transport to the backend's existing /api/coder/mcp-bridge/
 endpoints on loopback — the backend remains the single authority for deck state,
 conversation store, card resolution, and graph persistence. Control tools dispatch
 to Python handlers (app/control_plane.py) which own validation/policy and use the
-existing backend deck routes + the Python runtime-assignment store. No semantics,
+existing backend deck routes. No semantics,
 no fallback lives in this host.
 
 ThinkGraph mutation is an explicit Main Chat grant; KnowGraph ingestion remains
@@ -637,9 +636,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="canvas.inspect",
             description=(
-                "Bounded saved canvas/deck view: cards (id, title, runtime binding/type, tools, "
-                "assigned runtime profile, pinned skill versions, data binding references), wires, "
-                "and recent run traces. Read-only, project-scoped, no secrets."
+                "Bounded saved canvas/deck view: cards (id, title, runtime binding/type, tools) and wires. "
+                "Read-only, project-scoped, no secrets."
             ),
             inputSchema={
                 "type": "object",
@@ -680,44 +678,6 @@ async def list_tools() -> list[Tool]:
                     "wire": {"type": "object"},
                 },
                 "required": ["projectId", "deckId", "op", "wire"],
-            },
-        ),
-        Tool(
-            name="card.assign_runtime_skill",
-            description=(
-                "Assign (exact version pinned) or remove one PROMOTED, runtime-binding-compatible "
-                "runtime skill on a persisted card. Database-backed records only — no Markdown."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                    "cardId": {"type": "string"},
-                    "skillId": {"type": "string"},
-                    "skillVersion": {"type": "integer"},
-                    "op": {"type": "string", "enum": ["assign", "remove"]},
-                },
-                "required": ["projectId", "deckId", "cardId", "skillId", "op"],
-            },
-        ),
-        Tool(
-            name="card.assign_data_binding",
-            description=(
-                "Assign or remove one bounded data binding (pointer/scope record) on a persisted "
-                "card. Arbitrary SQL/Cypher/raw queries are structurally rejected."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                    "cardId": {"type": "string"},
-                    "bindingType": {"type": "string"},
-                    "bindingRef": {"type": "object"},
-                    "op": {"type": "string", "enum": ["assign", "remove"]},
-                },
-                "required": ["projectId", "deckId", "cardId", "bindingType", "op"],
             },
         ),
         Tool(
@@ -1035,8 +995,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="card.run_assistant_agent",
             description=(
-                "Run ONE saved, enabled assistant_agent card with its saved prompt/model/tools and "
-                "its assigned profile/skills/data bindings. No prompt/model/tool/card overrides "
+                "Run ONE saved, enabled assistant_agent card with its saved prompt/model/tools. "
+                "No prompt/model/tool/card overrides "
                 "exist on this path — extra arguments are rejected structurally. deckId defaults to "
                 "the canonical Agent Canvas deck. On the Harness saved-card doorway path, the "
                 "server injects projectId/correlationId/conversationId; the model supplies the "
@@ -1227,8 +1187,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "canvas.inspect": {"projectId", "deckId"},
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
-    "card.assign_runtime_skill": {"projectId", "deckId", "cardId", "skillId", "skillVersion", "op"},
-    "card.assign_data_binding": {"projectId", "deckId", "cardId", "bindingType", "bindingRef", "op"},
     "card.run_assistant_agent": {
         "projectId",
         "deckId",
@@ -1281,8 +1239,6 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
     "canvas.inspect": "canvas_inspect",
     "card.update_configuration": "card_update_configuration",
     "canvas.upsert_wire": "canvas_upsert_wire",
-    "card.assign_runtime_skill": "card_assign_runtime_skill",
-    "card.assign_data_binding": "card_assign_data_binding",
     "card.run_assistant_agent": "card_run_assistant_agent",
     "thinkgraph.get_graph_slice": "thinkgraph_get_graph_slice",
 }

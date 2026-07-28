@@ -1,9 +1,7 @@
 """Focused control-plane handler coverage (no network, no DB).
 
 Proves the user-directed Harness control tools enforce their gates: strict
-card-update allowlist, supported wire semantics only, promoted/pinned skill
-assignment via the shared validators, query-injection rejection on data
-bindings, and no-override card runs.
+card-update allowlist, supported wire semantics, and no-override card runs.
 """
 
 import asyncio
@@ -11,7 +9,6 @@ import asyncio
 import pytest
 
 from app import control_plane as cp
-from app.python_models import runtime_assignments as ra
 
 DECK = {
     "id": "deck_builder",
@@ -96,43 +93,6 @@ class TestUpsertWire:
         assert result["ok"] is True
         edges = fake_backend["deck"]["edges"]
         assert any(e["edgeType"] == "magentic_option" for e in edges)
-
-
-class TestAssignments:
-    def test_skill_assignment_requires_pinned_version(self, fake_backend):
-        with pytest.raises(cp.ControlPlaneError, match="skill_version_required_for_pinning"):
-            asyncio.run(cp.card_assign_runtime_skill({
-                "projectId": "p", "deckId": "d", "cardId": "tg-card",
-                "skillId": "s", "op": "assign",
-            }))
-
-    def test_skill_assignment_gates_flow_through_shared_validator(self, fake_backend, monkeypatch):
-        def assign(**kwargs):
-            raise ValueError("skill_not_promoted: s@1 status=candidate")
-
-        monkeypatch.setattr(ra, "assign_skill", assign)
-        with pytest.raises(cp.ControlPlaneError, match="skill_not_promoted"):
-            asyncio.run(cp.card_assign_runtime_skill({
-                "projectId": "p", "deckId": "d", "cardId": "tg-card",
-                "skillId": "s", "skillVersion": 1, "op": "assign",
-            }))
-
-    def test_data_binding_query_injection_rejected(self, fake_backend):
-        with pytest.raises(cp.ControlPlaneError, match="query_injection_rejected"):
-            asyncio.run(cp.card_assign_data_binding({
-                "projectId": "p", "deckId": "d", "cardId": "tg-card",
-                "bindingType": "cbm_query_scope",
-                "bindingRef": {"cypher": "MATCH (n) DETACH DELETE n"},
-                "op": "assign",
-            }))
-
-    def test_assignment_requires_card_to_exist_in_saved_deck(self, fake_backend):
-        with pytest.raises(cp.ControlPlaneError, match="card_not_found"):
-            asyncio.run(cp.card_assign_data_binding({
-                "projectId": "p", "deckId": "d", "cardId": "ghost",
-                "bindingType": "thinkgraph_project_slice", "bindingRef": {"limit": 10},
-                "op": "assign",
-            }))
 
 
 class TestGraphInspection:

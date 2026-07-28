@@ -54,9 +54,9 @@ tools/models. Changes persist via `saveDeckDocument` → `writeV3ProjectBlobCas`
 (`card_main_chat` ↔ `card_magentic`, `edgeType='magentic_option'`) if missing.
 Card positions, edges, and prompt templates survive reload.
 
-**Selected-card inspector**: clicking a card in `AgentCanvasPane` (React) triggers
-`onSelectCard`. Backend `POST /cards/runtime-assignments` reads the card's runtime
-skills/bindings via `callPythonAgentMcpTool('canvas.inspect')`.
+**Selected-card inspector**: clicking a card in `AgentCanvasPane` selects the
+saved card already loaded from the deck. It does not maintain a second runtime
+assignment record.
 
 **Bus**: a card with a `magentic_option` edge from the orchestrator is on the bus.
 No edge → disconnected → invisible to Mag One.
@@ -82,10 +82,6 @@ Bus (backend): resolvedMagenticOptions(orchestratorId, nodes, edges) [runtime.ts
 Bus (client): resolveBusConnections(cards, edges) [agentCardRegistryResolver.ts:54]
   → finds Sol (magentic_one) → 'orchestrator'; magentic_option edges → 'connected'
   → CBM-path-proven (callers: isLocalCoderBusConnected, spec)
-
-Inspector: AgentCanvasPane(onSelectCard) → POST /cards/runtime-assignments [coder.routes.ts:107]
-  → callPythonAgentMcpTool('canvas.inspect') → Python canvas_inspect [control_plane.py:102]
-  → POST /cards/assign-runtime-skill / assign-data-binding mutate card config
 
 Main Chat bus edge: buildMainChatBusEdge() [mainChatControllerCard.ts:54]
   source='card_main_chat', target='card_magentic', edgeType='magentic_option'
@@ -152,6 +148,6 @@ persists edges (UI-proven), Python `canvas_inspect` matches deck store (integrat
 | `apps/backend/src/routes/decks.routes.ts` | Deck GET/PUT endpoints |
 | `apps/backend/src/cards/runtime.ts` (lines 86-112) | resolvedMagenticOptions |
 | `apps/backend/src/services/mcp/pythonAgentMcpClient.ts` | Python MCP transport |
-| `apps/python-models/app/control_plane.py` | canvas_inspect, skill/data binding |
+| `apps/python-models/app/control_plane.py` | canvas inspection and saved-card execution |
 | `client/src/features/agentbuilder/canvas/AgentCanvasPane.tsx` | Canvas React component |
 | `client/src/runtime/agentCardRegistryResolver.ts` | Bus connections |

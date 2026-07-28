@@ -66,10 +66,6 @@ def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
             provider="openrouter",
             model_key="model-key",
             provider_model_id="provider/model",
-            profile_id=None,
-            profile_version=None,
-            skill_versions=["skill-one@v2"],
-            data_binding_refs=[{"bindingType": "database", "bindingRef": "db:one"}],
             connection=connection,
         )
         tool_evidence = [
@@ -121,10 +117,6 @@ def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
         assert hydrated["runTrace"]["runtime"] == "assistant_agent"
         assert hydrated["runTrace"]["provider"] == "openrouter"
         assert hydrated["runTrace"]["providerModelId"] == "provider/model"
-        assert hydrated["runTrace"]["skillVersions"] == ["skill-one@v2"]
-        assert hydrated["runTrace"]["dataBindingRefs"] == [
-            {"bindingRef": "db:one", "bindingType": "database"}
-        ]
         assert hydrated["operationReferences"][0]["operationId"] == "agentgraph.active_context_identities"
         assert hydrated["operationReferences"][0]["executionRole"] == "optional_tool"
         assert "body" not in hydrated["ageIdentity"]["instruction"]
