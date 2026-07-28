@@ -510,6 +510,10 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
 
     assert "graphview:one" in hydrated.model_context
     assert "Use the canonical AgentGraph assignment." in hydrated.model_context
+    assert "[AGENTGRAPH_CONTEXT_REFERENCES]" not in hydrated.model_context
+    assert "[PARENT_AGENTGRAPH_CONTINUITY]" not in hydrated.model_context
+    assert "REGISTERED DATABASE CONTEXT:" not in hydrated.model_context
+    assert "OPTIONAL REGISTERED OPERATIONS" not in hydrated.model_context
     assert references == [
         {
             "referenceId": "graphview:one",
@@ -527,3 +531,8 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
             "required": False,
         },
     ]
+
+
+def test_empty_agentgraph_context_sections_render_nothing() -> None:
+    assert rq.build_query_context([], []) == ""
+    assert rq._render_selected_graph_views([]) == ""

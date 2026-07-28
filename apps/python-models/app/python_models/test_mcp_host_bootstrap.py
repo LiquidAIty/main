@@ -281,7 +281,8 @@ async def check():
     else:
         raise AssertionError('native_exception_was_not_propagated')
     typed = await mcp_host.call_tool('native_failure', {'value': 3})
-    assert json.loads(typed[0].text) == {
+    assert typed.isError is True
+    assert json.loads(typed.content[0].text) == {
         'ok': False,
         'error': 'engraphis_failed: canonical native failure',
     }
@@ -612,7 +613,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "cardId": "coder-card",
         "approvedPrompt": "Approved exact task.",
     }))
-    assert "caller_identity_rejected: projectId" in denied[0].text
+    assert denied.isError is True
+    assert "caller_identity_rejected: projectId" in denied.content[0].text
 
     asyncio.run(mcp_host.call_tool("run_coder_subagent", {
         "cardId": "coder-card",
@@ -688,10 +690,12 @@ def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(m
     failed = asyncio.run(mcp_host.call_tool("canvas.inspect", {}))
     succeeded = asyncio.run(mcp_host.call_tool("canvas.inspect", {}))
 
-    assert json.loads(failed[0].text) == {
+    assert failed.isError is True
+    assert json.loads(failed.content[0].text) == {
         "ok": False,
         "error": "tool_handler_failed:RuntimeError",
     }
+    assert succeeded[0].type == "text"
     assert json.loads(succeeded[0].text) == {"ok": True, "cards": []}
 
 

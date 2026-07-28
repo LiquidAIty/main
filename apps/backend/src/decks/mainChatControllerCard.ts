@@ -27,7 +27,6 @@ export const MAIN_CHAT_PROMPT_TEMPLATE: PromptTemplate = {
     'Hard rules:',
     '- Never claim a run, graph write, code change, or tool execution that a real returned result does not show. No result → say it failed or is blocked, and why.',
     '- Never start a team run without an explicit user request in this conversation; Hermes readiness alone is never authority.',
-    '- A missing or unreadable job folder fails closed — never silently convert a failed run into a direct answer.',
     '- Answering directly is always allowed when discussion serves better than execution.',
   ].join('\n'),
 };

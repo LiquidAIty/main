@@ -63,7 +63,7 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import CallToolResult, TextContent, Tool
 
 BACKEND = os.environ.get("LIQUIDAITY_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
 KNOWGRAPH_QUERY_TIMEOUT_S = float(os.environ.get("KNOWGRAPH_QUERY_TIMEOUT_S", "20"))
@@ -1496,13 +1496,16 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     _trace("tool_call_started", **trace_fields)
     try:
         result = await _dispatch_tool(name, arguments)
+        result_category = _tool_result_category(result)
         _trace(
             "tool_call_completed",
             **trace_fields,
-            response_status=200,
-            result_category=_tool_result_category(result),
+            response_status=500 if result_category == "tool_error" else 200,
+            result_category=result_category,
             completed=True,
         )
+        if result_category == "tool_error" and isinstance(result, list):
+            return CallToolResult(content=result, isError=True)
         return result
     except Exception as error:
         _trace(
@@ -1513,17 +1516,20 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             exception_class=error.__class__.__name__,
             completed=True,
         )
-        return [
-            TextContent(
-                type="text",
-                text=json.dumps(
-                    {
-                        "ok": False,
-                        "error": f"tool_handler_failed:{error.__class__.__name__}",
-                    }
-                ),
-            )
-        ]
+        return CallToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "ok": False,
+                            "error": f"tool_handler_failed:{error.__class__.__name__}",
+                        }
+                    ),
+                )
+            ],
+            isError=True,
+        )
 
 
 async def _run_stdio() -> None:

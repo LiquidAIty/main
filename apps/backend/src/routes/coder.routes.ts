@@ -48,7 +48,11 @@ import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/ha
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { pool } from '../db/pool';
 import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantStore';
-import { runOpenClaudeCodeTask } from '../coder/execution/coderConsoleRuntime';
+import {
+  runOpenClaudeCodeTask,
+  type ConsoleCoderResult,
+  type ConsoleCoderStarted,
+} from '../coder/execution/coderConsoleRuntime';
 import { setLatestCoderAuditView, getLatestCoderAuditView } from '../coder/execution/coderAuditView';
 import type { CodeGraphViewContractResult } from '../contracts/coderContracts';
 import {
@@ -72,6 +76,15 @@ import {
 } from '../coder/openclaude/session/graphObjectContext';
 
 const router = Router();
+const DEFAULT_CODER_CONNECTOR_COMPLETION_WINDOW_MS = 20_000;
+
+export function resolveCoderConnectorCompletionWindowMs(): number {
+  const configured = Number(process.env.LIQUIDAITY_CODER_CONNECTOR_COMPLETION_WINDOW_MS);
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return DEFAULT_CODER_CONNECTOR_COMPLETION_WINDOW_MS;
+  }
+  return Math.min(45_000, Math.max(1, Math.trunc(configured)));
+}
 
 export function resolveCodeGraphProjectName(): string {
   const configuredProject = String(
@@ -298,14 +311,12 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
       modelKey: String(runtimeOptions.modelKey || model.providerModelId),
       providerModelId: model.providerModelId,
     });
-    const cancellation = new AbortController();
-    const cancel = () => cancellation.abort('coder_request_cancelled');
-    req.once('aborted', cancel);
-    res.once('close', () => {
-      if (!res.writableEnded) cancel();
+    let announceStarted!: (started: ConsoleCoderStarted) => void;
+    const startedPromise = new Promise<ConsoleCoderStarted>((resolve) => {
+      announceStarted = resolve;
     });
-    let result;
-    try {
+    const finalizationPromise = (async (): Promise<ConsoleCoderResult> => {
+      try {
       if (attachedViews.length) {
         await transitionGraphViewsOnPython({
           projectId,
@@ -315,7 +326,7 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
           invocationId: outerAssignment.correlationId,
         });
       }
-      result = await runOpenClaudeCodeTask({
+      const result = await runOpenClaudeCodeTask({
         parentRunId: String(body.parentRunId || ''),
         correlationId: assignmentCorrelationId,
         projectId,
@@ -326,83 +337,111 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
         authority,
         model: model.providerModelId,
         provider: model.provider,
-        signal: cancellation.signal,
+      }, {
+        onSessionStarted: announceStarted,
       });
-    } catch (error) {
       await finishAgentAssignmentOnPython(outerAssignment.assignmentId, {
         projectId,
         claimToken: outerAssignment.claimToken,
-        status: 'failed',
-        errorCode: 'openclaude_runtime_failed',
-        errorDetail: error instanceof Error ? error.message : String(error),
+        status:
+          result.terminalState === 'cancelled'
+            ? 'cancelled'
+            : result.ok
+              ? 'completed'
+              : 'failed',
+        output: JSON.stringify(result.report ?? result.auditResult ?? {
+            terminalState: result.terminalState,
+            resultValidationStatus: result.resultValidationStatus,
+        }),
+        summary: result.ok ? 'OpenClaude Coder completed' : 'OpenClaude Coder failed',
+        errorCode: result.error || undefined,
+        errorDetail: result.error || undefined,
+        toolEvidence: result.commandEvidence
+          ? [{
+              callId: result.sessionId || result.childRunId,
+              toolName: 'openclaude',
+              event: result.commandEvidence.transportMode,
+              status: result.terminalState,
+            }]
+          : [],
       });
       if (attachedViews.length) {
         await transitionGraphViewsOnPython({
           projectId,
           conversationId,
           viewIds: attachedViews.map((view) => view.viewId),
-          status: 'failed',
-          invocationId: String(body.parentRunId || ''),
+          status: result.ok ? 'consumed' : 'failed',
+          invocationId: result.correlationId,
         });
       }
-      throw error;
-    } finally {
-      req.off('aborted', cancel);
-    }
-    await finishAgentAssignmentOnPython(outerAssignment.assignmentId, {
-      projectId,
-      claimToken: outerAssignment.claimToken,
-      status:
-        result.terminalState === 'cancelled'
-          ? 'cancelled'
-          : result.ok
-            ? 'completed'
-            : 'failed',
-      output: JSON.stringify(result.report ?? result.auditResult ?? {
-          terminalState: result.terminalState,
-          resultValidationStatus: result.resultValidationStatus,
-      }),
-      summary: result.ok ? 'OpenClaude Coder completed' : 'OpenClaude Coder failed',
-      errorCode: result.error || undefined,
-      errorDetail: result.error || undefined,
-      toolEvidence: result.commandEvidence
-        ? [{
-            callId: result.sessionId || result.childRunId,
-            toolName: 'openclaude',
-            event: result.commandEvidence.transportMode,
-            status: result.terminalState,
-          }]
-        : [],
-    });
-    if (attachedViews.length) {
-      await transitionGraphViewsOnPython({
-        projectId,
-        conversationId,
-        viewIds: attachedViews.map((view) => view.viewId),
-        status: result.ok ? 'consumed' : 'failed',
-        invocationId: result.correlationId,
+      // Preserve the real audit result for the existing audit inspector. Native
+      // CBM remains the source; no synthetic Graph View is minted from its refs.
+      if (result.ok && result.resultKind === 'audit' && result.auditResult) {
+        const audit = result.auditResult;
+        setLatestCoderAuditView({
+          projectId,
+          conversationId,
+          childRunId: result.childRunId,
+          correlationId: result.correlationId,
+          conclusion: audit.conclusion,
+          repositoryIdentity: audit.repositoryIdentity,
+          revision: audit.revision,
+          freshness: audit.freshness,
+          codeGraphQuery: audit.codeGraphQuery,
+          codeGraphNodeRefs: audit.codeGraphNodeRefs,
+          viewContract: audit.viewContract as CodeGraphViewContractResult,
+          transcriptArtifact: result.transcriptArtifact ?? null,
+        });
+      }
+      return result;
+      } catch (error) {
+        await finishAgentAssignmentOnPython(outerAssignment.assignmentId, {
+          projectId,
+          claimToken: outerAssignment.claimToken,
+          status: 'failed',
+          errorCode: 'openclaude_runtime_failed',
+          errorDetail: error instanceof Error ? error.message : String(error),
+        });
+        if (attachedViews.length) {
+          await transitionGraphViewsOnPython({
+            projectId,
+            conversationId,
+            viewIds: attachedViews.map((view) => view.viewId),
+            status: 'failed',
+            invocationId: String(body.parentRunId || ''),
+          });
+        }
+        throw error;
+      }
+    })();
+
+    let completionTimer: NodeJS.Timeout | null = null;
+    const runningSignal = startedPromise.then(
+      (started) =>
+        new Promise<{ kind: 'running'; started: ConsoleCoderStarted }>((resolve) => {
+          completionTimer = setTimeout(
+            () => resolve({ kind: 'running', started }),
+            resolveCoderConnectorCompletionWindowMs(),
+          );
+        }),
+    );
+    const completionSignal = finalizationPromise.then(
+      (result) => ({ kind: 'completed' as const, result }),
+      (error: unknown) => ({ kind: 'failed' as const, error }),
+    );
+    const first = await Promise.race([completionSignal, runningSignal]);
+    if (completionTimer) clearTimeout(completionTimer);
+    if (first.kind === 'failed') throw first.error;
+    if (first.kind === 'running') {
+      return res.status(202).json({
+        ok: true,
+        status: 'running',
+        assignmentId: outerAssignment.assignmentId,
+        instructionId: outerAssignment.instructionId,
+        ...first.started,
       });
     }
-    // Preserve the real audit result for the existing audit inspector. Native
-    // CBM remains the source; no synthetic Graph View is minted from its refs.
-    if (result.ok && result.resultKind === 'audit' && result.report) {
-      const audit = result.report as Record<string, unknown>;
-      setLatestCoderAuditView({
-        projectId,
-        conversationId,
-        childRunId: result.childRunId,
-        correlationId: result.correlationId,
-        conclusion: String(audit.conclusion ?? ''),
-        repositoryIdentity: String(audit.repositoryIdentity ?? ''),
-        revision: String(audit.revision ?? ''),
-        freshness: String(audit.freshness ?? ''),
-        codeGraphQuery: String(audit.codeGraphQuery ?? ''),
-        codeGraphNodeRefs: Array.isArray(audit.codeGraphNodeRefs) ? audit.codeGraphNodeRefs.map(String) : [],
-        viewContract: (audit.viewContract ?? {}) as CodeGraphViewContractResult,
-        transcriptArtifact: result.transcriptArtifact ?? null,
-      });
-    }
-    if (res.destroyed) return undefined;
+    const result = first.result;
     const failureStatus = result.terminalState === 'timed_out'
       ? 408
       : result.terminalState === 'cancelled'

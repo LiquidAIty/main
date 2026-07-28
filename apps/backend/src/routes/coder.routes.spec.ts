@@ -59,7 +59,10 @@ const deckMocks = vi.hoisted(() => ({
 }));
 
 const consoleRuntimeMocks = vi.hoisted(() => ({
-  runOpenClaudeCodeTask: vi.fn(async (request: { approvedPrompt: string }) => ({
+  runOpenClaudeCodeTask: vi.fn(async (
+    request: { approvedPrompt: string },
+    _deps?: { onSessionStarted?: (started: Record<string, unknown>) => void },
+  ) => ({
     ok: true,
     parentRunId: 'parent-1',
     childRunId: 'child-1',
@@ -586,10 +589,13 @@ describe('coder routes', () => {
         }),
       });
       expect(response.status).toBe(200);
-      expect(consoleRuntimeMocks.runOpenClaudeCodeTask).toHaveBeenCalledWith(expect.objectContaining({
-        approvedPrompt: expect.stringContaining('[LIQUIDAITY_GRAPH_CONTEXT]\n- symbol:one'),
-        correlationId: expect.stringMatching(/^coder:/),
-      }));
+      expect(consoleRuntimeMocks.runOpenClaudeCodeTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          approvedPrompt: expect.stringContaining('[LIQUIDAITY_GRAPH_CONTEXT]\n- symbol:one'),
+          correlationId: expect.stringMatching(/^coder:/),
+        }),
+        expect.objectContaining({ onSessionStarted: expect.any(Function) }),
+      );
       expect(graphViewMocks.beginAgentAssignmentOnPython).toHaveBeenCalledWith(expect.objectContaining({
         projectId: 'project-1',
         deckId: 'deck_builder',
@@ -670,6 +676,70 @@ describe('coder routes', () => {
       const doorwayViews = (await graphViewMocks.fetchDoorwayContext.mock.results.at(-1)?.value)?.views;
       expect(doorwayViews?.every((view: Record<string, unknown>) => !('records' in view))).toBe(true);
     } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('returns the durable AgentGraph and OpenClaude identities before a long Coder run completes', async () => {
+    const previousWindow = process.env.LIQUIDAITY_CODER_CONNECTOR_COMPLETION_WINDOW_MS;
+    process.env.LIQUIDAITY_CODER_CONNECTOR_COMPLETION_WINDOW_MS = '5';
+    graphViewMocks.finishAgentAssignmentOnPython.mockClear();
+    consoleRuntimeMocks.runOpenClaudeCodeTask.mockImplementationOnce(
+      async (
+        _request: unknown,
+        deps?: { onSessionStarted?: (started: Record<string, unknown>) => void },
+      ) => {
+        deps?.onSessionStarted?.({
+          childRunId: 'coder-long-1',
+          parentRunId: 'parent-1',
+          correlationId: 'coder:long-1',
+          promptHash: 'prompt-hash-1',
+          sessionId: 'occ-long-1',
+          sessionState: 'running',
+          executionTimeoutMs: 300_000,
+          commandEvidence: {
+            commandPath: 'C:/openclaude/openclaude.exe',
+            runtimeSource: 'installed',
+            transportMode: 'pipe',
+            provider: 'openrouter',
+            model: 'z-ai/glm-5.2',
+          },
+        });
+        return await new Promise<never>(() => undefined);
+      },
+    );
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentRunId: 'parent-1',
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          conversationId: 'main',
+          cardId: 'card_local_coder',
+          authority: 'mag_one_execution',
+          approvedPrompt: 'Perform the bounded approved task.',
+        }),
+      });
+      expect(response.status).toBe(202);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        status: 'running',
+        assignmentId: 'assignment:coder-test',
+        instructionId: 'instruction:coder-test',
+        childRunId: 'coder-long-1',
+        sessionId: 'occ-long-1',
+        sessionState: 'running',
+      });
+      expect(graphViewMocks.finishAgentAssignmentOnPython).not.toHaveBeenCalled();
+    } finally {
+      if (previousWindow === undefined) {
+        delete process.env.LIQUIDAITY_CODER_CONNECTOR_COMPLETION_WINDOW_MS;
+      } else {
+        process.env.LIQUIDAITY_CODER_CONNECTOR_COMPLETION_WINDOW_MS = previousWindow;
+      }
       await closeServer(server);
     }
   });

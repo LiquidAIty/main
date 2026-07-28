@@ -348,7 +348,8 @@ class TestControlToolArgumentRejection:
                  "input": "hi", "prompt": "evil", "model": "evil", "tools": ["shell"]},
             )
         )
-        text = result[0].text
+        assert result.isError is True
+        text = result.content[0].text
         assert "tool_arguments_rejected" in text
         assert "prompt" in text and "model" in text and "tools" in text
 
@@ -356,7 +357,8 @@ class TestControlToolArgumentRejection:
         from app import mcp_host
 
         unknown = asyncio.run(mcp_host.call_tool("nope", {}))
-        assert "unknown_tool" in unknown[0].text
+        assert unknown.isError is True
+        assert "unknown_tool" in unknown.content[0].text
 
     def test_read_slice_smuggled_arguments_are_rejected(self):
         from app import mcp_host
@@ -367,6 +369,7 @@ class TestControlToolArgumentRejection:
                 {"projectId": "p", "prompt": "evil", "patch": {"nodes": []}},
             )
         )
-        text = result[0].text
+        assert result.isError is True
+        text = result.content[0].text
         assert "tool_arguments_rejected" in text
         assert "prompt" in text and "patch" in text

@@ -652,6 +652,8 @@ def build_query_context(
     executions: list[QueryExecution],
     optional_bindings: list[QueryBinding],
 ) -> str:
+    if not executions and not optional_bindings:
+        return ""
     lines = ["REGISTERED DATABASE CONTEXT:"]
     if executions:
         for execution in executions:
@@ -664,16 +666,12 @@ def build_query_context(
                 lines.append(
                     "  - " + json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
                 )
-    else:
-        lines.append("- required: none")
     if optional_bindings:
         lines.append("OPTIONAL REGISTERED OPERATIONS (call by binding_id only):")
         for binding in optional_bindings:
             lines.append(
                 f"- {binding.binding_id}: {binding.query_id}@v{binding.query_version}"
             )
-    else:
-        lines.append("OPTIONAL REGISTERED OPERATIONS: none")
     return "\n".join(lines)
 
 
@@ -773,7 +771,7 @@ def _attach_selected_graph_view_references(
 
 def _render_selected_graph_views(views: list[dict[str, Any]]) -> str:
     if not views:
-        return "[SELECTED_GRAPH_VIEWS]\n- none"
+        return ""
     from app.python_models.unified_context import _render_view_lines
 
     lines = ["[SELECTED_GRAPH_VIEWS]"]
@@ -932,20 +930,26 @@ def hydrate_assignment_context(
             ]
         )
         if isinstance(parent_continuity, dict)
-        else "[PARENT_AGENTGRAPH_CONTINUITY]\n- none"
+        else ""
     )
-    reference_context = "\n".join(
-        [
-            "[AGENTGRAPH_CONTEXT_REFERENCES]",
-            *[
-                f"- {reference['referenceType']}:{reference['referenceId']}"
-                + (" [required]" if reference.get("required") else "")
-                for reference in assignment.get("contextReferences") or []
-            ],
-        ]
+    context_references = assignment.get("contextReferences") or []
+    reference_context = (
+        "\n".join(
+            [
+                "[AGENTGRAPH_CONTEXT_REFERENCES]",
+                *[
+                    f"- {reference['referenceType']}:{reference['referenceId']}"
+                    + (" [required]" if reference.get("required") else "")
+                    for reference in context_references
+                ],
+            ]
+        )
+        if context_references
+        else ""
     )
     model_context = "\n\n".join(
-        [
+        part
+        for part in [
             "[AGENTGRAPH_ASSIGNMENT]",
             f"assignmentId: {assignment_id}",
             f"instructionId: {claimed['instructionId']}",
@@ -957,6 +961,7 @@ def hydrate_assignment_context(
             continuity_context,
             operation_context,
         ]
+        if part
     )
     return HydratedAssignmentContext(
         instruction=claimed["instruction"],

@@ -87,6 +87,31 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(mockRunCard).not.toHaveBeenCalled();
   });
 
+  it('rejects Main before the generic assistant runner reaches Python', async () => {
+    mockGetDeck.mockResolvedValue(deckWith([{
+      ...AGENT_CARD,
+      id: 'card_main_chat',
+      runtimeBinding: 'main_chat',
+    }]));
+    const result = await runConfiguredCard({ ...ARGS, cardId: 'card_main_chat' });
+    expect(result.status).toBe('not_runnable');
+    expect(result.error).toContain('single_card_main_chat_not_runnable');
+    expect(mockRunCard).not.toHaveBeenCalled();
+  });
+
+  it('rejects a workspace-only Trading card before instruction creation or billing', async () => {
+    mockGetDeck.mockResolvedValue(deckWith([{
+      ...AGENT_CARD,
+      id: 'card_trading_workbench',
+      runtimeBinding: 'trading_agent',
+      parentGraphId: 'workbench_trading',
+    }]));
+    const result = await runConfiguredCard({ ...ARGS, cardId: 'card_trading_workbench' });
+    expect(result.status).toBe('not_runnable');
+    expect(result.error).toContain('single_card_workspace_card_not_runnable');
+    expect(mockRunCard).not.toHaveBeenCalled();
+  });
+
   it('fails honestly when the card has no configured model — no fallback model is chosen', async () => {
     mockGetDeck.mockResolvedValue(deckWith([{ ...AGENT_CARD, runtimeOptions: { tools: [] } }]));
     const result = await runConfiguredCard(ARGS);
@@ -186,6 +211,28 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(mockRunCard).toHaveBeenCalledTimes(2);
     expect(mockRunCard.mock.calls.map(([payload]) => payload.cardRuntime.participants[0].cardId))
       .toEqual([connected.id, disconnected.id]);
+  });
+
+  it('gives the selected target only that card own saved tools', async () => {
+    const first = {
+      ...AGENT_CARD,
+      id: 'card_first',
+      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['calculator'] },
+    };
+    const target = {
+      ...AGENT_CARD,
+      id: 'card_target',
+      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['current_datetime'] },
+    };
+    mockGetDeck.mockResolvedValue(deckWith([first, target]));
+    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'target result' });
+
+    const result = await runConfiguredCard({ ...ARGS, cardId: target.id });
+
+    expect(result.status).toBe('completed');
+    expect(result.tools).toEqual(['current_datetime']);
+    expect(mockRunCard.mock.calls[0][0].cardRuntime.participants[0].tools)
+      .toEqual(['current_datetime']);
   });
 
   it('transports an AgentGraph instruction identity and conversation to Python without resolving graph content in TypeScript', async () => {

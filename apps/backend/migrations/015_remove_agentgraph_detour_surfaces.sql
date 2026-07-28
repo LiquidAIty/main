@@ -2,6 +2,9 @@
 -- lease/retry surfaces.
 -- Saved cards own their configuration. AgentGraph keeps exact assignments,
 -- operation references, execution identity, and result lineage.
+--
+-- Do not apply until the remaining registered_query_audit records have been
+-- reviewed. Migration 014 independently aligns the live claim-token contract.
 
 BEGIN;
 
@@ -45,25 +48,6 @@ ALTER TABLE IF EXISTS ag_catalog.card_run_traces
   DROP COLUMN IF EXISTS profile_version,
   DROP COLUMN IF EXISTS skill_versions,
   DROP COLUMN IF EXISTS data_binding_refs;
-
-ALTER TABLE IF EXISTS ag_catalog.agent_assignments
-  ADD COLUMN IF NOT EXISTS claim_token TEXT;
-
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1
-    FROM information_schema.columns
-    WHERE table_schema='ag_catalog'
-      AND table_name='agent_assignments'
-      AND column_name='lease_token'
-  ) THEN
-    EXECUTE
-      'UPDATE ag_catalog.agent_assignments
-       SET claim_token=COALESCE(claim_token, lease_token)';
-  END IF;
-END
-$$;
 
 ALTER TABLE IF EXISTS ag_catalog.agent_assignments
   DROP CONSTRAINT IF EXISTS agent_assignments_retry_of_assignment_id_fkey,

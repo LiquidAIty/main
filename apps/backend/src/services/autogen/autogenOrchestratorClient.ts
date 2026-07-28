@@ -141,6 +141,12 @@ export async function orchestrateWithAutoGen(
         if (!data || typeof data !== 'object') {
           throw new Error('autogen_orchestrator_invalid_response');
         }
+        if ((data as any).ok === false) {
+          const message = String(
+            (data as any).error || 'autogen_orchestrator_failed',
+          ).trim();
+          throw new Error(message || 'autogen_orchestrator_failed');
+        }
         // A Task-Ledger-only run legitimately has no chat answer
         // (finalResponseText === ''); it is still a successful run because it
         // carries the real Task Ledger artifact. Only an entirely empty result

@@ -688,9 +688,6 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             else:
                 autogen_messages.append(payload)
 
-        if not final_response_text and autogen_messages:
-            final_response_text = _as_text(autogen_messages[-1].get("content"))
-
         # Real Task Ledger artifact, read from the captured orchestrator's actual
         # state — NOT from finalResponseText / chat text. None if the orchestrator
         # produced no Task Ledger (no fabrication for PlanFlow).

@@ -12,7 +12,12 @@
  */
 
 import { spawn } from 'node:child_process';
-import { GRPC_PORT, decideGrpcAction, inspectPort } from './devStack';
+import {
+  GRPC_PORT,
+  buildProductChatGrpcEnvironment,
+  decideGrpcAction,
+  inspectPort,
+} from './devStack';
 
 async function main(): Promise<void> {
   const checkOnly = process.argv.includes('--check');
@@ -44,6 +49,7 @@ async function main(): Promise<void> {
   // Dropping shell:true clears DEP0190 without changing cwd/stdio/ownership.
   const child = spawn('bun', ['run', 'scripts/start-grpc.ts'], {
     cwd: 'localcoder',
+    env: buildProductChatGrpcEnvironment(process.env),
     stdio: 'inherit',
   });
   child.on('error', (err) => {

@@ -700,8 +700,8 @@ class ToolRegistry:
         return self._specs.get(str(name or "").strip())
 
     def resolve_one(self, name: str) -> FunctionTool:
-        cleaned = str(name or "").strip()
-        if not cleaned:
+        canonical_name = str(name or "").strip()
+        if not canonical_name:
             raise RuntimeError("card_tool_name_empty")
         # Canonical capability ids (the names cards store, shared with the
         # harness MCP surface) resolve to this runtime's own implementation.
@@ -710,19 +710,23 @@ class ToolRegistry:
         # thinkgraph pair is this runtime's read/write of the same authority.
         # Anything else stays loudly unknown: a capability without an adapter
         # in THIS runtime must fail here, never silently degrade.
-        cleaned = CANONICAL_TOOL_ALIASES.get(cleaned, cleaned)
-        spec = self._specs.get(cleaned)
+        implementation_name = CANONICAL_TOOL_ALIASES.get(canonical_name, canonical_name)
+        spec = self._specs.get(implementation_name)
         if spec is None:
             raise RuntimeError(
-                f"card_tool_unknown: {cleaned} (known: {','.join(self.known_names())})"
+                f"card_tool_unknown: {canonical_name} (known: {','.join(self.known_names())})"
             )
         if not spec.enabled:
-            raise RuntimeError(f"card_tool_disabled: {cleaned}")
+            raise RuntimeError(f"card_tool_disabled: {canonical_name}")
         # ToolSpec validation already guarantees complete schemas; re-check so a
         # mutated spec can never resolve silently.
         if not spec.inputSchema or not spec.outputSchema:
-            raise RuntimeError(f"card_tool_schema_missing: {cleaned}")
-        return FunctionTool(self._adapters[cleaned], description=spec.description, name=spec.name)
+            raise RuntimeError(f"card_tool_schema_missing: {canonical_name}")
+        return FunctionTool(
+            self._adapters[implementation_name],
+            description=spec.description,
+            name=spec.name,
+        )
 
     def resolve_selected(self, selected_names: list[str]) -> list[FunctionTool]:
         """Resolve exactly the card Tools tab selection.
@@ -730,7 +734,15 @@ class ToolRegistry:
         Registered but unselected tools are never returned; any invalid
         selection aborts the whole resolution rather than degrading silently.
         """
-        return [self.resolve_one(name) for name in (selected_names or [])]
+        resolved: list[FunctionTool] = []
+        runtime_names: set[str] = set()
+        for name in selected_names or []:
+            tool = self.resolve_one(name)
+            if tool.name in runtime_names:
+                raise RuntimeError(f"card_tool_runtime_name_collision: {tool.name}")
+            runtime_names.add(tool.name)
+            resolved.append(tool)
+        return resolved
 
 
 def build_default_tool_registry() -> ToolRegistry:

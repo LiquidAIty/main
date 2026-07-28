@@ -75,6 +75,36 @@ describe('autogenOrchestratorClient', () => {
     ).rejects.toThrow('autogen_orchestrator_http_500:card_runtime_sidecar_disabled');
   });
 
+  it('preserves an exact Python rails failure instead of rewriting it as missing output', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          ok: false,
+          error: 'tool_selection_invalid: unknown_tool',
+          finalResponseText: '',
+        }),
+    });
+    vi.stubGlobal('fetch', fetchMock as any);
+
+    await expect(
+      orchestrateWithAutoGen({
+        session: {
+          sessionId: 's1',
+          projectId: 'p1',
+          turnId: 't1',
+          route: 'deck_runtime',
+          orchestrator: 'magentic_one',
+          modelProvider: 'openai',
+          modelKey: 'gpt-5.1-chat-latest',
+          providerModelId: 'gpt-5.1-chat-latest',
+          startedAt: new Date().toISOString(),
+        },
+        userText: 'run this',
+      }),
+    ).rejects.toThrow('tool_selection_invalid: unknown_tool');
+  });
+
   it('returns the required unavailable code when Python rails cannot be reached', async () => {
     const connectionError = new Error('connect refused') as Error & {
       cause?: { code: string };

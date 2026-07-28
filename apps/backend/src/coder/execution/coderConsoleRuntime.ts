@@ -49,6 +49,9 @@ export type ConsoleCoderDeps = {
   model?: string;
   provider?: string;
   signal?: AbortSignal;
+  /** Announces the durable run/session identity immediately after the one
+   * visible OpenClaude session starts, before waiting for terminal output. */
+  onSessionStarted?: (started: ConsoleCoderStarted) => void;
   /** Injectable in focused tests; production uses the bounded environment/default value. */
   timeoutMs?: number;
 };
@@ -90,6 +93,17 @@ export type ConsoleCommandEvidence = {
   transportMode: string;
   provider: string | null;
   model: string | null;
+};
+
+export type ConsoleCoderStarted = {
+  childRunId: string;
+  parentRunId: string;
+  correlationId: string;
+  promptHash: string;
+  sessionId: string;
+  sessionState: string;
+  executionTimeoutMs: number;
+  commandEvidence: ConsoleCommandEvidence;
 };
 
 export type ConsoleCoderResult = {
@@ -333,6 +347,22 @@ export async function runOpenClaudeCodeTask(
   }
 
   const session = started.session;
+  deps.onSessionStarted?.({
+    childRunId: run.runId,
+    parentRunId: run.parentRunId,
+    correlationId: run.correlationId,
+    promptHash: run.promptHash,
+    sessionId: session.info.id,
+    sessionState: session.info.state,
+    executionTimeoutMs: timeoutMs,
+    commandEvidence: {
+      commandPath: session.info.commandPath,
+      runtimeSource: session.info.runtimeSource,
+      transportMode: session.info.transportMode,
+      provider: session.info.provider,
+      model: session.info.model,
+    },
+  });
   const waitOutcome = await awaitSessionExit(session, task.signal ?? deps.signal, timeoutMs);
 
   const transcript = session.transcriptText();

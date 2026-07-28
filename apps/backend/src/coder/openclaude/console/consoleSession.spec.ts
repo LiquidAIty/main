@@ -105,6 +105,17 @@ describe('OpenClaudeConsoleSessionManager', () => {
     expect(args[0]).toBe('localcoder/bin/openclaude');
   });
 
+  it('does not inject product-chat memory switches into the separate Coder process', () => {
+    const child = new FakeChild();
+    const { manager, spawnProcess } = managerWith(child, {
+      env: { OPENAI_API_KEY: 'sk-secretkey1234567890', OPENAI_MODEL: 'gpt-5.3-codex' },
+    });
+    manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
+    const [, , options] = spawnProcess.mock.calls[0];
+    expect(options.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS).toBeUndefined();
+    expect(options.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBeUndefined();
+  });
+
   it('streams stdout through the bridge transcript', async () => {
     const child = new FakeChild();
     const { manager } = managerWith(child);

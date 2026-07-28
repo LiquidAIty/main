@@ -15,6 +15,16 @@ export const GRPC_PORT = 50051;
 export const KNOWGRAPH_PORT = 8001;
 export const AUTOGEN_PORT = 8003;
 
+export function buildProductChatGrpcEnvironment(
+  parentEnv: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  return {
+    ...parentEnv,
+    CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
+  };
+}
+
 export type PortListener = { pid: number; name: string; commandLine: string };
 export type ProcInfo = { pid: number; name: string; commandLine: string };
 

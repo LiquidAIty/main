@@ -215,6 +215,17 @@ function isPythonAutoGenCallableRuntimeType(runtimeType: string): boolean {
   return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
 }
 
+function genericAssistantCardIneligibility(card: any): string | null {
+  const binding = resolveCardBinding(card);
+  if (binding === 'main_chat') {
+    return 'single_card_main_chat_not_runnable';
+  }
+  if (String(card?.parentGraphId || '').trim()) {
+    return 'single_card_workspace_card_not_runnable';
+  }
+  return null;
+}
+
 /** Exported for the dev agent harness (dev.routes.ts) so a dry-run probe
  * resolves a card's model EXACTLY the way the runtime does — same throws. */
 export function resolveCardModelStrict(card: any): {
@@ -657,6 +668,14 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     return done({ status: 'disabled', error: `card_disabled: ${cardId}` });
   }
   const runtimeType = resolveCardRuntimeType(card);
+  const ineligibility = genericAssistantCardIneligibility(card);
+  if (ineligibility) {
+    return done({
+      status: 'not_runnable',
+      runtimeType,
+      error: `${ineligibility}: cardId=${cardId}`,
+    });
+  }
   if (String(card.kind || 'agent') !== 'agent' || !isPythonAutoGenCallableRuntimeType(runtimeType)) {
     return done({
       status: 'not_runnable',

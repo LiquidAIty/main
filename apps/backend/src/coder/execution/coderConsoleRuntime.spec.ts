@@ -186,7 +186,18 @@ describe('runOpenClaudeCodeTask (visible Console PTY)', () => {
   it('mag_one_execution returns the validated CoderReport, auditResult null', async () => {
     const session = new FakeSession(validReportJson('executed'));
     const p = task('mag_one_execution');
-    const promise = runOpenClaudeCodeTask(p, { manager: managerFor({ ok: true, session }) });
+    const onSessionStarted = vi.fn();
+    const promise = runOpenClaudeCodeTask(p, {
+      manager: managerFor({ ok: true, session }),
+      onSessionStarted,
+    });
+    expect(onSessionStarted).toHaveBeenCalledWith(expect.objectContaining({
+      childRunId: expect.stringMatching(/^coder_/),
+      parentRunId: 'parent_1',
+      sessionId: 'occ_fake_1',
+      sessionState: 'running',
+      executionTimeoutMs: 300_000,
+    }));
     session.exitWith(0);
     const result = await promise;
     expect(result.ok).toBe(true);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildProductChatGrpcEnvironment,
   decideAutogenAction,
   decideGrpcAction,
   decideKnowgraphAction,
@@ -12,6 +13,19 @@ import {
 
 const REPO = 'C:\\Projects\\main';
 const grpc: PortListener = { pid: 6460, name: 'bun.exe', commandLine: 'bun  run scripts/start-grpc.ts' };
+
+describe('product-chat gRPC environment', () => {
+  it('disables repository Markdown and auto-memory only in the spawned gRPC child', () => {
+    const supervisorEnv: NodeJS.ProcessEnv = { PATH: 'test-path' };
+    const productChatEnv = buildProductChatGrpcEnvironment(supervisorEnv);
+
+    expect(productChatEnv.CLAUDE_CODE_DISABLE_CLAUDE_MDS).toBe('1');
+    expect(productChatEnv.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe('1');
+    expect(productChatEnv.PATH).toBe('test-path');
+    expect(supervisorEnv.CLAUDE_CODE_DISABLE_CLAUDE_MDS).toBeUndefined();
+    expect(supervisorEnv.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBeUndefined();
+  });
+});
 
 describe('isLiquidAItyGrpcListener — only the real OpenClaude bun gRPC is reusable', () => {
   it('accepts the exact bun start-grpc.ts listener', () => {
