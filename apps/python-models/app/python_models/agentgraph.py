@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Iterator
 from uuid import uuid4
@@ -526,7 +526,6 @@ def create_assignment(
               receiverCardId: $receiverCardId,
               instructionId: $instructionId,
               state: 'pending',
-              attempt: 0,
               createdAt: $createdAt
             }
             MERGE (assignment)-[:HAS_INSTRUCTION]->(instruction)
@@ -615,44 +614,33 @@ def claim_assignment(
     project_id: str,
     assignment_id: str,
     receiver_card_id: str,
-    lease_seconds: int = 120,
     connection: Any | None = None,
 ) -> dict[str, Any]:
-    """Atomically claim one pending or expired assignment lease."""
+    """Atomically claim one pending assignment with a unique ownership token."""
     project_id = _required_text(project_id, "project_id")
     assignment_id = _required_id(assignment_id, "assignment_id")
     receiver_card_id = _required_id(receiver_card_id, "receiver_card_id")
-    if not isinstance(lease_seconds, int) or not 10 <= lease_seconds <= 3600:
-        raise AgentGraphError("agentgraph_assignment_lease_invalid")
-    lease_token = f"lease:{uuid4().hex}"
-    now = datetime.now(timezone.utc)
-    expires = now + timedelta(seconds=lease_seconds)
+    claim_token = f"claim:{uuid4().hex}"
+    started_at = datetime.now(timezone.utc)
     with _connection_scope(connection) as conn, conn.cursor() as cursor:
         _prepare(cursor)
         cursor.execute(
             """
             UPDATE ag_catalog.agent_assignments
-            SET state='running', claimed_by_card_id=%s, lease_token=%s,
-                attempt=attempt+1, started_at=COALESCE(started_at,%s),
-                heartbeat_at=%s, lease_expires_at=%s, updated_at=%s
+            SET state='running', claimed_by_card_id=%s, claim_token=%s,
+                started_at=COALESCE(started_at,%s), updated_at=%s
             WHERE project_id=%s AND assignment_id=%s AND receiver_card_id=%s
-              AND (
-                state='pending'
-                OR (state='running' AND lease_expires_at < %s)
-              )
-            RETURNING correlation_id, instruction_id, attempt
+              AND state='pending'
+            RETURNING correlation_id, instruction_id
             """,
             (
                 receiver_card_id,
-                lease_token,
-                now,
-                now,
-                expires,
-                now,
+                claim_token,
+                started_at,
+                started_at,
                 project_id,
                 assignment_id,
                 receiver_card_id,
-                now,
             ),
         )
         claimed = cursor.fetchone()
@@ -660,7 +648,7 @@ def claim_assignment(
             raise AgentGraphError(
                 f"agentgraph_assignment_not_claimable: {assignment_id}"
             )
-        correlation_id, instruction_id, attempt = claimed
+        correlation_id, instruction_id = claimed
         cursor.execute(
             """
             UPDATE ag_catalog.card_run_traces
@@ -668,7 +656,7 @@ def claim_assignment(
                 started_at=COALESCE(started_at,%s), updated_at=%s
             WHERE project_id=%s AND correlation_id=%s
             """,
-            (now, now, project_id, correlation_id),
+            (started_at, started_at, project_id, correlation_id),
         )
         cursor.execute(
             """
@@ -690,9 +678,7 @@ def claim_assignment(
             WHERE assignment.assignmentId = $assignmentId
               AND assignment.projectId = $projectId
             SET assignment.state='running',
-                assignment.claimedByCardId=$receiverCardId,
-                assignment.attempt=$attempt,
-                assignment.leaseExpiresAt=$leaseExpiresAt
+                assignment.claimedByCardId=$receiverCardId
             RETURN assignment.assignmentId
             """,
             "assignment_id agtype",
@@ -700,8 +686,6 @@ def claim_assignment(
                 "assignmentId": assignment_id,
                 "projectId": project_id,
                 "receiverCardId": receiver_card_id,
-                "attempt": attempt,
-                "leaseExpiresAt": expires.isoformat(),
             },
         )
     return {
@@ -711,67 +695,8 @@ def claim_assignment(
         "instructionId": str(instruction_id),
         "instruction": str(instruction[0]),
         "instructionSha256": str(instruction[1]),
-        "leaseToken": lease_token,
-        "leaseExpiresAt": expires.isoformat(),
-        "attempt": int(attempt),
+        "claimToken": claim_token,
         "state": "running",
-    }
-
-
-def heartbeat_assignment(
-    *,
-    project_id: str,
-    assignment_id: str,
-    lease_token: str,
-    lease_seconds: int = 120,
-    connection: Any | None = None,
-) -> dict[str, Any]:
-    """Atomically extend only the current, unexpired assignment lease."""
-    project_id = _required_text(project_id, "project_id")
-    assignment_id = _required_id(assignment_id, "assignment_id")
-    lease_token = _required_id(lease_token, "lease_token")
-    if not isinstance(lease_seconds, int) or not 10 <= lease_seconds <= 3600:
-        raise AgentGraphError("agentgraph_assignment_lease_invalid")
-    now = datetime.now(timezone.utc)
-    expires = now + timedelta(seconds=lease_seconds)
-    with _connection_scope(connection) as conn, conn.cursor() as cursor:
-        _prepare(cursor)
-        cursor.execute(
-            """
-            UPDATE ag_catalog.agent_assignments
-            SET heartbeat_at=%s, lease_expires_at=%s, updated_at=%s
-            WHERE project_id=%s AND assignment_id=%s AND lease_token=%s
-              AND state='running' AND lease_expires_at > %s
-            RETURNING correlation_id, attempt
-            """,
-            (now, expires, now, project_id, assignment_id, lease_token, now),
-        )
-        row = cursor.fetchone()
-        if row is None:
-            raise AgentGraphError(
-                f"agentgraph_assignment_lease_mismatch: {assignment_id}"
-            )
-        _run_cypher(
-            cursor,
-            """
-            MATCH (assignment:Assignment)
-            WHERE assignment.assignmentId=$assignmentId
-              AND assignment.projectId=$projectId
-            SET assignment.leaseExpiresAt=$leaseExpiresAt
-            RETURN assignment.assignmentId
-            """,
-            "assignment_id agtype",
-            {
-                "assignmentId": assignment_id,
-                "projectId": project_id,
-                "leaseExpiresAt": expires.isoformat(),
-            },
-        )
-    return {
-        "ok": True,
-        "assignmentId": assignment_id,
-        "leaseExpiresAt": expires.isoformat(),
-        "attempt": int(row[1]),
     }
 
 
@@ -779,7 +704,7 @@ def finish_assignment(
     *,
     project_id: str,
     assignment_id: str,
-    lease_token: str,
+    claim_token: str,
     status: str,
     output: str | None = None,
     summary: str | None = None,
@@ -791,7 +716,7 @@ def finish_assignment(
     """Attach the exact terminal result to the claimed run."""
     project_id = _required_text(project_id, "project_id")
     assignment_id = _required_id(assignment_id, "assignment_id")
-    lease_token = _required_id(lease_token, "lease_token")
+    claim_token = _required_id(claim_token, "claim_token")
     terminal = _status(status)
     if terminal not in {"completed", "failed", "cancelled"}:
         raise AgentGraphError(
@@ -808,19 +733,19 @@ def finish_assignment(
         _prepare(cursor)
         cursor.execute(
             """
-            SELECT correlation_id, receiver_card_id, state, lease_expires_at
+            SELECT correlation_id, receiver_card_id, state
             FROM ag_catalog.agent_assignments
-            WHERE project_id=%s AND assignment_id=%s AND lease_token=%s
+            WHERE project_id=%s AND assignment_id=%s AND claim_token=%s
             FOR UPDATE
             """,
-            (project_id, assignment_id, lease_token),
+            (project_id, assignment_id, claim_token),
         )
         assignment = cursor.fetchone()
         if assignment is None:
             raise AgentGraphError(
-                f"agentgraph_assignment_lease_mismatch: {assignment_id}"
+                f"agentgraph_assignment_claim_mismatch: {assignment_id}"
             )
-        correlation_id, receiver_card_id, prior_state, lease_expires_at = assignment
+        correlation_id, receiver_card_id, prior_state = assignment
         if prior_state in {"completed", "failed", "cancelled"}:
             cursor.execute(
                 """
@@ -855,10 +780,6 @@ def finish_assignment(
             raise AgentGraphError(
                 f"agentgraph_assignment_already_terminal: {assignment_id}"
             )
-        if lease_expires_at is None or lease_expires_at <= datetime.now(timezone.utc):
-            raise AgentGraphError(
-                f"agentgraph_assignment_lease_expired: {assignment_id}"
-            )
         cursor.execute(
             """
             INSERT INTO ag_catalog.agent_results
@@ -883,8 +804,7 @@ def finish_assignment(
         cursor.execute(
             f"""
             UPDATE ag_catalog.agent_assignments
-            SET state=%s, {timestamp_column}=now(), lease_expires_at=NULL,
-                heartbeat_at=now(), updated_at=now()
+            SET state=%s, {timestamp_column}=now(), updated_at=now()
             WHERE assignment_id=%s
             """,
             (terminal, assignment_id),
@@ -998,7 +918,7 @@ def cancel_assignment(
     reason: str,
     connection: Any | None = None,
 ) -> dict[str, Any]:
-    """Cancel pending work as its sender without manufacturing a worker lease."""
+    """Cancel pending or running work as its sender."""
     project_id = _required_text(project_id, "project_id")
     assignment_id = _required_id(assignment_id, "assignment_id")
     requested_by = _required_id(requested_by_card_id, "requested_by_card_id")
@@ -1047,8 +967,8 @@ def cancel_assignment(
         cursor.execute(
             """
             UPDATE ag_catalog.agent_assignments
-            SET state='cancelled', cancelled_at=now(), lease_token=NULL,
-                lease_expires_at=NULL, updated_at=now()
+            SET state='cancelled', cancelled_at=now(), claim_token=NULL,
+                updated_at=now()
             WHERE assignment_id=%s
             """,
             (assignment_id,),
@@ -1273,11 +1193,10 @@ def read_assignment(
             """
             SELECT a.assignment_id, a.correlation_id, a.deck_id, a.conversation_id,
                    a.sender_card_id, a.receiver_card_id, a.parent_assignment_id,
-                   a.state, a.attempt, a.instruction_id, i.body, i.body_sha256,
+                   a.state, a.instruction_id, i.body, i.body_sha256,
                    r.result_id, r.status, r.output, r.summary, r.error_code, r.error_detail,
                    r.tool_evidence,
-                   a.parent_run_id, a.claimed_by_card_id, a.lease_expires_at,
-                   a.heartbeat_at, parent_run.session_id,
+                   a.parent_run_id, a.claimed_by_card_id, parent_run.session_id,
                    run.runtime, run.provider, run.model_key, run.provider_model_id,
                    run.outcome, run.state, run.error_code
             FROM ag_catalog.agent_assignments a
@@ -1364,27 +1283,24 @@ def read_assignment(
         "senderCardId": row[4],
         "receiverCardId": row[5],
         "parentAssignmentId": row[6],
-        "parentRunId": row[19],
+        "parentRunId": row[18],
         "state": row[7],
-        "attempt": row[8],
-        "claimedByCardId": row[20],
-        "leaseExpiresAt": row[21].isoformat() if row[21] else None,
-        "heartbeatAt": row[22].isoformat() if row[22] else None,
-        "nativeSessionId": row[23],
-        "instructionId": row[9],
-        "instruction": row[10],
-        "instructionSha256": row[11],
+        "claimedByCardId": row[19],
+        "nativeSessionId": row[20],
+        "instructionId": row[8],
+        "instruction": row[9],
+        "instructionSha256": row[10],
         "result": (
             {
-                "resultId": row[12],
-                "status": row[13],
-                "output": row[14],
-                "summary": row[15],
-                "errorCode": row[16],
-                "errorDetail": row[17],
-                "toolEvidence": list(row[18] or []),
+                "resultId": row[11],
+                "status": row[12],
+                "output": row[13],
+                "summary": row[14],
+                "errorCode": row[15],
+                "errorDetail": row[16],
+                "toolEvidence": list(row[17] or []),
             }
-            if row[12]
+            if row[11]
             else None
         ),
         "contextReferences": context_references,
@@ -1401,13 +1317,13 @@ def read_assignment(
             else None
         ),
         "runTrace": {
-            "runtime": row[24],
-            "provider": row[25],
-            "modelKey": row[26],
-            "providerModelId": row[27],
-            "outcome": row[28],
-            "state": row[29],
-            "errorCode": row[30],
+            "runtime": row[21],
+            "provider": row[22],
+            "modelKey": row[23],
+            "providerModelId": row[24],
+            "outcome": row[25],
+            "state": row[26],
+            "errorCode": row[27],
         },
         "ageIdentity": {
             "assignment": json.loads(str(identity_rows[0][0])),
@@ -1454,7 +1370,7 @@ def inspect_assignments(
                 """
                 SELECT a.assignment_id, a.correlation_id, a.sender_card_id,
                        a.receiver_card_id, a.parent_assignment_id, a.parent_run_id,
-                       a.state, a.attempt, a.instruction_id, a.created_at, a.updated_at,
+                       a.state, a.instruction_id, a.created_at, a.updated_at,
                        r.result_id, r.status, r.summary, a.conversation_id
                 FROM ag_catalog.agent_assignments a
                 LEFT JOIN ag_catalog.agent_results r
@@ -1503,14 +1419,13 @@ def inspect_assignments(
                 "parentAssignmentId": row[4],
                 "parentRunId": row[5],
                 "state": row[6],
-                "attempt": row[7],
-                "instructionId": row[8],
-                "createdAt": row[9].isoformat() if row[9] else None,
-                "updatedAt": row[10].isoformat() if row[10] else None,
-                "resultId": row[11],
-                "resultStatus": row[12],
-                "resultSummary": row[13],
-                "conversationId": row[14],
+                "instructionId": row[7],
+                "createdAt": row[8].isoformat() if row[8] else None,
+                "updatedAt": row[9].isoformat() if row[9] else None,
+                "resultId": row[10],
+                "resultStatus": row[11],
+                "resultSummary": row[12],
+                "conversationId": row[13],
             }
             for row in rows
         ],

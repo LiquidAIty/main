@@ -83,7 +83,7 @@ class QueryExecution:
 @dataclass(frozen=True)
 class HydratedAssignmentContext:
     instruction: str
-    lease_token: str
+    claim_token: str
     optional_bindings: tuple[QueryBinding, ...]
     model_context: str
 
@@ -310,10 +310,9 @@ def resolve_registered_version(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT q.project_id, q.query_id, v.version, q.operation_class,
+                SELECT q.project_id, q.query_id, v.version,
                        q.database_authority, q.database_name, q.title, v.language,
-                       v.statement, v.parameter_schema, v.row_limit, v.timeout_ms,
-                       q.disabled_at
+                       v.statement, v.parameter_schema, v.row_limit, v.timeout_ms
                 FROM ag_catalog.registered_queries q
                 JOIN ag_catalog.registered_query_versions v
                   ON v.project_id=q.project_id AND v.query_id=q.query_id
@@ -331,27 +330,21 @@ def resolve_registered_version(
             connection.close()
     if row is None:
         raise LookupError(f"registered_query_not_found: {query_id}@v{version}")
-    if row[12] is not None:
-        raise PermissionError(f"registered_query_disabled: {query_id}@v{version}")
-    if str(row[3]).strip().lower() != "read":
-        raise PermissionError(
-            f"registered_query_write_operation_not_supported: {query_id}@v{version}"
-        )
-    schema = row[9] if isinstance(row[9], dict) else json.loads(str(row[9]))
-    language = str(row[7])
-    statement = validate_read_only_statement(language, row[8])
+    schema = row[8] if isinstance(row[8], dict) else json.loads(str(row[8]))
+    language = str(row[6])
+    statement = validate_read_only_statement(language, row[7])
     return RegisteredQueryVersion(
         project_id=row[0],
         query_id=row[1],
         version=row[2],
-        database_authority=row[4],
-        database_name=row[5],
-        title=row[6],
+        database_authority=row[3],
+        database_name=row[4],
+        title=row[5],
         language=language,
         statement=statement,
         parameter_schema=validate_parameter_schema(schema),
-        row_limit=row[10],
-        timeout_ms=row[11],
+        row_limit=row[9],
+        timeout_ms=row[10],
     )
 
 
@@ -545,7 +538,6 @@ def execute_binding(
               AND assignment.correlation_id=%s
               AND assignment.receiver_card_id=%s
               AND assignment.state='running'
-              AND assignment.lease_expires_at > now()
               AND EXISTS (
                 SELECT 1
                 FROM ag_catalog.agent_assignment_operation_references reference
@@ -798,7 +790,6 @@ def hydrate_assignment_context(
     project_id: str,
     assignment_id: str,
     receiver_card_id: str,
-    lease_seconds: int = 120,
     graph_view_ids: list[str] | tuple[str, ...] | None = None,
     runtime_type: str = "",
     runtime_provider: str = "",
@@ -872,7 +863,6 @@ def hydrate_assignment_context(
         project_id=project_id,
         assignment_id=assignment_id,
         receiver_card_id=receiver_card_id,
-        lease_seconds=lease_seconds,
     )
     if all(
         (
@@ -915,7 +905,7 @@ def hydrate_assignment_context(
             ag.finish_assignment(
                 project_id=project_id,
                 assignment_id=assignment_id,
-                lease_token=claimed["leaseToken"],
+                claim_token=claimed["claimToken"],
                 status="failed",
                 error_code="registered_operation_materialization_failed",
                 error_detail=str(error),
@@ -970,7 +960,7 @@ def hydrate_assignment_context(
     )
     return HydratedAssignmentContext(
         instruction=claimed["instruction"],
-        lease_token=claimed["leaseToken"],
+        claim_token=claimed["claimToken"],
         optional_bindings=tuple(optional_operations),
         model_context=model_context,
     )

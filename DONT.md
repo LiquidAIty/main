@@ -206,6 +206,18 @@ The items below are the major deletion events. Every one "worked" before it was 
   seam look load-bearing. Build the pass and result ledger; do not build another agent platform
   around it.
 
+- **2026-07-28 — AgentGraph lease/retry follow-up: 11 files changed, 232 lines
+  removed.**
+  - Deleted expiry, heartbeat, reclaim, attempt counting, retry-chain fields, and their response/test
+    residue after CBM and current source proved there is no queue worker or assignment scanner.
+  - Preserved one atomic pending-to-running claim, a non-expiring claim token, one-result-per-assignment
+    protection, and idempotent identical terminal writes. AutoGen's internal retries are unrelated.
+  - Removed the remaining registered-operation write/capability/disable workflow schema; retained
+    immutable version lookup, typed parameters, read-only SQL/Cypher execution, Graph Views, and
+    pass-specific references.
+  Lesson: distributed-worker lease machinery without a distributed worker is not resilience. It creates
+  an expiry race that can invalidate a legitimate long model run.
+
 - **2026-06-01 through 2026-07-05 (full audit from git log) — running tally from the actual commit
   record: 5,963 files changed, +175,192 / -182,915 lines across ~90 commits.** The DONT.md entries above
   come from studying every deletion commit >500 lines to extract reusable anti-patterns. Major deletion

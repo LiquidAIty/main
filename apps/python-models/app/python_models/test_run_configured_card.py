@@ -73,7 +73,7 @@ def _durable_outer_boundaries(monkeypatch):
         "hydrate_assignment_context",
         lambda **kwargs: mac.rq.HydratedAssignmentContext(
             instruction="run",
-            lease_token="lease:test",
+            claim_token="claim:test",
             optional_bindings=(),
             model_context="run",
         ),
@@ -178,7 +178,6 @@ class TestGuardFailureResponse:
 
     def test_model_client_construction_failure_finishes_assignment(self, monkeypatch):
         finished: list[dict[str, object]] = []
-        monkeypatch.setattr(mac.rpe, "prepare", lambda **_kwargs: None)
         monkeypatch.setattr(
             mac,
             "_build_model_client",
@@ -207,7 +206,7 @@ class TestGuardFailureResponse:
             {
                 "project_id": "p",
                 "assignment_id": "assignment:corr-1",
-                "lease_token": "lease:test",
+                "claim_token": "claim:test",
                 "status": "failed",
                 "error_code": "run_failed",
                 "error_detail": "single_card_run_failed: provider config invalid",
@@ -254,7 +253,7 @@ class TestRegisteredQueryContext:
             events.append("materialized")
             return mac.rq.HydratedAssignmentContext(
                 instruction="Use registered context.",
-                lease_token="lease:test",
+                claim_token="claim:test",
                 optional_bindings=(optional,),
                 model_context=(
                     "materialized context\n"
@@ -265,7 +264,6 @@ class TestRegisteredQueryContext:
             )
 
         monkeypatch.setattr(mac.rq, "hydrate_assignment_context", hydrate)
-        monkeypatch.setattr(mac.rpe, "prepare", lambda **_kwargs: None)
         monkeypatch.setattr(
             mac,
             "_build_model_client",

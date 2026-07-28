@@ -225,9 +225,7 @@ def test_assignment_hydrator_materializes_required_and_keeps_optional_scoped(
             "instructionSha256": "sha256:one",
             "correlationId": "run:one",
             "instruction": "Approved task.",
-            "leaseToken": "lease:one",
-            "leaseExpiresAt": "later",
-            "attempt": 1,
+            "claimToken": "claim:one",
         },
     )
     monkeypatch.setattr(
@@ -303,9 +301,7 @@ def test_required_hydration_failure_finishes_only_the_assignment(
             "instructionSha256": "sha256:one",
             "correlationId": "run:one",
             "instruction": "Approved task.",
-            "leaseToken": "lease:one",
-            "leaseExpiresAt": "later",
-            "attempt": 1,
+            "claimToken": "claim:one",
         },
     )
     monkeypatch.setattr(
@@ -460,9 +456,7 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
             "instructionSha256": "sha256:one",
             "correlationId": "correlation:one",
             "instruction": "Use the selected bounded context.",
-            "leaseToken": "lease:one",
-            "leaseExpiresAt": "later",
-            "attempt": 1,
+            "claimToken": "claim:one",
         },
     )
     monkeypatch.setattr(

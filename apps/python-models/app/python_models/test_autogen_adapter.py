@@ -118,7 +118,7 @@ def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_to
         events.append("hydrated")
         return mac.rq.HydratedAssignmentContext(
             instruction="Approved task.",
-            lease_token="lease:one",
+            claim_token="claim:one",
             optional_bindings=(optional,),
             model_context="Approved task.\n\ngraphview:query:one",
         )

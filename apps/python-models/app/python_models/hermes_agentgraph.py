@@ -186,7 +186,7 @@ def write_hermes_report(
         completed = ag.finish_assignment(
             project_id=parent["projectId"],
             assignment_id=assignment["assignmentId"],
-            lease_token=claim["leaseToken"],
+            claim_token=claim["claimToken"],
             status="completed",
             output=report_markdown,
             summary=summary,

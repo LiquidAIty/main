@@ -310,7 +310,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     assignment_id: str | None = None
     instruction_id: str | None = None
     result_id: str | None = None
-    lease_token: str | None = None
+    claim_token: str | None = None
     hydrated_assignment: rq.HydratedAssignmentContext | None = None
 
     guard = _validate_single_card_context(context)
@@ -329,13 +329,13 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     async def _fail(error: str, summary: str) -> OrchestratorRunResponse:
         nonlocal result_id
         durable_error = ""
-        if assignment_id is not None and lease_token is not None:
+        if assignment_id is not None and claim_token is not None:
             try:
                 completed = await asyncio.to_thread(
                     ag.finish_assignment,
                     project_id=context.session.projectId,
                     assignment_id=assignment_id,
-                    lease_token=lease_token,
+                    claim_token=claim_token,
                     status="failed",
                     error_code=summary,
                     error_detail=error,
@@ -413,7 +413,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             runtime_model_key=context.session.modelKey,
             runtime_provider_model_id=context.session.providerModelId,
         )
-        lease_token = hydrated_assignment.lease_token
+        claim_token = hydrated_assignment.claim_token
         instruction_body = hydrated_assignment.instruction
     except Exception as err:
         durable_error = ""
@@ -518,7 +518,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             ag.finish_assignment,
             project_id=context.session.projectId,
             assignment_id=assignment_id,
-            lease_token=lease_token,
+            claim_token=claim_token,
             status="completed",
             output=final_text,
             tool_evidence=_tool_evidence_from_result(result),
@@ -607,7 +607,6 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             project_id=context.session.projectId,
             assignment_id=assignment["assignmentId"],
             receiver_card_id=request.receiverCardId,
-            lease_seconds=3600,
         )
     except Exception as err:
         return OrchestratorRunResponse(
@@ -700,7 +699,7 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             ag.finish_assignment,
             project_id=context.session.projectId,
             assignment_id=assignment["assignmentId"],
-            lease_token=hydrated_assignment.lease_token,
+            claim_token=hydrated_assignment.claim_token,
             status="completed" if ok else "failed",
             output=final_response_text or None,
             error_code=completion_error,
@@ -744,7 +743,7 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             ag.finish_assignment,
             project_id=context.session.projectId,
             assignment_id=assignment["assignmentId"],
-            lease_token=hydrated_assignment.lease_token,
+            claim_token=hydrated_assignment.claim_token,
             status="failed",
             error_code="magentic_run_failed",
             error_detail=str(err),

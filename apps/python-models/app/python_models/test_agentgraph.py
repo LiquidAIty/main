@@ -12,7 +12,7 @@ PROJECT_ID = "20ac92da-01fd-4cf6-97cc-0672421e751a"
 DECK_ID = "deck_builder"
 
 
-def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
+def test_assignment_claim_finish_and_hydration() -> None:
     correlation = f"agentgraph-test-{uuid4().hex}"
     connection = connect_postgres(autocommit=False)
     try:
@@ -48,17 +48,9 @@ def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
             project_id=PROJECT_ID,
             assignment_id=assignment["assignmentId"],
             receiver_card_id="card_magentic",
-            lease_seconds=30,
             connection=connection,
         )
         assert claim["instruction"] == "  Exact instruction bytes.\n"
-        assert ag.heartbeat_assignment(
-            project_id=PROJECT_ID,
-            assignment_id=assignment["assignmentId"],
-            lease_token=claim["leaseToken"],
-            lease_seconds=30,
-            connection=connection,
-        )["attempt"] == 1
         ag.record_assignment_runtime_context(
             project_id=PROJECT_ID,
             assignment_id=assignment["assignmentId"],
@@ -79,7 +71,7 @@ def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
         first = ag.finish_assignment(
             project_id=PROJECT_ID,
             assignment_id=assignment["assignmentId"],
-            lease_token=claim["leaseToken"],
+            claim_token=claim["claimToken"],
             status="completed",
             output="Exact result.",
             tool_evidence=tool_evidence,
@@ -89,7 +81,7 @@ def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
         assert ag.finish_assignment(
             project_id=PROJECT_ID,
             assignment_id=assignment["assignmentId"],
-            lease_token=claim["leaseToken"],
+            claim_token=claim["claimToken"],
             status="completed",
             output="Exact result.",
             tool_evidence=tool_evidence,
@@ -99,7 +91,7 @@ def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
             ag.finish_assignment(
                 project_id=PROJECT_ID,
                 assignment_id=assignment["assignmentId"],
-                lease_token=claim["leaseToken"],
+                claim_token=claim["claimToken"],
                 status="failed",
                 error_code="late",
                 error_detail="late",
@@ -191,7 +183,7 @@ def test_sender_can_cancel_pending_assignment_idempotently() -> None:
         connection.close()
 
 
-def test_instruction_references_reject_raw_query_unknown_and_disabled_versions() -> None:
+def test_instruction_references_reject_raw_query_and_unknown_versions() -> None:
     connection = connect_postgres(autocommit=False)
     try:
         with pytest.raises(ag.AgentGraphError, match="keys_unknown"):
@@ -223,32 +215,6 @@ def test_instruction_references_reject_raw_query_unknown_and_disabled_versions()
                         "version": 1,
                         "executionRole": "required_context",
                         "parameters": {},
-                    }
-                ],
-                connection=connection,
-            )
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                UPDATE ag_catalog.registered_queries
-                SET disabled_at=now()
-                WHERE project_id=%s
-                  AND query_id='agentgraph.active_context_identities'
-                """,
-                (PROJECT_ID,),
-            )
-        with pytest.raises(ag.AgentGraphError, match="registered_query_disabled"):
-            ag.create_instruction(
-                project_id=PROJECT_ID,
-                deck_id=DECK_ID,
-                conversation_id="main",
-                body="Disabled operation.",
-                operation_references=[
-                    {
-                        "operationId": "agentgraph.active_context_identities",
-                        "version": 2,
-                        "executionRole": "required_context",
-                        "parameters": {"project_id": PROJECT_ID},
                     }
                 ],
                 connection=connection,
