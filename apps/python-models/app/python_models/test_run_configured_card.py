@@ -228,6 +228,39 @@ class TestSharedBuilderReuse:
             mac._build_participants(ctx, _FakeToolClient())
 
 
+class TestAssignmentToolAuthority:
+    def test_assignment_authority_is_scoped_to_the_model_pass_and_reset(
+        self, monkeypatch
+    ):
+        observed: list[dict[str, str] | None] = []
+
+        class FakeAgent:
+            async def run(self, *, task):
+                observed.append(
+                    mac.ACTIVE_AGENT_ASSIGNMENT_CONTEXT.get()
+                )
+                return SimpleNamespace(messages=[SimpleNamespace(content="done")])
+
+        monkeypatch.setattr(mac, "_build_model_client", lambda _config: _FakeToolClient())
+        monkeypatch.setattr(
+            mac,
+            "_build_participants",
+            lambda _context, _client: [FakeAgent()],
+        )
+
+        response = asyncio.run(mac.run_configured_card(_context()))
+
+        assert response.ok is True
+        assert observed == [
+            {
+                "projectId": "p",
+                "assignmentId": "assignment:corr-1",
+                "receiverCardId": "tg",
+            }
+        ]
+        assert mac.ACTIVE_AGENT_ASSIGNMENT_CONTEXT.get() is None
+
+
 class TestRegisteredQueryContext:
     def test_required_view_materializes_before_model_and_optional_stays_callable(
         self, monkeypatch

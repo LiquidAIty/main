@@ -183,6 +183,79 @@ def test_sender_can_cancel_pending_assignment_idempotently() -> None:
         connection.close()
 
 
+def test_worldsignals_reference_is_relational_and_linked_to_assignment_in_age() -> None:
+    correlation = f"agentgraph-worldsignals-{uuid4().hex}"
+    reference_id = f"worldsignals:command:{uuid4().hex}"
+    connection = connect_postgres(autocommit=False)
+    try:
+        instruction = ag.create_instruction(
+            project_id=PROJECT_ID,
+            deck_id=DECK_ID,
+            conversation_id="main",
+            body="Use one current WorldSignals result.",
+            prepared_by_card_id="card_main_chat",
+            connection=connection,
+        )
+        assignment = ag.create_assignment(
+            project_id=PROJECT_ID,
+            deck_id=DECK_ID,
+            conversation_id="main",
+            correlation_id=correlation,
+            sender_card_id="card_main_chat",
+            receiver_card_id="card_worldsignals_agent",
+            instruction_id=instruction["instructionId"],
+            connection=connection,
+        )
+        ag.add_assignment_references(
+            project_id=PROJECT_ID,
+            assignment_id=assignment["assignmentId"],
+            receiver_card_id="card_worldsignals_agent",
+            references=[
+                {
+                    "referenceId": reference_id,
+                    "referenceType": "worldsignals",
+                    "required": False,
+                }
+            ],
+            connection=connection,
+        )
+        hydrated = ag.read_assignment(
+            project_id=PROJECT_ID,
+            assignment_id=assignment["assignmentId"],
+            receiving_card_id="card_worldsignals_agent",
+            connection=connection,
+        )
+        assert hydrated["contextReferences"] == [
+            {
+                "referenceId": reference_id,
+                "referenceType": "worldsignals",
+                "required": False,
+            }
+        ]
+        with connection.cursor() as cursor:
+            rows = ag._run_cypher(
+                cursor,
+                """
+                MATCH (assignment:Assignment)-[:REFERENCES]->
+                      (reference:WorldSignalsReference)
+                WHERE assignment.assignmentId=$assignmentId
+                  AND assignment.projectId=$projectId
+                  AND reference.referenceId=$referenceId
+                RETURN reference.referenceId
+                """,
+                "reference_id agtype",
+                {
+                    "assignmentId": assignment["assignmentId"],
+                    "projectId": PROJECT_ID,
+                    "referenceId": reference_id,
+                },
+            )
+        assert rows
+    finally:
+        connection.rollback()
+        connection.close()
+
+
 def test_instruction_references_reject_raw_query_and_unknown_versions() -> None:
     connection = connect_postgres(autocommit=False)
     try:

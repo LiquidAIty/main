@@ -266,6 +266,70 @@ export async function requestPythonRailsJson(
   return requestThinkGraphJson(endpointPath, init);
 }
 
+export type BegunAgentAssignment = {
+  ok: true;
+  assignmentId: string;
+  instructionId: string;
+  correlationId: string;
+  claimToken: string;
+  state: 'running';
+};
+
+/** Transport-only lifecycle calls; Python remains the sole AgentGraph writer. */
+export async function beginAgentAssignmentOnPython(payload: {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  correlationId: string;
+  senderCardId: string;
+  receiverCardId: string;
+  instruction: string;
+  parentRunId?: string;
+  references?: Array<{
+    referenceId: string;
+    referenceType: string;
+    required: boolean;
+  }>;
+  runtime?: string;
+  provider?: string;
+  modelKey?: string;
+  providerModelId?: string;
+}): Promise<BegunAgentAssignment> {
+  return requestThinkGraphJson('/agentgraph/assignments/begin', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }) as Promise<BegunAgentAssignment>;
+}
+
+export async function finishAgentAssignmentOnPython(
+  assignmentId: string,
+  payload: {
+    projectId: string;
+    claimToken: string;
+    status: 'completed' | 'failed' | 'cancelled';
+    output?: string;
+    summary?: string;
+    errorCode?: string;
+    errorDetail?: string;
+    toolEvidence?: Array<{
+      callId?: string;
+      toolName?: string;
+      event?: string;
+      status?: string;
+    }>;
+  },
+): Promise<unknown> {
+  return requestThinkGraphJson(
+    `/agentgraph/assignments/${encodeURIComponent(assignmentId)}/finish`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
 /**
  * Transport-only: fetch ThinkGraphProjectionV1 from the Python graph authority
  * and return the body UNCHANGED. No AGE query, no shaping, no labels, no visual

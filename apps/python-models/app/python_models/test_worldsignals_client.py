@@ -139,3 +139,83 @@ def test_long_descriptions_are_bounded(monkeypatch) -> None:
     described = worldsignals_capabilities()["tools"]["tools"][0]["description"]
     assert len(described) <= wsc._TOOL_DESCRIPTION_MAX
     assert described.endswith("…")
+
+
+def test_assignment_worldsignals_result_persists_only_a_stable_reference(monkeypatch) -> None:
+    from app.python_models import agentgraph
+
+    recorded: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        tr,
+        "worldsignals_command",
+        lambda command, arguments: {
+            "command": command,
+            "command_id": "world-command-1",
+            "status": "completed",
+            "payload": {"bounded": True},
+        },
+    )
+    monkeypatch.setattr(
+        agentgraph,
+        "add_assignment_references",
+        lambda **kwargs: recorded.append(kwargs) or {"ok": True},
+    )
+    token = tr.ACTIVE_AGENT_ASSIGNMENT_CONTEXT.set(
+        {
+            "projectId": "project-1",
+            "assignmentId": "assignment:one",
+            "receiverCardId": "card_worldsignals",
+        }
+    )
+    try:
+        result = tr.assignment_worldsignals_command(
+            "get_summary",
+            {"topic": "markets"},
+        )
+    finally:
+        tr.ACTIVE_AGENT_ASSIGNMENT_CONTEXT.reset(token)
+
+    assert result["command_id"] == "world-command-1"
+    reference = recorded[0]["references"][0]
+    assert reference["referenceType"] == "worldsignals"
+    assert reference["referenceId"] == "worldsignals:command:world-command-1"
+    assert "payload" not in reference
+
+
+def test_assignment_worldsignals_batch_records_each_native_command_identity(monkeypatch) -> None:
+    from app.python_models import agentgraph
+
+    recorded: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        tr,
+        "worldsignals_batch",
+        lambda _commands: {
+            "ok": True,
+            "results": [
+                {"command_id": "world-command-1", "status": "completed"},
+                {"command_id": "world-command-2", "status": "completed"},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        agentgraph,
+        "add_assignment_references",
+        lambda **kwargs: recorded.append(kwargs) or {"ok": True},
+    )
+    token = tr.ACTIVE_AGENT_ASSIGNMENT_CONTEXT.set(
+        {
+            "projectId": "project-1",
+            "assignmentId": "assignment:one",
+            "receiverCardId": "card_worldsignals",
+        }
+    )
+    try:
+        tr.assignment_worldsignals_batch([{"cmd": "get_summary"}])
+    finally:
+        tr.ACTIVE_AGENT_ASSIGNMENT_CONTEXT.reset(token)
+
+    references = recorded[0]["references"]
+    assert [reference["referenceId"] for reference in references] == [
+        "worldsignals:command:world-command-1",
+        "worldsignals:command:world-command-2",
+    ]

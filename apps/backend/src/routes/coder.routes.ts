@@ -61,6 +61,8 @@ import {
 import {
   fetchDoorwayContext,
   fetchUnifiedModelContext,
+  beginAgentAssignmentOnPython,
+  finishAgentAssignmentOnPython,
   persistGraphViewOnPython,
   transitionGraphViewsOnPython,
 } from '../services/autogen/autogenOrchestratorClient';
@@ -264,19 +266,38 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
       }
       doorwayGraphContext = String(doorway?.modelContext || '');
     }
-    if (attachedViews.length) {
-      await transitionGraphViewsOnPython({
-        projectId,
-        conversationId,
-        viewIds: attachedViews.map((view) => view.viewId),
-        status: 'active',
-        invocationId: String(body.parentRunId || ''),
-      });
-    }
     const approvedPrompt = [
       String(body.approvedPrompt || ''),
       attachedViews.length ? doorwayGraphContext : '',
     ].filter(Boolean).join('\n\n');
+    const senderCardId = await resolveMainChatCardId(projectId, deckId);
+    if (!senderCardId) {
+      return res.status(409).json({ ok: false, error: 'main_chat_card_not_found' });
+    }
+    const assignmentCorrelationId = `coder:${randomUUID()}`;
+    const runtimeOptions =
+      card && typeof card === 'object'
+        ? ((card as { runtimeOptions?: Record<string, unknown> }).runtimeOptions || {})
+        : {};
+    const outerAssignment = await beginAgentAssignmentOnPython({
+      projectId,
+      deckId,
+      conversationId,
+      correlationId: assignmentCorrelationId,
+      senderCardId,
+      receiverCardId: cardId,
+      instruction: String(body.approvedPrompt || ''),
+      parentRunId: String(body.parentRunId || '') || undefined,
+      references: attachedViews.map((view) => ({
+        referenceId: view.viewId,
+        referenceType: 'graph_view',
+        required: true,
+      })),
+      runtime: 'openclaude',
+      provider: model.provider,
+      modelKey: String(runtimeOptions.modelKey || model.providerModelId),
+      providerModelId: model.providerModelId,
+    });
     const cancellation = new AbortController();
     const cancel = () => cancellation.abort('coder_request_cancelled');
     req.once('aborted', cancel);
@@ -285,8 +306,18 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
     });
     let result;
     try {
+      if (attachedViews.length) {
+        await transitionGraphViewsOnPython({
+          projectId,
+          conversationId,
+          viewIds: attachedViews.map((view) => view.viewId),
+          status: 'active',
+          invocationId: outerAssignment.correlationId,
+        });
+      }
       result = await runOpenClaudeCodeTask({
         parentRunId: String(body.parentRunId || ''),
+        correlationId: assignmentCorrelationId,
         projectId,
         deckId,
         conversationId,
@@ -298,6 +329,13 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
         signal: cancellation.signal,
       });
     } catch (error) {
+      await finishAgentAssignmentOnPython(outerAssignment.assignmentId, {
+        projectId,
+        claimToken: outerAssignment.claimToken,
+        status: 'failed',
+        errorCode: 'openclaude_runtime_failed',
+        errorDetail: error instanceof Error ? error.message : String(error),
+      });
       if (attachedViews.length) {
         await transitionGraphViewsOnPython({
           projectId,
@@ -311,6 +349,31 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
     } finally {
       req.off('aborted', cancel);
     }
+    await finishAgentAssignmentOnPython(outerAssignment.assignmentId, {
+      projectId,
+      claimToken: outerAssignment.claimToken,
+      status:
+        result.terminalState === 'cancelled'
+          ? 'cancelled'
+          : result.ok
+            ? 'completed'
+            : 'failed',
+      output: JSON.stringify(result.report ?? result.auditResult ?? {
+          terminalState: result.terminalState,
+          resultValidationStatus: result.resultValidationStatus,
+      }),
+      summary: result.ok ? 'OpenClaude Coder completed' : 'OpenClaude Coder failed',
+      errorCode: result.error || undefined,
+      errorDetail: result.error || undefined,
+      toolEvidence: result.commandEvidence
+        ? [{
+            callId: result.sessionId || result.childRunId,
+            toolName: 'openclaude',
+            event: result.commandEvidence.transportMode,
+            status: result.terminalState,
+          }]
+        : [],
+    });
     if (attachedViews.length) {
       await transitionGraphViewsOnPython({
         projectId,

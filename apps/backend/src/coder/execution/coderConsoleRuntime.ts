@@ -57,6 +57,7 @@ export type ConsoleCoderDeps = {
  * one existing OpenClaude Code terminal, not an adapter or runtime selector. */
 export type OpenClaudeCodeTask = {
   parentRunId: string;
+  correlationId?: string;
   projectId: string;
   deckId: string;
   conversationId: string;
@@ -133,7 +134,7 @@ function prepareOpenClaudeCodeRun(task: OpenClaudeCodeTask): OpenClaudeCodeRun {
   if (!approvedPrompt.trim()) throw new Error('openclaude_code_prompt_empty');
   return {
     runId: `coder_${randomUUID()}`,
-    correlationId: `trace_${randomUUID()}`,
+    correlationId: task.correlationId || `trace_${randomUUID()}`,
     promptHash: createHash('sha256').update(Buffer.from(approvedPrompt, 'utf8')).digest('hex'),
     parentRunId: task.parentRunId,
     authority: task.authority,

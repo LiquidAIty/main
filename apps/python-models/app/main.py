@@ -304,6 +304,79 @@ def agentgraph_read_assignment(
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
+@app.post("/agentgraph/assignments/begin")
+def agentgraph_begin_assignment(payload: dict[str, Any]):
+    """Begin one Python-owned outer assignment before a saved runtime executes."""
+    from app.python_models.agentgraph import AgentGraphError, begin_assignment
+
+    try:
+        return begin_assignment(
+            project_id=str(payload.get("projectId") or ""),
+            deck_id=str(payload.get("deckId") or ""),
+            conversation_id=str(payload.get("conversationId") or ""),
+            correlation_id=str(payload.get("correlationId") or ""),
+            sender_card_id=str(payload.get("senderCardId") or ""),
+            receiver_card_id=str(payload.get("receiverCardId") or ""),
+            body=str(payload.get("instruction") or ""),
+            parent_correlation_id=(
+                str(payload.get("parentRunId") or "") or None
+            ),
+            references=list(payload.get("references") or []),
+            runtime=str(payload.get("runtime") or "") or None,
+            provider=str(payload.get("provider") or "") or None,
+            model_key=str(payload.get("modelKey") or "") or None,
+            provider_model_id=(
+                str(payload.get("providerModelId") or "") or None
+            ),
+        )
+    except (AgentGraphError, ValueError, LookupError, PermissionError) as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.post("/agentgraph/assignments/{assignment_id:path}/finish")
+def agentgraph_finish_assignment(
+    assignment_id: str,
+    payload: dict[str, Any],
+):
+    """Finish the same claimed outer assignment with its real runtime result."""
+    from app.python_models.agentgraph import AgentGraphError, finish_assignment
+
+    try:
+        return finish_assignment(
+            project_id=str(payload.get("projectId") or ""),
+            assignment_id=assignment_id,
+            claim_token=str(payload.get("claimToken") or ""),
+            status=str(payload.get("status") or ""),
+            output=(
+                str(payload["output"])
+                if payload.get("output") is not None
+                else None
+            ),
+            summary=(
+                str(payload["summary"])
+                if payload.get("summary") is not None
+                else None
+            ),
+            error_code=(
+                str(payload["errorCode"])
+                if payload.get("errorCode") is not None
+                else None
+            ),
+            error_detail=(
+                str(payload["errorDetail"])
+                if payload.get("errorDetail") is not None
+                else None
+            ),
+            tool_evidence=list(payload.get("toolEvidence") or []),
+        )
+    except (AgentGraphError, ValueError, LookupError, PermissionError) as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
 @app.post("/agentgraph/hermes/reports")
 def agentgraph_write_hermes_report(payload: dict[str, Any]):
     from app.python_models.hermes_agentgraph import write_hermes_report

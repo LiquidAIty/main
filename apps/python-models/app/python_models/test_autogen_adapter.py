@@ -92,6 +92,7 @@ def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_to
     events: list[str] = []
     tasks: list[str] = []
     attached_tools: list[str] = []
+    authorities: list[dict[str, str] | None] = []
     context = _context_pack("transport placeholder")
     context.cardRuntime.runtimeScope = {"deckId": "deck_builder"}
     context.agentAssignment = AgentAssignmentRequest(
@@ -144,6 +145,9 @@ def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_to
 
         async def run_stream(self, *, task):
             tasks.append(task)
+            authorities.append(
+                mac.ACTIVE_AGENT_ASSIGNMENT_CONTEXT.get()
+            )
             yield SimpleNamespace(
                 messages=[SimpleNamespace(content="done")],
                 stop_reason="complete",
@@ -162,6 +166,14 @@ def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_to
     assert events == ["hydrated", "model"]
     assert tasks == ["Approved task.\n\ngraphview:query:one"]
     assert attached_tools == []
+    assert authorities == [
+        {
+            "projectId": "p",
+            "assignmentId": "assignment:t",
+            "receiverCardId": "orch",
+        }
+    ]
+    assert mac.ACTIVE_AGENT_ASSIGNMENT_CONTEXT.get() is None
 
 def test_app_authored_scaffold_runtime_is_gone_but_real_task_ledger_artifact_allowed():
     # Removed: app-authored scaffold / fake local Task Ledger classes.

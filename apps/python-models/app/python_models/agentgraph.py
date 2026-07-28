@@ -37,6 +37,17 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _named_row(cursor: Any, row: Any) -> dict[str, Any] | None:
+    """Map a relational result to its selected column names immediately."""
+    if row is None:
+        return None
+    columns = []
+    for column in cursor.description or []:
+        name = getattr(column, "name", None)
+        columns.append(str(name if name is not None else column[0]))
+    return dict(zip(columns, row, strict=True))
+
+
 def _required_id(value: Any, field: str) -> str:
     text = str(value or "").strip()
     if not _ID.fullmatch(text):
@@ -700,6 +711,82 @@ def claim_assignment(
     }
 
 
+def begin_assignment(
+    *,
+    project_id: str,
+    deck_id: str,
+    conversation_id: str,
+    correlation_id: str,
+    sender_card_id: str,
+    receiver_card_id: str,
+    body: str,
+    parent_correlation_id: str | None = None,
+    references: list[dict[str, Any]] | None = None,
+    runtime: str | None = None,
+    provider: str | None = None,
+    model_key: str | None = None,
+    provider_model_id: str | None = None,
+) -> dict[str, Any]:
+    """Create, reference, and claim one real outer assignment atomically."""
+    with connect_postgres(autocommit=False) as connection:
+        instruction = create_instruction(
+            project_id=project_id,
+            deck_id=deck_id,
+            conversation_id=conversation_id,
+            body=body,
+            prepared_by_card_id=sender_card_id,
+            connection=connection,
+        )
+        assignment = create_assignment(
+            project_id=project_id,
+            deck_id=deck_id,
+            conversation_id=conversation_id,
+            correlation_id=correlation_id,
+            sender_card_id=sender_card_id,
+            receiver_card_id=receiver_card_id,
+            instruction_id=instruction["instructionId"],
+            parent_correlation_id=parent_correlation_id,
+            connection=connection,
+        )
+        if references:
+            add_assignment_references(
+                project_id=project_id,
+                assignment_id=assignment["assignmentId"],
+                receiver_card_id=receiver_card_id,
+                references=references,
+                connection=connection,
+            )
+        claim = claim_assignment(
+            project_id=project_id,
+            assignment_id=assignment["assignmentId"],
+            receiver_card_id=receiver_card_id,
+            connection=connection,
+        )
+        runtime_values = (runtime, provider, model_key, provider_model_id)
+        if any(value for value in runtime_values):
+            if not all(value for value in runtime_values):
+                raise AgentGraphError(
+                    "agentgraph_runtime_context_incomplete"
+                )
+            record_assignment_runtime_context(
+                project_id=project_id,
+                assignment_id=assignment["assignmentId"],
+                runtime=str(runtime),
+                provider=str(provider),
+                model_key=str(model_key),
+                provider_model_id=str(provider_model_id),
+                connection=connection,
+            )
+    return {
+        "ok": True,
+        "assignmentId": assignment["assignmentId"],
+        "instructionId": instruction["instructionId"],
+        "correlationId": assignment["correlationId"],
+        "claimToken": claim["claimToken"],
+        "state": claim["state"],
+    }
+
+
 def finish_assignment(
     *,
     project_id: str,
@@ -1139,6 +1226,29 @@ def add_assignment_references(
                 """,
                 (assignment_id, reference_id, reference_type, required),
             )
+            if reference_type == "worldsignals":
+                _run_cypher(
+                    cursor,
+                    """
+                    MATCH (assignment:Assignment)
+                    WHERE assignment.assignmentId=$assignmentId
+                      AND assignment.projectId=$projectId
+                    MERGE (reference:WorldSignalsReference {
+                      projectId: $projectId,
+                      referenceId: $referenceId
+                    })
+                    MERGE (assignment)-[link:REFERENCES]->(reference)
+                    SET link.required=$required
+                    RETURN reference.referenceId
+                    """,
+                    "reference_id agtype",
+                    {
+                        "assignmentId": assignment_id,
+                        "projectId": project_id,
+                        "referenceId": reference_id,
+                        "required": required,
+                    },
+                )
     return {
         "ok": True,
         "assignmentId": assignment_id,
@@ -1191,14 +1301,34 @@ def read_assignment(
             )
         cursor.execute(
             """
-            SELECT a.assignment_id, a.correlation_id, a.deck_id, a.conversation_id,
-                   a.sender_card_id, a.receiver_card_id, a.parent_assignment_id,
-                   a.state, a.instruction_id, i.body, i.body_sha256,
-                   r.result_id, r.status, r.output, r.summary, r.error_code, r.error_detail,
-                   r.tool_evidence,
-                   a.parent_run_id, a.claimed_by_card_id, parent_run.session_id,
-                   run.runtime, run.provider, run.model_key, run.provider_model_id,
-                   run.outcome, run.state, run.error_code
+            SELECT a.assignment_id AS assignment_id,
+                   a.correlation_id AS correlation_id,
+                   a.deck_id AS deck_id,
+                   a.conversation_id AS conversation_id,
+                   a.sender_card_id AS sender_card_id,
+                   a.receiver_card_id AS receiver_card_id,
+                   a.parent_assignment_id AS parent_assignment_id,
+                   a.state AS assignment_state,
+                   a.instruction_id AS instruction_id,
+                   i.body AS instruction_body,
+                   i.body_sha256 AS instruction_sha256,
+                   r.result_id AS result_id,
+                   r.status AS result_status,
+                   r.output AS result_output,
+                   r.summary AS result_summary,
+                   r.error_code AS result_error_code,
+                   r.error_detail AS result_error_detail,
+                   r.tool_evidence AS result_tool_evidence,
+                   a.parent_run_id AS parent_run_id,
+                   a.claimed_by_card_id AS claimed_by_card_id,
+                   parent_run.session_id AS native_session_id,
+                   run.runtime AS run_runtime,
+                   run.provider AS run_provider,
+                   run.model_key AS run_model_key,
+                   run.provider_model_id AS run_provider_model_id,
+                   run.outcome AS run_outcome,
+                   run.state AS run_state,
+                   run.error_code AS run_error_code
             FROM ag_catalog.agent_assignments a
             JOIN ag_catalog.agent_instructions i ON i.instruction_id=a.instruction_id
             LEFT JOIN ag_catalog.agent_results r ON r.assignment_id=a.assignment_id
@@ -1213,7 +1343,7 @@ def read_assignment(
             """,
             (project_id, assignment_id, receiving_card_id),
         )
-        row = cursor.fetchone()
+        row = _named_row(cursor, cursor.fetchone())
         if row is None:
             raise AgentGraphError(
                 f"agentgraph_assignment_payload_not_found: {assignment_id}"
@@ -1228,20 +1358,25 @@ def read_assignment(
             """,
             (assignment_id,),
         )
+        operation_rows = [
+            _named_row(cursor, item)
+            for item in cursor.fetchall()
+        ]
         operations = [
             {
-                "referenceId": item[0],
-                "operationId": item[1],
-                "version": item[2],
+                "referenceId": item["reference_id"],
+                "operationId": item["operation_id"],
+                "version": item["operation_version"],
                 "parameters": (
-                    item[3]
-                    if isinstance(item[3], dict)
-                    else json.loads(str(item[3]))
+                    item["parameters"]
+                    if isinstance(item["parameters"], dict)
+                    else json.loads(str(item["parameters"]))
                 ),
-                "explanation": item[4],
-                "executionRole": item[5],
+                "explanation": item["explanation"],
+                "executionRole": item["execution_role"],
             }
-            for item in cursor.fetchall()
+            for item in operation_rows
+            if item is not None
         ]
         cursor.execute(
             """
@@ -1252,18 +1387,26 @@ def read_assignment(
             """,
             (assignment_id,),
         )
+        context_rows = [
+            _named_row(cursor, item)
+            for item in cursor.fetchall()
+        ]
         context_references = [
             {
-                "referenceId": item[0],
-                "referenceType": item[1],
-                "required": item[2],
+                "referenceId": item["reference_id"],
+                "referenceType": item["reference_type"],
+                "required": item["required"],
             }
-            for item in cursor.fetchall()
+            for item in context_rows
+            if item is not None
         ]
         cursor.execute(
             """
-            SELECT parent.assignment_id, parent.instruction_id, result.result_id,
-                   result.status, result.summary
+            SELECT parent.assignment_id AS assignment_id,
+                   parent.instruction_id AS instruction_id,
+                   result.result_id AS result_id,
+                   result.status AS result_status,
+                   result.summary AS result_summary
             FROM ag_catalog.agent_assignments current
             JOIN ag_catalog.agent_assignments parent
               ON parent.assignment_id=current.parent_assignment_id
@@ -1273,57 +1416,57 @@ def read_assignment(
             """,
             (project_id, assignment_id),
         )
-        parent_row = cursor.fetchone()
+        parent_row = _named_row(cursor, cursor.fetchone())
     return {
         "ok": True,
-        "assignmentId": row[0],
-        "correlationId": row[1],
-        "deckId": row[2],
-        "conversationId": row[3],
-        "senderCardId": row[4],
-        "receiverCardId": row[5],
-        "parentAssignmentId": row[6],
-        "parentRunId": row[18],
-        "state": row[7],
-        "claimedByCardId": row[19],
-        "nativeSessionId": row[20],
-        "instructionId": row[8],
-        "instruction": row[9],
-        "instructionSha256": row[10],
+        "assignmentId": row["assignment_id"],
+        "correlationId": row["correlation_id"],
+        "deckId": row["deck_id"],
+        "conversationId": row["conversation_id"],
+        "senderCardId": row["sender_card_id"],
+        "receiverCardId": row["receiver_card_id"],
+        "parentAssignmentId": row["parent_assignment_id"],
+        "parentRunId": row["parent_run_id"],
+        "state": row["assignment_state"],
+        "claimedByCardId": row["claimed_by_card_id"],
+        "nativeSessionId": row["native_session_id"],
+        "instructionId": row["instruction_id"],
+        "instruction": row["instruction_body"],
+        "instructionSha256": row["instruction_sha256"],
         "result": (
             {
-                "resultId": row[11],
-                "status": row[12],
-                "output": row[13],
-                "summary": row[14],
-                "errorCode": row[15],
-                "errorDetail": row[16],
-                "toolEvidence": list(row[17] or []),
+                "resultId": row["result_id"],
+                "status": row["result_status"],
+                "output": row["result_output"],
+                "summary": row["result_summary"],
+                "errorCode": row["result_error_code"],
+                "errorDetail": row["result_error_detail"],
+                "toolEvidence": list(row["result_tool_evidence"] or []),
             }
-            if row[11]
+            if row["result_id"]
             else None
         ),
         "contextReferences": context_references,
         "operationReferences": operations,
         "parentContinuity": (
             {
-                "assignmentId": parent_row[0],
-                "instructionId": parent_row[1],
-                "resultId": parent_row[2],
-                "resultStatus": parent_row[3],
-                "resultSummary": parent_row[4],
+                "assignmentId": parent_row["assignment_id"],
+                "instructionId": parent_row["instruction_id"],
+                "resultId": parent_row["result_id"],
+                "resultStatus": parent_row["result_status"],
+                "resultSummary": parent_row["result_summary"],
             }
             if parent_row
             else None
         ),
         "runTrace": {
-            "runtime": row[21],
-            "provider": row[22],
-            "modelKey": row[23],
-            "providerModelId": row[24],
-            "outcome": row[25],
-            "state": row[26],
-            "errorCode": row[27],
+            "runtime": row["run_runtime"],
+            "provider": row["run_provider"],
+            "modelKey": row["run_model_key"],
+            "providerModelId": row["run_provider_model_id"],
+            "outcome": row["run_outcome"],
+            "state": row["run_state"],
+            "errorCode": row["run_error_code"],
         },
         "ageIdentity": {
             "assignment": json.loads(str(identity_rows[0][0])),
@@ -1368,10 +1511,20 @@ def inspect_assignments(
             _prepare(cursor)
             cursor.execute(
                 """
-                SELECT a.assignment_id, a.correlation_id, a.sender_card_id,
-                       a.receiver_card_id, a.parent_assignment_id, a.parent_run_id,
-                       a.state, a.instruction_id, a.created_at, a.updated_at,
-                       r.result_id, r.status, r.summary, a.conversation_id
+                SELECT a.assignment_id AS assignment_id,
+                       a.correlation_id AS correlation_id,
+                       a.sender_card_id AS sender_card_id,
+                       a.receiver_card_id AS receiver_card_id,
+                       a.parent_assignment_id AS parent_assignment_id,
+                       a.parent_run_id AS parent_run_id,
+                       a.state AS assignment_state,
+                       a.instruction_id AS instruction_id,
+                       a.created_at AS created_at,
+                       a.updated_at AS updated_at,
+                       r.result_id AS result_id,
+                       r.status AS result_status,
+                       r.summary AS result_summary,
+                       a.conversation_id AS conversation_id
                 FROM ag_catalog.agent_assignments a
                 LEFT JOIN ag_catalog.agent_results r
                   ON r.assignment_id=a.assignment_id
@@ -1392,7 +1545,11 @@ def inspect_assignments(
                     bounded_limit,
                 ),
             )
-            rows = list(cursor.fetchall())
+            rows = [
+                row
+                for item in cursor.fetchall()
+                if (row := _named_row(cursor, item)) is not None
+            ]
         if exact_id:
             if not rows:
                 raise AgentGraphError(
@@ -1401,7 +1558,7 @@ def inspect_assignments(
             return read_assignment(
                 project_id=project_id,
                 assignment_id=exact_id,
-                receiving_card_id=str(rows[0][3]),
+                receiving_card_id=str(rows[0]["receiver_card_id"]),
                 connection=conn,
             )
     return {
@@ -1412,20 +1569,28 @@ def inspect_assignments(
         "readScope": "project" if project_wide else "conversation",
         "assignments": [
             {
-                "assignmentId": row[0],
-                "correlationId": row[1],
-                "senderCardId": row[2],
-                "receiverCardId": row[3],
-                "parentAssignmentId": row[4],
-                "parentRunId": row[5],
-                "state": row[6],
-                "instructionId": row[7],
-                "createdAt": row[8].isoformat() if row[8] else None,
-                "updatedAt": row[9].isoformat() if row[9] else None,
-                "resultId": row[10],
-                "resultStatus": row[11],
-                "resultSummary": row[12],
-                "conversationId": row[13],
+                "assignmentId": row["assignment_id"],
+                "correlationId": row["correlation_id"],
+                "senderCardId": row["sender_card_id"],
+                "receiverCardId": row["receiver_card_id"],
+                "parentAssignmentId": row["parent_assignment_id"],
+                "parentRunId": row["parent_run_id"],
+                "state": row["assignment_state"],
+                "instructionId": row["instruction_id"],
+                "createdAt": (
+                    row["created_at"].isoformat()
+                    if row["created_at"]
+                    else None
+                ),
+                "updatedAt": (
+                    row["updated_at"].isoformat()
+                    if row["updated_at"]
+                    else None
+                ),
+                "resultId": row["result_id"],
+                "resultStatus": row["result_status"],
+                "resultSummary": row["result_summary"],
+                "conversationId": row["conversation_id"],
             }
             for row in rows
         ],

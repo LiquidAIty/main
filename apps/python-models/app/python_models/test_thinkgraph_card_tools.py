@@ -115,6 +115,7 @@ class TestPythonMcpHost:
         tools = asyncio.run(mcp_host.list_tools())
         names = sorted(t.name for t in tools)
         assert names == sorted([
+            "main.context",
             "agentgraph.inspect",
             "graphview.list",
             "graphview.get",

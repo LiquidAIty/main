@@ -449,6 +449,116 @@ async def apply_thinkgraph_patch_tool(
 
 
 # ---------------------------------------------------------------------------
+# AgentGraph assignment authority for stable WorldSignals references.
+# ---------------------------------------------------------------------------
+
+ACTIVE_AGENT_ASSIGNMENT_CONTEXT: ContextVar[dict[str, str] | None] = ContextVar(
+    "active_agent_assignment_context",
+    default=None,
+)
+
+
+def _worldsignals_reference_ids(
+    operation: str,
+    result: dict[str, Any],
+) -> list[str]:
+    """Return only native WorldSignals identities that its API actually emits."""
+    references: list[str] = []
+
+    def add(kind: str, value: Any) -> None:
+        identity = str(value or "").strip()
+        if identity:
+            reference = f"worldsignals:{kind}:{identity}"
+            if reference not in references:
+                references.append(reference)
+
+    add(operation, result.get("command_id") or result.get("task_id") or result.get("id"))
+    for key, kind in (
+        ("results", "command"),
+        ("commands", "command"),
+        ("tasks", "task"),
+        ("events", "event"),
+    ):
+        values = result.get(key)
+        if not isinstance(values, list):
+            continue
+        for item in values[:20]:
+            if not isinstance(item, dict):
+                continue
+            payload = item.get("data")
+            payload = payload if isinstance(payload, dict) else {}
+            add(
+                kind,
+                item.get("command_id")
+                or item.get("task_id")
+                or item.get("id")
+                or payload.get("command_id")
+                or payload.get("task_id")
+                or payload.get("id"),
+            )
+    return references
+
+
+def _record_worldsignals_reference(operation: str, result: dict[str, Any]) -> dict[str, Any]:
+    """Attach native result identities; WorldSignals retains its payload."""
+    authority = ACTIVE_AGENT_ASSIGNMENT_CONTEXT.get()
+    if authority is None:
+        return result
+    reference_ids = _worldsignals_reference_ids(operation, result)
+    if not reference_ids:
+        return result
+    from app.python_models import agentgraph
+
+    agentgraph.add_assignment_references(
+        project_id=authority["projectId"],
+        assignment_id=authority["assignmentId"],
+        receiver_card_id=authority["receiverCardId"],
+        references=[
+            {
+                "referenceId": reference_id,
+                "referenceType": "worldsignals",
+                "required": False,
+            }
+            for reference_id in reference_ids
+        ],
+    )
+    return result
+
+
+def assignment_worldsignals_command(
+    command: str,
+    arguments: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return _record_worldsignals_reference(
+        "command",
+        worldsignals_command(command, arguments),
+    )
+
+
+def assignment_worldsignals_batch(
+    commands: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return _record_worldsignals_reference(
+        "batch",
+        worldsignals_batch(commands),
+    )
+
+
+def assignment_worldsignals_poll() -> dict[str, Any]:
+    return _record_worldsignals_reference("poll", worldsignals_poll())
+
+
+def assignment_worldsignals_stream_events(
+    max_events: int = 1,
+    timeout_seconds: int = 15,
+) -> dict[str, Any]:
+    return _record_worldsignals_reference(
+        "events",
+        worldsignals_stream_events(max_events, timeout_seconds),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Local Coder tool — run a real coding task through the LocalCoder engine.
 # ---------------------------------------------------------------------------
 
@@ -628,10 +738,10 @@ def build_default_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
     for spec, adapter in [
         (ToolSpec(name="worldsignals.capabilities", description="Read the live WorldSignals capability and command manifests.", enabled=True, inputSchema={"type": "object", "properties": {}, "required": []}, outputSchema={"type": "object"}), worldsignals_capabilities),
-        (ToolSpec(name="worldsignals.command", description="Run one real command from the WorldSignals command manifest.", enabled=True, inputSchema={"type": "object", "properties": {"command": {"type": "string"}, "arguments": {"type": "object"}}, "required": ["command"]}, outputSchema={"type": "object"}), worldsignals_command),
-        (ToolSpec(name="worldsignals.batch", description="Run up to twenty real WorldSignals commands through its batch channel.", enabled=True, inputSchema={"type": "object", "properties": {"commands": {"type": "array", "items": {"type": "object"}, "maxItems": 20}}, "required": ["commands"]}, outputSchema={"type": "object"}), worldsignals_batch),
-        (ToolSpec(name="worldsignals.poll", description="Poll completed command results and pending WorldSignals tasks.", enabled=True, inputSchema={"type": "object", "properties": {}, "required": []}, outputSchema={"type": "object"}), worldsignals_poll),
-        (ToolSpec(name="worldsignals.stream_events", description="Read a bounded set of real-time events from the WorldSignals SSE channel.", enabled=True, inputSchema={"type": "object", "properties": {"max_events": {"type": "integer", "default": 1}, "timeout_seconds": {"type": "integer", "default": 15}}, "required": []}, outputSchema={"type": "object"}), worldsignals_stream_events),
+        (ToolSpec(name="worldsignals.command", description="Run one real command from the WorldSignals command manifest.", enabled=True, inputSchema={"type": "object", "properties": {"command": {"type": "string"}, "arguments": {"type": "object"}}, "required": ["command"]}, outputSchema={"type": "object"}), assignment_worldsignals_command),
+        (ToolSpec(name="worldsignals.batch", description="Run up to twenty real WorldSignals commands through its batch channel.", enabled=True, inputSchema={"type": "object", "properties": {"commands": {"type": "array", "items": {"type": "object"}, "maxItems": 20}}, "required": ["commands"]}, outputSchema={"type": "object"}), assignment_worldsignals_batch),
+        (ToolSpec(name="worldsignals.poll", description="Poll completed command results and pending WorldSignals tasks.", enabled=True, inputSchema={"type": "object", "properties": {}, "required": []}, outputSchema={"type": "object"}), assignment_worldsignals_poll),
+        (ToolSpec(name="worldsignals.stream_events", description="Read a bounded set of real-time events from the WorldSignals SSE channel.", enabled=True, inputSchema={"type": "object", "properties": {"max_events": {"type": "integer", "default": 1}, "timeout_seconds": {"type": "integer", "default": 15}}, "required": []}, outputSchema={"type": "object"}), assignment_worldsignals_stream_events),
     ]:
         registry.register(spec, adapter)
     registry.register(

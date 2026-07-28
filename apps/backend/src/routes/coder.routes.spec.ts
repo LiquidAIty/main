@@ -44,7 +44,15 @@ const runtimeMocks = vi.hoisted(() => ({
 const deckMocks = vi.hoisted(() => ({
   getDeckDocument: vi.fn(async () => ({
     deck: {
-      nodes: [{ id: 'card_local_coder', kind: 'agent', runtimeType: 'local_coder' }],
+      nodes: [
+        {
+          id: 'card_main_chat',
+          kind: 'main',
+          runtimeType: 'main_chat',
+          runtimeOptions: { binding: 'main_chat' },
+        },
+        { id: 'card_local_coder', kind: 'agent', runtimeType: 'local_coder' },
+      ],
       edges: [],
     } as any,
   })),
@@ -150,6 +158,15 @@ type UnifiedModelContextResult = {
 };
 
 const graphViewMocks = vi.hoisted(() => ({
+  beginAgentAssignmentOnPython: vi.fn(async (payload: { correlationId: string }) => ({
+    ok: true as const,
+    assignmentId: 'assignment:coder-test',
+    instructionId: 'instruction:coder-test',
+    correlationId: payload.correlationId,
+    claimToken: 'claim:coder-test',
+    state: 'running' as const,
+  })),
+  finishAgentAssignmentOnPython: vi.fn(async () => ({ ok: true })),
   persistGraphViewOnPython: vi.fn(async (view: unknown) => ({ ok: true, view })),
   fetchGraphViewsFromPython: vi.fn(async () => ({ ok: true, views: [] })),
   fetchUnifiedModelContext: vi.fn<() => Promise<UnifiedModelContextResult>>(async () => ({
@@ -549,6 +566,8 @@ describe('coder routes', () => {
       modelContext: '[LIQUIDAITY_GRAPH_CONTEXT]\n- symbol:one',
     });
     graphViewMocks.transitionGraphViewsOnPython.mockClear();
+    graphViewMocks.beginAgentAssignmentOnPython.mockClear();
+    graphViewMocks.finishAgentAssignmentOnPython.mockClear();
     consoleRuntimeMocks.runOpenClaudeCodeTask.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
@@ -569,7 +588,32 @@ describe('coder routes', () => {
       expect(response.status).toBe(200);
       expect(consoleRuntimeMocks.runOpenClaudeCodeTask).toHaveBeenCalledWith(expect.objectContaining({
         approvedPrompt: expect.stringContaining('[LIQUIDAITY_GRAPH_CONTEXT]\n- symbol:one'),
+        correlationId: expect.stringMatching(/^coder:/),
       }));
+      expect(graphViewMocks.beginAgentAssignmentOnPython).toHaveBeenCalledWith(expect.objectContaining({
+        projectId: 'project-1',
+        deckId: 'deck_builder',
+        conversationId: 'main',
+        senderCardId: 'card_main_chat',
+        receiverCardId: 'card_local_coder',
+        instruction: 'Inspect selected code.',
+        references: [{
+          referenceId: 'codegraph:selected-1',
+          referenceType: 'graph_view',
+          required: true,
+        }],
+        runtime: 'openclaude',
+        provider: 'openrouter',
+        providerModelId: 'z-ai/glm-5.2',
+      }));
+      expect(graphViewMocks.finishAgentAssignmentOnPython).toHaveBeenCalledWith(
+        'assignment:coder-test',
+        expect.objectContaining({
+          projectId: 'project-1',
+          claimToken: 'claim:coder-test',
+          status: 'completed',
+        }),
+      );
       expect(graphViewMocks.fetchDoorwayContext).toHaveBeenCalledWith(
         'project-1',
         'main',

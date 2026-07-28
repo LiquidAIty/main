@@ -26,6 +26,7 @@ from app.python_models import agentgraph as ag
 from app.python_models import registered_queries as rq
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
 from app.python_models.tool_registry import (
+    ACTIVE_AGENT_ASSIGNMENT_CONTEXT,
     DEFAULT_TOOL_REGISTRY,
     THINKGRAPH_RUN_AUTHORITY,
     build_local_coder_tool,
@@ -455,6 +456,13 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         authority_token = THINKGRAPH_RUN_AUTHORITY.set(
             {str(k): str(v) for k, v in runtime_scope.items()}
         )
+    assignment_context_token = ACTIVE_AGENT_ASSIGNMENT_CONTEXT.set(
+        {
+            "projectId": context.session.projectId,
+            "assignmentId": assignment_id,
+            "receiverCardId": single.cardId,
+        }
+    )
 
     started = time.monotonic()
 
@@ -542,6 +550,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             "run_failed",
         )
     finally:
+        ACTIVE_AGENT_ASSIGNMENT_CONTEXT.reset(assignment_context_token)
         if authority_token is not None:
             THINKGRAPH_RUN_AUTHORITY.reset(authority_token)
         if client is not None:
@@ -625,6 +634,14 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             provider=context.session.modelProvider,
             provider_model_id=context.session.providerModelId,
         )
+    )
+
+    assignment_context_token = ACTIVE_AGENT_ASSIGNMENT_CONTEXT.set(
+        {
+            "projectId": context.session.projectId,
+            "assignmentId": assignment["assignmentId"],
+            "receiverCardId": request.receiverCardId,
+        }
     )
 
     try:
@@ -750,6 +767,7 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
         )
         raise
     finally:
+        ACTIVE_AGENT_ASSIGNMENT_CONTEXT.reset(assignment_context_token)
         close = getattr(client, "close", None)
         if callable(close):
             try:
