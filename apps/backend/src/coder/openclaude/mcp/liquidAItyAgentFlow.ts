@@ -127,7 +127,6 @@ export type RunMagOneResult = {
   connectedParticipants: string[];
   conversationId: string | null;
   assignmentId: string | null;
-  artifactLocators: string[];
 };
 
 export async function runMagOne(
@@ -198,8 +197,5 @@ export async function runMagOne(
     connectedParticipants,
     conversationId: conversationId || null,
     assignmentId: assignment?.assignmentId ?? null,
-    artifactLocators: Array.isArray(assignment?.artifactLocators)
-      ? assignment.artifactLocators
-      : [],
   };
 }

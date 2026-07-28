@@ -66,8 +66,6 @@ export type AutoGenOrchestratorResponse = {
   taskLedgerArtifact?: unknown;
   // Progress Ledger is identify-only in this scope: referenced, never started.
   progressLedgerReference?: unknown;
-  // Exact artifact locators registered on the canonical AgentGraph assignment.
-  artifactLocators?: string[];
   error?: string;
   stopReason?: string | null;
   transcript?: string[];

@@ -17,7 +17,6 @@ roots:
     - apps/python-models/app/python_models/agentgraph.py
     - apps/python-models/app/python_models/registered_queries.py
     - apps/python-models/app/python_models/magentic_agentchat.py
-    - apps/python-models/app/python_models/assignment_artifacts.py
   symbols:
     - runMagOne
     - create_instruction
@@ -27,7 +26,6 @@ roots:
     - execute_binding
     - finish_assignment
     - read_assignment
-    - register_assignment_artifact
   tests:
     - apps/backend/src/coder/openclaude/mcp/liquidAItyAgentFlow.spec.ts
     - apps/python-models/app/python_models/test_agentgraph.py
@@ -41,7 +39,7 @@ roots:
 One saved Main controller sends an approved `instructionId` to the connected Mag One card. TypeScript
 transports stable identities and the saved card topology. Python claims the corresponding AgentGraph
 assignment, hydrates its exact relational instruction and context references, executes native Mag One,
-then persists the correlated result, failure state, and artifact references.
+then persists the correlated result and failure state.
 
 Saved Agent Cards remain the authority for permanent prompt, provider/model, tools, permissions, and
 runtime binding. AgentGraph stores operational instructions, assignments, attempts, references, results,
@@ -52,7 +50,6 @@ and traversal-worthy lineage; it does not copy card configuration or execute age
 Registered operations are part of this feature:
 
 - an operation has a stable identity and immutable version;
-- only a promoted version may execute;
 - parameters are typed and bounded;
 - raw SQL/Cypher is never accepted from a prompt or model tool call;
 - required bindings materialize bounded Graph Views before model execution;
@@ -74,12 +71,12 @@ run_mag_one({instructionId, projectId, deckId, conversationId})
 → Python create_assignment / claim_assignment
 → Python hydrate_assignment_context
    → relational instruction and context references
-   → promoted registered operations
+   → registered operation versions
    → required bounded Graph Views
    → optional execute_registered_query tools
 → native Mag One / AutoGen execution
 → finish_assignment
-→ registered assignment artifacts and correlated AgentGraph result lineage
+→ correlated AgentGraph result lineage
 ```
 
 ## Must not break
@@ -90,17 +87,15 @@ run_mag_one({instructionId, projectId, deckId, conversationId})
 4. Main control and worker eligibility come from saved topology, not card names or TS classifiers.
 5. Raw SQL/Cypher from prompts is rejected; models receive only assigned binding IDs and typed parameters.
 6. Required Graph Views are materialized before execution; optional results are not injected into every prompt.
-7. Results, failures, attempts, cancellation, artifacts, and parent/child assignments remain correlated by
+7. Results, failures, attempts, cancellation, and parent/child assignments remain correlated by
    stable identities.
-8. Deliberate output files may exist, but they are artifacts registered by locator—not a second handoff,
-   context, result, or “latest folder” authority.
-9. OpenClaude/Local Coder sessions, terminals, tools, streaming, and provider selection are separate preserved
+8. OpenClaude/Local Coder sessions, terminals, tools, streaming, and provider selection are separate preserved
    runtime boundaries.
 
 ## Valid proof
 
 - Backend focused tests prove the saved topology and identity-only Mag One transport.
-- Registered-query tests prove promotion, typed parameters, read-only enforcement, required/optional binding
+- Registered-query tests prove typed parameters, read-only enforcement, required/optional binding
   behavior, Graph View materialization, and lineage.
 - AgentGraph tests prove exact instruction/assignment/result identity and AGE traversal.
 - Python import/type checks and backend typechecks prove imports and contracts after removal of obsolete

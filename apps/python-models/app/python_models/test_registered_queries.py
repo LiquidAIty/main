@@ -596,7 +596,6 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
     assert hydrated.selected_graph_view_ids == ("graphview:one",)
     assert hydrated.graph_view_ids == ("graphview:one",)
     assert hydrated.saved_card_reference["cardId"] == "card_agent"
-    assert "[SAVED_CARD_REFERENCE]" in hydrated.model_context
     assert "graphview:one" in hydrated.model_context
     assert "Use the canonical AgentGraph assignment." in hydrated.model_context
     assert references == [

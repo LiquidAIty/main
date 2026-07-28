@@ -51,7 +51,6 @@ describe('AgentGraph-native Mag One flow', () => {
       output: 'done',
       agentAssignmentResult: {
         assignmentId: 'assignment:run-1',
-        artifactLocators: ['artifacts/a/report.md'],
       },
       }),
     );
@@ -76,7 +75,6 @@ describe('AgentGraph-native Mag One flow', () => {
     expect(JSON.stringify(context)).not.toContain('prompt.md');
     expect(JSON.stringify(context)).not.toContain('workspaceRoot');
     expect(result.assignmentId).toBe('assignment:run-1');
-    expect(result.artifactLocators).toEqual(['artifacts/a/report.md']);
   });
 
   it('fails before runtime when the stable instruction identity is absent', async () => {

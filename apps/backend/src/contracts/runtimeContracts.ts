@@ -8,7 +8,6 @@ export type AgentAssignmentRunResult = {
   assignmentId: string;
   instructionId?: string;
   resultId?: string;
-  artifactLocators: string[];
 };
 
 export type CardRunResult = {

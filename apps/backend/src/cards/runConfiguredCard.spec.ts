@@ -254,37 +254,17 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.cardRuntime.privateParticipants[0].providerModelId).toBe('gpt-5-mini');
   });
 
-  it('threads the canonical assignment identity and registered artifact locators back', async () => {
+  it('threads the canonical assignment identity back', async () => {
     mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
     mockRunCard.mockResolvedValue({
       ok: true,
       finalResponseText: 'ok',
       assignmentId: 'assignment:corr-123',
-      artifactLocators: ['artifacts/abc/card_thinkgraph_agent/report.md'],
     });
     const result = await runConfiguredCard(ARGS);
     expect(result.assignmentResult).toEqual({
       assignmentId: 'assignment:corr-123',
-      artifactLocators: ['artifacts/abc/card_thinkgraph_agent/report.md'],
     });
-  });
-
-  it('reports an assignment with no registered artifacts honestly', async () => {
-    mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
-    mockRunCard.mockResolvedValue({
-      ok: true,
-      finalResponseText: 'text only',
-      assignmentId: 'assignment:corr-123',
-      artifactLocators: [],
-    });
-    const result = await runConfiguredCard(ARGS);
-    expect(result.output).toBe('text only');
-    expect(result.assignmentResult).toEqual({
-      assignmentId: 'assignment:corr-123',
-      artifactLocators: [],
-    });
-    expect(JSON.stringify(result)).not.toContain('report.md');
-    expect(JSON.stringify(result)).not.toContain('result.md');
   });
 
   it('propagates an honest Python failure without retry or fallback', async () => {

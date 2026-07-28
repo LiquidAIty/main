@@ -190,7 +190,6 @@ router.post('/mcp-bridge/run_mag_one', async (req, res) => {
         assignmentId: result.assignmentId,
         conversationId: result.conversationId,
         connectedParticipants: result.connectedParticipants,
-        artifactLocators: result.artifactLocators,
         failure: result.failure,
       },
     });

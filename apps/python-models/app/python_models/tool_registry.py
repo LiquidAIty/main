@@ -31,7 +31,6 @@ from uuid import uuid4
 
 from autogen_core.tools import FunctionTool
 
-from app.python_models import assignment_artifacts as aa
 from app.python_models.web_search import web_search
 from app.python_models.orchestration_contracts import ContextPack, ToolSpec
 from app.python_models.sec_filing_signals import (
@@ -451,7 +450,7 @@ async def apply_thinkgraph_patch_tool(
 
 
 # ---------------------------------------------------------------------------
-# AgentGraph assignment artifact writer (run-scoped, not card-selectable).
+# AgentGraph assignment authority for stable external-data references.
 # ---------------------------------------------------------------------------
 
 AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY: ContextVar[dict[str, str] | None] = ContextVar(
@@ -523,58 +522,6 @@ def assignment_worldsignals_stream_events(
     return _record_worldsignals_reference(
         "events",
         worldsignals_stream_events(max_events, timeout_seconds),
-    )
-
-
-async def write_assignment_artifact_tool(card_id: str, path: str, content: str) -> str:
-    """Write and immediately register one assignment-scoped artifact."""
-    authority = AGENT_ASSIGNMENT_ARTIFACT_AUTHORITY.get()
-    if authority is None:
-        return json.dumps(
-            {
-                "ok": False,
-                "error": "agent_assignment_artifact_authority_missing",
-            }
-        )
-    try:
-        scope = aa.resolve_scope(
-            authority["workspaceRoot"],
-            authority["assignmentId"],
-            str(card_id or ""),
-        )
-        artifact = await asyncio.to_thread(
-            aa.write_artifact,
-            scope,
-            str(path or ""),
-            str(content or ""),
-        )
-        from app.python_models import agentgraph
-
-        await asyncio.to_thread(
-            agentgraph.register_assignment_artifact,
-            project_id=authority["projectId"],
-            assignment_id=authority["assignmentId"],
-            lease_token=authority["leaseToken"],
-            artifact=artifact,
-        )
-    except (ValueError, OSError) as err:
-        return json.dumps({"ok": False, "error": str(err)})
-    return json.dumps({"ok": True, **artifact})
-
-
-def build_assignment_artifact_tool(card_id: str) -> FunctionTool:
-    """Fresh assignment-scoped artifact tool bound to one saved card."""
-    async def _adapter(path: str, content: str) -> str:
-        return await write_assignment_artifact_tool(card_id, path, content)
-
-    return FunctionTool(
-        _adapter,
-        name="write_assignment_artifact",
-        description=(
-            "Create one real file artifact for the active AgentGraph assignment. "
-            "The model supplies only a relative path and content; assignment, run, "
-            "producer, hash, and storage authority are injected by Python."
-        ),
     )
 
 

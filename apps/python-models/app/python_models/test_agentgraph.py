@@ -118,7 +118,6 @@ def test_assignment_claim_heartbeat_finish_and_hydration() -> None:
         assert hydrated["instruction"] == "  Exact instruction bytes.\n"
         assert hydrated["result"]["output"] == "Exact result."
         assert hydrated["result"]["toolEvidence"] == tool_evidence
-        assert hydrated["result"]["reviewState"] == "unreviewed"
         assert hydrated["runTrace"]["runtime"] == "assistant_agent"
         assert hydrated["runTrace"]["provider"] == "openrouter"
         assert hydrated["runTrace"]["providerModelId"] == "provider/model"

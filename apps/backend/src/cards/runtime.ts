@@ -781,9 +781,6 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
               ...(String((response as any).resultId || '').trim()
                 ? { resultId: String((response as any).resultId).trim() }
                 : {}),
-              artifactLocators: Array.isArray((response as any).artifactLocators)
-                ? ((response as any).artifactLocators as string[])
-                : [],
             }
           : null,
     });
@@ -871,9 +868,6 @@ export async function runCardWithContract(
             ...(String((sidecarResponse as any).resultId || '').trim()
               ? { resultId: String((sidecarResponse as any).resultId).trim() }
               : {}),
-            artifactLocators: Array.isArray((sidecarResponse as any).artifactLocators)
-              ? ((sidecarResponse as any).artifactLocators as string[])
-              : [],
           };
         }
     } catch (e: any) {

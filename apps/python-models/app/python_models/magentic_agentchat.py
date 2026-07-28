@@ -25,7 +25,6 @@ from autogen_agentchat.messages import TextMessage
 from autogen_agentchat.teams import MagenticOneGroupChat
 
 from app.python_models import agentgraph as ag
-from app.python_models import assignment_artifacts as aa
 from app.python_models import registered_queries as rq
 from app.python_models import runtime_profile_executor as rpe
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
@@ -35,7 +34,6 @@ from app.python_models.tool_registry import (
     THINKGRAPH_PATCH_EVENTS,
     THINKGRAPH_RUN_AUTHORITY,
     build_local_coder_tool,
-    build_assignment_artifact_tool,
 )
 from app.python_models.orchestration_contracts import (
     ContextPack,
@@ -75,8 +73,7 @@ class _AssignmentBackedAssistantAgent(AssistantAgent):
 
     AutoGen still owns selection, orchestration, messages, tools, and model
     execution. This wrapper only loads the already-hydrated child context before
-    the worker's first model call, renews its lease, and scopes artifact writes to
-    that child assignment.
+    the worker's first model call and renews its lease.
     """
 
     def __init__(
@@ -84,13 +81,11 @@ class _AssignmentBackedAssistantAgent(AssistantAgent):
         *args: Any,
         agentgraph_context: rq.HydratedAssignmentContext,
         project_id: str,
-        workspace_root: str,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self._agentgraph_context = agentgraph_context
         self._agentgraph_project_id = project_id
-        self._agentgraph_workspace_root = workspace_root
         self._agentgraph_context_loaded = False
 
     async def on_messages_stream(self, messages: Any, cancellation_token: Any):
@@ -118,7 +113,6 @@ class _AssignmentBackedAssistantAgent(AssistantAgent):
                 "assignmentId": hydrated.assignment_id,
                 "leaseToken": hydrated.lease_token,
                 "receiverCardId": hydrated.receiver_card_id,
-                "workspaceRoot": self._agentgraph_workspace_root,
             }
         )
         try:
@@ -304,9 +298,6 @@ def _build_participants(
                 else tool
                 for tool in tools
             ]
-        # Each active assignment gets a writer scoped to that assignment and
-        # producer card. The tool registers every real artifact in AgentGraph.
-        tools = [*tools, build_assignment_artifact_tool(card_id or name)]
         child_context = (assignment_contexts or {}).get(card_id)
         if child_context is not None and child_context.optional_bindings:
             tools.append(
@@ -336,7 +327,6 @@ def _build_participants(
                     **kwargs,
                     agentgraph_context=child_context,
                     project_id=context.session.projectId,
-                    workspace_root=aa.resolve_workspace_root(),
                 )
             )
 
@@ -438,7 +428,6 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     result_id: str | None = None
     lease_token: str | None = None
     hydrated_assignment: rq.HydratedAssignmentContext | None = None
-    terminal_artifacts: list[dict[str, Any]] = []
 
     guard = _validate_single_card_context(context)
     if guard:
@@ -454,7 +443,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         )
 
     async def _fail(error: str, summary: str) -> OrchestratorRunResponse:
-        nonlocal result_id, terminal_artifacts
+        nonlocal result_id
         durable_error = ""
         if assignment_id is not None and lease_token is not None:
             try:
@@ -468,7 +457,6 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                     error_detail=error,
                 )
                 result_id = str(completed.get("resultId") or "") or None
-                terminal_artifacts = list(completed.get("artifacts") or [])
             except Exception as persistence_error:
                 durable_error = f"; outer_assignment_persist_failed: {persistence_error}"
         return OrchestratorRunResponse(
@@ -494,9 +482,6 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             "assignmentId": assignment_id,
             "instructionId": instruction_id,
             "resultId": result_id,
-            "artifactLocators": [
-                str(item.get("locator") or "") for item in terminal_artifacts
-            ],
         }
 
     selected_tools = [_as_text(t) for t in (single.tools or []) if _as_text(t)]
@@ -622,7 +607,6 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             "assignmentId": assignment_id,
             "leaseToken": lease_token,
             "receiverCardId": single.cardId,
-            "workspaceRoot": aa.resolve_workspace_root(),
         }
     )
     if isinstance(runtime_scope, dict) and runtime_scope.get("kind") == "thinkgraph_card_run":
@@ -757,7 +741,6 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             tool_evidence=_tool_evidence_from_result(result),
         )
         result_id = str(completed.get("resultId") or "") or None
-        terminal_artifacts = list(completed.get("artifacts") or [])
         assignment_fields = _assignment_fields()
 
         return OrchestratorRunResponse(
@@ -1016,7 +999,6 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             "assignmentId": assignment["assignmentId"],
             "leaseToken": hydrated_assignment.lease_token,
             "receiverCardId": request.receiverCardId,
-            "workspaceRoot": aa.resolve_workspace_root(),
         }
     )
 
@@ -1119,9 +1101,6 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             error_code=completion_error,
             error_detail=completion_error,
         )
-        artifact_locators = [
-            str(item.get("locator") or "") for item in completed.get("artifacts") or []
-        ]
         return OrchestratorRunResponse(
             ok=ok,
             session=context.session,
@@ -1142,7 +1121,6 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             autogenEvents=autogen_events,
             taskLedgerArtifact=task_ledger_artifact,
             progressLedgerReference=None,
-            artifactLocators=artifact_locators,
             error=completion_error,
             plan=context.plan,
             thinkGraph=context.thinkGraph,

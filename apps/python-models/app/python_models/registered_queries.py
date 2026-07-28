@@ -1479,13 +1479,6 @@ def hydrate_assignment_context(
             f"correlationId: {claimed['correlationId']}",
             "Exact instruction:",
             claimed["instruction"],
-            "[SAVED_CARD_REFERENCE]\n"
-            + json.dumps(
-                saved_card_reference,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ),
             reference_context,
             _render_selected_graph_views(selected_views),
             continuity_context,

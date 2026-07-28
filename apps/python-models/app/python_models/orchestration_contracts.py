@@ -471,8 +471,6 @@ class OrchestratorRunResponse(BaseModel):
     taskLedgerArtifact: TaskLedgerArtifact | None = None
     # Progress Ledger is identify-only in this scope: referenced, never started.
     progressLedgerReference: ProgressLedgerReference | None = None
-    # Registered artifact locators from the canonical AgentGraph assignment.
-    artifactLocators: list[str] = Field(default_factory=list)
     error: str | None = None
     blackboardEntries: list[BlackboardEntry] = Field(default_factory=list)
     plan: PlanContext

@@ -344,7 +344,7 @@ def test_selected_tool_attaches_real_functiontool_to_that_participant():
     research_tool_names = [tool.name for tool in research._tools]
     assert "retrieve_knowgraph_context" in research_tool_names
     assert all(isinstance(tool, FunctionTool) for tool in research._tools)
-    assert [tool.name for tool in plain._tools] == ["write_assignment_artifact"]
+    assert [tool.name for tool in plain._tools] == []
 
 
 def test_unknown_tool_id_fails_loudly_not_silently_dropped():

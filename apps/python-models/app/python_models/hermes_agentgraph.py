@@ -245,5 +245,4 @@ def read_hermes_report(
         "summary": result["summary"],
         "reportMarkdown": result["output"],
         "contextReferences": assignment["contextReferences"],
-        "artifacts": assignment["artifacts"],
     }

@@ -792,7 +792,7 @@ def finish_assignment(
     tool_evidence: list[dict[str, Any]] | None = None,
     connection: Any | None = None,
 ) -> dict[str, Any]:
-    """Attach exact terminal result and artifact identities to the claimed run."""
+    """Attach the exact terminal result to the claimed run."""
     project_id = _required_text(project_id, "project_id")
     assignment_id = _required_id(assignment_id, "assignment_id")
     lease_token = _required_id(lease_token, "lease_token")
@@ -909,35 +909,6 @@ def finish_assignment(
                 correlation_id,
             ),
         )
-        cursor.execute(
-            """
-            UPDATE ag_catalog.agent_artifact_references
-            SET result_id=%s
-            WHERE assignment_id=%s AND result_id IS NULL
-            """,
-            (result_id, assignment_id),
-        )
-        cursor.execute(
-            """
-            SELECT artifact_id, artifact_type, locator, producer_card_id,
-                   sha256, byte_count
-            FROM ag_catalog.agent_artifact_references
-            WHERE assignment_id=%s
-            ORDER BY artifact_id
-            """,
-            (assignment_id,),
-        )
-        artifact_rows = [
-            {
-                "artifactId": row[0],
-                "artifactType": row[1],
-                "locator": row[2],
-                "producerCardId": row[3],
-                "sha256": row[4],
-                "byteCount": row[5],
-            }
-            for row in cursor.fetchall()
-        ]
         _run_cypher(
             cursor,
             """
@@ -969,34 +940,12 @@ def finish_assignment(
                 "createdAt": created_at,
             },
         )
-        for artifact in artifact_rows:
-            _run_cypher(
-                cursor,
-                """
-                MATCH (assignment:Assignment), (result:Result), (artifact:Artifact)
-                WHERE assignment.assignmentId=$assignmentId
-                  AND result.resultId=$resultId
-                  AND artifact.artifactId=$artifactId
-                  AND artifact.assignmentId=$assignmentId
-                SET artifact.resultId=$resultId
-                CREATE (result)-[:HAS_ARTIFACT]->(artifact)
-                RETURN artifact.artifactId
-                """,
-                "artifact_id agtype",
-                {
-                    **artifact,
-                    "assignmentId": assignment_id,
-                    "resultId": result_id,
-                    "projectId": project_id,
-                },
-            )
     return {
         "ok": True,
         "created": True,
         "assignmentId": assignment_id,
         "resultId": result_id,
         "status": terminal,
-        "artifacts": artifact_rows,
         "toolEvidence": tool_evidence,
     }
 
@@ -1166,106 +1115,6 @@ def cancel_assignment(
         "assignmentId": assignment_id,
         "resultId": result_id,
         "status": "cancelled",
-    }
-
-
-def register_assignment_artifact(
-    *,
-    project_id: str,
-    assignment_id: str,
-    lease_token: str,
-    artifact: dict[str, Any],
-    connection: Any | None = None,
-) -> dict[str, Any]:
-    """Register one real file immediately against its active assignment lease."""
-    project_id = _required_text(project_id, "project_id")
-    assignment_id = _required_id(assignment_id, "assignment_id")
-    lease_token = _required_id(lease_token, "lease_token")
-    artifact_id = _required_id(artifact.get("artifactId"), "artifact_id")
-    artifact_type = _required_text(artifact.get("artifactType"), "artifact_type")
-    locator = _required_text(artifact.get("locator"), "artifact_locator")
-    producer = _required_id(
-        artifact.get("producerCardId"), "artifact_producer_card_id"
-    )
-    digest = _required_text(artifact.get("sha256"), "artifact_sha256")
-    byte_count = int(artifact.get("byteCount"))
-    if byte_count < 0:
-        raise AgentGraphError("agentgraph_artifact_byte_count_invalid")
-    with _connection_scope(connection) as conn, conn.cursor() as cursor:
-        _prepare(cursor)
-        cursor.execute(
-            """
-            SELECT correlation_id, receiver_card_id
-            FROM ag_catalog.agent_assignments
-            WHERE project_id=%s AND assignment_id=%s AND lease_token=%s
-              AND state='running' AND lease_expires_at > now()
-            FOR UPDATE
-            """,
-            (project_id, assignment_id, lease_token),
-        )
-        assignment = cursor.fetchone()
-        if assignment is None:
-            raise AgentGraphError(
-                f"agentgraph_assignment_lease_mismatch: {assignment_id}"
-            )
-        correlation_id, receiver_card_id = assignment
-        if producer != receiver_card_id:
-            raise AgentGraphError(
-                f"agentgraph_artifact_producer_mismatch: {producer}"
-            )
-        cursor.execute(
-            """
-            INSERT INTO ag_catalog.agent_artifact_references
-              (assignment_id, artifact_id, artifact_type, locator, run_id,
-               producer_card_id, sha256, byte_count)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT (assignment_id, artifact_id) DO NOTHING
-            """,
-            (
-                assignment_id,
-                artifact_id,
-                artifact_type,
-                locator,
-                correlation_id,
-                producer,
-                digest,
-                byte_count,
-            ),
-        )
-        created = cursor.rowcount == 1
-        if created:
-            _run_cypher(
-                cursor,
-                """
-                MATCH (assignment:Assignment)
-                WHERE assignment.assignmentId=$assignmentId
-                  AND assignment.projectId=$projectId
-                CREATE (artifact:Artifact {
-                  artifactId: $artifactId,
-                  assignmentId: $assignmentId,
-                  projectId: $projectId,
-                  producerCardId: $producerCardId,
-                  sha256: $sha256,
-                  byteCount: $byteCount
-                })
-                CREATE (assignment)-[:HAS_ARTIFACT]->(artifact)
-                RETURN artifact.artifactId
-                """,
-                "artifact_id agtype",
-                {
-                    "assignmentId": assignment_id,
-                    "projectId": project_id,
-                    "artifactId": artifact_id,
-                    "producerCardId": producer,
-                    "sha256": digest,
-                    "byteCount": byte_count,
-                },
-            )
-    return {
-        "ok": True,
-        "created": created,
-        "assignmentId": assignment_id,
-        **artifact,
     }
 
 
@@ -1450,7 +1299,7 @@ def read_assignment(
                    a.sender_card_id, a.receiver_card_id, a.parent_assignment_id,
                    a.state, a.attempt, a.instruction_id, i.body, i.body_sha256,
                    r.result_id, r.status, r.output, r.summary, r.error_code, r.error_detail,
-                   r.tool_evidence, r.review_state,
+                   r.tool_evidence,
                    a.parent_run_id, a.claimed_by_card_id, a.lease_expires_at,
                    a.heartbeat_at, parent_run.session_id,
                    run.runtime, run.provider, run.model_key, run.provider_model_id,
@@ -1475,27 +1324,6 @@ def read_assignment(
             raise AgentGraphError(
                 f"agentgraph_assignment_payload_not_found: {assignment_id}"
             )
-        cursor.execute(
-            """
-            SELECT artifact_id, artifact_type, locator, producer_card_id,
-                   sha256, byte_count
-            FROM ag_catalog.agent_artifact_references
-            WHERE assignment_id=%s
-            ORDER BY artifact_id
-            """,
-            (assignment_id,),
-        )
-        artifacts = [
-            {
-                "artifactId": item[0],
-                "artifactType": item[1],
-                "locator": item[2],
-                "producerCardId": item[3],
-                "sha256": item[4],
-                "byteCount": item[5],
-            }
-            for item in cursor.fetchall()
-        ]
         cursor.execute(
             """
             SELECT reference_id, operation_id, operation_version, parameters,
@@ -1561,13 +1389,13 @@ def read_assignment(
         "senderCardId": row[4],
         "receiverCardId": row[5],
         "parentAssignmentId": row[6],
-        "parentRunId": row[20],
+        "parentRunId": row[19],
         "state": row[7],
         "attempt": row[8],
-        "claimedByCardId": row[21],
-        "leaseExpiresAt": row[22].isoformat() if row[22] else None,
-        "heartbeatAt": row[23].isoformat() if row[23] else None,
-        "nativeSessionId": row[24],
+        "claimedByCardId": row[20],
+        "leaseExpiresAt": row[21].isoformat() if row[21] else None,
+        "heartbeatAt": row[22].isoformat() if row[22] else None,
+        "nativeSessionId": row[23],
         "instructionId": row[9],
         "instruction": row[10],
         "instructionSha256": row[11],
@@ -1580,12 +1408,10 @@ def read_assignment(
                 "errorCode": row[16],
                 "errorDetail": row[17],
                 "toolEvidence": list(row[18] or []),
-                "reviewState": row[19],
             }
             if row[12]
             else None
         ),
-        "artifacts": artifacts,
         "contextReferences": context_references,
         "operationReferences": operations,
         "parentContinuity": (
@@ -1600,17 +1426,17 @@ def read_assignment(
             else None
         ),
         "runTrace": {
-            "runtime": row[25],
-            "provider": row[26],
-            "modelKey": row[27],
-            "providerModelId": row[28],
-            "profileId": row[29],
-            "profileVersion": row[30],
-            "skillVersions": list(row[31] or []),
-            "dataBindingRefs": list(row[32] or []),
-            "outcome": row[33],
-            "state": row[34],
-            "errorCode": row[35],
+            "runtime": row[24],
+            "provider": row[25],
+            "modelKey": row[26],
+            "providerModelId": row[27],
+            "profileId": row[28],
+            "profileVersion": row[29],
+            "skillVersions": list(row[30] or []),
+            "dataBindingRefs": list(row[31] or []),
+            "outcome": row[32],
+            "state": row[33],
+            "errorCode": row[34],
         },
         "ageIdentity": {
             "assignment": json.loads(str(identity_rows[0][0])),
