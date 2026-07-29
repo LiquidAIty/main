@@ -2,6 +2,7 @@
 import asyncio
 import json
 import sys
+from types import SimpleNamespace
 
 from autogen_core.tools import FunctionTool
 
@@ -88,3 +89,42 @@ def test_manifest_exposes_no_secrets_endpoints_or_db_config():
     blob = json.dumps(tool_manifest()).lower()
     for forbidden in ["password", "bolt://", "neo4j_uri", "12434", "services/knowgraph", "api_key", "secret"]:
         assert forbidden not in blob
+
+
+def test_knowgraph_candidate_view_uses_the_actual_requesting_role(monkeypatch):
+    from app.python_models import tool_registry
+
+    result = SimpleNamespace(
+        retrieval_state="evidence",
+        assertions=[],
+        relations=[],
+        omitted_neighbor_count=0,
+        to_dict=lambda: {
+            "retrieval_state": "evidence",
+            "assertions": [],
+            "relations": [],
+        },
+    )
+    module = SimpleNamespace(
+        DEFAULT_OUTCOMES=("supported", "contradicted", "uncertain"),
+        CORPUS_UNPREPARED_STATE="corpus_unprepared",
+        ASSERTION_LABEL="Chunk",
+        KnowGraphRetrievalRequest=lambda **kwargs: kwargs,
+        retrieve_knowgraph_context=lambda _request: result,
+    )
+    monkeypatch.setattr(
+        tool_registry,
+        "_load_knowgraph_hybrid_retrieval",
+        lambda: module,
+    )
+
+    payload = asyncio.run(
+        retrieve_knowgraph_context_tool(
+            project_id="project-1",
+            query="knowledge graph modeling",
+            conversation_id="conversation-1",
+            requesting_role="main_chat",
+        )
+    )
+
+    assert payload["graphView"]["producingRole"] == "main_chat"

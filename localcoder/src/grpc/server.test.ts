@@ -15,6 +15,14 @@ import {
 import { resolveAgentTools } from '../tools/AgentTool/agentToolUtils.js'
 import { agentTextDeltaProgress } from '../tools/AgentTool/AgentTool.js'
 import { normalizeMessage } from '../utils/queryHelpers.js'
+import { QueryEngine } from '../QueryEngine.js'
+import type { QueryDeps } from '../query/deps.js'
+import { getDefaultAppState } from '../state/AppStateStore.js'
+import {
+  FileStateCache,
+  READ_FILE_STATE_CACHE_SIZE,
+} from '../utils/fileStateCache.js'
+import { createUserMessage } from '../utils/messages.js'
 
 // No Node .mjs host, no mcp__liquidaity__ bare-to-qualified mapping, no aliases.
 // A card doorway definition grants exactly the one card-run control tool — this
@@ -63,6 +71,171 @@ const REQUIRED_CONTROL_TOOLS = [
   'mcp__liquidaity__thinkgraph_get_graph_slice',
   'mcp__liquidaity__mag_one_describe_connected_agents',
 ]
+
+test('QueryEngine captures the final provider payload and blocks transport', async () => {
+  const previousDisableClaudeMds = process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS
+  const previousDisableAutoMemory =
+    process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY
+  const previousAnthropicKey = process.env.ANTHROPIC_API_KEY
+  const previousMacro = (globalThis as Record<string, unknown>).MACRO
+  process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS = '1'
+  process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1'
+  process.env.ANTHROPIC_API_KEY = 'provider-boundary-spy-not-a-real-key'
+  ;(globalThis as Record<string, unknown>).MACRO = new Proxy(
+    { VERSION: 'provider-boundary-spy' },
+    { get: (target, property) => Reflect.get(target, property) ?? 'test' },
+  )
+
+  const currentTask = 'CURRENT_TASK_SENTINEL: inspect the bounded graph context'
+  const harnessInstruction =
+    'HARNESS_INSTRUCTION_SENTINEL: follow the saved Main card contract'
+  const fileRange =
+    'repository evidence: C:/Projects/main/apps/backend/src/main.ts lines 10-20'
+  const previousHistory = 'BOUNDED_HISTORY_SENTINEL: previous user turn'
+  let captured: Parameters<QueryDeps['callModel']>[0] | undefined
+  let callCount = 0
+  const blocked = new Error('provider_transport_blocked_by_test')
+  const queryDeps = {
+    callModel: (async function* (request: Parameters<QueryDeps['callModel']>[0]) {
+      callCount += 1
+      captured = request
+      throw blocked
+    }) as QueryDeps['callModel'],
+    microcompact: (async (messages: unknown[]) => ({
+      messages,
+      compactionInfo: undefined,
+    })) as QueryDeps['microcompact'],
+    autocompact: (async () => ({
+      compactionResult: null,
+      consecutiveFailures: undefined,
+    })) as QueryDeps['autocompact'],
+    uuid: () => 'payload-spy-uuid',
+  }
+
+  let appState = getDefaultAppState()
+  const engine = new QueryEngine({
+    cwd: process.cwd(),
+    tools: [],
+    commands: [],
+    mcpClients: [],
+    agents: [],
+    canUseTool: async () => ({ behavior: 'allow' }),
+    getAppState: () => appState,
+    setAppState: updater => {
+      appState = updater(appState)
+    },
+    initialMessages: [createUserMessage({ content: previousHistory })],
+    readFileCache: new FileStateCache(
+      READ_FILE_STATE_CACHE_SIZE,
+      25 * 1024 * 1024,
+    ),
+    customSystemPrompt: 'SYSTEM_PROMPT_SENTINEL: deterministic transport proof',
+    appendSystemPrompt: [
+      harnessInstruction,
+      '[LIQUIDAITY_GRAPH_CONTEXT]',
+      'ROLE GRAPH VIEWS (1):',
+      'view: codegraph:payload-proof | records: 1',
+      `- ${fileRange}`,
+    ].join('\n'),
+    queryDeps,
+  })
+
+  try {
+    for await (const _message of engine.submitMessage(currentTask)) {
+      // QueryEngine converts the blocked transport into its normal SDK error
+      // result. The spy below proves callModel was reached exactly once.
+    }
+  } finally {
+    if (previousDisableClaudeMds === undefined) {
+      delete process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS
+    } else {
+      process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS = previousDisableClaudeMds
+    }
+    if (previousDisableAutoMemory === undefined) {
+      delete process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY
+    } else {
+      process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY =
+        previousDisableAutoMemory
+    }
+    if (previousAnthropicKey === undefined) {
+      delete process.env.ANTHROPIC_API_KEY
+    } else {
+      process.env.ANTHROPIC_API_KEY = previousAnthropicKey
+    }
+    if (previousMacro === undefined) {
+      delete (globalThis as Record<string, unknown>).MACRO
+    } else {
+      ;(globalThis as Record<string, unknown>).MACRO = previousMacro
+    }
+  }
+
+  assert.equal(callCount, 1)
+  assert.ok(captured)
+  const serialized = JSON.stringify(captured)
+  const serializedBytes = Buffer.byteLength(serialized)
+  const estimatedTokens = Math.ceil(serializedBytes / 4)
+  const messageText = JSON.stringify(captured.messages)
+  const systemText = String(captured.systemPrompt)
+  const sourceRanges = [
+    ...serialized.matchAll(
+      /([A-Za-z]:\/[^"\n]+?)(?:\s+lines\s+(\d+)-(\d+))/g,
+    ),
+  ].map(match => ({
+    file: match[1].replaceAll('\\', '/').toLowerCase(),
+    range: `${match[2]}:${match[3]}`,
+  }))
+  const uniqueFiles = new Set(sourceRanges.map(item => item.file))
+  const uniqueSourceRanges = new Set(
+    sourceRanges.map(item => `${item.file}:${item.range}`),
+  )
+  const metric = {
+    finalMessageCount: captured.messages.length,
+    boundedHistoryCount: messageText.includes(previousHistory) ? 1 : 0,
+    serializedBytes,
+    estimatedTokens,
+    toolCount: captured.tools.length,
+    graphViewCount: (systemText.match(/ROLE GRAPH VIEWS \(1\)/g) || []).length,
+    graphEvidenceCount: (systemText.match(/repository evidence:/g) || []).length,
+    uniqueFiles: uniqueFiles.size,
+    uniqueSourceRanges: uniqueSourceRanges.size,
+    duplicateFileRangeCount:
+      sourceRanges.length - uniqueSourceRanges.size,
+    currentTaskCopies: (serialized.match(/CURRENT_TASK_SENTINEL/g) || [])
+      .length,
+    harnessInstructionCopies: (
+      serialized.match(/HARNESS_INSTRUCTION_SENTINEL/g) || []
+    ).length,
+    promptSpecCopies: (serialized.match(/PromptSpec/g) || []).length,
+    recursivePayloadCopies: (
+      serialized.match(/PREVIOUS_PROVIDER_PAYLOAD/g) || []
+    ).length,
+    repeatedToolOutputCopies: (
+      serialized.match(/REPEATED_TOOL_OUTPUT_SENTINEL/g) || []
+    ).length,
+  }
+
+  assert.deepEqual(metric, {
+    finalMessageCount: 2,
+    boundedHistoryCount: 1,
+    serializedBytes,
+    estimatedTokens,
+    toolCount: 0,
+    graphViewCount: 1,
+    graphEvidenceCount: 1,
+    uniqueFiles: 1,
+    uniqueSourceRanges: 1,
+    duplicateFileRangeCount: 0,
+    currentTaskCopies: 1,
+    harnessInstructionCopies: 1,
+    promptSpecCopies: 0,
+    recursivePayloadCopies: 0,
+    repeatedToolOutputCopies: 0,
+  })
+  assert.ok(serializedBytes < 32_000)
+  assert.ok(estimatedTokens < 8_000)
+  assert.doesNotMatch(serialized, /full repository|CodeGraph dump/i)
+  console.log(`PROVIDER_PAYLOAD_PROOF ${JSON.stringify(metric)}`)
+})
 
 test('serializeProgressEvent preserves native structured subagent progress and linkage', () => {
   const progress = serializeProgressEvent({

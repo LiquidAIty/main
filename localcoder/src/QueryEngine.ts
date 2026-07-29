@@ -33,6 +33,7 @@ import type { CanUseToolFn } from './hooks/useCanUseTool.js'
 import { loadMemoryPrompt } from './memdir/memdir.js'
 import { hasAutoMemPathOverride } from './memdir/paths.js'
 import { query } from './query.js'
+import type { QueryDeps } from './query/deps.js'
 import { categorizeRetryableAPIError } from './services/api/errors.js'
 import type { MCPServerConnection } from './services/mcp/types.js'
 import type { AppState } from './state/AppState.js'
@@ -139,6 +140,9 @@ export type QueryEngineConfig = {
   setAppState: (f: (prev: AppState) => AppState) => void
   initialMessages?: Message[]
   readFileCache: FileStateCache
+  /** Test-only transport seam. Production callers omit this and query() uses
+   * productionDeps(); focused tests can stop at the final callModel boundary. */
+  queryDeps?: QueryDeps
   customSystemPrompt?: string
   appendSystemPrompt?: string
   userSpecifiedModel?: string
@@ -234,6 +238,7 @@ export class QueryEngine {
       agents = [],
       setSDKStatus,
       orphanedPermission,
+      queryDeps,
     } = this.config
 
     this.discoveredSkillNames.clear()
@@ -684,6 +689,7 @@ export class QueryEngine {
       querySource: 'sdk',
       maxTurns,
       taskBudget,
+      deps: queryDeps,
     })) {
       // Record assistant, user, and compact boundary messages
       if (

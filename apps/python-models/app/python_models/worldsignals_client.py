@@ -184,10 +184,37 @@ def _project_tool(entry: dict[str, Any]) -> dict[str, Any]:
     # dropped — the real result teaches that better than a sample ever could.
     if entry.get("parameters"):
         projected["parameters"] = entry["parameters"]
+    subtypes = entry.get("subtypes")
+    if isinstance(subtypes, dict):
+        projected["subtypes"] = sorted(str(name) for name in subtypes)[:20]
     return projected
 
 
-def worldsignals_capabilities() -> dict[str, Any]:
+def _normalized_text(value: Any) -> str:
+    if isinstance(value, list):
+        return " ".join(str(item) for item in value)
+    if isinstance(value, dict):
+        return " ".join(str(key) for key in value)
+    return str(value or "")
+
+
+def _tool_domain(entry: dict[str, Any]) -> str:
+    return _normalized_text(
+        entry.get("domain")
+        or entry.get("category")
+        or entry.get("namespace")
+        or entry.get("group")
+        or entry.get("subtypes")
+    ).strip()
+
+
+def worldsignals_capabilities(
+    domain: str | None = None,
+    command: str | None = None,
+    keyword: str | None = None,
+    operation_class: str | None = None,
+    limit: int = 25,
+) -> dict[str, Any]:
     """Return a BOUNDED view of the live WorldSignals capabilities + command manifest.
 
     Commands the profile guard would refuse are omitted rather than advertised:
@@ -204,27 +231,93 @@ def worldsignals_capabilities() -> dict[str, Any]:
     tools: dict[str, Any] = {k: raw_tools[k] for k in _TOOLS_DECISION_KEYS if k in raw_tools}
 
     entries = raw_tools.get("tools")
-    allowed = [
-        _project_tool(entry)
+    manifest_entries = [
+        entry
         for entry in (entries if isinstance(entries, list) else [])
         if isinstance(entry, dict)
-        and not (
+    ]
+    omitted_entries = [
+        entry
+        for entry in manifest_entries
+        if (
             str(entry.get("name") or "") in WORLDSIGNALS_RESTRICTED_COMMANDS
             and not _extended_profile_enabled()
         )
     ]
-    tools["tools"] = allowed
-    available = raw_tools.get("available_commands")
-    if isinstance(available, list):
-        tools["available_commands"] = [
-            name
-            for name in available
-            if not (str(name) in WORLDSIGNALS_RESTRICTED_COMMANDS and not _extended_profile_enabled())
-        ]
+    allowed_entries = [
+        entry
+        for entry in manifest_entries
+        if entry not in omitted_entries
+    ]
+    class_counts = {"read": 0, "write": 0, "other": 0}
+    for entry in allowed_entries:
+        operation_type = str(entry.get("type") or "").strip().lower()
+        class_counts[operation_type if operation_type in {"read", "write"} else "other"] += 1
+
+    domain_filter = str(domain or "").strip().casefold()
+    command_filter = str(command or "").strip().casefold()
+    keyword_filter = str(keyword or "").strip().casefold()
+    class_filter = str(operation_class or "").strip().casefold()
+
+    def selected(entry: dict[str, Any]) -> bool:
+        name = str(entry.get("name") or "").strip()
+        entry_domain = _tool_domain(entry)
+        operation_type = str(entry.get("type") or "").strip().lower()
+        if command_filter and name.casefold() != command_filter:
+            return False
+        if domain_filter:
+            domain_searchable = " ".join(
+                (entry_domain, name, str(entry.get("description") or ""))
+            ).casefold()
+            if domain_filter not in domain_searchable:
+                return False
+        if class_filter and operation_type != class_filter:
+            return False
+        if keyword_filter:
+            searchable = " ".join(
+                (
+                    name,
+                    str(entry.get("description") or ""),
+                    entry_domain,
+                    _normalized_text(entry.get("tags")),
+                )
+            ).casefold()
+            if keyword_filter not in searchable:
+                return False
+        return True
+
+    matched = [entry for entry in allowed_entries if selected(entry)]
+    bounded_limit = max(1, min(int(limit), 50))
+    tools["tools"] = [_project_tool(entry) for entry in matched[:bounded_limit]]
+    tools["inventory"] = {"total": len(allowed_entries), **class_counts}
+    tools["match_count"] = len(matched)
+    tools["returned_count"] = min(len(matched), bounded_limit)
+    tools["truncated"] = len(matched) > bounded_limit
+    tools["filters"] = {
+        key: value
+        for key, value in {
+            "domain": str(domain or "").strip(),
+            "command": str(command or "").strip(),
+            "keyword": str(keyword or "").strip(),
+            "operation_class": class_filter,
+        }.items()
+        if value
+    }
+    tools["available_commands"] = [
+        str(entry.get("name") or "")
+        for entry in matched[:bounded_limit]
+        if str(entry.get("name") or "").strip()
+    ]
     tools["profile"] = "extended" if _extended_profile_enabled() else "mainstream"
-    tools["omitted_restricted_commands"] = 0 if _extended_profile_enabled() else len(
-        WORLDSIGNALS_RESTRICTED_COMMANDS
-    )
+    tools["omitted_restricted_commands"] = len(omitted_entries)
+    tools["omissions"] = [
+        {
+            "name": str(entry.get("name") or ""),
+            "reason": "requires_explicit_extended_profile",
+        }
+        for entry in omitted_entries
+        if str(entry.get("name") or "").strip()
+    ]
     return {"capabilities": capabilities, "tools": tools}
 
 

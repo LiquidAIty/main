@@ -312,6 +312,25 @@ describe('coder routes', () => {
     });
   });
 
+  it('reports Coder idle from the live session owner instead of AgentGraph history', async () => {
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/coder_status`, {
+        method: 'POST',
+      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        state: 'idle',
+        running: false,
+        liveSessions: [],
+        authority: 'openclaude_console_session_manager',
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it('returns native CBM status for the configured CodeGraph project', async () => {
     cbmCallerMocks.callTool.mockReset();
     cbmCallerMocks.close.mockClear();

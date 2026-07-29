@@ -121,6 +121,14 @@ def test_manifest_does_not_advertise_commands_the_guard_will_refuse(monkeypatch)
     assert not names & set(WORLDSIGNALS_RESTRICTED_COMMANDS)
     assert "osint_sweep" not in result["tools"]["available_commands"]
     assert result["tools"]["profile"] == "mainstream"
+    assert result["tools"]["omitted_restricted_commands"] == 2
+    assert result["tools"]["omissions"] == [
+        {"name": "osint_sweep", "reason": "requires_explicit_extended_profile"},
+        {
+            "name": "get_sigint_totals",
+            "reason": "requires_explicit_extended_profile",
+        },
+    ]
 
 
 def test_extended_profile_advertises_the_full_roster(monkeypatch) -> None:
@@ -139,6 +147,57 @@ def test_long_descriptions_are_bounded(monkeypatch) -> None:
     described = worldsignals_capabilities()["tools"]["tools"][0]["description"]
     assert len(described) <= wsc._TOOL_DESCRIPTION_MAX
     assert described.endswith("…")
+
+
+def test_manifest_filters_and_exact_command_schema_are_bounded(monkeypatch) -> None:
+    monkeypatch.delenv("WORLDSIGNALS_EXTENDED_PROFILE", raising=False)
+    monkeypatch.setattr(
+        WorldSignalsClient,
+        "capabilities",
+        lambda _self: {"ok": True, "version": "0.9.82"},
+    )
+    monkeypatch.setattr(
+        WorldSignalsClient,
+        "tools",
+        lambda _self: {
+            "ok": True,
+            "tools": [
+                {
+                    "name": "market_snapshot",
+                    "type": "read",
+                    "domain": "markets",
+                    "description": "Current market prices.",
+                    "parameters": {"symbol": {"type": "string"}},
+                },
+                {
+                    "name": "add_watch",
+                    "type": "write",
+                    "domain": "markets",
+                    "description": "Create a market watch.",
+                    "parameters": {"symbol": {"type": "string"}},
+                },
+                {
+                    "name": "weather_now",
+                    "type": "read",
+                    "domain": "weather",
+                    "description": "Current conditions.",
+                    "parameters": {"location": {"type": "string"}},
+                },
+            ],
+        },
+    )
+
+    reads = worldsignals_capabilities(domain="markets", operation_class="read")
+    assert [tool["name"] for tool in reads["tools"]["tools"]] == ["market_snapshot"]
+    assert reads["tools"]["inventory"] == {"total": 3, "read": 2, "write": 1, "other": 0}
+
+    exact = worldsignals_capabilities(command="weather_now")
+    assert exact["tools"]["match_count"] == 1
+    assert exact["tools"]["tools"][0]["parameters"] == {"location": {"type": "string"}}
+
+    keyword = worldsignals_capabilities(keyword="watch", limit=1)
+    assert [tool["name"] for tool in keyword["tools"]["tools"]] == ["add_watch"]
+    assert keyword["tools"]["truncated"] is False
 
 
 def test_assignment_worldsignals_result_persists_only_a_stable_reference(monkeypatch) -> None:

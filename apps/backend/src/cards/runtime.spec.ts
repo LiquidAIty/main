@@ -146,6 +146,23 @@ describe('Canonical Cards Runtime', () => {
     expect(resolved.map(r => r.id)).toEqual(expect.arrayContaining(['agentA', 'agentB']));
   });
 
+  it('an explicitly bus-connected workbench card remains a Mag One worker', () => {
+    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
+    const workbench = {
+      id: 'trading',
+      kind: 'agent',
+      runtimeType: 'assistant_agent',
+      runtimeBinding: 'trading_agent',
+      parentGraphId: 'workbench_trading',
+    };
+    const edges = [
+      { id: 'trading-worker', source: workbench.id, target: cardM.id, edgeType: 'magentic_option' },
+    ];
+
+    expect(resolvedMagenticOptions(cardM.id, [cardM, workbench], edges).map((node) => node.id))
+      .toEqual(['trading']);
+  });
+
   it('does not treat the visually bus-connected main_chat controller as a Mag One worker', () => {
     const cardM = { id: 'card_magentic', kind: 'agent', runtimeType: 'magentic_one' };
     const mainChat = {

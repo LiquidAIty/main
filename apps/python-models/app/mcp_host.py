@@ -140,11 +140,21 @@ def _oauth_trace_fields() -> dict[str, str]:
 
 
 def _catalog_identity(tools: list[Tool]) -> tuple[int, str]:
-    names = sorted(tool.name for tool in tools)
+    descriptors = sorted(
+        (
+            tool.model_dump(by_alias=True, exclude_none=True)
+            for tool in tools
+        ),
+        key=lambda descriptor: str(descriptor.get("name") or ""),
+    )
     digest = hashlib.sha256(
-        json.dumps(names, separators=(",", ":")).encode("utf-8")
+        json.dumps(
+            descriptors,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
     ).hexdigest()
-    return len(names), digest
+    return len(descriptors), digest
 
 
 @dataclass(frozen=True)
@@ -527,13 +537,22 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="coder.status",
+            description=(
+                "Read the canonical OpenClaude Coder session/process state. Reports running only "
+                "when the backend's live session owner has a starting or running process; historical "
+                "AgentGraph assignments are not process evidence."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
             name="run_coder_subagent",
             description=(
                 "Main Chat only: send one approved coding assignment from the saved connected Coder card "
-                "directly to the existing visible OpenClaude Code terminal. Pass the exact active "
-                "project/deck/conversation/parentRunId from LIQUIDAITY_RUNTIME_CONTEXT, the saved Coder card id, "
-                "and approvedPrompt bytes. Returns the linked child run, the coder session/thread id, structured "
-                "command evidence, and the CoderReport verbatim."
+                "directly to the existing visible OpenClaude Code terminal. The server owns project, deck, "
+                "conversation, parent-run, and Main-card identity. Callers provide approvedPrompt, the saved "
+                "Coder cardId, optional authority, and optional persisted graphViewIds. Returns the linked child "
+                "run, the coder session/thread id, structured command evidence, and the CoderReport verbatim."
             ),
             inputSchema={
                 "type": "object",
@@ -957,8 +976,22 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="worldsignals.capabilities",
-            description="Read the live WorldSignals capability and command manifests.",
-            inputSchema={"type": "object", "properties": {}, "required": []},
+            description=(
+                "Read a bounded live WorldSignals capability/command view. Filter by domain, "
+                "exact command, keyword, or read/write operation class; an exact command match "
+                "returns that command's current parameter schema."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "domain": {"type": "string"},
+                    "command": {"type": "string"},
+                    "keyword": {"type": "string"},
+                    "operation_class": {"type": "string", "enum": ["read", "write"]},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 25},
+                },
+                "required": [],
+            },
         ),
         Tool(
             name="worldsignals.command",
@@ -1042,6 +1075,8 @@ async def list_tools() -> list[Tool]:
             },
         ),
     ]
+    for tool in tools:
+        tool.inputSchema.setdefault("additionalProperties", False)
     tools.extend(await _native_engraphis_tools())
     context = _authenticated_main_context()
     published = tools if context is None else _bind_authenticated_catalog(tools)
@@ -1063,6 +1098,7 @@ _READ_ONLY_TOOLS = {
     "agentgraph.inspect",
     "graphview.list",
     "graphview.get",
+    "coder.status",
     "mag_one.describe_connected_agents",
     "canvas.inspect",
     "thinkgraph.get_graph_slice",
@@ -1164,6 +1200,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "parentViewId",
         "omittedNeighborCount",
     },
+    "coder.status": set(),
     "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "approvedPrompt", "authority", "graphViewIds"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "instructionId", "conversationId"},
@@ -1201,7 +1238,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     },
     "thinkgraph.get_graph_slice": {"projectId", "limit"},
     "web_search": {"query", "max_results"},
-    "worldsignals.capabilities": set(),
+    "worldsignals.capabilities": {"domain", "command", "keyword", "operation_class", "limit"},
     "worldsignals.command": {"command", "arguments"},
     "worldsignals.batch": {"commands"},
     "worldsignals.poll": set(),
@@ -1209,6 +1246,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
 }
 
 _BRIDGE_PATHS: dict[str, str] = {
+    "coder.status": "coder_status",
     "run_coder_subagent": "run_coder_subagent",
     "mag_one.describe_connected_agents": "describe_connected_agents",
     "run_mag_one": "run_mag_one",
@@ -1364,6 +1402,10 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                 ),
                 timeout=KNOWGRAPH_QUERY_TIMEOUT_S,
             )
+            # knowgraph.query is read-only. The internal saved-card retrieval
+            # adapter may return a candidate view for agent-local use, but the
+            # public MCP query never returns a persistence-shaped Graph View.
+            result.pop("graphView", None)
             if not args.get("includeFullText"):
                 compact_assertions = []
                 for assertion in result.get("assertions") or []:
@@ -1395,17 +1437,6 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                 result["assertions"] = compact_assertions
                 result.pop("evidence", None)
                 omitted_relation_count = len(result.pop("relations", None) or [])
-                graph_view = result.get("graphView")
-                if isinstance(graph_view, dict):
-                    omitted_record_count = len(graph_view.pop("records", None) or [])
-                    omitted_view_relation_count = len(
-                        graph_view.pop("includedRelationships", None) or []
-                    )
-                    graph_view["omittedRecordCount"] = omitted_record_count
-                    graph_view["omittedRelationshipCount"] = omitted_view_relation_count
-                else:
-                    omitted_record_count = 0
-                    omitted_view_relation_count = 0
                 result["resultSummary"] = {
                     "state": str(result.get("retrieval_state") or ""),
                     "resultCount": len(compact_assertions),
@@ -1416,8 +1447,6 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                         for assertion in compact_assertions
                     ),
                     "relationCount": omitted_relation_count,
-                    "graphViewRecordCount": omitted_record_count,
-                    "graphViewRelationshipCount": omitted_view_relation_count,
                 }
                 result["expansion"] = {
                     "tool": "knowgraph.query",
@@ -1442,12 +1471,23 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
         )
         return [TextContent(type="text", text=result)]
     if name.startswith("worldsignals."):
-        from app.python_models.worldsignals_client import WorldSignalsClient, WorldSignalsError
+        from app.python_models.worldsignals_client import (
+            WorldSignalsClient,
+            WorldSignalsError,
+            worldsignals_capabilities,
+        )
 
         client = WorldSignalsClient()
         try:
             if name == "worldsignals.capabilities":
-                result = {"capabilities": client.capabilities(), "tools": client.tools()}
+                result = await asyncio.to_thread(
+                    worldsignals_capabilities,
+                    domain=args.get("domain"),
+                    command=args.get("command"),
+                    keyword=args.get("keyword"),
+                    operation_class=args.get("operation_class"),
+                    limit=int(args.get("limit") or 25),
+                )
             elif name == "worldsignals.command":
                 result = client.command(str(args.get("command") or ""), args.get("arguments") or {})
             elif name == "worldsignals.batch":

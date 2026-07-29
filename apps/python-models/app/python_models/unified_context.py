@@ -30,6 +30,12 @@ _INFLIGHT: dict[str, dict[str, Any]] = {}
 _INFLIGHT_LOCK = threading.Lock()
 SELECTABLE_GRAPH_VIEW_STATUSES = {"candidate", "attached", "active", "returned"}
 MAX_SELECTED_GRAPH_VIEWS = 6
+MAX_REASONING_STATE_RECORDS = 48
+MAX_GRAPH_EVIDENCE_RECORDS = 64
+MAX_GRAPH_EVIDENCE_RELATIONSHIPS = 96
+MAX_GRAPH_VIEW_PROVENANCE_REFS = 24
+MAX_GRAPH_CONTEXT_CHARACTERS = 32_000
+MAX_GRAPH_CONTEXT_FIELD_CHARACTERS = 1_000
 
 
 def _bounded(value: int, low: int, high: int) -> int:
@@ -595,10 +601,10 @@ def build_graph_object_context(
 # Compact model representation: the text a model invocation consumes, derived
 # deterministically from the SAME projection the Unified surface renders.
 # The projection decides membership; this layer only renders that membership
-# efficiently — every selected record and relationship is preserved, and only
-# transport/UI overhead is removed (coordinates, renderer metadata, repeated
-# canonical ids, membership arrays, per-record telemetry, selection
-# boilerplate, styling). Token COUNTING, never token enforcement.
+# efficiently. The persisted Graph View is already a bounded selection; this
+# final doorway additionally fails closed if its aggregate evidence or text
+# exceeds the provider-bound limits. Repeated repository evidence is identified
+# by normalized file identity plus source range, not by display-text equality.
 # ---------------------------------------------------------------------------
 _REASONING_STATE_TYPES = ("Goal", "Task", "Decision", "Question", "RunRecord", "Finding")
 
@@ -611,7 +617,79 @@ def _estimated_tokens(text: str) -> int:
     return max(1, math.ceil(len(text) / 4)) if text else 0
 
 
-def _render_view_lines(view: dict[str, Any]) -> list[str]:
+def _bounded_field(value: Any, *, field: str) -> str:
+    text = _flat(value)
+    if len(text) > MAX_GRAPH_CONTEXT_FIELD_CHARACTERS:
+        raise ValueError(
+            f"graph_context_field_limit_exceeded: {field} "
+            f"({len(text)}>{MAX_GRAPH_CONTEXT_FIELD_CHARACTERS})"
+        )
+    return text
+
+
+def _normalized_file_range(record: dict[str, Any]) -> tuple[str, str] | None:
+    """Return a stable repository-evidence identity when the record has one."""
+    properties = record.get("properties")
+    sources = [record, properties if isinstance(properties, dict) else {}]
+    file_value: Any = None
+    for source in sources:
+        for key in ("filePath", "file_path", "sourcePath", "source_path", "file", "path"):
+            if source.get(key):
+                file_value = source[key]
+                break
+        if file_value:
+            break
+    if not file_value:
+        return None
+    normalized_file = str(file_value).strip().replace("\\", "/")
+    while "//" in normalized_file:
+        normalized_file = normalized_file.replace("//", "/")
+    normalized_file = normalized_file.casefold()
+
+    range_value: Any = None
+    for source in sources:
+        for key in ("sourceRange", "source_range", "range"):
+            if source.get(key) is not None:
+                range_value = source[key]
+                break
+        if range_value is not None:
+            break
+    if isinstance(range_value, dict):
+        range_value = json.dumps(range_value, sort_keys=True, separators=(",", ":"))
+    elif range_value is None:
+        start = next(
+            (
+                source.get(key)
+                for source in sources
+                for key in ("startLine", "start_line", "lineStart", "line_start")
+                if source.get(key) is not None
+            ),
+            "",
+        )
+        end = next(
+            (
+                source.get(key)
+                for source in sources
+                for key in ("endLine", "end_line", "lineEnd", "line_end")
+                if source.get(key) is not None
+            ),
+            start,
+        )
+        range_value = f"{start}:{end}" if start != "" else ""
+    return normalized_file, _flat(range_value)
+
+
+def _new_render_state() -> dict[str, Any]:
+    return {
+        "recordCount": 0,
+        "relationshipCount": 0,
+        "seenFileRanges": set(),
+        "seenFiles": set(),
+        "duplicateFileRangeCount": 0,
+    }
+
+
+def _render_view_lines(view: dict[str, Any], state: dict[str, Any]) -> list[str]:
     """Compact per-view lines — the ONE serialization of a persisted Graph View
     for model delivery, shared by the doorway and model-context renderers."""
     lines: list[str] = []
@@ -624,18 +702,45 @@ def _render_view_lines(view: dict[str, Any]) -> list[str]:
         + (f" ({omitted} more available beyond this view)" if omitted else "")
     )
     if _flat(view.get("query")):
-        lines.append(f"query: {_flat(view.get('query'))}")
+        lines.append(f"query: {_bounded_field(view.get('query'), field='query')}")
     for record in records:
+        file_range = _normalized_file_range(record)
+        if file_range is not None:
+            state["seenFiles"].add(file_range[0])
+            if file_range in state["seenFileRanges"]:
+                state["duplicateFileRangeCount"] += 1
+                continue
+            state["seenFileRanges"].add(file_range)
+        state["recordCount"] += 1
+        if state["recordCount"] > MAX_GRAPH_EVIDENCE_RECORDS:
+            raise ValueError(
+                "graph_context_record_limit_exceeded: "
+                f"{state['recordCount']}>{MAX_GRAPH_EVIDENCE_RECORDS}"
+            )
         canonical = str(record.get("canonicalId") or "")
-        summary = _flat(record.get("summary") or "")
+        summary = _bounded_field(record.get("summary") or "", field="record.summary")
         lines.append(f"- {summary} ({canonical})" if summary else f"- ({canonical})")
     for relationship in relationships:
+        state["relationshipCount"] += 1
+        if state["relationshipCount"] > MAX_GRAPH_EVIDENCE_RELATIONSHIPS:
+            raise ValueError(
+                "graph_context_relationship_limit_exceeded: "
+                f"{state['relationshipCount']}>{MAX_GRAPH_EVIDENCE_RELATIONSHIPS}"
+            )
         lines.append(
             f"- {relationship.get('source')} -{relationship.get('type') or 'RELATED_TO'}-> {relationship.get('target')}"
         )
     refs = sorted({_flat(ref) for ref in (view.get("provenanceRefs") or []) if _flat(ref)})
+    if len(refs) > MAX_GRAPH_VIEW_PROVENANCE_REFS:
+        raise ValueError(
+            "graph_context_provenance_limit_exceeded: "
+            f"{len(refs)}>{MAX_GRAPH_VIEW_PROVENANCE_REFS}"
+        )
     if refs:
-        lines.append(f"provenance: {'; '.join(refs)}")
+        lines.append(
+            "provenance: "
+            + "; ".join(_bounded_field(ref, field="provenanceRef") for ref in refs)
+        )
     return lines
 
 
@@ -666,10 +771,14 @@ def render_model_context(projection: dict[str, Any], role_views: list[dict[str, 
         (node for node in nodes if node.get("authority") == "thinkgraph" and str(node.get("label")) in reasoning_order),
         key=lambda node: (reasoning_order[str(node.get("label"))], str(node.get("name"))),
     )
-    for node in reasoning_nodes:
+    omitted_reasoning_count = max(0, len(reasoning_nodes) - MAX_REASONING_STATE_RECORDS)
+    for node in reasoning_nodes[:MAX_REASONING_STATE_RECORDS]:
         props = node.get("properties") or {}
-        name = _flat(node.get("name"))
-        description = _flat(props.get("description") or "")
+        name = _bounded_field(node.get("name"), field="reasoning.name")
+        description = _bounded_field(
+            props.get("description") or "",
+            field="reasoning.description",
+        )
         status = str(node.get("status") or "").strip()
         line = f"- {node.get('label')}: {name}"
         if description and description != name:
@@ -678,16 +787,24 @@ def render_model_context(projection: dict[str, Any], role_views: list[dict[str, 
             line += f" [{status}]"
         line += f" ({node.get('source_id')})"
         reasoning_lines.append(line)
+    if omitted_reasoning_count:
+        reasoning_lines.append(
+            f"- {omitted_reasoning_count} additional reasoning records omitted by "
+            f"the {MAX_REASONING_STATE_RECORDS}-record provider-context limit"
+        )
     sections["reasoning_state"] = (["REASONING STATE (ThinkGraph):"] + reasoning_lines) if reasoning_lines else []
 
     view_measurements: dict[str, dict[str, int]] = {}
     view_lines: list[str] = []
+    render_state = _new_render_state()
     for view in role_views:
-        lines = _render_view_lines(view)
+        before_records = int(render_state["recordCount"])
+        before_relationships = int(render_state["relationshipCount"])
+        lines = _render_view_lines(view, render_state)
         view_lines.extend(lines)
         view_measurements[str(view.get("viewId"))] = {
-            "records": len(view.get("records") or []),
-            "relationships": len(view.get("includedRelationships") or []),
+            "records": int(render_state["recordCount"]) - before_records,
+            "relationships": int(render_state["relationshipCount"]) - before_relationships,
             "characters": len("\n".join(lines)),
             "estimatedTokens": _estimated_tokens("\n".join(lines)),
         }
@@ -711,6 +828,11 @@ def render_model_context(projection: dict[str, Any], role_views: list[dict[str, 
 
     ordered = ["header", "reasoning_state", "graph_views", "warnings", "retrieval"]
     text = "\n".join(line for key in ordered for line in sections[key] if sections[key])
+    if len(text) > MAX_GRAPH_CONTEXT_CHARACTERS:
+        raise ValueError(
+            "graph_context_character_limit_exceeded: "
+            f"{len(text)}>{MAX_GRAPH_CONTEXT_CHARACTERS}"
+        )
     section_measurements = {
         key: {"characters": len("\n".join(sections[key])), "estimatedTokens": _estimated_tokens("\n".join(sections[key]))}
         for key in ordered
@@ -721,7 +843,22 @@ def render_model_context(projection: dict[str, Any], role_views: list[dict[str, 
         "sections": section_measurements,
         "views": view_measurements,
         "projectionCounts": {authority: int(selected_counts.get(authority) or 0) for authority in AUTHORITY},
-        "reasoningStateRecords": len(reasoning_lines),
+        "reasoningStateRecords": min(len(reasoning_nodes), MAX_REASONING_STATE_RECORDS),
+        "omittedReasoningStateRecords": omitted_reasoning_count,
+        "graphViewCount": len(role_views),
+        "graphEvidenceCount": int(render_state["recordCount"]) + int(render_state["relationshipCount"]),
+        "uniqueFiles": len(render_state["seenFiles"]),
+        "uniqueSourceRanges": len(render_state["seenFileRanges"]),
+        "duplicateFileRangeCount": int(render_state["duplicateFileRangeCount"]),
+        "limits": {
+            "selectedGraphViews": MAX_SELECTED_GRAPH_VIEWS,
+            "reasoningStateRecords": MAX_REASONING_STATE_RECORDS,
+            "graphEvidenceRecords": MAX_GRAPH_EVIDENCE_RECORDS,
+            "graphEvidenceRelationships": MAX_GRAPH_EVIDENCE_RELATIONSHIPS,
+            "provenanceRefsPerView": MAX_GRAPH_VIEW_PROVENANCE_REFS,
+            "fieldCharacters": MAX_GRAPH_CONTEXT_FIELD_CHARACTERS,
+            "contextCharacters": MAX_GRAPH_CONTEXT_CHARACTERS,
+        },
     }
     return {"text": text, "measurements": measurements}
 
@@ -734,14 +871,19 @@ def render_graph_views(views: list[dict[str, Any]]) -> dict[str, Any]:
     total_records = 0
     total_relationships = 0
     per_view: dict[str, dict[str, int]] = {}
+    render_state = _new_render_state()
     for view in views:
-        view_lines = _render_view_lines(view)
+        before_records = int(render_state["recordCount"])
+        before_relationships = int(render_state["relationshipCount"])
+        view_lines = _render_view_lines(view, render_state)
         lines.extend(view_lines)
-        total_records += len(view.get("records") or [])
-        total_relationships += len(view.get("includedRelationships") or [])
+        rendered_records = int(render_state["recordCount"]) - before_records
+        rendered_relationships = int(render_state["relationshipCount"]) - before_relationships
+        total_records += rendered_records
+        total_relationships += rendered_relationships
         per_view[str(view.get("viewId"))] = {
-            "records": len(view.get("records") or []),
-            "relationships": len(view.get("includedRelationships") or []),
+            "records": rendered_records,
+            "relationships": rendered_relationships,
             "estimatedTokens": _estimated_tokens("\n".join(view_lines)),
         }
     lines.append(
@@ -749,6 +891,11 @@ def render_graph_views(views: list[dict[str, Any]]) -> dict[str, Any]:
         "Reference records by the canonical ids above; retrieve full records through the bounded graph tools."
     )
     text = "\n".join(lines)
+    if len(text) > MAX_GRAPH_CONTEXT_CHARACTERS:
+        raise ValueError(
+            "graph_context_character_limit_exceeded: "
+            f"{len(text)}>{MAX_GRAPH_CONTEXT_CHARACTERS}"
+        )
     return {
         "text": text,
         "measurements": {
@@ -757,6 +904,11 @@ def render_graph_views(views: list[dict[str, Any]]) -> dict[str, Any]:
             "views": per_view,
             "records": total_records,
             "relationships": total_relationships,
+            "graphViewCount": len(views),
+            "graphEvidenceCount": total_records + total_relationships,
+            "uniqueFiles": len(render_state["seenFiles"]),
+            "uniqueSourceRanges": len(render_state["seenFileRanges"]),
+            "duplicateFileRangeCount": int(render_state["duplicateFileRangeCount"]),
         },
     }
 

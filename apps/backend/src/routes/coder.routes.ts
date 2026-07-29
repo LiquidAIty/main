@@ -186,6 +186,21 @@ router.post('/mcp-bridge/describe_connected_agents', async (req, res) => {
   }
 });
 
+router.post('/mcp-bridge/coder_status', async (_req, res) => {
+  const sessions = openClaudeConsoleSessionManager.list();
+  const liveSessions = sessions.filter(
+    (session) => session.state === 'starting' || session.state === 'running',
+  );
+  return res.json({
+    ok: true,
+    state: liveSessions.length > 0 ? 'running' : 'idle',
+    running: liveSessions.length > 0,
+    liveSessions,
+    recentSessions: sessions.slice(-10),
+    authority: 'openclaude_console_session_manager',
+  });
+});
+
 router.post('/mcp-bridge/run_mag_one', async (req, res) => {
   try {
     const instructionId = String(req.body?.instructionId || '').trim();

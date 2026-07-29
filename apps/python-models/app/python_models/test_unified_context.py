@@ -5,6 +5,8 @@ import time
 import pytest
 
 from app.python_models.unified_context import (
+    MAX_GRAPH_CONTEXT_CHARACTERS,
+    MAX_GRAPH_EVIDENCE_RECORDS,
     UnifiedContextRequest,
     build_graph_object_context,
     build_model_context,
@@ -234,6 +236,71 @@ def test_explicit_multiple_selection_preserves_order_and_bounded_rendering():
     rendered = render_graph_views(selected)
     assert rendered["measurements"]["records"] == 2
     assert rendered["measurements"]["estimatedTokens"] < 200
+
+
+def test_graph_view_render_deduplicates_normalized_repository_file_ranges():
+    base = {
+        "projectId": "project-1",
+        "conversationId": "main",
+        "authority": "codegraph",
+        "status": "attached",
+        "records": [],
+        "includedRelationships": [],
+    }
+    rendered = render_graph_views([
+        {
+            **base,
+            "viewId": "codegraph:first",
+            "records": [{
+                "canonicalId": "first",
+                "summary": "First view of the function",
+                "filePath": r"C:\Projects\main\apps\backend\src\main.ts",
+                "sourceRange": {"startLine": 10, "endLine": 20},
+            }],
+        },
+        {
+            **base,
+            "viewId": "codegraph:second",
+            "records": [{
+                "canonicalId": "duplicate",
+                "summary": "Same function repeated with different prose",
+                "file_path": "c:/projects/main/apps/backend/src/main.ts",
+                "source_range": {"endLine": 20, "startLine": 10},
+            }],
+        },
+    ])
+
+    assert rendered["measurements"]["records"] == 1
+    assert rendered["measurements"]["uniqueFiles"] == 1
+    assert rendered["measurements"]["uniqueSourceRanges"] == 1
+    assert rendered["measurements"]["duplicateFileRangeCount"] == 1
+    assert "First view of the function" in rendered["text"]
+    assert "Same function repeated" not in rendered["text"]
+
+
+def test_graph_context_limits_are_enforced_before_provider_delivery():
+    base = {
+        "viewId": "codegraph:oversized",
+        "projectId": "project-1",
+        "conversationId": "main",
+        "authority": "codegraph",
+        "status": "attached",
+        "includedRelationships": [],
+    }
+    with pytest.raises(ValueError, match="graph_context_record_limit_exceeded"):
+        render_graph_views([{
+            **base,
+            "records": [
+                {"canonicalId": f"record:{index}", "summary": f"record {index}"}
+                for index in range(MAX_GRAPH_EVIDENCE_RECORDS + 1)
+            ],
+        }])
+
+    normal = render_graph_views([{
+        **base,
+        "records": [{"canonicalId": "record:one", "summary": "bounded"}],
+    }])
+    assert normal["measurements"]["characters"] <= MAX_GRAPH_CONTEXT_CHARACTERS
 
 
 @pytest.mark.parametrize(

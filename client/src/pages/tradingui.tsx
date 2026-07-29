@@ -154,15 +154,15 @@ const GradientBtn: React.FC<{ variant: 'enter' | 'exit'; children: React.ReactNo
   </button>
 );
 
-export default function TradingUI() {
+export default function TradingUI({ symbol }: { symbol?: string }) {
   const [agentMode, setAgentMode] = useState<'run' | 'follow'>('run');
   const [fullscreen, setFullscreen] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'dim'>('dark');
   const colors = theme === 'dark' ? DARK : DIM;
   const [searchParams] = useSearchParams();
-  // Explicit selected instrument from the URL (e.g. /tradingui?symbol=RDW). No default,
-  // no inference — an unknown/missing symbol shows an honest "select instrument" state.
-  const instrument = resolveInstrument(searchParams.get('symbol'));
+  // The card surface supplies its explicit instrument; the standalone route
+  // continues to accept an explicit URL symbol and has no silent default.
+  const instrument = resolveInstrument(symbol ?? searchParams.get('symbol'));
 
   const [messages, setMessages] = useState<Msg[]>([
     { who: 'User', text: 'Should I take this trade?' },

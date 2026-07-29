@@ -736,8 +736,8 @@ export default function AgentBuilder(): React.ReactElement {
       const selectedNode = cardId
         ? deck.nodes.find((node) => node.id === cardId) || null
         : null;
-      // Canvas selection always opens the saved-card editor. Console ownership
-      // stays on the dedicated rail action below.
+      // Canvas selection always opens the saved-card editor. Agent app surfaces
+      // are opened from their connected rail icons.
       setHermesConsoleOpen(false);
       setObjectDrawerOpen(Boolean(selectedNode));
       const isMagenticSelection = Boolean(
@@ -1184,7 +1184,7 @@ export default function AgentBuilder(): React.ReactElement {
           surfaceRole: 'companion',
         })
       }
-      tradingSurface={<TradingUI />}
+      tradingSurface={<TradingUI symbol="RDW" />}
       worldsignalSurface={
         <WorldSignalSurface
           projectId={

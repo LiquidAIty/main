@@ -116,7 +116,6 @@ export function resolvedMagenticControllers(
     )
     .map((edge) => nodeMap.get(edge.source === magenticCardId ? edge.target : edge.source))
     .filter((node): node is any => Boolean(node && node.kind === 'agent'))
-    .filter((node) => !String(node.parentGraphId || '').trim())
     .filter((node) => node?.enabled !== false && node?.runtimeOptions?.enabled !== false)
     .filter((node) => {
       if (seen.has(node.id)) return false;
@@ -166,7 +165,6 @@ export function resolvedMagenticOptions(
     )
     .map((edge) => nodeMap.get(edge.source === magenticCardId ? edge.target : edge.source))
     .filter((node): node is any => Boolean(node && node.kind === 'agent'))
-    .filter((node) => !String(node.parentGraphId || '').trim())
     .filter((node) => node?.enabled !== false && node?.runtimeOptions?.enabled !== false)
     .filter((node) => {
       // Principal roles are structurally never workers, even against stale edges.

@@ -188,8 +188,7 @@ class ContractTests(unittest.TestCase):
         )
         by_id = {candidate.record["assertion_id"]: candidate for candidate in fused}
 
-        self.assertLess(by_id["anchor-only"].score, by_id["substantive"].score)
-        self.assertEqual(by_id["anchor-only"].reasons, ["exact_anchor_match"])
+        self.assertNotIn("anchor-only", by_id)
         self.assertGreater(
             by_id["relevant-exact"].score,
             (1.0 / (hr.RRF_K + 2)) * 2,
@@ -198,6 +197,15 @@ class ContractTests(unittest.TestCase):
             by_id["relevant-exact"].ranks,
             {"vector": 2, "fulltext": 2, "exact": 2},
         )
+
+    def test_exact_only_anchor_rows_do_not_fill_an_unrelated_query(self):
+        result = hr.retrieve_knowgraph_context(
+            _request(query="unrelated narrow product question"),
+            driver=FakeDriver(exact=[_chunk("book-anchor-only")]),
+            embed_fn=fake_embed,
+        )
+        self.assertEqual(result.retrieval_state, "empty")
+        self.assertEqual(result.assertions, [])
 
     def test_empty_result_is_structured_and_not_failure(self):
         result = hr.retrieve_knowgraph_context(_request(), driver=FakeDriver(), embed_fn=fake_embed)

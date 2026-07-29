@@ -66,19 +66,56 @@ async def check():
     assert 'graphview.list' in by_name
     assert 'graphview.get' in by_name
     assert 'graphview.create' in by_name
+    assert 'coder.status' in by_name
+    assert all(
+        tool.inputSchema.get('additionalProperties') is False
+        for name, tool in by_name.items()
+        if not name.startswith('engraphis_')
+    )
+    worldsignals = by_name['worldsignals.capabilities'].inputSchema
+    assert worldsignals['properties']['operation_class']['enum'] == ['read', 'write']
+    assert {'domain', 'command', 'keyword', 'operation_class', 'limit'} == set(worldsignals['properties'])
     print(json.dumps({name: tool.model_dump() for name, tool in by_name.items()}, sort_keys=True))
 asyncio.run(check())
 """
     result = _run_in_script_launch_context(code)
     assert result.returncode == 0, result.stderr
     catalog = json.loads(result.stdout)
-    assert len(catalog) == 65
     assert len(catalog) == len(set(catalog))
     host = open(os.path.join(_APP_DIR, "mcp_host.py"), encoding="utf-8").read()
     assert "CHATGPT_MAIN" not in host
     assert "LIQUIDAITY_MAIN_PROJECT_ID" not in host
     assert "LIQUIDAITY_MAIN_DECK_ID" not in host
     assert "LIQUIDAITY_MAIN_CONVERSATION_ID" not in host
+
+
+def test_catalog_identity_covers_the_complete_frozen_tool_descriptor():
+    import mcp_host
+    from mcp.types import Tool
+
+    original = Tool(
+        name="example.read",
+        description="Original description",
+        inputSchema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    )
+    changed = Tool(
+        name="example.read",
+        description="Changed description",
+        inputSchema={
+            "type": "object",
+            "properties": {"query": {"type": "string", "minLength": 1}},
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    )
+
+    assert mcp_host._catalog_identity([original])[0] == 1
+    assert mcp_host._catalog_identity([original])[1] != mcp_host._catalog_identity([changed])[1]
 
 
 def test_mag_one_instruction_authoring_persists_operation_references(monkeypatch):
@@ -143,9 +180,11 @@ async def check():
         assert tool.model_dump() == native[tool.name].model_dump()
     combined = await mcp_host.list_tools()
     combined_names = [tool.name for tool in combined]
-    assert len(combined_names) == 65
-    assert len(set(combined_names)) == 65
-    assert len(set(combined_names) - set(native)) == 36
+    assert len(set(combined_names)) == len(combined_names)
+    assert {
+        'main.context', 'canvas.inspect', 'coder.status', 'run_coder_subagent',
+        'agentgraph.inspect', 'graphview.list', 'graphview.get', 'graphview.create',
+    }.issubset(set(combined_names) - set(native))
     print(json.dumps(sorted(native)))
 asyncio.run(check())
 """
@@ -411,9 +450,9 @@ async def check():
             actual = sorted(tool.name for tool in (await session.list_tools()).tools)
             elapsed = time.perf_counter() - started
             assert actual == expected
+            assert len(actual) == len(set(actual))
             assert 'main.context' in actual
             assert 'agentgraph.inspect' in actual
-            assert len(actual) == 65
             assert sum(name.startswith('engraphis_') for name in actual) == 29
             assert elapsed < 10
             print(json.dumps({{'status': 'STDIO_OK', 'count': len(actual), 'elapsed': elapsed}}))
@@ -522,13 +561,26 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     )
     tools = asyncio.run(mcp_host.list_tools())
     by_name = {tool.name: tool for tool in tools}
-    assert len(tools) == 65
-    assert len(by_name) == 65
+    assert len(tools) == len(by_name)
     assert "main.context" in by_name
     assert "agentgraph.inspect" in by_name
     assert "graphview.list" in by_name
     assert "graphview.get" in by_name
     assert "graphview.create" in by_name
+    assert "coder.status" in by_name
+    native_names = {tool.name for tool in asyncio.run(mcp_host._native_engraphis_tools())}
+    assert all(
+        tool.inputSchema.get("additionalProperties") is False
+        for name, tool in by_name.items()
+        if name not in native_names
+    )
+    assert set(by_name["worldsignals.capabilities"].inputSchema["properties"]) == {
+        "domain",
+        "command",
+        "keyword",
+        "operation_class",
+        "limit",
+    }
     assert {tool.name for tool in asyncio.run(mcp_host._native_engraphis_tools())}.issubset(by_name)
     assert "engraphis_recall" in by_name
     assert "codegraph.status" in by_name
@@ -536,11 +588,20 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "thinkgraph.persist_graph_view" not in by_name
     assert "run_coder_subagent" in by_name
     assert "run_mag_one" in by_name
-    assert "projectId" not in by_name["run_coder_subagent"].inputSchema["properties"]
-    assert "parentRunId" not in by_name["run_coder_subagent"].inputSchema["properties"]
+    coder_tool = by_name["run_coder_subagent"]
+    assert set(coder_tool.inputSchema["properties"]) == {
+        "approvedPrompt",
+        "cardId",
+        "authority",
+        "graphViewIds",
+    }
+    assert "projectId" not in coder_tool.inputSchema["properties"]
+    assert "parentRunId" not in coder_tool.inputSchema["properties"]
     assert "agentContextId" not in by_name["run_coder_subagent"].inputSchema["properties"]
     assert "agentContext" not in by_name["run_coder_subagent"].inputSchema["properties"]
     assert "adapter" not in by_name["run_coder_subagent"].inputSchema["properties"]
+    assert "server owns project, deck, conversation, parent-run, and Main-card identity" in coder_tool.description
+    assert "Pass the exact active" not in coder_tool.description
     assert "instructionId" not in by_name["card.run_assistant_agent"].inputSchema["properties"]
     assert "graphViewIds" in by_name["card.run_assistant_agent"].inputSchema["properties"]
     assert by_name["engraphis_recall"].model_dump()["securitySchemes"] == [
@@ -550,6 +611,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         {"type": "oauth2", "scopes": ["liquidaity.main"]}
     ]
     assert by_name["codegraph.search"].annotations.readOnlyHint is True
+    assert by_name["coder.status"].annotations.readOnlyHint is True
     assert by_name["run_coder_subagent"].annotations is None
 
     calls = []
@@ -596,6 +658,9 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "parentRunId": "external-main:grant-1",
         "mainCardId": "card_main_chat",
     }
+
+    asyncio.run(mcp_host.call_tool("coder.status", {}))
+    assert calls[-1] == ("coder_status", {})
 
     asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
         "cardId": "card_agent",
@@ -697,6 +762,46 @@ def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(m
     }
     assert succeeded[0].type == "text"
     assert json.loads(succeeded[0].text) == {"ok": True, "cards": []}
+
+
+def test_public_knowgraph_query_is_read_only_and_drops_candidate_graph_view(monkeypatch):
+    import asyncio
+    import mcp_host
+    from app.python_models import tool_registry
+
+    async def retrieve(**_kwargs):
+        return {
+            "retrieval_state": "evidence",
+            "assertions": [],
+            "evidence": [],
+            "relations": [],
+            "graphView": {
+                "viewId": "knowgraph:candidate",
+                "producingRole": "main_chat",
+            },
+        }
+
+    async def initialized():
+        mcp_host._NATIVE_ENGRAPHIS_NAMES = frozenset()
+
+    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
+    monkeypatch.setattr(tool_registry, "retrieve_knowgraph_context_tool", retrieve)
+
+    result = asyncio.run(
+        mcp_host.call_tool(
+            "knowgraph.query",
+            {
+                "projectId": "project-1",
+                "conversationId": "conversation-1",
+                "query": "knowledge graph modeling",
+            },
+        )
+    )
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is True
+    assert "graphView" not in payload
 
 
 def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp():

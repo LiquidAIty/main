@@ -12,7 +12,11 @@ from app.python_models.thinkgraph_engraphis import ThinkGraphEngraphis
 class LocalTestEmbedder:
     dim = 384
 
+    def __init__(self):
+        self.call_sizes = []
+
     def embed(self, texts, *, kind="text"):
+        self.call_sizes.append(len(texts))
         rows = []
         for text in texts:
             raw = hashlib.sha384(text.encode("utf-8")).digest()
@@ -77,6 +81,32 @@ def test_patch_preserves_ids_and_is_idempotent(tmp_path):
     assert projection["authority"] == "engraphis-v2"
 
 
+def test_conflicting_retry_with_same_correlation_fails_visibly(tmp_path):
+    graph = adapter(tmp_path)
+    assert graph.apply_patch(authority(), patch())["status"] == "applied"
+    conflicting = patch()
+    conflicting["resources"][1]["label"] = "A different decision."
+
+    result = graph.apply_patch(authority(), conflicting)
+
+    assert result == {
+        "ok": False,
+        "status": "conflict",
+        "error": "thinkgraph_correlation_conflict",
+        "correlationId": "turn-1",
+    }
+    assert graph.get_record("ADMIN", "dec:kg01")["label"] != "A different decision."
+
+
+def test_patch_embeds_changed_resources_in_one_batch(tmp_path):
+    embedder = LocalTestEmbedder()
+    graph = ThinkGraphEngraphis(tmp_path / "thinkgraph.sqlite", embedder=embedder)
+
+    graph.apply_patch(authority(), patch())
+
+    assert embedder.call_sizes == [2]
+
+
 @pytest.mark.parametrize("invalid_value", [["nested"], {"nested": True}])
 def test_patch_rejects_non_scalar_properties_without_coercion(tmp_path, invalid_value):
     graph = adapter(tmp_path)
@@ -123,6 +153,72 @@ def test_current_and_historical_projection(tmp_path):
     historical_decision = next(node for node in historical["nodes"] if node["id"] == "dec:kg01")
     assert historical_decision["currentState"] == "historical"
     assert historical_decision["validTo"]
+
+
+def test_projection_edge_endpoints_resolve_in_active_and_historical_identity_modes(tmp_path):
+    graph = adapter(tmp_path)
+    graph.apply_patch(authority(correlation="turn-1"), patch())
+    changed = patch()
+    changed["resources"][1]["label"] = "Updated shared graph contract."
+    graph.apply_patch(authority(correlation="turn-2"), changed)
+
+    current = graph.projection("ADMIN")
+    historical = graph.projection("ADMIN", include_historical=True)
+
+    assert {edge["source"] for edge in current["edges"]} | {
+        edge["target"] for edge in current["edges"]
+    } <= {node["id"] for node in current["nodes"]}
+    assert {edge["source"] for edge in historical["edges"]} | {
+        edge["target"] for edge in historical["edges"]
+    } <= {node["id"] for node in historical["nodes"]}
+    assert all(node["id"] == node["canonicalId"] for node in current["nodes"])
+    assert all(node["id"] == node["versionId"] for node in historical["nodes"])
+
+
+def test_accepted_resolution_suppresses_block_only_from_active_projection(tmp_path):
+    graph = adapter(tmp_path)
+    base = {
+        "resources": [
+            {"id": "issue:claim", "label": "Claim token gap", "kind": "Finding"},
+            {"id": "schema:assignments", "label": "Assignments schema", "kind": "System"},
+        ],
+        "statements": [
+            {
+                "id": "stmt:block",
+                "subject": "issue:claim",
+                "predicateTerm": "term:blocks",
+                "object": "schema:assignments",
+                "review": "provisional",
+            }
+        ],
+    }
+    graph.apply_patch(authority(correlation="block-turn"), base)
+    resolved = {
+        "statements": [
+            {
+                "id": "stmt:resolved",
+                "subject": "issue:claim",
+                "predicateTerm": "term:resolved_for",
+                "object": "schema:assignments",
+                "review": "accepted",
+            }
+        ]
+    }
+    graph.apply_patch(authority(correlation="resolve-turn"), resolved)
+
+    active = graph.projection("ADMIN")
+    historical = graph.projection("ADMIN", include_historical=True)
+
+    assert not any(edge["predicate"] == "term:blocks" for edge in active["edges"])
+    resolution = next(
+        edge for edge in active["edges"] if edge["predicate"] == "term:resolved_for"
+    )
+    assert resolution["lifecycleState"] == "resolved"
+    historical_block = next(
+        edge for edge in historical["edges"] if edge["predicate"] == "term:blocks"
+    )
+    assert historical_block["lifecycleState"] == "superseded"
+    assert {node["lifecycleState"] for node in active["nodes"]} == {"active"}
 
 
 def test_changed_record_creates_immutable_version_and_supersedes_lineage(tmp_path):

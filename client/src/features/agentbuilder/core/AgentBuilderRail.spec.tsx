@@ -54,6 +54,34 @@ describe('AgentBuilderRail Hermes terminal icon', () => {
     expect(button.getAttribute('title')).toBe('Graphs');
   });
 
+  it('shows the connected Trading Agent app icon', () => {
+    const host = render(
+      <AgentBuilderRail
+        {...baseProps}
+        visibleRailItems={{ ...baseVisibility, showTrading: true }}
+      />,
+    );
+    expect(host.querySelector('[data-testid="rail-trading-button"]')).not.toBeNull();
+  });
+
+  it('opens the Trading Agent app from its rail icon', () => {
+    const onOpen = vi.fn();
+    const host = render(
+      <AgentBuilderRail
+        {...baseProps}
+        visibleRailItems={{ ...baseVisibility, showTrading: true }}
+        onShowTradingWorkspace={onOpen}
+      />,
+    );
+    const button = host.querySelector(
+      '[data-testid="rail-trading-button"]',
+    ) as HTMLButtonElement;
+    act(() => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
+
   it('shows the terminal icon when the console is visible', () => {
     const host = render(
       <AgentBuilderRail

@@ -416,7 +416,15 @@ def _fuse(channels: dict[str, list[dict[str, Any]]]) -> list[_Candidate]:
                 candidate.ranks[channel] = rank
                 candidate.score += channel_weight / (RRF_K + rank)
                 candidate.reasons.append(reasons[channel])
-    return sorted(candidates.values(), key=lambda item: (-item.score, _clean(item.record.get("assertion_id"))))
+    # Exact anchors are context, not query relevance. They may strengthen a
+    # semantic/full-text match, but an exact-only row must not fill maxResults
+    # for an unrelated narrow query.
+    relevant = [
+        candidate
+        for candidate in candidates.values()
+        if "vector" in candidate.ranks or "fulltext" in candidate.ranks
+    ]
+    return sorted(relevant, key=lambda item: (-item.score, _clean(item.record.get("assertion_id"))))
 
 
 def _select_diverse(candidates: list[_Candidate], cap: int) -> list[_Candidate]:

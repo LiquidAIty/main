@@ -7,6 +7,7 @@ graph relationships. The retired AGE store is neither read nor written.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -117,12 +118,23 @@ class ThinkGraphEngraphis:
                 project_id TEXT NOT NULL,
                 correlation_id TEXT NOT NULL,
                 applied_at REAL NOT NULL,
+                payload_hash TEXT,
                 PRIMARY KEY(project_id, correlation_id)
             );
             CREATE INDEX IF NOT EXISTS idx_tg_entity_canonical
                 ON entities(workspace_id, repo_id, canonical_id);
             """
         )
+        receipt_columns = {
+            str(row[1])
+            for row in self.store.conn.execute(
+                "PRAGMA table_info(thinkgraph_patch_receipts)"
+            ).fetchall()
+        }
+        if "payload_hash" not in receipt_columns:
+            self.store.conn.execute(
+                "ALTER TABLE thinkgraph_patch_receipts ADD COLUMN payload_hash TEXT"
+            )
         self.store.conn.commit()
 
     def _ensure_embedding_runtime(self) -> None:
@@ -226,6 +238,7 @@ class ThinkGraphEngraphis:
         valid_from: float | None = None,
         valid_to: float | None = None,
         ingested_at: float | None = None,
+        embedding: Any | None = None,
     ) -> tuple[str, bool]:
         existing = self._active_record(workspace_id, repo_id, canonical_id)
         existing_meta = dict(existing.metadata or {}) if existing else {}
@@ -288,7 +301,9 @@ class ThinkGraphEngraphis:
             "embedModel": EMBED_MODEL,
         }
         memory_type = _mtype(kind, properties)
-        vector = self.embedder.embed([f"{kind}\n{label}"])[0]
+        vector = embedding
+        if vector is None:
+            vector = self.embedder.embed([f"{kind}\n{label}"])[0]
         record = MemoryRecord(
             id=physical_id,
             content=label,
@@ -366,13 +381,42 @@ class ThinkGraphEngraphis:
         statements = list(patch.get("statements") or [])
         if not resources and not relations and not statements:
             return self._result("empty", correlation_id, [], [], 0)
+        prepared_resources = [
+            {
+                "canonical_id": _text(resource.get("id")),
+                "label": _text(resource.get("label")) or _text(resource.get("id")),
+                "kind": _text(resource.get("kind")) or "Record",
+                "properties": _scalar_properties(resource.get("properties")),
+            }
+            for resource in resources
+        ]
+        payload_hash = hashlib.sha256(
+            json.dumps(
+                {
+                    "resources": resources,
+                    "relations": relations,
+                    "statements": statements,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
         with self.lock:
             workspace_id, repo_id = self._scope(project_id)
             receipt = self.store.conn.execute(
-                "SELECT 1 FROM thinkgraph_patch_receipts WHERE project_id=? AND correlation_id=?",
+                "SELECT payload_hash FROM thinkgraph_patch_receipts WHERE project_id=? AND correlation_id=?",
                 (project_id, correlation_id),
             ).fetchone()
             if receipt:
+                prior_hash = _text(receipt[0])
+                if prior_hash and prior_hash != payload_hash:
+                    return {
+                        "ok": False,
+                        "status": "conflict",
+                        "error": "thinkgraph_correlation_conflict",
+                        "correlationId": correlation_id,
+                    }
                 return self._result("duplicate", correlation_id, [], [], 0)
             known = {
                 _text((item.metadata or {}).get("canonicalId") or item.id)
@@ -391,17 +435,49 @@ class ThinkGraphEngraphis:
             stored_resources: list[str] = []
             stored_statements: list[str] = []
             try:
-                for resource in resources:
-                    canonical_id = _text(resource.get("id"))
+                changed_indexes: list[int] = []
+                embedding_texts: list[str] = []
+                for index, resource in enumerate(prepared_resources):
+                    existing = self._active_record(
+                        workspace_id,
+                        repo_id,
+                        resource["canonical_id"],
+                    )
+                    existing_meta = dict(existing.metadata or {}) if existing else {}
+                    if (
+                        existing
+                        and existing.content == resource["label"]
+                        and _text(existing_meta.get("recordKind") or existing.title)
+                        == resource["kind"]
+                        and dict(existing_meta.get("properties") or {})
+                        == resource["properties"]
+                    ):
+                        continue
+                    changed_indexes.append(index)
+                    embedding_texts.append(
+                        f"{resource['kind']}\n{resource['label']}"
+                    )
+                embedded_rows = (
+                    self.embedder.embed(embedding_texts)
+                    if embedding_texts
+                    else []
+                )
+                embeddings = {
+                    resource_index: embedded_rows[position]
+                    for position, resource_index in enumerate(changed_indexes)
+                }
+                for index, resource in enumerate(prepared_resources):
+                    canonical_id = resource["canonical_id"]
                     self._write_memory(
                         canonical_id=canonical_id,
-                        label=_text(resource.get("label")) or canonical_id,
-                        kind=_text(resource.get("kind")) or "Record",
-                        properties=_scalar_properties(resource.get("properties")),
+                        label=resource["label"],
+                        kind=resource["kind"],
+                        properties=resource["properties"],
                         authority=authority,
                         workspace_id=workspace_id,
                         repo_id=repo_id,
                         now=now,
+                        embedding=embeddings.get(index),
                     )
                     stored_resources.append(canonical_id)
                 for relation in relations:
@@ -434,8 +510,8 @@ class ThinkGraphEngraphis:
                     )
                     stored_statements.append(statement_id)
                 self.store.conn.execute(
-                    "INSERT INTO thinkgraph_patch_receipts(project_id, correlation_id, applied_at) VALUES(?,?,?)",
-                    (project_id, correlation_id, now),
+                    "INSERT INTO thinkgraph_patch_receipts(project_id, correlation_id, applied_at, payload_hash) VALUES(?,?,?,?)",
+                    (project_id, correlation_id, now, payload_hash),
                 )
                 self.store.conn.commit()
             except Exception:
@@ -496,19 +572,49 @@ class ThinkGraphEngraphis:
                 for record in identity_records
             }
             scoped_edges = self.store.edges_in_scope(SearchFilter(workspace_id=workspace_id, repo_id=repo_id))
+            current_edges = [edge for edge in scoped_edges if edge.valid_to is None]
+            accepted_resolutions = {
+                (
+                    canonical_by_id.get(edge.src, edge.src),
+                    canonical_by_id.get(edge.dst, edge.dst),
+                )
+                for edge in current_edges
+                if self._relation_token(edge.relation) == "resolved_for"
+                and self._edge_review(edge) in {"accepted", "approved", "resolved"}
+            }
             if include_historical:
                 edges = [edge for edge in scoped_edges if edge.src in ids and edge.dst in ids]
             else:
                 current_canonical_ids = {canonical_by_id[record.id] for record in records}
                 canonical_edges: dict[tuple[str, str, str], Any] = {}
-                for edge in scoped_edges:
+                for edge in current_edges:
                     source = canonical_by_id.get(edge.src)
                     target = canonical_by_id.get(edge.dst)
                     if edge.relation == "SUPERSEDES" or source not in current_canonical_ids or target not in current_canonical_ids:
                         continue
+                    if (
+                        self._relation_token(edge.relation) == "blocks"
+                        and (source, target) in accepted_resolutions
+                    ):
+                        continue
                     canonical_edges.setdefault((source, edge.relation, target), edge)
                 edges = list(canonical_edges.values())
-            projected_edges = [self._project_edge(edge, canonical_by_id) for edge in edges]
+            projected_edges = [
+                self._project_edge(
+                    edge,
+                    canonical_by_id,
+                    preserve_version_identity=include_historical,
+                    superseded=(
+                        self._relation_token(edge.relation) == "blocks"
+                        and (
+                            canonical_by_id.get(edge.src, edge.src),
+                            canonical_by_id.get(edge.dst, edge.dst),
+                        )
+                        in accepted_resolutions
+                    ),
+                )
+                for edge in edges
+            ]
             degree: dict[str, int] = {}
             for edge in projected_edges:
                 degree[edge["source"]] = degree.get(edge["source"], 0) + 1
@@ -517,7 +623,13 @@ class ThinkGraphEngraphis:
                 self._project_record(
                     record,
                     project_id,
-                    degree.get(record.id, degree.get(canonical_by_id[record.id], 0)),
+                    degree.get(
+                        record.id
+                        if include_historical
+                        else canonical_by_id.get(record.id, record.id),
+                        0,
+                    ),
+                    preserve_version_identity=include_historical,
                 )
                 for record in records
             ]
@@ -533,12 +645,34 @@ class ThinkGraphEngraphis:
                 "counts": {"nodes": len(nodes), "edges": len(projected_edges)},
             }
 
-    def _project_record(self, record: MemoryRecord, project_id: str, degree: int) -> dict[str, Any]:
+    def _project_record(
+        self,
+        record: MemoryRecord,
+        project_id: str,
+        degree: int,
+        *,
+        preserve_version_identity: bool = False,
+    ) -> dict[str, Any]:
         metadata = dict(record.metadata or {})
         props = dict(metadata.get("properties") or {})
+        canonical_id = _text(metadata.get("canonicalId")) or record.id
+        current_state = (
+            "historical"
+            if record.valid_to is not None
+            else _text(metadata.get("currentState")) or "current"
+        )
+        lifecycle_state = current_state.lower()
+        if lifecycle_state == "current" or lifecycle_state not in {
+            "active",
+            "provisional",
+            "resolved",
+            "superseded",
+            "historical",
+        }:
+            lifecycle_state = "active"
         return {
-            "id": record.id,
-            "canonicalId": metadata.get("canonicalId") or record.id,
+            "id": record.id if preserve_version_identity else canonical_id,
+            "canonicalId": canonical_id,
             "versionId": metadata.get("versionId") or record.id,
             "versionOrdinal": int(metadata.get("versionOrdinal") or 1),
             "supersedesVersionId": metadata.get("supersedesVersionId") or None,
@@ -558,7 +692,8 @@ class ThinkGraphEngraphis:
             "correlationId": metadata.get("correlationId"),
             "goalId": metadata.get("goalId"),
             "memoryType": record.mtype.value,
-            "currentState": "historical" if record.valid_to is not None else metadata.get("currentState") or "current",
+            "currentState": current_state,
+            "lifecycleState": lifecycle_state,
             "createdAt": _iso(record.valid_from),
             "validFrom": _iso(record.valid_from),
             "validTo": _iso(record.valid_to),
@@ -581,17 +716,53 @@ class ThinkGraphEngraphis:
         }
 
     @staticmethod
-    def _project_edge(edge: Any, canonical_by_id: dict[str, str]) -> dict[str, Any]:
+    def _relation_token(relation: Any) -> str:
+        return _text(relation).lower().rsplit(":", 1)[-1]
+
+    @staticmethod
+    def _edge_review(edge: Any) -> str:
+        try:
+            provenance = dict(edge.provenance or {})
+        except (TypeError, ValueError):
+            return ""
+        properties = provenance.get("properties")
+        return (
+            _text(properties.get("review")).lower()
+            if isinstance(properties, dict)
+            else ""
+        )
+
+    @classmethod
+    def _project_edge(
+        cls,
+        edge: Any,
+        canonical_by_id: dict[str, str],
+        *,
+        preserve_version_identity: bool = False,
+        superseded: bool = False,
+    ) -> dict[str, Any]:
         try:
             provenance = dict(edge.provenance or {})
         except (TypeError, ValueError):
             provenance = {}
-        preserve_version_identity = edge.relation == "SUPERSEDES"
+        relation_token = cls._relation_token(edge.relation)
+        review = cls._edge_review(edge)
+        if edge.valid_to is not None:
+            lifecycle_state = "historical"
+        elif superseded or edge.relation == "SUPERSEDES":
+            lifecycle_state = "superseded"
+        elif relation_token == "resolved_for":
+            lifecycle_state = "resolved"
+        elif review == "provisional":
+            lifecycle_state = "provisional"
+        else:
+            lifecycle_state = "active"
         return {
             "id": edge.id,
             "source": edge.src if preserve_version_identity else canonical_by_id.get(edge.src, edge.src),
             "target": edge.dst if preserve_version_identity else canonical_by_id.get(edge.dst, edge.dst),
             "predicate": edge.relation,
+            "lifecycleState": lifecycle_state,
             "mentionCount": 1,
             "provenanceCount": 1,
             "validFrom": _iso(edge.valid_from),
