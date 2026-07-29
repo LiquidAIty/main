@@ -416,13 +416,13 @@ def _fuse(channels: dict[str, list[dict[str, Any]]]) -> list[_Candidate]:
                 candidate.ranks[channel] = rank
                 candidate.score += channel_weight / (RRF_K + rank)
                 candidate.reasons.append(reasons[channel])
-    # Exact anchors are context, not query relevance. They may strengthen a
-    # semantic/full-text match, but an exact-only row must not fill maxResults
-    # for an unrelated narrow query.
+    # The vector channel is the semantic relevance authority. Full-text and exact
+    # matches can strengthen a semantic match, but a token occurrence by itself
+    # must not turn an unrelated book passage into evidence for a narrow query.
     relevant = [
         candidate
         for candidate in candidates.values()
-        if "vector" in candidate.ranks or "fulltext" in candidate.ranks
+        if "vector" in candidate.ranks
     ]
     return sorted(relevant, key=lambda item: (-item.score, _clean(item.record.get("assertion_id"))))
 

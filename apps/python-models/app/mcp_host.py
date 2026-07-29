@@ -7,7 +7,8 @@ MCP client for the server's lifetime — before any chat work is accepted. No
 env vars, no .env, no per-turn spawn, no fallback host.
 
 Exposes this application tool surface plus the complete installed Engraphis
-FastMCP registry:
+FastMCP registry and, for the authenticated external operator connection, the
+complete paginated native Codebase Memory MCP registry:
   * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
   * run_mag_one                      (Main-only approved AgentGraph assignment)
   * thinkgraph.get_graph_slice       (bounded product projection)
@@ -33,13 +34,17 @@ or conversational agents.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import copy
 import hashlib
 import json
 import os
+import queue
+import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -228,6 +233,10 @@ _NATIVE_ENGRAPHIS_MCP: Any | None = None
 _NATIVE_ENGRAPHIS_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_ENGRAPHIS_NAMES: frozenset[str] = frozenset()
 _NATIVE_ENGRAPHIS_CALL_LOCK = threading.Lock()
+_NATIVE_CBM_CLIENT: "_NativeStdioMcpClient | None" = None
+_NATIVE_CBM_TOOLS: tuple[Tool, ...] | None = None
+_NATIVE_CBM_NAMES: frozenset[str] = frozenset()
+_NATIVE_CBM_INIT_LOCK = threading.Lock()
 
 
 @server.list_resources()
@@ -309,6 +318,231 @@ def _call_native_engraphis(name: str, arguments: dict[str, Any]):
     """
     with _NATIVE_ENGRAPHIS_CALL_LOCK:
         return asyncio.run(_native_engraphis_mcp().call_tool(name, arguments))
+
+
+class _NativeStdioMcpClient:
+    """One serialized JSON-RPC session to the installed native CBM server."""
+
+    def __init__(self, command: str, args: list[str], cwd: str):
+        creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        self._process = subprocess.Popen(
+            [command, *args],
+            cwd=cwd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            creationflags=creation_flags,
+        )
+        self._responses: queue.Queue[dict[str, Any]] = queue.Queue()
+        self._stderr: deque[str] = deque(maxlen=12)
+        self._request_lock = threading.Lock()
+        self._next_id = 0
+        threading.Thread(
+            target=self._read_stdout,
+            name="liquidaity-native-cbm-stdout",
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=self._read_stderr,
+            name="liquidaity-native-cbm-stderr",
+            daemon=True,
+        ).start()
+        initialized = self._request(
+            "initialize",
+            {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "liquidaity-native-cbm",
+                    "version": "1.0.0",
+                },
+            },
+        )
+        if not isinstance(initialized.get("serverInfo"), dict):
+            raise RuntimeError("native_cbm_initialize_invalid")
+        self._notify("notifications/initialized", {})
+
+    def _read_stdout(self) -> None:
+        stream = self._process.stdout
+        if stream is None:
+            self._responses.put({"__eof__": True})
+            return
+        try:
+            for line in stream:
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    message = json.loads(text)
+                except json.JSONDecodeError:
+                    self._responses.put(
+                        {"__protocol_error__": "native_cbm_invalid_json_response"}
+                    )
+                    continue
+                if isinstance(message, dict):
+                    self._responses.put(message)
+        finally:
+            self._responses.put({"__eof__": True})
+
+    def _read_stderr(self) -> None:
+        stream = self._process.stderr
+        if stream is None:
+            return
+        for line in stream:
+            text = line.strip()
+            if text:
+                self._stderr.append(text[:500])
+
+    def _write(self, payload: dict[str, Any]) -> None:
+        stream = self._process.stdin
+        if stream is None or self._process.poll() is not None:
+            raise RuntimeError("native_cbm_process_not_running")
+        stream.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+        stream.flush()
+
+    def _notify(self, method: str, params: dict[str, Any]) -> None:
+        self._write({"jsonrpc": "2.0", "method": method, "params": params})
+
+    def _request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        with self._request_lock:
+            self._next_id += 1
+            request_id = self._next_id
+            self._write(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": params,
+                }
+            )
+            deadline = time.monotonic() + 30.0
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError(f"native_cbm_timeout:{method}")
+                try:
+                    message = self._responses.get(timeout=remaining)
+                except queue.Empty as exc:
+                    raise RuntimeError(f"native_cbm_timeout:{method}") from exc
+                if message.get("__eof__"):
+                    tail = " | ".join(self._stderr)
+                    raise RuntimeError(
+                        f"native_cbm_process_exited:{self._process.poll()}:{tail}"
+                    )
+                if message.get("__protocol_error__"):
+                    raise RuntimeError(str(message["__protocol_error__"]))
+                if message.get("id") != request_id:
+                    continue
+                error = message.get("error")
+                if isinstance(error, dict):
+                    raise RuntimeError(
+                        "native_cbm_protocol_error:"
+                        + json.dumps(error, ensure_ascii=False, sort_keys=True)
+                    )
+                result = message.get("result")
+                if not isinstance(result, dict):
+                    raise RuntimeError(f"native_cbm_invalid_result:{method}")
+                return result
+
+    def list_tools(self) -> list[Tool]:
+        tools: list[Tool] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        while True:
+            params = {"cursor": cursor} if cursor else {}
+            result = self._request("tools/list", params)
+            page = result.get("tools")
+            if not isinstance(page, list):
+                raise RuntimeError("native_cbm_tools_list_invalid")
+            tools.extend(Tool.model_validate(tool) for tool in page)
+            next_cursor = result.get("nextCursor")
+            if not isinstance(next_cursor, str) or not next_cursor:
+                return tools
+            if next_cursor in seen_cursors:
+                raise RuntimeError("native_cbm_tools_cursor_cycle")
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+
+    def call_tool(self, name: str, arguments: dict[str, Any]) -> CallToolResult:
+        result = self._request(
+            "tools/call",
+            {"name": name, "arguments": dict(arguments or {})},
+        )
+        return CallToolResult.model_validate(result)
+
+    def close(self) -> None:
+        if self._process.poll() is not None:
+            return
+        self._process.terminate()
+        try:
+            self._process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+            self._process.wait(timeout=5)
+
+
+def _native_cbm_config() -> tuple[str, list[str], str]:
+    """Read the same native CBM stdio command used by the backend."""
+    repo_root = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
+    config_path = os.path.join(repo_root, "apps", "backend", "mcp.config.json")
+    with open(config_path, encoding="utf-8") as stream:
+        configured = (json.load(stream).get("mcpServers") or {}).get("codebase-memory")
+    if not isinstance(configured, dict) or configured.get("transport") not in (None, "stdio"):
+        raise RuntimeError("native_cbm_stdio_config_missing")
+    command = os.path.expandvars(str(configured.get("command") or "")).strip()
+    args = configured.get("args") or []
+    if not command or not isinstance(args, list):
+        raise RuntimeError("native_cbm_stdio_config_invalid")
+    return command, [str(arg) for arg in args], repo_root
+
+
+def _initialize_native_cbm_sync() -> None:
+    global _NATIVE_CBM_CLIENT, _NATIVE_CBM_NAMES, _NATIVE_CBM_TOOLS
+    if _NATIVE_CBM_TOOLS is not None:
+        return
+    with _NATIVE_CBM_INIT_LOCK:
+        if _NATIVE_CBM_TOOLS is not None:
+            return
+        command, args, cwd = _native_cbm_config()
+        client = _NativeStdioMcpClient(command, args, cwd)
+        try:
+            tools = tuple(client.list_tools())
+            names = [tool.name for tool in tools]
+            if len(names) != len(set(names)):
+                raise RuntimeError("native_cbm_duplicate_tool_name")
+        except Exception:
+            client.close()
+            raise
+        _NATIVE_CBM_CLIENT = client
+        _NATIVE_CBM_TOOLS = tools
+        _NATIVE_CBM_NAMES = frozenset(names)
+
+
+async def _native_cbm_tools() -> list[Tool]:
+    await asyncio.to_thread(_initialize_native_cbm_sync)
+    return list(_NATIVE_CBM_TOOLS or ())
+
+
+def _call_native_cbm(name: str, arguments: dict[str, Any]) -> CallToolResult:
+    _initialize_native_cbm_sync()
+    if _NATIVE_CBM_CLIENT is None:
+        raise RuntimeError("native_cbm_not_initialized")
+    return _NATIVE_CBM_CLIENT.call_tool(name, arguments)
+
+
+def _close_native_cbm() -> None:
+    global _NATIVE_CBM_CLIENT
+    client = _NATIVE_CBM_CLIENT
+    _NATIVE_CBM_CLIENT = None
+    if client is not None:
+        client.close()
+
+
+atexit.register(_close_native_cbm)
 
 
 def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
@@ -1079,7 +1313,22 @@ async def list_tools() -> list[Tool]:
         tool.inputSchema.setdefault("additionalProperties", False)
     tools.extend(await _native_engraphis_tools())
     context = _authenticated_main_context()
-    published = tools if context is None else _bind_authenticated_catalog(tools)
+    if context is None:
+        published = tools
+    else:
+        external_tools = [
+            tool for tool in tools if tool.name not in _EXTERNAL_CODEGRAPH_ADAPTERS
+        ]
+        native_cbm_tools = await _native_cbm_tools()
+        collisions = {tool.name for tool in external_tools} & {
+            tool.name for tool in native_cbm_tools
+        }
+        if collisions:
+            raise RuntimeError(
+                "native_cbm_tool_name_collision:" + ",".join(sorted(collisions))
+            )
+        external_tools.extend(native_cbm_tools)
+        published = _bind_authenticated_catalog(external_tools)
     catalog_count, catalog_hash = _catalog_identity(published)
     _trace(
         "catalog",
@@ -1112,7 +1361,18 @@ _READ_ONLY_TOOLS = {
     "worldsignals.capabilities",
     "worldsignals.poll",
     "worldsignals.stream_events",
+    "search_graph",
+    "query_graph",
+    "trace_path",
+    "get_code_snippet",
+    "get_graph_schema",
+    "get_architecture",
+    "search_code",
+    "list_projects",
+    "index_status",
+    "detect_changes",
 }
+_EXTERNAL_CODEGRAPH_ADAPTERS = frozenset({"codegraph.status", "codegraph.search"})
 _SERVER_OWNED_ARGUMENTS = {
     "projectId",
     "deckId",
@@ -1306,6 +1566,30 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                     text=json.dumps({"ok": False, "error": f"engraphis_failed: {err}"}),
                 )
             ]
+    if context is not None and name in _NATIVE_CBM_NAMES:
+        try:
+            return await asyncio.to_thread(
+                _call_native_cbm,
+                name,
+                dict(arguments or {}),
+            )
+        except Exception as err:  # noqa: BLE001 - preserve one honest native failure
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=json.dumps({"ok": False, "error": f"native_cbm_failed: {err}"}),
+                    )
+                ],
+                isError=True,
+            )
+    if context is not None and name in _EXTERNAL_CODEGRAPH_ADAPTERS:
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"ok": False, "error": f"unknown_tool: {name}"}),
+            )
+        ]
     allowed = _ALLOWED_KEYS.get(name)
     if allowed is None:
         return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"unknown_tool: {name}"}))]
@@ -1514,7 +1798,12 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
 
 def _tool_result_category(result: Any) -> str:
     try:
-        blocks = result if isinstance(result, list) else []
+        if isinstance(result, CallToolResult):
+            if result.isError:
+                return "tool_error"
+            blocks = result.content
+        else:
+            blocks = result if isinstance(result, list) else []
         for block in blocks:
             text = getattr(block, "text", "")
             if isinstance(text, str) and text:
@@ -1660,8 +1949,11 @@ async def _run_streamable_http() -> None:
         await session_manager.handle_request(scope, receive, send)
 
     async def lifespan(_app: Starlette):
-        async with session_manager.run():
-            yield
+        try:
+            async with session_manager.run():
+                yield
+        finally:
+            await asyncio.to_thread(_close_native_cbm)
 
     if OAUTH_ENFORCED:
         resource_url = AnyHttpUrl(config_values.resource_url)
@@ -1704,6 +1996,7 @@ async def main() -> None:
         await _run_stdio()
         return
     if MCP_TRANSPORT == "streamable-http":
+        await _native_cbm_tools()
         await _run_streamable_http()
         return
     raise RuntimeError(f"unsupported_mcp_transport: {MCP_TRANSPORT}")

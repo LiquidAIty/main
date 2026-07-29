@@ -207,6 +207,44 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(result.retrieval_state, "empty")
         self.assertEqual(result.assertions, [])
 
+    def test_fulltext_only_book_tokens_do_not_answer_a_narrow_product_query(self):
+        result = hr.retrieve_knowgraph_context(
+            _request(
+                query=(
+                    "Does the current MCP catalog have 66 unique tools and what "
+                    "fields does run_coder_subagent accept?"
+                )
+            ),
+            driver=FakeDriver(
+                fulltext=[
+                    _chunk(
+                        "weak-book-token-match",
+                        text="A catalog can organize tools and fields in a knowledge graph.",
+                    )
+                ]
+            ),
+            embed_fn=fake_embed,
+        )
+        self.assertEqual(result.retrieval_state, "empty")
+        self.assertEqual(result.assertions, [])
+
+    def test_relevant_book_phrase_remains_evidence_when_semantically_supported(self):
+        passage = _chunk(
+            "organizing-principle",
+            text="An organizing principle provides structure for a knowledge graph.",
+        )
+        result = hr.retrieve_knowgraph_context(
+            _request(query="knowledge graph organizing principle"),
+            driver=FakeDriver(vector=[passage], fulltext=[passage]),
+            embed_fn=fake_embed,
+        )
+        self.assertEqual(result.retrieval_state, "evidence")
+        self.assertEqual(result.assertions[0]["document_id"], "doc-1")
+        self.assertEqual(
+            set(result.assertions[0]["retrieval_reasons"]),
+            {"semantic_chunk_match", "fulltext_match"},
+        )
+
     def test_empty_result_is_structured_and_not_failure(self):
         result = hr.retrieve_knowgraph_context(_request(), driver=FakeDriver(), embed_fn=fake_embed)
         self.assertEqual(result.retrieval_state, "empty")
