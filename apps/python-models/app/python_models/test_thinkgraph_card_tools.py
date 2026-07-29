@@ -120,6 +120,7 @@ class TestPythonMcpHost:
             "graphview.list",
             "graphview.get",
             "graphview.create",
+            "coder.status",
             "run_coder_subagent",
             "mag_one.describe_connected_agents",
             "run_mag_one",
@@ -161,13 +162,6 @@ class TestPythonMcpHost:
             "thinkgraph.submit_update",
             "knowgraph.query",
             "knowgraph.ingest",
-            "knowgraph_analyze_scope",
-            "knowgraph_get_analysis",
-            "knowgraph_compare_providers",
-            "knowgraph_get_topics",
-            "knowgraph_get_gateways",
-            "knowgraph_get_gaps",
-            "knowgraph_create_analysis_view",
             "codegraph.status",
             "codegraph.search",
             "hermes.memory_read",
@@ -271,11 +265,7 @@ class TestPythonMcpHost:
         assert "relations" not in payload
         assert payload["expansion"]["arguments"]["includeFullText"] is True
         assert payload["expansion"]["arguments"]["maxResults"] == 5
-        assert "records" not in payload["graphView"]
-        assert "includedRelationships" not in payload["graphView"]
-        assert payload["graphView"]["viewId"] == "knowgraph:view-1"
-        assert payload["graphView"]["omittedRecordCount"] == 1
-        assert payload["graphView"]["omittedRelationshipCount"] == 1
+        assert "graphView" not in payload
         assert payload["omitted"]["relationCount"] == 1
 
     def test_knowgraph_expansion_arguments_are_accepted_by_the_exposed_schema(self, monkeypatch):

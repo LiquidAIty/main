@@ -96,12 +96,12 @@ def tool_calculator(expression: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# KnowGraph hybrid retrieval tool (explicit, deliberate, read-only).
+# KnowGraph Graphiti retrieval tool (explicit, deliberate, read-only).
 # ---------------------------------------------------------------------------
 
 
 def _load_knowgraph_hybrid_retrieval():
-    """Import the KnowGraph Python rails hybrid retrieval capability.
+    """Import the KnowGraph Python rails temporal retrieval capability.
 
     The Mag One rails (this package) and the KnowGraph rails
     (``services/knowgraph``) are separate. The KnowGraph rails use bare-module
@@ -137,11 +137,10 @@ async def retrieve_knowgraph_context_tool(
 ) -> dict[str, Any]:
     """Mag One tool: retrieve a compact, project-scoped KnowGraph evidence slice.
 
-    Combines exact anchored traversal + Neo4j full-text + local-embedding vector
-    retrieval over the single KnowGraph (Neo4j). Read-only. Mag One decides when
-    to call this and supplies the bounded request; registering the tool never
-    runs it. Returns structured data (dict) preserving each assertion's outcome
-    and source identity (sourceRef/title/url).
+    Uses Graphiti's hybrid temporal-fact search over the single KnowGraph
+    (Neo4j), with a legacy Chunk compatibility read only for scopes that have no
+    Graphiti facts. Read-only. Mag One decides when to call this; registration
+    never runs it. Returns source and temporal validity with every fact.
     """
     module = _load_knowgraph_hybrid_retrieval()
     request = module.KnowGraphRetrievalRequest(
@@ -158,7 +157,7 @@ async def retrieve_knowgraph_context_tool(
         prior_assertion_ids=list(prior_assertion_ids) if prior_assertion_ids else None,
         prior_source_refs=list(prior_source_refs) if prior_source_refs else None,
     )
-    # Blocking Neo4j + local embedding call runs off the event loop.
+    # Blocking Graphiti/Neo4j search runs off the event loop.
     result = await asyncio.to_thread(module.retrieve_knowgraph_context, request)
     payload = result.to_dict()
     records = []
@@ -179,7 +178,7 @@ async def retrieve_knowgraph_context_tool(
             "canonicalId": canonical_id,
             "summary": summary,
             "selectionReason": " · ".join(reasons) or "Selected by canonical KnowGraph retrieval",
-            "relevance": assertion.get("fused_score"),
+            "relevance": assertion.get("retrieval_score", assertion.get("fused_score")),
             "rank": rank,
             "provenanceRefs": provenance_refs[:12],
             "estimatedCharacters": len(summary),
@@ -221,9 +220,14 @@ async def retrieve_knowgraph_context_tool(
         "includedCanonicalNodeIds": selected_ids,
         "includedRelationships": included_relationships,
         "query": str(query or "").strip(),
-        # Must name the label the channels actually match; advertising the
-        # retired SourceBackedAssertion here is how PL-7 stayed invisible.
-        "filter": {"nodeTypes": [module.ASSERTION_LABEL], "trustStates": []},
+        "filter": {
+            "nodeTypes": [
+                module.GRAPHITI_ASSERTION_LABEL
+                if result.retrieval_modes.get("backend") == "graphiti"
+                else module.ASSERTION_LABEL
+            ],
+            "trustStates": [],
+        },
         "hopDepth": max(0, int(max_hops or 0)),
         "provenanceRefs": list(dict.fromkeys(ref for record in records for ref in record["provenanceRefs"]))[:40],
         "note": "Filtered KnowGraph evidence returned by Hermes retrieval",
@@ -890,11 +894,11 @@ def build_default_tool_registry() -> ToolRegistry:
         ToolSpec(
             name="retrieve_knowgraph_context",
             description=(
-                "Retrieve a compact, project-scoped KnowGraph evidence slice by combining exact "
-                "anchored graph traversal, Neo4j full-text retrieval, and local-embedding vector "
-                "retrieval over the one knowledge graph. Read-only; returns source-backed "
-                "assertions with outcomes (supported/contradicted/uncertain), contradictions, "
-                "one-hop relations, and per-result retrieval reasons. "
+                "Retrieve a compact, project-scoped KnowGraph evidence slice using Graphiti's "
+                "hybrid temporal-fact search over Neo4j. Read-only; returns source-backed facts, "
+                "current/superseded/expired validity, contradictions, one-hop entity relations, "
+                "and per-result retrieval reasons. Legacy Chunk evidence is read only when a "
+                "scope has no Graphiti facts. "
                 "Use it when the selected task needs source-backed external evidence, "
                 "contradictions, uncertainty, or connected KnowGraph evidence. Do not call it "
                 "merely because it is attached. Do not use it for unrelated code-only tasks. Do "
@@ -1138,7 +1142,7 @@ _TOOL_DISPLAY_METADATA: dict[str, dict[str, Any]] = {
         "agentCompatibility": ["magentic_one", "assistant_agent"],
     },
     "retrieve_knowgraph_context": {
-        "displayName": "KnowGraph Hybrid Retrieval",
+        "displayName": "KnowGraph Temporal Retrieval",
         # Mag One capability, held by the Mag One team's participant agents. The
         # existing runtime attaches per-participant tools (assistant_agent cards
         # that are bus-connected to the Mag One orchestrator), so both the Mag One

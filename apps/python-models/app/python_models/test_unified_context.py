@@ -43,14 +43,14 @@ class FakeThinkGraph:
 
 
 def fake_read(path, params):
-    if path == "/api/knowgraph/analysis/latest":
-        return {"analysis": {
+    if path == "/api/knowgraph/graph":
+        return {
             "nodes": [
                 {"id": "know:one", "label": "Know one", "type": "Concept", "properties": {}},
                 {"id": "know:two", "label": "Know two", "type": "Document", "properties": {}},
             ],
-            "edges": [{"id": "know-edge", "source": "know:one", "target": "know:two", "type": "SUPPORTED_BY"}],
-        }}
+            "relationships": [{"id": "know-edge", "source": "know:one", "target": "know:two", "type": "SUPPORTED_BY"}],
+        }
     if path == "/api/layout":
         assert params["project"] == "C-Projects-main"
         return {
@@ -100,7 +100,7 @@ def test_projection_identity_is_stable_and_changes_with_source_identity():
 
 def test_partial_authority_failure_is_honest_and_does_not_backfill():
     def partial_read(path, params):
-        if path == "/api/knowgraph/analysis/latest":
+        if path == "/api/knowgraph/graph":
             raise RuntimeError("neo4j_down")
         return fake_read(path, params)
     result = build_unified_context(request(), graph=FakeThinkGraph(), read_json=partial_read, read_codegraph_json=fake_read)

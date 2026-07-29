@@ -404,7 +404,7 @@ async function main(): Promise<void> {
   try {
     const source = readFileSync(frameworkPath, 'utf8');
     const pageSource = readFileSync(path.join(repoRoot, 'client', 'src', 'pages', 'agentbuilder.tsx'), 'utf8');
-    const ok = ['UnifiedGraphSurface', 'NativeCodeGraphSurface', 'NativeThinkGraphSurface', 'KnowGraphAnalysisSurface']
+    const ok = ['UnifiedGraphSurface', 'NativeCodeGraphSurface', 'NativeThinkGraphSurface', 'NativeKnowGraphSurface']
       .every((name) => source.includes(name))
       && pageSource.includes('<KnowledgeGraphFramework');
     report(

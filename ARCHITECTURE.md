@@ -166,9 +166,9 @@ bounded reads and writes. It is not Neo4j and not AGE.
 
 ### KnowGraph
 
-KnowGraph is sourced knowledge and provenance in Neo4j. Python ingestion/research owns writes. The
-current KnowGraph route and `services/knowgraph` API expose retrieval and analysis without merging AGE
-results.
+KnowGraph is sourced knowledge and provenance in Neo4j. Graphiti is its canonical Python ingestion
+and retrieval engine; its native entity, episode, relation, temporal, and provenance schema owns the
+database. The backend exposes that graph without merging Apache AGE results.
 
 ### CodeGraph
 

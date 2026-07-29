@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../vendor/codebase-memory-ui/src/components/GraphTab', () => ({
@@ -23,7 +23,11 @@ vi.mock('force-graph', () => ({ default: function ForceGraphMock() { return {
 class ResizeObserverStub { observe() {} disconnect() {} }
 vi.stubGlobal('ResizeObserver', ResizeObserverStub);
 
-import { NativeCodeGraphSurface, NativeThinkGraphSurface } from './NativeAuthorityGraphSurface';
+import {
+  NativeCodeGraphSurface,
+  NativeKnowGraphSurface,
+  NativeThinkGraphSurface,
+} from './NativeAuthorityGraphSurface';
 import KnowledgeGraphFramework from './KnowledgeGraphFramework';
 
 describe('native authority graph surfaces', () => {
@@ -37,6 +41,23 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByText('No entities in this project yet.')).toBeTruthy();
     expect(screen.getByTestId('graph-navigation-controls')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Open ThinkGraph Inspector' })).toBeTruthy();
+  });
+
+  it('loads the native Graphiti projection for KnowGraph without the removed analysis API', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ nodes: [], relationships: [] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<NativeKnowGraphSurface projectId="project-1" />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/knowgraph/graph?projectId=project-1',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    ));
+    await waitFor(() => expect(screen.getByTestId('native-knowgraph-surface')).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Open KnowGraph Inspector' })).toBeTruthy();
   });
 
   it('keeps canonical identity, authority, graph references, and provenance in the inspector', () => {

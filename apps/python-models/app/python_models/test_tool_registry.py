@@ -60,7 +60,7 @@ def test_manifest_includes_knowgraph_retrieval_with_display_name():
     manifest = tool_manifest()
     entry = next((m for m in manifest if m["id"] == "retrieve_knowgraph_context"), None)
     assert entry is not None
-    assert entry["displayName"] == "KnowGraph Hybrid Retrieval"
+    assert entry["displayName"] == "KnowGraph Temporal Retrieval"
     assert "magentic_one" in entry["agentCompatibility"]
     assert entry["description"]
     assert "project_id" in entry["inputSchemaSummary"]
@@ -96,6 +96,7 @@ def test_knowgraph_candidate_view_uses_the_actual_requesting_role(monkeypatch):
 
     result = SimpleNamespace(
         retrieval_state="evidence",
+        retrieval_modes={"backend": "graphiti"},
         assertions=[],
         relations=[],
         omitted_neighbor_count=0,
@@ -109,6 +110,7 @@ def test_knowgraph_candidate_view_uses_the_actual_requesting_role(monkeypatch):
         DEFAULT_OUTCOMES=("supported", "contradicted", "uncertain"),
         CORPUS_UNPREPARED_STATE="corpus_unprepared",
         ASSERTION_LABEL="Chunk",
+        GRAPHITI_ASSERTION_LABEL="RELATES_TO",
         KnowGraphRetrievalRequest=lambda **kwargs: kwargs,
         retrieve_knowgraph_context=lambda _request: result,
     )

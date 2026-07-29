@@ -177,25 +177,8 @@ async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<strin
   return Array.from(scopeIds);
 }
 
-async function resolvePreferredKnowGraphScope(projectId: string): Promise<string> {
-  const scopeIds = await resolveKnowGraphProjectScopeIds(projectId);
-  const seed = String(projectId || '').trim();
-  try {
-    const attached = await pool.query(
-      `SELECT scope FROM liq_core.knowgraph_scope_attachment
-       WHERE project_id = ANY($1::text[]) ORDER BY attached_at DESC LIMIT 1`,
-      [scopeIds],
-    );
-    const scope = String(attached.rows?.[0]?.scope || '').trim();
-    if (scope) return scope;
-  } catch (error: any) {
-    console.warn('[KNOWGRAPH][SCOPE] preferred attachment resolution failed:', error?.message || error);
-  }
-  return seed;
-}
-
 // SkillGraph (services/knowgraph/skill_ingest.py) shares this Neo4j database but uses its OWN node
-// labels. The KnowGraph reads below scope by project_id but are otherwise label-blind, so :Skill*
+// labels. The KnowGraph reads below scope by Graphiti group_id but are otherwise label-blind, so :Skill*
 // nodes would leak into the KnowGraph canvas. Exclude the skill-graph labels from every KnowGraph
 // read. KnowGraph itself never writes these labels (it writes :SemanticRecord / :SourceBackedAssertion
 // / :Entity / :Source / :Observation / ...), so this can only remove skill nodes, never hide evidence.
@@ -208,7 +191,7 @@ function _neoInt(v: any): number {
   return Number(v?.toNumber?.() ?? v ?? 0);
 }
 
-// List the distinct KnowGraph scopes (project_id values) present in Neo4j, with a
+// List the distinct Graphiti group scopes present in Neo4j, with a
 // human label + counts, so the UI can open ANY real KnowGraph scope directly — e.g.
 // an imported book under its own canonical scope — without moving or re-keying data.
 async function listKnowGraphScopes(): Promise<
@@ -226,13 +209,13 @@ async function listKnowGraphScopes(): Promise<
   try {
     const r = await session.run(
       `
-        MATCH (n) WHERE n.project_id IS NOT NULL AND ${notSkillNode('n')}
-        WITH toString(n.project_id) AS scope, collect(n) AS ns
+        MATCH (n) WHERE n.group_id IS NOT NULL AND ${notSkillNode('n')}
+        WITH toString(n.group_id) AS scope, collect(n) AS ns
         RETURN scope,
           size(ns) AS nodes,
-          size([x IN ns WHERE 'Concept' IN labels(x)]) AS concepts,
-          size([x IN ns WHERE 'Document' IN labels(x)]) AS documents,
-          head([x IN ns WHERE 'Document' IN labels(x) | coalesce(x.source_name, x.document_id)]) AS label
+          size([x IN ns WHERE 'Entity' IN labels(x)]) AS concepts,
+          size([x IN ns WHERE 'Episodic' IN labels(x)]) AS documents,
+          head([x IN ns WHERE 'Episodic' IN labels(x) | coalesce(x.source_name, x.name, x.document_id)]) AS label
         ORDER BY nodes DESC
       `,
     );
@@ -295,9 +278,9 @@ async function queryKnowGraphProject(projectId: string): Promise<{
     const relResult = await session.run(
       `
         MATCH (a)-[r]->(b)
-        WHERE toString(a.project_id) IN $projectScopeIds
-          AND toString(b.project_id) IN $projectScopeIds
-          AND (r.project_id IS NULL OR toString(r.project_id) IN $projectScopeIds)
+        WHERE toString(a.group_id) IN $projectScopeIds
+          AND toString(b.group_id) IN $projectScopeIds
+          AND toString(r.group_id) IN $projectScopeIds
           AND ${notSkillNode('a')} AND ${notSkillNode('b')}
         RETURN DISTINCT
           elementId(r) AS rel_id,
@@ -337,7 +320,7 @@ async function queryKnowGraphProject(projectId: string): Promise<{
     const nodeResult = await session.run(
       `
         MATCH (n)
-        WHERE toString(n.project_id) IN $projectScopeIds
+        WHERE toString(n.group_id) IN $projectScopeIds
           AND ${notSkillNode('n')}
         RETURN DISTINCT elementId(n) AS node_id, labels(n) AS node_labels, properties(n) AS node_props
       `,
@@ -416,7 +399,7 @@ async function queryKnowGraphExpand(
       `
         MATCH (n)
         WHERE elementId(n) = $nodeId
-          AND toString(n.project_id) IN $projectScopeIds
+          AND toString(n.group_id) IN $projectScopeIds
         RETURN elementId(n) AS node_id, labels(n) AS node_labels, properties(n) AS node_props
         LIMIT 1
       `,
@@ -435,12 +418,12 @@ async function queryKnowGraphExpand(
       `
         MATCH (center)
         WHERE elementId(center) = $nodeId
-          AND toString(center.project_id) IN $projectScopeIds
+          AND toString(center.group_id) IN $projectScopeIds
         MATCH (a)-[r]-(b)
         WHERE (a = center OR b = center)
-          AND toString(a.project_id) IN $projectScopeIds
-          AND toString(b.project_id) IN $projectScopeIds
-          AND toString(r.project_id) IN $projectScopeIds
+          AND toString(a.group_id) IN $projectScopeIds
+          AND toString(b.group_id) IN $projectScopeIds
+          AND toString(r.group_id) IN $projectScopeIds
           AND ${notSkillNode('a')} AND ${notSkillNode('b')}
         RETURN DISTINCT
           elementId(r) AS rel_id,
@@ -539,32 +522,6 @@ async function proxyKnowgraphGetJson(pathname: string, query?: Record<string, st
   throw lastError;
 }
 
-async function proxyKnowgraphPostJson(pathname: string, body: unknown): Promise<{
-  status: number;
-  data: any;
-}> {
-  const baseUrls = buildKnowgraphBaseUrls();
-  let lastError: any;
-
-  for (const baseUrl of baseUrls) {
-    try {
-      const response = await axios.post(`${baseUrl}${pathname}`, body, {
-        timeout: 300_000,
-        validateStatus: () => true,
-      });
-      return { status: response.status, data: response.data };
-    } catch (error: any) {
-      lastError = error;
-      const code = String(error?.code || '');
-      const canRetryNetworkLookup =
-        !error?.response && (code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN');
-      if (!canRetryNetworkLookup) break;
-    }
-  }
-
-  throw lastError;
-}
-
 router.get('/health', async (_req, res) => {
   try {
     const response = await proxyKnowgraphGetJson('/health');
@@ -599,120 +556,6 @@ router.get('/graph', async (req, res) => {
   } catch (error: any) {
     const message = error?.message || 'Failed to fetch KnowGraph graph';
     return res.status(500).json({ ok: false, error: { message } });
-  }
-});
-
-// Derived network analysis lives in the existing Python KnowGraph service and
-// persists back into the same Neo4j. These routes are transport only.
-router.get('/analysis/capabilities', async (_req, res) => {
-  try {
-    const response = await proxyKnowgraphGetJson('/analysis/capabilities');
-    return res.status(response.status).json(response.data);
-  } catch (error: any) {
-    return res.status(502).json({ ok: false, error: { message: error?.message || 'analysis capabilities unavailable' } });
-  }
-});
-
-router.get('/analysis/source-preview', async (req, res) => {
-  try {
-    const projectId = String(req.query?.projectId || req.query?.project_id || '').trim();
-    if (!projectId) return res.status(400).json({ ok: false, error: { message: 'projectId is required' } });
-    const resolvedProjectId = await resolvePreferredKnowGraphScope(projectId);
-    const response = await proxyKnowgraphGetJson('/analysis/source-preview', { project_id: resolvedProjectId });
-    return res.status(response.status).json({ ...response.data, resolved_project_id: resolvedProjectId });
-  } catch (error: any) {
-    return res.status(502).json({ ok: false, error: { message: error?.message || 'source preview unavailable' } });
-  }
-});
-
-router.post('/analysis/analyze', async (req, res) => {
-  try {
-    const requestedProjectId = String(req.body?.project_id || '').trim();
-    const resolvedProjectId = await resolvePreferredKnowGraphScope(requestedProjectId);
-    const response = await proxyKnowgraphPostJson('/analysis/analyze', {
-      ...req.body,
-      project_id: resolvedProjectId,
-      source_scope: { ...(req.body?.source_scope || {}), project_id: resolvedProjectId },
-    });
-    return res.status(response.status).json(response.data);
-  } catch (error: any) {
-    return res.status(502).json({ ok: false, error: { message: error?.message || 'analysis failed' } });
-  }
-});
-
-router.post('/analysis/compare', async (req, res) => {
-  try {
-    const response = await proxyKnowgraphPostJson('/analysis/compare', req.body);
-    return res.status(response.status).json(response.data);
-  } catch (error: any) {
-    return res.status(502).json({ ok: false, error: { message: error?.message || 'provider comparison failed' } });
-  }
-});
-
-router.get('/analysis/latest', async (req, res) => {
-  try {
-    const projectId = String(req.query?.projectId || req.query?.project_id || '').trim();
-    const provider = String(req.query?.provider || 'local_cleanroom').trim();
-    if (!projectId) return res.status(400).json({ ok: false, error: { message: 'projectId is required' } });
-    const resolvedProjectId = await resolvePreferredKnowGraphScope(projectId);
-    const response = await proxyKnowgraphGetJson('/analysis/latest', { project_id: resolvedProjectId, provider });
-    return res.status(response.status).json({ ...response.data, resolved_project_id: resolvedProjectId });
-  } catch (error: any) {
-    return res.status(502).json({ ok: false, error: { message: error?.message || 'analysis unavailable' } });
-  }
-});
-
-router.get('/analysis/comparison/latest', async (req, res) => {
-  try {
-    const projectId = String(req.query?.projectId || req.query?.project_id || '').trim();
-    if (!projectId) return res.status(400).json({ ok: false, error: { message: 'projectId is required' } });
-    const response = await proxyKnowgraphGetJson('/analysis/comparison/latest', { project_id: projectId });
-    return res.status(response.status).json(response.data);
-  } catch (error: any) {
-    return res.status(502).json({ ok: false, error: { message: error?.message || 'comparison unavailable' } });
-  }
-});
-
-router.get('/analysis/:analysisId/evidence/:topicId', async (req, res) => {
-  try {
-    const response = await proxyKnowgraphGetJson(
-      `/analysis/${encodeURIComponent(req.params.analysisId)}/evidence/${encodeURIComponent(req.params.topicId)}`,
-    );
-    return res.status(response.status).json(response.data);
-  } catch (error: any) {
-    return res.status(502).json({ ok: false, error: { message: error?.message || 'analysis evidence unavailable' } });
-  }
-});
-
-for (const detail of ['topics', 'gateways', 'gaps'] as const) {
-  router.get(`/analysis/:analysisId/${detail}`, async (req, res) => {
-    try {
-      const response = await proxyKnowgraphGetJson(
-        `/analysis/${encodeURIComponent(req.params.analysisId)}/${detail}`,
-      );
-      return res.status(response.status).json(response.data);
-    } catch (error: any) {
-      return res.status(502).json({ ok: false, error: { message: error?.message || `analysis ${detail} unavailable` } });
-    }
-  });
-}
-
-router.get('/analysis/:analysisId', async (req, res) => {
-  try {
-    const response = await proxyKnowgraphGetJson(`/analysis/${encodeURIComponent(req.params.analysisId)}`);
-    return res.status(response.status).json(response.data);
-  } catch (error: any) {
-    return res.status(502).json({ ok: false, error: { message: error?.message || 'analysis unavailable' } });
-  }
-});
-
-router.post('/analysis-view', async (req, res) => {
-  try {
-    const resolvedProjectId = await resolvePreferredKnowGraphScope(String(req.body?.project_id || '').trim());
-    const response = await proxyKnowgraphPostJson('/analysis-view', { ...req.body, project_id: resolvedProjectId });
-    return res.status(response.status).json(response.data);
-  } catch (error: any) {
-    return res.status(502).json({ ok: false, error: { message: error?.message || 'analysis view creation failed' } });
   }
 });
 

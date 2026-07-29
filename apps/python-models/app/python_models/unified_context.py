@@ -237,9 +237,16 @@ def _build_unified_context(
     selected_view_id = request.active_view_id
     know_started = time.perf_counter()
     try:
-        latest = read_json("/api/knowgraph/analysis/latest", {"projectId": request.knowgraph_scope or request.project_id, "provider": "local_cleanroom"})
-        analysis = dict(latest.get("analysis") or {})
-        know = {"nodes": list(analysis.get("nodes") or []), "relationships": list(analysis.get("edges") or [])}
+        graph_payload = read_json(
+            "/api/knowgraph/graph",
+            {"projectId": request.knowgraph_scope or request.project_id},
+        )
+        know = {
+            "nodes": list(graph_payload.get("nodes") or []),
+            "relationships": list(
+                graph_payload.get("relationships") or []
+            ),
+        }
     except Exception as error:  # one authority may fail without fabricating records
         know = {"nodes": [], "relationships": []}
         warnings.append({"authority": "knowgraph", "code": "authority_unavailable", "detail": str(error)})

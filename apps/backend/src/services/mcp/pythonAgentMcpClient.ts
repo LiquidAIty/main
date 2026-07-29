@@ -82,7 +82,15 @@ export async function callPythonAgentMcpTool(
   const content = Array.isArray(result?.content) ? result.content : [];
   const text = String((content[0] as { text?: unknown })?.text ?? '').trim();
   if (!text) throw new Error(`python_agent_mcp_empty_result: ${name}`);
-  const parsed = JSON.parse(text);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    if (result.isError) {
+      return { ok: false, error: text };
+    }
+    throw new Error(`python_agent_mcp_invalid_json_result: ${name}`);
+  }
   if (!parsed || typeof parsed !== 'object') {
     throw new Error(`python_agent_mcp_invalid_result: ${name}`);
   }

@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph from 'force-graph';
 import { forceCollide, forceX, forceY } from 'd3-force';
 
 import { GraphTab as CbmGraphTab } from '../../vendor/codebase-memory-ui/src/components/GraphTab';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
-import { AskMainAction, type GraphObjectRef } from './GraphObjectContext';
+import { AskMainAction, type GraphAuthority, type GraphObjectRef } from './GraphObjectContext';
 import './nativeAuthorityGraphSurface.css';
 
 // The server-owned graph projection contract rendered by the native surfaces.
@@ -72,6 +72,125 @@ export type GraphProjectionV1 = {
   nodes: GraphProjectionNode[];
   edges: GraphProjectionEdge[];
 };
+
+type KnowGraphPayload = {
+  nodes?: Array<{
+    id: string;
+    label?: string;
+    type?: string;
+    properties?: Record<string, unknown>;
+  }>;
+  relationships?: Array<{
+    id: string;
+    from: string;
+    to: string;
+    type?: string;
+    properties?: Record<string, unknown>;
+  }>;
+};
+
+function toKnowGraphProjection(payload: KnowGraphPayload, projectId: string): GraphProjectionV1 {
+  const nodes = Array.isArray(payload.nodes) ? payload.nodes : [];
+  const relationships = Array.isArray(payload.relationships) ? payload.relationships : [];
+  return {
+    schemaVersion: 'knowgraph.graphiti.projection.v1',
+    authority: 'knowgraph',
+    projectId,
+    counts: { nodes: nodes.length, edges: relationships.length },
+    nodes: nodes.map((node) => ({
+      id: String(node.id),
+      canonicalId: String(node.properties?.uuid || node.id),
+      label: String(node.label || node.properties?.name || node.id),
+      type: String(node.type || 'Entity'),
+      authority: 'knowgraph',
+      mentionCount: 0,
+      properties: node.properties || {},
+      provenance: {
+        groupId: node.properties?.group_id,
+        sourceEpisodeId: node.properties?.source_episode_id,
+      },
+    })),
+    edges: relationships.map((relationship) => ({
+      id: String(relationship.id),
+      source: String(relationship.from),
+      target: String(relationship.to),
+      predicate: String(relationship.type || 'RELATES_TO'),
+      mentionCount: 0,
+      properties: relationship.properties || {},
+      provenance: {
+        groupId: relationship.properties?.group_id,
+        episodes: relationship.properties?.episodes,
+      },
+      validFrom: String(relationship.properties?.valid_at || ''),
+      validTo: relationship.properties?.invalid_at
+        ? String(relationship.properties.invalid_at)
+        : null,
+    })),
+  };
+}
+
+export function NativeKnowGraphSurface({
+  projectId,
+  onAskMain,
+  onSelectedObjectChange,
+}: {
+  projectId: string;
+  onAskMain?: (reference: GraphObjectRef) => void;
+  onSelectedObjectChange?: (reference: GraphObjectRef | null) => void;
+}) {
+  const [projection, setProjection] = useState<GraphProjectionV1 | null>(null);
+  const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (signal?: AbortSignal) => {
+    if (!projectId) {
+      setProjection(null);
+      setStatus('ready');
+      setError(null);
+      return;
+    }
+    setStatus('loading');
+    setError(null);
+    try {
+      const response = await fetch(`/api/knowgraph/graph?projectId=${encodeURIComponent(projectId)}`, { signal });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(String(payload?.error?.message || payload?.error || `HTTP ${response.status}`));
+      }
+      if (signal?.aborted) return;
+      setProjection(toKnowGraphProjection(payload || {}, projectId));
+      setStatus('ready');
+    } catch (nextError: any) {
+      if (signal?.aborted || nextError?.name === 'AbortError') return;
+      setProjection(null);
+      setStatus('error');
+      setError(String(nextError?.message || nextError));
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
+
+  useEffect(() => {
+    const refresh = () => void load();
+    window.addEventListener('knowledge:refresh', refresh);
+    return () => window.removeEventListener('knowledge:refresh', refresh);
+  }, [load]);
+
+  return (
+    <NativeThinkGraphSurface
+      projection={projection}
+      status={status}
+      error={error}
+      authority="knowgraph"
+      onAskMain={onAskMain}
+      onSelectedObjectChange={onSelectedObjectChange}
+    />
+  );
+}
 
 export function NativeCodeGraphSurface({
   project,
@@ -151,12 +270,14 @@ export function NativeThinkGraphSurface({
   projection,
   status,
   error,
+  authority = 'thinkgraph',
   onAskMain,
   onSelectedObjectChange,
 }: {
   projection: GraphProjectionV1 | null;
   status: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
+  authority?: GraphAuthority;
   onAskMain?: (reference: GraphObjectRef) => void;
   onSelectedObjectChange?: (reference: GraphObjectRef | null) => void;
 }) {
@@ -182,12 +303,12 @@ export function NativeThinkGraphSurface({
 
   useEffect(() => {
     onSelectedObjectChange?.(selected ? {
-      authority: 'thinkgraph',
+      authority,
       canonicalId: selected.canonicalId,
-      selectedThrough: 'thinkgraph',
+      selectedThrough: authority,
       displayLabel: selected.fullLabel,
     } : null);
-  }, [onSelectedObjectChange, selected]);
+  }, [authority, onSelectedObjectChange, selected]);
   selectedRef.current = selected?.id || null;
 
   const nativeData = useMemo(() => {
@@ -205,7 +326,7 @@ export function NativeThinkGraphSurface({
         label: shortNodeLabel(node),
         fullLabel: String(node.label || node.title || node.id),
         etype: node.type || 'person_or_concept',
-        authority: String(node.authority || projection?.authority || 'thinkgraph'),
+        authority: String(node.authority || projection?.authority || authority),
         currentState: node.currentState,
         trustState: node.trustState,
         qualityState: node.qualityState,
@@ -222,7 +343,7 @@ export function NativeThinkGraphSurface({
       .filter((edge) => ids.has(edge.source) && ids.has(edge.target))
       .map((edge) => ({ source: edge.source, target: edge.target, label: edge.predicate }));
     return { nodes: visibleNodes, links };
-  }, [hideIsolated, projection]);
+  }, [authority, hideIsolated, projection]);
 
   const adjacency = useMemo(() => {
     const result = new Map<string, Set<string>>();
@@ -378,8 +499,9 @@ export function NativeThinkGraphSurface({
     return counts;
   }, new Map<string, number>())].sort((a, b) => b[1] - a[1]);
   const connectedCount = nativeData.nodes.filter((node) => node.degree > 0).length;
+  const surfaceLabel = authority === 'knowgraph' ? 'KnowGraph' : 'ThinkGraph';
   return (
-    <div data-testid="native-thinkgraph-surface" className="engraphis-native-graph">
+    <div data-testid={`native-${authority}-surface`} className="engraphis-native-graph">
       <div className="engraphis-native-canvas">
         <GraphPaperBackground />
         <div ref={hostRef} className="engraphis-native-network" />
@@ -400,22 +522,22 @@ export function NativeThinkGraphSurface({
       </div>
       <RightGlassDrawer
         isOpen={inspectorOpen}
-        title="ThinkGraph Inspector"
+        title={`${surfaceLabel} Inspector`}
         onClose={() => setInspectorOpen(false)}
         onOpen={() => setInspectorOpen(true)}
         collapsedLabel={null}
-        openAriaLabel="Open ThinkGraph Inspector"
+        openAriaLabel={`Open ${surfaceLabel} Inspector`}
         defaultWidth={340}
         minWidth={320}
         maxWidth={520}
-        storageKey="liquidaity.drawer.thinkgraph.width"
+        storageKey={`liquidaity.drawer.${authority}.width`}
         top={48}
         right={12}
         bottom={12}
         zIndex={6}
       >
       <div className="engraphis-native-controls">
-        {selected ? <section data-testid="thinkgraph-node-inspector"><h3>Identity</h3><h4>{selected.fullLabel}</h4><p>{selected.authority} · {selected.etype} · {selected.degree} connections</p><p>{selected.canonicalId}{selected.currentState ? ` · ${selected.currentState}` : ''}{selected.trustState ? ` · ${selected.trustState}` : ''}{selected.qualityState ? ` · ${selected.qualityState}` : ''}</p>{selected.codeGraphRef ? <p>CodeGraph: {selected.codeGraphRef}</p> : null}{selected.knowGraphRef ? <p>KnowGraph: {selected.knowGraphRef}</p> : null}<AskMainAction reference={{ authority: 'thinkgraph', canonicalId: selected.canonicalId, selectedThrough: 'thinkgraph', displayLabel: selected.fullLabel }} onAskMain={onAskMain} /></section> : null}
+        {selected ? <section data-testid={`${authority}-node-inspector`}><h3>Identity</h3><h4>{selected.fullLabel}</h4><p>{selected.authority} · {selected.etype} · {selected.degree} connections</p><p>{selected.canonicalId}{selected.currentState ? ` · ${selected.currentState}` : ''}{selected.trustState ? ` · ${selected.trustState}` : ''}{selected.qualityState ? ` · ${selected.qualityState}` : ''}</p>{selected.codeGraphRef ? <p>CodeGraph: {selected.codeGraphRef}</p> : null}{selected.knowGraphRef ? <p>KnowGraph: {selected.knowGraphRef}</p> : null}<AskMainAction reference={{ authority, canonicalId: selected.canonicalId, selectedThrough: authority, displayLabel: selected.fullLabel }} onAskMain={onAskMain} /></section> : null}
         <section>
           <h3>Controls</h3>
           <div className="engraphis-native-actions">

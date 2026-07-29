@@ -979,11 +979,11 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="knowgraph.query",
             description=(
-                "READ-ONLY grounded knowledge retrieval from KnowGraph (Neo4j): sourced claims, "
-                "entities, relationships, conflicts, and provenance via exact + full-text + "
-                "vector retrieval. Returns real stored evidence only. An empty/unseeded graph "
-                "returns assertions/evidence empty; an unreachable or timed-out graph returns an "
-                "honest error, never fabricated context. Do not retry a terminal empty/error result."
+                "READ-ONLY grounded temporal knowledge retrieval from KnowGraph (Neo4j) using "
+                "Graphiti hybrid fact search: sourced facts, entities, relationships, current or "
+                "superseded validity, conflicts, and episode provenance. Legacy Chunk evidence is "
+                "used only when a scope has no Graphiti facts. Returns real stored evidence only; "
+                "an unreachable or timed-out graph returns an honest error, never fabricated context."
             ),
             inputSchema={
                 "type": "object",
@@ -997,7 +997,7 @@ async def list_tools() -> list[Tool]:
                     "includeFullText": {
                         "type": "boolean",
                         "default": False,
-                        "description": "Explicit expansion: include complete selected chunk text. Default false returns compact summaries.",
+                        "description": "Explicit expansion: include complete selected fact text. Default false returns compact summaries.",
                     },
                 },
                 "required": ["projectId", "conversationId", "query"],
@@ -1006,11 +1006,11 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="knowgraph.ingest",
             description=(
-                "Hermes only: ingest REAL source material into KnowGraph through the existing "
-                "Neo/Python extraction pipeline (chunking, extraction prompts, entity/relationship "
-                "extraction, provenance, Neo4j writes). Each document must carry real source text "
-                "plus source metadata (source_url/title/fetched_at/document_id). Never invent "
-                "sources; never ingest model speculation."
+                "Hermes only: ingest REAL source material into KnowGraph as deterministic Graphiti "
+                "episodes. Graphiti performs entity resolution, temporal fact extraction, episode "
+                "provenance, and Neo4j writes. Each document must carry real source text plus source "
+                "metadata (source_url/title/fetched_at/document_id). Never invent sources or ingest "
+                "model speculation."
             ),
             inputSchema={
                 "type": "object",
@@ -1035,76 +1035,6 @@ async def list_tools() -> list[Tool]:
                     "researchFocus": {"type": "object"},
                 },
                 "required": ["projectId", "documents"],
-            },
-        ),
-        Tool(
-            name="knowgraph_analyze_scope",
-            description=(
-                "Analyze canonical KnowGraph chunks through the Python clean-room text-network engine or the "
-                "explicitly requested InfraNodus MCP provider. The request must use knowgraph.analysis.request.v1. "
-                "Local analysis stays in Neo4j; external analysis requires external_provider_permission=true."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {"request": {"type": "object"}},
-                "required": ["request"],
-            },
-        ),
-        Tool(
-            name="knowgraph_get_analysis",
-            description="Get one persisted derived KnowGraph analysis by its stable analysis ID.",
-            inputSchema={
-                "type": "object",
-                "properties": {"analysisId": {"type": "string"}},
-                "required": ["analysisId"],
-            },
-        ),
-        Tool(
-            name="knowgraph_compare_providers",
-            description=(
-                "Run Local and InfraNodus over the same ordered canonical source scope and persist a descriptive "
-                "comparison. Explicit external-provider permission is required; neither provider is treated as truth."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "request": {"type": "object"},
-                    "externalProviderPermission": {"type": "boolean"},
-                    "persist": {"type": "boolean"},
-                },
-                "required": ["request", "externalProviderPermission"],
-            },
-        ),
-        Tool(
-            name="knowgraph_get_topics",
-            description="Get derived topical communities and main concepts for a persisted analysis.",
-            inputSchema={"type": "object", "properties": {"analysisId": {"type": "string"}}, "required": ["analysisId"]},
-        ),
-        Tool(
-            name="knowgraph_get_gateways",
-            description="Get derived conceptual gateways for a persisted analysis.",
-            inputSchema={"type": "object", "properties": {"analysisId": {"type": "string"}}, "required": ["analysisId"]},
-        ),
-        Tool(
-            name="knowgraph_get_gaps",
-            description="Get structural gap candidates; these are derived opportunities, never sourced facts.",
-            inputSchema={"type": "object", "properties": {"analysisId": {"type": "string"}}, "required": ["analysisId"]},
-        ),
-        Tool(
-            name="knowgraph_create_analysis_view",
-            description=(
-                "Create a candidate KnowGraph Graph View over a persisted analysis. The view declares derived "
-                "epistemic level, provider, source scope, canonical references, and producing invocation."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "analysisId": {"type": "string"},
-                    "projectId": {"type": "string"},
-                    "producingInvocation": {"type": "string"},
-                    "parentViewId": {"type": "string"},
-                },
-                "required": ["analysisId", "projectId", "producingInvocation"],
             },
         ),
         Tool(
@@ -1352,10 +1282,6 @@ _READ_ONLY_TOOLS = {
     "canvas.inspect",
     "thinkgraph.get_graph_slice",
     "knowgraph.query",
-    "knowgraph_get_analysis",
-    "knowgraph_get_topics",
-    "knowgraph_get_gateways",
-    "knowgraph_get_gaps",
     "codegraph.status",
     "codegraph.search",
     "worldsignals.capabilities",
@@ -1467,13 +1393,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "thinkgraph.submit_update": {"projectId", "conversationId", "resources", "relations", "statements"},
     "knowgraph.query": {"projectId", "conversationId", "query", "anchors", "maxResults", "parentViewId", "includeFullText"},
     "knowgraph.ingest": {"projectId", "documents", "researchFocus"},
-    "knowgraph_analyze_scope": {"request"},
-    "knowgraph_get_analysis": {"analysisId"},
-    "knowgraph_compare_providers": {"request", "externalProviderPermission", "persist"},
-    "knowgraph_get_topics": {"analysisId"},
-    "knowgraph_get_gateways": {"analysisId"},
-    "knowgraph_get_gaps": {"analysisId"},
-    "knowgraph_create_analysis_view": {"analysisId", "projectId", "producingInvocation", "parentViewId"},
     "codegraph.status": set(),
     "codegraph.search": {"projectId", "conversationId", "query", "limit"},
     "hermes.memory_read": {"projectId", "key"},
@@ -1512,13 +1431,6 @@ _BRIDGE_PATHS: dict[str, str] = {
     "run_mag_one": "run_mag_one",
     "thinkgraph.submit_update": "thinkgraph_submit_update",
     "knowgraph.ingest": "knowgraph_ingest",
-    "knowgraph_analyze_scope": "knowgraph_analyze_scope",
-    "knowgraph_get_analysis": "knowgraph_get_analysis",
-    "knowgraph_compare_providers": "knowgraph_compare_providers",
-    "knowgraph_get_topics": "knowgraph_get_topics",
-    "knowgraph_get_gateways": "knowgraph_get_gateways",
-    "knowgraph_get_gaps": "knowgraph_get_gaps",
-    "knowgraph_create_analysis_view": "knowgraph_create_analysis_view",
     "codegraph.status": "codegraph_status",
     "codegraph.search": "codegraph_search",
     "hermes.memory_read": "hermes_memory_read",

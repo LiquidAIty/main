@@ -17,10 +17,8 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
     // TestPythonMcpHost) — one host, with native Hermes living in LocalCoder
     // rather than a second model-facing preflight tool.
     //
-    // This list froze at 19 while the host legitimately grew to 34: the
-    // WorldSignals channel (5), the clean-room analysis engine (7), the Hermes
-    // report surface (2), and web_search. Each is a documented, additive
-    // capability — the failure was this expectation, not the host.
+    // This list is the exact canonical host surface. Abandoned experimental
+    // tool clusters must be removed here when their runtime path is removed.
     expect(names).toEqual([
       'agentgraph.inspect',
       'canvas.inspect',
@@ -29,6 +27,7 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'card.update_configuration',
       'codegraph.search',
       'codegraph.status',
+      'coder.status',
       'engraphis_answer',
       'engraphis_check_update',
       'engraphis_code_impact',
@@ -67,14 +66,8 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'hermes.write_report',
       'knowgraph.ingest',
       'knowgraph.query',
-      'knowgraph_analyze_scope',
-      'knowgraph_compare_providers',
-      'knowgraph_create_analysis_view',
-      'knowgraph_get_analysis',
-      'knowgraph_get_gaps',
-      'knowgraph_get_gateways',
-      'knowgraph_get_topics',
       'mag_one.describe_connected_agents',
+      'main.context',
       'run_coder_subagent',
       'run_mag_one',
       'thinkgraph.get_graph_slice',
@@ -108,7 +101,7 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       tools: ['shell'],
     });
     expect(result.ok).toBe(false);
-    expect(String(result.error)).toContain('tool_arguments_rejected');
+    expect(String(result.error)).toContain('Input validation error');
     expect(String(result.error)).toContain('prompt');
     expect(String(result.error)).toContain('modelKey');
     expect(String(result.error)).toContain('tools');

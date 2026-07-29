@@ -7,10 +7,13 @@ import type { KnowledgeGraphKind } from '../../types/agentgraph';
 import type { ThinkGraphProjectionState } from '../../features/agentbuilder/state/useAgentBuilderThinkGraphProjection';
 
 const UnifiedGraphSurface = lazy(() => import('./UnifiedGraphSurface'));
-const KnowGraphAnalysisSurface = lazy(() => import('./KnowGraphAnalysisSurface'));
 const NativeCodeGraphSurface = lazy(async () => {
   const mod = await import('./NativeAuthorityGraphSurface');
   return { default: mod.NativeCodeGraphSurface };
+});
+const NativeKnowGraphSurface = lazy(async () => {
+  const mod = await import('./NativeAuthorityGraphSurface');
+  return { default: mod.NativeKnowGraphSurface };
 });
 const NativeThinkGraphSurface = lazy(async () => {
   const mod = await import('./NativeAuthorityGraphSurface');
@@ -137,7 +140,7 @@ export default function KnowledgeGraphFramework({
             onSelectedObjectChange={onSelectedObjectChange}
           />
         ) : kind === 'knowgraph' ? (
-          <KnowGraphAnalysisSurface projectId={projectId ?? ''} onAskMain={onAskMain} onSelectedObjectChange={onSelectedObjectChange} />
+          <NativeKnowGraphSurface projectId={projectId ?? ''} onAskMain={onAskMain} onSelectedObjectChange={onSelectedObjectChange} />
         ) : (
           <UnifiedGraphSurface
             projectId={projectId ?? ''}
