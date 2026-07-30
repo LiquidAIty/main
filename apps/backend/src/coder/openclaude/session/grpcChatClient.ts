@@ -410,6 +410,7 @@ export async function resolveCardDoorwayDefinitions(
 
 export type MainChatRuntimeConfig = {
   cardId: string;
+  runtimeBinding: 'main_chat';
   title: string;
   prompt: string | null;
   provider: string;
@@ -468,6 +469,7 @@ export async function resolveMainChatRuntimeConfig(
   const edges: any[] = Array.isArray((doc?.deck as any)?.edges) ? (doc!.deck as any).edges : [];
   return {
     cardId: String(card?.id || ''),
+    runtimeBinding: 'main_chat',
     title: String(card?.title || card?.id || ''),
     prompt: String(card?.prompt || '').trim() || null,
     provider: resolved.provider,
@@ -720,6 +722,9 @@ export async function startGrpcTurn(
         ? { parent_allowed_native_tools: mainChatConfig.parentAllowedNativeTools }
         : {}),
       ...(args.traceId ? { originating_run_id: args.traceId } : {}),
+      parent_card_id: mainChatConfig.cardId,
+      parent_runtime_binding: mainChatConfig.runtimeBinding,
+      parent_deck_id: BUILDER_DECK_ID,
     },
   });
 

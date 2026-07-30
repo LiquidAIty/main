@@ -101,7 +101,7 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertEqual(result["fact_count"], 1)
         self.assertEqual(len(graphiti.add_calls), 1)
         call = graphiti.add_calls[0]
-        self.assertEqual(call["group_id"], "liquidaity:project-1")
+        self.assertEqual(call["group_id"], "liquidaity-project-1")
         self.assertEqual(call["uuid"], result["episode_id"])
         self.assertEqual(call["custom_extraction_instructions"], "Keep claims grounded.")
         self.assertTrue(

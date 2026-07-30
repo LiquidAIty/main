@@ -25,6 +25,19 @@ def test_default_registry_exposes_known_tools():
     assert len(names) >= 1
 
 
+def test_worldsignals_batch_uses_the_native_command_contract():
+    registry = build_default_tool_registry()
+    spec = registry.spec("worldsignals.batch")
+    assert spec is not None
+    command = spec.inputSchema["properties"]["commands"]["items"]
+    assert command["required"] == ["cmd"]
+    assert command["properties"] == {
+        "cmd": {"type": "string", "minLength": 1},
+        "args": {"type": "object"},
+    }
+    assert command["additionalProperties"] is False
+
+
 def test_manifest_exposes_thinkgraph_tools_for_assistant_agent_cards():
     """The card Tools tab filters by agentCompatibility, so the two scoped
     ThinkGraph tools must be attachable on assistant_agent cards (and never on

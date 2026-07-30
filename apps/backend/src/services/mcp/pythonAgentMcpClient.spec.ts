@@ -13,10 +13,10 @@ const LIVE_STACK = process.env.LIQUIDAITY_LIVE_STACK === '1';
 describe('Python Agent MCP host — real stdio discovery + calls', () => {
   it('federates the three complete native catalogs with the LiquidAIty control surface', async () => {
     const names = await listPythonAgentMcpTools();
-    expect(names).toHaveLength(82);
-    expect(new Set(names).size).toBe(82);
+    expect(names).toHaveLength(81);
+    expect(new Set(names).size).toBe(81);
     expect(names.filter((name) => name.startsWith('cbm.'))).toHaveLength(14);
-    expect(names.filter((name) => name.startsWith('engraphis.'))).toHaveLength(29);
+    expect(names.filter((name) => name.startsWith('engraphis.'))).toHaveLength(28);
     expect(names.filter((name) => name.startsWith('graphiti.'))).toHaveLength(13);
     expect(names).toEqual(expect.arrayContaining([
       'agentgraph.inspect',
@@ -27,8 +27,8 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'coder.status',
       'cbm.search_graph',
       'cbm.index_status',
-      'engraphis.engraphis_recall',
-      'engraphis.engraphis_stats',
+      'engraphis.recall',
+      'engraphis.stats',
       'graphiti.search_nodes',
       'graphiti.get_status',
       'graphview.create',
@@ -63,6 +63,7 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
     expect(names).not.toContain('knowgraph.ingest');
     expect(names).not.toContain('codegraph.search');
     expect(names).not.toContain('codegraph.status');
+    expect(names).not.toContain('engraphis.answer');
   }, 30_000);
 
   it('rejects smuggled prompt/model/tool arguments at the MCP boundary', async () => {

@@ -23,7 +23,7 @@ import {
 
 const main = {
   id: 'card_main_chat', kind: 'agent', runtimeBinding: 'main_chat', runtimeType: 'assistant_agent',
-  prompt: 'Main prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'engraphis.engraphis_recall'], nativeTools: ['Agent'] },
+  prompt: 'Main prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'engraphis.recall'], nativeTools: ['Agent'] },
 };
 const hermes = {
   id: 'card_hermes_steward', kind: 'agent', runtimeBinding: 'hermes_steward', runtimeType: 'assistant_agent',
@@ -47,7 +47,7 @@ describe('native Main / Hermes / Search doorways', () => {
     mcpMocks.listPythonAgentMcpTools.mockResolvedValue([
       'thinkgraph.get_graph_slice', 'thinkgraph.submit_update',
       'cbm.search_graph', 'cbm.index_status',
-      'engraphis.engraphis_recall', 'graphiti.search_nodes',
+      'engraphis.recall', 'graphiti.search_nodes',
       'graphiti.add_memory', 'graphiti.add_triplet', 'hermes.memory.write',
       'write_mag_one_instructions', 'card.run_assistant_agent', 'web_search',
     ]);
@@ -140,7 +140,7 @@ describe('native Main / Hermes / Search doorways', () => {
     expect(config?.parentAllowedMcpTools).toEqual([
       'mcp__liquidaity__thinkgraph_get_graph_slice',
       'mcp__liquidaity__thinkgraph_submit_update',
-      'mcp__liquidaity__engraphis_engraphis_recall',
+      'mcp__liquidaity__engraphis_recall',
     ]);
     // The card's assigned native tools travel verbatim — the engine filters
     // the parent's native schemas before serialization.

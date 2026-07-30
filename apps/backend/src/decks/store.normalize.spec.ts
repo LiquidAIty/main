@@ -8,7 +8,6 @@ vi.mock('../db/pool', () => ({
 import {
   getDeckDocument,
   normalizeRuntimeOptions,
-  repairNativeGraphToolGrants,
 } from './store';
 
 beforeEach(() => {
@@ -56,108 +55,6 @@ describe('deck store runtime-options tool persistence', () => {
 
   it('an absent selection stays absent — no default tools are injected', () => {
     expect(normalizeRuntimeOptions({})?.tools).toBe(null);
-  });
-});
-
-describe('native graph-tool grant repair', () => {
-  it('removes obsolete wrappers, adds role-local native grants, and is idempotent', () => {
-    const deck = {
-      id: 'deck_builder',
-      name: 'Saved Builder',
-      workspaceRoot: 'C:\\Projects\\main',
-      version: 7,
-      promptTemplates: [{ id: 'custom', content: 'Keep me.' }],
-      nodes: [
-        {
-          id: 'custom-main',
-          kind: 'agent',
-          templateId: 'custom-main-template',
-          prompt: 'Keep the saved Main prompt.',
-          runtimeBinding: 'main_chat',
-          runtimeType: 'assistant_agent',
-          runtimeOptions: {
-            provider: 'openrouter',
-            modelKey: 'z-ai/glm-5.2',
-            tools: [
-              'canvas.inspect',
-              'future.explicit-error',
-              'engraphis.engraphis_stats',
-            ],
-          },
-          tools: ['legacy.keep'],
-          parentGraphId: null,
-          title: 'Saved Main',
-          subtitle: 'Keep subtitle',
-          position: { x: 12, y: 34 },
-        },
-        {
-          id: 'custom-hermes',
-          kind: 'agent',
-          templateId: 'custom-hermes-template',
-          prompt: 'Keep the saved Hermes prompt.',
-          runtimeBinding: 'hermes_steward',
-          runtimeType: 'assistant_agent',
-          runtimeOptions: {
-            provider: 'openrouter',
-            modelKey: 'openai/gpt-5.1-chat',
-            tools: ['knowgraph.query', 'hermes.memory.write'],
-          },
-          parentGraphId: null,
-          title: 'Saved Hermes',
-          position: { x: 56, y: 78 },
-        },
-        {
-          id: 'unrelated',
-          kind: 'agent',
-          templateId: 'custom-worker',
-          prompt: 'Untouched.',
-          runtimeBinding: 'research_agent',
-          runtimeType: 'assistant_agent',
-          runtimeOptions: {
-            tools: [
-              'codegraph.status',
-              'web_search',
-              'engraphis.engraphis_stats',
-            ],
-          },
-          parentGraphId: null,
-          title: 'Unrelated',
-          position: { x: 90, y: 12 },
-        },
-      ],
-      edges: [{ id: 'keep-edge', source: 'custom-main', target: 'custom-hermes', edgeType: 'flow' }],
-    } as any;
-
-    const repaired = repairNativeGraphToolGrants(deck);
-    const [main, hermes, unrelated] = repaired.nodes;
-    expect(main.runtimeOptions?.tools).toEqual(expect.arrayContaining([
-      'canvas.inspect',
-      'future.explicit-error',
-      'engraphis.engraphis_recall',
-      'engraphis.engraphis_recall_grounded',
-      'engraphis.engraphis_answer',
-      'engraphis.engraphis_why',
-      'engraphis.engraphis_timeline',
-    ]));
-    expect(main.runtimeOptions?.tools).not.toContain('engraphis.engraphis_stats');
-    expect(hermes.runtimeOptions?.tools).toEqual(expect.arrayContaining([
-      'hermes.memory.write',
-      'graphiti.search_nodes',
-      'graphiti.add_memory',
-      'graphiti.add_triplet',
-    ]));
-    expect(unrelated.runtimeOptions?.tools).toEqual([
-      'web_search',
-      'engraphis.engraphis_stats',
-    ]);
-    for (const node of repaired.nodes) {
-      expect(node.runtimeOptions?.tools ?? []).not.toEqual(expect.arrayContaining([
-        'knowgraph.query',
-        'codegraph.status',
-        'codegraph.search',
-      ]));
-    }
-    expect(repairNativeGraphToolGrants(repaired)).toBe(repaired);
   });
 });
 

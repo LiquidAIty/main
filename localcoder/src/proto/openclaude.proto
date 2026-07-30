@@ -54,6 +54,11 @@ message ChatRequest {
   // Server-minted identity of the live parent Harness turn. Doorway child
   // card calls use it as the originating run for durable AgentGraph handoffs.
   optional string originating_run_id = 10;
+  // Saved parent-card identity and binding. These are minted by the backend
+  // from the persisted canvas and used only for server-side tool authority.
+  optional string parent_card_id = 11;
+  optional string parent_runtime_binding = 12;
+  optional string parent_deck_id = 13;
 }
 
 // Structural saved-card configuration only — never graph data, conversation

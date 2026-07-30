@@ -13,7 +13,6 @@ import {
   isLegacyUaCard,
   LOCAL_CODER_CONTROLLER_MODEL_KEY,
   LOCAL_CODER_CONTROLLER_PROVIDER,
-  LOCAL_CODER_CONTROLLER_TOOLS,
   MAGENTIC_ONE_DEFAULT_MODEL_KEY,
   MAGENTIC_ONE_DEFAULT_PROVIDER,
   normalizeRuntimeBinding,
@@ -45,21 +44,14 @@ function isLocalCoderControllerCard(card: AgentCardInstance | null | undefined):
 function normalizeLocalCoderControllerCard(card: AgentCardInstance): AgentCardInstance {
   if (!isLocalCoderControllerCard(card)) return card;
   const runtimeOptions = normalizeRuntimeOptions(card.runtimeOptions) ?? {};
-  // Provider/model are the saved card's authority — no hardcoded default and no
-  // model blacklist. Only identity (binding/type) and the run_local_coder tool
-  // are normalized here; the card selects its own engine and model.
+  // Provider, model, and tools are saved-card authority. Hydration normalizes
+  // only the controller identity and never adds hidden grants.
   return {
     ...card,
     runtimeBinding: 'local_coder',
     runtimeType: 'local_coder',
     runtimeOptions: {
       ...runtimeOptions,
-      tools: Array.from(new Set([
-        ...LOCAL_CODER_CONTROLLER_TOOLS,
-        ...(Array.isArray(runtimeOptions.tools)
-          ? runtimeOptions.tools.map((tool) => safeText(tool).trim()).filter(Boolean)
-          : []),
-      ])),
     },
   };
 }

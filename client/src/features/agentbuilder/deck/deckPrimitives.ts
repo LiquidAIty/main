@@ -50,8 +50,11 @@ export const LOCAL_CODER_CONTROLLER_TOOLS = [
   'cbm.get_architecture',
   'cbm.search_code',
   'cbm.list_projects',
+  'cbm.delete_project',
   'cbm.index_status',
   'cbm.detect_changes',
+  'cbm.manage_adr',
+  'cbm.ingest_traces',
 ] as const;
 
 export function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {

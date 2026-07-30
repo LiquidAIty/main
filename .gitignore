@@ -73,6 +73,8 @@ apps/backend/env
 
 
 autogen-main/
+/neo4j-text2cypher/
+/defog-sqlcoder/
 
 # WorldSignals embed bundle - built from worldsignal/Shadowbroker-main/frontend (npm run build:embed)
 client/public/worldsignals/

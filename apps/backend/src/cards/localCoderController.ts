@@ -1,20 +1,5 @@
 import type { AgentCardInstance } from '../types';
 
-export const LOCAL_CODER_CONTROLLER_TOOLS = [
-  'run_local_coder',
-  'cbm.index_repository',
-  'cbm.search_graph',
-  'cbm.query_graph',
-  'cbm.trace_path',
-  'cbm.get_code_snippet',
-  'cbm.get_graph_schema',
-  'cbm.get_architecture',
-  'cbm.search_code',
-  'cbm.list_projects',
-  'cbm.index_status',
-  'cbm.detect_changes',
-] as const;
-
 export type CardLike = Partial<
   Pick<
     AgentCardInstance,
@@ -39,11 +24,8 @@ export function isLocalCoderControllerCard(card: CardLike | null | undefined): b
 }
 
 /**
- * Normalize ONLY the coder controller card's identity: its runtime binding/type
- * and the presence of its run_local_coder tool. Provider and model are the saved
- * card's authority — there is no hardcoded default and no model blacklist here.
- * The card selects its own engine (an OpenRouter/OpenAI model, or a BYOC coder
- * CLI); this normalizer never overrides that choice.
+ * Normalize ONLY the coder controller card's identity. Provider, model, and
+ * tools are saved-card authority; hydration never adds hidden grants.
  */
 export function normalizeLocalCoderControllerCard<T extends CardLike>(card: T): T {
   if (!isLocalCoderControllerCard(card)) return card;
@@ -51,19 +33,12 @@ export function normalizeLocalCoderControllerCard<T extends CardLike>(card: T): 
     card.runtimeOptions && typeof card.runtimeOptions === 'object' && !Array.isArray(card.runtimeOptions)
       ? { ...(card.runtimeOptions as Record<string, unknown>) }
       : {};
-  const rawTools = Array.isArray(runtimeOptions.tools)
-    ? runtimeOptions.tools
-        .map((tool) => cleanOptionalText(tool))
-        .filter((tool): tool is string => Boolean(tool))
-    : [];
-
   return {
     ...card,
     runtimeBinding: 'local_coder',
     runtimeType: 'local_coder',
     runtimeOptions: {
       ...runtimeOptions,
-      tools: Array.from(new Set([...LOCAL_CODER_CONTROLLER_TOOLS, ...rawTools])),
     },
   };
 }

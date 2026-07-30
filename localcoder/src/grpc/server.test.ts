@@ -5,6 +5,7 @@ import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
 
 import {
+  bindServerOwnedToolCaller,
   buildAgentDefinitionsFromRequest,
   concurrentRequestError,
   interruptActiveRequest,
@@ -23,6 +24,55 @@ import {
   READ_FILE_STATE_CACHE_SIZE,
 } from '../utils/fileStateCache.js'
 import { createUserMessage } from '../utils/messages.js'
+
+test('bindServerOwnedToolCaller replaces model identity with the saved Hermes identity', () => {
+  const result = bindServerOwnedToolCaller({
+    toolName: 'mcp__liquidaity__write_mag_one_instructions',
+    input: {
+      instructions: 'Prepare this exact task.',
+      projectId: 'spoofed',
+      _callerCardId: 'spoofed',
+    },
+    agentType: 'hermes-child',
+    parentCardId: 'card_main_chat',
+    parentRuntimeBinding: 'main_chat',
+    projectId: 'project-1',
+    deckId: 'deck_builder',
+    conversationId: 'conversation-1',
+    parentRunId: 'run-1',
+    cardIdByAgentType: new Map([['hermes-child', 'card_hermes_steward']]),
+    runtimeBindingByAgentType: new Map([['hermes-child', 'hermes_steward']]),
+  })
+
+  assert.deepEqual(result, {
+    updatedInput: {
+      instructions: 'Prepare this exact task.',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'conversation-1',
+      _callerCardId: 'card_hermes_steward',
+      _callerRuntimeBinding: 'hermes_steward',
+    },
+  })
+})
+
+test('bindServerOwnedToolCaller fails closed without a saved caller binding', () => {
+  const result = bindServerOwnedToolCaller({
+    toolName: 'mcp__liquidaity__run_mag_one',
+    input: { instructionId: 'instruction:one' },
+    agentType: 'unknown-child',
+    parentCardId: 'card_main_chat',
+    parentRuntimeBinding: 'main_chat',
+    projectId: 'project-1',
+    deckId: 'deck_builder',
+    conversationId: 'conversation-1',
+    parentRunId: 'run-1',
+    cardIdByAgentType: new Map(),
+    runtimeBindingByAgentType: new Map(),
+  })
+
+  assert.deepEqual(result, { deny: 'tool_caller_identity_unavailable' })
+})
 
 // No Node .mjs host, no mcp__liquidaity__ bare-to-qualified mapping, no aliases.
 // A card doorway definition grants exactly the one card-run control tool — this

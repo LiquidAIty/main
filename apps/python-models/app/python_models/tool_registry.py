@@ -629,7 +629,35 @@ def build_default_tool_registry() -> ToolRegistry:
             worldsignals_capabilities,
         ),
         (ToolSpec(name="worldsignals.command", description="Run one real command from the WorldSignals command manifest.", enabled=True, inputSchema={"type": "object", "properties": {"command": {"type": "string"}, "arguments": {"type": "object"}}, "required": ["command"], "additionalProperties": False}, outputSchema={"type": "object"}), assignment_worldsignals_command),
-        (ToolSpec(name="worldsignals.batch", description="Run up to twenty real WorldSignals commands through its batch channel.", enabled=True, inputSchema={"type": "object", "properties": {"commands": {"type": "array", "items": {"type": "object"}, "maxItems": 20}}, "required": ["commands"], "additionalProperties": False}, outputSchema={"type": "object"}), assignment_worldsignals_batch),
+        (
+            ToolSpec(
+                name="worldsignals.batch",
+                description="Run up to twenty real WorldSignals commands through its batch channel.",
+                enabled=True,
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "commands": {
+                            "type": "array",
+                            "maxItems": 20,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "cmd": {"type": "string", "minLength": 1},
+                                    "args": {"type": "object"},
+                                },
+                                "required": ["cmd"],
+                                "additionalProperties": False,
+                            },
+                        }
+                    },
+                    "required": ["commands"],
+                    "additionalProperties": False,
+                },
+                outputSchema={"type": "object"},
+            ),
+            assignment_worldsignals_batch,
+        ),
         (ToolSpec(name="worldsignals.poll", description="Poll completed command results and pending WorldSignals tasks.", enabled=True, inputSchema={"type": "object", "properties": {}, "required": [], "additionalProperties": False}, outputSchema={"type": "object"}), assignment_worldsignals_poll),
         (ToolSpec(name="worldsignals.stream_events", description="Read a bounded set of real-time events from the WorldSignals SSE channel.", enabled=True, inputSchema={"type": "object", "properties": {"max_events": {"type": "integer", "minimum": 1, "maximum": 20, "default": 1}, "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 30, "default": 15}}, "required": [], "additionalProperties": False}, outputSchema={"type": "object"}), assignment_worldsignals_stream_events),
     ]:

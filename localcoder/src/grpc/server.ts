@@ -29,6 +29,82 @@ const MAG_ONE_DESCRIBE_TOOL_NAME = 'mcp__liquidaity__mag_one_describe_connected_
 // card through the canonical Python executor (card.run_assistant_agent on the
 // official Python MCP host, qualified per the runtime's own MCP naming).
 const CARD_RUN_CONTROL_TOOL_NAME = 'mcp__liquidaity__card_run_assistant_agent'
+const IDENTITY_BOUND_TOOL_NAMES = new Set([
+  'mcp__liquidaity__run_coder_subagent',
+  'mcp__liquidaity__run_mag_one',
+  'mcp__liquidaity__hermes_memory_read',
+  'mcp__liquidaity__hermes_memory_write',
+  'mcp__liquidaity__hermes_read_report',
+  'mcp__liquidaity__hermes_write_report',
+  'mcp__liquidaity__write_mag_one_instructions',
+])
+
+export function bindServerOwnedToolCaller(params: {
+  toolName: string
+  input: Record<string, unknown>
+  agentType: string | undefined
+  parentCardId: string
+  parentRuntimeBinding: string
+  projectId: string
+  deckId: string
+  conversationId: string
+  parentRunId: string
+  cardIdByAgentType: Map<string, string>
+  runtimeBindingByAgentType: Map<string, string>
+}): { deny: string } | { updatedInput: Record<string, unknown> } {
+  const agentType = String(params.agentType || '')
+  const cardId = agentType
+    ? String(params.cardIdByAgentType.get(agentType) || '')
+    : String(params.parentCardId || '')
+  const runtimeBinding = agentType
+    ? String(params.runtimeBindingByAgentType.get(agentType) || '')
+    : String(params.parentRuntimeBinding || '')
+  if (!cardId || !runtimeBinding) {
+    return { deny: 'tool_caller_identity_unavailable' }
+  }
+  const updatedInput = { ...params.input }
+  delete updatedInput.projectId
+  delete updatedInput.deckId
+  delete updatedInput.conversationId
+  delete updatedInput.parentRunId
+  delete updatedInput.correlationId
+  delete updatedInput._callerCardId
+  delete updatedInput._callerRuntimeBinding
+  const normalizedName = params.toolName.replace(/^mcp__liquidaity__/, '')
+  const identity: Record<string, unknown> = {}
+  if ([
+    'run_coder_subagent',
+    'run_mag_one',
+    'hermes_memory_read',
+    'hermes_memory_write',
+    'write_mag_one_instructions',
+  ].includes(normalizedName)) {
+    identity.projectId = params.projectId
+  }
+  if ([
+    'run_coder_subagent',
+    'run_mag_one',
+    'write_mag_one_instructions',
+  ].includes(normalizedName)) {
+    identity.deckId = params.deckId
+    identity.conversationId = params.conversationId
+  }
+  if ([
+    'run_coder_subagent',
+    'hermes_read_report',
+    'hermes_write_report',
+  ].includes(normalizedName)) {
+    identity.parentRunId = params.parentRunId
+  }
+  return {
+    updatedInput: {
+      ...updatedInput,
+      ...identity,
+      _callerCardId: cardId,
+      _callerRuntimeBinding: runtimeBinding,
+    },
+  }
+}
 
 export const CONCURRENT_REQUEST_ERROR = {
   message: 'A request is already in progress on this stream',
@@ -412,6 +488,13 @@ export class GrpcServer {
               .filter((d: any) => String(d?.agent_type || '').trim() && String(d?.card_id || '').trim())
               .map((d: any) => [String(d.agent_type), String(d.card_id)]),
           )
+          const runtimeBindingByAgentType = new Map<string, string>(
+            rawAgentDefinitions
+              .filter((d: any) =>
+                String(d?.agent_type || '').trim()
+                && String(d?.runtime_binding || '').trim())
+              .map((d: any) => [String(d.agent_type), String(d.runtime_binding)]),
+          )
           // ORANGE-edge card-run authority per child (backend-resolved).
           const allowedCardRunIdsByAgentType = new Map<string, string[]>(
             rawAgentDefinitions
@@ -503,6 +586,29 @@ export class GrpcServer {
                   originatingRunId: String(req.originating_run_id || ''),
                   allowedCardRunIdsByAgentType,
                   selfCardRunByAgentType,
+                })
+                if ('deny' in resolved) {
+                  return {
+                    behavior: 'deny',
+                    message: resolved.deny,
+                    decisionReason: { type: 'other', reason: resolved.deny },
+                  }
+                }
+                return { behavior: 'allow', updatedInput: resolved.updatedInput }
+              }
+              if (IDENTITY_BOUND_TOOL_NAMES.has(tool.name)) {
+                const resolved = bindServerOwnedToolCaller({
+                  toolName: tool.name,
+                  input: input as Record<string, unknown>,
+                  agentType: context.agentType,
+                  parentCardId: String(req.parent_card_id || ''),
+                  parentRuntimeBinding: String(req.parent_runtime_binding || ''),
+                  projectId: sessionParts?.projectId ?? '',
+                  deckId: String(req.parent_deck_id || ''),
+                  conversationId: sessionParts?.conversationId ?? '',
+                  parentRunId: String(req.originating_run_id || ''),
+                  cardIdByAgentType,
+                  runtimeBindingByAgentType,
                 })
                 if ('deny' in resolved) {
                   return {

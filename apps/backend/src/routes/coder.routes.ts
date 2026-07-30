@@ -50,8 +50,6 @@ import {
   type ConsoleCoderResult,
   type ConsoleCoderStarted,
 } from '../coder/execution/coderConsoleRuntime';
-import { setLatestCoderAuditView, getLatestCoderAuditView } from '../coder/execution/coderAuditView';
-import type { CodeGraphViewContractResult } from '../contracts/coderContracts';
 import {
   completeGraphViews,
   parseGraphViewIdentities,
@@ -335,25 +333,6 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
           invocationId: result.correlationId,
         });
       }
-      // Preserve the real audit result for the existing audit inspector. Native
-      // CBM remains the source; no synthetic Graph View is minted from its refs.
-      if (result.ok && result.resultKind === 'audit' && result.auditResult) {
-        const audit = result.auditResult;
-        setLatestCoderAuditView({
-          projectId,
-          conversationId,
-          childRunId: result.childRunId,
-          correlationId: result.correlationId,
-          conclusion: audit.conclusion,
-          repositoryIdentity: audit.repositoryIdentity,
-          revision: audit.revision,
-          freshness: audit.freshness,
-          codeGraphQuery: audit.codeGraphQuery,
-          codeGraphNodeRefs: audit.codeGraphNodeRefs,
-          viewContract: audit.viewContract as CodeGraphViewContractResult,
-          transcriptArtifact: result.transcriptArtifact ?? null,
-        });
-      }
       return result;
       } catch (error) {
         await finishAgentAssignmentOnPython(outerAssignment.assignmentId, {
@@ -617,15 +596,6 @@ router.post('/mcp-bridge/hermes_read_report', async (req, res) => {
     const reason = error instanceof Error ? error.message : 'hermes_report_read_failed';
     return res.status(reason.includes('http_404') ? 404 : 400).json({ ok: false, error: reason });
   }
-});
-
-// Latest filtered CodeGraph view from a direct_main_audit run, for the frontend
-// to focus the existing CodeGraphSurface on the audited branch.
-router.get('/coder-audit-view', (req, res) => {
-  const projectId = String(req.query?.projectId || '').trim();
-  const conversationId = String(req.query?.conversationId || 'main').trim();
-  if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-  return res.json({ ok: true, view: getLatestCoderAuditView(projectId, conversationId) });
 });
 
 router.post('/openclaude/session/chat', async (req, res) => {

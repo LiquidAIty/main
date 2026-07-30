@@ -39,6 +39,7 @@ import inspect
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -55,6 +56,7 @@ from uuid import uuid4
 # 'app'"). Adding the package root here (the ONE launch/bootstrap boundary) makes all
 # `app.*` imports resolve, for every tool. Not a per-tool sys.path hack.
 _PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
 if _PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, _PACKAGE_ROOT)
 
@@ -70,8 +72,16 @@ from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
 load_dotenv(os.path.join(_REPO_ROOT, "apps", "backend", ".env"), override=False)
+
+_GRAPHITI_PROJECT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def graphiti_project_group_id(project_id: str) -> str:
+    """Map a LiquidAIty project to Graphiti's legal isolated group namespace."""
+    if not isinstance(project_id, str) or not _GRAPHITI_PROJECT_ID.fullmatch(project_id):
+        raise ValueError("projectId must contain only letters, numbers, underscores, and hyphens")
+    return f"liquidaity-{project_id}"
 
 BACKEND = os.environ.get("LIQUIDAITY_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
 MCP_TRANSPORT = os.environ.get("LIQUIDAITY_MCP_TRANSPORT", "stdio").strip().lower()
@@ -255,8 +265,13 @@ def _namespace_native_tools(provider: str, tools: list[Tool]) -> list[Tool]:
     prefix = _NATIVE_PREFIXES[provider]
     result: list[Tool] = []
     for tool in tools:
+        if provider == "engraphis" and tool.name == "engraphis_answer":
+            continue
         payload = tool.model_dump(by_alias=True, exclude_none=True)
-        payload["name"] = prefix + tool.name
+        native_name = tool.name
+        if provider == "engraphis":
+            native_name = native_name.removeprefix("engraphis_")
+        payload["name"] = prefix + native_name
         result.append(Tool.model_validate(payload))
     return result
 
@@ -594,6 +609,9 @@ class _NativeStdioMcpClient:
         )
         return CallToolResult.model_validate(result)
 
+    def is_running(self) -> bool:
+        return self._process.poll() is None
+
     def close(self) -> None:
         if self._process.poll() is not None:
             return
@@ -622,11 +640,25 @@ def _native_cbm_config() -> tuple[str, list[str], str]:
 
 def _initialize_native_cbm_sync() -> None:
     global _NATIVE_CBM_CLIENT, _NATIVE_CBM_NAMES, _NATIVE_CBM_TOOLS
-    if _NATIVE_CBM_TOOLS is not None:
+    if (
+        _NATIVE_CBM_TOOLS is not None
+        and _NATIVE_CBM_CLIENT is not None
+        and _NATIVE_CBM_CLIENT.is_running()
+    ):
         return
     with _NATIVE_CBM_INIT_LOCK:
-        if _NATIVE_CBM_TOOLS is not None:
+        if (
+            _NATIVE_CBM_TOOLS is not None
+            and _NATIVE_CBM_CLIENT is not None
+            and _NATIVE_CBM_CLIENT.is_running()
+        ):
             return
+        stale_client = _NATIVE_CBM_CLIENT
+        _NATIVE_CBM_CLIENT = None
+        _NATIVE_CBM_TOOLS = None
+        _NATIVE_CBM_NAMES = frozenset()
+        if stale_client is not None:
+            stale_client.close()
         command, args, cwd = _native_cbm_config()
         client = _NativeStdioMcpClient(command, args, cwd)
         try:
@@ -655,9 +687,12 @@ def _call_native_cbm(name: str, arguments: dict[str, Any]) -> CallToolResult:
 
 
 def _close_native_cbm() -> None:
-    global _NATIVE_CBM_CLIENT
-    client = _NATIVE_CBM_CLIENT
-    _NATIVE_CBM_CLIENT = None
+    global _NATIVE_CBM_CLIENT, _NATIVE_CBM_NAMES, _NATIVE_CBM_TOOLS
+    with _NATIVE_CBM_INIT_LOCK:
+        client = _NATIVE_CBM_CLIENT
+        _NATIVE_CBM_CLIENT = None
+        _NATIVE_CBM_TOOLS = None
+        _NATIVE_CBM_NAMES = frozenset()
     if client is not None:
         client.close()
 
@@ -1222,8 +1257,23 @@ async def list_tools() -> list[Tool]:
             description="Run up to twenty real WorldSignals commands through its batch channel.",
             inputSchema={
                 "type": "object",
-                "properties": {"commands": {"type": "array", "items": {"type": "object"}, "maxItems": 20}},
+                "properties": {
+                    "commands": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "cmd": {"type": "string", "minLength": 1},
+                                "args": {"type": "object"},
+                            },
+                            "required": ["cmd"],
+                            "additionalProperties": False,
+                        },
+                    }
+                },
                 "required": ["commands"],
+                "additionalProperties": False,
             },
         ),
         Tool(
@@ -1340,9 +1390,43 @@ _SERVER_OWNED_ARGUMENTS = {
     "conversationId",
     "correlationId",
     "senderAgentId",
+    "senderCardId",
+    "parentRunId",
     "originatingAgentId",
     "originatingRunId",
+    "_callerCardId",
+    "_callerRuntimeBinding",
 }
+_MAIN_ONLY_TOOLS = {
+    "run_coder_subagent",
+    "run_mag_one",
+}
+_HERMES_ONLY_TOOLS = {
+    "hermes.memory_read",
+    "hermes.memory_write",
+    "hermes.read_report",
+    "hermes.write_report",
+    "write_mag_one_instructions",
+}
+
+
+def _enforce_tool_caller(name: str, args: dict[str, Any]) -> str | None:
+    expected = (
+        "main_chat"
+        if name in _MAIN_ONLY_TOOLS
+        else "hermes_steward"
+        if name in _HERMES_ONLY_TOOLS
+        else None
+    )
+    if expected is None:
+        return None
+    card_id = str(args.pop("_callerCardId", "") or "").strip()
+    binding = str(args.pop("_callerRuntimeBinding", "") or "").strip()
+    if not card_id or not binding:
+        return "tool_caller_identity_unavailable"
+    if binding != expected:
+        return f"tool_caller_not_authorized: {name} requires {expected}"
+    return None
 
 
 def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
@@ -1355,7 +1439,11 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
     result: list[Tool] = []
     for tool in tools:
         payload = tool.model_dump(by_alias=True, exclude_none=True)
-        is_native = any(tool.name.startswith(prefix) for prefix in _NATIVE_PREFIXES.values())
+        native_system = next(
+            (system for system, prefix in _NATIVE_PREFIXES.items() if tool.name.startswith(prefix)),
+            None,
+        )
+        is_native = native_system is not None
         if not is_native:
             schema = copy.deepcopy(tool.inputSchema)
             properties = schema.get("properties")
@@ -1381,6 +1469,18 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
                     schema["required"] = [
                         field for field in schema["required"] if field != "instructionId"
                     ]
+            payload["inputSchema"] = schema
+        elif native_system == "graphiti":
+            schema = copy.deepcopy(tool.inputSchema)
+            properties = schema.get("properties")
+            if isinstance(properties, dict):
+                properties.pop("group_id", None)
+                properties.pop("group_ids", None)
+            required = schema.get("required")
+            if isinstance(required, list):
+                schema["required"] = [
+                    field for field in required if field not in {"group_id", "group_ids"}
+                ]
             payload["inputSchema"] = schema
         payload["securitySchemes"] = security_schemes
         if not is_native and tool.name in _READ_ONLY_TOOLS:
@@ -1427,7 +1527,13 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "hermes.memory_write": {"projectId", "key", "value"},
     "hermes.read_report": {"parentRunId"},
     "hermes.write_report": {"parentRunId", "reportMarkdown", "summary", "thinkGraphNodeIds", "knowGraphRefs", "codeGraphRefs"},
-    "write_mag_one_instructions": {"instructions", "operationReferences"},
+    "write_mag_one_instructions": {
+        "projectId",
+        "deckId",
+        "conversationId",
+        "instructions",
+        "operationReferences",
+    },
     "canvas.inspect": {"projectId", "deckId"},
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
@@ -1483,7 +1589,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
     context = _authenticated_main_context()
     if name.startswith(_NATIVE_PREFIXES["engraphis"]):
         await _initialize_native_engraphis()
-        native_name = name.removeprefix(_NATIVE_PREFIXES["engraphis"])
+        native_name = "engraphis_" + name.removeprefix(_NATIVE_PREFIXES["engraphis"])
         if native_name in _NATIVE_ENGRAPHIS_NAMES:
             return await asyncio.to_thread(
                 _call_native_engraphis,
@@ -1501,20 +1607,41 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
             )
     if name.startswith(_NATIVE_PREFIXES["graphiti"]):
         await _initialize_native_graphiti()
+        native_tools = await _native_graphiti_tools()
         native_name = name.removeprefix(_NATIVE_PREFIXES["graphiti"])
         if native_name in _NATIVE_GRAPHITI_NAMES:
             native_args = dict(arguments or {})
             if context is not None:
-                group_id = f"liquidaity:{context['projectId']}"
-                if native_name in {"add_memory", "add_triplet", "summarize_saga"}:
+                if "group_id" in native_args or "group_ids" in native_args:
+                    return [
+                        TextContent(
+                            type="text",
+                            text=json.dumps(
+                                {
+                                    "ok": False,
+                                    "error": "caller_identity_rejected: group_id,group_ids",
+                                }
+                            ),
+                        )
+                    ]
+                group_id = graphiti_project_group_id(str(context["projectId"]))
+                native_tool = next(
+                    (
+                        tool
+                        for tool in native_tools
+                        if tool.name == native_name
+                    ),
+                    None,
+                )
+                native_properties = (
+                    native_tool.inputSchema.get("properties", {})
+                    if native_tool is not None
+                    and isinstance(native_tool.inputSchema, dict)
+                    else {}
+                )
+                if "group_id" in native_properties:
                     native_args["group_id"] = group_id
-                elif native_name in {
-                    "search_nodes",
-                    "search_memory_facts",
-                    "get_episodes",
-                    "build_communities",
-                    "clear_graph",
-                }:
+                if "group_ids" in native_properties:
                     native_args["group_ids"] = [group_id]
             return await _call_native_graphiti(native_name, native_args)
     allowed = _ALLOWED_KEYS.get(name)
@@ -1540,8 +1667,20 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                 args["originatingRunId"] = str(context["parentRunId"])
             if name == "run_coder_subagent":
                 args["parentRunId"] = f"req_external_main_{uuid4()}"
+            if name in _MAIN_ONLY_TOOLS or name in _HERMES_ONLY_TOOLS:
+                args["_callerCardId"] = str(context["mainCardId"])
+                args["_callerRuntimeBinding"] = "main_chat"
         except (KeyError, RuntimeError, ValueError) as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
+    caller_card_id = str(args.get("_callerCardId", "") or "").strip()
+    caller_error = _enforce_tool_caller(name, args)
+    if caller_error:
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"ok": False, "error": caller_error}),
+            )
+        ]
     extra = [k for k in args.keys() if k not in allowed]
     if extra:
         return [
@@ -1551,18 +1690,16 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
             )
         ]
     if name == "write_mag_one_instructions":
-        if context is None:
-            return [TextContent(type="text", text=json.dumps({"ok": False, "error": "main_context_unavailable"}))]
         from app.python_models import agentgraph
 
         try:
             result = await asyncio.to_thread(
                 agentgraph.create_instruction,
-                project_id=str(context["projectId"]),
-                deck_id=str(context["deckId"]),
-                conversation_id=str(context["conversationId"]),
+                project_id=str(args.get("projectId") or ""),
+                deck_id=str(args.get("deckId") or ""),
+                conversation_id=str(args.get("conversationId") or ""),
                 body=args.get("instructions"),
-                prepared_by_card_id=str(context["mainCardId"]),
+                prepared_by_card_id=caller_card_id,
                 operation_references=args.get("operationReferences"),
             )
             return [TextContent(type="text", text=json.dumps(result))]
@@ -1655,7 +1792,10 @@ def _tool_result_category(result: Any) -> str:
             text = getattr(block, "text", "")
             if isinstance(text, str) and text:
                 payload = json.loads(text)
-                if isinstance(payload, dict) and payload.get("ok") is False:
+                if isinstance(payload, dict) and (
+                    payload.get("ok") is False
+                    or bool(payload.get("error"))
+                ):
                     return "tool_error"
     except Exception:
         return "success"

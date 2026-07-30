@@ -4,6 +4,8 @@
 /Kronos-main/
 client/src/vendor/codebase-memory-ui/
 /vendor/
+/neo4j-text2cypher/
+/defog-sqlcoder/
 node_modules/
 dist/
 build/

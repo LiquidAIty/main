@@ -21,10 +21,10 @@ describe('normalizeLocalCoderControllerCard', () => {
     expect(normalized.runtimeBinding).toBe('local_coder');
     expect(normalized.runtimeOptions?.provider).toBe('openrouter');
     expect(normalized.runtimeOptions?.modelKey).toBe('z-ai/glm-5.2');
-    expect(normalized.runtimeOptions?.tools).toEqual(['run_local_coder']);
+    expect(normalized.runtimeOptions?.tools).toEqual([]);
   });
 
-  it('normalizes identity and injects run_local_coder even when the card omits them', () => {
+  it('normalizes identity without injecting hidden tool grants', () => {
     const card: CardLike = {
       id: 'card_local_coder',
       templateId: 'template_local_coder',
@@ -37,7 +37,7 @@ describe('normalizeLocalCoderControllerCard', () => {
     // Provider/model are left exactly as the card set them — no forced default.
     expect(normalized.runtimeOptions?.provider).toBe('openai');
     expect(normalized.runtimeOptions?.modelKey).toBe('gpt-4o-mini');
-    expect(normalized.runtimeOptions?.tools).toEqual(['run_local_coder']);
+    expect(normalized.runtimeOptions?.tools).toBeUndefined();
   });
 
   it('does not rewrite unrelated cards', () => {

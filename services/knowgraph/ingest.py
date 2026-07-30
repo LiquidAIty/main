@@ -17,12 +17,12 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from dotenv import load_dotenv
+from graphiti_identity import graphiti_project_group_id
 
 load_dotenv()
 
 GRAPHITI_VERSION = "0.29.3"
 GRAPHITI_EPISODE_NAMESPACE = "liquidaity:knowgraph:episode"
-GRAPHITI_PROJECT_GROUP_PREFIX = "liquidaity:"
 DEFAULT_NEO4J_DATABASE = "neo4j"
 
 
@@ -512,7 +512,7 @@ async def _ingest_episode(
             # Graphiti's group_id is the graph namespace, not the Neo4j
             # database name. Project scope keeps search and temporal evolution
             # isolated while the existing Neo4j driver remains the one store.
-            group_id=f"{GRAPHITI_PROJECT_GROUP_PREFIX}{project_id}",
+            group_id=graphiti_project_group_id(project_id),
             uuid=episode_id,
             update_communities=False,
             custom_extraction_instructions=guidance,

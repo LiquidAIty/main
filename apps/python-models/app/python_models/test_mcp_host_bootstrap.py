@@ -124,14 +124,7 @@ def test_mag_one_instruction_authoring_persists_operation_references(monkeypatch
     import mcp_host
     from app.python_models import agentgraph
 
-    context = {
-        "projectId": "project-1",
-        "deckId": "deck_builder",
-        "conversationId": "main",
-        "mainCardId": "card_main_chat",
-    }
     captured = []
-    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: context)
     monkeypatch.setattr(mcp_host, "_native_engraphis_tools", lambda: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(
         agentgraph,
@@ -146,6 +139,11 @@ def test_mag_one_instruction_authoring_persists_operation_references(monkeypatch
         mcp_host.call_tool(
             "write_mag_one_instructions",
             {
+                "_callerCardId": "card_hermes",
+                "_callerRuntimeBinding": "hermes_steward",
+                "projectId": "project-1",
+                "deckId": "deck_builder",
+                "conversationId": "main",
                 "instructions": "Approved task.",
                 "operationReferences": [
                     {
@@ -162,6 +160,7 @@ def test_mag_one_instruction_authoring_persists_operation_references(monkeypatch
     assert json.loads(result[0].text)["instructionId"] == "instruction:one"
     assert captured[0]["operation_references"][0]["version"] == 2
     assert captured[0]["operation_references"][0]["executionRole"] == "required_context"
+    assert captured[0]["prepared_by_card_id"] == "card_hermes"
 
 
 def test_native_engraphis_registry_is_initialized_once_without_schema_adaptation():
@@ -232,7 +231,7 @@ def test_native_engraphis_dispatch_keeps_sync_handlers_off_the_outer_event_loop(
     monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
 
     async def check():
-        task = asyncio.create_task(mcp_host.call_tool("engraphis.engraphis_stats", {"canonical": True}))
+        task = asyncio.create_task(mcp_host.call_tool("engraphis.stats", {"canonical": True}))
         for _ in range(200):
             if entered.is_set():
                 break
@@ -271,8 +270,8 @@ def test_native_engraphis_dispatch_keeps_sync_handlers_off_the_outer_event_loop(
 
     async def check_serialization():
         return await asyncio.gather(
-            mcp_host.call_tool("engraphis.engraphis_stats", {"request": 1}),
-            mcp_host.call_tool("engraphis.engraphis_stats", {"request": 2}),
+            mcp_host.call_tool("engraphis.stats", {"request": 1}),
+            mcp_host.call_tool("engraphis.stats", {"request": 2}),
         )
 
     serialized_results = asyncio.run(check_serialization())
@@ -353,7 +352,66 @@ print('NATIVE_WORKER_LIFECYCLE_OK')
     assert "NATIVE_WORKER_LIFECYCLE_OK" in result.stdout
 
 
-def test_coder_and_mag_one_dispatch_without_hermes_report_substitution():
+def test_native_cbm_replaces_a_stale_process_without_retrying_a_tool(monkeypatch):
+    import mcp_host
+
+    native_tool = mcp_host.Tool(
+        name="list_projects",
+        description="Native project list.",
+        inputSchema={"type": "object", "properties": {}},
+    )
+
+    class StaleClient:
+        def __init__(self):
+            self.closed = False
+
+        def is_running(self):
+            return False
+
+        def close(self):
+            self.closed = True
+
+    class FreshClient:
+        def __init__(self, command, args, cwd):
+            self.command = command
+            self.args = args
+            self.cwd = cwd
+            self.closed = False
+
+        def is_running(self):
+            return True
+
+        def list_tools(self):
+            return [native_tool]
+
+        def close(self):
+            self.closed = True
+
+    stale = StaleClient()
+    mcp_host._NATIVE_CBM_CLIENT = stale
+    mcp_host._NATIVE_CBM_TOOLS = (native_tool,)
+    mcp_host._NATIVE_CBM_NAMES = frozenset({"list_projects"})
+    monkeypatch.setattr(
+        mcp_host,
+        "_native_cbm_config",
+        lambda: ("native-cbm", ["--stdio"], r"C:\Projects\main"),
+    )
+    monkeypatch.setattr(mcp_host, "_NativeStdioMcpClient", FreshClient)
+
+    try:
+        mcp_host._initialize_native_cbm_sync()
+        assert stale.closed is True
+        assert isinstance(mcp_host._NATIVE_CBM_CLIENT, FreshClient)
+        assert mcp_host._NATIVE_CBM_NAMES == frozenset({"list_projects"})
+    finally:
+        mcp_host._close_native_cbm()
+
+    assert mcp_host._NATIVE_CBM_CLIENT is None
+    assert mcp_host._NATIVE_CBM_TOOLS is None
+    assert mcp_host._NATIVE_CBM_NAMES == frozenset()
+
+
+def test_main_dispatches_coder_and_only_an_approved_mag_one_instruction():
     code = """
 import asyncio, json, mcp_host
 async def check():
@@ -362,14 +420,15 @@ async def check():
         calls.append({'path': path, 'payload': payload})
         return [mcp_host.TextContent(type='text', text=json.dumps({'ok': True}))]
     mcp_host._bridge = bridge
+    identity = {'_callerCardId': 'card_main_chat', '_callerRuntimeBinding': 'main_chat'}
     coder = {
         'parentRunId': 'main-run', 'projectId': 'project-1', 'deckId': 'deck_builder',
         'conversationId': 'conversation-1', 'cardId': 'coder-card',
         'approvedPrompt': 'Main approved these exact instructions.'
     }
     mag = {'projectId': 'project-1', 'deckId': 'deck_builder', 'instructionId': 'instruction:one'}
-    await mcp_host.call_tool('run_coder_subagent', coder)
-    await mcp_host.call_tool('run_mag_one', mag)
+    await mcp_host.call_tool('run_coder_subagent', {**coder, **identity})
+    await mcp_host.call_tool('run_mag_one', {**mag, **identity})
     assert calls == [
         {'path': 'run_coder_subagent', 'payload': coder},
         {'path': 'run_mag_one', 'payload': mag},
@@ -660,7 +719,9 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "graphview.create" in by_name
     assert "coder.status" in by_name
     native_names = {
-        f"engraphis.{tool.name}" for tool in native_engraphis_tools
+        f"engraphis.{tool.name.removeprefix('engraphis_')}"
+        for tool in native_engraphis_tools
+        if tool.name != "engraphis_answer"
     } | {
         f"cbm.{tool.name}" for tool in native_cbm_tools
     } | {
@@ -678,7 +739,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "operation_class",
         "limit",
     }
-    assert "engraphis.engraphis_recall" in by_name
+    assert "engraphis.recall" in by_name
+    assert "engraphis.answer" not in by_name
     assert "codegraph.status" not in by_name
     assert "codegraph.search" not in by_name
     assert {"cbm.search_graph", "cbm.index_status"}.issubset(by_name)
@@ -702,7 +764,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "Pass the exact active" not in coder_tool.description
     assert "instructionId" not in by_name["card.run_assistant_agent"].inputSchema["properties"]
     assert "graphViewIds" in by_name["card.run_assistant_agent"].inputSchema["properties"]
-    assert by_name["engraphis.engraphis_recall"].model_dump()["securitySchemes"] == [
+    assert by_name["engraphis.recall"].model_dump()["securitySchemes"] == [
         {"type": "oauth2", "scopes": ["liquidaity.main"]}
     ]
     assert by_name["cbm.search_graph"].model_dump()["securitySchemes"] == [
@@ -760,7 +822,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         return {"ok": True}
     monkeypatch.setattr(control_plane, "card_run_assistant_agent", run_saved_card)
 
-    asyncio.run(mcp_host.call_tool("engraphis.engraphis_recall", {"query": "Main", "limit": 3}))
+    asyncio.run(mcp_host.call_tool("engraphis.recall", {"query": "Main", "limit": 3}))
     assert calls[-1] == ("engraphis_recall", {"query": "Main", "limit": 3})
 
     asyncio.run(
@@ -771,7 +833,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     asyncio.run(mcp_host.call_tool("graphiti.search_nodes", {"query": "Main"}))
     assert calls[-1] == (
         "search_nodes",
-        {"query": "Main", "group_ids": ["liquidaity:project-1"]},
+        {"query": "Main", "group_ids": ["liquidaity-project-1"]},
     )
 
     removed_adapter = asyncio.run(
@@ -788,6 +850,12 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "parentRunId": "external-main:grant-1",
         "mainCardId": "card_main_chat",
     }
+
+    hermes_only = asyncio.run(
+        mcp_host.call_tool("hermes.memory_write", {"key": "scope", "value": "denied"})
+    )
+    assert hermes_only.isError is True
+    assert "requires hermes_steward" in hermes_only.content[0].text
 
     asyncio.run(mcp_host.call_tool("coder.status", {}))
     assert calls[-1] == ("coder_status", {})

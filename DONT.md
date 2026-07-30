@@ -304,6 +304,21 @@ The items below are the major deletion events. Every one "worked" before it was 
   friendlier wrapper names and a second retrieval pipeline; namespace the upstream tools
   mechanically, preserve their metadata, and assign them at the saved-card boundary.**
 
+- **2026-07-30 — Native catalog lifecycle and hidden-grant cleanup: 26 files,
+  +507 / -441 lines before this log entry.**
+  - Deleted the backend deck-loader grant rewriter and the backend/client Coder hydration unions
+    that silently changed saved card tools every time a deck was read.
+  - Deleted the process-local Coder audit cache, its route, and its self-supporting test; durable
+    Coder results already belong to the existing AgentGraph/artifact/CBM authorities.
+  - Repaired one persistent native-CBM child lifecycle so a dead child cannot leave cached tool
+    metadata behind, and removed the orphan test process after proof.
+  - Replaced double-prefixed Engraphis publication names with one stable generated namespace,
+    removed its duplicate `answer` alias, and removed Engraphis code-memory overlap from Main's
+    saved grants while preserving the full external native catalog.
+  Lesson: **saved-card grants are data, not hydration policy; a native MCP child and its cached
+  catalog have one lifecycle; a public namespace is added once, never copied from an upstream
+  prefix; process-local audit state is not a substitute for durable graph evidence.**
+
 ## Patterns that keep coming back — do NOT write these
 
 Every one of these was written, shipped, "worked," and got ripped out. If your diff resembles any of
