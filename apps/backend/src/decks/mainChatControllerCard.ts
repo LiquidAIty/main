@@ -50,7 +50,6 @@ export function buildMainChatControllerCard(prompt = MAIN_CHAT_PROMPT_TEMPLATE.c
         'engraphis.engraphis_answer',
         'engraphis.engraphis_why',
         'engraphis.engraphis_timeline',
-        'engraphis.engraphis_stats',
         'canvas.inspect',
         'mag_one.describe_connected_agents',
         'run_mag_one',

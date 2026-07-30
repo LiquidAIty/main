@@ -96,11 +96,12 @@ class GraphitiIngestTests(unittest.TestCase):
         result = _run(graphiti)
 
         self.assertFalse(result["idempotent"])
+        self.assertEqual(result["status"], "ingested")
         self.assertEqual(result["entity_count"], 1)
         self.assertEqual(result["fact_count"], 1)
         self.assertEqual(len(graphiti.add_calls), 1)
         call = graphiti.add_calls[0]
-        self.assertEqual(call["group_id"], "project-1")
+        self.assertEqual(call["group_id"], "liquidaity:project-1")
         self.assertEqual(call["uuid"], result["episode_id"])
         self.assertEqual(call["custom_extraction_instructions"], "Keep claims grounded.")
         self.assertTrue(
@@ -113,6 +114,7 @@ class GraphitiIngestTests(unittest.TestCase):
         result = _run(graphiti)
 
         self.assertTrue(result["idempotent"])
+        self.assertEqual(result["status"], "already_ingested")
         self.assertEqual(graphiti.add_calls, [])
         self.assertEqual(len(graphiti.driver.queries), 1)
         self.assertTrue(graphiti.driver.closed)

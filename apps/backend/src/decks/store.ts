@@ -44,13 +44,15 @@ const OBSOLETE_GRAPH_TOOL_GRANTS = new Set([
   'codegraph.status',
   'codegraph.search',
 ]);
+const MAIN_BLOCKED_TOOL_GRANTS = new Set([
+  'engraphis.engraphis_stats',
+]);
 const MAIN_NATIVE_GRAPH_TOOL_GRANTS = [
   'engraphis.engraphis_recall',
   'engraphis.engraphis_recall_grounded',
   'engraphis.engraphis_answer',
   'engraphis.engraphis_why',
   'engraphis.engraphis_timeline',
-  'engraphis.engraphis_stats',
 ] as const;
 const HERMES_NATIVE_GRAPH_TOOL_GRANTS = [
   'graphiti.search_nodes',
@@ -422,6 +424,7 @@ export function repairNativeGraphToolGrants(deck: DeckDocument): DeckDocument {
           .filter(
             (tool) =>
               !OBSOLETE_GRAPH_TOOL_GRANTS.has(tool) &&
+              !(binding === 'main_chat' && MAIN_BLOCKED_TOOL_GRANTS.has(tool)) &&
               !tool.startsWith('knowgraph.'),
           )
           .map((tool) =>

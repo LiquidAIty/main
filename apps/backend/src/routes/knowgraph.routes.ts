@@ -83,6 +83,32 @@ type KnowGraphRelationshipDto = {
   properties: Record<string, unknown>;
 };
 
+async function resolveAuthenticatedKnowGraphProjectId(
+  userId: string,
+  requestedProjectId: string,
+): Promise<string | null> {
+  const ownerUserId = String(userId || '').trim();
+  const selector = String(requestedProjectId || '').trim();
+  if (!ownerUserId || !selector) return null;
+
+  const result = await pool.query(
+    `
+      SELECT id::text AS id
+      FROM ag_catalog.projects
+      WHERE owner_user_id::text = $1
+        AND (
+          id::text = $2
+          OR lower(coalesce(name, '')) = lower($2)
+          OR lower(coalesce(code, '')) = lower($2)
+        )
+      LIMIT 1
+    `,
+    [ownerUserId, selector],
+  );
+  const canonicalProjectId = String(result?.rows?.[0]?.id || '').trim();
+  return canonicalProjectId || null;
+}
+
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
   const n = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(n)) return fallback;
@@ -848,9 +874,30 @@ async function proxyKnowgraphPdfIngest(input: {
 
 router.post('/ingest', knowgraphUploadSingle as any, async (req, res) => {
   try {
-    const projectId = typeof req.body?.project_id === 'string' ? req.body.project_id.trim() : '';
+    const requestedProjectId =
+      typeof req.body?.project_id === 'string' ? req.body.project_id.trim() : '';
     const documentId = typeof req.body?.document_id === 'string' ? req.body.document_id.trim() : '';
     const file = (req as any).file as UploadedFile | undefined;
+    const userId = String((req as any).userId || '').trim();
+    if (!userId) {
+      return res.status(401).json({
+        ok: false,
+        error: { message: 'Authentication required for KnowGraph ingest.' },
+      });
+    }
+    if (!requestedProjectId) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'project_id, document_id, and file are required' },
+      });
+    }
+    const projectId = await resolveAuthenticatedKnowGraphProjectId(userId, requestedProjectId);
+    if (!projectId) {
+      return res.status(404).json({
+        ok: false,
+        error: { message: 'KnowGraph project not found for the authenticated user.' },
+      });
+    }
     const upstream = await proxyKnowgraphPdfIngest({
       projectId,
       documentId,

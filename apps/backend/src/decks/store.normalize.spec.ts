@@ -78,7 +78,11 @@ describe('native graph-tool grant repair', () => {
           runtimeOptions: {
             provider: 'openrouter',
             modelKey: 'z-ai/glm-5.2',
-            tools: ['canvas.inspect', 'future.explicit-error'],
+            tools: [
+              'canvas.inspect',
+              'future.explicit-error',
+              'engraphis.engraphis_stats',
+            ],
           },
           tools: ['legacy.keep'],
           parentGraphId: null,
@@ -109,7 +113,13 @@ describe('native graph-tool grant repair', () => {
           prompt: 'Untouched.',
           runtimeBinding: 'research_agent',
           runtimeType: 'assistant_agent',
-          runtimeOptions: { tools: ['codegraph.status', 'web_search'] },
+          runtimeOptions: {
+            tools: [
+              'codegraph.status',
+              'web_search',
+              'engraphis.engraphis_stats',
+            ],
+          },
           parentGraphId: null,
           title: 'Unrelated',
           position: { x: 90, y: 12 },
@@ -124,14 +134,22 @@ describe('native graph-tool grant repair', () => {
       'canvas.inspect',
       'future.explicit-error',
       'engraphis.engraphis_recall',
+      'engraphis.engraphis_recall_grounded',
+      'engraphis.engraphis_answer',
+      'engraphis.engraphis_why',
+      'engraphis.engraphis_timeline',
     ]));
+    expect(main.runtimeOptions?.tools).not.toContain('engraphis.engraphis_stats');
     expect(hermes.runtimeOptions?.tools).toEqual(expect.arrayContaining([
       'hermes.memory.write',
       'graphiti.search_nodes',
       'graphiti.add_memory',
       'graphiti.add_triplet',
     ]));
-    expect(unrelated.runtimeOptions?.tools).toEqual(['web_search']);
+    expect(unrelated.runtimeOptions?.tools).toEqual([
+      'web_search',
+      'engraphis.engraphis_stats',
+    ]);
     for (const node of repaired.nodes) {
       expect(node.runtimeOptions?.tools ?? []).not.toEqual(expect.arrayContaining([
         'knowgraph.query',

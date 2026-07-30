@@ -22,6 +22,7 @@ load_dotenv()
 
 GRAPHITI_VERSION = "0.29.3"
 GRAPHITI_EPISODE_NAMESPACE = "liquidaity:knowgraph:episode"
+GRAPHITI_PROJECT_GROUP_PREFIX = "liquidaity:"
 DEFAULT_NEO4J_DATABASE = "neo4j"
 
 
@@ -486,6 +487,7 @@ async def _ingest_episode(
     try:
         if await _episode_exists(graphiti, episode_id):
             return {
+                "status": "already_ingested",
                 "run_id": episode_id,
                 "episode_id": episode_id,
                 "project_id": project_id,
@@ -510,7 +512,7 @@ async def _ingest_episode(
             # Graphiti's group_id is the graph namespace, not the Neo4j
             # database name. Project scope keeps search and temporal evolution
             # isolated while the existing Neo4j driver remains the one store.
-            group_id=project_id,
+            group_id=f"{GRAPHITI_PROJECT_GROUP_PREFIX}{project_id}",
             uuid=episode_id,
             update_communities=False,
             custom_extraction_instructions=guidance,
@@ -533,6 +535,7 @@ async def _ingest_episode(
             agent_id=agent_id,
         )
         return {
+            "status": "ingested",
             "run_id": episode_id,
             "episode_id": episode_id,
             "project_id": project_id,
@@ -558,6 +561,7 @@ async def ingest_pdf(
     project_id: str,
     document_id: str,
     *,
+    source_name: str | None = None,
     provider: str | None = None,
     model_key: str | None = None,
     model_id: str | None = None,
@@ -584,7 +588,7 @@ async def ingest_pdf(
         project_id=project_id,
         document_id=document_id,
         text=text,
-        source_name=source.name,
+        source_name=(source_name or source.name).strip() or source.name,
         source_path=str(source.resolve()),
         source_type="pdf_upload",
         source_url=None,

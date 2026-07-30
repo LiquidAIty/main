@@ -83,10 +83,11 @@ async def ingest(
         agent_model_key = (request.headers.get("x-agent-model-key") or "").strip() or None
         agent_model_id = (request.headers.get("x-agent-model-id") or "").strip() or None
 
-        await ingest_pdf(
+        result = await ingest_pdf(
             str(saved_path),
             project_id,
             document_id,
+            source_name=filename,
             provider=agent_provider,
             model_key=agent_model_key,
             model_id=agent_model_id,
@@ -100,10 +101,7 @@ async def ingest(
             status_code=200,
             content={
                 "ok": True,
-                "project_id": project_id,
-                "document_id": document_id,
-                "provider": agent_provider,
-                "model": agent_model_id or agent_model_key,
+                **result,
             },
         )
     except Exception as exc:
