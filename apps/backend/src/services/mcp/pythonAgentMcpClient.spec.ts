@@ -11,52 +11,26 @@ import { callPythonAgentMcpTool, listPythonAgentMcpTools } from './pythonAgentMc
 const LIVE_STACK = process.env.LIQUIDAITY_LIVE_STACK === '1';
 
 describe('Python Agent MCP host — real stdio discovery + calls', () => {
-  it('exposes exactly the Mag One entrypoints, the bounded ThinkGraph read, and the Harness control surface (no model-facing write, no pair front door, no visible-flow wrapper)', async () => {
+  it('federates the three complete native catalogs with the LiquidAIty control surface', async () => {
     const names = await listPythonAgentMcpTools();
-    // Mirror of the Python host's own surface test (test_thinkgraph_card_tools
-    // TestPythonMcpHost) — one host, with native Hermes living in LocalCoder
-    // rather than a second model-facing preflight tool.
-    //
-    // This list is the exact canonical host surface. Abandoned experimental
-    // tool clusters must be removed here when their runtime path is removed.
-    expect(names).toEqual([
+    expect(names).toHaveLength(82);
+    expect(new Set(names).size).toBe(82);
+    expect(names.filter((name) => name.startsWith('cbm.'))).toHaveLength(14);
+    expect(names.filter((name) => name.startsWith('engraphis.'))).toHaveLength(29);
+    expect(names.filter((name) => name.startsWith('graphiti.'))).toHaveLength(13);
+    expect(names).toEqual(expect.arrayContaining([
       'agentgraph.inspect',
       'canvas.inspect',
       'canvas.upsert_wire',
       'card.run_assistant_agent',
       'card.update_configuration',
-      'codegraph.search',
-      'codegraph.status',
       'coder.status',
-      'engraphis_answer',
-      'engraphis_check_update',
-      'engraphis_code_impact',
-      'engraphis_code_path',
-      'engraphis_consolidate',
-      'engraphis_correct',
-      'engraphis_end_session',
-      'engraphis_export_code_graph',
-      'engraphis_export_receipts',
-      'engraphis_forget',
-      'engraphis_index_repo',
-      'engraphis_ingest',
-      'engraphis_ingest_postgres_schema',
-      'engraphis_link',
-      'engraphis_pin',
-      'engraphis_proactive_context',
-      'engraphis_promote',
-      'engraphis_recall',
-      'engraphis_recall_grounded',
-      'engraphis_recall_proactive',
-      'engraphis_receipts',
-      'engraphis_record_event',
-      'engraphis_remember',
-      'engraphis_search_code',
-      'engraphis_start_session',
-      'engraphis_stats',
-      'engraphis_timeline',
-      'engraphis_verify_receipts',
-      'engraphis_why',
+      'cbm.search_graph',
+      'cbm.index_status',
+      'engraphis.engraphis_recall',
+      'engraphis.engraphis_stats',
+      'graphiti.search_nodes',
+      'graphiti.get_status',
       'graphview.create',
       'graphview.get',
       'graphview.list',
@@ -64,8 +38,6 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'hermes.memory_write',
       'hermes.read_report',
       'hermes.write_report',
-      'knowgraph.ingest',
-      'knowgraph.query',
       'mag_one.describe_connected_agents',
       'main.context',
       'run_coder_subagent',
@@ -79,7 +51,7 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'worldsignals.poll',
       'worldsignals.stream_events',
       'write_mag_one_instructions',
-    ]);
+    ]));
     // The obsolete pair front door, the model-facing write tool, and the old
     // visible-flow / agent-fabric wrapper tools are all gone.
     expect(names).not.toContain('thinkgraph.process_conversation_pair');
@@ -87,6 +59,10 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
     expect(names).not.toContain('thinkgraph.persist_graph_view');
     expect(names).not.toContain('execute_visible_flow');
     expect(names).not.toContain('describe_agent_fabric');
+    expect(names).not.toContain('knowgraph.query');
+    expect(names).not.toContain('knowgraph.ingest');
+    expect(names).not.toContain('codegraph.search');
+    expect(names).not.toContain('codegraph.status');
   }, 30_000);
 
   it('rejects smuggled prompt/model/tool arguments at the MCP boundary', async () => {

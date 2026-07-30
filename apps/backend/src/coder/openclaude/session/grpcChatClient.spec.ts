@@ -23,11 +23,11 @@ import {
 
 const main = {
   id: 'card_main_chat', kind: 'agent', runtimeBinding: 'main_chat', runtimeType: 'assistant_agent',
-  prompt: 'Main prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query', 'codegraph.search', 'codegraph.status', 'engraphis_recall'], nativeTools: ['Agent'] },
+  prompt: 'Main prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'engraphis.engraphis_recall'], nativeTools: ['Agent'] },
 };
 const hermes = {
   id: 'card_hermes_steward', kind: 'agent', runtimeBinding: 'hermes_steward', runtimeType: 'assistant_agent',
-  prompt: 'Hermes prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'knowgraph.query', 'knowgraph.ingest', 'codegraph.search', 'codegraph.status', 'engraphis_recall', 'hermes.memory_write', 'write_mag_one_instructions', 'card.run_assistant_agent'] },
+  prompt: 'Hermes prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'graphiti.search_nodes', 'graphiti.add_memory', 'graphiti.add_triplet', 'hermes.memory.write', 'write_mag_one_instructions', 'card.run_assistant_agent'] },
 };
 const search = {
   id: 'card_research_agent', kind: 'agent', runtimeBinding: 'research_agent', runtimeType: 'assistant_agent',
@@ -45,9 +45,10 @@ describe('native Main / Hermes / Search doorways', () => {
     deckMocks.getDeckDocument.mockReset();
     mcpMocks.listPythonAgentMcpTools.mockReset();
     mcpMocks.listPythonAgentMcpTools.mockResolvedValue([
-      'thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query',
-      'knowgraph.ingest', 'codegraph.search', 'codegraph.status',
-      'engraphis_recall', 'hermes.memory_write',
+      'thinkgraph.get_graph_slice', 'thinkgraph.submit_update',
+      'cbm.search_graph', 'cbm.index_status',
+      'engraphis.engraphis_recall', 'graphiti.search_nodes',
+      'graphiti.add_memory', 'graphiti.add_triplet', 'hermes.memory.write',
       'write_mag_one_instructions', 'card.run_assistant_agent', 'web_search',
     ]);
   });
@@ -98,18 +99,18 @@ describe('native Main / Hermes / Search doorways', () => {
     const definition = buildHarnessAgentDefinition(hermes, null, {
       allowedCardRunIds: [search.id],
       availableMcpTools: [
-        'thinkgraph.get_graph_slice', 'knowgraph.query', 'knowgraph.ingest',
-        'codegraph.search', 'codegraph.status', 'engraphis_recall',
-        'hermes.memory_write', 'write_mag_one_instructions',
+        'thinkgraph.get_graph_slice', 'graphiti.search_nodes',
+        'graphiti.add_memory', 'graphiti.add_triplet',
+        'hermes.memory.write', 'write_mag_one_instructions',
         'card.run_assistant_agent',
       ],
     }) as any;
     expect(definition.system_prompt).toBe('Hermes prompt');
     expect(definition.context_mode_inherit_parent).toBe(true);
     expect(definition.allowed_tools).not.toContain('mcp__liquidaity__thinkgraph_submit_update');
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__knowgraph_ingest');
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__codegraph_search');
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__codegraph_status');
+    expect(definition.allowed_tools).toContain('mcp__liquidaity__graphiti_search_nodes');
+    expect(definition.allowed_tools).toContain('mcp__liquidaity__graphiti_add_memory');
+    expect(definition.allowed_tools).toContain('mcp__liquidaity__graphiti_add_triplet');
     expect(definition.allowed_tools).toContain('mcp__liquidaity__hermes_memory_write');
     expect(definition.allowed_tools).not.toContain('mcp__liquidaity__hermes_read_report');
     expect(definition.allowed_tools).not.toContain('mcp__liquidaity__hermes_write_report');
@@ -139,10 +140,7 @@ describe('native Main / Hermes / Search doorways', () => {
     expect(config?.parentAllowedMcpTools).toEqual([
       'mcp__liquidaity__thinkgraph_get_graph_slice',
       'mcp__liquidaity__thinkgraph_submit_update',
-      'mcp__liquidaity__knowgraph_query',
-      'mcp__liquidaity__codegraph_search',
-      'mcp__liquidaity__codegraph_status',
-      'mcp__liquidaity__engraphis_recall',
+      'mcp__liquidaity__engraphis_engraphis_recall',
     ]);
     // The card's assigned native tools travel verbatim — the engine filters
     // the parent's native schemas before serialization.
@@ -150,20 +148,20 @@ describe('native Main / Hermes / Search doorways', () => {
     expect(config?.doorwayDefinitions.map((entry: any) => entry.card_id)).toEqual([hermes.id]);
   });
 
-  it('accepts restored CodeGraph grants as part of the live Main MCP catalog', async () => {
+  it('accepts native CBM grants as part of the live Main MCP catalog', async () => {
     deckMocks.getDeckDocument.mockResolvedValue(doc(
       [{
         ...main,
         runtimeOptions: {
           ...main.runtimeOptions,
-          tools: ['codegraph.status'],
+          tools: ['cbm.index_status'],
         },
       }],
       [],
     ));
     const config = await resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat');
     expect(config?.parentAllowedMcpTools).toEqual([
-      'mcp__liquidaity__codegraph_status',
+      'mcp__liquidaity__cbm_index_status',
     ]);
   });
 

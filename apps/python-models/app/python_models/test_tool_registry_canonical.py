@@ -14,7 +14,6 @@ def test_canonical_capability_ids_resolve_to_runner_implementations() -> None:
     assert CANONICAL_TOOL_ALIASES == {
         "thinkgraph.get_graph_slice": "read_thinkgraph_scope",
         "thinkgraph.submit_update": "apply_thinkgraph_patch",
-        "knowgraph.query": "retrieve_knowgraph_context",
     }
     for canonical, runner_name in CANONICAL_TOOL_ALIASES.items():
         tool = registry.resolve_one(canonical)

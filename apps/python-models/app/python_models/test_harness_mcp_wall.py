@@ -104,12 +104,15 @@ class TestPythonMcpHostIsThin:
         assert 'name="card.run_assistant_agent"' in source
         assert 'name="thinkgraph.get_graph_slice"' in source
         assert 'name="thinkgraph.submit_update"' in source
-        assert 'name="knowgraph.query"' in source
-        assert 'name="knowgraph.ingest"' in source
         assert "from engraphis.mcp_server import mcp" in source
-        assert "tools.extend(await _native_engraphis_tools())" in source
-        assert 'name="codegraph.search"' in source
-        assert 'name="codegraph.status"' in source
+        assert 'tools.extend(_namespace_native_tools(provider, native_tools))' in source
+        assert '"engraphis": await _native_engraphis_tools()' in source
+        assert '"cbm": await _native_cbm_tools()' in source
+        assert '"graphiti": await _native_graphiti_tools()' in source
+        assert 'name="knowgraph.query"' not in source
+        assert 'name="knowgraph.ingest"' not in source
+        assert 'name="codegraph.search"' not in source
+        assert 'name="codegraph.status"' not in source
         assert 'name="thinkgraph.persist_graph_view"' not in source
         assert 'name="web_search"' in source
 

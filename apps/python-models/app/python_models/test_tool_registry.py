@@ -1,14 +1,8 @@
 """Focused coverage for the deterministic tool registry primitives."""
-import asyncio
 import json
-import sys
-from types import SimpleNamespace
-
-from autogen_core.tools import FunctionTool
 
 from app.python_models.tool_registry import (
     build_default_tool_registry,
-    retrieve_knowgraph_context_tool,
     tool_calculator,
     tool_current_datetime,
     tool_manifest,
@@ -31,41 +25,6 @@ def test_default_registry_exposes_known_tools():
     assert len(names) >= 1
 
 
-def test_knowgraph_retrieval_tool_registered_but_not_executed():
-    # Building the registry only stores the spec+adapter; it must not import the
-    # KnowGraph rails, connect to Neo4j, or invoke the tool.
-    sys.modules.pop("hybrid_retrieval", None)
-    registry = build_default_tool_registry()
-    assert "retrieve_knowgraph_context" in registry.known_names()
-    assert registry._adapters["retrieve_knowgraph_context"] is retrieve_knowgraph_context_tool
-    assert asyncio.iscoroutinefunction(retrieve_knowgraph_context_tool)
-    # The capability module is loaded lazily inside the adapter, never at registration.
-    assert "hybrid_retrieval" not in sys.modules
-
-
-def test_knowgraph_retrieval_tool_resolves_to_function_tool():
-    registry = build_default_tool_registry()
-    tool = registry.resolve_one("retrieve_knowgraph_context")
-    assert isinstance(tool, FunctionTool)
-    assert tool.name == "retrieve_knowgraph_context"
-
-
-def test_knowgraph_retrieval_tool_only_present_when_selected():
-    registry = build_default_tool_registry()
-    selected = registry.resolve_selected(["calculator"])
-    assert "retrieve_knowgraph_context" not in [tool.name for tool in selected]
-
-
-def test_manifest_includes_knowgraph_retrieval_with_display_name():
-    manifest = tool_manifest()
-    entry = next((m for m in manifest if m["id"] == "retrieve_knowgraph_context"), None)
-    assert entry is not None
-    assert entry["displayName"] == "KnowGraph Temporal Retrieval"
-    assert "magentic_one" in entry["agentCompatibility"]
-    assert entry["description"]
-    assert "project_id" in entry["inputSchemaSummary"]
-
-
 def test_manifest_exposes_thinkgraph_tools_for_assistant_agent_cards():
     """The card Tools tab filters by agentCompatibility, so the two scoped
     ThinkGraph tools must be attachable on assistant_agent cards (and never on
@@ -82,51 +41,10 @@ def test_manifest_is_registry_backed_no_duplicate_entries():
     manifest = tool_manifest()
     ids = [m["id"] for m in manifest]
     assert ids == sorted(set(ids))  # one entry per registered tool, deduped
-    assert "retrieve_knowgraph_context" in ids
+    assert "retrieve_knowgraph_context" not in ids
 
 
 def test_manifest_exposes_no_secrets_endpoints_or_db_config():
     blob = json.dumps(tool_manifest()).lower()
     for forbidden in ["password", "bolt://", "neo4j_uri", "12434", "services/knowgraph", "api_key", "secret"]:
         assert forbidden not in blob
-
-
-def test_knowgraph_candidate_view_uses_the_actual_requesting_role(monkeypatch):
-    from app.python_models import tool_registry
-
-    result = SimpleNamespace(
-        retrieval_state="evidence",
-        retrieval_modes={"backend": "graphiti"},
-        assertions=[],
-        relations=[],
-        omitted_neighbor_count=0,
-        to_dict=lambda: {
-            "retrieval_state": "evidence",
-            "assertions": [],
-            "relations": [],
-        },
-    )
-    module = SimpleNamespace(
-        DEFAULT_OUTCOMES=("supported", "contradicted", "uncertain"),
-        CORPUS_UNPREPARED_STATE="corpus_unprepared",
-        ASSERTION_LABEL="Chunk",
-        GRAPHITI_ASSERTION_LABEL="RELATES_TO",
-        KnowGraphRetrievalRequest=lambda **kwargs: kwargs,
-        retrieve_knowgraph_context=lambda _request: result,
-    )
-    monkeypatch.setattr(
-        tool_registry,
-        "_load_knowgraph_hybrid_retrieval",
-        lambda: module,
-    )
-
-    payload = asyncio.run(
-        retrieve_knowgraph_context_tool(
-            project_id="project-1",
-            query="knowledge graph modeling",
-            conversation_id="conversation-1",
-            requesting_role="main_chat",
-        )
-    )
-
-    assert "graphView" not in payload

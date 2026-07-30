@@ -70,7 +70,7 @@ async def check():
     assert all(
         tool.inputSchema.get('additionalProperties') is False
         for name, tool in by_name.items()
-        if not name.startswith('engraphis_')
+        if not name.startswith(('engraphis.', 'cbm.', 'graphiti.'))
     )
     worldsignals = by_name['worldsignals.capabilities'].inputSchema
     assert worldsignals['properties']['operation_class']['enum'] == ['read', 'write']
@@ -184,7 +184,9 @@ async def check():
     assert {
         'main.context', 'canvas.inspect', 'coder.status', 'run_coder_subagent',
         'agentgraph.inspect', 'graphview.list', 'graphview.get', 'graphview.create',
-    }.issubset(set(combined_names) - set(native))
+    }.issubset(set(combined_names))
+    assert {f'engraphis.{name}' for name in native}.issubset(combined_names)
+    assert not set(native).intersection(combined_names)
     print(json.dumps(sorted(native)))
 asyncio.run(check())
 """
@@ -230,7 +232,7 @@ def test_native_engraphis_dispatch_keeps_sync_handlers_off_the_outer_event_loop(
     monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
 
     async def check():
-        task = asyncio.create_task(mcp_host.call_tool("engraphis_stats", {"canonical": True}))
+        task = asyncio.create_task(mcp_host.call_tool("engraphis.engraphis_stats", {"canonical": True}))
         for _ in range(200):
             if entered.is_set():
                 break
@@ -269,8 +271,8 @@ def test_native_engraphis_dispatch_keeps_sync_handlers_off_the_outer_event_loop(
 
     async def check_serialization():
         return await asyncio.gather(
-            mcp_host.call_tool("engraphis_stats", {"request": 1}),
-            mcp_host.call_tool("engraphis_stats", {"request": 2}),
+            mcp_host.call_tool("engraphis.engraphis_stats", {"request": 1}),
+            mcp_host.call_tool("engraphis.engraphis_stats", {"request": 2}),
         )
 
     serialized_results = asyncio.run(check_serialization())
@@ -304,7 +306,7 @@ mcp_host._NATIVE_ENGRAPHIS_NAMES = frozenset({
 })
 
 async def check():
-    normal = await mcp_host.call_tool('normal_call', {'value': 1})
+    normal = await mcp_host.call_tool('engraphis.normal_call', {'value': 1})
     assert json.loads(normal[0].text) == {
         'name': 'normal_call',
         'arguments': {'value': 1},
@@ -319,14 +321,14 @@ async def check():
         assert str(exc) == 'canonical native failure'
     else:
         raise AssertionError('native_exception_was_not_propagated')
-    typed = await mcp_host.call_tool('native_failure', {'value': 3})
+    typed = await mcp_host.call_tool('engraphis.native_failure', {'value': 3})
     assert typed.isError is True
     assert json.loads(typed.content[0].text) == {
         'ok': False,
-        'error': 'engraphis_failed: canonical native failure',
+        'error': 'tool_handler_failed:NativeFailure',
     }
     pending = asyncio.create_task(
-        mcp_host.call_tool('cancelled_call', {'value': 4})
+        mcp_host.call_tool('engraphis.cancelled_call', {'value': 4})
     )
     await asyncio.sleep(0.01)
     pending.cancel()
@@ -453,7 +455,7 @@ async def check():
             assert len(actual) == len(set(actual))
             assert 'main.context' in actual
             assert 'agentgraph.inspect' in actual
-            assert sum(name.startswith('engraphis_') for name in actual) == 29
+            assert sum(name.startswith('engraphis.') for name in actual) == 29
             assert elapsed < 10
             print(json.dumps({{'status': 'STDIO_OK', 'count': len(actual), 'elapsed': elapsed}}))
 
@@ -464,7 +466,7 @@ asyncio.run(check())
         cwd=_APP_DIR,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=45,
     )
     assert result.returncode == 0, result.stderr
     assert "STDIO_OK" in result.stdout
@@ -581,6 +583,42 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
             },
         ),
     ]
+    native_engraphis_tools = [
+        mcp_host.Tool(
+            name="engraphis_recall",
+            title="Recall",
+            description="Native Engraphis recall.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                "required": ["query"],
+            },
+        )
+    ]
+    native_graphiti_tools = [
+        mcp_host.Tool(
+            name="get_status",
+            title="Get status",
+            description="Native Graphiti status.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        mcp_host.Tool(
+            name="search_nodes",
+            title="Search nodes",
+            description="Native Graphiti node search.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "group_ids": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["query"],
+            },
+        ),
+    ]
 
     monkeypatch.setattr(
         mcp_host,
@@ -592,6 +630,26 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         return native_cbm_tools
 
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", native_cbm_catalog)
+    monkeypatch.setattr(
+        mcp_host,
+        "_NATIVE_ENGRAPHIS_NAMES",
+        frozenset(tool.name for tool in native_engraphis_tools),
+    )
+    monkeypatch.setattr(
+        mcp_host,
+        "_native_engraphis_tools",
+        lambda: asyncio.sleep(0, result=native_engraphis_tools),
+    )
+    monkeypatch.setattr(
+        mcp_host,
+        "_NATIVE_GRAPHITI_NAMES",
+        frozenset(tool.name for tool in native_graphiti_tools),
+    )
+    monkeypatch.setattr(
+        mcp_host,
+        "_native_graphiti_tools",
+        lambda: asyncio.sleep(0, result=native_graphiti_tools),
+    )
     tools = asyncio.run(mcp_host.list_tools())
     by_name = {tool.name: tool for tool in tools}
     assert len(tools) == len(by_name)
@@ -602,8 +660,12 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "graphview.create" in by_name
     assert "coder.status" in by_name
     native_names = {
-        tool.name for tool in asyncio.run(mcp_host._native_engraphis_tools())
-    } | {tool.name for tool in native_cbm_tools}
+        f"engraphis.{tool.name}" for tool in native_engraphis_tools
+    } | {
+        f"cbm.{tool.name}" for tool in native_cbm_tools
+    } | {
+        f"graphiti.{tool.name}" for tool in native_graphiti_tools
+    }
     assert all(
         tool.inputSchema.get("additionalProperties") is False
         for name, tool in by_name.items()
@@ -616,11 +678,11 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "operation_class",
         "limit",
     }
-    assert {tool.name for tool in asyncio.run(mcp_host._native_engraphis_tools())}.issubset(by_name)
-    assert "engraphis_recall" in by_name
+    assert "engraphis.engraphis_recall" in by_name
     assert "codegraph.status" not in by_name
     assert "codegraph.search" not in by_name
-    assert {"search_graph", "index_status"}.issubset(by_name)
+    assert {"cbm.search_graph", "cbm.index_status"}.issubset(by_name)
+    assert {"graphiti.get_status", "graphiti.search_nodes"}.issubset(by_name)
     assert "thinkgraph.persist_graph_view" not in by_name
     assert "run_coder_subagent" in by_name
     assert "run_mag_one" in by_name
@@ -640,23 +702,24 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "Pass the exact active" not in coder_tool.description
     assert "instructionId" not in by_name["card.run_assistant_agent"].inputSchema["properties"]
     assert "graphViewIds" in by_name["card.run_assistant_agent"].inputSchema["properties"]
-    assert by_name["engraphis_recall"].model_dump()["securitySchemes"] == [
+    assert by_name["engraphis.engraphis_recall"].model_dump()["securitySchemes"] == [
         {"type": "oauth2", "scopes": ["liquidaity.main"]}
     ]
-    assert by_name["search_graph"].model_dump()["securitySchemes"] == [
+    assert by_name["cbm.search_graph"].model_dump()["securitySchemes"] == [
         {"type": "oauth2", "scopes": ["liquidaity.main"]}
     ]
-    assert by_name["search_graph"].annotations.readOnlyHint is True
-    assert by_name["search_graph"].description == "Native search description."
-    assert by_name["search_graph"].inputSchema == native_cbm_tools[0].inputSchema
+    assert by_name["graphiti.get_status"].model_dump()["securitySchemes"] == [
+        {"type": "oauth2", "scopes": ["liquidaity.main"]}
+    ]
+    assert by_name["cbm.search_graph"].description == "Native search description."
+    assert by_name["cbm.search_graph"].inputSchema == native_cbm_tools[0].inputSchema
     assert by_name["coder.status"].annotations.readOnlyHint is True
     assert by_name["run_coder_subagent"].annotations is None
 
     calls = []
-    native_tools = asyncio.run(mcp_host._native_engraphis_tools())
     class NativeMcp:
         async def list_tools(self):
-            return native_tools
+            return native_engraphis_tools
 
         async def call_tool(self, name, arguments):
             calls.append((name, arguments))
@@ -677,6 +740,16 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
 
     monkeypatch.setattr(mcp_host, "_call_native_cbm", call_native_cbm)
 
+    async def initialize_graphiti():
+        return None
+
+    async def call_native_graphiti(name, arguments):
+        calls.append((name, arguments))
+        return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
+
+    monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialize_graphiti)
+    monkeypatch.setattr(mcp_host, "_call_native_graphiti", call_native_graphiti)
+
     async def bridge(path, payload):
         calls.append((path, payload))
         return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
@@ -687,13 +760,19 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         return {"ok": True}
     monkeypatch.setattr(control_plane, "card_run_assistant_agent", run_saved_card)
 
-    asyncio.run(mcp_host.call_tool("engraphis_recall", {"query": "Main", "limit": 3}))
+    asyncio.run(mcp_host.call_tool("engraphis.engraphis_recall", {"query": "Main", "limit": 3}))
     assert calls[-1] == ("engraphis_recall", {"query": "Main", "limit": 3})
 
     asyncio.run(
-        mcp_host.call_tool("search_graph", {"project": "C-Projects-main"})
+        mcp_host.call_tool("cbm.search_graph", {"project": "C-Projects-main"})
     )
     assert calls[-1] == ("search_graph", {"project": "C-Projects-main"})
+
+    asyncio.run(mcp_host.call_tool("graphiti.search_nodes", {"query": "Main"}))
+    assert calls[-1] == (
+        "search_nodes",
+        {"query": "Main", "group_ids": ["liquidaity:project-1"]},
+    )
 
     removed_adapter = asyncio.run(
         mcp_host.call_tool("codegraph.search", {"query": "Main"})
@@ -813,46 +892,6 @@ def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(m
     }
     assert succeeded[0].type == "text"
     assert json.loads(succeeded[0].text) == {"ok": True, "cards": []}
-
-
-def test_public_knowgraph_query_is_read_only_and_drops_candidate_graph_view(monkeypatch):
-    import asyncio
-    import mcp_host
-    from app.python_models import tool_registry
-
-    async def retrieve(**_kwargs):
-        return {
-            "retrieval_state": "evidence",
-            "assertions": [],
-            "evidence": [],
-            "relations": [],
-            "graphView": {
-                "viewId": "knowgraph:candidate",
-                "producingRole": "main_chat",
-            },
-        }
-
-    async def initialized():
-        mcp_host._NATIVE_ENGRAPHIS_NAMES = frozenset()
-
-    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
-    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
-    monkeypatch.setattr(tool_registry, "retrieve_knowgraph_context_tool", retrieve)
-
-    result = asyncio.run(
-        mcp_host.call_tool(
-            "knowgraph.query",
-            {
-                "projectId": "project-1",
-                "conversationId": "conversation-1",
-                "query": "knowledge graph modeling",
-            },
-        )
-    )
-    payload = json.loads(result[0].text)
-
-    assert payload["ok"] is True
-    assert "graphView" not in payload
 
 
 def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp():

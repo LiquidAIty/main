@@ -8,7 +8,7 @@ vi.mock('../db/pool', () => ({
 import {
   getDeckDocument,
   normalizeRuntimeOptions,
-  repairCodeGraphToolGrants,
+  repairNativeGraphToolGrants,
 } from './store';
 
 beforeEach(() => {
@@ -59,8 +59,8 @@ describe('deck store runtime-options tool persistence', () => {
   });
 });
 
-describe('required CodeGraph grant repair', () => {
-  it('restores the CodeGraph pair on Main and Hermes, preserves all other grants, and is idempotent', () => {
+describe('native graph-tool grant repair', () => {
+  it('removes obsolete wrappers, adds role-local native grants, and is idempotent', () => {
     const deck = {
       id: 'deck_builder',
       name: 'Saved Builder',
@@ -118,38 +118,28 @@ describe('required CodeGraph grant repair', () => {
       edges: [{ id: 'keep-edge', source: 'custom-main', target: 'custom-hermes', edgeType: 'flow' }],
     } as any;
 
-    const repaired = repairCodeGraphToolGrants(deck);
-    expect(repaired).toEqual({
-      ...deck,
-      nodes: [
-        {
-          ...deck.nodes[0],
-          runtimeOptions: {
-            ...deck.nodes[0].runtimeOptions,
-            tools: [
-              'canvas.inspect',
-              'future.explicit-error',
-              'codegraph.status',
-              'codegraph.search',
-            ],
-          },
-        },
-        {
-          ...deck.nodes[1],
-          runtimeOptions: {
-            ...deck.nodes[1].runtimeOptions,
-            tools: [
-              'knowgraph.query',
-              'hermes.memory.write',
-              'codegraph.status',
-              'codegraph.search',
-            ],
-          },
-        },
-        deck.nodes[2],
-      ],
-    });
-    expect(repairCodeGraphToolGrants(repaired)).toBe(repaired);
+    const repaired = repairNativeGraphToolGrants(deck);
+    const [main, hermes, unrelated] = repaired.nodes;
+    expect(main.runtimeOptions?.tools).toEqual(expect.arrayContaining([
+      'canvas.inspect',
+      'future.explicit-error',
+      'engraphis.engraphis_recall',
+    ]));
+    expect(hermes.runtimeOptions?.tools).toEqual(expect.arrayContaining([
+      'hermes.memory.write',
+      'graphiti.search_nodes',
+      'graphiti.add_memory',
+      'graphiti.add_triplet',
+    ]));
+    expect(unrelated.runtimeOptions?.tools).toEqual(['web_search']);
+    for (const node of repaired.nodes) {
+      expect(node.runtimeOptions?.tools ?? []).not.toEqual(expect.arrayContaining([
+        'knowgraph.query',
+        'codegraph.status',
+        'codegraph.search',
+      ]));
+    }
+    expect(repairNativeGraphToolGrants(repaired)).toBe(repaired);
   });
 });
 

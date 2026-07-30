@@ -582,7 +582,8 @@ def render_model_context(projection: dict[str, Any], role_views: list[dict[str, 
 
     sections["retrieval"] = [
         "RETRIEVAL: full records and anything beyond this view are available through the bounded tools — "
-        "read_thinkgraph_scope (reasoning records), retrieve_knowgraph_context (evidence and sources), "
+        "read_thinkgraph_scope (reasoning records), graphiti.search_memory_facts and "
+        "graphiti.search_nodes (evidence and sources), "
         "and the Coder runtime's native Codebase Memory MCP catalog (repository structure). "
         "Reference records by the canonical ids shown above.",
     ]

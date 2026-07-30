@@ -41,9 +41,11 @@ canvas card (deck_builder)            ← identity, prompt, model, enabled, tool
 
 - Native Main, Hermes, and Search grants are selected on saved cards and
   validated against the live `mcp_host.py` catalog before the Harness turn.
-  TypeScript does not maintain a fallback tool catalog. Native names include
-  `thinkgraph.get_graph_slice`, `thinkgraph.submit_update`, `knowgraph.query`,
-  `knowgraph.ingest`, `codegraph.search`, and `web_search`.
+  TypeScript does not maintain a fallback tool catalog. LiquidAIty-owned
+  controls include `thinkgraph.get_graph_slice`, `thinkgraph.submit_update`,
+  and `web_search`; native graph tools are discovered from their upstream MCP
+  servers and mechanically namespaced as `engraphis.<native_name>`,
+  `graphiti.<native_name>`, and `cbm.<native_name>`.
 - AutoGen/Mag One card tool ids pass through TypeScript unchanged and resolve
   only in Python's canonical `tool_registry.py`; names such as
   `read_thinkgraph_scope`, `apply_thinkgraph_patch`, and

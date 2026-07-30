@@ -35,7 +35,6 @@ import {
   listConversations,
   markConversationRunRunning,
 } from '../conversations/store';
-import { createCodebaseMemoryMcpCaller } from '../services/graphContext/cbmMcpCaller';
 import {
   applyThinkGraphPatch,
   readThinkGraphScope,
@@ -75,50 +74,6 @@ export function resolveCoderConnectorCompletionWindowMs(): number {
     return DEFAULT_CODER_CONNECTOR_COMPLETION_WINDOW_MS;
   }
   return Math.min(45_000, Math.max(1, Math.trunc(configured)));
-}
-
-export function resolveCodeGraphProjectName(): string {
-  const configuredProject = String(
-    process.env.LIQUIDAITY_CODEGRAPH_PROJECT || 'C-Projects-main',
-  ).trim();
-  if (!configuredProject) throw new Error('cbm_project_not_configured');
-  return configuredProject;
-}
-
-export function describeCodeGraphFreshness(status: unknown): {
-  operationalStatus: string;
-  semanticFreshness: 'unverified' | 'stale';
-  reason: string;
-} {
-  const value =
-    status && typeof status === 'object' ? (status as Record<string, unknown>) : {};
-  const git =
-    value.git && typeof value.git === 'object'
-      ? (value.git as Record<string, unknown>)
-      : {};
-  const operationalStatus = String(value.status || 'unknown');
-  const indexedRevision = String(
-    value.indexed_revision ||
-      value.indexedRevision ||
-      value.indexed_commit ||
-      value.indexedCommit ||
-      '',
-  ).trim();
-  const worktreeRevision = String(git.head_sha || git.headSha || '').trim();
-  if (indexedRevision && worktreeRevision && indexedRevision !== worktreeRevision) {
-    return {
-      operationalStatus,
-      semanticFreshness: 'stale',
-      reason: `indexed_revision_mismatch:${indexedRevision}:${worktreeRevision}`,
-    };
-  }
-  return {
-    operationalStatus,
-    semanticFreshness: 'unverified',
-    reason: indexedRevision
-      ? 'revision_match_does_not_prove_deleted_symbol_purge'
-      : 'cbm_status_does_not_report_an_indexed_revision',
-  };
 }
 
 // ── LiquidAIty MCP bridge (SDK-free) ───────────────────────────────────────
@@ -488,71 +443,6 @@ router.post('/mcp-bridge/thinkgraph_submit_update', async (req, res) => {
   }
 });
 
-// ── CodeGraph reads (native CBM is the one indexer/writer) ─────────────────
-router.post('/mcp-bridge/codegraph_status', async (_req, res) => {
-  let session: Awaited<ReturnType<typeof createCodebaseMemoryMcpCaller>> | null = null;
-  try {
-    session = await createCodebaseMemoryMcpCaller(process.cwd());
-    const cbmProject = resolveCodeGraphProjectName();
-    const status = await session.callTool('index_status', { project: cbmProject });
-    return res.json({
-      ok: true,
-      cbmProject,
-      status,
-      freshness: describeCodeGraphFreshness(status),
-    });
-  } catch (error) {
-    return res.status(502).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'codegraph_status_failed',
-    });
-  } finally {
-    await session?.close();
-  }
-});
-
-router.post('/mcp-bridge/codegraph_search', async (req, res) => {
-  let session: Awaited<ReturnType<typeof createCodebaseMemoryMcpCaller>> | null = null;
-  try {
-    const query = String(req.body?.query || '').trim();
-    const canonicalRefs = [
-      ...new Set<string>(
-        (Array.isArray(req.body?.canonicalRefs) ? req.body.canonicalRefs : [])
-          .map((value: unknown): string =>
-            String(value || '')
-              .trim()
-              .replace(/^code:/, ''),
-          )
-          .filter((value: string) => Boolean(value)),
-      ),
-    ].slice(0, 20);
-    if (!query) return res.status(400).json({ ok: false, error: 'query_required' });
-    const limit = Math.min(Math.max(Number(req.body?.limit) || 15, 1), 50);
-    session = await createCodebaseMemoryMcpCaller(process.cwd());
-    const cbmProject = resolveCodeGraphProjectName();
-    const exactQualifiedNames =
-      canonicalRefs.length > 0
-        ? `^(?:${canonicalRefs
-            .map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-            .join('|')})$`
-        : null;
-    const result = await session.callTool(
-      'search_graph',
-      exactQualifiedNames
-        ? { project: cbmProject, qn_pattern: exactQualifiedNames, limit }
-        : { project: cbmProject, query, limit },
-    );
-    return res.json({ ok: true, cbmProject, result });
-  } catch (error) {
-    return res.status(502).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'codegraph_search_failed',
-    });
-  } finally {
-    await session?.close();
-  }
-});
-
 // ── Hermes SQL memory (liq_core.memory_space/memory_item, scope 'hermes') ───
 // Project-scoped private steward continuity — separate from ThinkGraph. The
 // runtime project authority is ag_catalog.projects, the same table used by
@@ -634,35 +524,6 @@ router.post('/mcp-bridge/hermes_memory_write', async (req, res) => {
     return res.json({ ok: true, key, stored: true });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'hermes_memory_write_failed' });
-  }
-});
-
-// ── KnowGraph bridges (query is read-only; ingestion = real sources through
-// the existing Neo/Python pipeline via the canonical gateway) ────────────────
-router.post('/mcp-bridge/knowgraph_ingest', async (req, res) => {
-  try {
-    const projectId = String(req.body?.projectId || '').trim();
-    const documents = Array.isArray(req.body?.documents) ? req.body.documents : [];
-    if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-    if (documents.length === 0) return res.status(400).json({ ok: false, error: 'documents_required' });
-    // Same-process call into the canonical gateway logic via HTTP keeps ONE
-    // authority for KNOWGRAPH_URL resolution and pipeline error shaping.
-    const port = Number(process.env.PORT || 4000);
-    const axios = (await import('axios')).default;
-    const response = await axios.post(
-      `http://127.0.0.1:${port}/api/knowgraph/ingest_web`,
-      {
-        project_id: projectId,
-        // Project identity is trusted transport scope, not source content. The
-        // canonical web-ingest request validates it on every selected document.
-        documents: documents.map((document: Record<string, unknown>) => ({ ...document, project_id: projectId })),
-        ...(req.body?.researchFocus ? { research_focus: req.body.researchFocus } : {}),
-      },
-      { timeout: 300_000, validateStatus: () => true },
-    );
-    return res.status(response.status).json(response.data);
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'knowgraph_ingest_failed' });
   }
 });
 

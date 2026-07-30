@@ -397,9 +397,12 @@ export const INITIAL_DECK: DeckDocument = {
         tools: [
           'thinkgraph.get_graph_slice',
           'thinkgraph.submit_update',
-          'knowgraph.query',
-          'codegraph.search',
-          'codegraph.status',
+          'engraphis.engraphis_recall',
+          'engraphis.engraphis_recall_grounded',
+          'engraphis.engraphis_answer',
+          'engraphis.engraphis_why',
+          'engraphis.engraphis_timeline',
+          'engraphis.engraphis_stats',
           'canvas.inspect',
           'mag_one.describe_connected_agents',
           'run_mag_one',
@@ -497,15 +500,19 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeType: 'assistant_agent',
       // Hermes runs as Main Chat's native inherited-context subagent; its Tools
       // selection is its REAL harness MCP surface (enforced as the child agent's
-      // allowed_tools). Hermes reads ThinkGraph; Main writes it. KnowGraph
-      // ingestion remains Hermes-only through the canonical pipeline.
+      // allowed_tools). Hermes reads ThinkGraph; Main writes it. Official
+      // Graphiti retrieval and ingestion are granted only to Hermes here.
       runtimeOptions: {
         tools: [
           'thinkgraph.get_graph_slice',
-          'knowgraph.query',
-          'knowgraph.ingest',
-          'codegraph.status',
-          'codegraph.search',
+          'graphiti.search_nodes',
+          'graphiti.search_memory_facts',
+          'graphiti.get_entity_edge',
+          'graphiti.get_episodes',
+          'graphiti.get_episode_entities',
+          'graphiti.get_status',
+          'graphiti.add_memory',
+          'graphiti.add_triplet',
           'hermes.memory_read',
           'hermes.memory_write',
           'write_mag_one_instructions',

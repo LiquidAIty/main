@@ -39,7 +39,20 @@ export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions[
 // authoritative. Low-cost OpenRouter default; there is no model blacklist.
 export const LOCAL_CODER_CONTROLLER_MODEL_KEY = 'z-ai/glm-5.2';
 export const LOCAL_CODER_CONTROLLER_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openrouter';
-export const LOCAL_CODER_CONTROLLER_TOOLS = ['run_local_coder'] as const;
+export const LOCAL_CODER_CONTROLLER_TOOLS = [
+  'run_local_coder',
+  'cbm.index_repository',
+  'cbm.search_graph',
+  'cbm.query_graph',
+  'cbm.trace_path',
+  'cbm.get_code_snippet',
+  'cbm.get_graph_schema',
+  'cbm.get_architecture',
+  'cbm.search_code',
+  'cbm.list_projects',
+  'cbm.index_status',
+  'cbm.detect_changes',
+] as const;
 
 export function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   const normalized = safeText(value).trim().toLowerCase();

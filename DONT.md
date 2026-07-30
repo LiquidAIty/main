@@ -289,6 +289,21 @@ The items below are the major deletion events. Every one "worked" before it was 
   server-owned agent context that exists outside the agent's Python runtime is a second prompt
   system, not context.**
 
+- **2026-07-30 — Native graph-catalog federation and fake-wrapper purge: 26 files,
+  +539 / -1,935 lines before this log entry.**
+  - Deleted the handwritten `knowgraph.query`, `knowgraph.ingest`, `codegraph.status`, and
+    `codegraph.search` MCP façades, their duplicate backend bridges, and the disconnected
+    clean-room KnowGraph hybrid retriever.
+  - Federated the complete upstream CBM, Engraphis, and official Graphiti MCP catalogs through
+    generated `cbm.`, `engraphis.`, and `graphiti.` routing prefixes without copying their
+    descriptors or schemas.
+  - Kept tool ownership card-local: Coder defaults to CBM/CodeGraph, Main defaults to
+    Engraphis/ThinkGraph, and Hermes defaults to Graphiti/KnowGraph. Destructive native tools
+    remain discoverable but are not granted by default.
+  Lesson: **a native MCP catalog is the contract. Do not replace a real graph system with four
+  friendlier wrapper names and a second retrieval pipeline; namespace the upstream tools
+  mechanically, preserve their metadata, and assign them at the saved-card boundary.**
+
 ## Patterns that keep coming back — do NOT write these
 
 Every one of these was written, shipped, "worked," and got ripped out. If your diff resembles any of

@@ -77,9 +77,21 @@ describe('Main / Hermes / graph authority topology', () => {
     const mainTools = byId.get('card_main_chat')?.runtimeOptions?.tools ?? [];
     const hermesTools = byId.get('card_hermes_steward')?.runtimeOptions?.tools ?? [];
     const searchTools = byId.get('card_research_agent')?.runtimeOptions?.tools ?? [];
-    expect(mainTools).toEqual(expect.arrayContaining(['thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query', 'canvas.inspect']));
+    expect(mainTools).toEqual(expect.arrayContaining([
+      'thinkgraph.get_graph_slice',
+      'thinkgraph.submit_update',
+      'engraphis.engraphis_recall',
+      'canvas.inspect',
+    ]));
     expect(mainTools).not.toEqual(expect.arrayContaining(['knowgraph.ingest', 'web_search']));
-    expect(hermesTools).toEqual(expect.arrayContaining(['thinkgraph.get_graph_slice', 'knowgraph.ingest', 'write_mag_one_instructions', 'card.run_assistant_agent']));
+    expect(hermesTools).toEqual(expect.arrayContaining([
+      'thinkgraph.get_graph_slice',
+      'graphiti.search_nodes',
+      'graphiti.add_memory',
+      'graphiti.add_triplet',
+      'write_mag_one_instructions',
+      'card.run_assistant_agent',
+    ]));
     expect(hermesTools).not.toEqual(expect.arrayContaining(['thinkgraph.submit_update', 'web_search', 'run_mag_one', 'run_coder_subagent']));
     expect(searchTools).toEqual(['web_search']);
   });

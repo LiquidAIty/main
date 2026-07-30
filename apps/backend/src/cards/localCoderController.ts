@@ -1,6 +1,19 @@
 import type { AgentCardInstance } from '../types';
 
-export const LOCAL_CODER_CONTROLLER_TOOLS = ['run_local_coder'] as const;
+export const LOCAL_CODER_CONTROLLER_TOOLS = [
+  'run_local_coder',
+  'cbm.index_repository',
+  'cbm.search_graph',
+  'cbm.query_graph',
+  'cbm.trace_path',
+  'cbm.get_code_snippet',
+  'cbm.get_graph_schema',
+  'cbm.get_architecture',
+  'cbm.search_code',
+  'cbm.list_projects',
+  'cbm.index_status',
+  'cbm.detect_changes',
+] as const;
 
 export type CardLike = Partial<
   Pick<

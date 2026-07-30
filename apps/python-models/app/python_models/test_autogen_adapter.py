@@ -6,7 +6,6 @@ AutoGen Task Ledger artifact path remains allowed, and card-selected tools are
 attached as real AutoGen FunctionTools only when selected (without executing).
 """
 import asyncio
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -192,10 +191,10 @@ def test_app_authored_scaffold_runtime_is_gone_but_real_task_ledger_artifact_all
 
 
 def test_selected_tool_attaches_real_functiontool_to_that_participant():
-    participants = mac._build_participants(_tools_context(["retrieve_knowgraph_context"]), _FakeToolClient())
+    participants = mac._build_participants(_tools_context(["calculator"]), _FakeToolClient())
     research, plain = participants[0], participants[1]
     research_tool_names = [tool.name for tool in research._tools]
-    assert "retrieve_knowgraph_context" in research_tool_names
+    assert "calculator" in research_tool_names
     assert all(isinstance(tool, FunctionTool) for tool in research._tools)
     assert [tool.name for tool in plain._tools] == []
 
@@ -203,15 +202,6 @@ def test_selected_tool_attaches_real_functiontool_to_that_participant():
 def test_unknown_tool_id_fails_loudly_not_silently_dropped():
     with pytest.raises(RuntimeError):
         mac._build_participants(_tools_context(["does_not_exist_tool"]), _FakeToolClient())
-
-
-def test_building_participants_attaches_without_executing_retrieval():
-    # Wrapping the adapter in a FunctionTool must not import/run the KnowGraph
-    # rails — retrieval only happens when Mag One actually calls the tool.
-    sys.modules.pop("hybrid_retrieval", None)
-    mac._build_participants(_tools_context(["retrieve_knowgraph_context"]), _FakeToolClient())
-    assert "hybrid_retrieval" not in sys.modules
-
 
 def test_magentic_success_requires_a_model_result():
     ok, error = mac._magentic_completion_status("Here is the answer.")

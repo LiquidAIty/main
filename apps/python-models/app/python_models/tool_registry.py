@@ -19,10 +19,8 @@ import json
 import operator
 import os
 import re
-import sys
 from contextvars import ContextVar, Token
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -92,99 +90,6 @@ def tool_calculator(expression: str) -> str:
     parsed = ast.parse(expression, mode="eval")
     return str(_eval_arithmetic(parsed))
 
-
-
-# ---------------------------------------------------------------------------
-# KnowGraph Graphiti retrieval tool (explicit, deliberate, read-only).
-# ---------------------------------------------------------------------------
-
-
-def _load_knowgraph_hybrid_retrieval():
-    """Import the KnowGraph Python rails temporal retrieval capability.
-
-    The Mag One rails (this package) and the KnowGraph rails
-    (``services/knowgraph``) are separate. The KnowGraph rails use bare-module
-    imports, so its directory is placed on ``sys.path`` (idempotent) and the
-    module is imported by name — no TypeScript and no second service involved.
-    """
-    repo_root = Path(__file__).resolve().parents[4]
-    kg_dir = repo_root / "services" / "knowgraph"
-    kg_path = str(kg_dir)
-    if kg_path not in sys.path:
-        sys.path.insert(0, kg_path)
-    import hybrid_retrieval  # noqa: E402  (bare-module rails convention)
-
-    return hybrid_retrieval
-
-
-async def retrieve_knowgraph_context_tool(
-    project_id: str,
-    query: str,
-    conversation_id: str,
-    anchors: list[str] | None = None,
-    goal_id: str | None = None,
-    episode_id: str | None = None,
-    job_id: str | None = None,
-    requesting_role: str = "main_chat",
-    parent_view_id: str | None = None,
-    task_id: str | None = None,
-    max_results: int = 12,
-    max_hops: int = 1,
-    include_outcomes: list[str] | None = None,
-    prior_assertion_ids: list[str] | None = None,
-    prior_source_refs: list[str] | None = None,
-) -> dict[str, Any]:
-    """Mag One tool: retrieve a compact, project-scoped KnowGraph evidence slice.
-
-    Uses Graphiti's hybrid temporal-fact search over the single KnowGraph
-    (Neo4j), with a legacy Chunk compatibility read only for scopes that have no
-    Graphiti facts. Read-only. Mag One decides when to call this; registration
-    never runs it. Returns source and temporal validity with every fact.
-    """
-    module = _load_knowgraph_hybrid_retrieval()
-    request = module.KnowGraphRetrievalRequest(
-        project_id=str(project_id or "").strip(),
-        query=str(query or "").strip(),
-        anchors=[str(a).strip() for a in (anchors or []) if str(a).strip()],
-        task_id=(str(task_id).strip() or None) if task_id else None,
-        max_results=max_results if isinstance(max_results, int) else 12,
-        max_hops=max_hops if isinstance(max_hops, int) else 1,
-        include_outcomes=(
-            [str(o).strip() for o in include_outcomes if str(o).strip()]
-            if include_outcomes else list(module.DEFAULT_OUTCOMES)
-        ),
-        prior_assertion_ids=list(prior_assertion_ids) if prior_assertion_ids else None,
-        prior_source_refs=list(prior_source_refs) if prior_source_refs else None,
-    )
-    # Blocking Graphiti/Neo4j search runs off the event loop.
-    result = await asyncio.to_thread(module.retrieve_knowgraph_context, request)
-    payload = result.to_dict()
-    records = []
-    for rank, assertion in enumerate(result.assertions, start=1):
-        canonical_id = str(assertion.get("assertion_id") or assertion.get("id") or "").strip()
-        summary = str(assertion.get("text") or "").strip()
-        if not canonical_id or not summary:
-            continue
-        reasons = [str(reason).strip() for reason in assertion.get("retrieval_reasons") or [] if str(reason).strip()]
-        provenance_refs = [
-            str(value).strip()
-            for value in [assertion.get("source_url"), assertion.get("document_id"), *(assertion.get("chunk_refs") or [])]
-            if str(value or "").strip()
-        ]
-        records.append({
-            "canonicalId": canonical_id,
-            "summary": summary,
-            "selectionReason": " · ".join(reasons) or "Selected by canonical KnowGraph retrieval",
-            "relevance": assertion.get("retrieval_score", assertion.get("fused_score")),
-            "rank": rank,
-            "provenanceRefs": provenance_refs[:12],
-            "estimatedCharacters": len(summary),
-            "estimatedTokens": max(1, (len(summary) + 3) // 4),
-        })
-    # The evidence stays in KnowGraph and in this immediate tool result. A
-    # caller may create an AgentGraph view containing stable assertion/source
-    # references, but this tool never wraps or persists copied graph records.
-    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -623,7 +528,6 @@ def build_local_coder_tool(model_provider: str, provider_model_id: str) -> Funct
 CANONICAL_TOOL_ALIASES: dict[str, str] = {
     "thinkgraph.get_graph_slice": "read_thinkgraph_scope",
     "thinkgraph.submit_update": "apply_thinkgraph_patch",
-    "knowgraph.query": "retrieve_knowgraph_context",
 }
 
 
@@ -656,9 +560,8 @@ class ToolRegistry:
             raise RuntimeError("card_tool_name_empty")
         # Canonical capability ids (the names cards store, shared with the
         # harness MCP surface) resolve to this runtime's own implementation.
-        # Only proven same-capability pairs are aliased — knowgraph.query IS
-        # retrieve_knowgraph_context (mcp_host.py calls it directly), and the
-        # thinkgraph pair is this runtime's read/write of the same authority.
+        # Only proven same-capability pairs are aliased. The ThinkGraph pair is
+        # this runtime's read/write of the same authority.
         # Anything else stays loudly unknown: a capability without an adapter
         # in THIS runtime must fail here, never silently degrade.
         implementation_name = CANONICAL_TOOL_ALIASES.get(canonical_name, canonical_name)
@@ -839,61 +742,11 @@ def build_default_tool_registry() -> ToolRegistry:
     )
     registry.register(
         ToolSpec(
-            name="retrieve_knowgraph_context",
-            description=(
-                "Retrieve a compact, project-scoped KnowGraph evidence slice using Graphiti's "
-                "hybrid temporal-fact search over Neo4j. Read-only; returns source-backed facts, "
-                "current/superseded/expired validity, contradictions, one-hop entity relations, "
-                "and per-result retrieval reasons. Legacy Chunk evidence is read only when a "
-                "scope has no Graphiti facts. "
-                "Use it when the selected task needs source-backed external evidence, "
-                "contradictions, uncertainty, or connected KnowGraph evidence. Do not call it "
-                "merely because it is attached. Do not use it for unrelated code-only tasks. Do "
-                "not treat its returned assertions as unconditional truth; preserve the "
-                "supported/contradicted/uncertain outcomes and the sourceRefs."
-            ),
-            enabled=True,
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "project_id": {"type": "string"},
-                    "query": {"type": "string"},
-                    "anchors": {"type": "array", "items": {"type": "string"}},
-                    "task_id": {"type": ["string", "null"]},
-                    "max_results": {"type": "integer", "default": 12},
-                    "max_hops": {"type": "integer", "default": 1},
-                    "include_outcomes": {"type": "array", "items": {"type": "string"}},
-                    "prior_assertion_ids": {"type": "array", "items": {"type": "string"}},
-                    "prior_source_refs": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["project_id", "query"],
-            },
-            outputSchema={
-                "type": "object",
-                "properties": {
-                    "project_id": {"type": "string"},
-                    "anchors": {"type": "array", "items": {"type": "string"}},
-                    "retrieval_modes": {"type": "object"},
-                    "assertions": {"type": "array"},
-                    "evidence": {"type": "array"},
-                    "relations": {"type": "array"},
-                    "contradictions": {"type": "array"},
-                    "uncertainties": {"type": "array"},
-                    "next_anchor_suggestions": {"type": "array"},
-                    "excluded_as_seen": {"type": "array"},
-                    "retrieval_notes": {"type": "array"},
-                },
-            },
-        ),
-        retrieve_knowgraph_context_tool,
-    )
-    registry.register(
-        ToolSpec(
             name="web_search",
             description=(
                 "Real web search via Tavily. Returns real result pages (url, title, domain, "
                 "content excerpt, published date) for the agent to read and select. Read-only "
-                "and never fabricates results; pair with knowgraph.ingest to persist selected "
+                "and never fabricates results; pair with graphiti.add_memory to persist selected "
                 "real sources with provenance. Does not run automatically — the agent decides "
                 "when a task needs external web sources."
             ),
@@ -1086,14 +939,6 @@ _TOOL_DISPLAY_METADATA: dict[str, dict[str, Any]] = {
     },
     "run_local_coder": {
         "displayName": "Local Coder",
-        "agentCompatibility": ["magentic_one", "assistant_agent"],
-    },
-    "retrieve_knowgraph_context": {
-        "displayName": "KnowGraph Temporal Retrieval",
-        # Mag One capability, held by the Mag One team's participant agents. The
-        # existing runtime attaches per-participant tools (assistant_agent cards
-        # that are bus-connected to the Mag One orchestrator), so both the Mag One
-        # orchestrator card and its assistant_agent team cards are compatible.
         "agentCompatibility": ["magentic_one", "assistant_agent"],
     },
     "find_recent_sec_filing_signals": {

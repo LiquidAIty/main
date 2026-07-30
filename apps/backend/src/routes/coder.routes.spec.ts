@@ -5,8 +5,6 @@ import { describe, expect, it, vi } from 'vitest';
 // Static imports: NodeNext ESM rejects extensionless dynamic import('./coder.routes')
 // after the '.routes' infix strip. vitest hoists vi.mock() above these.
 import router, {
-  describeCodeGraphFreshness,
-  resolveCodeGraphProjectName,
   resolveHermesProjectId,
 } from './coder.routes';
 
@@ -96,12 +94,6 @@ const cbmScopeMocks = vi.hoisted(() => ({
     editAllowed: true,
     blockedReason: '',
   })),
-}));
-
-const cbmCallerMocks = vi.hoisted(() => ({
-  callTool: vi.fn(),
-  close: vi.fn(async () => undefined),
-  create: vi.fn(),
 }));
 
 const chatSessionMocks = vi.hoisted(() => {
@@ -202,10 +194,6 @@ vi.mock('../services/graphContext/cbmScopeGate', () => ({
   runLocalCoderCbmScopeGate: cbmScopeMocks.runLocalCoderCbmScopeGate,
 }));
 
-vi.mock('../services/graphContext/cbmMcpCaller', () => ({
-  createCodebaseMemoryMcpCaller: cbmCallerMocks.create,
-}));
-
 vi.mock('../cards/runtime', () => ({
   runConfiguredCard: runtimeMocks.runConfiguredCard,
   resolveCardModelStrict: runtimeMocks.resolveCardModelStrict,
@@ -288,29 +276,6 @@ describe('coder routes', () => {
   // vendored runtime is built or API keys are exported on the test machine.
   const BROKEN_COMMAND = 'node C:/liquidaity/nonexistent/openclaude.mjs';
 
-  it('selects the configured LiquidAIty CodeGraph project and reports freshness honestly', () => {
-    const previous = process.env.LIQUIDAITY_CODEGRAPH_PROJECT;
-    process.env.LIQUIDAITY_CODEGRAPH_PROJECT = 'C-Projects-main';
-    try {
-      expect(
-        resolveCodeGraphProjectName(),
-      ).toBe('C-Projects-main');
-    } finally {
-      if (previous === undefined) delete process.env.LIQUIDAITY_CODEGRAPH_PROJECT;
-      else process.env.LIQUIDAITY_CODEGRAPH_PROJECT = previous;
-    }
-    expect(
-      describeCodeGraphFreshness({
-        status: 'ready',
-        git: { head_sha: 'current-head' },
-      }),
-    ).toEqual({
-      operationalStatus: 'ready',
-      semanticFreshness: 'unverified',
-      reason: 'cbm_status_does_not_report_an_indexed_revision',
-    });
-  });
-
   it('reports Coder idle from the live session owner instead of AgentGraph history', async () => {
     const { server, baseUrl } = await createApiServer();
     try {
@@ -325,102 +290,6 @@ describe('coder routes', () => {
         liveSessions: [],
         authority: 'openclaude_console_session_manager',
       });
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  it('returns native CBM status for the configured CodeGraph project', async () => {
-    cbmCallerMocks.callTool.mockReset();
-    cbmCallerMocks.close.mockClear();
-    cbmCallerMocks.create.mockResolvedValueOnce({
-      callTool: cbmCallerMocks.callTool,
-      close: cbmCallerMocks.close,
-    });
-    cbmCallerMocks.callTool.mockResolvedValueOnce({
-      project: 'C-Projects-main',
-      root_path: 'C:/Projects/main',
-      nodes: 5283,
-      edges: 17347,
-      status: 'ready',
-    });
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/codegraph_status`, {
-        method: 'POST',
-      });
-      expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toMatchObject({
-        ok: true,
-        cbmProject: 'C-Projects-main',
-        status: {
-          root_path: 'C:/Projects/main',
-          nodes: 5283,
-          edges: 17347,
-          status: 'ready',
-        },
-      });
-      expect(cbmCallerMocks.callTool).toHaveBeenCalledOnce();
-      expect(cbmCallerMocks.callTool).toHaveBeenCalledWith('index_status', {
-        project: 'C-Projects-main',
-      });
-      expect(cbmCallerMocks.close).toHaveBeenCalledOnce();
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  it('returns native CodeGraph search results without constructing another graph', async () => {
-    cbmCallerMocks.callTool.mockReset();
-    cbmCallerMocks.close.mockClear();
-    cbmCallerMocks.create.mockResolvedValueOnce({
-      callTool: cbmCallerMocks.callTool,
-      close: cbmCallerMocks.close,
-    });
-    cbmCallerMocks.callTool.mockResolvedValueOnce({
-      total: 1,
-      results: [
-        {
-          name: 'useBuilderDeckPersistenceActions',
-          qualified_name:
-            'C-Projects-main.client.src.components.builder.useBuilderDeckPersistenceActions.useBuilderDeckPersistenceActions',
-          label: 'Function',
-          file_path:
-            'client/src/components/builder/useBuilderDeckPersistenceActions.ts',
-        },
-      ],
-    });
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/codegraph_search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: 'useBuilderDeckPersistenceActions',
-          limit: 5,
-        }),
-      });
-      expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toMatchObject({
-        ok: true,
-        cbmProject: 'C-Projects-main',
-        result: {
-          total: 1,
-          results: [
-            {
-              name: 'useBuilderDeckPersistenceActions',
-              file_path:
-                'client/src/components/builder/useBuilderDeckPersistenceActions.ts',
-            },
-          ],
-        },
-      });
-      expect(cbmCallerMocks.callTool).toHaveBeenLastCalledWith('search_graph', {
-        project: 'C-Projects-main',
-        query: 'useBuilderDeckPersistenceActions',
-        limit: 5,
-      });
-      expect(cbmCallerMocks.close).toHaveBeenCalledOnce();
     } finally {
       await closeServer(server);
     }

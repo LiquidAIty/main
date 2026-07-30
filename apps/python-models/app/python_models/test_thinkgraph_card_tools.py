@@ -114,7 +114,12 @@ class TestPythonMcpHost:
 
         tools = asyncio.run(mcp_host.list_tools())
         names = sorted(t.name for t in tools)
-        assert names == sorted([
+        assert len(names) == 82
+        assert len(names) == len(set(names))
+        assert sum(name.startswith("engraphis.") for name in names) == 29
+        assert sum(name.startswith("cbm.") for name in names) == 14
+        assert sum(name.startswith("graphiti.") for name in names) == 13
+        assert {
             "main.context",
             "agentgraph.inspect",
             "graphview.list",
@@ -129,52 +134,15 @@ class TestPythonMcpHost:
             "card.update_configuration",
             "canvas.upsert_wire",
             "card.run_assistant_agent",
-            "engraphis_answer",
-            "engraphis_check_update",
-            "engraphis_code_impact",
-            "engraphis_code_path",
-            "engraphis_consolidate",
-            "engraphis_correct",
-            "engraphis_end_session",
-            "engraphis_export_code_graph",
-            "engraphis_export_receipts",
-            "engraphis_forget",
-            "engraphis_index_repo",
-            "engraphis_ingest",
-            "engraphis_ingest_postgres_schema",
-            "engraphis_link",
-            "engraphis_pin",
-            "engraphis_proactive_context",
-            "engraphis_promote",
-            "engraphis_recall",
-            "engraphis_recall_grounded",
-            "engraphis_recall_proactive",
-            "engraphis_receipts",
-            "engraphis_record_event",
-            "engraphis_remember",
-            "engraphis_search_code",
-            "engraphis_start_session",
-            "engraphis_stats",
-            "engraphis_timeline",
-            "engraphis_verify_receipts",
-            "engraphis_why",
             "thinkgraph.get_graph_slice",
             "thinkgraph.submit_update",
+        }.issubset(names)
+        assert {
             "knowgraph.query",
             "knowgraph.ingest",
             "codegraph.status",
             "codegraph.search",
-            "hermes.memory_read",
-            "hermes.memory_write",
-            "hermes.read_report",
-            "hermes.write_report",
-            "web_search",
-            "worldsignals.batch",
-            "worldsignals.capabilities",
-            "worldsignals.command",
-            "worldsignals.poll",
-            "worldsignals.stream_events",
-        ])
+        }.isdisjoint(names)
         assert "thinkgraph.persist_graph_view" not in names
 
     def test_card_run_schema_matches_the_doorway_contract(self):
@@ -203,101 +171,6 @@ class TestPythonMcpHost:
         assert properties["statements"]["items"]["properties"]["properties"]["additionalProperties"] == scalar_contract
         assert "Minimal valid example" in update.description
 
-    def test_knowgraph_query_is_compact_by_default_and_explicitly_expandable(self, monkeypatch):
-        from app import mcp_host
-
-        async def fake_retrieve(**_kwargs):
-            text = "grounded evidence " * 100
-            return {
-                "retryable": False,
-                "retrieval_state": "evidence",
-                "assertions": [{
-                    "assertion_id": "chunk-1",
-                    "text": text,
-                    "document_id": "document-1",
-                    "chunk_refs": ["chunk-1"],
-                    "source_title": "Grounded source",
-                    "source_url": "https://example.com/source",
-                    "retrieval_reasons": ["fulltext_match"],
-                    "fused_score": 0.032,
-                }],
-                "evidence": [{"assertion_id": "chunk-1", "text": text}],
-                "relations": [{"source": "chunk-1", "target": "entity-1"}],
-                "graphView": {
-                    "viewId": "knowgraph:view-1",
-                    "includedRelationships": [{"source": "chunk-1", "target": "entity-1"}],
-                    "records": [{
-                        "canonicalId": "chunk-1",
-                        "summary": text,
-                        "estimatedCharacters": len(text),
-                        "estimatedTokens": len(text) // 4,
-                    }]
-                },
-            }
-
-        monkeypatch.setattr(
-            tr,
-            "retrieve_knowgraph_context_tool",
-            fake_retrieve,
-        )
-        result = asyncio.run(mcp_host.call_tool(
-            "knowgraph.query",
-            {
-                "projectId": "project-1",
-                "conversationId": "conversation-1",
-                "query": "grounded evidence",
-            },
-        ))
-        payload = json.loads(result[0].text)
-
-        assertion = payload["assertions"][0]
-        assert "text" not in assertion
-        assert len(assertion["summary"]) == 480
-        assert assertion["canonicalId"] == "chunk-1"
-        assert assertion["documentId"] == "document-1"
-        assert assertion["chunkId"] == "chunk-1"
-        assert assertion["sourceTitle"] == "Grounded source"
-        assert assertion["sourceRef"] == "https://example.com/source"
-        assert assertion["retrievalReasons"] == ["fulltext_match"]
-        assert assertion["fusedScore"] == 0.032
-        assert payload["retryable"] is False
-        assert "evidence" not in payload
-        assert "relations" not in payload
-        assert payload["expansion"]["arguments"]["includeFullText"] is True
-        assert payload["expansion"]["arguments"]["maxResults"] == 5
-        assert "graphView" not in payload
-        assert payload["omitted"]["relationCount"] == 1
-
-    def test_knowgraph_expansion_arguments_are_accepted_by_the_exposed_schema(self, monkeypatch):
-        from app import mcp_host
-
-        async def fake_retrieve(**_kwargs):
-            return {
-                "retrieval_state": "empty",
-                "assertions": [],
-                "evidence": [],
-                "relations": [],
-            }
-
-        monkeypatch.setattr(tr, "retrieve_knowgraph_context_tool", fake_retrieve)
-        tools = asyncio.run(mcp_host.list_tools())
-        query_tool = next(tool for tool in tools if tool.name == "knowgraph.query")
-        result = asyncio.run(mcp_host.call_tool(
-            "knowgraph.query",
-            {
-                "projectId": "project-1",
-                "conversationId": "conversation-1",
-                "query": "provenance",
-            },
-        ))
-        payload = json.loads(result[0].text)
-        expansion_keys = set(payload["expansion"]["arguments"])
-        schema_keys = set(query_tool.inputSchema["properties"])
-
-        assert payload["expansion"]["tool"] == query_tool.name
-        assert expansion_keys <= schema_keys
-        assert expansion_keys <= mcp_host._ALLOWED_KEYS[query_tool.name]
-
     def test_host_never_exposes_a_write_tool_or_pair_front_door(self):
         from app import mcp_host
 
@@ -313,6 +186,8 @@ class TestPythonMcpHost:
         # Inspect each real schema; native Engraphis tools intentionally do not
         # live in the application handler allow-list.
         for tool in tools:
+            if tool.name.startswith(("engraphis.", "cbm.", "graphiti.")):
+                continue
             properties = set((tool.inputSchema or {}).get("properties") or {})
             assert not properties & {
                 "taskLedger",

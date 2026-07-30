@@ -40,7 +40,41 @@ const PROJECTS_TABLE = 'ag_catalog.projects';
 const V3_STATE_KEY = 'v3_state';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const V3_SCHEMA_CAS_RETRIES = 3;
-const REQUIRED_CODEGRAPH_TOOL_GRANTS = ['codegraph.status', 'codegraph.search'] as const;
+const OBSOLETE_GRAPH_TOOL_GRANTS = new Set([
+  'codegraph.status',
+  'codegraph.search',
+]);
+const MAIN_NATIVE_GRAPH_TOOL_GRANTS = [
+  'engraphis.engraphis_recall',
+  'engraphis.engraphis_recall_grounded',
+  'engraphis.engraphis_answer',
+  'engraphis.engraphis_why',
+  'engraphis.engraphis_timeline',
+  'engraphis.engraphis_stats',
+] as const;
+const HERMES_NATIVE_GRAPH_TOOL_GRANTS = [
+  'graphiti.search_nodes',
+  'graphiti.search_memory_facts',
+  'graphiti.get_entity_edge',
+  'graphiti.get_episodes',
+  'graphiti.get_episode_entities',
+  'graphiti.get_status',
+  'graphiti.add_memory',
+  'graphiti.add_triplet',
+] as const;
+const CODER_NATIVE_CBM_TOOL_GRANTS = [
+  'cbm.index_repository',
+  'cbm.search_graph',
+  'cbm.query_graph',
+  'cbm.trace_path',
+  'cbm.get_code_snippet',
+  'cbm.get_graph_schema',
+  'cbm.get_architecture',
+  'cbm.search_code',
+  'cbm.list_projects',
+  'cbm.index_status',
+  'cbm.detect_changes',
+] as const;
 
 function projectLookup(projectId: string): { clause: string; params: any[] } {
   if (UUID_REGEX.test(projectId)) {
@@ -360,8 +394,12 @@ function ensureMainChatControllerCard(deck: DeckDocument): DeckDocument {
   return { ...deck, promptTemplates, nodes, edges: finalEdges };
 }
 
-/** Restore the required app-facing CodeGraph grants on Main and Hermes cards. */
-export function repairCodeGraphToolGrants(deck: DeckDocument): DeckDocument {
+/**
+ * Replace obsolete graph-wrapper grants with role-appropriate native MCP tools.
+ * This changes saved authorization only; upstream MCP catalogs remain the tool
+ * schema and behavior authorities.
+ */
+export function repairNativeGraphToolGrants(deck: DeckDocument): DeckDocument {
   if (deck.id !== BUILDER_DECK_ID) return deck;
   let changed = false;
   const nodes = deck.nodes.map((node) => {
@@ -369,18 +407,44 @@ export function repairCodeGraphToolGrants(deck: DeckDocument): DeckDocument {
       (node.runtimeOptions as any)?.binding ?? node.runtimeBinding,
       node.id,
     );
-    if (binding !== 'main_chat' && binding !== 'hermes_steward') return node;
-
-    const selected = Array.isArray(node.runtimeOptions?.tools) ? node.runtimeOptions.tools : [];
-    const missing = REQUIRED_CODEGRAPH_TOOL_GRANTS.filter((tool) => !selected.includes(tool));
-    if (missing.length === 0) return node;
+    const required =
+      binding === 'main_chat'
+        ? MAIN_NATIVE_GRAPH_TOOL_GRANTS
+        : binding === 'hermes_steward'
+          ? HERMES_NATIVE_GRAPH_TOOL_GRANTS
+          : binding === 'local_coder'
+            ? CODER_NATIVE_CBM_TOOL_GRANTS
+            : [];
+    const selected = Array.isArray(node.runtimeOptions?.tools)
+      ? node.runtimeOptions.tools
+          .map((tool) => String(tool || '').trim())
+          .filter(Boolean)
+          .filter(
+            (tool) =>
+              !OBSOLETE_GRAPH_TOOL_GRANTS.has(tool) &&
+              !tool.startsWith('knowgraph.'),
+          )
+          .map((tool) =>
+            tool.startsWith('engraphis_') ? `engraphis.${tool}` : tool,
+          )
+      : [];
+    const repaired = Array.from(new Set([...selected, ...required]));
+    const current = Array.isArray(node.runtimeOptions?.tools)
+      ? node.runtimeOptions.tools
+      : [];
+    if (
+      repaired.length === current.length &&
+      repaired.every((tool, index) => tool === current[index])
+    ) {
+      return node;
+    }
 
     changed = true;
     return {
       ...node,
       runtimeOptions: {
         ...node.runtimeOptions,
-        tools: [...selected, ...missing],
+        tools: repaired,
       },
     };
   });
@@ -415,7 +479,7 @@ function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument
           .filter((edge: DeckEdge | null): edge is DeckEdge => Boolean(edge))
       : [],
   };
-  return repairCodeGraphToolGrants(ensureMainChatControllerCard(deck));
+  return repairNativeGraphToolGrants(ensureMainChatControllerCard(deck));
 }
 
 function hashRevision(value: unknown): string {

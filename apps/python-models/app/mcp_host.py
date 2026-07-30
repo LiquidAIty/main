@@ -6,9 +6,8 @@ and the gRPC Harness (localcoder/src/grpc/server.ts) spawns them as ONE stdio
 MCP client for the server's lifetime — before any chat work is accepted. No
 env vars, no .env, no per-turn spawn, no fallback host.
 
-Exposes this application tool surface plus the complete installed Engraphis
-FastMCP registry and, for the authenticated external operator connection, the
-complete paginated native Codebase Memory MCP registry:
+Exposes this application tool surface plus the dynamically discovered native
+Engraphis, Codebase Memory, and official Graphiti MCP registries:
   * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
   * run_mag_one                      (Main-only approved AgentGraph assignment)
   * thinkgraph.get_graph_slice       (bounded product projection)
@@ -24,11 +23,10 @@ to Python handlers (app/control_plane.py) which own validation/policy and use th
 existing backend deck routes. No semantics,
 no fallback lives in this host.
 
-ThinkGraph mutation is an explicit Main Chat grant; KnowGraph ingestion remains
-an explicit Hermes-only grant. Engraphis tools are imported from
-``engraphis.mcp_server`` without copied schemas, handlers, or a second registry,
-and use the same database as ThinkGraph. Graph authorities never appear as cards
-or conversational agents.
+ThinkGraph mutation is an explicit Main Chat grant; official Graphiti ingestion
+is an explicit Hermes-only grant. Native tools keep their upstream schemas,
+annotations, dispatch, and results; this host adds only provider namespaces and
+authentication. Graph authorities never appear as cards or conversational agents.
 """
 
 from __future__ import annotations
@@ -37,6 +35,7 @@ import asyncio
 import atexit
 import copy
 import hashlib
+import inspect
 import json
 import os
 import queue
@@ -63,6 +62,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from dotenv import load_dotenv
 from mcp.server import Server
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
@@ -70,8 +70,10 @@ from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
+_REPO_ROOT = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
+load_dotenv(os.path.join(_REPO_ROOT, "apps", "backend", ".env"), override=False)
+
 BACKEND = os.environ.get("LIQUIDAITY_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
-KNOWGRAPH_QUERY_TIMEOUT_S = float(os.environ.get("KNOWGRAPH_QUERY_TIMEOUT_S", "20"))
 MCP_TRANSPORT = os.environ.get("LIQUIDAITY_MCP_TRANSPORT", "stdio").strip().lower()
 HTTP_MCP_HOST = "127.0.0.1"
 HTTP_MCP_PORT = int(os.environ.get("LIQUIDAITY_HTTP_MCP_PORT", "8765"))
@@ -237,6 +239,26 @@ _NATIVE_CBM_CLIENT: "_NativeStdioMcpClient | None" = None
 _NATIVE_CBM_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_CBM_NAMES: frozenset[str] = frozenset()
 _NATIVE_CBM_INIT_LOCK = threading.Lock()
+_NATIVE_GRAPHITI_MODULE: Any | None = None
+_NATIVE_GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
+_NATIVE_GRAPHITI_NAMES: frozenset[str] = frozenset()
+
+_NATIVE_PREFIXES = {
+    "cbm": "cbm.",
+    "engraphis": "engraphis.",
+    "graphiti": "graphiti.",
+}
+
+
+def _namespace_native_tools(provider: str, tools: list[Tool]) -> list[Tool]:
+    """Add only a generated routing prefix; preserve every upstream field."""
+    prefix = _NATIVE_PREFIXES[provider]
+    result: list[Tool] = []
+    for tool in tools:
+        payload = tool.model_dump(by_alias=True, exclude_none=True)
+        payload["name"] = prefix + tool.name
+        result.append(Tool.model_validate(payload))
+    return result
 
 
 @server.list_resources()
@@ -320,6 +342,104 @@ def _call_native_engraphis(name: str, arguments: dict[str, Any]):
         return asyncio.run(_native_engraphis_mcp().call_tool(name, arguments))
 
 
+def _graphiti_config():
+    """Build the official Graphiti config from LiquidAIty's existing authorities."""
+    from config.schema import GraphitiConfig
+
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY") or None
+    openrouter_url = os.environ.get("OPENROUTER_BASE_URL") or "https://openrouter.ai/api/v1"
+    openai_key = os.environ.get("OPENAI_API_KEY") or None
+    return GraphitiConfig(
+        database={
+            "provider": "neo4j",
+            "providers": {
+                "neo4j": {
+                    "uri": os.environ.get("NEO4J_URI", "bolt://localhost:7687"),
+                    "username": os.environ.get("NEO4J_USER", "neo4j"),
+                    "password": os.environ.get("NEO4J_PASSWORD") or None,
+                    "database": os.environ.get("NEO4J_DATABASE", "neo4j"),
+                }
+            },
+        },
+        llm={
+            "provider": "openai",
+            "model": os.environ.get(
+                "OPENROUTER_DEFAULT_KG_MODEL_KEY",
+                os.environ.get("OPENROUTER_DEFAULT_MODEL", "z-ai/glm-5.2"),
+            ),
+            "providers": {
+                "openai": {
+                    "api_key": openrouter_key,
+                    "api_url": openrouter_url,
+                }
+            },
+        },
+        embedder={
+            "provider": "openai",
+            "model": os.environ.get("GRAPHITI_EMBEDDER_MODEL", "text-embedding-3-small"),
+            "providers": {
+                "openai": {
+                    "api_key": openai_key,
+                    "api_url": os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                }
+            },
+        },
+        graphiti={
+            "group_id": "liquidaity",
+            "user_id": "liquidaity-mcp",
+        },
+    )
+
+
+async def _initialize_native_graphiti() -> None:
+    """Initialize the installed official Graphiti MCP server exactly once."""
+    global _NATIVE_GRAPHITI_MODULE, _NATIVE_GRAPHITI_NAMES, _NATIVE_GRAPHITI_TOOLS
+    if _NATIVE_GRAPHITI_TOOLS is not None:
+        return
+    import graphiti_mcp_server as native
+
+    native.config = _graphiti_config()
+    native.graphiti_service = native.GraphitiService(native.config, native.SEMAPHORE_LIMIT)
+    native.queue_service = native.QueueService()
+    await native.graphiti_service.initialize()
+    native.graphiti_client = await native.graphiti_service.get_client()
+    native.semaphore = native.graphiti_service.semaphore
+    await native.queue_service.initialize(native.graphiti_client)
+    tools = tuple(await native.mcp.list_tools())
+    names = [tool.name for tool in tools]
+    if len(names) != len(set(names)):
+        raise RuntimeError("native_graphiti_duplicate_tool_name")
+    _NATIVE_GRAPHITI_MODULE = native
+    _NATIVE_GRAPHITI_TOOLS = tools
+    _NATIVE_GRAPHITI_NAMES = frozenset(names)
+
+
+async def _native_graphiti_tools() -> list[Tool]:
+    await _initialize_native_graphiti()
+    return list(_NATIVE_GRAPHITI_TOOLS or ())
+
+
+async def _call_native_graphiti(name: str, arguments: dict[str, Any]):
+    if _NATIVE_GRAPHITI_MODULE is None:
+        raise RuntimeError("native_graphiti_not_initialized")
+    return await _NATIVE_GRAPHITI_MODULE.mcp.call_tool(name, arguments)
+
+
+async def _close_native_graphiti() -> None:
+    global _NATIVE_GRAPHITI_MODULE, _NATIVE_GRAPHITI_NAMES, _NATIVE_GRAPHITI_TOOLS
+    native = _NATIVE_GRAPHITI_MODULE
+    _NATIVE_GRAPHITI_MODULE = None
+    _NATIVE_GRAPHITI_TOOLS = None
+    _NATIVE_GRAPHITI_NAMES = frozenset()
+    client = getattr(native, "graphiti_client", None) if native is not None else None
+    driver = getattr(client, "driver", None)
+    close = getattr(driver, "close", None)
+    if callable(close):
+        result = close()
+        if inspect.isawaitable(result):
+            await result
+
+
 class _NativeStdioMcpClient:
     """One serialized JSON-RPC session to the installed native CBM server."""
 
@@ -354,7 +474,7 @@ class _NativeStdioMcpClient:
         initialized = self._request(
             "initialize",
             {
-                "protocolVersion": "2025-06-18",
+                "protocolVersion": "2024-11-05",
                 "capabilities": {},
                 "clientInfo": {
                     "name": "liquidaity-native-cbm",
@@ -992,90 +1112,6 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="knowgraph.query",
-            description=(
-                "READ-ONLY grounded temporal knowledge retrieval from KnowGraph (Neo4j) using "
-                "Graphiti hybrid fact search: sourced facts, entities, relationships, current or "
-                "superseded validity, conflicts, and episode provenance. Legacy Chunk evidence is "
-                "used only when a scope has no Graphiti facts. Returns real stored evidence only; "
-                "an unreachable or timed-out graph returns an honest error, never fabricated context."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "conversationId": {"type": "string"},
-                    "query": {"type": "string"},
-                    "anchors": {"type": "array", "items": {"type": "string"}},
-                    "maxResults": {"type": "integer", "minimum": 1, "maximum": 12, "default": 5},
-                    "parentViewId": {"type": "string"},
-                    "includeFullText": {
-                        "type": "boolean",
-                        "default": False,
-                        "description": "Explicit expansion: include complete selected fact text. Default false returns compact summaries.",
-                    },
-                },
-                "required": ["projectId", "conversationId", "query"],
-            },
-        ),
-        Tool(
-            name="knowgraph.ingest",
-            description=(
-                "Hermes only: ingest REAL source material into KnowGraph as deterministic Graphiti "
-                "episodes. Graphiti performs entity resolution, temporal fact extraction, episode "
-                "provenance, and Neo4j writes. Each document must carry real source text plus source "
-                "metadata (source_url/title/fetched_at/document_id). Never invent sources or ingest "
-                "model speculation."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "documents": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "document_id": {"type": "string"},
-                                "text": {"type": "string"},
-                                "title": {"type": "string"},
-                                "source_url": {"type": "string"},
-                                "fetched_at": {"type": "string"},
-                                "snippet": {"type": "string"},
-                                "metadata": {"type": "object"},
-                            },
-                            "required": ["text"],
-                        },
-                    },
-                    "researchFocus": {"type": "object"},
-                },
-                "required": ["projectId", "documents"],
-            },
-        ),
-        Tool(
-            name="codegraph.status",
-            description=(
-                "READ-ONLY CodeGraph/CBM project and index status. Native CBM remains "
-                "the only CodeGraph writer and indexer."
-            ),
-            inputSchema={"type": "object", "properties": {}, "required": []},
-        ),
-        Tool(
-            name="codegraph.search",
-            description=(
-                "READ-ONLY repository-structure search through native CBM. Returns "
-                "native qualified identities, paths, relationships, and errors unchanged."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 50},
-                },
-                "required": ["query"],
-            },
-        ),
-        Tool(
             name="hermes.memory_read",
             description=(
                 "Hermes only: read your project-scoped SQL memory (private steward continuity — "
@@ -1256,24 +1292,22 @@ async def list_tools() -> list[Tool]:
     ]
     for tool in tools:
         tool.inputSchema.setdefault("additionalProperties", False)
-    tools.extend(await _native_engraphis_tools())
+    native_catalogs = {
+        "engraphis": await _native_engraphis_tools(),
+        "cbm": await _native_cbm_tools(),
+        "graphiti": await _native_graphiti_tools(),
+    }
+    for provider, native_tools in native_catalogs.items():
+        tools.extend(_namespace_native_tools(provider, native_tools))
+    names = [tool.name for tool in tools]
+    if len(names) != len(set(names)):
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        raise RuntimeError("federated_duplicate_tool_name:" + ",".join(duplicates))
     context = _authenticated_main_context()
     if context is None:
         published = tools
     else:
-        external_tools = [
-            tool for tool in tools if tool.name not in _EXTERNAL_CODEGRAPH_ADAPTERS
-        ]
-        native_cbm_tools = await _native_cbm_tools()
-        collisions = {tool.name for tool in external_tools} & {
-            tool.name for tool in native_cbm_tools
-        }
-        if collisions:
-            raise RuntimeError(
-                "native_cbm_tool_name_collision:" + ",".join(sorted(collisions))
-            )
-        external_tools.extend(native_cbm_tools)
-        published = _bind_authenticated_catalog(external_tools)
+        published = _bind_authenticated_catalog(tools)
     catalog_count, catalog_hash = _catalog_identity(published)
     _trace(
         "catalog",
@@ -1296,24 +1330,10 @@ _READ_ONLY_TOOLS = {
     "mag_one.describe_connected_agents",
     "canvas.inspect",
     "thinkgraph.get_graph_slice",
-    "knowgraph.query",
-    "codegraph.status",
-    "codegraph.search",
     "worldsignals.capabilities",
     "worldsignals.poll",
     "worldsignals.stream_events",
-    "search_graph",
-    "query_graph",
-    "trace_path",
-    "get_code_snippet",
-    "get_graph_schema",
-    "get_architecture",
-    "search_code",
-    "list_projects",
-    "index_status",
-    "detect_changes",
 }
-_EXTERNAL_CODEGRAPH_ADAPTERS = frozenset({"codegraph.status", "codegraph.search"})
 _SERVER_OWNED_ARGUMENTS = {
     "projectId",
     "deckId",
@@ -1334,30 +1354,36 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
     security_schemes = [{"type": "oauth2", "scopes": [AUTH0_REQUIRED_SCOPE]}]
     result: list[Tool] = []
     for tool in tools:
-        schema = copy.deepcopy(tool.inputSchema)
-        properties = schema.get("properties")
-        if isinstance(properties, dict):
-            for field in _SERVER_OWNED_ARGUMENTS:
-                properties.pop(field, None)
-        required = schema.get("required")
-        if isinstance(required, list):
-            schema["required"] = [field for field in required if field not in _SERVER_OWNED_ARGUMENTS]
-        if tool.name == "run_coder_subagent":
-            if isinstance(properties, dict):
-                properties.pop("parentRunId", None)
-            if isinstance(schema.get("required"), list):
-                schema["required"] = [field for field in schema["required"] if field != "parentRunId"]
-        if tool.name == "card.run_assistant_agent":
-            if isinstance(properties, dict):
-                properties.pop("instructionId", None)
-            if isinstance(schema.get("required"), list):
-                schema["required"] = [
-                    field for field in schema["required"] if field != "instructionId"
-                ]
         payload = tool.model_dump(by_alias=True, exclude_none=True)
-        payload["inputSchema"] = schema
+        is_native = any(tool.name.startswith(prefix) for prefix in _NATIVE_PREFIXES.values())
+        if not is_native:
+            schema = copy.deepcopy(tool.inputSchema)
+            properties = schema.get("properties")
+            if isinstance(properties, dict):
+                for field in _SERVER_OWNED_ARGUMENTS:
+                    properties.pop(field, None)
+            required = schema.get("required")
+            if isinstance(required, list):
+                schema["required"] = [
+                    field for field in required if field not in _SERVER_OWNED_ARGUMENTS
+                ]
+            if tool.name == "run_coder_subagent":
+                if isinstance(properties, dict):
+                    properties.pop("parentRunId", None)
+                if isinstance(schema.get("required"), list):
+                    schema["required"] = [
+                        field for field in schema["required"] if field != "parentRunId"
+                    ]
+            if tool.name == "card.run_assistant_agent":
+                if isinstance(properties, dict):
+                    properties.pop("instructionId", None)
+                if isinstance(schema.get("required"), list):
+                    schema["required"] = [
+                        field for field in schema["required"] if field != "instructionId"
+                    ]
+            payload["inputSchema"] = schema
         payload["securitySchemes"] = security_schemes
-        if tool.name in _READ_ONLY_TOOLS:
+        if not is_native and tool.name in _READ_ONLY_TOOLS:
             annotations = dict(payload.get("annotations") or {})
             annotations["readOnlyHint"] = True
             payload["annotations"] = annotations
@@ -1397,10 +1423,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "instructionId", "conversationId"},
     "thinkgraph.submit_update": {"projectId", "conversationId", "resources", "relations", "statements"},
-    "knowgraph.query": {"projectId", "conversationId", "query", "anchors", "maxResults", "parentViewId", "includeFullText"},
-    "knowgraph.ingest": {"projectId", "documents", "researchFocus"},
-    "codegraph.status": set(),
-    "codegraph.search": {"projectId", "conversationId", "query", "limit"},
     "hermes.memory_read": {"projectId", "key"},
     "hermes.memory_write": {"projectId", "key", "value"},
     "hermes.read_report": {"parentRunId"},
@@ -1436,9 +1458,6 @@ _BRIDGE_PATHS: dict[str, str] = {
     "mag_one.describe_connected_agents": "describe_connected_agents",
     "run_mag_one": "run_mag_one",
     "thinkgraph.submit_update": "thinkgraph_submit_update",
-    "knowgraph.ingest": "knowgraph_ingest",
-    "codegraph.status": "codegraph_status",
-    "codegraph.search": "codegraph_search",
     "hermes.memory_read": "hermes_memory_read",
     "hermes.memory_write": "hermes_memory_write",
     "hermes.read_report": "hermes_read_report",
@@ -1461,53 +1480,43 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
 
 
 async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
-    await _initialize_native_engraphis()
-    native_engraphis = _NATIVE_ENGRAPHIS_NAMES
     context = _authenticated_main_context()
-    if name in native_engraphis:
-        try:
-            result = await asyncio.to_thread(
+    if name.startswith(_NATIVE_PREFIXES["engraphis"]):
+        await _initialize_native_engraphis()
+        native_name = name.removeprefix(_NATIVE_PREFIXES["engraphis"])
+        if native_name in _NATIVE_ENGRAPHIS_NAMES:
+            return await asyncio.to_thread(
                 _call_native_engraphis,
-                name,
+                native_name,
                 dict(arguments or {}),
             )
-            # FastMCP 1.0 tools return the MCP SDK's native result union:
-            # unstructured content, structured content, or the
-            # (content_blocks, structured_content) combination. Returning it
-            # unchanged lets the outer low-level Server normalize the same
-            # contract without stringifying or discarding structuredContent.
-            return result
-        except Exception as err:  # noqa: BLE001 - preserve one honest tool-level failure
-            return [
-                TextContent(
-                    type="text",
-                    text=json.dumps({"ok": False, "error": f"engraphis_failed: {err}"}),
-                )
-            ]
-    if context is not None and name in _NATIVE_CBM_NAMES:
-        try:
+    if name.startswith(_NATIVE_PREFIXES["cbm"]):
+        await _native_cbm_tools()
+        native_name = name.removeprefix(_NATIVE_PREFIXES["cbm"])
+        if native_name in _NATIVE_CBM_NAMES:
             return await asyncio.to_thread(
                 _call_native_cbm,
-                name,
+                native_name,
                 dict(arguments or {}),
             )
-        except Exception as err:  # noqa: BLE001 - preserve one honest native failure
-            return CallToolResult(
-                content=[
-                    TextContent(
-                        type="text",
-                        text=json.dumps({"ok": False, "error": f"native_cbm_failed: {err}"}),
-                    )
-                ],
-                isError=True,
-            )
-    if context is not None and name in _EXTERNAL_CODEGRAPH_ADAPTERS:
-        return [
-            TextContent(
-                type="text",
-                text=json.dumps({"ok": False, "error": f"unknown_tool: {name}"}),
-            )
-        ]
+    if name.startswith(_NATIVE_PREFIXES["graphiti"]):
+        await _initialize_native_graphiti()
+        native_name = name.removeprefix(_NATIVE_PREFIXES["graphiti"])
+        if native_name in _NATIVE_GRAPHITI_NAMES:
+            native_args = dict(arguments or {})
+            if context is not None:
+                group_id = f"liquidaity:{context['projectId']}"
+                if native_name in {"add_memory", "add_triplet", "summarize_saga"}:
+                    native_args["group_id"] = group_id
+                elif native_name in {
+                    "search_nodes",
+                    "search_memory_facts",
+                    "get_episodes",
+                    "build_communities",
+                    "clear_graph",
+                }:
+                    native_args["group_ids"] = [group_id]
+            return await _call_native_graphiti(native_name, native_args)
     allowed = _ALLOWED_KEYS.get(name)
     if allowed is None:
         return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"unknown_tool: {name}"}))]
@@ -1584,83 +1593,6 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                 ),
             )
         ]
-    if name == "knowgraph.query":
-        # Direct in-process reuse of the ONE proven hybrid retrieval
-        # (services/knowgraph via tool_registry) — read-only; honest error when
-        # Neo4j or the embedding backend is unavailable.
-        try:
-            from app.python_models.tool_registry import retrieve_knowgraph_context_tool
-
-            max_results = args.get("maxResults")
-            bounded_max_results = min(max_results, 12) if isinstance(max_results, int) and max_results > 0 else 5
-            result = await asyncio.wait_for(
-                retrieve_knowgraph_context_tool(
-                    project_id=str(args.get("projectId") or ""),
-                    conversation_id=str(args.get("conversationId") or ""),
-                    query=str(args.get("query") or ""),
-                    anchors=[str(a) for a in (args.get("anchors") or []) if str(a).strip()],
-                    max_results=bounded_max_results,
-                    parent_view_id=str(args.get("parentViewId") or "") or None,
-                ),
-                timeout=KNOWGRAPH_QUERY_TIMEOUT_S,
-            )
-            if not args.get("includeFullText"):
-                compact_assertions = []
-                for assertion in result.get("assertions") or []:
-                    full_text = str(assertion.get("text") or "")
-                    chunk_refs = [
-                        str(value)
-                        for value in (assertion.get("chunk_refs") or [])
-                        if str(value).strip()
-                    ]
-                    compact_assertions.append({
-                        "canonicalId": str(
-                            assertion.get("assertion_id")
-                            or assertion.get("id")
-                            or ""
-                        ),
-                        "summary": full_text[:480],
-                        "documentId": str(assertion.get("document_id") or ""),
-                        "chunkId": chunk_refs[0] if chunk_refs else "",
-                        "retrievalReasons": [
-                            str(value)
-                            for value in (assertion.get("retrieval_reasons") or [])
-                            if str(value).strip()
-                        ],
-                        "fusedScore": assertion.get("fused_score"),
-                        "sourceTitle": str(assertion.get("source_title") or ""),
-                        "sourceRef": str(assertion.get("source_url") or ""),
-                        "omittedCharacters": max(0, len(full_text) - 480),
-                    })
-                result["assertions"] = compact_assertions
-                result.pop("evidence", None)
-                omitted_relation_count = len(result.pop("relations", None) or [])
-                result["resultSummary"] = {
-                    "state": str(result.get("retrieval_state") or ""),
-                    "resultCount": len(compact_assertions),
-                }
-                result["omitted"] = {
-                    "fullTextCharacters": sum(
-                        int(assertion["omittedCharacters"])
-                        for assertion in compact_assertions
-                    ),
-                    "relationCount": omitted_relation_count,
-                }
-                result["expansion"] = {
-                    "tool": "knowgraph.query",
-                    "arguments": {
-                        "query": str(args.get("query") or ""),
-                        "anchors": list(args.get("anchors") or []),
-                        "maxResults": bounded_max_results,
-                        "includeFullText": True,
-                    },
-                }
-            result.pop("graphView", None)
-            return [TextContent(type="text", text=json.dumps({"ok": True, **result}))]
-        except asyncio.TimeoutError:
-            return [TextContent(type="text", text=json.dumps({"ok": False, "error": "knowgraph_query_timeout"}))]
-        except Exception as err:  # noqa: BLE001 — honest tool-level failure
-            return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"knowgraph_query_failed: {err}"}))]
     if name == "web_search":
         from app.python_models.web_search import web_search
 
@@ -1777,8 +1709,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
 
 
 async def _run_stdio() -> None:
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(read_stream, write_stream, server.create_initialization_options())
+    finally:
+        await _close_native_graphiti()
+        await asyncio.to_thread(_close_native_cbm)
 
 
 def _safe_request_header(scope: dict[str, Any], name: bytes) -> str:
@@ -1868,6 +1804,7 @@ async def _run_streamable_http() -> None:
             async with session_manager.run():
                 yield
         finally:
+            await _close_native_graphiti()
             await asyncio.to_thread(_close_native_cbm)
 
     if OAUTH_ENFORCED:
@@ -1907,6 +1844,7 @@ async def _run_streamable_http() -> None:
 
 async def main() -> None:
     await _initialize_native_engraphis()
+    await _initialize_native_graphiti()
     if MCP_TRANSPORT == "stdio":
         await _run_stdio()
         return

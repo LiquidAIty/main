@@ -242,7 +242,7 @@ describe('Canonical Cards Runtime', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const research = {
       id: 'research', kind: 'agent', runtimeType: 'assistant_agent', title: 'Research Agent',
-      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['retrieve_knowgraph_context'] },
+      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['calculator'] },
     };
     const allCards = [cardM, research];
     const allEdges = [{ id: 'e', source: research.id, target: cardM.id, edgeType: 'magentic_option' }];
@@ -251,7 +251,7 @@ describe('Canonical Cards Runtime', () => {
       cardM, {}, 'do research', { projectId: 'p', deckId: 'd', allCards, allEdges }, {}, callable, '2026',
     );
     const participant = payload.cardRuntime.participants.find((p) => p.cardId === 'research');
-    expect(participant?.tools).toContain('retrieve_knowgraph_context');
+    expect(participant?.tools).toContain('calculator');
   });
 
   it('does not add ThinkGraph authority to the Mag One runtime scope', () => {
