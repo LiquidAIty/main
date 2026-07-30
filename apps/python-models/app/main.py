@@ -161,27 +161,10 @@ def unified_model_context(
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
-@app.post("/unified/object-context")
-def unified_object_context(payload: dict[str, Any]):
-    """Resolve identity-only selected graph objects into bounded Main context."""
-    from app.python_models.unified_context import build_graph_object_context
-    try:
-        return build_graph_object_context(
-            str(payload.get("projectId") or ""),
-            str(payload.get("conversationId") or ""),
-            list(payload.get("references") or []),
-        )
-    except ValueError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err)) from err
-
-
 @app.get("/unified/doorway-context")
 def unified_doorway_context(projectId: str, conversationId: str, viewIds: str):
-    """Compact rendering of persisted Graph View records for a child doorway —
-    resolved by id from the persistent store, never from caller-supplied JSON."""
-    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+    """Render AgentGraph reference identities for a child doorway."""
+    from app.python_models import agentgraph
     from app.python_models.unified_context import (
         graph_view_identities,
         render_graph_views,
@@ -191,7 +174,11 @@ def unified_doorway_context(projectId: str, conversationId: str, viewIds: str):
     if not requested:
         raise HTTPException(status_code=400, detail="view_ids_required")
     try:
-        persisted = get_thinkgraph().graph_views(projectId, conversationId).get("views") or []
+        persisted = agentgraph.list_graph_views(
+            project_id=projectId,
+            conversation_id=conversationId,
+            limit=50,
+        ).get("views") or []
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err
     try:
@@ -214,16 +201,6 @@ def unified_doorway_context(projectId: str, conversationId: str, viewIds: str):
             "modelContext": rendered["text"], "measurements": rendered["measurements"]}
 
 
-@app.get("/thinkgraph/context-view")
-def thinkgraph_context_view(projectId: str, conversationId: str, role: str = "main_chat", activeGraphViewId: str | None = None, limit: int = 80, expansionDepth: int = 0):
-    from app.python_models.thinkgraph_context import resolve_thinkgraph_context
-    from app.python_models.thinkgraph_engraphis import get_thinkgraph
-    try:
-        return resolve_thinkgraph_context(get_thinkgraph(), project_id=projectId, conversation_id=conversationId, receiving_role=role, active_view_id=activeGraphViewId, limit=limit, extra_hops=expansionDepth)
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err)) from err
-
-
 @app.get("/thinkgraph/health")
 def thinkgraph_health():
     """Load and report the real local embedding engine; never a fallback."""
@@ -243,29 +220,41 @@ def thinkgraph_apply_patch(payload: dict):
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
-@app.post("/thinkgraph/graph-views")
-def thinkgraph_store_graph_view(payload: dict):
-    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+@app.post("/agentgraph/graph-views")
+def agentgraph_store_graph_view(payload: dict):
+    from app.python_models import agentgraph
+    view = dict(payload.get("view") or {})
     try:
-        return get_thinkgraph().persist_graph_view(payload.get("view") or {})
+        return agentgraph.create_graph_view(
+            project_id=str(view.get("projectId") or ""),
+            conversation_id=str(view.get("conversationId") or ""),
+            correlation_id=str(
+                view.get("correlationId") or view.get("invocationId") or ""
+            ),
+            display_label=str(view.get("displayLabel") or ""),
+            references=list(view.get("references") or []),
+            producing_role=str(view.get("producingRole") or "main_chat"),
+            receiving_role=str(view.get("receivingRole") or "main_chat"),
+            status=str(view.get("status") or "candidate"),
+            parent_view_id=str(view.get("parentViewId") or "") or None,
+            note=str(view.get("note") or "") or None,
+            view_id=str(view.get("viewId") or "") or None,
+        )
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
-@app.post("/thinkgraph/graph-views/transition")
-def thinkgraph_transition_graph_views(payload: dict):
-    """Update lifecycle for exact persisted IDs without moving view content."""
-    from app.python_models.thinkgraph_engraphis import get_thinkgraph
-    from app.python_models.unified_context import transition_persisted_graph_views
+@app.post("/agentgraph/graph-views/transition")
+def agentgraph_transition_graph_views(payload: dict):
+    """Update lifecycle for exact AgentGraph view IDs."""
+    from app.python_models import agentgraph
     try:
-        views = transition_persisted_graph_views(
-            get_thinkgraph(),
+        views = agentgraph.transition_graph_views(
             project_id=str(payload.get("projectId") or ""),
             conversation_id=str(payload.get("conversationId") or ""),
             view_ids=list(payload.get("viewIds") or []),
             status=str(payload.get("status") or ""),
-            invocation_id=str(payload.get("invocationId") or "") or None,
-            runtime=dict(payload.get("runtime") or {}) if payload.get("runtime") is not None else None,
+            correlation_id=str(payload.get("invocationId") or "") or None,
         )
         return {"ok": True, "views": views}
     except ValueError as err:
@@ -274,11 +263,15 @@ def thinkgraph_transition_graph_views(payload: dict):
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
-@app.get("/thinkgraph/graph-views")
-def thinkgraph_graph_views(projectId: str, conversationId: str | None = None):
-    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+@app.get("/agentgraph/graph-views")
+def agentgraph_graph_views(projectId: str, conversationId: str | None = None):
+    from app.python_models import agentgraph
     try:
-        return get_thinkgraph().graph_views(projectId, conversationId)
+        return agentgraph.list_graph_views(
+            project_id=projectId,
+            conversation_id=conversationId,
+            limit=50,
+        )
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err
 

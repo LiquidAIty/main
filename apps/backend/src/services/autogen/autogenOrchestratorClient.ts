@@ -387,14 +387,6 @@ export async function applyThinkGraphPatchOnPython(authority: unknown, patch: un
   });
 }
 
-export async function persistGraphViewOnPython(view: unknown): Promise<unknown> {
-  return requestThinkGraphJson('/thinkgraph/graph-views', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ view }),
-  });
-}
-
 export async function transitionGraphViewsOnPython(params: {
   projectId: string;
   conversationId: string;
@@ -403,7 +395,7 @@ export async function transitionGraphViewsOnPython(params: {
   invocationId?: string;
   runtime?: unknown;
 }): Promise<unknown> {
-  return requestThinkGraphJson('/thinkgraph/graph-views/transition', {
+  return requestThinkGraphJson('/agentgraph/graph-views/transition', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
@@ -433,24 +425,7 @@ export async function fetchUnifiedModelContext(params: {
   return requestThinkGraphJson(`/unified/model-context?${query.toString()}`, { method: 'GET' });
 }
 
-export async function fetchGraphObjectContext(params: {
-  projectId: string;
-  conversationId: string;
-  references: unknown[];
-}): Promise<unknown> {
-  return requestThinkGraphJson('/unified/object-context', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      projectId: params.projectId,
-      conversationId: params.conversationId,
-      references: params.references,
-    }),
-  });
-}
-
-/** Resolve persisted Graph Views by id and get their compact doorway
- * rendering — the callers never supply view content, only identity. */
+/** Resolve AgentGraph reference views by id and render pointer identities only. */
 export async function fetchDoorwayContext(
   projectId: string,
   conversationId: string,

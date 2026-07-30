@@ -6,8 +6,6 @@
  * `streamSession` forwards the RAW native event stream (verbatim) to `onEvent`
  * and resolves with `done.full_text`. No transformation, no curation.
  */
-import type { GraphObjectRef } from '../../../components/knowledge/GraphObjectContext';
-
 type NativeSessionEvent = {
   kind: 'session' | 'text' | 'tool_start' | 'tool_result' | 'permission' | 'done' | 'error' | 'end' | string;
   [key: string]: unknown;
@@ -44,25 +42,16 @@ export class SessionStreamError extends Error {
  * saved card as a direct saved-card doorway. Explicit — never inferred. */
 type HarnessMode = 'chat' | 'canvas';
 
-/** Optional, UI-neutral ThinkGraph focus hints. The backend always mints the
- * project/conversation context for Hermes; no graph selection is required. */
-type InvestigationContextInput = {
-  focusNodeIds?: string[];
-  requestedOutcome?: string;
-};
-
 export async function streamSession(args: {
   projectId: string;
   conversationId: string;
   message: string;
   mode?: HarnessMode;
-  investigationContext?: InvestigationContextInput;
   /** Projection IDENTITY only — the server resolves the persisted projection
    * and derives the model context. The browser never carries graph membership. */
   projectionId?: string;
   activeGraphViewId?: string;
   knowgraphScope?: string;
-  selectedGraphObjectRefs?: GraphObjectRef[];
   onEvent: (event: NativeSessionEvent) => void;
   signal?: AbortSignal;
 }): Promise<{ finalText: string }> {
@@ -76,11 +65,9 @@ export async function streamSession(args: {
       message: args.message,
       // Default 'chat' when omitted (backend also defaults to chat).
       mode: args.mode === 'canvas' ? 'canvas' : 'chat',
-      ...(args.investigationContext ? { investigationContext: args.investigationContext } : {}),
       ...(args.projectionId ? { projectionId: args.projectionId } : {}),
       ...(args.activeGraphViewId ? { activeGraphViewId: args.activeGraphViewId } : {}),
       ...(args.knowgraphScope ? { knowgraphScope: args.knowgraphScope } : {}),
-      ...(args.selectedGraphObjectRefs?.length ? { selectedGraphObjectRefs: args.selectedGraphObjectRefs } : {}),
     }),
     signal: args.signal,
   });

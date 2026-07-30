@@ -170,7 +170,6 @@ const graphViewMocks = vi.hoisted(() => ({
     state: 'running' as const,
   })),
   finishAgentAssignmentOnPython: vi.fn(async () => ({ ok: true })),
-  persistGraphViewOnPython: vi.fn(async (view: unknown) => ({ ok: true, view })),
   fetchGraphViewsFromPython: vi.fn(async () => ({ ok: true, views: [] })),
   fetchUnifiedModelContext: vi.fn<() => Promise<UnifiedModelContextResult>>(async () => ({
     ok: true,
@@ -268,15 +267,15 @@ function coderGraphView(overrides: Record<string, unknown> = {}) {
   return {
     schemaVersion: 'graph-view.v1',
     viewId: 'codegraph:selected-1',
-    authority: 'codegraph',
+    authority: 'agentgraph',
     status: 'candidate',
     projectId: 'project-1',
     conversationId: 'main',
+    displayLabel: 'Selected code references',
     producingRole: 'main_chat',
     receivingRole: 'coder',
-    recordCount: 1,
-    relationshipCount: 0,
-    omittedNeighborCount: 0,
+    references: [{ referenceId: 'symbol:one', referenceType: 'codegraph', required: true }],
+    referenceCount: 1,
     createdAt: '2026-07-23T00:00:00Z',
     updatedAt: '2026-07-23T00:00:00Z',
     ...overrides,
@@ -664,8 +663,11 @@ describe('coder routes', () => {
     graphViewMocks.fetchDoorwayContext.mockResolvedValueOnce({
       ok: true,
       views: [
-        coderGraphView({ viewId: 'codegraph:selected-2', recordCount: 2 }),
-        coderGraphView({ viewId: 'thinkgraph:selected-1', authority: 'thinkgraph' }),
+        coderGraphView({ viewId: 'codegraph:selected-2' }),
+        coderGraphView({
+          viewId: 'thinkgraph:selected-1',
+          references: [{ referenceId: 'decision:one', referenceType: 'thinkgraph', required: true }],
+        }),
       ],
       modelContext: '[LIQUIDAITY_GRAPH_CONTEXT]\n- exact selected context',
     });
@@ -911,18 +913,18 @@ describe('coder routes', () => {
 
     it('resolves the projection server-side by id and delivers compact context, activating and consuming the same views', async () => {
       const serverView = {
-        schemaVersion: 'graph-view.v1', viewId: 'codegraph:server-1', authority: 'codegraph', status: 'candidate',
-        projectId: 'project-1', conversationId: 'main', producingRole: 'codegraph', receivingRole: 'main_chat',
-        rootCanonicalNodeIds: ['symbol:one'], includedCanonicalNodeIds: ['symbol:one'], includedRelationships: [], query: 'selected code', filter: { nodeTypes: [], trustStates: [] }, hopDepth: 0, provenanceRefs: [],
-        records: [{ canonicalId: 'symbol:one', summary: 'Selected symbol', selectionReason: 'Projection membership', provenanceRefs: [], estimatedCharacters: 15, estimatedTokens: 4 }],
-        omittedNeighborCount: 2, createdAt: '2026-07-15T00:00:00Z', updatedAt: '2026-07-15T01:00:00Z',
+        schemaVersion: 'graph-view.v1', viewId: 'codegraph:server-1', authority: 'agentgraph', status: 'candidate',
+        projectId: 'project-1', conversationId: 'main', displayLabel: 'Selected code references',
+        producingRole: 'main_chat', receivingRole: 'main_chat',
+        references: [{ referenceId: 'symbol:one', referenceType: 'codegraph', required: true }],
+        referenceCount: 1, createdAt: '2026-07-15T00:00:00Z', updatedAt: '2026-07-15T01:00:00Z',
       };
       const compact = '[LIQUIDAITY_GRAPH_CONTEXT]\nprojection: unified:abc123 | project: project-1 | conversation: main | role: main_chat\n- [Function] one (symbol:one)';
       graphViewMocks.fetchUnifiedModelContext.mockResolvedValueOnce({
         ok: true, projectionId: 'unified:abc123', graphViews: [serverView], modelContext: compact,
         measurements: { characters: compact.length, estimatedTokens: 40 },
       });
-      const activeView = { ...serverView, status: 'active', invocationId: 'req-1', runtime: { provider: 'openai', model: 'gpt-5.1-chat-latest', role: 'main_chat', invocationId: 'req-1', attachedAt: '2026-07-15T01:00:00Z', includedRecords: 1, excludedRecords: 2, contextCharacters: compact.length, estimatedTokens: 40 } };
+      const activeView = { ...serverView, status: 'active', correlationId: 'req-1', runtime: { provider: 'openai', model: 'gpt-5.1-chat-latest', role: 'main_chat', invocationId: 'req-1', attachedAt: '2026-07-15T01:00:00Z', includedReferences: 1, contextCharacters: compact.length, estimatedTokens: 40 } };
       chatSessionMocks.startGrpcTurn.mockImplementationOnce(async () => ({
         done: Promise.resolve({ finalText: 'Used bounded context.', usage: chatSessionMocks.usage }), cancel: vi.fn(), answer: vi.fn(),
         resolved: { cardId: 'card_main_chat', provider: 'openai', modelKey: 'gpt-5.1-chat-latest', providerModelId: 'gpt-5.1-chat-latest' },
@@ -993,9 +995,7 @@ describe('coder routes', () => {
         // The user message + pending run are atomic, then the resolved saved
         // card metadata and final assistant result complete the same run.
         expect(chatSessionMocks.startGrpcTurn).toHaveBeenCalledTimes(1);
-        expect((chatSessionMocks.startGrpcTurn.mock.calls[0][0] as any).investigationContext).toEqual({
-          projectId: 'project-1', conversationId: 'main', focusNodeIds: [], requestedOutcome: null,
-        });
+        expect(chatSessionMocks.startGrpcTurn.mock.calls[0][0]).not.toHaveProperty('investigationContext');
         expect(chatSessionMocks.beginConversationRun).toHaveBeenCalledWith(expect.objectContaining({
           projectId: 'project-1',
           deckId: 'deck_builder',
@@ -1132,28 +1132,6 @@ describe('coder routes', () => {
     });
   });
 
-  it('accepts an ordinary Hermes turn with no graph selection and keeps focus optional', async () => {
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: 'project-1',
-          conversationId: 'main',
-          message: 'Investigate.',
-          investigationContext: { focusNodeIds: [], requestedOutcome: 'Investigate.' },
-        }),
-      });
-      expect(response.status).toBe(200);
-      await response.text();
-      expect((chatSessionMocks.startGrpcTurn.mock.calls.at(-1)?.[0] as any).investigationContext).toEqual({
-        projectId: 'project-1', conversationId: 'main', focusNodeIds: [], requestedOutcome: 'Investigate.',
-      });
-    } finally {
-      await closeServer(server);
-    }
-  });
 });
 
 describe('Hermes memory project authority', () => {

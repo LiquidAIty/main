@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Dispatch, SetStateAction } from 'react';
 
 import { waitForBackendReady } from '../../../components/builder/backendReadiness';
 import {
@@ -7,10 +6,6 @@ import {
   reduceHermesTerminalEvent,
 } from '../../../components/hermes/HermesConsole';
 import type { HermesTerminalState } from '../../../components/hermes/HermesConsole';
-import {
-  graphObjectRefKey,
-  type GraphObjectRef,
-} from '../../../components/knowledge/GraphObjectContext';
 import type { UnifiedProjectionIdentity } from '../../../components/knowledge/UnifiedGraphSurface';
 import {
   loadSessionHistory,
@@ -28,8 +23,6 @@ type UseAgentBuilderMainChatArgs = {
   canvasProjectId: string;
   conversationId: string;
   initialMessages: AgentBuilderChatMessage[];
-  pendingGraphObjectRef: GraphObjectRef | null;
-  setPendingGraphObjectRef: Dispatch<SetStateAction<GraphObjectRef | null>>;
   workspaceView: string;
 };
 
@@ -38,8 +31,6 @@ export default function useAgentBuilderMainChat({
   canvasProjectId,
   conversationId,
   initialMessages,
-  pendingGraphObjectRef,
-  setPendingGraphObjectRef,
   workspaceView,
 }: UseAgentBuilderMainChatArgs) {
   const [nativeSessionBusy, setNativeSessionBusy] = useState(false);
@@ -99,7 +90,6 @@ export default function useAgentBuilderMainChat({
       }
       if (nativeSessionBusy) throw new Error('main_session_busy');
 
-      const sentGraphObjectRef = pendingGraphObjectRef;
       setMessages((current) => [
         ...current,
         { role: 'user', text: trimmed },
@@ -144,9 +134,6 @@ export default function useAgentBuilderMainChat({
                   : {}),
               }
             : {}),
-          ...(sentGraphObjectRef
-            ? { selectedGraphObjectRefs: [sentGraphObjectRef] }
-            : {}),
           onEvent: (event) => {
             setHermesTerminal((current) =>
               reduceHermesTerminalEvent(current, event),
@@ -158,15 +145,6 @@ export default function useAgentBuilderMainChat({
             }
           },
         });
-        if (sentGraphObjectRef) {
-          setPendingGraphObjectRef((current) =>
-            current &&
-            graphObjectRefKey(current) ===
-              graphObjectRefKey(sentGraphObjectRef)
-              ? null
-              : current,
-          );
-        }
         const completedText = finalText.trim();
         if (!assistantStarted && completedText) {
           appendAssistantText(completedText);
@@ -209,8 +187,6 @@ export default function useAgentBuilderMainChat({
       canvasProjectId,
       conversationId,
       nativeSessionBusy,
-      pendingGraphObjectRef,
-      setPendingGraphObjectRef,
       workspaceView,
     ],
   );

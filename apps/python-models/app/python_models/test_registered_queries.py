@@ -1,33 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-
-import numpy as np
 import pytest
 
 from app import control_plane
 from app.python_models import registered_queries as rq
-from app.python_models.thinkgraph_engraphis import ThinkGraphEngraphis
 
 
 PROJECT_ID = "20ac92da-01fd-4cf6-97cc-0672421e751a"
-
-
-class _LocalEmbedder:
-    dim = 384
-
-    def embed(self, texts, *, kind="text"):
-        rows = []
-        for text in texts:
-            vector = np.resize(
-                np.frombuffer(hashlib.sha384(text.encode("utf-8")).digest(), dtype=np.uint8)
-                .astype(np.float32),
-                self.dim,
-            )
-            vector /= np.linalg.norm(vector)
-            rows.append(vector)
-        return np.vstack(rows)
 
 
 def _query(**overrides) -> rq.RegisteredQueryVersion:
@@ -108,7 +88,7 @@ def test_sql_and_age_execution_are_database_read_only_and_bounded() -> None:
     assert isinstance(age_truncated, bool)
 
 
-def test_materialized_registered_query_view_uses_canonical_graph_view_store(tmp_path) -> None:
+def test_registered_query_view_contains_only_agentgraph_references() -> None:
     query = _query()
     binding = rq.QueryBinding(
         project_id=PROJECT_ID,
@@ -129,17 +109,28 @@ def test_materialized_registered_query_view_uses_canonical_graph_view_store(tmp_
         correlation_id="run:test",
         conversation_id="main",
     )
-    graph = ThinkGraphEngraphis(
-        tmp_path / "registered-query-view.sqlite",
-        embedder=_LocalEmbedder(),
-    )
-    graph.persist_graph_view(view)
-    stored = graph.graph_views(PROJECT_ID, "main")["views"]
-
-    assert stored[0]["viewId"] == view["viewId"]
-    assert stored[0]["query"] == "agentgraph.context_count@v1"
-    assert stored[0]["records"][0]["properties"] == {"context_count": 4}
-    assert stored[0]["runtime"]["queryExecutionId"] == "queryexec:test"
+    assert view["authority"] == "agentgraph"
+    assert view["references"] == [
+        {
+            "referenceId": f"registered-query:{PROJECT_ID}:agentgraph.context_count:v1",
+            "referenceType": "registered_query",
+            "required": True,
+        },
+        {
+            "referenceId": "query-execution:queryexec:test",
+            "referenceType": "query_execution",
+            "required": True,
+        },
+    ]
+    forbidden = {
+        "records",
+        "includedRelationships",
+        "includedCanonicalNodeIds",
+        "rootCanonicalNodeIds",
+        "filter",
+        "query",
+    }
+    assert forbidden.isdisjoint(view)
 
 
 def test_assignment_hydrator_materializes_required_and_keeps_optional_scoped(
@@ -409,7 +400,6 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
 ) -> None:
     from app import control_plane
     from app.python_models import agentgraph
-    from app.python_models import thinkgraph_engraphis
 
     assignment = {
         "assignmentId": "assignment:one",
@@ -427,18 +417,23 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
     view = {
         "viewId": "graphview:one",
         "displayLabel": "Selected project context",
-        "authority": "mixed",
+        "authority": "agentgraph",
+        "status": "attached",
+        "projectId": "project-one",
+        "conversationId": "main",
+        "producingRole": "main_chat",
         "receivingRole": "research",
-        "records": [
+        "references": [
             {
-                "canonicalId": "thinkgraph:decision:one",
-                "authority": "thinkgraph",
-                "summary": "Use the canonical AgentGraph assignment.",
-            }
-        ],
-        "provenanceRefs": [
-            "thinkgraph:decision:one",
-            "codegraph:symbol:one",
+                "referenceId": "thinkgraph:decision:one",
+                "referenceType": "thinkgraph",
+                "required": True,
+            },
+            {
+                "referenceId": "codegraph:symbol:one",
+                "referenceType": "codegraph",
+                "required": False,
+            },
         ],
     }
     references: list[dict] = []
@@ -487,17 +482,9 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
         },
     )
     monkeypatch.setattr(
-        thinkgraph_engraphis,
-        "get_thinkgraph",
-        lambda: type(
-            "ThinkGraph",
-            (),
-            {
-                "graph_views": lambda _self, _project, _conversation: {
-                    "views": [view]
-                }
-            },
-        )(),
+        agentgraph,
+        "list_graph_views",
+        lambda **_kwargs: {"views": [view]},
     )
     monkeypatch.setattr(rq, "bindings_from_operation_references", lambda **_kwargs: [])
 
@@ -509,7 +496,8 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
     )
 
     assert "graphview:one" in hydrated.model_context
-    assert "Use the canonical AgentGraph assignment." in hydrated.model_context
+    assert "thinkgraph -> thinkgraph:decision:one [required]" in hydrated.model_context
+    assert "codegraph -> codegraph:symbol:one" in hydrated.model_context
     assert "[AGENTGRAPH_CONTEXT_REFERENCES]" not in hydrated.model_context
     assert "[PARENT_AGENTGRAPH_CONTINUITY]" not in hydrated.model_context
     assert "REGISTERED DATABASE CONTEXT:" not in hydrated.model_context
@@ -519,16 +507,6 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
             "referenceId": "graphview:one",
             "referenceType": "graph_view",
             "required": True,
-        },
-        {
-            "referenceId": "thinkgraph:decision:one",
-            "referenceType": "thinkgraph",
-            "required": False,
-        },
-        {
-            "referenceId": "codegraph:symbol:one",
-            "referenceType": "codegraph",
-            "required": False,
         },
     ]
 

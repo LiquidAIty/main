@@ -117,8 +117,6 @@ describe('native authority graph surfaces', () => {
         thinkGraphProjection={{ status: 'idle', projection: null, error: null }}
         onKindChange={vi.fn()}
         onProjectionChange={vi.fn()}
-        onAskMain={vi.fn()}
-        onSelectedObjectChange={vi.fn()}
       />,
     );
 

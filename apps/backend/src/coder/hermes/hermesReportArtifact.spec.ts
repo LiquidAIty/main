@@ -9,7 +9,6 @@ vi.mock('../../services/autogen/autogenOrchestratorClient', () => ({
 }));
 
 import {
-  parseHermesInvestigationContext,
   readHermesReport,
   writeHermesReport,
 } from './hermesReportArtifact';
@@ -17,29 +16,6 @@ import {
 describe('Hermes AgentGraph report transport', () => {
   beforeEach(() => {
     rails.request.mockReset();
-  });
-
-  it('preserves optional native investigation focus without inventing it', () => {
-    expect(parseHermesInvestigationContext(undefined, 'project-1', 'main')).toEqual({
-      projectId: 'project-1',
-      conversationId: 'main',
-      focusNodeIds: [],
-      requestedOutcome: null,
-    });
-    expect(parseHermesInvestigationContext(
-      {
-        focusNodeIds: ['goal:g1'],
-        requestedOutcome: 'Research the runtime.',
-        goalId: 'goal:g1',
-        codeGraphRefs: ['code:run'],
-      },
-      'project-1',
-      'main',
-    )).toMatchObject({
-      goalId: 'goal:g1',
-      requestedOutcome: 'Research the runtime.',
-      codeGraphRefs: ['code:run'],
-    });
   });
 
   it('transports one exact parent-run result to Python without a folder path', async () => {

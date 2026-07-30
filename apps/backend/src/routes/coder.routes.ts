@@ -23,10 +23,8 @@ import {
   type GrpcTurnHandle,
 } from '../coder/openclaude/session/grpcChatClient';
 import {
-  parseHermesInvestigationContext,
   readHermesReport,
   writeHermesReport,
-  type HermesInvestigationContext,
 } from '../coder/hermes/hermesReportArtifact';
 import {
   beginConversationRun,
@@ -58,8 +56,6 @@ import type { CodeGraphViewContractResult } from '../contracts/coderContracts';
 import {
   completeGraphViews,
   parseGraphViewIdentities,
-  parseGraphViews,
-  type GraphView,
   type GraphViewIdentity,
 } from '../contracts/graphView';
 import {
@@ -67,13 +63,8 @@ import {
   fetchUnifiedModelContext,
   beginAgentAssignmentOnPython,
   finishAgentAssignmentOnPython,
-  persistGraphViewOnPython,
   transitionGraphViewsOnPython,
 } from '../services/autogen/autogenOrchestratorClient';
-import {
-  parseGraphObjectRefs,
-  resolveSelectedGraphObjectContext,
-} from '../coder/openclaude/session/graphObjectContext';
 
 const router = Router();
 const DEFAULT_CODER_CONNECTOR_COMPLETION_WINDOW_MS = 20_000;
@@ -795,19 +786,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
   if (!projectId || !message) {
     return res.status(400).json({ ok: false, error: 'projectId_and_message_required' });
   }
-  let investigationContext: HermesInvestigationContext;
-  try {
-    investigationContext = parseHermesInvestigationContext(
-      req.body?.investigationContext,
-      projectId,
-      conversationId,
-    );
-  } catch (error) {
-    return res.status(400).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'turn_context_invalid',
-    });
-  }
   // Graph context: the browser is a renderer, never the transport for graph
   // membership. The chat request carries projection IDENTITY only; the server
   // resolves the persisted projection and derives the compact model
@@ -830,16 +808,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
   let graphViews: GraphViewIdentity[] = [];
   let graphContext = '';
   let graphContextMeasurements: unknown = null;
-  let selectedGraphObjectRefs: ReturnType<typeof parseGraphObjectRefs>;
-  try {
-    selectedGraphObjectRefs = parseGraphObjectRefs(req.body?.selectedGraphObjectRefs);
-    if (selectedGraphObjectRefs.length) await getDeckDocument(projectId, BUILDER_DECK_ID);
-  } catch (error) {
-    return res.status(400).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'selected_graph_object_refs_invalid',
-    });
-  }
   if (projectionId) {
     try {
       const resolved = (await fetchUnifiedModelContext({
@@ -863,38 +831,17 @@ router.post('/openclaude/session/chat', async (req, res) => {
         .json({ ok: false, error: reason, projectionId });
     }
   }
-  if (selectedGraphObjectRefs.length) {
-    try {
-      const objectContext = await resolveSelectedGraphObjectContext({
-        projectId,
-        conversationId,
-        references: selectedGraphObjectRefs,
-      });
-      if (objectContext) {
-        graphContext = [graphContext, objectContext.modelContext].filter(Boolean).join('\n\n');
-        graphContextMeasurements = graphContextMeasurements
-          ? { projection: graphContextMeasurements, selectedObjects: objectContext.measurements }
-          : { selectedObjects: objectContext.measurements };
-      }
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'graph_object_resolution_failed';
-      return res.status(reason.includes('http_409') || reason.includes('not_visible') ? 409 : 502).json({
-        ok: false,
-        error: reason,
-      });
-    }
-  }
   // Compact Graph View lifecycle announcements for the browser: identity and
   // status ONLY — the UI discovers contents by refetching its server-owned
   // projection, never from event payloads (browser is not a membership carrier).
-  const compactGraphViewEvent = (views: Array<GraphView | GraphViewIdentity>) => ({
+  const compactGraphViewEvent = (views: GraphViewIdentity[]) => ({
     views: views.map((view) => ({
       viewId: view.viewId,
       status: view.status,
       authority: view.authority,
       producingRole: view.producingRole,
       receivingRole: view.receivingRole,
-      ...(view.invocationId ? { invocationId: view.invocationId } : {}),
+      ...(view.correlationId ? { correlationId: view.correlationId } : {}),
       ...(view.parentViewId ? { parentViewId: view.parentViewId } : {}),
     })),
   });
@@ -950,8 +897,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
   let runCancelled = false;
   let terminalDoneEvent: Extract<GrpcSessionEvent, { kind: 'done' }> | null = null;
   let activeRuntimeViews: GraphViewIdentity[] = [];
-  const pendingGraphViewWrites: Promise<void>[] = [];
-  const liquidaityToolUses = new Set<string>();
   try {
     const handle = await startGrpcTurn({
       sessionId,
@@ -959,7 +904,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
       workingDirectory,
       mode,
       traceId: correlationId,
-      investigationContext,
       graphViews,
       graphContext,
     }, async (event) => {
@@ -967,26 +911,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
       if (event.kind === 'done') {
         terminalDoneEvent = event;
         return;
-      }
-      if (event.kind === 'tool_start' && event.toolName.startsWith('mcp__liquidaity__')) {
-        liquidaityToolUses.add(event.toolUseId);
-      } else if (event.kind === 'tool_result' && liquidaityToolUses.has(event.toolUseId)) {
-        liquidaityToolUses.delete(event.toolUseId);
-        if (!event.isError) {
-          try {
-            const payload = JSON.parse(String(event.output || '{}')) as Record<string, unknown>;
-            const rawView = payload.graphView;
-            if (rawView) {
-              const returned = parseGraphViews([rawView], { projectId, conversationId }, 'returned')[0];
-              const write = persistGraphViewOnPython(returned).then(() => {
-                writeSse('graph_view', compactGraphViewEvent([returned]));
-              });
-              pendingGraphViewWrites.push(write);
-            }
-          } catch {
-            // A normal tool result may be prose or a non-view JSON payload.
-          }
-        }
       }
       // Backend trace of the REAL event (only when it carries lifecycle signal),
       // then the unchanged SSE forward to the browser.
@@ -1033,7 +957,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
       });
     });
     const { finalText, usage } = await handle.done;
-    await Promise.all(pendingGraphViewWrites);
     if (activeRuntimeViews.length > 0) {
       const consumedViews = completeGraphViews(activeRuntimeViews);
       await transitionGraphViewsOnPython({

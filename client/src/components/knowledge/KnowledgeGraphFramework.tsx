@@ -1,7 +1,6 @@
 import { Suspense, lazy } from 'react';
 
 import { GRAPH_THEME, graphDrawerSectionStyle } from '../graph/graphVisualTokens';
-import type { GraphObjectRef } from './GraphObjectContext';
 import type { UnifiedProjectionIdentity } from './UnifiedGraphSurface';
 import type { KnowledgeGraphKind } from '../../types/agentgraph';
 import type { ThinkGraphProjectionState } from '../../features/agentbuilder/state/useAgentBuilderThinkGraphProjection';
@@ -40,8 +39,6 @@ type Props = {
   thinkGraphProjection: ThinkGraphProjectionState;
   onKindChange: (kind: KnowledgeSurfaceKind) => void;
   onProjectionChange: (identity: UnifiedProjectionIdentity | null) => void;
-  onAskMain: (ref: GraphObjectRef) => void;
-  onSelectedObjectChange: (ref: GraphObjectRef | null) => void;
 };
 
 export default function KnowledgeGraphFramework({
@@ -55,8 +52,6 @@ export default function KnowledgeGraphFramework({
   thinkGraphProjection,
   onKindChange,
   onProjectionChange,
-  onAskMain,
-  onSelectedObjectChange,
 }: Props) {
   return (
     <div
@@ -125,30 +120,22 @@ export default function KnowledgeGraphFramework({
               {codeGraphProjectError}
             </div>
           ) : (
-            <NativeCodeGraphSurface
-              project={codeGraphProjectName}
-              onAskMain={onAskMain}
-              onSelectedObjectChange={onSelectedObjectChange}
-            />
+            <NativeCodeGraphSurface project={codeGraphProjectName} />
           )
         ) : kind === 'thinkgraph' ? (
           <NativeThinkGraphSurface
             projection={thinkGraphProjection.projection}
             status={thinkGraphProjection.status}
             error={thinkGraphProjection.error}
-            onAskMain={onAskMain}
-            onSelectedObjectChange={onSelectedObjectChange}
           />
         ) : kind === 'knowgraph' ? (
-          <NativeKnowGraphSurface projectId={projectId ?? ''} onAskMain={onAskMain} onSelectedObjectChange={onSelectedObjectChange} />
+          <NativeKnowGraphSurface projectId={projectId ?? ''} />
         ) : (
           <UnifiedGraphSurface
             projectId={projectId ?? ''}
             conversationId={conversationId ?? ''}
             onProjectionChange={onProjectionChange}
             onOpenAuthority={onKindChange}
-            onAskMain={onAskMain}
-            onSelectedObjectChange={onSelectedObjectChange}
           />
         )}
       </Suspense>

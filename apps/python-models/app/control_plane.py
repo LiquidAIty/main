@@ -21,10 +21,8 @@ import os
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from uuid import uuid4
 
 from app.python_models import agentgraph as ag
-from app.python_models.thinkgraph_engraphis import get_thinkgraph
 
 _BACKEND = os.environ.get("LIQUIDAITY_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
 
@@ -303,7 +301,7 @@ async def thinkgraph_get_graph_slice(args: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# graphview.* — the current persisted Graph View contract, not another graph.
+# graphview.* — bounded AgentGraph reference views, never copied graph payloads.
 # ---------------------------------------------------------------------------
 
 
@@ -315,12 +313,12 @@ async def graph_view_list(args: dict[str, Any]) -> dict[str, Any]:
     limit = args.get("limit")
     bounded_limit = max(1, min(int(limit), 50)) if isinstance(limit, int) else 20
     result = await asyncio.to_thread(
-        lambda: get_thinkgraph().graph_views(
-            project_id,
-            None if project_wide else conversation_id,
-        )
+        ag.list_graph_views,
+        project_id=project_id,
+        conversation_id=None if project_wide else conversation_id,
+        limit=bounded_limit,
     )
-    views = list(result.get("views") or [])[:bounded_limit]
+    views = list(result.get("views") or [])
     return {
         "ok": True,
         "projectId": project_id,
@@ -336,78 +334,40 @@ async def graph_view_get(args: dict[str, Any]) -> dict[str, Any]:
     conversation_id = str(args["conversationId"]).strip()
     project_wide = args.get("projectWide") is True
     view_id = str(args["viewId"]).strip()
-    result = await asyncio.to_thread(
-        lambda: get_thinkgraph().graph_views(
-            project_id,
-            None if project_wide else conversation_id,
+    try:
+        return await asyncio.to_thread(
+            ag.get_graph_view,
+            project_id=project_id,
+            conversation_id=None if project_wide else conversation_id,
+            view_id=view_id,
         )
-    )
-    matches = [
-        view
-        for view in (result.get("views") or [])
-        if str(view.get("viewId") or "") == view_id
-    ]
-    if not matches:
-        raise ControlPlaneError(f"graph_view_not_found_in_runtime_context: {view_id}")
-    if len(matches) != 1:
-        raise ControlPlaneError(f"graph_view_identity_ambiguous: {view_id}")
-    return {"ok": True, "view": matches[0]}
+    except ag.AgentGraphError as error:
+        raise ControlPlaneError(str(error)) from error
 
 
 async def graph_view_create(args: dict[str, Any]) -> dict[str, Any]:
-    _require(args, "projectId", "conversationId", "correlationId", "displayLabel", "authority")
+    _require(args, "projectId", "conversationId", "correlationId", "displayLabel", "references")
     project_id = str(args["projectId"]).strip()
     conversation_id = str(args["conversationId"]).strip()
     correlation_id = str(args["correlationId"]).strip()
-    authority = str(args["authority"]).strip().lower()
-    if authority not in {"thinkgraph", "knowgraph", "codegraph", "mixed"}:
-        raise ControlPlaneError(f"graph_view_authority_invalid: {authority}")
-
-    records = args.get("records") or []
-    relationships = args.get("includedRelationships") or []
-    if not isinstance(records, list) or len(records) > 200 or not all(isinstance(item, dict) for item in records):
-        raise ControlPlaneError("graph_view_records_invalid")
-    if (
-        not isinstance(relationships, list)
-        or len(relationships) > 400
-        or not all(isinstance(item, dict) for item in relationships)
-    ):
-        raise ControlPlaneError("graph_view_relationships_invalid")
-
-    def _ids(field: str, maximum: int) -> list[str]:
-        values = args.get(field) or []
-        if not isinstance(values, list) or len(values) > maximum:
-            raise ControlPlaneError(f"graph_view_{field}_invalid")
-        result = [str(value).strip() for value in values]
-        if any(not value for value in result):
-            raise ControlPlaneError(f"graph_view_{field}_invalid")
-        return result
-
-    view_id = f"graphview:external:{uuid4().hex[:24]}"
-    view = {
-        "schemaVersion": "graph-view.v1",
-        "viewId": view_id,
-        "displayLabel": str(args["displayLabel"]).strip()[:200],
-        "authority": authority,
-        "status": "candidate",
-        "projectId": project_id,
-        "conversationId": conversation_id,
-        "invocationId": correlation_id,
-        "producingRole": "main_chat",
-        "receivingRole": str(args.get("receivingRole") or "main_chat").strip(),
-        "rootCanonicalNodeIds": _ids("rootCanonicalNodeIds", 100),
-        "includedCanonicalNodeIds": _ids("includedCanonicalNodeIds", 200),
-        "includedRelationships": relationships,
-        "records": records,
-        "filter": dict(args.get("filter") or {}),
-        "hopDepth": max(0, min(int(args.get("hopDepth") or 0), 4)),
-        "query": str(args.get("query") or "")[:2000],
-        "note": str(args.get("note") or "")[:2000] or None,
-        "provenanceRefs": _ids("provenanceRefs", 100),
-        "parentViewId": str(args.get("parentViewId") or "").strip() or None,
-        "omittedNeighborCount": max(0, int(args.get("omittedNeighborCount") or 0)),
-    }
-    return await asyncio.to_thread(lambda: get_thinkgraph().persist_graph_view(view))
+    references = args.get("references")
+    if not isinstance(references, list):
+        raise ControlPlaneError("graph_view_references_invalid")
+    try:
+        return await asyncio.to_thread(
+            ag.create_graph_view,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            correlation_id=correlation_id,
+            display_label=str(args["displayLabel"]).strip(),
+            references=references,
+            producing_role="main_chat",
+            receiving_role=str(args.get("receivingRole") or "main_chat").strip(),
+            parent_view_id=str(args.get("parentViewId") or "").strip() or None,
+            note=str(args.get("note") or "").strip() or None,
+        )
+    except ag.AgentGraphError as error:
+        raise ControlPlaneError(str(error)) from error
 
 
 async def agentgraph_inspect(args: dict[str, Any]) -> dict[str, Any]:

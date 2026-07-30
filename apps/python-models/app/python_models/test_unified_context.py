@@ -4,17 +4,16 @@ import time
 
 import pytest
 
+from app.python_models import agentgraph
 from app.python_models.unified_context import (
     MAX_GRAPH_CONTEXT_CHARACTERS,
-    MAX_GRAPH_EVIDENCE_RECORDS,
+    MAX_GRAPH_VIEW_REFERENCES,
     UnifiedContextRequest,
-    build_graph_object_context,
     build_model_context,
     build_unified_context,
     render_graph_views,
     render_model_context,
     select_persisted_graph_views,
-    transition_persisted_graph_views,
 )
 
 
@@ -30,16 +29,27 @@ class FakeThinkGraph:
         }
 
     def graph_views(self, project_id: str, conversation_id: str | None = None):
-        base = {"schemaVersion": "graph-view.v1", "projectId": project_id, "conversationId": conversation_id or "main", "producingRole": "thinkgraph", "provenanceRefs": [], "omittedNeighborCount": 0, "query": ""}
+        base = {"schemaVersion": "graph-view.v1", "projectId": project_id, "conversationId": conversation_id or "main", "authority": "agentgraph", "producingRole": "main_chat", "displayLabel": "Bounded references"}
         return {"ok": True, "views": [
-            {**base, "viewId": "thinkgraph:role-view", "authority": "thinkgraph", "status": "attached", "receivingRole": "main_chat",
-             "records": [{"canonicalId": "think:two", "summary": "Decision Think two"}],
-             "includedRelationships": [{"id": "vr", "source": "think:one", "target": "think:two", "type": "RELATES_TO"}]},
-            {**base, "viewId": "codegraph:coder-only", "authority": "codegraph", "status": "attached", "receivingRole": "coder",
-             "records": [{"canonicalId": "pkg.one", "summary": "coder-only record"}], "includedRelationships": []},
-            {**base, "viewId": "thinkgraph:spent", "authority": "thinkgraph", "status": "consumed", "receivingRole": "main_chat",
-             "records": [{"canonicalId": "think:one", "summary": "already consumed"}], "includedRelationships": []},
+            {**base, "viewId": "thinkgraph:role-view", "status": "attached", "receivingRole": "main_chat",
+             "references": [{"referenceId": "think:two", "referenceType": "thinkgraph", "required": True}]},
+            {**base, "viewId": "codegraph:coder-only", "status": "attached", "receivingRole": "coder",
+             "references": [{"referenceId": "pkg.one", "referenceType": "codegraph", "required": True}]},
+            {**base, "viewId": "thinkgraph:spent", "status": "consumed", "receivingRole": "main_chat",
+             "references": [{"referenceId": "think:one", "referenceType": "thinkgraph", "required": False}]},
         ]}
+
+
+@pytest.fixture(autouse=True)
+def _agentgraph_view_store(monkeypatch):
+    monkeypatch.setattr(
+        agentgraph,
+        "list_graph_views",
+        lambda *, project_id, conversation_id=None, limit=20, **_kwargs: {
+            **FakeThinkGraph().graph_views(project_id, conversation_id),
+            "views": FakeThinkGraph().graph_views(project_id, conversation_id)["views"][:limit],
+        },
+    )
 
 
 def fake_read(path, params):
@@ -116,63 +126,16 @@ def test_model_context_uses_the_same_projection_identity():
         build_model_context("unified:wrong", request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
 
 
-def test_selected_objects_resolve_by_authority_with_bounded_relationships():
-    context = build_graph_object_context(
-        "project-1",
-        "main",
-        [
-            {"authority": "thinkgraph", "canonicalId": "think:one", "selectedThrough": "thinkgraph"},
-            {"authority": "knowgraph", "canonicalId": "know:one", "selectedThrough": "knowgraph"},
-            {"authority": "codegraph", "canonicalId": "pkg.one", "selectedThrough": "codegraph"},
-        ],
-        graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read,
-    )
-    assert [record["authority"] for record in context["resolved"]] == ["thinkgraph", "knowgraph", "codegraph"]
-    assert "ThinkGraph Finding — think:one" in context["modelContext"]
-    assert "RELATES_TO -> Think two" in context["modelContext"]
-    assert context["measurements"]["objects"] == 3
-    assert context["measurements"]["relationships"] <= 24
-
-
-def test_unified_object_selection_preserves_source_authority_and_rejects_stale_or_missing_identity():
-    built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
-    resolved = build_graph_object_context(
-        "project-1", "main",
-        [{"authority": "thinkgraph", "canonicalId": "think:two", "selectedThrough": "unified", "sourceAuthority": "thinkgraph", "projectionId": built["projectionId"]}],
-        graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read,
-    )
-    assert resolved["resolved"][0]["authority"] == "thinkgraph"
-    with pytest.raises(ValueError, match="projection_superseded"):
-        build_graph_object_context(
-            "project-1", "main",
-            [{"authority": "thinkgraph", "canonicalId": "think:two", "selectedThrough": "unified", "sourceAuthority": "thinkgraph", "projectionId": "unified:stale"}],
-            graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read,
-        )
-    class ProjectIsolatedThinkGraph(FakeThinkGraph):
-        def projection(self, project_id: str, limit: int = 5000):
-            if project_id != "project-1":
-                return {"revision": "other", "nodes": [], "edges": []}
-            return super().projection(project_id, limit)
-
-    with pytest.raises(ValueError, match="not_visible"):
-        build_graph_object_context(
-            "another-project", "main",
-            [{"authority": "thinkgraph", "canonicalId": "think:two", "selectedThrough": "thinkgraph"}],
-            graph=ProjectIsolatedThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read,
-        )
-
-
 def test_model_context_is_bounded_to_the_explicit_selected_view_never_the_projection_dump():
     selected_request = request(active_view_id="thinkgraph:role-view")
     built = build_unified_context(selected_request, graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
     delivered = build_model_context(built["projectionId"], selected_request, graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
     text = delivered["modelContext"]
-    # Reasoning state (structural ThinkGraph types) + this role's persisted views.
+    # Reasoning state plus AgentGraph reference identities.
     assert "REASONING STATE" in text and "- Decision: Think two" in text
-    assert "thinkgraph:role-view" in text and "Decision Think two (think:two)" in text
-    assert "think:one -RELATES_TO-> think:two" in text
+    assert "thinkgraph:role-view" in text and "thinkgraph -> think:two [required]" in text
     # Other-role and spent-lifecycle views never leak in.
-    assert "codegraph:coder-only" not in text and "coder-only record" not in text
+    assert "codegraph:coder-only" not in text
     assert "thinkgraph:spent" not in text
     # The display projection's node/edge dump NEVER enters the prompt — it is
     # referenced by identity and counts only.
@@ -183,7 +146,7 @@ def test_model_context_is_bounded_to_the_explicit_selected_view_never_the_projec
     assert [view["viewId"] for view in delivered["graphViews"]] == ["thinkgraph:role-view"]
     measurements = delivered["measurements"]
     assert set(measurements["sections"]) == {"header", "reasoning_state", "graph_views", "warnings", "retrieval"}
-    assert measurements["views"]["thinkgraph:role-view"]["relationships"] == 1
+    assert measurements["views"]["thinkgraph:role-view"]["references"] == 1
     # Bounded means bounded: the whole context stays tiny even though the
     # projection carries every authority record.
     assert measurements["estimatedTokens"] < 400
@@ -211,7 +174,7 @@ def test_unified_exposes_selected_identity_and_lifecycle_without_view_content():
     )
     assert result["lifecycle"]["selected"] == ["thinkgraph:role-view"]
     assert result["lifecycle"]["consumed"] == ["thinkgraph:spent"]
-    assert result["graphViews"][0]["recordCount"] == 1
+    assert result["graphViews"][0]["referenceCount"] == 1
     assert "records" not in result["graphViews"][0]
     assert {view["viewId"] for view in result["availableGraphViews"]} == {
         "thinkgraph:role-view",
@@ -234,48 +197,36 @@ def test_explicit_multiple_selection_preserves_order_and_bounded_rendering():
         "thinkgraph:role-view",
     ]
     rendered = render_graph_views(selected)
-    assert rendered["measurements"]["records"] == 2
+    assert rendered["measurements"]["references"] == 2
     assert rendered["measurements"]["estimatedTokens"] < 200
 
 
-def test_graph_view_render_deduplicates_normalized_repository_file_ranges():
+def test_graph_view_render_carries_reference_identities_without_payloads():
     base = {
         "projectId": "project-1",
         "conversationId": "main",
-        "authority": "codegraph",
+        "authority": "agentgraph",
         "status": "attached",
-        "records": [],
-        "includedRelationships": [],
+        "displayLabel": "Code references",
+        "producingRole": "main_chat",
+        "receivingRole": "coder",
     }
     rendered = render_graph_views([
         {
             **base,
             "viewId": "codegraph:first",
-            "records": [{
-                "canonicalId": "first",
-                "summary": "First view of the function",
-                "filePath": r"C:\Projects\main\apps\backend\src\main.ts",
-                "sourceRange": {"startLine": 10, "endLine": 20},
-            }],
+            "references": [{"referenceId": "symbol:first", "referenceType": "codegraph", "required": True}],
         },
         {
             **base,
             "viewId": "codegraph:second",
-            "records": [{
-                "canonicalId": "duplicate",
-                "summary": "Same function repeated with different prose",
-                "file_path": "c:/projects/main/apps/backend/src/main.ts",
-                "source_range": {"endLine": 20, "startLine": 10},
-            }],
+            "references": [{"referenceId": "symbol:second", "referenceType": "codegraph", "required": False}],
         },
     ])
 
-    assert rendered["measurements"]["records"] == 1
-    assert rendered["measurements"]["uniqueFiles"] == 1
-    assert rendered["measurements"]["uniqueSourceRanges"] == 1
-    assert rendered["measurements"]["duplicateFileRangeCount"] == 1
-    assert "First view of the function" in rendered["text"]
-    assert "Same function repeated" not in rendered["text"]
+    assert rendered["measurements"]["references"] == 2
+    assert "codegraph -> symbol:first [required]" in rendered["text"]
+    assert "codegraph -> symbol:second" in rendered["text"]
 
 
 def test_graph_context_limits_are_enforced_before_provider_delivery():
@@ -283,22 +234,24 @@ def test_graph_context_limits_are_enforced_before_provider_delivery():
         "viewId": "codegraph:oversized",
         "projectId": "project-1",
         "conversationId": "main",
-        "authority": "codegraph",
+        "authority": "agentgraph",
         "status": "attached",
-        "includedRelationships": [],
+        "displayLabel": "Oversized",
+        "producingRole": "main_chat",
+        "receivingRole": "coder",
     }
-    with pytest.raises(ValueError, match="graph_context_record_limit_exceeded"):
+    with pytest.raises(ValueError, match="graph_view_reference_limit_exceeded"):
         render_graph_views([{
             **base,
-            "records": [
-                {"canonicalId": f"record:{index}", "summary": f"record {index}"}
-                for index in range(MAX_GRAPH_EVIDENCE_RECORDS + 1)
+            "references": [
+                {"referenceId": f"record:{index}", "referenceType": "codegraph"}
+                for index in range(MAX_GRAPH_VIEW_REFERENCES + 1)
             ],
         }])
 
     normal = render_graph_views([{
         **base,
-        "records": [{"canonicalId": "record:one", "summary": "bounded"}],
+        "references": [{"referenceId": "record:one", "referenceType": "codegraph"}],
     }])
     assert normal["measurements"]["characters"] <= MAX_GRAPH_CONTEXT_CHARACTERS
 
@@ -339,43 +292,6 @@ def test_view_scope_and_duplicate_selection_fail_closed():
             project_id="project-1",
             conversation_id="main",
             receiving_roles={"main_chat"},
-        )
-
-
-def test_lifecycle_transition_updates_the_persisted_full_view_without_transporting_membership():
-    class PersistingThinkGraph(FakeThinkGraph):
-        def __init__(self):
-            self.saved = []
-
-        def persist_graph_view(self, view):
-            self.saved.append(view)
-            return {"ok": True, "view": view}
-
-    graph = PersistingThinkGraph()
-    identities = transition_persisted_graph_views(
-        graph,
-        project_id="project-1",
-        conversation_id="main",
-        view_ids=["thinkgraph:role-view"],
-        status="active",
-        invocation_id="run-1",
-        runtime={"provider": "openai"},
-    )
-    assert identities == [{
-        **identities[0],
-        "viewId": "thinkgraph:role-view",
-        "status": "active",
-        "recordCount": 1,
-    }]
-    assert graph.saved[0]["records"][0]["summary"] == "Decision Think two"
-    assert "records" not in identities[0]
-    with pytest.raises(ValueError, match="graph_view_transition_invalid"):
-        transition_persisted_graph_views(
-            graph,
-            project_id="project-1",
-            conversation_id="main",
-            view_ids=["thinkgraph:role-view"],
-            status="consumed",
         )
 
 

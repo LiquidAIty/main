@@ -1,8 +1,7 @@
-"""Bounded, read-only context projection across the three graph authorities.
+"""Bounded read-only projection across canonical graph authorities.
 
-Unified is a projection, never a fourth graph.  Python owns selection, canonical
-identity, lineage and placement; the UI and agent runtime receive the same
-serialized Graph View records from this payload.
+AgentGraph owns reference passing and lineage. Unified resolves source graphs for
+display, but never persists their records inside ThinkGraph or AgentGraph.
 """
 from __future__ import annotations
 
@@ -18,6 +17,7 @@ from typing import Any, Callable
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
+from app.python_models import agentgraph
 from app.python_models.thinkgraph_engraphis import ThinkGraphEngraphis, get_thinkgraph
 
 
@@ -31,9 +31,7 @@ _INFLIGHT_LOCK = threading.Lock()
 SELECTABLE_GRAPH_VIEW_STATUSES = {"candidate", "attached", "active", "returned"}
 MAX_SELECTED_GRAPH_VIEWS = 6
 MAX_REASONING_STATE_RECORDS = 48
-MAX_GRAPH_EVIDENCE_RECORDS = 64
-MAX_GRAPH_EVIDENCE_RELATIONSHIPS = 96
-MAX_GRAPH_VIEW_PROVENANCE_REFS = 24
+MAX_GRAPH_VIEW_REFERENCES = 128
 MAX_GRAPH_CONTEXT_CHARACTERS = 32_000
 MAX_GRAPH_CONTEXT_FIELD_CHARACTERS = 1_000
 
@@ -88,7 +86,7 @@ class UnifiedContextRequest:
 
 
 def _graph_view_identity(view: dict[str, Any]) -> dict[str, Any]:
-    """Expose persisted identity and lifecycle without transporting membership."""
+    """Expose AgentGraph view identity plus stable references only."""
     return {
         key: view.get(key)
         for key in (
@@ -98,22 +96,19 @@ def _graph_view_identity(view: dict[str, Any]) -> dict[str, Any]:
             "status",
             "projectId",
             "conversationId",
-            "goalId",
-            "episodeId",
-            "jobId",
-            "runId",
-            "invocationId",
+            "correlationId",
+            "displayLabel",
             "producingRole",
             "receivingRole",
             "parentViewId",
-            "omittedNeighborCount",
+            "note",
             "createdAt",
             "updatedAt",
         )
         if view.get(key) is not None
     } | {
-        "recordCount": len(view.get("records") or []),
-        "relationshipCount": len(view.get("includedRelationships") or []),
+        "references": list(view.get("references") or []),
+        "referenceCount": len(view.get("references") or []),
     }
 
 
@@ -129,10 +124,10 @@ def select_persisted_graph_views(
     conversation_id: str,
     receiving_roles: set[str],
 ) -> list[dict[str, Any]]:
-    """Resolve an explicit ordered selection from persisted Graph Views.
+    """Resolve an explicit ordered selection of AgentGraph reference views.
 
     The caller carries identities only. Python enforces scope, target role, and
-    lifecycle before any full view is rendered for a model.
+    lifecycle before reference identities are rendered for a model.
     """
     requested = [str(view_id).strip() for view_id in requested_view_ids if str(view_id).strip()]
     if len(requested) > MAX_SELECTED_GRAPH_VIEWS:
@@ -160,48 +155,6 @@ def select_persisted_graph_views(
     return selected
 
 
-def transition_persisted_graph_views(
-    graph: ThinkGraphEngraphis,
-    *,
-    project_id: str,
-    conversation_id: str,
-    view_ids: list[str],
-    status: str,
-    invocation_id: str | None = None,
-    runtime: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    """Transition exact persisted views without transporting their contents."""
-    if status not in {"active", "consumed", "failed"}:
-        raise ValueError(f"graph_view_transition_status_invalid: {status}")
-    persisted = list(graph.graph_views(project_id, conversation_id).get("views") or [])
-    selected = select_persisted_graph_views(
-        persisted,
-        view_ids,
-        project_id=project_id,
-        conversation_id=conversation_id,
-        receiving_roles={"main_chat", "coder"},
-    )
-    updated: list[dict[str, Any]] = []
-    for view in selected:
-        source_status = str(view.get("status") or "")
-        if status in {"consumed", "failed"} and source_status != "active":
-            raise ValueError(
-                f"graph_view_transition_invalid: {view.get('viewId')} ({source_status}->{status})"
-            )
-        next_view = {
-            **view,
-            "status": status,
-            "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
-        if invocation_id:
-            next_view["invocationId"] = invocation_id
-        if runtime is not None:
-            next_view["runtime"] = runtime
-        graph.persist_graph_view(next_view)
-        updated.append(_graph_view_identity(next_view))
-    return updated
-
-
 def _build_unified_context(
     request: UnifiedContextRequest,
     *,
@@ -223,7 +176,11 @@ def _build_unified_context(
     think = graph.projection(request.project_id, limit=limits["thinkgraph"])
     think_ms = (time.perf_counter() - think_started) * 1000
     persisted_graph_views = list(
-        graph.graph_views(request.project_id, request.conversation_id).get("views") or []
+        agentgraph.list_graph_views(
+            project_id=request.project_id,
+            conversation_id=request.conversation_id,
+            limit=50,
+        ).get("views") or []
     )
     selected_full_views = select_persisted_graph_views(
         persisted_graph_views,
@@ -487,128 +444,11 @@ def build_unified_context(
                 _INFLIGHT.pop(key, None)
 
 
-def build_graph_object_context(
-    project_id: str,
-    conversation_id: str,
-    references: list[dict[str, Any]],
-    *,
-    graph: ThinkGraphEngraphis | None = None,
-    read_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _get_json,
-    read_codegraph_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _get_codegraph_json,
-) -> dict[str, Any]:
-    """Resolve compact object identities against the current project authorities.
-
-    The caller supplies identity only. Membership, properties, relationships,
-    provenance, and stale-state checks are resolved from the canonical projection.
-    """
-    if not project_id.strip() or not conversation_id.strip():
-        raise ValueError("project_id_and_conversation_id_required")
-    if not references or len(references) > 5:
-        raise ValueError("selected_graph_object_refs_must_contain_1_to_5_items")
-    projection = build_unified_context(
-        UnifiedContextRequest(project_id=project_id, conversation_id=conversation_id, role="main_chat"),
-        graph=graph,
-        read_json=read_json,
-        read_codegraph_json=read_codegraph_json,
-    )
-    nodes_by_identity = {
-        (str(node.get("authority")), str(node.get("source_id"))): node
-        for node in projection.get("nodes") or []
-    }
-    nodes_by_id = {int(node["id"]): node for node in projection.get("nodes") or []}
-    edges = list(projection.get("edges") or [])
-    seen: set[tuple[str, str]] = set()
-    resolved: list[dict[str, Any]] = []
-    sections: list[str] = ["[LIQUIDAITY_SELECTED_PROJECT_OBJECTS]"]
-    for reference in references:
-        authority = str(reference.get("authority") or "").strip()
-        canonical_id = str(reference.get("canonicalId") or "").strip()
-        selected_through = str(reference.get("selectedThrough") or "").strip()
-        source_authority = str(reference.get("sourceAuthority") or "").strip()
-        projection_id = str(reference.get("projectionId") or "").strip()
-        if authority not in AUTHORITY or selected_through not in {*AUTHORITY, "unified"} or not canonical_id:
-            raise ValueError("selected_graph_object_ref_invalid")
-        if selected_through == "unified" and source_authority != authority:
-            raise ValueError("unified_source_authority_required")
-        if projection_id and projection_id != projection.get("projectionId"):
-            raise ValueError(f"graph_object_projection_superseded:{projection_id}")
-        identity = (authority, canonical_id)
-        if identity in seen:
-            continue
-        seen.add(identity)
-        node = nodes_by_identity.get(identity)
-        if node is None:
-            raise ValueError(f"graph_object_not_visible:{authority}:{canonical_id}")
-        direct_edges = [edge for edge in edges if edge.get("source") == node["id"] or edge.get("target") == node["id"]][:8]
-        relationships: list[dict[str, str]] = []
-        for edge in direct_edges:
-            other_id = int(edge["target"] if edge.get("source") == node["id"] else edge["source"])
-            other = nodes_by_id.get(other_id)
-            if not other:
-                continue
-            relationships.append({
-                "type": str(edge.get("type") or "RELATED_TO"),
-                "authority": str(other.get("authority") or ""),
-                "canonicalId": str(other.get("source_id") or ""),
-                "label": _flat(other.get("name")),
-            })
-        provenance = node.get("provenance") if isinstance(node.get("provenance"), dict) else {}
-        properties = node.get("properties") if isinstance(node.get("properties"), dict) else {}
-        provenance_refs = []
-        for value in [
-            *provenance.values(),
-            properties.get("source_document_refs"),
-            properties.get("supporting_statement_ids"),
-            node.get("file_path"),
-        ]:
-            for ref in _refs(value):
-                if ref not in provenance_refs:
-                    provenance_refs.append(ref)
-        record = {
-            "authority": authority,
-            "canonicalId": canonical_id,
-            "type": str(node.get("label") or "Record"),
-            "label": _flat(node.get("name")),
-            "status": node.get("status"),
-            "trust": node.get("trust"),
-            "relationships": relationships,
-            "provenanceRefs": provenance_refs[:8],
-        }
-        resolved.append(record)
-        sections.append(f"{AUTHORITY[authority]['label']} {record['type']} — {canonical_id}")
-        sections.append(f"- label: {record['label']}")
-        if record["status"]:
-            sections.append(f"- status: {_flat(record['status'])}")
-        if record["trust"]:
-            sections.append(f"- trust: {_flat(record['trust'])}")
-        for relationship in relationships:
-            sections.append(
-                f"- {relationship['type']} -> {relationship['label']} "
-                f"({relationship['authority']}:{relationship['canonicalId']})"
-            )
-        if provenance_refs:
-            sections.append(f"- provenance: {', '.join(provenance_refs[:8])}")
-    text = "\n".join(sections)
-    return {
-        "schemaVersion": "graph-object-context.v1",
-        "projectId": project_id,
-        "conversationId": conversation_id,
-        "modelContext": text,
-        "resolved": resolved,
-        "measurements": {
-            "objects": len(resolved),
-            "relationships": sum(len(record["relationships"]) for record in resolved),
-            "characters": len(text),
-            "estimatedTokens": max(1, math.ceil(len(text) / 4)),
-        },
-    }
-
-
 # ---------------------------------------------------------------------------
 # Compact model representation: the text a model invocation consumes, derived
 # deterministically from the SAME projection the Unified surface renders.
 # The projection decides membership; this layer only renders that membership
-# efficiently. The persisted Graph View is already a bounded selection; this
+# efficiently. An AgentGraph view is already a bounded reference selection; this
 # final doorway additionally fails closed if its aggregate evidence or text
 # exceeds the provider-bound limits. Repeated repository evidence is identified
 # by normalized file identity plus source range, not by display-text equality.
@@ -634,120 +474,36 @@ def _bounded_field(value: Any, *, field: str) -> str:
     return text
 
 
-def _normalized_file_range(record: dict[str, Any]) -> tuple[str, str] | None:
-    """Return a stable repository-evidence identity when the record has one."""
-    properties = record.get("properties")
-    sources = [record, properties if isinstance(properties, dict) else {}]
-    file_value: Any = None
-    for source in sources:
-        for key in ("filePath", "file_path", "sourcePath", "source_path", "file", "path"):
-            if source.get(key):
-                file_value = source[key]
-                break
-        if file_value:
-            break
-    if not file_value:
-        return None
-    normalized_file = str(file_value).strip().replace("\\", "/")
-    while "//" in normalized_file:
-        normalized_file = normalized_file.replace("//", "/")
-    normalized_file = normalized_file.casefold()
-
-    range_value: Any = None
-    for source in sources:
-        for key in ("sourceRange", "source_range", "range"):
-            if source.get(key) is not None:
-                range_value = source[key]
-                break
-        if range_value is not None:
-            break
-    if isinstance(range_value, dict):
-        range_value = json.dumps(range_value, sort_keys=True, separators=(",", ":"))
-    elif range_value is None:
-        start = next(
-            (
-                source.get(key)
-                for source in sources
-                for key in ("startLine", "start_line", "lineStart", "line_start")
-                if source.get(key) is not None
-            ),
-            "",
-        )
-        end = next(
-            (
-                source.get(key)
-                for source in sources
-                for key in ("endLine", "end_line", "lineEnd", "line_end")
-                if source.get(key) is not None
-            ),
-            start,
-        )
-        range_value = f"{start}:{end}" if start != "" else ""
-    return normalized_file, _flat(range_value)
-
-
 def _new_render_state() -> dict[str, Any]:
-    return {
-        "recordCount": 0,
-        "relationshipCount": 0,
-        "seenFileRanges": set(),
-        "seenFiles": set(),
-        "duplicateFileRangeCount": 0,
-    }
+    return {"referenceCount": 0}
 
 
 def _render_view_lines(view: dict[str, Any], state: dict[str, Any]) -> list[str]:
-    """Compact per-view lines — the ONE serialization of a persisted Graph View
-    for model delivery, shared by the doorway and model-context renderers."""
-    lines: list[str] = []
-    omitted = int(view.get("omittedNeighborCount") or 0)
-    records = list(view.get("records") or [])
-    relationships = list(view.get("includedRelationships") or [])
-    lines.append(
-        f"view: {view.get('viewId')} | authority: {view.get('authority')} | project: {view.get('projectId')} | "
-        f"conversation: {view.get('conversationId')} | status: {view.get('status')} | records: {len(records)}"
-        + (f" ({omitted} more available beyond this view)" if omitted else "")
-    )
-    if _flat(view.get("query")):
-        lines.append(f"query: {_bounded_field(view.get('query'), field='query')}")
-    for record in records:
-        file_range = _normalized_file_range(record)
-        if file_range is not None:
-            state["seenFiles"].add(file_range[0])
-            if file_range in state["seenFileRanges"]:
-                state["duplicateFileRangeCount"] += 1
-                continue
-            state["seenFileRanges"].add(file_range)
-        state["recordCount"] += 1
-        if state["recordCount"] > MAX_GRAPH_EVIDENCE_RECORDS:
-            raise ValueError(
-                "graph_context_record_limit_exceeded: "
-                f"{state['recordCount']}>{MAX_GRAPH_EVIDENCE_RECORDS}"
-            )
-        canonical = str(record.get("canonicalId") or "")
-        summary = _bounded_field(record.get("summary") or "", field="record.summary")
-        lines.append(f"- {summary} ({canonical})" if summary else f"- ({canonical})")
-    for relationship in relationships:
-        state["relationshipCount"] += 1
-        if state["relationshipCount"] > MAX_GRAPH_EVIDENCE_RELATIONSHIPS:
-            raise ValueError(
-                "graph_context_relationship_limit_exceeded: "
-                f"{state['relationshipCount']}>{MAX_GRAPH_EVIDENCE_RELATIONSHIPS}"
-            )
-        lines.append(
-            f"- {relationship.get('source')} -{relationship.get('type') or 'RELATED_TO'}-> {relationship.get('target')}"
-        )
-    refs = sorted({_flat(ref) for ref in (view.get("provenanceRefs") or []) if _flat(ref)})
-    if len(refs) > MAX_GRAPH_VIEW_PROVENANCE_REFS:
+    """Serialize only AgentGraph pointer identities for on-demand resolution."""
+    references = list(view.get("references") or [])
+    if len(references) > MAX_GRAPH_VIEW_REFERENCES:
         raise ValueError(
-            "graph_context_provenance_limit_exceeded: "
-            f"{len(refs)}>{MAX_GRAPH_VIEW_PROVENANCE_REFS}"
+            "graph_view_reference_limit_exceeded: "
+            f"{len(references)}>{MAX_GRAPH_VIEW_REFERENCES}"
         )
-    if refs:
+    lines: list[str] = [
+        f"view: {view.get('viewId')} | authority: agentgraph | project: {view.get('projectId')} | "
+        f"conversation: {view.get('conversationId')} | status: {view.get('status')} | "
+        f"references: {len(references)}"
+    ]
+    if _flat(view.get("displayLabel")):
         lines.append(
-            "provenance: "
-            + "; ".join(_bounded_field(ref, field="provenanceRef") for ref in refs)
+            f"label: {_bounded_field(view.get('displayLabel'), field='displayLabel')}"
         )
+    for reference in references:
+        state["referenceCount"] += 1
+        lines.append(
+            "- "
+            f"{reference.get('referenceType')} -> {reference.get('referenceId')}"
+            + (" [required]" if reference.get("required") else "")
+        )
+    if _flat(view.get("note")):
+        lines.append(f"note: {_bounded_field(view.get('note'), field='note')}")
     return lines
 
 
@@ -755,7 +511,7 @@ def render_model_context(projection: dict[str, Any], role_views: list[dict[str, 
     """Bounded, target-specific model text + per-section token counts.
 
     Membership comes from persisted structures only: the ThinkGraph reasoning
-    state (structural record types) and the persisted Graph Views addressed to
+    state (structural record types) and AgentGraph reference views addressed to
     this role. The broad display projection is referenced by identity and
     counts — its node/edge dump NEVER enters a prompt (a full CBM layout is
     ~180k tokens of relationship lines). Everything beyond this bounded context
@@ -805,13 +561,11 @@ def render_model_context(projection: dict[str, Any], role_views: list[dict[str, 
     view_lines: list[str] = []
     render_state = _new_render_state()
     for view in role_views:
-        before_records = int(render_state["recordCount"])
-        before_relationships = int(render_state["relationshipCount"])
+        before_references = int(render_state["referenceCount"])
         lines = _render_view_lines(view, render_state)
         view_lines.extend(lines)
         view_measurements[str(view.get("viewId"))] = {
-            "records": int(render_state["recordCount"]) - before_records,
-            "relationships": int(render_state["relationshipCount"]) - before_relationships,
+            "references": int(render_state["referenceCount"]) - before_references,
             "characters": len("\n".join(lines)),
             "estimatedTokens": _estimated_tokens("\n".join(lines)),
         }
@@ -853,16 +607,11 @@ def render_model_context(projection: dict[str, Any], role_views: list[dict[str, 
         "reasoningStateRecords": min(len(reasoning_nodes), MAX_REASONING_STATE_RECORDS),
         "omittedReasoningStateRecords": omitted_reasoning_count,
         "graphViewCount": len(role_views),
-        "graphEvidenceCount": int(render_state["recordCount"]) + int(render_state["relationshipCount"]),
-        "uniqueFiles": len(render_state["seenFiles"]),
-        "uniqueSourceRanges": len(render_state["seenFileRanges"]),
-        "duplicateFileRangeCount": int(render_state["duplicateFileRangeCount"]),
+        "graphReferenceCount": int(render_state["referenceCount"]),
         "limits": {
             "selectedGraphViews": MAX_SELECTED_GRAPH_VIEWS,
             "reasoningStateRecords": MAX_REASONING_STATE_RECORDS,
-            "graphEvidenceRecords": MAX_GRAPH_EVIDENCE_RECORDS,
-            "graphEvidenceRelationships": MAX_GRAPH_EVIDENCE_RELATIONSHIPS,
-            "provenanceRefsPerView": MAX_GRAPH_VIEW_PROVENANCE_REFS,
+            "graphViewReferences": MAX_GRAPH_VIEW_REFERENCES,
             "fieldCharacters": MAX_GRAPH_CONTEXT_FIELD_CHARACTERS,
             "contextCharacters": MAX_GRAPH_CONTEXT_CHARACTERS,
         },
@@ -871,31 +620,24 @@ def render_model_context(projection: dict[str, Any], role_views: list[dict[str, 
 
 
 def render_graph_views(views: list[dict[str, Any]]) -> dict[str, Any]:
-    """Faithful compact rendering of persisted Graph View records (doorway
-    delivery). Every record and relationship in the views is preserved; only
-    transport/UI overhead is removed. Shares the one per-view serializer."""
+    """Render AgentGraph reference views without copying source records."""
     lines: list[str] = ["[LIQUIDAITY_GRAPH_CONTEXT]"]
-    total_records = 0
-    total_relationships = 0
+    total_references = 0
     per_view: dict[str, dict[str, int]] = {}
     render_state = _new_render_state()
     for view in views:
-        before_records = int(render_state["recordCount"])
-        before_relationships = int(render_state["relationshipCount"])
+        before_references = int(render_state["referenceCount"])
         view_lines = _render_view_lines(view, render_state)
         lines.extend(view_lines)
-        rendered_records = int(render_state["recordCount"]) - before_records
-        rendered_relationships = int(render_state["relationshipCount"]) - before_relationships
-        total_records += rendered_records
-        total_relationships += rendered_relationships
+        rendered_references = int(render_state["referenceCount"]) - before_references
+        total_references += rendered_references
         per_view[str(view.get("viewId"))] = {
-            "records": rendered_records,
-            "relationships": rendered_relationships,
+            "references": rendered_references,
             "estimatedTokens": _estimated_tokens("\n".join(view_lines)),
         }
     lines.append(
-        "These compact canonical references are the exact filtered graph views supplied to this invocation. "
-        "Reference records by the canonical ids above; retrieve full records through the bounded graph tools."
+        "Resolve these stable references through their named canonical tools; "
+        "the referenced payloads are not embedded in AgentGraph."
     )
     text = "\n".join(lines)
     if len(text) > MAX_GRAPH_CONTEXT_CHARACTERS:
@@ -909,13 +651,9 @@ def render_graph_views(views: list[dict[str, Any]]) -> dict[str, Any]:
             "characters": len(text),
             "estimatedTokens": _estimated_tokens(text),
             "views": per_view,
-            "records": total_records,
-            "relationships": total_relationships,
+            "references": total_references,
             "graphViewCount": len(views),
-            "graphEvidenceCount": total_records + total_relationships,
-            "uniqueFiles": len(render_state["seenFiles"]),
-            "uniqueSourceRanges": len(render_state["seenFileRanges"]),
-            "duplicateFileRangeCount": int(render_state["duplicateFileRangeCount"]),
+            "graphReferenceCount": total_references,
         },
     }
 
@@ -943,9 +681,12 @@ def build_model_context(
     )
     if str(rebuilt.get("projectionId")) != str(projection_id):
         raise ValueError(f"projection_superseded: current is {rebuilt.get('projectionId')}")
-    resolved_graph = graph or get_thinkgraph()
     persisted = list(
-        resolved_graph.graph_views(request.project_id, request.conversation_id).get("views") or []
+        agentgraph.list_graph_views(
+            project_id=request.project_id,
+            conversation_id=request.conversation_id,
+            limit=50,
+        ).get("views") or []
     )
     role_views = select_persisted_graph_views(
         persisted,

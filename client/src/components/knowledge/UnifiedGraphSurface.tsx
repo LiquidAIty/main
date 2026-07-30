@@ -7,7 +7,6 @@ import type { CodeGraphData, CodeGraphNode } from '../codegraph/types';
 import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GRAPH_THEME, graphDrawerButtonStyle, graphGlassPillStyle } from '../graph/graphVisualTokens';
-import { AskMainAction, type GraphAuthority, type GraphObjectRef } from './GraphObjectContext';
 
 type Layer = 'thinkgraph' | 'knowgraph' | 'codegraph';
 
@@ -24,12 +23,11 @@ type UnifiedPayload = {
   activeGraphViewId: string | null;
   graphViews: Array<{
     viewId: string;
-    authority: Layer;
+    authority: 'agentgraph';
     status: string;
     producingRole: string;
     receivingRole: string;
-    recordCount: number;
-    relationshipCount: number;
+    referenceCount: number;
   }>;
   lifecycle: {
     available: string[];
@@ -123,15 +121,11 @@ export default function UnifiedGraphSurface({
   conversationId,
   onProjectionChange,
   onOpenAuthority,
-  onAskMain,
-  onSelectedObjectChange,
 }: {
   projectId: string;
   conversationId: string;
   onProjectionChange?: (projection: UnifiedProjectionIdentity | null) => void;
   onOpenAuthority?: (authority: Layer) => void;
-  onAskMain?: (reference: GraphObjectRef) => void;
-  onSelectedObjectChange?: (reference: GraphObjectRef | null) => void;
 }) {
   const [payload, setPayload] = useState<UnifiedPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -154,22 +148,6 @@ export default function UnifiedGraphSurface({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const requestGeneration = useRef(0);
   const [cameraCommand, setCameraCommand] = useState<{ action: 'zoom_in' | 'zoom_out' | 'fit_view'; token: number }>({ action: 'fit_view', token: 0 });
-
-  useEffect(() => {
-    // A node without a source_id has no canonical identity, so it cannot be
-    // published as a selected graph object — a ref carrying an undefined
-    // canonicalId is unresolvable by every downstream consumer. Report no
-    // selection instead of an unusable one.
-    const canonicalId = selected?.source_id;
-    onSelectedObjectChange?.(selected && canonicalId ? {
-      authority: selected.authority as GraphAuthority,
-      canonicalId,
-      selectedThrough: 'unified',
-      sourceAuthority: selected.authority as GraphAuthority,
-      projectionId: payload?.projectionId,
-      displayLabel: displayLabel(selected),
-    } : null);
-  }, [onSelectedObjectChange, payload?.projectionId, selected]);
 
   useEffect(() => {
     if (!projectId) {
@@ -270,7 +248,6 @@ export default function UnifiedGraphSurface({
           {/* Same rule as the selection effect: without a canonical id there is
               nothing Main could resolve, so offer no action rather than send an
               unresolvable reference. */}
-          {selected.source_id ? <AskMainAction reference={{ authority: selected.authority as GraphAuthority, canonicalId: selected.source_id, selectedThrough: 'unified', sourceAuthority: selected.authority as GraphAuthority, projectionId: payload?.projectionId, displayLabel: displayLabel(selected) }} onAskMain={onAskMain} /> : null}
           {onOpenAuthority && selected.authority ? <button type="button" onClick={() => onOpenAuthority(selected.authority as Layer)} style={graphDrawerButtonStyle({ width: '100%', marginTop: 10 })}>Open {selected.authority}</button> : null}
         </section> : null}
         <section>

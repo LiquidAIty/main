@@ -167,28 +167,18 @@ describe('native Main / Hermes / Search doorways', () => {
     ]);
   });
 
-  it('adds server-minted project context to Hermes without requiring selected nodes', async () => {
+  it('adds the canonical runtime identity to Hermes without a separate context packet', async () => {
     deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [flow(main.id, hermes.id), flow(hermes.id, search.id)]));
-    const context = {
-      projectId: 'p1',
-      conversationId: 'c1',
-      focusNodeIds: [],
-      requestedOutcome: null,
-    };
-    const config = await resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat', 'req_1234abcd', context);
+    const config = await resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat', 'req_1234abcd');
     const [definition] = config!.doorwayDefinitions as any[];
-    expect(definition.system_prompt).toContain('[LIQUIDAITY_INVESTIGATION_CONTEXT]');
-    expect(definition.system_prompt).toContain(JSON.stringify(context));
-    expect(buildHarnessRuntimeContext(deriveSessionId('p1', 'c1'), 'req_1234abcd')).not.toContain(
-      '[LIQUIDAITY_INVESTIGATION_CONTEXT]',
-    );
+    expect(definition.system_prompt).toContain('[LIQUIDAITY_RUNTIME_CONTEXT]');
+    expect(definition.system_prompt).toContain('active projectId: p1');
+    expect(definition.system_prompt).toContain('active parentRunId: req_1234abcd');
   });
 
   it('does not inject the obsolete active-report channel into Main or Hermes', async () => {
     deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [flow(main.id, hermes.id), flow(hermes.id, search.id)]));
-    const config = await resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat', 'req_new', {
-      projectId: 'p1', conversationId: 'c1', focusNodeIds: [], requestedOutcome: null,
-    });
+    const config = await resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat', 'req_new');
     const hermesDefinition = config!.doorwayDefinitions[0] as any;
     expect(hermesDefinition.system_prompt).not.toContain('[LIQUIDAITY_HERMES_ACTIVE_REPORT]');
     const mainContext = buildHarnessRuntimeContext(deriveSessionId('p1', 'c1'), 'req_new');

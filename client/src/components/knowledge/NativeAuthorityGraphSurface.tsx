@@ -5,8 +5,9 @@ import { forceCollide, forceX, forceY } from 'd3-force';
 import { GraphTab as CbmGraphTab } from '../../vendor/codebase-memory-ui/src/components/GraphTab';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
-import { AskMainAction, type GraphAuthority, type GraphObjectRef } from './GraphObjectContext';
 import './nativeAuthorityGraphSurface.css';
+
+type GraphAuthority = 'thinkgraph' | 'knowgraph' | 'codegraph';
 
 // The server-owned graph projection contract rendered by the native surfaces.
 type GraphProjectionNode = {
@@ -129,15 +130,7 @@ function toKnowGraphProjection(payload: KnowGraphPayload, projectId: string): Gr
   };
 }
 
-export function NativeKnowGraphSurface({
-  projectId,
-  onAskMain,
-  onSelectedObjectChange,
-}: {
-  projectId: string;
-  onAskMain?: (reference: GraphObjectRef) => void;
-  onSelectedObjectChange?: (reference: GraphObjectRef | null) => void;
-}) {
+export function NativeKnowGraphSurface({ projectId }: { projectId: string }) {
   const [projection, setProjection] = useState<GraphProjectionV1 | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -186,34 +179,14 @@ export function NativeKnowGraphSurface({
       status={status}
       error={error}
       authority="knowgraph"
-      onAskMain={onAskMain}
-      onSelectedObjectChange={onSelectedObjectChange}
     />
   );
 }
 
-export function NativeCodeGraphSurface({
-  project,
-  onAskMain,
-  onSelectedObjectChange,
-}: {
-  project: string | null;
-  onAskMain?: (reference: GraphObjectRef) => void;
-  onSelectedObjectChange?: (reference: GraphObjectRef | null) => void;
-}) {
-  const asReference = (node: { name: string }): GraphObjectRef => ({
-    authority: 'codegraph',
-    canonicalId: node.name,
-    selectedThrough: 'codegraph',
-    displayLabel: node.name,
-  });
+export function NativeCodeGraphSurface({ project }: { project: string | null }) {
   return (
     <div data-testid="native-codegraph-surface" className="cbm-native-surface h-full w-full min-h-0 bg-background text-foreground">
-      <CbmGraphTab
-        project={project}
-        onAskMainNode={(node) => onAskMain?.(asReference(node))}
-        onSelectedNodeChange={(node) => onSelectedObjectChange?.(node ? asReference(node) : null)}
-      />
+      <CbmGraphTab project={project} />
     </div>
   );
 }
@@ -271,15 +244,11 @@ export function NativeThinkGraphSurface({
   status,
   error,
   authority = 'thinkgraph',
-  onAskMain,
-  onSelectedObjectChange,
 }: {
   projection: GraphProjectionV1 | null;
   status: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
   authority?: GraphAuthority;
-  onAskMain?: (reference: GraphObjectRef) => void;
-  onSelectedObjectChange?: (reference: GraphObjectRef | null) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
@@ -301,14 +270,6 @@ export function NativeThinkGraphSurface({
     gravity: 14,
   });
 
-  useEffect(() => {
-    onSelectedObjectChange?.(selected ? {
-      authority,
-      canonicalId: selected.canonicalId,
-      selectedThrough: authority,
-      displayLabel: selected.fullLabel,
-    } : null);
-  }, [authority, onSelectedObjectChange, selected]);
   selectedRef.current = selected?.id || null;
 
   const nativeData = useMemo(() => {
@@ -537,7 +498,7 @@ export function NativeThinkGraphSurface({
         zIndex={6}
       >
       <div className="engraphis-native-controls">
-        {selected ? <section data-testid={`${authority}-node-inspector`}><h3>Identity</h3><h4>{selected.fullLabel}</h4><p>{selected.authority} · {selected.etype} · {selected.degree} connections</p><p>{selected.canonicalId}{selected.currentState ? ` · ${selected.currentState}` : ''}{selected.trustState ? ` · ${selected.trustState}` : ''}{selected.qualityState ? ` · ${selected.qualityState}` : ''}</p>{selected.codeGraphRef ? <p>CodeGraph: {selected.codeGraphRef}</p> : null}{selected.knowGraphRef ? <p>KnowGraph: {selected.knowGraphRef}</p> : null}<AskMainAction reference={{ authority, canonicalId: selected.canonicalId, selectedThrough: authority, displayLabel: selected.fullLabel }} onAskMain={onAskMain} /></section> : null}
+        {selected ? <section data-testid={`${authority}-node-inspector`}><h3>Identity</h3><h4>{selected.fullLabel}</h4><p>{selected.authority} · {selected.etype} · {selected.degree} connections</p><p>{selected.canonicalId}{selected.currentState ? ` · ${selected.currentState}` : ''}{selected.trustState ? ` · ${selected.trustState}` : ''}{selected.qualityState ? ` · ${selected.qualityState}` : ''}</p>{selected.codeGraphRef ? <p>CodeGraph: {selected.codeGraphRef}</p> : null}{selected.knowGraphRef ? <p>KnowGraph: {selected.knowGraphRef}</p> : null}</section> : null}
         <section>
           <h3>Controls</h3>
           <div className="engraphis-native-actions">

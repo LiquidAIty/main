@@ -272,6 +272,23 @@ The items below are the major deletion events. Every one "worked" before it was 
   "for later" and later never comes. Do not create either. If you split a file, delete the original and prove
   every piece has a live importer. If you scaffold, wire it now or don't write it.
 
+- **2026-07-29 — GraphView authority collapse and prompt-packet purge: 41 files, +1,063 / -1,925
+  lines before this log entry.**
+  - Moved bounded GraphView reference/lineage persistence out of ThinkGraph/Engraphis and into
+    AgentGraph. Deleted the ThinkGraph GraphView writer, its full `records_json` /
+    `relationships_json` copies, and the corresponding persisted Engraphis records.
+  - Deleted the disconnected Ask Main / selected-graph-object overlay from client, backend, and
+    Python rails. It duplicated server-owned graph resolution and never became a working
+    object-aware Main interaction.
+  - Deleted the separate TypeScript `LIQUIDAITY_INVESTIGATION_CONTEXT` packet. Hermes now receives
+    only the generic server-owned runtime identities; its actual result still returns through the
+    existing Python AgentGraph authority.
+  - Preserved native graph viewers, card-local tools, generic runtime identity, AgentGraph reference
+    passing, Hermes report persistence, and claim/finish protections.
+  Lesson: **a reference graph must point to native authorities, not copy their payloads; a
+  server-owned agent context that exists outside the agent's Python runtime is a second prompt
+  system, not context.**
+
 ## Patterns that keep coming back — do NOT write these
 
 Every one of these was written, shipped, "worked," and got ripped out. If your diff resembles any of

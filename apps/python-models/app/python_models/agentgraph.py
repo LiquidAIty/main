@@ -27,6 +27,28 @@ _MAX_ERROR_CHARS = 8_000
 _MAX_INSTRUCTION_CHARS = 200_000
 _MAX_OPERATION_REFERENCES = 16
 _MAX_TOOL_EVIDENCE = 64
+_GRAPH_VIEW_STATUSES = {
+    "candidate",
+    "attached",
+    "active",
+    "consumed",
+    "returned",
+    "superseded",
+    "failed",
+}
+_GRAPH_REFERENCE_TYPES = {
+    "artifact",
+    "codegraph",
+    "conversation_message",
+    "database",
+    "knowgraph",
+    "native_session",
+    "query_execution",
+    "registered_query",
+    "thinkgraph",
+    "worldsignals",
+}
+_MAX_GRAPH_VIEW_REFERENCES = 128
 
 
 class AgentGraphError(ValueError):
@@ -143,6 +165,53 @@ def _run_cypher(
         (json.dumps(params, ensure_ascii=False, separators=(",", ":")),),
     )
     return list(cursor.fetchall())
+
+
+def _ag_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (dict, list, str, int, float, bool)):
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (TypeError, ValueError):
+                return value
+        return value
+    return json.loads(str(value))
+
+
+def _graph_view_references(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or len(value) > _MAX_GRAPH_VIEW_REFERENCES:
+        raise AgentGraphError("agentgraph_graph_view_references_invalid")
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in value:
+        if not isinstance(raw, dict) or set(raw) - {
+            "referenceId",
+            "referenceType",
+            "required",
+        }:
+            raise AgentGraphError("agentgraph_graph_view_reference_invalid")
+        reference_id = _required_id(raw.get("referenceId"), "reference_id")
+        reference_type = _required_text(
+            raw.get("referenceType"), "reference_type"
+        ).lower()
+        if reference_type not in _GRAPH_REFERENCE_TYPES:
+            raise AgentGraphError(
+                f"agentgraph_reference_type_invalid: {reference_type}"
+            )
+        identity = (reference_type, reference_id)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        normalized.append(
+            {
+                "referenceId": reference_id,
+                "referenceType": reference_type,
+                "required": bool(raw.get("required", False)),
+            }
+        )
+    return normalized
 
 
 def _validate_instruction_operation_references(
@@ -1101,6 +1170,341 @@ def cancel_assignment(
     }
 
 
+def _graph_view_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
+    properties = dict(_ag_value(row[0]) or {})
+    reference_properties = list(_ag_value(row[1]) or [])
+    required_values = list(_ag_value(row[2]) or [])
+    references: list[dict[str, Any]] = []
+    for index, raw in enumerate(reference_properties):
+        if not isinstance(raw, dict):
+            continue
+        reference_id = str(raw.get("referenceId") or "").strip()
+        reference_type = str(raw.get("referenceType") or "").strip()
+        if not reference_id or not reference_type:
+            continue
+        references.append(
+            {
+                "referenceId": reference_id,
+                "referenceType": reference_type,
+                "required": bool(
+                    required_values[index]
+                    if index < len(required_values)
+                    else False
+                ),
+            }
+        )
+    return {
+        "schemaVersion": "graph-view.v1",
+        "viewId": properties.get("viewId"),
+        "authority": "agentgraph",
+        "status": properties.get("status"),
+        "projectId": properties.get("projectId"),
+        "conversationId": properties.get("conversationId"),
+        "correlationId": properties.get("correlationId"),
+        "displayLabel": properties.get("displayLabel"),
+        "producingRole": properties.get("producingRole"),
+        "receivingRole": properties.get("receivingRole"),
+        "parentViewId": properties.get("parentViewId") or None,
+        "note": properties.get("note") or None,
+        "createdAt": properties.get("createdAt"),
+        "updatedAt": properties.get("updatedAt"),
+        "references": references,
+    }
+
+
+def create_graph_view(
+    *,
+    project_id: str,
+    conversation_id: str,
+    correlation_id: str,
+    display_label: str,
+    references: list[dict[str, Any]],
+    producing_role: str = "main_chat",
+    receiving_role: str = "main_chat",
+    status: str = "candidate",
+    parent_view_id: str | None = None,
+    note: str | None = None,
+    view_id: str | None = None,
+    connection: Any | None = None,
+) -> dict[str, Any]:
+    """Persist only a bounded AgentGraph view of stable external references."""
+    project_id = _required_id(project_id, "project_id")
+    conversation_id = _required_id(conversation_id, "conversation_id")
+    correlation_id = _required_id(correlation_id, "correlation_id")
+    producing_role = _required_id(producing_role, "producing_role")
+    receiving_role = _required_id(receiving_role, "receiving_role")
+    display_label = _required_text(display_label, "display_label")[:200]
+    view_id = _required_id(
+        view_id or f"graphview:{uuid4().hex[:24]}", "graph_view_id"
+    )
+    status = _required_text(status, "graph_view_status").lower()
+    if status not in _GRAPH_VIEW_STATUSES:
+        raise AgentGraphError(f"agentgraph_graph_view_status_invalid: {status}")
+    parent_view_id = (
+        _required_id(parent_view_id, "parent_graph_view_id")
+        if parent_view_id
+        else None
+    )
+    note = _optional_text(note, "graph_view_note")
+    if note is not None and len(note) > 2_000:
+        raise AgentGraphError("agentgraph_graph_view_note_too_large")
+    normalized = _graph_view_references(references)
+    now = _now()
+    with _connection_scope(connection) as conn, conn.cursor() as cursor:
+        _prepare(cursor)
+        rows = _run_cypher(
+            cursor,
+            """
+            MERGE (view:GraphView {projectId:$projectId, viewId:$viewId})
+            SET view.schemaVersion='graph-view.v1',
+                view.authority='agentgraph',
+                view.status=$status,
+                view.conversationId=$conversationId,
+                view.correlationId=$correlationId,
+                view.displayLabel=$displayLabel,
+                view.producingRole=$producingRole,
+                view.receivingRole=$receivingRole,
+                view.parentViewId=$parentViewId,
+                view.note=$note,
+                view.createdAt=coalesce(view.createdAt, $now),
+                view.updatedAt=$now
+            RETURN view.viewId
+            """,
+            "view_id agtype",
+            {
+                "projectId": project_id,
+                "viewId": view_id,
+                "status": status,
+                "conversationId": conversation_id,
+                "correlationId": correlation_id,
+                "displayLabel": display_label,
+                "producingRole": producing_role,
+                "receivingRole": receiving_role,
+                "parentViewId": parent_view_id,
+                "note": note,
+                "now": now,
+            },
+        )
+        if not rows:
+            raise AgentGraphError("agentgraph_graph_view_create_failed")
+        for reference in normalized:
+            _run_cypher(
+                cursor,
+                """
+                MATCH (view:GraphView)
+                WHERE view.projectId=$projectId AND view.viewId=$viewId
+                MERGE (reference:Reference {
+                  projectId:$projectId,
+                  referenceType:$referenceType,
+                  referenceId:$referenceId
+                })
+                MERGE (view)-[link:POINTS_TO]->(reference)
+                SET link.required=$required
+                RETURN reference.referenceId
+                """,
+                "reference_id agtype",
+                {
+                    "projectId": project_id,
+                    "viewId": view_id,
+                    **reference,
+                },
+            )
+        if parent_view_id:
+            parent_rows = _run_cypher(
+                cursor,
+                """
+                MATCH (view:GraphView), (parent:GraphView)
+                WHERE view.projectId=$projectId AND view.viewId=$viewId
+                  AND parent.projectId=$projectId
+                  AND parent.viewId=$parentViewId
+                MERGE (view)-[:DERIVED_FROM]->(parent)
+                RETURN parent.viewId
+                """,
+                "parent_view_id agtype",
+                {
+                    "projectId": project_id,
+                    "viewId": view_id,
+                    "parentViewId": parent_view_id,
+                },
+            )
+            if not parent_rows:
+                raise AgentGraphError(
+                    f"agentgraph_parent_graph_view_not_found: {parent_view_id}"
+                )
+    return {
+        "ok": True,
+        "view": {
+            "schemaVersion": "graph-view.v1",
+            "viewId": view_id,
+            "authority": "agentgraph",
+            "status": status,
+            "projectId": project_id,
+            "conversationId": conversation_id,
+            "correlationId": correlation_id,
+            "displayLabel": display_label,
+            "producingRole": producing_role,
+            "receivingRole": receiving_role,
+            "parentViewId": parent_view_id,
+            "note": note,
+            "createdAt": now,
+            "updatedAt": now,
+            "references": normalized,
+        },
+    }
+
+
+def list_graph_views(
+    *,
+    project_id: str,
+    conversation_id: str | None = None,
+    limit: int = 20,
+    connection: Any | None = None,
+) -> dict[str, Any]:
+    """List AgentGraph view metadata and reference identities, never payload copies."""
+    project_id = _required_id(project_id, "project_id")
+    conversation_id = (
+        _required_id(conversation_id, "conversation_id")
+        if conversation_id
+        else ""
+    )
+    limit = max(1, min(int(limit), 50))
+    with _connection_scope(connection) as conn, conn.cursor() as cursor:
+        _prepare(cursor)
+        rows = _run_cypher(
+            cursor,
+            """
+            MATCH (view:GraphView)
+            WHERE view.projectId=$projectId
+              AND ($conversationId='' OR view.conversationId=$conversationId)
+              AND view.authority='agentgraph'
+            OPTIONAL MATCH (view)-[link:POINTS_TO]->(reference:Reference)
+            RETURN properties(view), collect(properties(reference)),
+                   collect(link.required)
+            """,
+            "view agtype, reference_values agtype, required_values agtype",
+            {"projectId": project_id, "conversationId": conversation_id},
+        )
+    views = [_graph_view_from_row(row) for row in rows]
+    views.sort(
+        key=lambda view: str(view.get("updatedAt") or ""),
+        reverse=True,
+    )
+    return {
+        "ok": True,
+        "projectId": project_id,
+        "conversationId": conversation_id or None,
+        "views": views[:limit],
+    }
+
+
+def get_graph_view(
+    *,
+    project_id: str,
+    view_id: str,
+    conversation_id: str | None = None,
+    connection: Any | None = None,
+) -> dict[str, Any]:
+    project_id = _required_id(project_id, "project_id")
+    view_id = _required_id(view_id, "graph_view_id")
+    conversation_id = (
+        _required_id(conversation_id, "conversation_id")
+        if conversation_id
+        else ""
+    )
+    with _connection_scope(connection) as conn, conn.cursor() as cursor:
+        _prepare(cursor)
+        rows = _run_cypher(
+            cursor,
+            """
+            MATCH (view:GraphView)
+            WHERE view.projectId=$projectId
+              AND view.viewId=$viewId
+              AND ($conversationId='' OR view.conversationId=$conversationId)
+              AND view.authority='agentgraph'
+            OPTIONAL MATCH (view)-[link:POINTS_TO]->(reference:Reference)
+            RETURN properties(view), collect(properties(reference)),
+                   collect(link.required)
+            """,
+            "view agtype, reference_values agtype, required_values agtype",
+            {
+                "projectId": project_id,
+                "viewId": view_id,
+                "conversationId": conversation_id,
+            },
+        )
+    if len(rows) != 1:
+        raise AgentGraphError(f"agentgraph_graph_view_not_found: {view_id}")
+    return {"ok": True, "view": _graph_view_from_row(rows[0])}
+
+
+def transition_graph_views(
+    *,
+    project_id: str,
+    conversation_id: str,
+    view_ids: list[str],
+    status: str,
+    correlation_id: str | None = None,
+    connection: Any | None = None,
+) -> list[dict[str, Any]]:
+    project_id = _required_id(project_id, "project_id")
+    conversation_id = _required_id(conversation_id, "conversation_id")
+    status = _required_text(status, "graph_view_status").lower()
+    if status not in {"active", "consumed", "failed"}:
+        raise AgentGraphError(f"agentgraph_graph_view_status_invalid: {status}")
+    normalized_ids = [_required_id(value, "graph_view_id") for value in view_ids]
+    if len(normalized_ids) != len(set(normalized_ids)):
+        raise AgentGraphError("agentgraph_graph_view_ids_duplicate")
+    updated: list[dict[str, Any]] = []
+    now = _now()
+    with _connection_scope(connection) as conn, conn.cursor() as cursor:
+        _prepare(cursor)
+        for view_id in normalized_ids:
+            current = get_graph_view(
+                project_id=project_id,
+                conversation_id=conversation_id,
+                view_id=view_id,
+                connection=conn,
+            )["view"]
+            if status in {"consumed", "failed"} and current.get("status") != "active":
+                raise AgentGraphError(
+                    "agentgraph_graph_view_transition_invalid: "
+                    f"{view_id} ({current.get('status')}->{status})"
+                )
+            _run_cypher(
+                cursor,
+                """
+                MATCH (view:GraphView)
+                WHERE view.projectId=$projectId AND view.viewId=$viewId
+                  AND view.conversationId=$conversationId
+                SET view.status=$status, view.updatedAt=$now,
+                    view.correlationId=coalesce($correlationId, view.correlationId)
+                RETURN view.viewId
+                """,
+                "view_id agtype",
+                {
+                    "projectId": project_id,
+                    "conversationId": conversation_id,
+                    "viewId": view_id,
+                    "status": status,
+                    "correlationId": correlation_id,
+                    "now": now,
+                },
+            )
+            updated.append(
+                {
+                    **current,
+                    "status": status,
+                    "updatedAt": now,
+                    **(
+                        {"correlationId": correlation_id}
+                        if correlation_id
+                        else {}
+                    ),
+                }
+            )
+    return updated
+
+
 def register_operation_execution_lineage(
     *,
     project_id: str,
@@ -1136,10 +1540,10 @@ def register_operation_execution_lineage(
               projectId: $projectId,
               executionId: $executionId
             })
-            MERGE (view:GraphView {
-              projectId: $projectId,
-              viewId: $graphViewId
-            })
+            MATCH (view:GraphView)
+            WHERE view.projectId=$projectId
+              AND view.viewId=$graphViewId
+              AND view.authority='agentgraph'
             MERGE (assignment)-[:EXECUTED_OPERATION]->(execution)
             MERGE (execution)-[:OF_VERSION]->(operation)
             MERGE (execution)-[:MATERIALIZED]->(view)
@@ -1170,8 +1574,10 @@ def add_assignment_references(
     assignment_id = _required_id(assignment_id, "assignment_id")
     receiver_card_id = _required_id(receiver_card_id, "receiver_card_id")
     allowed_types = {
+        "artifact",
         "graph_view",
         "registered_query",
+        "query_execution",
         "conversation_message",
         "database",
         "thinkgraph",

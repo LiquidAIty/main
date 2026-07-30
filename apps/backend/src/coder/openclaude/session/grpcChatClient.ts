@@ -20,7 +20,6 @@ import { resolveDirectSubagents } from '../../../cards/runtime';
 import { resolveModel } from '../../../llm/models.config';
 import { listPythonAgentMcpTools } from '../../../services/mcp/pythonAgentMcpClient';
 import { logHarnessTrace } from '../../../services/harnessTrace';
-import type { HermesInvestigationContext } from '../../hermes/hermesReportArtifact';
 import {
   attachGraphViewsToRuntime,
   type GraphViewIdentity,
@@ -93,8 +92,6 @@ export type GrpcTurnArgs = {
    * state from the client — never inferred from message content. */
   mode?: HarnessMode;
   traceId?: string;
-  /** Server-minted context passed only to the native Hermes doorway. */
-  investigationContext?: HermesInvestigationContext;
   /** Server-resolved delivery views for LIFECYCLE recording only — their JSON
    * never enters the model prompt. */
   graphViews?: GraphViewIdentity[];
@@ -151,7 +148,6 @@ export function buildHarnessRuntimeContext(
   sessionId: string,
   parentRunId?: string,
   options: {
-    investigationContext?: HermesInvestigationContext;
     /** Compact server-rendered graph context text (already carries its own
      * [LIQUIDAITY_GRAPH_CONTEXT] header). Full Graph View JSON is never
      * serialized into the prompt. */
@@ -167,14 +163,6 @@ export function buildHarnessRuntimeContext(
     `active conversationId: ${parsed.conversationId}`,
     ...(parentRunId ? [`active parentRunId: ${parentRunId}`] : []),
     'Use these exact values for LiquidAIty MCP tool calls. Never derive an id from the working directory, repository name, or session label.',
-    ...(options.investigationContext
-      ? [
-          '',
-          '[LIQUIDAITY_INVESTIGATION_CONTEXT]',
-          JSON.stringify(options.investigationContext),
-          'This compact context is server-minted for Hermes. Read the current project ThinkGraph yourself; focusNodeIds are optional hints, never the complete assignment.',
-        ]
-      : []),
     ...(options.graphContext?.trim()
       ? [
           '',
@@ -463,7 +451,6 @@ export async function resolveMainChatRuntimeConfig(
   sessionId: string,
   mode: HarnessMode,
   parentRunId?: string,
-  investigationContext?: HermesInvestigationContext,
 ): Promise<MainChatRuntimeConfig | null> {
   const parsed = parseSessionId(sessionId);
   if (!parsed) return null;
@@ -489,19 +476,9 @@ export async function resolveMainChatRuntimeConfig(
     deckRevision: doc?.meta?.deckRevision || null,
     doorwayDefinitions: selectDoorwayCards(nodes, edges, mode)
       .map((node) => {
-        const binding = resolveRuntimeBinding(
-          node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
-          node?.id,
-        );
         return buildHarnessAgentDefinition(
           node,
-          buildHarnessRuntimeContext(
-            sessionId,
-            parentRunId,
-            binding === 'hermes_steward'
-              ? { investigationContext }
-              : {},
-          ),
+          buildHarnessRuntimeContext(sessionId, parentRunId),
           {
             allowedCardRunIds: resolveDirectSubagents(String(node.id), nodes, edges).map((child: any) =>
               String(child.id),
@@ -680,7 +657,6 @@ export async function startGrpcTurn(
     args.sessionId,
     mode,
     args.traceId,
-    args.investigationContext,
   );
   if (!mainChatConfig) {
     throw new Error('main_chat_runtime_config_unavailable: exactly one configured main_chat card with a valid saved model is required');

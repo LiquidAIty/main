@@ -1,49 +1,47 @@
-export type GraphAuthority = 'thinkgraph' | 'knowgraph' | 'codegraph';
-export type GraphViewStatus = 'candidate' | 'attached' | 'active' | 'consumed' | 'returned' | 'superseded' | 'failed';
+export type GraphViewStatus =
+  | 'candidate'
+  | 'attached'
+  | 'active'
+  | 'consumed'
+  | 'returned'
+  | 'superseded'
+  | 'failed';
 
-export type GraphViewRecord = {
-  canonicalId: string;
-  summary: string;
-  selectionReason: string;
-  relevance?: number;
-  rank?: number;
-  provenanceRefs: string[];
-  estimatedCharacters: number;
-  estimatedTokens: number;
+export type GraphReferenceType =
+  | 'artifact'
+  | 'codegraph'
+  | 'conversation_message'
+  | 'database'
+  | 'knowgraph'
+  | 'native_session'
+  | 'query_execution'
+  | 'registered_query'
+  | 'thinkgraph'
+  | 'worldsignals';
+
+export type GraphViewReference = {
+  referenceId: string;
+  referenceType: GraphReferenceType;
+  required: boolean;
 };
 
-export type GraphViewRelationship = {
-  id: string;
-  source: string;
-  target: string;
-  type: string;
-};
-
-export type GraphView = {
+/** A bounded AgentGraph view of stable references.
+ * Canonical graph records and artifacts never cross TypeScript in this object. */
+export type GraphViewIdentity = {
   schemaVersion: 'graph-view.v1';
   viewId: string;
-  authority: GraphAuthority;
+  authority: 'agentgraph';
   status: GraphViewStatus;
   projectId: string;
   conversationId: string;
-  goalId?: string;
-  episodeId?: string;
-  jobId?: string;
-  runId?: string;
-  invocationId?: string;
+  correlationId?: string;
+  displayLabel: string;
   producingRole: string;
   receivingRole: string;
-  rootCanonicalNodeIds: string[];
-  includedCanonicalNodeIds: string[];
-  records: GraphViewRecord[];
-  includedRelationships: GraphViewRelationship[];
-  query: string;
-  filter: { nodeTypes: string[]; trustStates: string[] };
-  hopDepth: number;
-  provenanceRefs: string[];
-  note?: string;
+  references: GraphViewReference[];
   parentViewId?: string;
-  omittedNeighborCount: number;
+  note?: string;
+  referenceCount: number;
   createdAt: string;
   updatedAt: string;
   runtime?: {
@@ -52,124 +50,37 @@ export type GraphView = {
     role: string;
     invocationId: string;
     attachedAt: string;
-    includedRecords: number;
-    excludedRecords: number;
+    includedReferences: number;
     contextCharacters: number;
     estimatedTokens: number;
   };
 };
 
-/** Persisted Graph View identity/lifecycle transported through TypeScript.
- * Membership and record contents stay in Python and are rendered there. */
-export type GraphViewIdentity = {
-  schemaVersion: 'graph-view.v1';
-  viewId: string;
-  authority: GraphAuthority;
-  status: GraphViewStatus;
-  projectId: string;
-  conversationId: string;
-  goalId?: string;
-  episodeId?: string;
-  jobId?: string;
-  runId?: string;
-  invocationId?: string;
-  producingRole: string;
-  receivingRole: string;
-  parentViewId?: string;
-  omittedNeighborCount: number;
-  recordCount: number;
-  relationshipCount: number;
-  createdAt: string;
-  updatedAt: string;
-  runtime?: GraphView['runtime'];
-};
-
-const AUTHORITIES = new Set<GraphAuthority>(['thinkgraph', 'knowgraph', 'codegraph']);
-const STATUSES = new Set<GraphViewStatus>(['candidate', 'attached', 'active', 'consumed', 'returned', 'superseded', 'failed']);
-const text = (value: unknown, max: number): string => typeof value === 'string' ? value.trim().slice(0, max) : '';
-const optionalText = (value: unknown, max: number): string | undefined => text(value, max) || undefined;
-const stringList = (value: unknown, maxItems: number, maxLength: number): string[] => Array.isArray(value)
-  ? [...new Set(value.map((item) => text(item, maxLength)).filter(Boolean))].slice(0, maxItems)
-  : [];
-
-export function parseGraphViews(
-  value: unknown,
-  trusted: { projectId: string; conversationId: string },
-  forceStatus?: GraphViewStatus,
-): GraphView[] {
-  if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) throw new Error('graph_views_must_be_an_array');
-  return value.slice(0, 6).map((raw, viewIndex) => {
-    if (!raw || typeof raw !== 'object') throw new Error(`graph_view_${viewIndex}_invalid`);
-    const input = raw as Record<string, unknown>;
-    const authority = text(input.authority, 32) as GraphAuthority;
-    if (!AUTHORITIES.has(authority)) throw new Error(`graph_view_${viewIndex}_authority_invalid`);
-    const records = (Array.isArray(input.records) ? input.records.slice(0, 80) : []).map((rawRecord, recordIndex): GraphViewRecord => {
-      if (!rawRecord || typeof rawRecord !== 'object') throw new Error(`graph_view_${viewIndex}_record_${recordIndex}_invalid`);
-      const record = rawRecord as Record<string, unknown>;
-      const canonicalId = text(record.canonicalId, 320);
-      const summary = text(record.summary, 480);
-      const selectionReason = text(record.selectionReason, 240);
-      if (!canonicalId || !summary || !selectionReason) throw new Error(`graph_view_${viewIndex}_record_${recordIndex}_incomplete`);
-      return {
-        canonicalId,
-        summary,
-        selectionReason,
-        ...(Number.isFinite(record.relevance) ? { relevance: Number(record.relevance) } : {}),
-        ...(Number.isFinite(record.rank) ? { rank: Math.max(1, Math.trunc(Number(record.rank))) } : {}),
-        provenanceRefs: stringList(record.provenanceRefs, 12, 320),
-        estimatedCharacters: summary.length,
-        estimatedTokens: Math.max(1, Math.ceil(summary.length / 4)),
-      };
-    });
-    const includedCanonicalNodeIds = stringList(input.includedCanonicalNodeIds, 80, 320);
-    if (records.some((record) => !includedCanonicalNodeIds.includes(record.canonicalId))) throw new Error(`graph_view_${viewIndex}_record_not_included`);
-    const includedRelationships = (Array.isArray(input.includedRelationships) ? input.includedRelationships.slice(0, 160) : []).flatMap((rawRelationship) => {
-      if (!rawRelationship || typeof rawRelationship !== 'object') return [];
-      const relation = rawRelationship as Record<string, unknown>;
-      const source = text(relation.source, 320);
-      const target = text(relation.target, 320);
-      const type = text(relation.type, 120);
-      if (!source || !target || !type || !includedCanonicalNodeIds.includes(source) || !includedCanonicalNodeIds.includes(target)) return [];
-      return [{ id: text(relation.id, 320) || `${source}:${type}:${target}`, source, target, type }];
-    });
-    const filterInput = input.filter && typeof input.filter === 'object' ? input.filter as Record<string, unknown> : {};
-    const proposedStatus = text(input.status, 32) as GraphViewStatus;
-    const status = forceStatus || (STATUSES.has(proposedStatus) ? proposedStatus : 'candidate');
-    const now = new Date().toISOString();
-    return {
-      schemaVersion: 'graph-view.v1',
-      viewId: text(input.viewId, 200) || `${authority}:${status}:${viewIndex + 1}`,
-      authority,
-      status,
-      projectId: trusted.projectId,
-      conversationId: trusted.conversationId,
-      ...(optionalText(input.goalId, 160) ? { goalId: optionalText(input.goalId, 160) } : {}),
-      ...(optionalText(input.episodeId, 160) ? { episodeId: optionalText(input.episodeId, 160) } : {}),
-      ...(optionalText(input.jobId, 160) ? { jobId: optionalText(input.jobId, 160) } : {}),
-      ...(optionalText(input.runId, 160) ? { runId: optionalText(input.runId, 160) } : {}),
-      ...(optionalText(input.invocationId, 160) ? { invocationId: optionalText(input.invocationId, 160) } : {}),
-      producingRole: text(input.producingRole, 100) || 'main_chat',
-      receivingRole: text(input.receivingRole, 100) || 'main_chat',
-      rootCanonicalNodeIds: stringList(input.rootCanonicalNodeIds, 20, 320),
-      includedCanonicalNodeIds,
-      records,
-      includedRelationships,
-      query: text(input.query, 600),
-      filter: {
-        nodeTypes: stringList(filterInput.nodeTypes, 30, 120),
-        trustStates: stringList(filterInput.trustStates, 20, 120),
-      },
-      hopDepth: Math.min(6, Math.max(0, Math.trunc(Number(input.hopDepth) || 0))),
-      provenanceRefs: stringList(input.provenanceRefs, 40, 320),
-      ...(optionalText(input.note, 600) ? { note: optionalText(input.note, 600) } : {}),
-      ...(optionalText(input.parentViewId, 200) ? { parentViewId: optionalText(input.parentViewId, 200) } : {}),
-      omittedNeighborCount: Math.max(0, Math.trunc(Number(input.omittedNeighborCount) || 0)),
-      createdAt: optionalText(input.createdAt, 80) || now,
-      updatedAt: now,
-    };
-  });
-}
+const STATUSES = new Set<GraphViewStatus>([
+  'candidate',
+  'attached',
+  'active',
+  'consumed',
+  'returned',
+  'superseded',
+  'failed',
+]);
+const REFERENCE_TYPES = new Set<GraphReferenceType>([
+  'artifact',
+  'codegraph',
+  'conversation_message',
+  'database',
+  'knowgraph',
+  'native_session',
+  'query_execution',
+  'registered_query',
+  'thinkgraph',
+  'worldsignals',
+]);
+const text = (value: unknown, max: number): string =>
+  typeof value === 'string' ? value.trim().slice(0, max) : '';
+const optionalText = (value: unknown, max: number): string | undefined =>
+  text(value, max) || undefined;
 
 export function parseGraphViewIdentities(
   value: unknown,
@@ -177,63 +88,81 @@ export function parseGraphViewIdentities(
 ): GraphViewIdentity[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) throw new Error('graph_view_identities_must_be_an_array');
-  if (value.length > 6) throw new Error('graph_view_identity_limit_exceeded');
+  if (value.length > 16) throw new Error('graph_view_identity_limit_exceeded');
   return value.map((raw, index) => {
     if (!raw || typeof raw !== 'object') throw new Error(`graph_view_identity_${index}_invalid`);
     const input = raw as Record<string, unknown>;
-    const viewId = text(input.viewId, 200);
-    const authority = text(input.authority, 32) as GraphAuthority;
+    const viewId = text(input.viewId, 256);
     const status = text(input.status, 32) as GraphViewStatus;
-    const projectId = text(input.projectId, 200);
-    const conversationId = text(input.conversationId, 200);
-    const producingRole = text(input.producingRole, 100);
-    const receivingRole = text(input.receivingRole, 100);
-    if (!viewId || !AUTHORITIES.has(authority) || !STATUSES.has(status) || !producingRole || !receivingRole) {
+    const projectId = text(input.projectId, 256);
+    const conversationId = text(input.conversationId, 256);
+    const producingRole = text(input.producingRole, 128);
+    const receivingRole = text(input.receivingRole, 128);
+    const displayLabel = text(input.displayLabel, 200);
+    if (
+      !viewId
+      || input.authority !== 'agentgraph'
+      || !STATUSES.has(status)
+      || !producingRole
+      || !receivingRole
+      || !displayLabel
+    ) {
       throw new Error(`graph_view_identity_${index}_incomplete`);
     }
     if (projectId !== trusted.projectId || conversationId !== trusted.conversationId) {
       throw new Error(`graph_view_scope_mismatch: ${viewId}`);
     }
+    const rawReferences = Array.isArray(input.references) ? input.references : [];
+    if (rawReferences.length > 128) throw new Error(`graph_view_reference_limit_exceeded: ${viewId}`);
+    const seen = new Set<string>();
+    const references = rawReferences.map((rawReference, referenceIndex): GraphViewReference => {
+      if (!rawReference || typeof rawReference !== 'object') {
+        throw new Error(`graph_view_${index}_reference_${referenceIndex}_invalid`);
+      }
+      const reference = rawReference as Record<string, unknown>;
+      const referenceId = text(reference.referenceId, 256);
+      const referenceType = text(reference.referenceType, 64) as GraphReferenceType;
+      if (!referenceId || !REFERENCE_TYPES.has(referenceType)) {
+        throw new Error(`graph_view_${index}_reference_${referenceIndex}_invalid`);
+      }
+      const identity = `${referenceType}:${referenceId}`;
+      if (seen.has(identity)) throw new Error(`graph_view_reference_duplicate: ${identity}`);
+      seen.add(identity);
+      return { referenceId, referenceType, required: reference.required === true };
+    });
+    const now = new Date().toISOString();
     return {
       schemaVersion: 'graph-view.v1',
       viewId,
-      authority,
+      authority: 'agentgraph',
       status,
       projectId,
       conversationId,
-      ...(optionalText(input.goalId, 160) ? { goalId: optionalText(input.goalId, 160) } : {}),
-      ...(optionalText(input.episodeId, 160) ? { episodeId: optionalText(input.episodeId, 160) } : {}),
-      ...(optionalText(input.jobId, 160) ? { jobId: optionalText(input.jobId, 160) } : {}),
-      ...(optionalText(input.runId, 160) ? { runId: optionalText(input.runId, 160) } : {}),
-      ...(optionalText(input.invocationId, 160) ? { invocationId: optionalText(input.invocationId, 160) } : {}),
+      ...(optionalText(input.correlationId, 256) ? { correlationId: optionalText(input.correlationId, 256) } : {}),
+      displayLabel,
       producingRole,
       receivingRole,
-      ...(optionalText(input.parentViewId, 200) ? { parentViewId: optionalText(input.parentViewId, 200) } : {}),
-      omittedNeighborCount: Math.max(0, Math.trunc(Number(input.omittedNeighborCount) || 0)),
-      recordCount: Math.max(0, Math.trunc(Number(input.recordCount) || 0)),
-      relationshipCount: Math.max(0, Math.trunc(Number(input.relationshipCount) || 0)),
-      createdAt: text(input.createdAt, 80),
-      updatedAt: text(input.updatedAt, 80),
+      references,
+      ...(optionalText(input.parentViewId, 256) ? { parentViewId: optionalText(input.parentViewId, 256) } : {}),
+      ...(optionalText(input.note, 2_000) ? { note: optionalText(input.note, 2_000) } : {}),
+      referenceCount: references.length,
+      createdAt: text(input.createdAt, 80) || now,
+      updatedAt: text(input.updatedAt, 80) || now,
     };
   });
 }
 
-export function attachGraphViewsToRuntime<T extends GraphView | GraphViewIdentity>(
+export function attachGraphViewsToRuntime<T extends GraphViewIdentity>(
   candidates: T[],
   runtime: { provider: string; model: string; role: string; invocationId: string; attachedAt?: string },
-  delivered?: {
-    /** Characters of the compact server-rendered context the model actually
-     * received for these views. The views' own JSON never enters the prompt,
-     * so measuring JSON.stringify(view) here would be dishonest. */
-    contextCharacters: number;
-  },
-): Array<T & { status: 'active'; runtime: NonNullable<GraphView['runtime']> }> {
+  delivered?: { contextCharacters: number },
+): Array<T & { status: 'active'; runtime: NonNullable<GraphViewIdentity['runtime']> }> {
   const attachedAt = runtime.attachedAt || new Date().toISOString();
   const contextCharacters = Math.max(0, Math.trunc(delivered?.contextCharacters ?? 0));
   return candidates.map((candidate) => ({
     ...candidate,
     status: 'active',
-    invocationId: runtime.invocationId,
+    correlationId: runtime.invocationId,
     updatedAt: attachedAt,
     runtime: {
       provider: runtime.provider,
@@ -241,15 +170,18 @@ export function attachGraphViewsToRuntime<T extends GraphView | GraphViewIdentit
       role: runtime.role,
       invocationId: runtime.invocationId,
       attachedAt,
-      includedRecords: 'records' in candidate ? candidate.records.length : candidate.recordCount,
-      excludedRecords: candidate.omittedNeighborCount,
+      includedReferences: candidate.references.length,
       contextCharacters,
       estimatedTokens: contextCharacters > 0 ? Math.max(1, Math.ceil(contextCharacters / 4)) : 0,
     },
-  })) as Array<T & { status: 'active'; runtime: NonNullable<GraphView['runtime']> }>;
+  })) as Array<T & { status: 'active'; runtime: NonNullable<GraphViewIdentity['runtime']> }>;
 }
 
-export function completeGraphViews<T extends GraphView | GraphViewIdentity>(active: T[], failed = false): T[] {
+export function completeGraphViews<T extends GraphViewIdentity>(active: T[], failed = false): T[] {
   const updatedAt = new Date().toISOString();
-  return active.map((view) => ({ ...view, status: failed ? 'failed' : 'consumed', updatedAt })) as T[];
+  return active.map((view) => ({
+    ...view,
+    status: failed ? 'failed' : 'consumed',
+    updatedAt,
+  })) as T[];
 }

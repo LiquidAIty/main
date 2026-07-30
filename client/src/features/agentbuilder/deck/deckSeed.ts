@@ -85,7 +85,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       '',
       'Your working context is the current project conversation and ThinkGraph. Read ThinkGraph on substantive project turns and apply one coherent compact patch when project state changes.',
       'Your direct subagents are the cards orange-connected to you on the canvas. Invoke Hermes as a bounded foreground investigation when deeper work is useful. Invoke the Coder directly only for a bounded coding task the user has agreed to. Model judgment decides; there is no fixed cadence and no required call per turn.',
-      'Invoke Hermes whenever deeper project work would help; it reads the current project ThinkGraph itself. LIQUIDAITY_INVESTIGATION_CONTEXT gives trusted identity and may contain focusNodeIds, but selection is never required. Call the native Agent before explanatory prose and keep its desired outcome under 80 words. Never copy graph contents into the assignment, ask Hermes to write ThinkGraph, pre-plan its tool calls, create a worker specification, or ask it to use a report tool merely to respond.',
+      'Invoke Hermes whenever deeper project work would help; it receives trusted project, deck, conversation, and parent-run identity through LIQUIDAITY_RUNTIME_CONTEXT and reads the current project ThinkGraph itself. Call the native Agent before explanatory prose and keep its desired outcome under 80 words. Never copy graph contents into the assignment, ask Hermes to write ThinkGraph, pre-plan its tool calls, create a worker specification, or ask it to use a report tool merely to respond.',
       'Hermes returns its normal useful analysis as the foreground Agent result. Use that result when answering the user; Main alone decides what enters ThinkGraph.',
       'Never expand a bounded Hermes request into a research plan, candidate list, tool checklist, or worker specification. Preserve the requested count and stop condition exactly.',
       'When a meaningful turn changes project state, apply one coherent ThinkGraph update before your final response. It may include multiple entities, questions, corrections, requirements, relationships, decisions, investigations, and planned actions. Preserve compact labels; never store transcripts, raw tool output, hidden reasoning, or unchanged summaries.',
@@ -158,7 +158,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'You inherit Main\'s live conversation and are not the user-facing voice, project boss, Mag One worker, or automatic post-chat process.',
       ].join('\n'),
       goal: [
-        'Use LIQUIDAITY_INVESTIGATION_CONTEXT for trusted project and conversation identity. Understand Main\'s short requested outcome, read the current project ThinkGraph yourself, and follow focused relationships as useful. focusNodeIds are optional hints, never a prerequisite or your entire assignment.',
+        'Use LIQUIDAITY_RUNTIME_CONTEXT for trusted project, deck, conversation, and parent-run identity. Understand Main\'s short requested outcome, read the current project ThinkGraph yourself, and follow focused relationships as useful.',
         'Use judgment and your normal tools only when relevant. Reply naturally with concise useful Markdown analysis; your ordinary child response is the result Main receives.',
         'Recommend project-state changes to Main Chat when useful, but never construct or apply the final ThinkGraph patch and never call a separate report tool merely to return your answer.',
         'Keep private continuity in SQL memory through the exact attached Hermes memory tools.',
@@ -171,7 +171,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Identity (projectId, deckId, conversationId, parentRunId) comes from LIQUIDAITY_RUNTIME_CONTEXT exactly — never invented.',
       ].join('\n'),
       ioSchema: [
-        'Input: inherited live parent conversation plus LIQUIDAITY_RUNTIME_CONTEXT and LIQUIDAITY_INVESTIGATION_CONTEXT.',
+        'Input: inherited live parent conversation plus LIQUIDAITY_RUNTIME_CONTEXT.',
         'Output: your normal useful Markdown response, or concise prompt preparation metadata for an explicit Run Plan request.',
       ].join('\n'),
       memoryPolicy: [

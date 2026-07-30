@@ -458,55 +458,33 @@ def _graph_view(
     correlation_id: str,
     conversation_id: str,
 ) -> dict[str, Any]:
+    """Build AgentGraph view metadata; query rows remain in the live result only."""
     view_id = (
         f"graphview:query:{sha256((execution_id + query.query_id).encode()).hexdigest()[:24]}"
     )
-    records = []
-    for index, row in enumerate(rows):
-        encoded = json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        records.append(
-            {
-                "canonicalId": f"queryrow:{execution_id}:{index + 1}",
-                "label": query.title,
-                "kind": "RegisteredQueryRow",
-                "summary": encoded[:1500],
-                "properties": row,
-            }
-        )
     return {
         "viewId": view_id,
         "displayLabel": query.title,
-        "authority": query.database_authority,
+        "authority": "agentgraph",
         "projectId": query.project_id,
         "conversationId": conversation_id,
         "status": "attached",
         "producingRole": binding.card_id,
         "receivingRole": binding.card_id,
-        "runId": correlation_id,
-        "invocationId": execution_id,
-        "rootCanonicalNodeIds": [record["canonicalId"] for record in records[:1]],
-        "includedCanonicalNodeIds": [record["canonicalId"] for record in records],
-        "includedRelationships": [],
-        "records": records,
-        "filter": {
-            "queryId": query.query_id,
-            "queryVersion": query.version,
-            "parameters": parameters,
-        },
-        "hopDepth": 0,
-        "query": f"{query.query_id}@v{query.version}",
+        "correlationId": correlation_id,
         "note": "Bounded registered-query result; raw statement remains in the database registry.",
-        "provenanceRefs": [
-            f"registered-query:{query.project_id}:{query.query_id}:v{query.version}",
-            f"query-execution:{execution_id}",
+        "references": [
+            {
+                "referenceId": f"registered-query:{query.project_id}:{query.query_id}:v{query.version}",
+                "referenceType": "registered_query",
+                "required": True,
+            },
+            {
+                "referenceId": f"query-execution:{execution_id}",
+                "referenceType": "query_execution",
+                "required": True,
+            },
         ],
-        "omittedNeighborCount": 1 if truncated else 0,
-        "runtime": {
-            "queryExecutionId": execution_id,
-            "bindingId": binding.binding_id,
-            "rowLimit": query.row_limit,
-            "truncated": truncated,
-        },
     }
 
 
@@ -591,11 +569,23 @@ def execute_binding(
             correlation_id=correlation_id,
             conversation_id=conversation_id,
         )
-        from app.python_models.thinkgraph_engraphis import get_thinkgraph
-
-        get_thinkgraph().persist_graph_view(view)
         view_id = str(view["viewId"])
         with connect_postgres() as connection, connection.cursor() as cursor:
+            from app.python_models import agentgraph as ag
+
+            ag.create_graph_view(
+                project_id=query.project_id,
+                conversation_id=conversation_id,
+                correlation_id=correlation_id,
+                display_label=str(view["displayLabel"]),
+                references=list(view["references"]),
+                producing_role=binding.card_id,
+                receiving_role=binding.card_id,
+                status="attached",
+                note=str(view["note"]),
+                view_id=view_id,
+                connection=connection,
+            )
             cursor.execute(
                 """
                 UPDATE ag_catalog.registered_query_executions
@@ -614,8 +604,6 @@ def execute_binding(
                 """,
                 (assignment_id, view_id, binding.delivery_mode == "required"),
             )
-            from app.python_models import agentgraph as ag
-
             ag.register_operation_execution_lineage(
                 project_id=query.project_id,
                 assignment_id=assignment_id,
@@ -692,9 +680,13 @@ def _resolve_selected_graph_views(
         raise ValueError("agentgraph_selected_graph_view_ids_invalid")
     if not identities:
         return []
-    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+    from app.python_models import agentgraph as ag
 
-    available = get_thinkgraph().graph_views(project_id, conversation_id).get("views") or []
+    available = ag.list_graph_views(
+        project_id=project_id,
+        conversation_id=conversation_id,
+        limit=50,
+    ).get("views") or []
     allowed_receivers = {
         value
         for value in (receiver_card_id, receiver_role)
@@ -750,17 +742,6 @@ def _attach_selected_graph_view_references(
 
     for view in views:
         add(str(view.get("viewId") or ""), "graph_view", True)
-        authority = str(view.get("authority") or "").strip().lower()
-        for raw_reference in view.get("provenanceRefs") or []:
-            reference_id = str(raw_reference or "").strip()
-            prefix = reference_id.split(":", 1)[0].lower()
-            reference_type = (
-                prefix
-                if prefix in {"thinkgraph", "knowgraph", "codegraph"}
-                else authority
-            )
-            if reference_type in {"thinkgraph", "knowgraph", "codegraph"}:
-                add(reference_id, reference_type, False)
     ag.add_assignment_references(
         project_id=project_id,
         assignment_id=assignment_id,
@@ -772,11 +753,17 @@ def _attach_selected_graph_view_references(
 def _render_selected_graph_views(views: list[dict[str, Any]]) -> str:
     if not views:
         return ""
-    from app.python_models.unified_context import _render_view_lines
-
     lines = ["[SELECTED_GRAPH_VIEWS]"]
     for view in views:
-        lines.extend(_render_view_lines(view))
+        lines.append(
+            f"- {view.get('viewId')} ({view.get('displayLabel') or 'AgentGraph view'})"
+        )
+        for reference in view.get("references") or []:
+            lines.append(
+                "  - "
+                f"{reference.get('referenceType')} -> {reference.get('referenceId')}"
+                + (" [required]" if reference.get("required") else "")
+            )
     text = "\n".join(lines)
     if len(text) > _MAX_SELECTED_GRAPH_VIEW_CONTEXT_CHARS:
         raise ValueError("agentgraph_selected_graph_view_context_too_large")
@@ -798,7 +785,7 @@ def hydrate_assignment_context(
 
     The request carries identities only. Python hydrates the exact instruction,
     receiving saved card, grants, registered-operation versions, parameters,
-    and persisted Graph Views from their canonical stores.
+    and AgentGraph view references without copying their canonical payloads.
     """
     from app import control_plane
     from app.python_models import agentgraph as ag

@@ -1,17 +1,5 @@
 import { requestPythonRailsJson } from '../../services/autogen/autogenOrchestratorClient';
 
-export type HermesInvestigationContext = {
-  projectId: string;
-  conversationId: string;
-  focusNodeIds: string[];
-  requestedOutcome: string | null;
-  goalId?: string;
-  goalText?: string;
-  thinkGraphBranch?: string[];
-  codeGraphRefs?: string[];
-  knowGraphRefs?: string[];
-};
-
 export type HermesReportWriteInput = {
   parentRunId: string;
   reportMarkdown: string;
@@ -56,48 +44,6 @@ function refs(value: unknown, field: string): string[] {
   if (!Array.isArray(value)) throw new Error(`${field}_array_required`);
   if (value.length > 128) throw new Error(`${field}_too_many`);
   return [...new Set(value.map((entry) => requiredText(entry, field, 512)))];
-}
-
-function optionalText(value: unknown, field: string, maxLength: number): string | null {
-  if (value === undefined || value === null || value === '') return null;
-  return requiredText(value, field, maxLength);
-}
-
-/** Server-minted project identity is always present for the native doorway.
- * Optional focus values remain native Hermes working-context hints. */
-export function parseHermesInvestigationContext(
-  value: unknown,
-  projectId: string,
-  conversationId: string,
-): HermesInvestigationContext {
-  if (value === undefined) {
-    return { projectId, conversationId, focusNodeIds: [], requestedOutcome: null };
-  }
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('investigation_context_object_required');
-  }
-  const candidate = value as Record<string, unknown>;
-  const context: HermesInvestigationContext = {
-    projectId,
-    conversationId,
-    focusNodeIds: refs(candidate.focusNodeIds, 'investigation_focus_node_ids'),
-    requestedOutcome: optionalText(
-      candidate.requestedOutcome,
-      'investigation_requested_outcome',
-      2_000,
-    ),
-  };
-  const goalId = optionalText(candidate.goalId, 'investigation_goal_id', 256);
-  if (goalId) context.goalId = goalId;
-  const goalText = optionalText(candidate.goalText, 'investigation_goal_text', 2_000);
-  if (goalText) context.goalText = goalText;
-  const thinkGraphBranch = refs(candidate.thinkGraphBranch, 'investigation_thinkgraph_branch');
-  if (thinkGraphBranch.length) context.thinkGraphBranch = thinkGraphBranch;
-  const codeGraphRefs = refs(candidate.codeGraphRefs, 'investigation_codegraph_refs');
-  if (codeGraphRefs.length) context.codeGraphRefs = codeGraphRefs;
-  const knowGraphRefs = refs(candidate.knowGraphRefs, 'investigation_knowgraph_refs');
-  if (knowGraphRefs.length) context.knowGraphRefs = knowGraphRefs;
-  return context;
 }
 
 /** Persist one exact terminal report through Python AgentGraph authority. */

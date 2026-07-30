@@ -256,6 +256,77 @@ def test_worldsignals_reference_is_relational_and_linked_to_assignment_in_age() 
         connection.close()
 
 
+def test_graph_view_keeps_only_agentgraph_metadata_and_reference_identities() -> None:
+    connection = connect_postgres(autocommit=False)
+    try:
+        view = ag.create_graph_view(
+            project_id=PROJECT_ID,
+            conversation_id="main",
+            correlation_id=f"graphview-test-{uuid4().hex}",
+            display_label="Bounded agent context",
+            references=[
+                {
+                    "referenceId": "thinkgraph:decision:kg01",
+                    "referenceType": "thinkgraph",
+                    "required": True,
+                },
+                {
+                    "referenceId": "codegraph:C-Projects-main:runtime.ts",
+                    "referenceType": "codegraph",
+                    "required": False,
+                },
+            ],
+            connection=connection,
+        )
+        exact = ag.get_graph_view(
+            project_id=PROJECT_ID,
+            conversation_id="main",
+            view_id=view["view"]["viewId"],
+            connection=connection,
+        )["view"]
+        assert exact["authority"] == "agentgraph"
+        assert sorted(
+            exact["references"], key=lambda item: item["referenceId"]
+        ) == sorted([
+            {
+                "referenceId": "thinkgraph:decision:kg01",
+                "referenceType": "thinkgraph",
+                "required": True,
+            },
+            {
+                "referenceId": "codegraph:C-Projects-main:runtime.ts",
+                "referenceType": "codegraph",
+                "required": False,
+            },
+        ], key=lambda item: item["referenceId"])
+        assert not {
+            "records",
+            "relationships",
+            "includedCanonicalNodeIds",
+            "rootCanonicalNodeIds",
+            "query",
+            "filter",
+        }.intersection(exact)
+        listed = ag.list_graph_views(
+            project_id=PROJECT_ID,
+            conversation_id="main",
+            limit=50,
+            connection=connection,
+        )["views"]
+        assert any(item["viewId"] == view["view"]["viewId"] for item in listed)
+        active = ag.transition_graph_views(
+            project_id=PROJECT_ID,
+            conversation_id="main",
+            view_ids=[view["view"]["viewId"]],
+            status="active",
+            connection=connection,
+        )
+        assert active[0]["status"] == "active"
+    finally:
+        connection.rollback()
+        connection.close()
+
+
 def test_instruction_references_reject_raw_query_and_unknown_versions() -> None:
     connection = connect_postgres(autocommit=False)
     try:

@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from uuid import uuid4
 
 from autogen_core.tools import FunctionTool
 
@@ -161,13 +160,11 @@ async def retrieve_knowgraph_context_tool(
     result = await asyncio.to_thread(module.retrieve_knowgraph_context, request)
     payload = result.to_dict()
     records = []
-    selected_ids = []
     for rank, assertion in enumerate(result.assertions, start=1):
         canonical_id = str(assertion.get("assertion_id") or assertion.get("id") or "").strip()
         summary = str(assertion.get("text") or "").strip()
         if not canonical_id or not summary:
             continue
-        selected_ids.append(canonical_id)
         reasons = [str(reason).strip() for reason in assertion.get("retrieval_reasons") or [] if str(reason).strip()]
         provenance_refs = [
             str(value).strip()
@@ -184,59 +181,9 @@ async def retrieve_knowgraph_context_tool(
             "estimatedCharacters": len(summary),
             "estimatedTokens": max(1, (len(summary) + 3) // 4),
         })
-    # An unavailable corpus produced no evidence, so there is no view to return.
-    # Minting a graphView with status="returned" here would hand the caller a
-    # success-shaped object for work that never happened — the exact failure the
-    # readiness check exists to prevent. The typed state + notes are the answer.
-    if result.retrieval_state == module.CORPUS_UNPREPARED_STATE:
-        return payload
-    now = datetime.now(timezone.utc).isoformat()
-    included_relationships = []
-    selected_set = set(selected_ids)
-    for index, relation in enumerate(result.relations):
-        source = str(relation.get("source") or relation.get("subject") or "").strip()
-        target = str(relation.get("target") or relation.get("object") or "").strip()
-        relation_type = str(relation.get("type") or relation.get("predicate") or "RELATED_TO").strip()
-        if source in selected_set and target in selected_set:
-            included_relationships.append({
-                "id": str(relation.get("id") or f"knowgraph:{source}:{relation_type}:{target}:{index}"),
-                "source": source,
-                "target": target,
-                "type": relation_type,
-            })
-    payload["graphView"] = {
-        "schemaVersion": "graph-view.v1",
-        "viewId": f"knowgraph:{uuid4()}",
-        "authority": "knowgraph",
-        "status": "returned",
-        "projectId": str(project_id or "").strip(),
-        "conversationId": str(conversation_id or "").strip(),
-        "goalId": str(goal_id or "").strip() or None,
-        "episodeId": str(episode_id or "").strip() or None,
-        "jobId": str(job_id or task_id or "").strip() or None,
-        "producingRole": str(requesting_role or "main_chat").strip(),
-        "receivingRole": str(requesting_role or "main_chat").strip(),
-        "rootCanonicalNodeIds": selected_ids[:3],
-        "includedCanonicalNodeIds": selected_ids,
-        "includedRelationships": included_relationships,
-        "query": str(query or "").strip(),
-        "filter": {
-            "nodeTypes": [
-                module.GRAPHITI_ASSERTION_LABEL
-                if result.retrieval_modes.get("backend") == "graphiti"
-                else module.ASSERTION_LABEL
-            ],
-            "trustStates": [],
-        },
-        "hopDepth": max(0, int(max_hops or 0)),
-        "provenanceRefs": list(dict.fromkeys(ref for record in records for ref in record["provenanceRefs"]))[:40],
-        "note": "Filtered KnowGraph evidence returned by Hermes retrieval",
-        "parentViewId": str(parent_view_id or "").strip() or None,
-        "records": records,
-        "omittedNeighborCount": result.omitted_neighbor_count,
-        "createdAt": now,
-        "updatedAt": now,
-    }
+    # The evidence stays in KnowGraph and in this immediate tool result. A
+    # caller may create an AgentGraph view containing stable assertion/source
+    # references, but this tool never wraps or persists copied graph records.
     return payload
 
 

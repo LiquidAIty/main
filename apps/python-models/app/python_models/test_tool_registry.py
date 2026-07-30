@@ -129,4 +129,4 @@ def test_knowgraph_candidate_view_uses_the_actual_requesting_role(monkeypatch):
         )
     )
 
-    assert payload["graphView"]["producingRole"] == "main_chat"
+    assert "graphView" not in payload

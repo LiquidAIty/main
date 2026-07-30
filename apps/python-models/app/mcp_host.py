@@ -698,9 +698,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="graphview.list",
             description=(
-                "List bounded persisted Graph Views for the current project and conversation. "
-                "Returns stable view identities and their stored bounded records; it does not "
-                "scan folders or reconstruct views from chat text."
+                "List bounded AgentGraph reference views for the current project and conversation. "
+                "Returns stable view identities and pointers only; source graph records and "
+                "artifacts remain in their canonical authorities."
             ),
             inputSchema={
                 "type": "object",
@@ -716,8 +716,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="graphview.get",
             description=(
-                "Read one exact persisted Graph View by stable viewId within the current runtime "
-                "scope. Fails honestly when the identity is absent or ambiguous."
+                "Read one exact AgentGraph reference view by stable viewId. Returns pointer "
+                "identities only and fails honestly when the view is absent."
             ),
             inputSchema={
                 "type": "object",
@@ -733,9 +733,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="graphview.create",
             description=(
-                "Persist one bounded candidate Graph View using the existing Python Graph View "
-                "contract. The server mints its stable identity; callers provide structured "
-                "records and references, never raw SQL/Cypher execution."
+                "Create one bounded AgentGraph view containing stable references to canonical "
+                "graphs, artifacts, or real-time outputs. Never accepts copied graph records, "
+                "relationships, raw SQL, or raw Cypher."
             ),
             inputSchema={
                 "type": "object",
@@ -744,29 +744,44 @@ async def list_tools() -> list[Tool]:
                     "conversationId": {"type": "string"},
                     "correlationId": {"type": "string"},
                     "displayLabel": {"type": "string"},
-                    "authority": {
-                        "type": "string",
-                        "enum": ["thinkgraph", "knowgraph", "codegraph", "mixed"],
-                    },
                     "receivingRole": {"type": "string"},
-                    "rootCanonicalNodeIds": {"type": "array", "items": {"type": "string"}},
-                    "includedCanonicalNodeIds": {"type": "array", "items": {"type": "string"}},
-                    "includedRelationships": {"type": "array", "items": {"type": "object"}},
-                    "records": {"type": "array", "items": {"type": "object"}},
-                    "filter": {"type": "object"},
-                    "hopDepth": {"type": "integer", "minimum": 0, "maximum": 4},
-                    "query": {"type": "string"},
+                    "references": {
+                        "type": "array",
+                        "maxItems": 128,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "referenceId": {"type": "string"},
+                                "referenceType": {
+                                    "type": "string",
+                                    "enum": [
+                                        "artifact",
+                                        "codegraph",
+                                        "conversation_message",
+                                        "database",
+                                        "knowgraph",
+                                        "native_session",
+                                        "query_execution",
+                                        "registered_query",
+                                        "thinkgraph",
+                                        "worldsignals",
+                                    ],
+                                },
+                                "required": {"type": "boolean", "default": False},
+                            },
+                            "required": ["referenceId", "referenceType"],
+                        },
+                    },
                     "note": {"type": "string"},
-                    "provenanceRefs": {"type": "array", "items": {"type": "string"}},
                     "parentViewId": {"type": "string"},
-                    "omittedNeighborCount": {"type": "integer", "minimum": 0},
                 },
                 "required": [
                     "projectId",
                     "conversationId",
                     "correlationId",
                     "displayLabel",
-                    "authority",
+                    "references",
                 ],
             },
         ),
@@ -801,7 +816,7 @@ async def list_tools() -> list[Tool]:
                     "graphViewIds": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Persisted Graph View ids (canonical, e.g. codegraph:…) to attach. IDs only — the server resolves the persisted views and renders their compact context; never paste view content.",
+                            "description": "AgentGraph reference-view ids to attach. IDs only; canonical graph and artifact payloads remain behind their native tools.",
                     },
                 },
                 "required": ["parentRunId", "projectId", "deckId", "conversationId", "cardId", "approvedPrompt"],
@@ -1229,8 +1244,8 @@ async def list_tools() -> list[Tool]:
                         "items": {"type": "string"},
                         "maxItems": 16,
                         "description": (
-                            "Stable persisted Graph View identities selected for this assignment. "
-                            "Python resolves their bounded payloads from the canonical Graph View store."
+                            "Stable AgentGraph reference-view identities selected for this assignment. "
+                            "Referenced data stays in its canonical authority and is resolved on demand."
                         ),
                     },
                     "input": {"type": "string"},
@@ -1372,19 +1387,10 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "conversationId",
         "correlationId",
         "displayLabel",
-        "authority",
         "receivingRole",
-        "rootCanonicalNodeIds",
-        "includedCanonicalNodeIds",
-        "includedRelationships",
-        "records",
-        "filter",
-        "hopDepth",
-        "query",
+        "references",
         "note",
-        "provenanceRefs",
         "parentViewId",
-        "omittedNeighborCount",
     },
     "coder.status": set(),
     "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "approvedPrompt", "authority", "graphViewIds"},
@@ -1598,10 +1604,6 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                 ),
                 timeout=KNOWGRAPH_QUERY_TIMEOUT_S,
             )
-            # knowgraph.query is read-only. The internal saved-card retrieval
-            # adapter may return a candidate view for agent-local use, but the
-            # public MCP query never returns a persistence-shaped Graph View.
-            result.pop("graphView", None)
             if not args.get("includeFullText"):
                 compact_assertions = []
                 for assertion in result.get("assertions") or []:
@@ -1653,6 +1655,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                         "includeFullText": True,
                     },
                 }
+            result.pop("graphView", None)
             return [TextContent(type="text", text=json.dumps({"ok": True, **result}))]
         except asyncio.TimeoutError:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": "knowgraph_query_timeout"}))]
