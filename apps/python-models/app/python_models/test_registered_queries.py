@@ -18,6 +18,7 @@ def _bounded_graph_view_delivery(monkeypatch) -> None:
             "graphViews": [],
             "manifest": {
                 "schema": "delivered-context-manifest.v1",
+                "manifestHash": "sha256:empty",
                 "records": [],
                 "unresolvedReferences": [],
                 "externalReferences": [],
@@ -509,6 +510,7 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
             "graphViews": [view],
             "manifest": {
                 "schema": "delivered-context-manifest.v1",
+                "manifestHash": "sha256:delivery-one",
                 "records": [
                     {
                         "authority": "thinkgraph",
@@ -550,6 +552,11 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
     assert "REGISTERED DATABASE CONTEXT:" not in hydrated.model_context
     assert "OPTIONAL REGISTERED OPERATIONS" not in hydrated.model_context
     assert references == [
+        {
+            "referenceId": "delivered-context-manifest:sha256:delivery-one",
+            "referenceType": "artifact",
+            "required": True,
+        },
         {
             "referenceId": "graphview:one",
             "referenceType": "graph_view",

@@ -112,10 +112,11 @@ def resolve_saved_card_reference(
         else {}
     )
     binding = str(card.get("runtimeBinding") or runtime_options.get("binding") or "")
+    role = str(card.get("role") or runtime_options.get("role") or binding).strip()
     return {
         "cardId": card_id,
         "title": str(card.get("title") or ""),
-        "role": str(card.get("role") or runtime_options.get("role") or ""),
+        "role": role,
         "runtimeType": str(card.get("runtimeType") or ""),
         "runtimeBinding": binding,
         "provider": str(runtime_options.get("provider") or card.get("provider") or ""),

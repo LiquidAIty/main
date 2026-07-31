@@ -332,6 +332,7 @@ def agentgraph_read_card_context(
             if reference.get("referenceType") == "graph_view"
         ]
         delivered_context = None
+        delivery_verification = None
         if graph_view_ids:
             views = [
                 agentgraph.get_graph_view(
@@ -354,10 +355,43 @@ def agentgraph_read_card_context(
                 receiving_role=next(iter(roles)),
                 graph_view_ids=graph_view_ids,
             )
+            expected_manifest_hashes = {
+                str(reference.get("referenceId") or "").removeprefix(
+                    "delivered-context-manifest:"
+                )
+                for reference in assignment.get("contextReferences") or []
+                if reference.get("referenceType") == "artifact"
+                and str(reference.get("referenceId") or "").startswith(
+                    "delivered-context-manifest:"
+                )
+            }
+            if len(expected_manifest_hashes) > 1:
+                raise ValueError("agentgraph_delivered_context_manifest_conflict")
+            current_manifest_hash = str(
+                (delivered_context.get("manifest") or {}).get("manifestHash") or ""
+            ).strip()
+            expected_manifest_hash = next(iter(expected_manifest_hashes), None)
+            if (
+                expected_manifest_hash is not None
+                and expected_manifest_hash != current_manifest_hash
+            ):
+                raise ValueError(
+                    "agentgraph_delivered_context_superseded: "
+                    f"expected {expected_manifest_hash}, current {current_manifest_hash}"
+                )
+            delivery_verification = {
+                "status": (
+                    "verified"
+                    if expected_manifest_hash is not None
+                    else "legacy_unverified"
+                ),
+                "manifestHash": current_manifest_hash,
+            }
         return {
             "ok": True,
             "assignment": assignment,
             "deliveredContext": delivered_context,
+            "deliveryVerification": delivery_verification,
         }
     except (ValueError, LookupError, PermissionError) as err:
         raise HTTPException(status_code=404, detail=str(err)) from err

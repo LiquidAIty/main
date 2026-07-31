@@ -184,7 +184,10 @@ async def check():
         'main.context', 'canvas.inspect', 'coder.status', 'run_coder_subagent',
         'agentgraph.inspect', 'graphview.list', 'graphview.get', 'graphview.create',
     }.issubset(set(combined_names))
-    assert {f'engraphis.{name}' for name in native}.issubset(combined_names)
+    assert {
+        f'engraphis.{name.removeprefix("engraphis_")}'
+        for name in native
+    }.issubset(combined_names)
     assert not set(native).intersection(combined_names)
     print(json.dumps(sorted(native)))
 asyncio.run(check())
@@ -202,13 +205,11 @@ def test_native_engraphis_uses_the_cached_local_embedding_model(monkeypatch):
     assert os.environ["HF_HUB_OFFLINE"] == "1"
 
 
-def test_native_engraphis_dispatch_keeps_sync_handlers_off_the_outer_event_loop(monkeypatch):
+def test_native_engraphis_dispatch_calls_the_native_registry_directly(monkeypatch):
     import asyncio
     import mcp_host
 
     outer_thread = threading.get_ident()
-    entered = threading.Event()
-    release = threading.Event()
     calls = []
     native_result = mcp_host.TextContent(
         type="text",
@@ -217,10 +218,8 @@ def test_native_engraphis_dispatch_keeps_sync_handlers_off_the_outer_event_loop(
 
     class NativeMcp:
         async def call_tool(self, name, arguments):
+            await asyncio.sleep(0)
             calls.append((name, arguments, threading.get_ident()))
-            entered.set()
-            if not release.wait(timeout=2):
-                raise RuntimeError("test_release_timeout")
             return [native_result], {"result": {"ok": True, "source": "native"}}
 
     async def initialized():
@@ -230,68 +229,26 @@ def test_native_engraphis_dispatch_keeps_sync_handlers_off_the_outer_event_loop(
     monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_NAMES", frozenset({"engraphis_stats"}))
     monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
 
-    async def check():
-        task = asyncio.create_task(mcp_host.call_tool("engraphis.stats", {"canonical": True}))
-        for _ in range(200):
-            if entered.is_set():
-                break
-            await asyncio.sleep(0.005)
-        assert entered.is_set()
-        heartbeat = False
-        await asyncio.sleep(0)
-        heartbeat = True
-        release.set()
-        result = await asyncio.wait_for(task, timeout=2)
-        return result, heartbeat
-
-    result, heartbeat = asyncio.run(check())
-    assert heartbeat is True
+    result = asyncio.run(
+        mcp_host.call_tool("engraphis.stats", {"canonical": True})
+    )
     assert result[0][0] is native_result
     assert result[1] == {"result": {"ok": True, "source": "native"}}
     assert calls == [("engraphis_stats", {"canonical": True}, calls[0][2])]
-    assert calls[0][2] != outer_thread
-
-    active = 0
-    max_active = 0
-    state_lock = threading.Lock()
-
-    class SerializedNativeMcp:
-        async def call_tool(self, _name, _arguments):
-            nonlocal active, max_active
-            with state_lock:
-                active += 1
-                max_active = max(max_active, active)
-            time.sleep(0.05)
-            with state_lock:
-                active -= 1
-            return [mcp_host.TextContent(type="text", text="serialized")]
-
-    monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: SerializedNativeMcp())
-
-    async def check_serialization():
-        return await asyncio.gather(
-            mcp_host.call_tool("engraphis.stats", {"request": 1}),
-            mcp_host.call_tool("engraphis.stats", {"request": 2}),
-        )
-
-    serialized_results = asyncio.run(check_serialization())
-    assert [result[0].text for result in serialized_results] == ["serialized", "serialized"]
-    assert max_active == 1
+    assert calls[0][2] == outer_thread
 
 
-def test_native_engraphis_worker_completion_failure_and_cancellation_exit_cleanly():
+def test_native_engraphis_failure_is_typed_and_the_next_call_succeeds():
     code = """
-import asyncio, json, time, mcp_host
+import asyncio, json, mcp_host
 
 class NativeFailure(RuntimeError):
     pass
 
 class NativeMcp:
     async def call_tool(self, name, arguments):
-        if name == 'native_failure':
+        if name == 'engraphis_native_failure':
             raise NativeFailure('canonical native failure')
-        if name == 'cancelled_call':
-            time.sleep(0.1)
         return [mcp_host.TextContent(type='text', text=json.dumps({
             'name': name,
             'arguments': arguments,
@@ -301,45 +258,24 @@ native = NativeMcp()
 mcp_host._NATIVE_ENGRAPHIS_MCP = native
 mcp_host._NATIVE_ENGRAPHIS_TOOLS = ()
 mcp_host._NATIVE_ENGRAPHIS_NAMES = frozenset({
-    'normal_call', 'native_failure', 'cancelled_call',
+    'engraphis_normal_call', 'engraphis_native_failure',
 })
 
 async def check():
-    normal = await mcp_host.call_tool('engraphis.normal_call', {'value': 1})
-    assert json.loads(normal[0].text) == {
-        'name': 'normal_call',
-        'arguments': {'value': 1},
-    }
-    try:
-        await asyncio.to_thread(
-            mcp_host._call_native_engraphis,
-            'native_failure',
-            {'value': 2},
-        )
-    except NativeFailure as exc:
-        assert str(exc) == 'canonical native failure'
-    else:
-        raise AssertionError('native_exception_was_not_propagated')
-    typed = await mcp_host.call_tool('engraphis.native_failure', {'value': 3})
+    typed = await mcp_host.call_tool('engraphis.native_failure', {'value': 1})
     assert typed.isError is True
     assert json.loads(typed.content[0].text) == {
         'ok': False,
         'error': 'tool_handler_failed:NativeFailure',
     }
-    pending = asyncio.create_task(
-        mcp_host.call_tool('engraphis.cancelled_call', {'value': 4})
-    )
-    await asyncio.sleep(0.01)
-    pending.cancel()
-    try:
-        await pending
-    except asyncio.CancelledError:
-        pass
-    else:
-        raise AssertionError('cancelled_call_was_not_cancelled')
+    normal = await mcp_host.call_tool('engraphis.normal_call', {'value': 2})
+    assert json.loads(normal[0].text) == {
+        'name': 'engraphis_normal_call',
+        'arguments': {'value': 2},
+    }
 
 asyncio.run(check())
-print('NATIVE_WORKER_LIFECYCLE_OK')
+print('NATIVE_DIRECT_DISPATCH_OK')
 """
     result = subprocess.run(
         [sys.executable, "-c", code],
@@ -349,7 +285,7 @@ print('NATIVE_WORKER_LIFECYCLE_OK')
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
-    assert "NATIVE_WORKER_LIFECYCLE_OK" in result.stdout
+    assert "NATIVE_DIRECT_DISPATCH_OK" in result.stdout
 
 
 def test_native_cbm_replaces_a_stale_process_without_retrying_a_tool(monkeypatch):

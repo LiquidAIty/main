@@ -743,6 +743,10 @@ def _attach_selected_graph_view_references(
             }
         )
 
+    manifest_hash = str(manifest.get("manifestHash") or "").strip()
+    if not manifest_hash:
+        raise ValueError("delivered_context_manifest_hash_missing")
+    add(f"delivered-context-manifest:{manifest_hash}", "artifact", True)
     for view in views:
         add(str(view.get("viewId") or ""), "graph_view", True)
     for record in manifest.get("records") or []:
@@ -843,7 +847,7 @@ def hydrate_assignment_context(
         ),
         graph_view_ids=selected_ids,
     )
-    if graph_view_ids is not None:
+    if selected_views:
         _attach_selected_graph_view_references(
             project_id=project_id,
             assignment_id=assignment_id,

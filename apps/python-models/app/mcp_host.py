@@ -244,7 +244,6 @@ server = LiquidAItyServer("liquidaity")
 _NATIVE_ENGRAPHIS_MCP: Any | None = None
 _NATIVE_ENGRAPHIS_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_ENGRAPHIS_NAMES: frozenset[str] = frozenset()
-_NATIVE_ENGRAPHIS_CALL_LOCK = threading.Lock()
 _NATIVE_CBM_CLIENT: "_NativeStdioMcpClient | None" = None
 _NATIVE_CBM_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_CBM_NAMES: frozenset[str] = frozenset()
@@ -265,8 +264,6 @@ def _namespace_native_tools(provider: str, tools: list[Tool]) -> list[Tool]:
     prefix = _NATIVE_PREFIXES[provider]
     result: list[Tool] = []
     for tool in tools:
-        if provider == "engraphis" and tool.name == "engraphis_answer":
-            continue
         payload = tool.model_dump(by_alias=True, exclude_none=True)
         native_name = tool.name
         if provider == "engraphis":
@@ -342,19 +339,6 @@ async def _native_engraphis_tools() -> list[Tool]:
     """Return the original native Engraphis Tool objects discovered at startup."""
     await _initialize_native_engraphis()
     return list(_NATIVE_ENGRAPHIS_TOOLS or ())
-
-
-def _call_native_engraphis(name: str, arguments: dict[str, Any]):
-    """Run Engraphis' native dispatcher without blocking the outer MCP loop.
-
-    FastMCP 1.28 executes synchronous registered functions inline. Engraphis
-    initializes its local embedding model on the first tool call, so delegating
-    on the outer server's event loop prevents stdio from sending any response.
-    One serialized worker preserves FastMCP's native validation/handler path and
-    the service's original single-request execution semantics.
-    """
-    with _NATIVE_ENGRAPHIS_CALL_LOCK:
-        return asyncio.run(_native_engraphis_mcp().call_tool(name, arguments))
 
 
 def _graphiti_config():
@@ -1591,8 +1575,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
         await _initialize_native_engraphis()
         native_name = "engraphis_" + name.removeprefix(_NATIVE_PREFIXES["engraphis"])
         if native_name in _NATIVE_ENGRAPHIS_NAMES:
-            return await asyncio.to_thread(
-                _call_native_engraphis,
+            return await _native_engraphis_mcp().call_tool(
                 native_name,
                 dict(arguments or {}),
             )

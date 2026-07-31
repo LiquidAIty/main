@@ -42,6 +42,18 @@ def fake_backend(monkeypatch):
     return saved
 
 
+def test_saved_card_role_falls_back_to_its_runtime_binding() -> None:
+    reference = cp.resolve_saved_card_reference(
+        "project-one",
+        "deck_builder",
+        "tg-card",
+        deck=DECK,
+    )
+
+    assert reference["runtimeBinding"] == "thinkgraph_agent"
+    assert reference["role"] == "thinkgraph_agent"
+
+
 class TestCardUpdateConfiguration:
     def test_arbitrary_runtime_and_authority_fields_rejected(self, fake_backend):
         for field in ("runtimeCode", "shell", "hiddenTools", "runAuthority", "runtimeScope", "magenticWorkers"):
