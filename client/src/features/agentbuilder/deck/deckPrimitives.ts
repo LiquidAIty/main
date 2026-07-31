@@ -41,7 +41,6 @@ export const LOCAL_CODER_CONTROLLER_MODEL_KEY = 'z-ai/glm-5.2';
 export const LOCAL_CODER_CONTROLLER_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openrouter';
 export const LOCAL_CODER_CONTROLLER_TOOLS = [
   'run_local_coder',
-  'cbm.index_repository',
   'cbm.search_graph',
   'cbm.query_graph',
   'cbm.trace_path',
@@ -50,12 +49,52 @@ export const LOCAL_CODER_CONTROLLER_TOOLS = [
   'cbm.get_architecture',
   'cbm.search_code',
   'cbm.list_projects',
-  'cbm.delete_project',
   'cbm.index_status',
   'cbm.detect_changes',
-  'cbm.manage_adr',
-  'cbm.ingest_traces',
+  'engraphis.index_repo',
+  'engraphis.search_code',
+  'engraphis.code_path',
+  'engraphis.code_impact',
+  'engraphis.export_code_graph',
 ] as const;
+export const MAIN_CHAT_CONTROLLER_TOOLS = [
+  'thinkgraph.get_graph_slice',
+  'thinkgraph.submit_update',
+  'engraphis.recall',
+  'engraphis.recall_grounded',
+  'canvas.inspect',
+  'mag_one.describe_connected_agents',
+  'run_mag_one',
+  'run_coder_subagent',
+] as const;
+export const HERMES_STEWARD_TOOLS = [
+  'thinkgraph.get_graph_slice',
+  'engraphis.recall',
+  'engraphis.recall_grounded',
+  'engraphis.why',
+  'engraphis.timeline',
+  'engraphis.receipts',
+  'engraphis.search_code',
+  'engraphis.code_path',
+  'cbm.search_graph',
+  'cbm.get_code_snippet',
+  'graphiti.search_nodes',
+  'graphiti.search_memory_facts',
+  'graphiti.get_entity_edge',
+  'graphiti.get_episodes',
+  'graphiti.get_episode_entities',
+  'graphiti.get_status',
+  'graphiti.add_memory',
+  'graphiti.add_triplet',
+  'write_mag_one_instructions',
+  'card.run_assistant_agent',
+  'worldsignals.capabilities',
+  'worldsignals.command',
+  'worldsignals.batch',
+  'worldsignals.poll',
+  'worldsignals.stream_events',
+] as const;
+export const SYSTEM_TOOL_GRANTS_VERSION = 4;
 
 export function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   const normalized = safeText(value).trim().toLowerCase();

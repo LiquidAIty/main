@@ -1,0 +1,16 @@
+# Generated state and imported upstream projects outside the maintained
+# LiquidAIty/Engraphis runtime indexed as ADMIN/main.
+artifacts
+autogen-main
+coder-workspace
+db
+defog-sqlcoder
+dist
+docs
+Kronos-main
+localcoder
+neo4j-text2cypher
+output
+repo-intake
+tmp
+worldsignal

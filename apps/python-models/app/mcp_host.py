@@ -1575,9 +1575,12 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
         await _initialize_native_engraphis()
         native_name = "engraphis_" + name.removeprefix(_NATIVE_PREFIXES["engraphis"])
         if native_name in _NATIVE_ENGRAPHIS_NAMES:
-            return await _native_engraphis_mcp().call_tool(
-                native_name,
-                dict(arguments or {}),
+            return await asyncio.to_thread(
+                asyncio.run,
+                _native_engraphis_mcp().call_tool(
+                    native_name,
+                    dict(arguments or {}),
+                ),
             )
     if name.startswith(_NATIVE_PREFIXES["cbm"]):
         await _native_cbm_tools()

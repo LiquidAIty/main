@@ -10,15 +10,19 @@ import { sanitizeDeckEdges } from '../../../components/builder/deckValidation';
 import {
   cleanOptionalText,
   cloneDeckDocument,
+  HERMES_STEWARD_TOOLS,
   isLegacyUaCard,
   LOCAL_CODER_CONTROLLER_MODEL_KEY,
   LOCAL_CODER_CONTROLLER_PROVIDER,
+  LOCAL_CODER_CONTROLLER_TOOLS,
+  MAIN_CHAT_CONTROLLER_TOOLS,
   MAGENTIC_ONE_DEFAULT_MODEL_KEY,
   MAGENTIC_ONE_DEFAULT_PROVIDER,
   normalizeRuntimeBinding,
   normalizeRuntimeOptions,
   normalizeRuntimeType,
   safeText,
+  SYSTEM_TOOL_GRANTS_VERSION,
 } from './deckPrimitives';
 import {
   BASELINE_OPTIONAL_CARD_IDS,
@@ -79,6 +83,30 @@ function normalizeRetiredMagenticOneDefault(card: AgentCardInstance): AgentCardI
       ...runtimeOptions,
       provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
       modelKey: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
+    },
+  };
+}
+
+function migrateSystemToolGrants(
+  card: AgentCardInstance,
+  sourceVersion: number,
+): AgentCardInstance {
+  if (sourceVersion >= SYSTEM_TOOL_GRANTS_VERSION) return card;
+  const tools =
+    card.id === 'card_main_chat'
+      ? MAIN_CHAT_CONTROLLER_TOOLS
+      : card.id === 'card_local_coder'
+        ? LOCAL_CODER_CONTROLLER_TOOLS
+        : card.id === 'card_hermes_steward'
+          ? HERMES_STEWARD_TOOLS
+          : null;
+  if (!tools) return card;
+  const runtimeOptions = normalizeRuntimeOptions(card.runtimeOptions) ?? {};
+  return {
+    ...card,
+    runtimeOptions: {
+      ...runtimeOptions,
+      tools: [...tools],
     },
   };
 }
@@ -392,10 +420,12 @@ export function hydrateDeckDocument(
   ]);
   const baseDeck = {
     ...hydratedDeck,
+    version: Math.max(hydratedDeck.version, SYSTEM_TOOL_GRANTS_VERSION),
     nodes: hydratedDeck.nodes
       .filter((node) => !bannedNodeIds.has(node.id))
       .map(normalizeLocalCoderControllerCard)
-      .map(normalizeRetiredMagenticOneDefault),
+      .map(normalizeRetiredMagenticOneDefault)
+      .map((node) => migrateSystemToolGrants(node, hydratedDeck.version)),
     edges: hydratedDeck.edges.filter(
       (edge) =>
         !bannedNodeIds.has(edge.source) && !bannedNodeIds.has(edge.target),

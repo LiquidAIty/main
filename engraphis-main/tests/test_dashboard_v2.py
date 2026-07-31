@@ -1,0 +1,182 @@
+"""Unified local dashboard tests for the public open-core boundary."""
+import pytest
+
+pytest.importorskip("fastapi", reason="full-stack extra not installed")
+pytest.importorskip("httpx", reason="httpx not installed")
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from engraphis.config import settings  # noqa: E402
+from engraphis.service import MemoryService  # noqa: E402
+
+
+def _client(monkeypatch, tmp_path):
+    db_path = str(tmp_path / "dashboard.db")
+    monkeypatch.setattr(settings, "db_path", db_path)
+    monkeypatch.setattr(settings, "embed_model", "")
+    monkeypatch.setattr(settings, "embed_dim", 384)
+    monkeypatch.setattr(settings, "allowed_workspaces", [])
+    monkeypatch.setattr(settings, "api_token", "")
+    seeded = MemoryService.create(db_path)
+    seeded.remember(
+        "Postgres 16 is the main database.",
+        workspace="demo",
+        scope="workspace",
+        title="Database",
+    )
+    seeded.store.close()
+    from engraphis.dashboard_app import create_app
+    return TestClient(create_app(), client=("127.0.0.1", 50000))
+
+
+def test_dashboard_serves_and_bootstraps_local_core(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client:
+        page = client.get("/")
+        assert page.status_code == 200
+        assert 'class="sidebar"' in page.text
+        bootstrap = client.get("/api/bootstrap")
+        assert bootstrap.status_code == 200
+        assert bootstrap.json()["stats"]["memories"] >= 1
+
+
+def test_team_account_routes_are_not_in_public_runtime(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client:
+        assert client.post("/api/auth/setup", json={}).status_code == 404
+        assert client.get("/api/auth/users").status_code == 404
+        state = client.get("/api/auth/state").json()
+        assert state["enabled"] is False
+        assert state["hosted_team"] is True
+
+
+def test_local_agent_write_has_no_client_side_team_paywall(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client:
+        response = client.post(
+            "/api/remember",
+            json={"workspace": "demo", "content": "Queues use at-least-once delivery."},
+        )
+        assert response.status_code == 200
+
+
+def test_manual_consolidation_stays_local_but_dreaming_is_cloud_only(
+    monkeypatch, tmp_path
+):
+    with _client(monkeypatch, tmp_path) as client:
+        manual = client.post(
+            "/api/consolidate",
+            json={"workspace": "demo", "dry_run": True, "infer": False},
+        )
+        assert manual.status_code == 200
+        dream = client.post(
+            "/api/consolidate",
+            json={"workspace": "demo", "dry_run": True, "infer": True},
+        )
+        assert dream.status_code == 501
+        assert dream.json()["detail"]["cloud_only"] is True
+
+
+def test_analytics_route_delegates_to_managed_compute(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "engraphis.cloud_features.run_managed_job",
+        lambda service, workspace, kind: {
+            "result": {
+                "kind": kind,
+                "generation": 4,
+                "totals": {"live": 1},
+            }
+        },
+    )
+    with _client(monkeypatch, tmp_path) as client:
+        response = client.get("/api/analytics?workspace=demo")
+        assert response.status_code == 200
+        assert response.json()["kind"] == "analytics"
+        assert response.json()["generation"] == 4
+
+
+def test_hosted_automation_accepts_the_cloud_policy_field(monkeypatch, tmp_path):
+    saved = {}
+
+    class _Cloud:
+        def upload_snapshot(self, workspace_id, snapshot):
+            return {"generation": snapshot["generation"]}
+
+        def get_policy(self, workspace_id):
+            return {"enabled": False, "cadence_minutes": 1440, "dream_enabled": False}
+
+        def save_policy(self, workspace_id, policy):
+            saved.update(policy)
+            return {"version": 2}
+
+    monkeypatch.setattr(
+        "engraphis.cloud_features.build_managed_snapshot",
+        lambda service, workspace: ("ws_cloud", {"generation": 1}),
+    )
+    monkeypatch.setattr(
+        "engraphis.cloud_features.CloudFeatureClient.from_environment",
+        lambda workspace_id=None: _Cloud(),
+    )
+    with _client(monkeypatch, tmp_path) as client:
+        response = client.post(
+            "/api/automation",
+            json={"enabled": True, "dream_enabled": True, "cadence_hours": 12},
+        )
+        assert response.status_code == 200
+        assert response.json()["dream_enabled"] is True
+        assert saved["dream_enabled"] is True
+
+
+def test_reading_or_disabling_automation_never_uploads_memory_content(
+    monkeypatch, tmp_path
+):
+    saved = {}
+
+    class _Cloud:
+        def get_policy(self, workspace_id):
+            return {"enabled": True, "cadence_minutes": 60, "dream_enabled": True}
+
+        def list_jobs(self, workspace_id, *, limit=10):
+            return {"jobs": []}
+
+        def save_policy(self, workspace_id, policy):
+            saved.update(policy)
+            return {"version": 3}
+
+    def _unexpected_upload(*args, **kwargs):
+        raise AssertionError("policy inspection must not build or upload a snapshot")
+
+    monkeypatch.setattr(
+        "engraphis.cloud_features.build_managed_snapshot",
+        _unexpected_upload,
+    )
+    monkeypatch.setattr(
+        "engraphis.cloud_features.CloudFeatureClient.from_environment",
+        lambda workspace_id=None: _Cloud(),
+    )
+    with _client(monkeypatch, tmp_path) as client:
+        assert client.get("/api/automation").status_code == 200
+        response = client.post("/api/automation", json={"enabled": False})
+        assert response.status_code == 200
+        assert saved["enabled"] is False
+
+
+def test_portfolio_and_report_analytics_are_hosted_only(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client:
+        assert client.get("/api/analytics/portfolio").status_code == 501
+        assert client.get("/api/analytics/export?workspace=demo").status_code == 501
+
+
+def test_raw_owner_export_is_free_but_signed_report_is_cloud_only(
+    monkeypatch, tmp_path
+):
+    with _client(monkeypatch, tmp_path) as client:
+        raw = client.get("/api/export?workspace=demo")
+        assert raw.status_code == 200
+        assert raw.json()["counts"]["memories"] >= 1
+        signed = client.get("/api/export?workspace=demo&signed=true")
+        assert signed.status_code == 501
+        assert signed.json()["detail"]["cloud_only"] is True
+
+
+def test_health_and_readiness_remain_public(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client:
+        assert client.get("/api/health").status_code == 200
+        assert client.get("/api/ready").status_code == 200

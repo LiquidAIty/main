@@ -205,11 +205,13 @@ def test_native_engraphis_uses_the_cached_local_embedding_model(monkeypatch):
     assert os.environ["HF_HUB_OFFLINE"] == "1"
 
 
-def test_native_engraphis_dispatch_calls_the_native_registry_directly(monkeypatch):
+def test_native_engraphis_hung_call_does_not_block_later_native_dispatch(monkeypatch):
     import asyncio
     import mcp_host
 
     outer_thread = threading.get_ident()
+    entered = threading.Event()
+    release = threading.Event()
     calls = []
     native_result = mcp_host.TextContent(
         type="text",
@@ -218,24 +220,49 @@ def test_native_engraphis_dispatch_calls_the_native_registry_directly(monkeypatc
 
     class NativeMcp:
         async def call_tool(self, name, arguments):
-            await asyncio.sleep(0)
             calls.append((name, arguments, threading.get_ident()))
+            if name == "engraphis_hung":
+                entered.set()
+                if not release.wait(timeout=2):
+                    raise RuntimeError("test_release_timeout")
             return [native_result], {"result": {"ok": True, "source": "native"}}
 
     async def initialized():
         return None
 
     monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
-    monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_NAMES", frozenset({"engraphis_stats"}))
+    monkeypatch.setattr(
+        mcp_host,
+        "_NATIVE_ENGRAPHIS_NAMES",
+        frozenset({"engraphis_hung", "engraphis_stats"}),
+    )
     monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
 
-    result = asyncio.run(
-        mcp_host.call_tool("engraphis.stats", {"canonical": True})
-    )
-    assert result[0][0] is native_result
-    assert result[1] == {"result": {"ok": True, "source": "native"}}
-    assert calls == [("engraphis_stats", {"canonical": True}, calls[0][2])]
-    assert calls[0][2] == outer_thread
+    async def check():
+        hung = asyncio.create_task(
+            mcp_host.call_tool("engraphis.hung", {"request": 1})
+        )
+        for _ in range(200):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.005)
+        assert entered.is_set()
+        later = await asyncio.wait_for(
+            mcp_host.call_tool("engraphis.stats", {"request": 2}),
+            timeout=1,
+        )
+        release.set()
+        return later, await asyncio.wait_for(hung, timeout=1)
+
+    later, hung = asyncio.run(check())
+    assert later[0][0] is native_result
+    assert hung[0][0] is native_result
+    assert [call[:2] for call in calls] == [
+        ("engraphis_hung", {"request": 1}),
+        ("engraphis_stats", {"request": 2}),
+    ]
+    assert all(call[2] != outer_thread for call in calls)
+    assert calls[0][2] != calls[1][2]
 
 
 def test_native_engraphis_failure_is_typed_and_the_next_call_succeeds():
@@ -657,7 +684,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     native_names = {
         f"engraphis.{tool.name.removeprefix('engraphis_')}"
         for tool in native_engraphis_tools
-        if tool.name != "engraphis_answer"
     } | {
         f"cbm.{tool.name}" for tool in native_cbm_tools
     } | {
@@ -676,7 +702,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "limit",
     }
     assert "engraphis.recall" in by_name
-    assert "engraphis.answer" not in by_name
+    assert "engraphis.answer" in by_name
     assert "codegraph.status" not in by_name
     assert "codegraph.search" not in by_name
     assert {"cbm.search_graph", "cbm.index_status"}.issubset(by_name)

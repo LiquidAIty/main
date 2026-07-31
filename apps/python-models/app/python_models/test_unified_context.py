@@ -234,6 +234,35 @@ def test_explicit_multiple_selection_preserves_order_and_bounded_rendering():
     assert rendered["measurements"]["estimatedTokens"] < 200
 
 
+@pytest.mark.parametrize("status", ["failed", "superseded"])
+def test_failed_and_superseded_graph_views_cannot_be_selected(status):
+    view = {
+        "viewId": f"thinkgraph:{status}",
+        "projectId": "project-1",
+        "conversationId": "main",
+        "authority": "agentgraph",
+        "status": status,
+        "displayLabel": "Spent context",
+        "producingRole": "main_chat",
+        "receivingRole": "main_chat",
+        "references": [
+            {
+                "referenceId": "think:one",
+                "referenceType": "thinkgraph",
+                "required": True,
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="graph_view_lifecycle_invalid"):
+        select_persisted_graph_views(
+            [view],
+            [view["viewId"]],
+            project_id="project-1",
+            conversation_id="main",
+            receiving_roles={"main_chat"},
+        )
+
+
 def test_graph_view_render_carries_reference_identities_without_payloads():
     base = {
         "projectId": "project-1",

@@ -14,9 +14,11 @@ import {
   DEFAULT_CARD_MODEL_KEY,
   DEFAULT_CARD_PROVIDER,
   DEFAULT_WORKSPACE_ROOT,
+  HERMES_STEWARD_TOOLS,
   LOCAL_CODER_CONTROLLER_MODEL_KEY,
   LOCAL_CODER_CONTROLLER_PROVIDER,
   LOCAL_CODER_CONTROLLER_TOOLS,
+  MAIN_CHAT_CONTROLLER_TOOLS,
   MAGENTIC_ONE_DEFAULT_MODEL_KEY,
   MAGENTIC_ONE_DEFAULT_PROVIDER,
 } from './deckPrimitives';
@@ -161,7 +163,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Use LIQUIDAITY_RUNTIME_CONTEXT for trusted project, deck, conversation, and parent-run identity. Understand Main\'s short requested outcome, read the current project ThinkGraph yourself, and follow focused relationships as useful.',
         'Use judgment and your normal tools only when relevant. Reply naturally with concise useful Markdown analysis; your ordinary child response is the result Main receives.',
         'Recommend project-state changes to Main Chat when useful, but never construct or apply the final ThinkGraph patch and never call a separate report tool merely to return your answer.',
-        'Keep private continuity in SQL memory through the exact attached Hermes memory tools.',
+        'Read bounded Engraphis memory and provenance when prior context matters, and follow stable ThinkGraph, KnowGraph, and CodeGraph references without copying those authorities.',
         'Your native Hermes runtime is already active: never call card.run_assistant_agent with card_hermes_steward. For external research, invoke only your orange-connected Search child card_research_agent once with one bounded task; interpret its returned sources yourself.',
       ].join('\n'),
       constraints: [
@@ -370,7 +372,7 @@ export const INITIAL_DECK: DeckDocument = {
   name: 'Agent Card Deck',
   workspaceRoot: DEFAULT_WORKSPACE_ROOT,
   promptTemplates: cloneDeckDocument(INITIAL_PROMPT_TEMPLATES),
-  version: 3,
+  version: 4,
   nodes: [
     {
       // The Harness front-door card. runtimeBinding 'main_chat' is the ONLY thing
@@ -394,18 +396,7 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeOptions: {
         provider: DEFAULT_CARD_PROVIDER,
         modelKey: DEFAULT_CARD_MODEL_KEY,
-        tools: [
-          'thinkgraph.get_graph_slice',
-          'thinkgraph.submit_update',
-          'engraphis.recall',
-          'engraphis.recall_grounded',
-          'engraphis.why',
-          'engraphis.timeline',
-          'canvas.inspect',
-          'mag_one.describe_connected_agents',
-          'run_mag_one',
-          'run_coder_subagent',
-        ],
+        tools: [...MAIN_CHAT_CONTROLLER_TOOLS],
       },
       parentGraphId: null,
       title: 'Main Chat / Harness',
@@ -501,26 +492,7 @@ export const INITIAL_DECK: DeckDocument = {
       // allowed_tools). Hermes reads ThinkGraph; Main writes it. Official
       // Graphiti retrieval and ingestion are granted only to Hermes here.
       runtimeOptions: {
-        tools: [
-          'thinkgraph.get_graph_slice',
-          'graphiti.search_nodes',
-          'graphiti.search_memory_facts',
-          'graphiti.get_entity_edge',
-          'graphiti.get_episodes',
-          'graphiti.get_episode_entities',
-          'graphiti.get_status',
-          'graphiti.add_memory',
-          'graphiti.add_triplet',
-          'hermes.memory_read',
-          'hermes.memory_write',
-          'write_mag_one_instructions',
-          'card.run_assistant_agent',
-          'worldsignals.capabilities',
-          'worldsignals.command',
-          'worldsignals.batch',
-          'worldsignals.poll',
-          'worldsignals.stream_events',
-        ],
+        tools: [...HERMES_STEWARD_TOOLS],
         modelKey: 'openai/gpt-5.1-chat',
         provider: 'openrouter',
       },

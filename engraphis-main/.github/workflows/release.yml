@@ -1,0 +1,353 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing tag to repair as a GitHub Release"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release_tag == ''
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+
+      - name: Install release gate and the production dependency set
+        run: >-
+          python -m pip install --upgrade "pip>=26.1.2" "setuptools>=83"
+          build twine pip-audit ".[all,test]"
+
+      - name: Require tag and package version to match
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          actual="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "$GITHUB_REF_NAME" = "v$actual"
+          test "$expected" = "$actual"
+
+      - name: Require release tag commit to be on protected main
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Full release gate
+        run: |
+          python scripts/check_commercial_manifest.py
+          python scripts/externalize_dashboard_assets.py
+          ruff check .
+          python -m pytest tests/ -q
+          python -m eval.harness --dataset eval/datasets/sample.jsonl --k 5
+          python -m eval.harness --dataset eval/datasets/codemem.jsonl --k 5
+          python -m eval.ablation
+          python -m pip_audit --local
+
+      - name: Build source and universal wheel distributions
+        run: python -m build
+
+      - name: Validate distributions
+        run: python -m twine check dist/*
+
+      - name: Store distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: python-package-distributions
+          path: dist/
+
+  python-matrix:
+    name: Python ${{ matrix.python-version }} release gate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release_tag == ''
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install version-appropriate gate
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          if [ "${{ matrix.python-version }}" = "3.9" ]; then
+            python -m pip install numpy pytest ruff
+          else
+            python -m pip install -e ".[test]"
+          fi
+      - name: Unit, lint, and retrieval gates
+        run: |
+          ruff check .
+          python -m pytest tests/ -q
+          python -m eval.harness --dataset eval/datasets/sample.jsonl --k 5
+          python -m eval.harness --dataset eval/datasets/codemem.jsonl --k 5
+          python -m eval.ablation
+
+  browser-accessibility:
+    name: Browser accessibility release gate
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release_tag == ''
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24"
+      - name: Install browser gate
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]" "uvicorn[standard]>=0.29"
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Playwright desktop/mobile, keyboard, CSP, console, and axe checks
+        run: npx playwright test
+
+  docker-smoke:
+    name: Production image release gate
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release_tag == ''
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Build production image
+        run: docker build -t engraphis:release .
+      - name: Verify production image OCR runtime
+        run: >-
+          docker run --rm --entrypoint sh engraphis:release -c
+          'python -c "import PIL, pytesseract" && command -v tesseract >/dev/null &&
+          tesseract --version | head -n 1'
+      - name: Audit production image dependencies
+        run: >-
+          docker run --rm --entrypoint sh engraphis:release -c
+          'python -m pip install --no-cache-dir pip-audit &&
+          python -m pip_audit --local'
+      - name: Run customer-mode readiness smoke
+        shell: bash
+        run: |
+          docker run -d --name engraphis-release -p 8700:8700 \
+            -e ENGRAPHIS_EMBED_MODEL= \
+            -e ENGRAPHIS_LOOP_INTERVAL=0 \
+            -e ENGRAPHIS_HOST=0.0.0.0 \
+            engraphis:release
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8700/api/ready; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs engraphis-release
+          exit 1
+      - name: Teardown
+        if: always()
+        run: docker rm -f engraphis-release || true
+
+  publish:
+    name: Publish to PyPI
+    needs: [build, python-matrix, browser-accessibility, docker-smoke]
+    # Manual dispatch is intentionally build/check-only. Publication requires a pushed
+    # semver tag, whose value was matched to pyproject.toml in the build job above.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Download distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Verify any previously published subset
+        shell: bash
+        run: >-
+          python scripts/verify_release_artifacts.py --dist dist
+          --version "${GITHUB_REF_NAME#v}" --allow-subset
+
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        with:
+          skip-existing: true
+
+      - name: Require the exact complete PyPI file set
+        shell: bash
+        run: >-
+          python scripts/verify_release_artifacts.py --dist dist
+          --version "${GITHUB_REF_NAME#v}" --retries 18 --delay 10
+
+  github-release:
+    name: Publish GitHub Release
+    needs: publish
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GH_REPO" >/dev/null 2>&1; then
+            # A previous partial attempt may have created the release before every
+            # canonical package asset uploaded. Reconcile same-named assets from the
+            # exact aggregate that passed the publish gate.
+            gh release upload "$GITHUB_REF_NAME" dist/* \
+              --repo "$GH_REPO" \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --repo "$GH_REPO" \
+              --verify-tag \
+              --generate-notes \
+              --title "Engraphis ${GITHUB_REF_NAME#v}" \
+              --latest
+          fi
+
+  github-release-repair:
+    name: Repair GitHub Release
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Download published distributions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag_ref="$(gh api "repos/${GH_REPO}/git/ref/tags/${RELEASE_TAG}")"
+          object_type="$(jq -r '.object.type' <<<"$tag_ref")"
+          tag_sha="$(jq -r '.object.sha' <<<"$tag_ref")"
+          # Annotated tags point at tag objects rather than commits. Peel a bounded
+          # chain explicitly so a same-named branch can never supply the repair SHA.
+          for _ in {1..8}; do
+            if [ "$object_type" = "commit" ]; then
+              break
+            fi
+            test "$object_type" = "tag"
+            tag_object="$(gh api "repos/${GH_REPO}/git/tags/${tag_sha}")"
+            object_type="$(jq -r '.object.type' <<<"$tag_object")"
+            tag_sha="$(jq -r '.object.sha' <<<"$tag_object")"
+          done
+          test "$object_type" = "commit"
+          runs="$(gh run list \
+            --repo "$GH_REPO" \
+            --workflow release.yml \
+            --branch "$RELEASE_TAG" \
+            --event push \
+            --limit 20 \
+            --json databaseId,headBranch,headSha,event)"
+          run_id="$(jq -r \
+            --arg tag "$RELEASE_TAG" \
+            --arg sha "$tag_sha" \
+            'map(select(.headBranch == $tag and
+                        .headSha == $sha and
+                        .event == "push"))[0].databaseId // empty' \
+            <<<"$runs")"
+          test -n "$run_id"
+          jobs="$(gh run view "$run_id" --repo "$GH_REPO" --json jobs)"
+          test "$(jq '[.jobs[] | select(.name == "Build distributions" and
+                                        .conclusion == "success")] | length' \
+            <<<"$jobs")" -eq 1
+          test "$(jq '[.jobs[] | select(.name == "Publish to PyPI" and
+                                        (.conclusion == "success" or
+                                         .conclusion == "failure"))] | length' \
+            <<<"$jobs")" -eq 1
+          gh run download "$run_id" \
+            --repo "$GH_REPO" \
+            --name python-package-distributions \
+            --dir dist
+
+      - name: Verify any previously published subset
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: >-
+          python scripts/verify_release_artifacts.py --dist dist
+          --version "${RELEASE_TAG#v}" --allow-subset
+
+      - name: Publish only missing verified distributions
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        with:
+          skip-existing: true
+
+      - name: Require the exact complete PyPI file set
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: >-
+          python scripts/verify_release_artifacts.py --dist dist
+          --version "${RELEASE_TAG#v}" --retries 18 --delay 10
+
+      - name: Repair GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* \
+              --repo "$GH_REPO" \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* \
+              --repo "$GH_REPO" \
+              --verify-tag \
+              --generate-notes \
+              --title "Engraphis ${RELEASE_TAG#v}" \
+              --latest
+          fi

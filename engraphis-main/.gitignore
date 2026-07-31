@@ -1,0 +1,64 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Webhook fulfillment runtime state — dedup DB + the undelivered-key fallback,
+# which can contain live license keys. Must never be committed.
+.engraphis_processed_webhooks
+undelivered_license_keys.tsv
+
+# Automation/autosync runtime policy + last-run state (engraphis/automation.py —
+# lives next to the DB or in ~/.engraphis/). Regenerable local state, not content.
+automation.json
+autosync.json
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+# Extracted sdist directory (e.g. engraphis-0.1.0/) — regenerable build artifact
+/engraphis-[0-9]*/
+.pytest_cache/
+.ruff_cache/
+node_modules/
+.playwright/
+playwright-report/
+test-results/
+models_cache/
+.secrets/
+internal/
+
+# Local internal design-review tooling output (candid self-assessment, not for the repo).
+.commandcode/
+
+# Runtime logs (e.g. dashboard.log from `engraphis-dashboard`) — regenerable, not content.
+*.log
+
+# One-off local dashboard measurement/smoke scripts (Playwright/d3 timing probes) that keep
+# landing at the repo root — throwaway dev tooling, never part of the package. The already-
+# tracked _smoke*.mjs / _measure_*.mjs must be removed with `git rm` (see audit handoff).
+/_*.mjs
+
+# Local machine-specific launchers (absolute user paths / PM2 deploy specifics — not portable)
+/Start-Engraphis-Dashboard.bat
+/Engraphis Dashboard.lnk
+# Hermes/PM2 singleton MCP-HTTP launcher: hardcodes this machine's ENGRAPHIS_DB_PATH and PM2
+# venv. The portable, env-configurable equivalent is the tracked scripts/mcp_server_http.py.
+/engraphis-mcp-http.py
+
+# Generated screen-demo payload and encoded video.
+/demo/generated/
+/demo/output/
+
+# FUSE mount artifacts: orphaned unlink-while-open handles from the Cowork
+# mount layer, not real content. Safe to ignore; delete host-side once the
+# holding process releases the handle (rm from the sandbox gets EPERM).
+.fuse_hidden*
+
+# Local curl/testing cookie jar — may contain live session cookies. Never commit.
+cookies.txt

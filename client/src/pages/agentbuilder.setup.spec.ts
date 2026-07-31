@@ -6,6 +6,12 @@ import type { AgentCardInstance, DeckDocument, RuntimeBinding } from '../types/a
 // tests the real modules directly.
 import { INITIAL_DECK } from '../features/agentbuilder/deck/deckSeed';
 import {
+  HERMES_STEWARD_TOOLS,
+  LOCAL_CODER_CONTROLLER_TOOLS,
+  MAIN_CHAT_CONTROLLER_TOOLS,
+  SYSTEM_TOOL_GRANTS_VERSION,
+} from '../features/agentbuilder/deck/deckPrimitives';
+import {
   hydrateDeckDocument,
   resolveProjectDeckLoadResult,
   resolveProjectDeckPayload,
@@ -377,6 +383,73 @@ describe('agentbuilder authoring flow', () => {
       modelKey: 'z-ai/glm-5.2',
       maxTurns: 3,
     });
+  });
+
+  it('migrates stale system-card grants once without changing saved card presentation or wiring', () => {
+    const stale = JSON.parse(JSON.stringify(INITIAL_DECK)) as DeckDocument;
+    stale.version = SYSTEM_TOOL_GRANTS_VERSION - 1;
+    const main = stale.nodes.find((node) => node.id === 'card_main_chat');
+    const coder = stale.nodes.find((node) => node.id === 'card_local_coder');
+    const hermes = stale.nodes.find((node) => node.id === 'card_hermes_steward');
+    if (!main || !coder || !hermes) throw new Error('system_cards_missing');
+    main.prompt = 'Saved Main prompt';
+    main.position = { x: 111, y: 222 };
+    main.runtimeOptions = {
+      ...main.runtimeOptions,
+      provider: 'openrouter',
+      modelKey: 'saved-main-model',
+      tools: ['engraphis.export_code_graph'],
+    };
+    coder.runtimeOptions = {
+      ...coder.runtimeOptions,
+      provider: 'openrouter',
+      modelKey: 'saved-coder-model',
+      tools: ['cbm.delete_project'],
+    };
+    hermes.runtimeOptions = {
+      ...hermes.runtimeOptions,
+      provider: 'openrouter',
+      modelKey: 'saved-hermes-model',
+      tools: ['hermes.memory_read', 'graphiti.clear_graph'],
+    };
+    const savedEdges = JSON.parse(JSON.stringify(stale.edges));
+
+    const migrated = hydrateDeckDocument(stale);
+    const migratedMain = migrated.nodes.find((node) => node.id === 'card_main_chat');
+    const migratedCoder = migrated.nodes.find((node) => node.id === 'card_local_coder');
+    const migratedHermes = migrated.nodes.find((node) => node.id === 'card_hermes_steward');
+
+    expect(migrated.version).toBe(SYSTEM_TOOL_GRANTS_VERSION);
+    expect(migratedMain?.runtimeOptions?.tools).toEqual([...MAIN_CHAT_CONTROLLER_TOOLS]);
+    expect(migratedCoder?.runtimeOptions?.tools).toEqual([...LOCAL_CODER_CONTROLLER_TOOLS]);
+    expect(migratedHermes?.runtimeOptions?.tools).toEqual([...HERMES_STEWARD_TOOLS]);
+    expect(migratedMain).toMatchObject({
+      prompt: 'Saved Main prompt',
+      position: { x: 111, y: 222 },
+      runtimeOptions: {
+        provider: 'openrouter',
+        modelKey: 'saved-main-model',
+      },
+    });
+    expect(migratedCoder?.runtimeOptions).toMatchObject({
+      provider: 'openrouter',
+      modelKey: 'saved-coder-model',
+    });
+    expect(migratedHermes?.runtimeOptions).toMatchObject({
+      provider: 'openrouter',
+      modelKey: 'saved-hermes-model',
+    });
+    expect(migrated.edges).toMatchObject(savedEdges);
+
+    if (!migratedMain) throw new Error('migrated_main_missing');
+    migratedMain.runtimeOptions = {
+      ...migratedMain.runtimeOptions,
+      tools: ['custom.saved.tool'],
+    };
+    expect(
+      hydrateDeckDocument(migrated).nodes.find((node) => node.id === 'card_main_chat')
+        ?.runtimeOptions?.tools,
+    ).toEqual(['custom.saved.tool']);
   });
 
   it('drops the retired generic Code-workbench card and prompt from saved decks', () => {

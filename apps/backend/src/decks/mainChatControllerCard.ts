@@ -6,6 +6,16 @@ export const MAIN_CHAT_TEMPLATE_ID = 'template_main_chat';
 export const MAIN_CHAT_CONTROL_EDGE_ID = 'edge_main_chat_magentic_control';
 export const MAIN_CHAT_MODEL_KEY = 'z-ai/glm-5.2';
 export const MAIN_CHAT_PROVIDER = 'openrouter';
+export const MAIN_CHAT_CONTROLLER_TOOLS = [
+  'thinkgraph.get_graph_slice',
+  'thinkgraph.submit_update',
+  'engraphis.recall',
+  'engraphis.recall_grounded',
+  'canvas.inspect',
+  'mag_one.describe_connected_agents',
+  'run_mag_one',
+  'run_coder_subagent',
+] as const;
 
 // Kept in sync with the client seed (deckSeed.ts prompt_main_chat). The
 // persisted saved card prompt remains the live authority; this template only
@@ -42,18 +52,7 @@ export function buildMainChatControllerCard(prompt = MAIN_CHAT_PROMPT_TEMPLATE.c
     runtimeOptions: {
       provider: MAIN_CHAT_PROVIDER,
       modelKey: MAIN_CHAT_MODEL_KEY,
-      tools: [
-        'thinkgraph.get_graph_slice',
-        'thinkgraph.submit_update',
-        'engraphis.recall',
-        'engraphis.recall_grounded',
-        'engraphis.why',
-        'engraphis.timeline',
-        'canvas.inspect',
-        'mag_one.describe_connected_agents',
-        'run_mag_one',
-        'run_coder_subagent',
-      ],
+      tools: [...MAIN_CHAT_CONTROLLER_TOOLS],
     },
     parentGraphId: null,
     title: 'Main Chat / Harness',
