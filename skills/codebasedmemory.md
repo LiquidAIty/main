@@ -199,8 +199,20 @@ when the user explicitly requests it.
 ## Cold Start & Performance
 
 Every CLI call starts a process, while the connected MCP service can keep its own graph state warm.
-Neither lifecycle depends on Hermes. Batch independent calls when useful, but do not reindex as a
-reflex.
+Neither lifecycle depends on Hermes.
+
+Use one doorway per run. Prefer the already-connected native MCP service. Main/GPT may use the
+transparent `cbm.*` federation because it preserves native schemas and owns one persistent native
+child; do not mix that doorway with a separate direct connection after either is proven healthy.
+
+Default to sequential calls. The federation serializes requests through one persistent JSON-RPC
+session, so launching many callers does not make one CBM process execute many operations at once.
+A small parallel batch of independent reads is acceptable only after the selected doorway is warm.
+Never parallelize initialization, `tools/list`, indexing, deletion, or recovery, and never launch
+many CLI calls as a concurrency strategy.
+
+Process lifecycle and index lifecycle are separate. A transport error does not authorize an index
+delete or reindex.
 
 ## Hybrid Workflow Pattern (The Core Loop)
 
@@ -237,7 +249,33 @@ When CBM returns nothing:
 
 When graph and source disagree: source truth wins. Determine if index is stale, path excluded, call resolution uncertain, or dynamic dispatch involved. Record the disagreement.
 
-Do not repeatedly restart CBM. Do not repeatedly call index_repository.
+When CBM returns `Transport closed`, times out, or exits:
+1. Stop equivalent retries.
+2. Identify which doorway was selected and inspect its owner once.
+3. Distinguish connector/process failure from query or index failure.
+4. Preserve the live owner's native child and stop only a proven orphan.
+5. Retry once only after a specific lifecycle repair.
+6. Use verified direct-source fallback when the index is ready but the connector remains unavailable.
+
+Do not repeatedly restart CBM. Do not repeatedly call `index_repository`. Do not compensate by
+starting both the direct connector and LiquidAIty federation.
+
+Expose state without interaction tax: report the selected doorway, project/root, readiness,
+operation, and exact failure. Do not dump process tables or raw graph payloads unless needed for
+diagnosis.
+
+## Skill Learning Loop
+
+Turn repeated real incidents into compact skill updates:
+
+1. Classify the problem as query/schema, coverage, transport, process lifecycle, or misuse.
+2. Preserve the smallest raw evidence and the recovery that actually worked.
+3. Add one rule to this canonical skill; never create a second general CBM manual.
+4. Validate the updated skill and use it on the next real task.
+5. Remove rules that later evidence disproves.
+
+This is the calm-technology standard for CBM: continuous legible state, predictable controls,
+visible failure, direct recovery, and no need for the user to supervise the machinery.
 
 ## LiquidAIty-Specific Patterns
 
