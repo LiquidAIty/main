@@ -297,6 +297,74 @@ def agentgraph_read_assignment(
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
+@app.get("/agentgraph/cards/{receiver_card_id:path}/context")
+def agentgraph_read_card_context(
+    receiver_card_id: str,
+    projectId: str,
+    deckId: str,
+    conversationId: str,
+    assignmentId: str | None = None,
+):
+    """Read a card's exact returned assignment or its active/latest assignment."""
+    from app.python_models import agentgraph
+    from app.python_models.unified_context import build_graph_view_delivery
+
+    try:
+        assignment = (
+            agentgraph.read_assignment(
+                project_id=projectId,
+                assignment_id=assignmentId,
+                receiving_card_id=receiver_card_id,
+            )
+            if assignmentId
+            else agentgraph.read_latest_card_assignment(
+                project_id=projectId,
+                deck_id=deckId,
+                conversation_id=conversationId,
+                receiving_card_id=receiver_card_id,
+            )
+        )
+        if assignment is None:
+            return {"ok": True, "assignment": None, "deliveredContext": None}
+        graph_view_ids = [
+            str(reference.get("referenceId") or "")
+            for reference in assignment.get("contextReferences") or []
+            if reference.get("referenceType") == "graph_view"
+        ]
+        delivered_context = None
+        if graph_view_ids:
+            views = [
+                agentgraph.get_graph_view(
+                    project_id=projectId,
+                    conversation_id=assignment["conversationId"],
+                    view_id=view_id,
+                )["view"]
+                for view_id in graph_view_ids
+            ]
+            roles = {
+                str(view.get("receivingRole") or "").strip()
+                for view in views
+                if str(view.get("receivingRole") or "").strip()
+            }
+            if len(roles) != 1:
+                raise ValueError("agentgraph_card_context_receiver_role_conflict")
+            delivered_context = build_graph_view_delivery(
+                project_id=projectId,
+                conversation_id=assignment["conversationId"],
+                receiving_role=next(iter(roles)),
+                graph_view_ids=graph_view_ids,
+            )
+        return {
+            "ok": True,
+            "assignment": assignment,
+            "deliveredContext": delivered_context,
+        }
+    except (ValueError, LookupError, PermissionError) as err:
+        raise HTTPException(status_code=404, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
 @app.post("/agentgraph/assignments/begin")
 def agentgraph_begin_assignment(payload: dict[str, Any]):
     """Begin one Python-owned outer assignment before a saved runtime executes."""

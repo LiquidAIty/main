@@ -34,6 +34,8 @@ MAX_REASONING_STATE_RECORDS = 48
 MAX_GRAPH_VIEW_REFERENCES = 128
 MAX_GRAPH_CONTEXT_CHARACTERS = 32_000
 MAX_GRAPH_CONTEXT_FIELD_CHARACTERS = 1_000
+MAX_DELIVERED_RECORD_CHARACTERS = 4_000
+_GRAPH_AUTHORITIES = frozenset(AUTHORITY)
 
 
 def _bounded(value: int, low: int, high: int) -> int:
@@ -58,6 +60,367 @@ def _refs(value: Any) -> list[str]:
     return []
 
 
+def _compact_value(value: Any, *, depth: int = 0) -> Any:
+    """Bound native record detail without copying an unbounded tool payload."""
+    if depth >= 3:
+        return _flat(value)[:MAX_GRAPH_CONTEXT_FIELD_CHARACTERS]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return _flat(value)[:MAX_GRAPH_CONTEXT_FIELD_CHARACTERS]
+    if isinstance(value, list):
+        return [_compact_value(item, depth=depth + 1) for item in value[:20]]
+    if isinstance(value, dict):
+        return {
+            str(key)[:128]: _compact_value(value[key], depth=depth + 1)
+            for key in sorted(value, key=lambda item: str(item))[:40]
+        }
+    return _flat(value)[:MAX_GRAPH_CONTEXT_FIELD_CHARACTERS]
+
+
+def _canonical_node_id(authority: str, source: dict[str, Any]) -> str:
+    props = dict(source.get("properties") or {})
+    return str(
+        source.get("source_id")
+        or source.get("canonicalId")
+        or props.get("qualified_name")
+        or props.get("uuid")
+        or source.get("name")
+        or source.get("id")
+        or ""
+    ).strip()
+
+
+def _node_aliases(authority: str, source: dict[str, Any]) -> set[str]:
+    props = dict(source.get("properties") or {})
+    aliases = {
+        _canonical_node_id(authority, source),
+        str(source.get("id") or "").strip(),
+        str(source.get("source_id") or "").strip(),
+        str(source.get("canonicalId") or "").strip(),
+        str(source.get("name") or "").strip(),
+        str(props.get("qualified_name") or "").strip(),
+        str(props.get("uuid") or "").strip(),
+    }
+    canonical = _canonical_node_id(authority, source)
+    if authority == "codegraph" and canonical:
+        aliases.add(f"code:{canonical}")
+        aliases.add(f"codegraph:{canonical}")
+    return {alias for alias in aliases if alias}
+
+
+def _raw_edge_endpoints(raw: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(raw.get("source") or raw.get("from") or "").strip(),
+        str(raw.get("target") or raw.get("to") or "").strip(),
+    )
+
+
+def _native_revision(
+    authority: str,
+    source: dict[str, Any],
+    authority_revision: str | None,
+) -> str | None:
+    props = dict(source.get("properties") or {})
+    value = (
+        source.get("revision")
+        or source.get("updatedAt")
+        or source.get("updated_at")
+        or source.get("valid_at")
+        or props.get("revision")
+        or props.get("updated_at")
+        or props.get("updatedAt")
+        or props.get("valid_at")
+        or authority_revision
+    )
+    return str(value).strip() if value is not None and str(value).strip() else None
+
+
+def _record_representation(
+    *,
+    authority: str,
+    kind: str,
+    native_id: str,
+    source: dict[str, Any],
+    native_revision: str | None,
+    source_id: str | None = None,
+    target_id: str | None = None,
+    predicate: str | None = None,
+) -> tuple[str, str]:
+    props = dict(source.get("properties") or {})
+    if kind == "node":
+        bounded = {
+            "authority": authority,
+            "kind": "node",
+            "nativeId": native_id,
+            "type": str(source.get("type") or source.get("kind") or source.get("label") or "Record"),
+            "label": str(source.get("title") or source.get("name") or source.get("label") or native_id),
+            **({"nativeRevision": native_revision} if native_revision else {}),
+            "properties": _compact_value(props),
+            "provenance": _compact_value(source.get("provenance") or {}),
+        }
+    else:
+        bounded = {
+            "authority": authority,
+            "kind": "edge",
+            "nativeId": native_id,
+            "sourceId": source_id,
+            "targetId": target_id,
+            "predicate": predicate or "RELATED_TO",
+            **({"nativeRevision": native_revision} if native_revision else {}),
+            "properties": _compact_value(props),
+            "provenance": _compact_value(source.get("provenance") or {}),
+        }
+    representation = json.dumps(
+        bounded,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    if len(representation) > MAX_DELIVERED_RECORD_CHARACTERS:
+        raise ValueError(
+            "delivered_graph_record_too_large: "
+            f"{authority}:{native_id} "
+            f"({len(representation)}>{MAX_DELIVERED_RECORD_CHARACTERS})"
+        )
+    return representation, hashlib.sha256(representation.encode()).hexdigest()
+
+
+def compile_delivered_context_manifest(
+    *,
+    project_id: str,
+    conversation_id: str,
+    receiving_role: str,
+    views: list[dict[str, Any]],
+    raw_nodes: dict[str, list[dict[str, Any]]],
+    raw_edges: dict[str, list[dict[str, Any]]],
+    authority_revisions: dict[str, str | None] | None = None,
+) -> dict[str, Any]:
+    """Resolve GraphView pointers into the exact bounded records delivered.
+
+    Source graphs remain authoritative. This manifest exists only as the
+    deterministic pre-run representation shared by model context and UI.
+    """
+    authority_revisions = authority_revisions or {}
+    node_by_alias: dict[str, dict[str, dict[str, Any]]] = {
+        authority: {} for authority in AUTHORITY
+    }
+    canonical_by_endpoint: dict[str, dict[str, str]] = {
+        authority: {} for authority in AUTHORITY
+    }
+    for authority in AUTHORITY:
+        for source in raw_nodes.get(authority) or []:
+            canonical = _canonical_node_id(authority, source)
+            if not canonical:
+                continue
+            for alias in _node_aliases(authority, source):
+                node_by_alias[authority].setdefault(alias, source)
+                canonical_by_endpoint[authority].setdefault(alias, canonical)
+
+    edge_by_alias: dict[str, dict[str, dict[str, Any]]] = {
+        authority: {} for authority in AUTHORITY
+    }
+    edge_identity: dict[int, tuple[str, str, str, str]] = {}
+    for authority in AUTHORITY:
+        for raw in raw_edges.get(authority) or []:
+            source_ref, target_ref = _raw_edge_endpoints(raw)
+            source_id = canonical_by_endpoint[authority].get(source_ref, source_ref)
+            target_id = canonical_by_endpoint[authority].get(target_ref, target_ref)
+            predicate = str(raw.get("predicate") or raw.get("type") or "RELATED_TO")
+            native_id = str(
+                raw.get("id")
+                or f"{source_id}|{predicate}|{target_id}"
+            ).strip()
+            aliases = {
+                native_id,
+                f"{source_id}|{predicate}|{target_id}",
+                f"{source_ref}|{predicate}|{target_ref}",
+            }
+            for alias in aliases:
+                if alias:
+                    edge_by_alias[authority].setdefault(alias, raw)
+            edge_identity[id(raw)] = (native_id, source_id, target_id, predicate)
+
+    records: list[dict[str, Any]] = []
+    record_index: dict[tuple[str, str, str], int] = {}
+    unresolved: list[dict[str, Any]] = []
+    external_references: list[dict[str, Any]] = []
+
+    def append_record(
+        *,
+        authority: str,
+        kind: str,
+        native_id: str,
+        source: dict[str, Any],
+        required: bool,
+        selected_by: str,
+        source_id: str | None = None,
+        target_id: str | None = None,
+        predicate: str | None = None,
+    ) -> None:
+        identity = (authority, kind, native_id)
+        existing_index = record_index.get(identity)
+        if existing_index is not None:
+            if required:
+                records[existing_index]["required"] = True
+            return
+        native_revision = _native_revision(
+            authority,
+            source,
+            authority_revisions.get(authority),
+        )
+        representation, representation_hash = _record_representation(
+            authority=authority,
+            kind=kind,
+            native_id=native_id,
+            source=source,
+            native_revision=native_revision,
+            source_id=source_id,
+            target_id=target_id,
+            predicate=predicate,
+        )
+        record_index[identity] = len(records)
+        records.append(
+            {
+                "authority": authority,
+                "kind": kind,
+                "nativeId": native_id,
+                "nativeRevision": native_revision,
+                "sourceId": source_id,
+                "targetId": target_id,
+                "predicate": predicate,
+                "required": required,
+                "deliveryOrder": len(records),
+                "selectedBy": selected_by,
+                "representation": representation,
+                "representationHash": representation_hash,
+                "characters": len(representation),
+                "bytes": len(representation.encode("utf-8")),
+            }
+        )
+
+    for view in views:
+        references = sorted(
+            enumerate(view.get("references") or []),
+            key=lambda item: (
+                int(item[1].get("deliveryOrder"))
+                if isinstance(item[1].get("deliveryOrder"), int)
+                else item[0],
+                str(item[1].get("referenceType") or ""),
+                str(item[1].get("referenceId") or ""),
+            ),
+        )
+        for _index, reference in references:
+            authority = str(reference.get("referenceType") or "").strip()
+            reference_id = str(reference.get("referenceId") or "").strip()
+            required = bool(reference.get("required"))
+            selected_by = str(view.get("viewId") or "")
+            if authority not in _GRAPH_AUTHORITIES:
+                external_references.append(
+                    {
+                        "referenceId": reference_id,
+                        "referenceType": authority,
+                        "required": required,
+                        "selectedBy": selected_by,
+                    }
+                )
+                continue
+            requested_kind = str(reference.get("recordKind") or "").strip()
+            node = node_by_alias[authority].get(reference_id)
+            edge = edge_by_alias[authority].get(reference_id)
+            if requested_kind == "node":
+                edge = None
+            elif requested_kind == "edge":
+                node = None
+            elif node is not None and edge is not None:
+                raise ValueError(
+                    f"graph_reference_kind_ambiguous: {authority}:{reference_id}"
+                )
+            if node is not None:
+                append_record(
+                    authority=authority,
+                    kind="node",
+                    native_id=_canonical_node_id(authority, node),
+                    source=node,
+                    required=required,
+                    selected_by=selected_by,
+                )
+                continue
+            if edge is not None:
+                native_id, source_id, target_id, predicate = edge_identity[id(edge)]
+                for endpoint_id in (source_id, target_id):
+                    endpoint = node_by_alias[authority].get(endpoint_id)
+                    if endpoint is None:
+                        raise ValueError(
+                            f"graph_edge_endpoint_unavailable: {authority}:{native_id}:{endpoint_id}"
+                        )
+                    append_record(
+                        authority=authority,
+                        kind="node",
+                        native_id=_canonical_node_id(authority, endpoint),
+                        source=endpoint,
+                        required=required,
+                        selected_by=selected_by,
+                    )
+                append_record(
+                    authority=authority,
+                    kind="edge",
+                    native_id=native_id,
+                    source=edge,
+                    required=required,
+                    selected_by=selected_by,
+                    source_id=source_id,
+                    target_id=target_id,
+                    predicate=predicate,
+                )
+                continue
+            missing = {
+                "referenceId": reference_id,
+                "referenceType": authority,
+                "recordKind": requested_kind or None,
+                "required": required,
+                "selectedBy": selected_by,
+                "reason": "native_record_unavailable",
+            }
+            unresolved.append(missing)
+            if required:
+                raise ValueError(
+                    f"required_graph_reference_unavailable: {authority}:{reference_id}"
+                )
+
+    identity_payload = [
+        (
+            record["authority"],
+            record["kind"],
+            record["nativeId"],
+            record["representationHash"],
+            record["required"],
+            record["deliveryOrder"],
+        )
+        for record in records
+    ]
+    manifest_hash = hashlib.sha256(
+        json.dumps(identity_payload, separators=(",", ":")).encode()
+    ).hexdigest()
+    return {
+        "schemaVersion": "delivered-context-manifest.v1",
+        "authority": "agentgraph",
+        "projectId": project_id,
+        "conversationId": conversation_id,
+        "receivingRole": receiving_role,
+        "graphViewIds": [str(view.get("viewId") or "") for view in views],
+        "records": records,
+        "unresolvedReferences": unresolved,
+        "externalReferences": external_references,
+        "recordCount": len(records),
+        "nodeCount": sum(1 for record in records if record["kind"] == "node"),
+        "edgeCount": sum(1 for record in records if record["kind"] == "edge"),
+        "characters": sum(int(record["characters"]) for record in records),
+        "bytes": sum(int(record["bytes"]) for record in records),
+        "manifestHash": manifest_hash,
+    }
+
+
 def _position(authority: str, canonical_id: str, cluster: str) -> dict[str, float]:
     """Stable authority-region placement derived only from canonical identity."""
     seed = hashlib.sha256(f"{authority}|{cluster}|{canonical_id}".encode()).digest()
@@ -79,6 +442,7 @@ class UnifiedContextRequest:
     conversation_id: str
     role: str = "main_chat"
     active_view_id: str | None = None
+    active_view_ids: tuple[str, ...] = ()
     knowgraph_scope: str | None = None
     think_limit: int = 5000
     know_limit: int = 50000
@@ -182,44 +546,55 @@ def _build_unified_context(
             limit=50,
         ).get("views") or []
     )
+    requested_view_ids = list(request.active_view_ids) or (
+        [request.active_view_id] if request.active_view_id else []
+    )
     selected_full_views = select_persisted_graph_views(
         persisted_graph_views,
-        [request.active_view_id] if request.active_view_id else [],
+        requested_view_ids,
         project_id=request.project_id,
         conversation_id=request.conversation_id,
         receiving_roles={request.role},
     )
     graph_views = graph_view_identities(persisted_graph_views)
     selected_views = graph_view_identities(selected_full_views)
-    selected_view_id = request.active_view_id
+    selected_view_id = (
+        str(selected_full_views[0].get("viewId") or "")
+        if len(selected_full_views) == 1
+        else None
+    )
     know_started = time.perf_counter()
-    try:
-        graph_payload = read_json(
-            "/api/knowgraph/graph",
-            {"projectId": request.knowgraph_scope or request.project_id},
-        )
-        know = {
-            "nodes": list(graph_payload.get("nodes") or []),
-            "relationships": list(
-                graph_payload.get("relationships") or []
-            ),
-        }
-    except Exception as error:  # one authority may fail without fabricating records
-        know = {"nodes": [], "relationships": []}
-        warnings.append({"authority": "knowgraph", "code": "authority_unavailable", "detail": str(error)})
+    know: dict[str, Any] = {"nodes": [], "relationships": []}
+    code: dict[str, Any] = {"nodes": [], "edges": [], "projectId": None}
+    if selected_full_views:
+        try:
+            graph_payload = read_json(
+                "/api/knowgraph/graph",
+                {"projectId": request.knowgraph_scope or request.project_id},
+            )
+            know = {
+                "nodes": list(graph_payload.get("nodes") or []),
+                "relationships": list(
+                    graph_payload.get("relationships") or []
+                ),
+                "revision": graph_payload.get("revision"),
+                "resolved_project_id": graph_payload.get("resolved_project_id"),
+            }
+        except Exception as error:  # one authority may fail without fabricating records
+            warnings.append({"authority": "knowgraph", "code": "authority_unavailable", "detail": str(error)})
     know_ms = (time.perf_counter() - know_started) * 1000
     code_started = time.perf_counter()
-    try:
-        code_project = str(
-            os.getenv("LIQUIDAITY_CODEGRAPH_PROJECT") or "C-Projects-main"
-        ).strip()
-        if not code_project:
-            raise ValueError("codegraph_project_unavailable")
-        code = read_codegraph_json("/api/layout", {"project": code_project, "max_nodes": limits["codegraph"]})
-        code["projectId"] = code_project
-    except Exception as error:
-        code = {"nodes": [], "edges": [], "projectId": None}
-        warnings.append({"authority": "codegraph", "code": "authority_unavailable", "detail": str(error)})
+    if selected_full_views:
+        try:
+            code_project = str(
+                os.getenv("LIQUIDAITY_CODEGRAPH_PROJECT") or "C-Projects-main"
+            ).strip()
+            if not code_project:
+                raise ValueError("codegraph_project_unavailable")
+            code = read_codegraph_json("/api/layout", {"project": code_project, "max_nodes": limits["codegraph"]})
+            code["projectId"] = code_project
+        except Exception as error:
+            warnings.append({"authority": "codegraph", "code": "authority_unavailable", "detail": str(error)})
     code_ms = (time.perf_counter() - code_started) * 1000
 
     raw_nodes: dict[str, list[dict[str, Any]]] = {
@@ -233,74 +608,91 @@ def _build_unified_context(
         "codegraph": list(code.get("edges") or []),
     }
 
-    chosen = raw_nodes
+    manifest = compile_delivered_context_manifest(
+        project_id=request.project_id,
+        conversation_id=request.conversation_id,
+        receiving_role=request.role,
+        views=selected_full_views,
+        raw_nodes=raw_nodes,
+        raw_edges=raw_edges,
+        authority_revisions={
+            "thinkgraph": str(think.get("revision") or "").strip() or None,
+            "knowgraph": str(know.get("revision") or "").strip() or None,
+            "codegraph": str(code.get("generation") or code.get("revision") or "").strip() or None,
+        },
+    )
 
     nodes: list[dict[str, Any]] = []
     numeric_by_key: dict[tuple[str, str], int] = {}
-    pending_refs: dict[tuple[int, str, str], None] = {}
-    for authority in AUTHORITY:
-        for source in chosen[authority]:
-            canonical = str(source.get("source_id") or source.get("canonicalId") or (source.get("properties") or {}).get("qualified_name") or source.get("name") or source.get("id") or "")
-            props = dict(source.get("properties") or {})
-            if authority == "knowgraph":
-                for field in ("community_id", "frequency", "influence", "bridge_importance", "supporting_statement_ids", "source_document_refs"):
-                    if source.get(field) is not None:
-                        props.setdefault(field, source.get(field))
-            cluster = str(props.get("cluster") or source.get("type") or source.get("label") or "records")
-            numeric = len(nodes) + 1
-            numeric_by_key[(authority, canonical)] = numeric
-            numeric_by_key[(authority, str(source.get("id") or canonical))] = numeric
-            if authority == "codegraph":
-                numeric_by_key[(authority, f"code:{canonical}")] = numeric
-            for key, target_authority in (("knowgraph_ref", "knowgraph"), ("knowGraphRef", "knowgraph"), ("codegraph_ref", "codegraph"), ("codeGraphRef", "codegraph"), ("secondary_ref", "codegraph")):
-                for ref in _refs(props.get(key) if key in props else source.get(key)):
-                    pending_refs.setdefault((numeric, target_authority, ref), None)
-            record_type = str(source.get("type") or source.get("kind") or source.get("label") or "Record")
-            supplied_position = all(isinstance(source.get(axis), (int, float)) for axis in ("x", "y", "z"))
-            position = ({axis: float(source[axis]) for axis in ("x", "y", "z")} if supplied_position else _position(authority, canonical, cluster))
-            nodes.append({
-                "id": numeric,
-                **position,
-                "label": record_type,
-                "name": str(source.get("title") or source.get("name") or source.get("label") or canonical),
-                "size": float(source.get("size") or 5.0),
-                "color": str(source.get("color") or AUTHORITY[authority]["color"]),
-                "authority": authority,
-                "source_id": canonical,
-                "file_path": source.get("file_path"),
-                "properties": props,
-                "provenance": source.get("provenance") or {},
-                "project_id": source.get("projectId") or request.project_id,
-                "conversation_id": source.get("conversationId") or request.conversation_id,
-                "run_id": source.get("runId") or props.get("run_id"),
-                "status": props.get("status") or source.get("currentState"),
-                "trust": source.get("trustState") or props.get("trust_state"),
-                "source_graph": AUTHORITY[authority]["label"],
-                "cluster": cluster,
-            })
+    for record in manifest["records"]:
+        if record["kind"] != "node":
+            continue
+        authority = str(record["authority"])
+        canonical = str(record["nativeId"])
+        decoded = json.loads(str(record["representation"]))
+        props = dict(decoded.get("properties") or {})
+        cluster = str(decoded.get("type") or "records")
+        numeric = len(nodes) + 1
+        numeric_by_key[(authority, canonical)] = numeric
+        position = _position(authority, canonical, cluster)
+        nodes.append({
+            "id": numeric,
+            **position,
+            "label": str(decoded.get("type") or "Record"),
+            "name": str(decoded.get("label") or canonical),
+            "size": 5.0,
+            "color": AUTHORITY[authority]["color"],
+            "authority": authority,
+            "source_id": canonical,
+            "properties": {
+                **props,
+                "deliveryOrder": record["deliveryOrder"],
+                "representationHash": record["representationHash"],
+                "required": record["required"],
+            },
+            "provenance": decoded.get("provenance") or {},
+            "project_id": request.project_id,
+            "conversation_id": request.conversation_id,
+            "source_graph": AUTHORITY[authority]["label"],
+            "cluster": cluster,
+        })
 
     cross_started = time.perf_counter()
     edges: list[dict[str, Any]] = []
-    for authority in AUTHORITY:
-        for raw in raw_edges[authority]:
-            source_ref = str(raw.get("source") or raw.get("from") or "")
-            target_ref = str(raw.get("target") or raw.get("to") or "")
-            source = numeric_by_key.get((authority, source_ref))
-            target = numeric_by_key.get((authority, target_ref))
-            if source and target:
-                raw_edge_id = str(raw.get("id") or f"{source_ref}:{target_ref}")
-                edges.append({"id": f"{authority}:{raw_edge_id}", "source": source, "target": target, "type": str(raw.get("predicate") or raw.get("type") or "RELATED_TO"), "cross_authority": False})
-    missing_refs: set[tuple[str, str]] = set()
-    for source, target_authority, ref in pending_refs:
-        target = numeric_by_key.get((target_authority, ref))
-        if target:
-            edges.append({"id": f"cross:{source}:{target}:{ref}", "source": source, "target": target, "type": "REFERENCES", "cross_authority": True})
-        else:
-            missing_refs.add((target_authority, ref))
-    warnings.extend({"authority": authority, "code": "referenced_record_not_in_projection", "detail": ref} for authority, ref in sorted(missing_refs))
-    for authority in AUTHORITY:
-        if not chosen[authority]:
-            warnings.append({"authority": authority, "code": "empty_authority_view", "detail": f"The {authority} authority returned no records for this configuration."})
+    for record in manifest["records"]:
+        if record["kind"] != "edge":
+            continue
+        authority = str(record["authority"])
+        source = numeric_by_key.get((authority, str(record["sourceId"])))
+        target = numeric_by_key.get((authority, str(record["targetId"])))
+        if source is None or target is None:
+            raise ValueError(
+                f"delivered_graph_edge_endpoint_missing: {authority}:{record['nativeId']}"
+            )
+        edges.append({
+            "id": f"{authority}:{record['nativeId']}",
+            "source": source,
+            "target": target,
+            "type": str(record["predicate"] or "RELATED_TO"),
+            "cross_authority": False,
+            "delivery_order": record["deliveryOrder"],
+            "representation_hash": record["representationHash"],
+            "required": record["required"],
+        })
+    if not selected_full_views:
+        warnings.append({
+            "authority": "agentgraph",
+            "code": "no_active_context_manifest",
+            "detail": "Unified is empty until a GraphView is explicitly selected.",
+        })
+    warnings.extend(
+        {
+            "authority": str(reference.get("referenceType") or "agentgraph"),
+            "code": "optional_reference_unavailable",
+            "detail": str(reference.get("referenceId") or ""),
+        }
+        for reference in manifest["unresolvedReferences"]
+    )
     cross_ms = (time.perf_counter() - cross_started) * 1000
 
     serialization_started = time.perf_counter()
@@ -309,6 +701,7 @@ def _build_unified_context(
         "conversationId": request.conversation_id,
         "role": request.role,
         "activeGraphViewId": selected_view_id,
+        "activeGraphViewIds": requested_view_ids,
         "knowgraphScope": request.knowgraph_scope,
         "limits": limits,
     }
@@ -316,6 +709,7 @@ def _build_unified_context(
     content_identity = {
         "configurationHash": configuration_hash,
         "selectedGraphViewIds": [view.get("viewId") for view in selected_views],
+        "manifestHash": manifest["manifestHash"],
         "nodes": [(node["authority"], node["source_id"]) for node in nodes],
         "edges": [(edge["source"], edge["target"], edge["type"], edge["cross_authority"]) for edge in edges],
     }
@@ -360,13 +754,21 @@ def _build_unified_context(
         "graphViews": selected_views,
         "availableGraphViews": graph_views,
         "authorityGraphViews": selected_views,
+        "manifest": manifest,
         "lifecycle": lifecycle,
         "nodes": nodes,
         "edges": edges,
         "regions": [{"id": key, **value} for key, value in AUTHORITY.items()],
         "counts": {
             "available": {key: len(raw_nodes[key]) for key in AUTHORITY},
-            "selected": {key: len(chosen[key]) for key in AUTHORITY},
+            "selected": {
+                key: sum(
+                    1
+                    for record in manifest["records"]
+                    if record["authority"] == key
+                )
+                for key in AUTHORITY
+            },
             "nodes": len(nodes),
             "edges": len(edges),
             "crossAuthorityEdges": sum(1 for edge in edges if edge["cross_authority"]),
@@ -399,6 +801,7 @@ def build_unified_context(
         "conversationId": request.conversation_id,
         "role": request.role,
         "activeGraphViewId": request.active_view_id,
+        "activeGraphViewIds": list(request.active_view_ids),
         "knowgraphScope": request.knowgraph_scope,
         "thinkLimit": request.think_limit,
         "knowLimit": request.know_limit,
@@ -508,87 +911,34 @@ def _render_view_lines(view: dict[str, Any], state: dict[str, Any]) -> list[str]
 
 
 def render_model_context(projection: dict[str, Any], role_views: list[dict[str, Any]]) -> dict[str, Any]:
-    """Bounded, target-specific model text + per-section token counts.
-
-    Membership comes from persisted structures only: the ThinkGraph reasoning
-    state (structural record types) and AgentGraph reference views addressed to
-    this role. The broad display projection is referenced by identity and
-    counts — its node/edge dump NEVER enters a prompt (a full CBM layout is
-    ~180k tokens of relationship lines). Everything beyond this bounded context
-    is reachable through the bounded retrieval tools."""
-    nodes = list(projection.get("nodes") or [])
-    counts = projection.get("counts") or {}
-    selected_counts = counts.get("selected") or {}
-    sections: dict[str, list[str]] = {}
-
-    sections["header"] = [
-        "[LIQUIDAITY_GRAPH_CONTEXT]",
-        f"projection: {projection.get('projectionId')} | project: {projection.get('projectId')} | conversation: {projection.get('conversationId')} | role: {projection.get('receivingRole')}",
-        "records visible in Unified (retrieve via tools, never assumed loaded): "
-        + ", ".join(f"{authority}={int(selected_counts.get(authority) or 0)}" for authority in AUTHORITY),
-    ]
-
-    reasoning_lines: list[str] = []
-    reasoning_order = {name: index for index, name in enumerate(_REASONING_STATE_TYPES)}
-    reasoning_nodes = sorted(
-        (node for node in nodes if node.get("authority") == "thinkgraph" and str(node.get("label")) in reasoning_order),
-        key=lambda node: (reasoning_order[str(node.get("label"))], str(node.get("name"))),
-    )
-    omitted_reasoning_count = max(0, len(reasoning_nodes) - MAX_REASONING_STATE_RECORDS)
-    for node in reasoning_nodes[:MAX_REASONING_STATE_RECORDS]:
-        props = node.get("properties") or {}
-        name = _bounded_field(node.get("name"), field="reasoning.name")
-        description = _bounded_field(
-            props.get("description") or "",
-            field="reasoning.description",
-        )
-        status = str(node.get("status") or "").strip()
-        line = f"- {node.get('label')}: {name}"
-        if description and description != name:
-            line += f" — {description}"
-        if status:
-            line += f" [{status}]"
-        line += f" ({node.get('source_id')})"
-        reasoning_lines.append(line)
-    if omitted_reasoning_count:
-        reasoning_lines.append(
-            f"- {omitted_reasoning_count} additional reasoning records omitted by "
-            f"the {MAX_REASONING_STATE_RECORDS}-record provider-context limit"
-        )
-    sections["reasoning_state"] = (["REASONING STATE (ThinkGraph):"] + reasoning_lines) if reasoning_lines else []
-
-    view_measurements: dict[str, dict[str, int]] = {}
-    view_lines: list[str] = []
-    render_state = _new_render_state()
-    for view in role_views:
-        before_references = int(render_state["referenceCount"])
-        lines = _render_view_lines(view, render_state)
-        view_lines.extend(lines)
-        view_measurements[str(view.get("viewId"))] = {
-            "references": int(render_state["referenceCount"]) - before_references,
-            "characters": len("\n".join(lines)),
-            "estimatedTokens": _estimated_tokens("\n".join(lines)),
-        }
-    sections["graph_views"] = (
-        [f"ROLE GRAPH VIEWS ({len(role_views)}):"] + view_lines
-        if role_views
-        else ["ROLE GRAPH VIEWS: none persisted for this role — use the retrieval tools for records beyond the reasoning state."]
-    )
-
-    warning_codes = sorted({str(warning.get("code")) for warning in projection.get("warnings") or []})
-    sections["warnings"] = (
-        [f"WARNINGS: {len(projection.get('warnings') or [])} ({', '.join(warning_codes)})"] if warning_codes else []
-    )
-
-    sections["retrieval"] = [
-        "RETRIEVAL: full records and anything beyond this view are available through the bounded tools — "
-        "read_thinkgraph_scope (reasoning records), graphiti.search_memory_facts and "
-        "graphiti.search_nodes (evidence and sources), "
-        "and the Coder runtime's native Codebase Memory MCP catalog (repository structure). "
-        "Reference records by the canonical ids shown above.",
-    ]
-
-    ordered = ["header", "reasoning_state", "graph_views", "warnings", "retrieval"]
+    """Render the exact record representations materialized in Unified."""
+    manifest = dict(projection.get("manifest") or {})
+    records = list(manifest.get("records") or [])
+    sections: dict[str, list[str]] = {
+        "header": [
+            "[DELIVERED_GRAPH_CONTEXT]",
+            f"manifest: {manifest.get('manifestHash')} | projection: {projection.get('projectionId')} | "
+            f"project: {projection.get('projectId')} | conversation: {projection.get('conversationId')} | "
+            f"role: {projection.get('receivingRole')} | records: {len(records)}",
+        ],
+        "records": [
+            f"- order={record.get('deliveryOrder')} required={str(bool(record.get('required'))).lower()} "
+            f"hash={record.get('representationHash')} {record.get('representation')}"
+            for record in records
+        ],
+        "unresolved": [
+            "UNRESOLVED OPTIONAL REFERENCES:",
+            *[
+                f"- {reference.get('referenceType')}:{reference.get('referenceId')}"
+                for reference in manifest.get("unresolvedReferences") or []
+            ],
+        ] if manifest.get("unresolvedReferences") else [],
+        "retrieval": [
+            "Records not listed above are not in this model-visible graph context. "
+            "Use the card's saved native graph tools to retrieve more context when needed.",
+        ],
+    }
+    ordered = ["header", "records", "unresolved", "retrieval"]
     text = "\n".join(line for key in ordered for line in sections[key] if sections[key])
     if len(text) > MAX_GRAPH_CONTEXT_CHARACTERS:
         raise ValueError(
@@ -599,21 +949,46 @@ def render_model_context(projection: dict[str, Any], role_views: list[dict[str, 
         key: {"characters": len("\n".join(sections[key])), "estimatedTokens": _estimated_tokens("\n".join(sections[key]))}
         for key in ordered
     }
+    view_measurements = {
+        str(view.get("viewId")): {
+            "references": len(view.get("references") or []),
+            "characters": sum(
+                int(record.get("characters") or 0)
+                for record in records
+                if record.get("selectedBy") == view.get("viewId")
+            ),
+            "estimatedTokens": _estimated_tokens(
+                "".join(
+                    str(record.get("representation") or "")
+                    for record in records
+                    if record.get("selectedBy") == view.get("viewId")
+                )
+            ),
+        }
+        for view in role_views
+    }
     measurements = {
         "characters": len(text),
         "estimatedTokens": _estimated_tokens(text),
         "sections": section_measurements,
         "views": view_measurements,
-        "projectionCounts": {authority: int(selected_counts.get(authority) or 0) for authority in AUTHORITY},
-        "reasoningStateRecords": min(len(reasoning_nodes), MAX_REASONING_STATE_RECORDS),
-        "omittedReasoningStateRecords": omitted_reasoning_count,
+        "projectionCounts": {
+            authority: sum(
+                1 for record in records if record.get("authority") == authority
+            )
+            for authority in AUTHORITY
+        },
+        "manifestHash": manifest.get("manifestHash"),
+        "recordCount": len(records),
+        "nodeCount": sum(1 for record in records if record.get("kind") == "node"),
+        "edgeCount": sum(1 for record in records if record.get("kind") == "edge"),
         "graphViewCount": len(role_views),
-        "graphReferenceCount": int(render_state["referenceCount"]),
+        "graphReferenceCount": sum(len(view.get("references") or []) for view in role_views),
         "limits": {
             "selectedGraphViews": MAX_SELECTED_GRAPH_VIEWS,
-            "reasoningStateRecords": MAX_REASONING_STATE_RECORDS,
             "graphViewReferences": MAX_GRAPH_VIEW_REFERENCES,
             "fieldCharacters": MAX_GRAPH_CONTEXT_FIELD_CHARACTERS,
+            "recordCharacters": MAX_DELIVERED_RECORD_CHARACTERS,
             "contextCharacters": MAX_GRAPH_CONTEXT_CHARACTERS,
         },
     }
@@ -659,6 +1034,45 @@ def render_graph_views(views: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def build_graph_view_delivery(
+    *,
+    project_id: str,
+    conversation_id: str,
+    receiving_role: str,
+    graph_view_ids: list[str] | tuple[str, ...],
+    graph: ThinkGraphEngraphis | None = None,
+    read_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _get_json,
+    read_codegraph_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _get_codegraph_json,
+) -> dict[str, Any]:
+    """Compile exact selected GraphViews once for assignment delivery/readback."""
+    request = UnifiedContextRequest(
+        project_id=project_id,
+        conversation_id=conversation_id,
+        role=receiving_role,
+        active_view_ids=tuple(graph_view_ids),
+    )
+    projection = build_unified_context(
+        request,
+        graph=graph,
+        read_json=read_json,
+        read_codegraph_json=read_codegraph_json,
+    )
+    selected = list(projection.get("graphViews") or [])
+    rendered = render_model_context(projection, selected)
+    return {
+        "ok": True,
+        "projectionId": projection.get("projectionId"),
+        "activeGraphViewId": projection.get("activeGraphViewId"),
+        "graphViews": selected,
+        "manifest": projection.get("manifest") or {},
+        "nodes": projection.get("nodes") or [],
+        "edges": projection.get("edges") or [],
+        "modelContext": rendered["text"],
+        "measurements": rendered["measurements"],
+        "warnings": projection.get("warnings") or [],
+    }
+
+
 def build_model_context(
     projection_id: str,
     request: UnifiedContextRequest,
@@ -691,7 +1105,9 @@ def build_model_context(
     )
     role_views = select_persisted_graph_views(
         persisted,
-        [request.active_view_id] if request.active_view_id else [],
+        list(request.active_view_ids) or (
+            [request.active_view_id] if request.active_view_id else []
+        ),
         project_id=request.project_id,
         conversation_id=request.conversation_id,
         receiving_roles={request.role},
@@ -704,6 +1120,7 @@ def build_model_context(
         "activeGraphViewId": rebuilt.get("activeGraphViewId"),
         "modelContext": rendered["text"],
         "measurements": rendered["measurements"],
+        "manifest": rebuilt.get("manifest") or {},
         "graphViews": graph_view_identities(role_views),
         "warnings": rebuilt.get("warnings") or [],
     }

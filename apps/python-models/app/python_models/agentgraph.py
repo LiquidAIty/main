@@ -190,6 +190,7 @@ def _graph_view_references(value: Any) -> list[dict[str, Any]]:
             "referenceId",
             "referenceType",
             "required",
+            "recordKind",
         }:
             raise AgentGraphError("agentgraph_graph_view_reference_invalid")
         reference_id = _required_id(raw.get("referenceId"), "reference_id")
@@ -209,8 +210,16 @@ def _graph_view_references(value: Any) -> list[dict[str, Any]]:
                 "referenceId": reference_id,
                 "referenceType": reference_type,
                 "required": bool(raw.get("required", False)),
+                **(
+                    {"recordKind": str(raw.get("recordKind")).strip().lower()}
+                    if str(raw.get("recordKind") or "").strip()
+                    else {}
+                ),
+                "deliveryOrder": len(normalized),
             }
         )
+        if normalized[-1].get("recordKind") not in {None, "node", "edge"}:
+            raise AgentGraphError("agentgraph_graph_view_record_kind_invalid")
     return normalized
 
 
@@ -1173,7 +1182,7 @@ def cancel_assignment(
 def _graph_view_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
     properties = dict(_ag_value(row[0]) or {})
     reference_properties = list(_ag_value(row[1]) or [])
-    required_values = list(_ag_value(row[2]) or [])
+    link_properties = list(_ag_value(row[2]) or [])
     references: list[dict[str, Any]] = []
     for index, raw in enumerate(reference_properties):
         if not isinstance(raw, dict):
@@ -1182,17 +1191,36 @@ def _graph_view_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
         reference_type = str(raw.get("referenceType") or "").strip()
         if not reference_id or not reference_type:
             continue
+        link = (
+            link_properties[index]
+            if index < len(link_properties)
+            and isinstance(link_properties[index], dict)
+            else {}
+        )
         references.append(
             {
                 "referenceId": reference_id,
                 "referenceType": reference_type,
-                "required": bool(
-                    required_values[index]
-                    if index < len(required_values)
-                    else False
+                "required": bool(link.get("required", False)),
+                **(
+                    {"recordKind": str(link.get("recordKind")).strip()}
+                    if str(link.get("recordKind") or "").strip()
+                    else {}
+                ),
+                "deliveryOrder": (
+                    int(link["deliveryOrder"])
+                    if isinstance(link.get("deliveryOrder"), int)
+                    else index
                 ),
             }
         )
+    references.sort(
+        key=lambda reference: (
+            int(reference.get("deliveryOrder") or 0),
+            str(reference.get("referenceType") or ""),
+            str(reference.get("referenceId") or ""),
+        )
+    )
     return {
         "schemaVersion": "graph-view.v1",
         "viewId": properties.get("viewId"),
@@ -1299,7 +1327,9 @@ def create_graph_view(
                   referenceId:$referenceId
                 })
                 MERGE (view)-[link:POINTS_TO]->(reference)
-                SET link.required=$required
+                SET link.required=$required,
+                    link.recordKind=$recordKind,
+                    link.deliveryOrder=$deliveryOrder
                 RETURN reference.referenceId
                 """,
                 "reference_id agtype",
@@ -1307,6 +1337,7 @@ def create_graph_view(
                     "projectId": project_id,
                     "viewId": view_id,
                     **reference,
+                    "recordKind": reference.get("recordKind"),
                 },
             )
         if parent_view_id:
@@ -1379,9 +1410,9 @@ def list_graph_views(
               AND view.authority='agentgraph'
             OPTIONAL MATCH (view)-[link:POINTS_TO]->(reference:Reference)
             RETURN properties(view), collect(properties(reference)),
-                   collect(link.required)
+                   collect(properties(link))
             """,
-            "view agtype, reference_values agtype, required_values agtype",
+            "view agtype, reference_values agtype, link_values agtype",
             {"projectId": project_id, "conversationId": conversation_id},
         )
     views = [_graph_view_from_row(row) for row in rows]
@@ -1423,9 +1454,9 @@ def get_graph_view(
               AND view.authority='agentgraph'
             OPTIONAL MATCH (view)-[link:POINTS_TO]->(reference:Reference)
             RETURN properties(view), collect(properties(reference)),
-                   collect(link.required)
+                   collect(properties(link))
             """,
-            "view agtype, reference_values agtype, required_values agtype",
+            "view agtype, reference_values agtype, link_values agtype",
             {
                 "projectId": project_id,
                 "viewId": view_id,
@@ -1880,6 +1911,51 @@ def read_assignment(
             "results": json.loads(str(identity_rows[0][2])),
         },
     }
+
+
+def read_latest_card_assignment(
+    *,
+    project_id: str,
+    deck_id: str,
+    conversation_id: str,
+    receiving_card_id: str,
+    connection: Any | None = None,
+) -> dict[str, Any] | None:
+    """Read the active or latest durable assignment for one saved card."""
+    project_id = _required_text(project_id, "project_id")
+    deck_id = _required_id(deck_id, "deck_id")
+    conversation_id = _required_id(conversation_id, "conversation_id")
+    receiving_card_id = _required_id(receiving_card_id, "receiving_card_id")
+    with _connection_scope(connection) as conn, conn.cursor() as cursor:
+        _prepare(cursor)
+        cursor.execute(
+            """
+            SELECT assignment_id
+            FROM ag_catalog.agent_assignments
+            WHERE project_id=%s AND deck_id=%s AND conversation_id=%s
+              AND receiver_card_id=%s
+            ORDER BY
+              CASE state
+                WHEN 'running' THEN 0
+                WHEN 'pending' THEN 1
+                ELSE 2
+              END,
+              updated_at DESC,
+              assignment_id
+            LIMIT 1
+            """,
+            (project_id, deck_id, conversation_id, receiving_card_id),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        assignment_id = str(row[0])
+        return read_assignment(
+            project_id=project_id,
+            assignment_id=assignment_id,
+            receiving_card_id=receiving_card_id,
+            connection=conn,
+        )
 
 
 def inspect_assignments(

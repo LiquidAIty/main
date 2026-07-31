@@ -29,6 +29,28 @@ type UnifiedPayload = {
     receivingRole: string;
     referenceCount: number;
   }>;
+  availableGraphViews: Array<{
+    viewId: string;
+    authority: 'agentgraph';
+    status: string;
+    displayLabel: string;
+    producingRole: string;
+    receivingRole: string;
+    referenceCount: number;
+  }>;
+  manifest: {
+    schemaVersion: 'delivered-context-manifest.v1';
+    manifestHash: string;
+    recordCount: number;
+    nodeCount: number;
+    edgeCount: number;
+    unresolvedReferences: Array<{
+      referenceId: string;
+      referenceType: string;
+      required: boolean;
+      reason: string;
+    }>;
+  };
   lifecycle: {
     available: string[];
     selected: string[];
@@ -131,6 +153,11 @@ export default function UnifiedGraphSurface({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [selectedGraphViewId, setSelectedGraphViewId] = useState('');
+
+  useEffect(() => {
+    setSelectedGraphViewId('');
+  }, [conversationId, projectId]);
 
   // Compact discovery of returned Graph Views: a completed turn dispatches
   // knowledge:refresh (openClaudeSessionClient) and Unified refetches its
@@ -159,6 +186,7 @@ export default function UnifiedGraphSurface({
     const generation = ++requestGeneration.current;
     const controller = new AbortController();
     const params = new URLSearchParams({ projectId, conversationId, role: 'main_chat' });
+    if (selectedGraphViewId) params.set('activeGraphViewId', selectedGraphViewId);
     setLoading(true);
     setError(null);
     void fetch(`/api/unified/context?${params}`, { signal: controller.signal })
@@ -171,7 +199,12 @@ export default function UnifiedGraphSurface({
         if (controller.signal.aborted || generation !== requestGeneration.current) return;
         setPayload(next);
         setLoading(false);
-        onProjectionChange?.({ projectionId: next.projectionId, role: 'main_chat', activeGraphViewId: null, knowgraphScope: null });
+        onProjectionChange?.({
+          projectionId: next.projectionId,
+          role: 'main_chat',
+          activeGraphViewId: next.activeGraphViewId,
+          knowgraphScope: null,
+        });
       })
       .catch((reason) => {
         if (controller.signal.aborted || generation !== requestGeneration.current) return;
@@ -179,7 +212,7 @@ export default function UnifiedGraphSurface({
         setError(String(reason?.message || reason));
       });
     return () => controller.abort();
-  }, [conversationId, onProjectionChange, projectId, refresh]);
+  }, [conversationId, onProjectionChange, projectId, refresh, selectedGraphViewId]);
 
   const placedNodes = useMemo(
     () => placeAuthorityLayers(payload?.nodes || [], payload?.edges || []),
@@ -215,9 +248,27 @@ export default function UnifiedGraphSurface({
   return (
     <div data-testid="unified-graph-surface" style={{ position: 'relative', width: '100%', height: '100%', minHeight: 0, overflow: 'hidden', background: GRAPH_THEME.background.knowledgeSurface }}>
       <GraphPaperBackground />
-      {payload ? <div style={graphGlassPillStyle({ position: 'absolute', left: 12, top: 52, zIndex: 5, pointerEvents: 'none' })}>
-        Full authority data · Code {payload.counts.selected.codegraph.toLocaleString()} · Think {payload.counts.selected.thinkgraph.toLocaleString()} · Know {payload.counts.selected.knowgraph.toLocaleString()}
+      {payload ? <div style={graphGlassPillStyle({ position: 'absolute', left: 12, top: 52, zIndex: 5 })}>
+        Delivered context · Code {payload.counts.selected.codegraph.toLocaleString()} · Think {payload.counts.selected.thinkgraph.toLocaleString()} · Know {payload.counts.selected.knowgraph.toLocaleString()}
       </div> : null}
+      {payload ? <label style={{ ...graphGlassPillStyle({ position: 'absolute', left: 12, top: 84, zIndex: 5 }), display: 'flex', gap: 8, alignItems: 'center' }}>
+        <span>Graph View</span>
+        <select
+          aria-label="Active Graph View"
+          value={selectedGraphViewId}
+          onChange={(event) => setSelectedGraphViewId(event.target.value)}
+          style={{ background: '#101722', color: '#d8edf0', border: '1px solid #31505c', borderRadius: 5, padding: '3px 6px' }}
+        >
+          <option value="">None — empty model context</option>
+          {(payload.availableGraphViews || [])
+            .filter((view) => view.receivingRole === 'main_chat')
+            .map((view) => (
+              <option key={view.viewId} value={view.viewId}>
+                {view.displayLabel || view.viewId} · {view.referenceCount}
+              </option>
+            ))}
+        </select>
+      </label> : null}
       {payload ? <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}>
         <CodeGraphScene
           data={sceneData}
@@ -235,9 +286,9 @@ export default function UnifiedGraphSurface({
           fitDistanceScale={0.52}
         />
       </div> : null}
-      {loading && !payload ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#91A9B8' }}>Loading full graph authorities…</div> : null}
+      {loading && !payload ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#91A9B8' }}>Loading delivered graph context…</div> : null}
       {error && !payload ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#FFB0A6', textAlign: 'center' }}><div>{error}<br /><button type="button" onClick={() => setRefresh((value) => value + 1)} style={graphDrawerButtonStyle({ marginTop: 10 })}>Retry</button></div></div> : null}
-      {payload && payload.nodes.length === 0 ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#91A9B8' }}>No graph data is available for Unified.</div> : null}
+      {payload && payload.nodes.length === 0 ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#91A9B8' }}>No Graph View is active. Unified is empty because no graph records will be delivered.</div> : null}
       <GraphNavigationControls onZoomIn={() => setCameraCommand({ action: 'zoom_in', token: Date.now() })} onZoomOut={() => setCameraCommand({ action: 'zoom_out', token: Date.now() })} onFit={() => setCameraCommand({ action: 'fit_view', token: Date.now() })} />
       <style>{`button[aria-label="Open Unified Inspector"]{top:auto!important;bottom:88px!important;transform:none!important;opacity:.58!important}`}</style>
       <RightGlassDrawer isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} onOpen={() => setDrawerOpen(true)} collapsedLabel={null} openAriaLabel="Open Unified Inspector" title="Unified Inspector" defaultWidth={360} minWidth={320} maxWidth={520} storageKey="liquidaity.drawer.unified.width" top={48} right={12} bottom={12} zIndex={7}>
@@ -258,6 +309,9 @@ export default function UnifiedGraphSurface({
           <label style={{ display: 'flex', gap: 8, margin: '10px 0', color: GRAPH_THEME.surface.text, fontSize: 12 }}><input type="checkbox" checked={showLabels} onChange={(event) => setShowLabels(event.target.checked)} />Labels</label>
           <button type="button" onClick={() => setCameraCommand({ action: 'fit_view', token: Date.now() })} style={graphDrawerButtonStyle({ width: '100%', marginTop: 8 })}>Fit all enabled layers</button>
           <div style={{ marginTop: 14, color: GRAPH_THEME.surface.mutedText, fontSize: 10, lineHeight: 1.45 }}>Visibility controls affect this scene only. Source graphs and Main projection membership are unchanged.</div>
+          {payload ? <div style={{ marginTop: 14, color: GRAPH_THEME.surface.mutedText, fontSize: 10, lineHeight: 1.45 }}>
+            Manifest {payload.manifest.manifestHash.slice(0, 12)} · {payload.manifest.nodeCount} nodes · {payload.manifest.edgeCount} edges
+          </div> : null}
         </section>
       </RightGlassDrawer>
     </div>

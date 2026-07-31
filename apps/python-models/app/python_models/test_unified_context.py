@@ -32,7 +32,12 @@ class FakeThinkGraph:
         base = {"schemaVersion": "graph-view.v1", "projectId": project_id, "conversationId": conversation_id or "main", "authority": "agentgraph", "producingRole": "main_chat", "displayLabel": "Bounded references"}
         return {"ok": True, "views": [
             {**base, "viewId": "thinkgraph:role-view", "status": "attached", "receivingRole": "main_chat",
-             "references": [{"referenceId": "think:two", "referenceType": "thinkgraph", "required": True}]},
+             "references": [
+                 {"referenceId": "think:two", "referenceType": "thinkgraph", "recordKind": "node", "required": True},
+                 {"referenceId": "think-edge", "referenceType": "thinkgraph", "recordKind": "edge", "required": True},
+                 {"referenceId": "know:one", "referenceType": "knowgraph", "recordKind": "node", "required": False},
+                 {"referenceId": "pkg.one", "referenceType": "codegraph", "recordKind": "node", "required": True},
+             ]},
             {**base, "viewId": "codegraph:coder-only", "status": "attached", "receivingRole": "coder",
              "references": [{"referenceId": "pkg.one", "referenceType": "codegraph", "required": True}]},
             {**base, "viewId": "thinkgraph:spent", "status": "consumed", "receivingRole": "main_chat",
@@ -81,23 +86,37 @@ def request(**overrides):
     return UnifiedContextRequest(**values)
 
 
-def test_full_authority_data_passes_through_without_classifier_membership():
+def test_no_active_manifest_is_honestly_empty_not_full_authority_data():
     result = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
-    assert result["counts"]["selected"] == {"thinkgraph": 2, "knowgraph": 2, "codegraph": 3}
-    assert result["counts"]["nodes"] == 7
-    assert result["counts"]["edges"] == 3
-    assert {node["source_id"] for node in result["nodes"]} == {"think:one", "think:two", "know:one", "know:two", "pkg.one", "pkg.two", "pkg.file"}
-    assert {(edge["type"], edge["cross_authority"]) for edge in result["edges"]} == {("RELATES_TO", False), ("SUPPORTED_BY", False), ("CALLS", False)}
-    forbidden = {"activeAnchor", "context_role", "reason_for_inclusion", "story_state", "connected_to_anchor", "distance_to_anchor", "path_to_anchor"}
-    assert forbidden.isdisjoint(result)
-    assert all(forbidden.isdisjoint(node) for node in result["nodes"])
+    assert result["counts"]["selected"] == {"thinkgraph": 0, "knowgraph": 0, "codegraph": 0}
+    assert result["nodes"] == []
+    assert result["edges"] == []
+    assert result["manifest"]["records"] == []
+    assert {warning["code"] for warning in result["warnings"]} == {
+        "no_active_context_manifest",
+        "missing_authority_mapping",
+    }
 
 
-def test_codegraph_coordinates_and_full_membership_are_preserved():
-    result = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
+def test_selected_native_membership_is_materialized_from_one_manifest():
+    result = build_unified_context(request(active_view_id="thinkgraph:role-view"), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
     code = next(node for node in result["nodes"] if node["source_id"] == "pkg.one")
-    assert (code["x"], code["y"], code["z"], code["size"]) == (1.0, 2.0, 3.0, 4.0)
+    assert all(isinstance(code[axis], float) for axis in ("x", "y", "z"))
     assert result["identity"]["codeGraphProjectId"] == "C-Projects-main"
+    assert {node["source_id"] for node in result["nodes"]} == {
+        "think:one",
+        "think:two",
+        "know:one",
+        "pkg.one",
+    }
+    assert [(edge["type"], edge["cross_authority"]) for edge in result["edges"]] == [
+        ("RELATES_TO", False)
+    ]
+    records = result["manifest"]["records"]
+    assert [record["deliveryOrder"] for record in records] == list(range(5))
+    assert all(record["representationHash"] and record["characters"] > 0 for record in records)
+    assert result["manifest"]["nodeCount"] == 4
+    assert result["manifest"]["edgeCount"] == 1
 
 
 def test_projection_identity_is_stable_and_changes_with_source_identity():
@@ -113,9 +132,13 @@ def test_partial_authority_failure_is_honest_and_does_not_backfill():
         if path == "/api/knowgraph/graph":
             raise RuntimeError("neo4j_down")
         return fake_read(path, params)
-    result = build_unified_context(request(), graph=FakeThinkGraph(), read_json=partial_read, read_codegraph_json=fake_read)
-    assert result["counts"]["selected"] == {"thinkgraph": 2, "knowgraph": 0, "codegraph": 3}
-    assert {warning["code"] for warning in result["warnings"]} >= {"authority_unavailable", "empty_authority_view"}
+    result = build_unified_context(request(active_view_id="thinkgraph:role-view"), graph=FakeThinkGraph(), read_json=partial_read, read_codegraph_json=fake_read)
+    assert result["counts"]["selected"] == {"thinkgraph": 3, "knowgraph": 0, "codegraph": 1}
+    assert {warning["code"] for warning in result["warnings"]} >= {
+        "authority_unavailable",
+        "optional_reference_unavailable",
+    }
+    assert "know:one" not in {node["source_id"] for node in result["nodes"]}
 
 
 def test_model_context_uses_the_same_projection_identity():
@@ -126,30 +149,40 @@ def test_model_context_uses_the_same_projection_identity():
         build_model_context("unified:wrong", request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
 
 
-def test_model_context_is_bounded_to_the_explicit_selected_view_never_the_projection_dump():
+def test_model_and_unified_use_identical_selected_manifest_membership():
     selected_request = request(active_view_id="thinkgraph:role-view")
     built = build_unified_context(selected_request, graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
     delivered = build_model_context(built["projectionId"], selected_request, graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
     text = delivered["modelContext"]
-    # Reasoning state plus AgentGraph reference identities.
-    assert "REASONING STATE" in text and "- Decision: Think two" in text
-    assert "thinkgraph:role-view" in text and "thinkgraph -> think:two [required]" in text
+    assert "[DELIVERED_GRAPH_CONTEXT]" in text
+    assert '"nativeId":"think:two"' in text
+    assert '"nativeId":"think-edge"' in text
+    assert '"nativeId":"know:one"' in text
+    assert '"nativeId":"pkg.one"' in text
     # Other-role and spent-lifecycle views never leak in.
     assert "codegraph:coder-only" not in text
     assert "thinkgraph:spent" not in text
-    # The display projection's node/edge dump NEVER enters the prompt — it is
-    # referenced by identity and counts only.
-    assert "pkg.one" not in text and "pkg.two" not in text and "-CALLS->" not in text
-    assert "know:one" not in text
-    assert "thinkgraph=2, knowgraph=2, codegraph=3" in text
+    assert "pkg.two" not in text and "know:two" not in text
+    assert {
+        (record["authority"], record["kind"], record["nativeId"])
+        for record in delivered["manifest"]["records"]
+    } == {
+        (node["authority"], "node", node["source_id"])
+        for node in built["nodes"]
+    } | {
+        (
+            "thinkgraph",
+            "edge",
+            edge["id"].removeprefix("thinkgraph:"),
+        )
+        for edge in built["edges"]
+    }
     # Lifecycle views returned for runtime stamping are exactly the role views.
     assert [view["viewId"] for view in delivered["graphViews"]] == ["thinkgraph:role-view"]
     measurements = delivered["measurements"]
-    assert set(measurements["sections"]) == {"header", "reasoning_state", "graph_views", "warnings", "retrieval"}
-    assert measurements["views"]["thinkgraph:role-view"]["references"] == 1
-    # Bounded means bounded: the whole context stays tiny even though the
-    # projection carries every authority record.
-    assert measurements["estimatedTokens"] < 400
+    assert set(measurements["sections"]) == {"header", "records", "unresolved", "retrieval"}
+    assert measurements["views"]["thinkgraph:role-view"]["references"] == 4
+    assert measurements["manifestHash"] == built["manifest"]["manifestHash"]
 
 
 def test_unselected_role_views_are_not_automatically_attached():
@@ -174,7 +207,7 @@ def test_unified_exposes_selected_identity_and_lifecycle_without_view_content():
     )
     assert result["lifecycle"]["selected"] == ["thinkgraph:role-view"]
     assert result["lifecycle"]["consumed"] == ["thinkgraph:spent"]
-    assert result["graphViews"][0]["referenceCount"] == 1
+    assert result["graphViews"][0]["referenceCount"] == 4
     assert "records" not in result["graphViews"][0]
     assert {view["viewId"] for view in result["availableGraphViews"]} == {
         "thinkgraph:role-view",
@@ -197,7 +230,7 @@ def test_explicit_multiple_selection_preserves_order_and_bounded_rendering():
         "thinkgraph:role-view",
     ]
     rendered = render_graph_views(selected)
-    assert rendered["measurements"]["references"] == 2
+    assert rendered["measurements"]["references"] == 5
     assert rendered["measurements"]["estimatedTokens"] < 200
 
 
@@ -298,7 +331,7 @@ def test_view_scope_and_duplicate_selection_fail_closed():
 def test_render_model_context_with_no_role_views_is_honest_not_a_fallback_dump():
     built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read)
     rendered = render_model_context(built, [])
-    assert "ROLE GRAPH VIEWS: none persisted for this role" in rendered["text"]
+    assert "records: 0" in rendered["text"]
     assert "-CALLS->" not in rendered["text"] and "pkg.one" not in rendered["text"]
 
 
@@ -317,7 +350,7 @@ def test_identical_concurrent_requests_join_one_full_authority_read():
 
     def resolve():
         barrier.wait(timeout=2)
-        return build_unified_context(request(project_id="concurrent"), graph=FakeThinkGraph(), read_json=slow_read, read_codegraph_json=slow_read)
+        return build_unified_context(request(project_id="concurrent", active_view_id="thinkgraph:role-view"), graph=FakeThinkGraph(), read_json=slow_read, read_codegraph_json=slow_read)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         first, second = [future.result(timeout=3) for future in [pool.submit(resolve), pool.submit(resolve)]]

@@ -344,6 +344,18 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                 result_id = str(completed.get("resultId") or "") or None
             except Exception as persistence_error:
                 durable_error = f"; outer_assignment_persist_failed: {persistence_error}"
+        if hydrated_assignment is not None and hydrated_assignment.graph_view_ids:
+            try:
+                await asyncio.to_thread(
+                    ag.transition_graph_views,
+                    project_id=context.session.projectId,
+                    conversation_id=_as_text(context.conversationId) or "main",
+                    view_ids=list(hydrated_assignment.graph_view_ids),
+                    status="failed",
+                    correlation_id=context.session.turnId,
+                )
+            except Exception as view_error:
+                durable_error += f"; graph_view_failure_transition_failed: {view_error}"
         return OrchestratorRunResponse(
             ok=False,
             session=context.session,
@@ -416,6 +428,15 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         )
         claim_token = hydrated_assignment.claim_token
         instruction_body = hydrated_assignment.instruction
+        if hydrated_assignment.graph_view_ids:
+            await asyncio.to_thread(
+                ag.transition_graph_views,
+                project_id=context.session.projectId,
+                conversation_id=_as_text(context.conversationId) or "main",
+                view_ids=list(hydrated_assignment.graph_view_ids),
+                status="active",
+                correlation_id=context.session.turnId,
+            )
     except Exception as err:
         durable_error = ""
         if assignment_id is not None:
@@ -532,6 +553,15 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             tool_evidence=_tool_evidence_from_result(result),
         )
         result_id = str(completed.get("resultId") or "") or None
+        if hydrated_assignment.graph_view_ids:
+            await asyncio.to_thread(
+                ag.transition_graph_views,
+                project_id=context.session.projectId,
+                conversation_id=_as_text(context.conversationId) or "main",
+                view_ids=list(hydrated_assignment.graph_view_ids),
+                status="consumed",
+                correlation_id=context.session.turnId,
+            )
         assignment_fields = _assignment_fields()
 
         return OrchestratorRunResponse(

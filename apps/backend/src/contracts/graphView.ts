@@ -23,6 +23,8 @@ export type GraphViewReference = {
   referenceId: string;
   referenceType: GraphReferenceType;
   required: boolean;
+  recordKind?: 'node' | 'edge';
+  deliveryOrder?: number;
 };
 
 /** A bounded AgentGraph view of stable references.
@@ -128,7 +130,21 @@ export function parseGraphViewIdentities(
       const identity = `${referenceType}:${referenceId}`;
       if (seen.has(identity)) throw new Error(`graph_view_reference_duplicate: ${identity}`);
       seen.add(identity);
-      return { referenceId, referenceType, required: reference.required === true };
+      const recordKind =
+        reference.recordKind === 'node' || reference.recordKind === 'edge'
+          ? reference.recordKind
+          : undefined;
+      const deliveryOrder =
+        Number.isInteger(reference.deliveryOrder)
+          ? Math.max(0, Number(reference.deliveryOrder))
+          : referenceIndex;
+      return {
+        referenceId,
+        referenceType,
+        required: reference.required === true,
+        ...(recordKind ? { recordKind } : {}),
+        deliveryOrder,
+      };
     });
     const now = new Date().toISOString();
     return {

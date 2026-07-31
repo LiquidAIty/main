@@ -47,6 +47,7 @@ import {
 } from '../components/graph/graphVisualTokens';
 import RightGlassDrawer from '../components/graph/RightGlassDrawer';
 import type { UnifiedProjectionIdentity } from '../components/knowledge/UnifiedGraphSurface';
+import type { AgentCardRunContext } from '../components/AgentManager';
 // Decomposed Agent Builder modules (2026-07-08): the page is composition only;
 // deck primitives/seed/document logic and rail derivation live in the feature.
 import {
@@ -576,6 +577,13 @@ export default function AgentBuilder(): React.ReactElement {
   });
   const [standaloneTestPrompt, setStandaloneTestPrompt] = useState('');
   const [standaloneTestBusy, setStandaloneTestBusy] = useState(false);
+  const [selectedCardRunContext, setSelectedCardRunContext] =
+    useState<AgentCardRunContext | null>(null);
+  const [selectedCardRunContextLoading, setSelectedCardRunContextLoading] =
+    useState(false);
+  const [selectedCardRunContextError, setSelectedCardRunContextError] =
+    useState<string | null>(null);
+  const cardContextRequestGeneration = useRef(0);
   const standaloneTestRequestRef = useRef<string | null>(null);
   const standaloneTestUnavailableReason = useMemo(
     () => getStandaloneCardUnavailableReason(selectedCard),
@@ -589,6 +597,54 @@ export default function AgentBuilder(): React.ReactElement {
     setStandaloneTestPrompt('');
     setStandaloneTestBusy(false);
   }, [selectedCardId]);
+
+  const refreshCardRunContext = useCallback(
+    async (cardId: string, assignmentId?: string) => {
+      if (!canvasProjectId || !conversationId || !cardId) {
+        setSelectedCardRunContext(null);
+        return;
+      }
+      const generation = ++cardContextRequestGeneration.current;
+      setSelectedCardRunContextLoading(true);
+      setSelectedCardRunContextError(null);
+      const params = new URLSearchParams({
+        projectId: canvasProjectId,
+        deckId: BUILDER_DECK_ID,
+        conversationId,
+        receiverCardId: cardId,
+      });
+      if (assignmentId) params.set('assignmentId', assignmentId);
+      try {
+        const response = await fetch(`/api/coder/agentgraph/card-context?${params}`);
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || payload?.ok !== true) {
+          throw new Error(String(payload?.error || `agent_card_context_http_${response.status}`));
+        }
+        if (generation !== cardContextRequestGeneration.current) return;
+        setSelectedCardRunContext(payload as AgentCardRunContext);
+      } catch (error) {
+        if (generation !== cardContextRequestGeneration.current) return;
+        setSelectedCardRunContext(null);
+        setSelectedCardRunContextError(
+          error instanceof Error ? error.message : 'AgentGraph card context failed.',
+        );
+      } finally {
+        if (generation === cardContextRequestGeneration.current) {
+          setSelectedCardRunContextLoading(false);
+        }
+      }
+    },
+    [canvasProjectId, conversationId],
+  );
+
+  useEffect(() => {
+    cardContextRequestGeneration.current += 1;
+    setSelectedCardRunContext(null);
+    setSelectedCardRunContextError(null);
+    if (selectedCardId) {
+      void refreshCardRunContext(selectedCardId);
+    }
+  }, [refreshCardRunContext, selectedCardId]);
 
   const runStandaloneCardTest = useCallback(async () => {
     if (
@@ -626,6 +682,9 @@ export default function AgentBuilder(): React.ReactElement {
         );
       }
       if (standaloneTestRequestRef.current === correlationId) {
+        if (result.assignmentId) {
+          await refreshCardRunContext(selectedCard.id, String(result.assignmentId));
+        }
         setDeckStatusMessage(
           result.error
             ? String(result.error)
@@ -651,6 +710,7 @@ export default function AgentBuilder(): React.ReactElement {
     standaloneTestBusy,
     standaloneTestPrompt,
     standaloneTestUnavailableReason,
+    refreshCardRunContext,
   ]);
   const builderTabs = useMemo(() => {
     if (selectedCard) return [...BUILDER_NODE_TABS];
@@ -872,6 +932,9 @@ export default function AgentBuilder(): React.ReactElement {
                       Boolean(standaloneTestUnavailableReason) ||
                       standaloneTestBusy
                     }
+                    runContext={selectedCardRunContext}
+                    runContextLoading={selectedCardRunContextLoading}
+                    runContextError={selectedCardRunContextError}
                     onSaveLocalConfig={handleSaveSelectedCardConfig}
                     onGraphRefresh={() => {
                       // no-op

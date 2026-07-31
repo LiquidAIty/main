@@ -336,6 +336,25 @@ export async function finishAgentAssignmentOnPython(
   );
 }
 
+export async function fetchAgentCardContext(params: {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  receiverCardId: string;
+  assignmentId?: string;
+}): Promise<unknown> {
+  const query = new URLSearchParams({
+    projectId: params.projectId,
+    deckId: params.deckId,
+    conversationId: params.conversationId,
+  });
+  if (params.assignmentId) query.set('assignmentId', params.assignmentId);
+  return requestThinkGraphJson(
+    `/agentgraph/cards/${encodeURIComponent(params.receiverCardId)}/context?${query.toString()}`,
+    { method: 'GET' },
+  );
+}
+
 /**
  * Transport-only: fetch ThinkGraphProjectionV1 from the Python graph authority
  * and return the body UNCHANGED. No AGE query, no shaping, no labels, no visual

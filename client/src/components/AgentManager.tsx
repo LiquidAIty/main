@@ -39,7 +39,74 @@ interface AgentManagerProps {
   promptTestDisabled?: boolean;
   localConfig?: AgentManagerLocalConfig | null;
   onSaveLocalConfig?: (config: AgentManagerLocalConfig) => void | Promise<void>;
+  runContext?: AgentCardRunContext | null;
+  runContextLoading?: boolean;
+  runContextError?: string | null;
 }
+
+export type AgentCardRunContext = {
+  assignment: {
+    assignmentId: string;
+    instructionId: string;
+    instruction: string;
+    state: string;
+    correlationId: string;
+    contextReferences: Array<{
+      referenceId: string;
+      referenceType: string;
+      required: boolean;
+    }>;
+    result: {
+      resultId: string;
+      status: string;
+      output?: string | null;
+      summary?: string | null;
+      errorCode?: string | null;
+      errorDetail?: string | null;
+      toolEvidence?: Array<Record<string, unknown>>;
+    } | null;
+    runTrace: {
+      runtime?: string | null;
+      provider?: string | null;
+      modelKey?: string | null;
+      providerModelId?: string | null;
+      outcome?: string | null;
+      state?: string | null;
+      errorCode?: string | null;
+    };
+  } | null;
+  deliveredContext: {
+    projectionId: string;
+    graphViews: Array<{
+      viewId: string;
+      displayLabel?: string;
+      receivingRole?: string;
+    }>;
+    manifest: {
+      manifestHash: string;
+      records: Array<{
+        authority: string;
+        kind: 'node' | 'edge';
+        nativeId: string;
+        nativeRevision?: string | null;
+        sourceId?: string | null;
+        targetId?: string | null;
+        predicate?: string | null;
+        required: boolean;
+        deliveryOrder: number;
+        representation: string;
+        representationHash: string;
+        characters: number;
+      }>;
+      unresolvedReferences: Array<{
+        referenceId: string;
+        referenceType: string;
+        required: boolean;
+        reason: string;
+      }>;
+    };
+  } | null;
+};
 
 export type AgentManagerLocalConfig = {
   runtime_binding?: RuntimeBinding | null;
@@ -198,6 +265,9 @@ export function AgentManager({
   promptTestDisabled = false,
   localConfig,
   onSaveLocalConfig,
+  runContext,
+  runContextLoading = false,
+  runContextError = null,
 }: AgentManagerProps) {
   const isLocalConfigMode = Boolean(localConfig && onSaveLocalConfig);
   const [runtimeBinding, setRuntimeBinding] = useState<RuntimeBinding | ''>('');
@@ -454,38 +524,97 @@ export function AgentManager({
                   {promptTestBusy ? 'Running...' : 'Run Test'}
                 </button>
               </div>
-            </div>
+              </div>
           )}
+          <div style={{ borderTop: '1px solid #3A3A3A', paddingTop: 12 }}>
+            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
+              Current task / PromptSpec
+            </div>
+            <pre style={{ whiteSpace: 'pre-wrap', color: '#B9C7CC', fontSize: 11 }}>
+              {runContextLoading
+                ? 'Loading canonical AgentGraph assignment…'
+                : runContextError
+                  ? runContextError
+                  : runContext?.assignment?.instruction || 'No assignment has been delivered to this card.'}
+            </pre>
+            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
+              Graph context delivered after the task
+            </div>
+            <pre style={{ whiteSpace: 'pre-wrap', color: '#91A9B8', fontSize: 10, maxHeight: 240, overflow: 'auto' }}>
+              {runContext?.deliveredContext?.manifest.records.length
+                ? runContext.deliveredContext.manifest.records
+                    .map((record) => record.representation)
+                    .join('\n')
+                : 'No graph records delivered.'}
+            </pre>
+          </div>
         </div>
       );
     }
 
     if (activeTab === 'Knowledge') {
+      const assignment = runContext?.assignment;
+      const delivered = runContext?.deliveredContext;
       return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <label style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-            Knowledge Sources
-          </label>
-          <textarea
-            value={knowledgeText}
-            onChange={(event) => {
-              setKnowledgeText(event.target.value);
-              setSaveMessage(null);
-            }}
-            placeholder="One knowledge source per line."
-            rows={8}
-            style={{
-              width: '100%',
-              padding: 10,
-              background: '#2B2B2B',
-              color: '#FFF',
-              border: '1px solid #3A3A3A',
-              borderRadius: 8,
-              fontFamily: 'monospace',
-              fontSize: 12,
-              resize: 'vertical',
-            }}
-          />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {runContextLoading ? <div style={{ color: '#91A9B8' }}>Loading canonical AgentGraph context…</div> : null}
+          {runContextError ? <div role="alert" style={{ color: '#FFB0A6' }}>{runContextError}</div> : null}
+          {!runContextLoading && !runContextError && !assignment ? (
+            <div style={{ color: '#91A9B8' }}>This card has no delivered assignment yet.</div>
+          ) : null}
+          {assignment ? (
+            <>
+              <section>
+                <div style={{ color: '#E0DED5', fontWeight: 600 }}>Assignment</div>
+                <div style={{ color: '#91A9B8', fontSize: 11 }}>
+                  {assignment.assignmentId} · {assignment.state}
+                </div>
+                <pre style={{ whiteSpace: 'pre-wrap', color: '#D5E4E8', fontSize: 11 }}>
+                  {assignment.instruction}
+                </pre>
+              </section>
+              <section>
+                <div style={{ color: '#E0DED5', fontWeight: 600 }}>Delivered knowledge</div>
+                <div style={{ color: '#91A9B8', fontSize: 11 }}>
+                  {delivered
+                    ? `${delivered.graphViews.map((view) => view.viewId).join(', ')} · ${delivered.manifest.records.length} records · manifest ${delivered.manifest.manifestHash.slice(0, 12)}`
+                    : 'No GraphView attached.'}
+                </div>
+                {(delivered?.manifest.records || []).map((record) => (
+                  <details key={`${record.authority}:${record.kind}:${record.nativeId}`} style={{ marginTop: 8 }}>
+                    <summary style={{ color: '#B9D9DC', cursor: 'pointer', fontSize: 11 }}>
+                      {record.deliveryOrder}. {record.authority} {record.kind} · {record.nativeId}
+                      {record.required ? ' · required' : ''}
+                    </summary>
+                    <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#91A9B8', fontSize: 10 }}>
+                      {record.representation}
+                    </pre>
+                  </details>
+                ))}
+                {(delivered?.manifest.unresolvedReferences || []).map((reference) => (
+                  <div key={`${reference.referenceType}:${reference.referenceId}`} style={{ color: '#FFB0A6', fontSize: 11 }}>
+                    Unavailable: {reference.referenceType}:{reference.referenceId} · {reference.reason}
+                  </div>
+                ))}
+              </section>
+              <section>
+                <div style={{ color: '#E0DED5', fontWeight: 600 }}>Runtime and result</div>
+                <div style={{ color: '#91A9B8', fontSize: 11 }}>
+                  {assignment.runTrace.provider || 'provider unavailable'} · {assignment.runTrace.providerModelId || assignment.runTrace.modelKey || 'model unavailable'}
+                </div>
+                {assignment.result ? (
+                  <pre style={{ whiteSpace: 'pre-wrap', color: assignment.result.status === 'failed' ? '#FFB0A6' : '#D5E4E8', fontSize: 11 }}>
+                    {assignment.result.output
+                      || assignment.result.errorDetail
+                      || assignment.result.summary
+                      || assignment.result.status}
+                  </pre>
+                ) : (
+                  <div style={{ color: '#91A9B8', fontSize: 11 }}>Pending; no durable result yet.</div>
+                )}
+              </section>
+            </>
+          ) : null}
         </div>
       );
     }
@@ -596,7 +725,7 @@ export function AgentManager({
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <label style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-            Declared Tools
+            Saved executable grants
           </label>
           <textarea
             value={toolsText}
@@ -604,7 +733,7 @@ export function AgentManager({
               setToolsText(event.target.value);
               setSaveMessage(null);
             }}
-            placeholder="One tool per line. Prompt-only hints unless the runtime explicitly executes them."
+            placeholder="One canonical saved tool grant per line."
             rows={10}
             style={{
               width: '100%',
@@ -618,6 +747,16 @@ export function AgentManager({
               resize: 'vertical',
             }}
           />
+          <div style={{ color: '#91A9B8', fontSize: 11 }}>
+            The runtime resolves exactly these saved grants and fails if a grant is unknown or disabled.
+          </div>
+          {runContext?.assignment?.result?.toolEvidence?.length ? (
+            <pre style={{ whiteSpace: 'pre-wrap', color: '#B9C7CC', fontSize: 10 }}>
+              {JSON.stringify(runContext.assignment.result.toolEvidence, null, 2)}
+            </pre>
+          ) : (
+            <div style={{ color: '#91A9B8', fontSize: 11 }}>No tool evidence recorded for the current assignment.</div>
+          )}
         </div>
       );
     }
@@ -638,6 +777,9 @@ export function AgentManager({
     provider,
     responseFormatText,
     runtimeBinding,
+    runContext,
+    runContextError,
+    runContextLoading,
     temperature,
     toolsText,
   ]);

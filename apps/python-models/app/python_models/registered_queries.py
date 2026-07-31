@@ -86,6 +86,8 @@ class HydratedAssignmentContext:
     claim_token: str
     optional_bindings: tuple[QueryBinding, ...]
     model_context: str
+    graph_view_ids: tuple[str, ...] = ()
+    delivered_manifest: dict[str, Any] | None = None
 
 
 def _required_identity(value: Any, field: str) -> str:
@@ -719,6 +721,7 @@ def _attach_selected_graph_view_references(
     assignment_id: str,
     receiver_card_id: str,
     views: list[dict[str, Any]],
+    manifest: dict[str, Any],
 ) -> None:
     if not views:
         return
@@ -742,6 +745,12 @@ def _attach_selected_graph_view_references(
 
     for view in views:
         add(str(view.get("viewId") or ""), "graph_view", True)
+    for record in manifest.get("records") or []:
+        add(
+            str(record.get("nativeId") or ""),
+            str(record.get("authority") or ""),
+            bool(record.get("required")),
+        )
     ag.add_assignment_references(
         project_id=project_id,
         assignment_id=assignment_id,
@@ -823,12 +832,24 @@ def hydrate_assignment_context(
         receiver_role=str(saved_card_reference.get("role") or "").strip(),
         graph_view_ids=selected_ids,
     )
+    from app.python_models.unified_context import build_graph_view_delivery
+
+    delivered = build_graph_view_delivery(
+        project_id=project_id,
+        conversation_id=assignment["conversationId"],
+        receiving_role=(
+            str(saved_card_reference.get("role") or "").strip()
+            or receiver_card_id
+        ),
+        graph_view_ids=selected_ids,
+    )
     if graph_view_ids is not None:
         _attach_selected_graph_view_references(
             project_id=project_id,
             assignment_id=assignment_id,
             receiver_card_id=receiver_card_id,
             views=selected_views,
+            manifest=delivered["manifest"],
         )
         assignment = ag.read_assignment(
             project_id=project_id,
@@ -944,7 +965,7 @@ def hydrate_assignment_context(
             "Exact instruction:",
             claimed["instruction"],
             reference_context,
-            _render_selected_graph_views(selected_views),
+            delivered["modelContext"] if selected_views else "",
             continuity_context,
             operation_context,
         ]
@@ -955,6 +976,8 @@ def hydrate_assignment_context(
         claim_token=claimed["claimToken"],
         optional_bindings=tuple(optional_operations),
         model_context=model_context,
+        graph_view_ids=tuple(selected_ids),
+        delivered_manifest=dict(delivered.get("manifest") or {}),
     )
 
 

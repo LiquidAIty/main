@@ -10,6 +10,23 @@ from app.python_models import registered_queries as rq
 PROJECT_ID = "20ac92da-01fd-4cf6-97cc-0672421e751a"
 
 
+@pytest.fixture(autouse=True)
+def _bounded_graph_view_delivery(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.python_models.unified_context.build_graph_view_delivery",
+        lambda **_kwargs: {
+            "graphViews": [],
+            "manifest": {
+                "schema": "delivered-context-manifest.v1",
+                "records": [],
+                "unresolvedReferences": [],
+                "externalReferences": [],
+            },
+            "modelContext": "",
+        },
+    )
+
+
 def _query(**overrides) -> rq.RegisteredQueryVersion:
     values = {
         "project_id": PROJECT_ID,
@@ -486,6 +503,36 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
         "list_graph_views",
         lambda **_kwargs: {"views": [view]},
     )
+    monkeypatch.setattr(
+        "app.python_models.unified_context.build_graph_view_delivery",
+        lambda **_kwargs: {
+            "graphViews": [view],
+            "manifest": {
+                "schema": "delivered-context-manifest.v1",
+                "records": [
+                    {
+                        "authority": "thinkgraph",
+                        "nativeId": "thinkgraph:decision:one",
+                        "required": True,
+                        "representation": '{"id":"thinkgraph:decision:one"}',
+                    },
+                    {
+                        "authority": "codegraph",
+                        "nativeId": "codegraph:symbol:one",
+                        "required": False,
+                        "representation": '{"id":"codegraph:symbol:one"}',
+                    },
+                ],
+                "unresolvedReferences": [],
+                "externalReferences": [],
+            },
+            "modelContext": (
+                "[DELIVERED_GRAPH_CONTEXT]\n"
+                '{"id":"thinkgraph:decision:one"}\n'
+                '{"id":"codegraph:symbol:one"}'
+            ),
+        },
+    )
     monkeypatch.setattr(rq, "bindings_from_operation_references", lambda **_kwargs: [])
 
     hydrated = rq.hydrate_assignment_context(
@@ -495,9 +542,9 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
         graph_view_ids=["graphview:one"],
     )
 
-    assert "graphview:one" in hydrated.model_context
-    assert "thinkgraph -> thinkgraph:decision:one [required]" in hydrated.model_context
-    assert "codegraph -> codegraph:symbol:one" in hydrated.model_context
+    assert hydrated.graph_view_ids == ("graphview:one",)
+    assert '{"id":"thinkgraph:decision:one"}' in hydrated.model_context
+    assert '{"id":"codegraph:symbol:one"}' in hydrated.model_context
     assert "[AGENTGRAPH_CONTEXT_REFERENCES]" not in hydrated.model_context
     assert "[PARENT_AGENTGRAPH_CONTINUITY]" not in hydrated.model_context
     assert "REGISTERED DATABASE CONTEXT:" not in hydrated.model_context
@@ -507,6 +554,16 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
             "referenceId": "graphview:one",
             "referenceType": "graph_view",
             "required": True,
+        },
+        {
+            "referenceId": "thinkgraph:decision:one",
+            "referenceType": "thinkgraph",
+            "required": True,
+        },
+        {
+            "referenceId": "codegraph:symbol:one",
+            "referenceType": "codegraph",
+            "required": False,
         },
     ]
 

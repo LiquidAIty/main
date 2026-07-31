@@ -292,11 +292,13 @@ def test_graph_view_keeps_only_agentgraph_metadata_and_reference_identities() ->
                 "referenceId": "thinkgraph:decision:kg01",
                 "referenceType": "thinkgraph",
                 "required": True,
+                "deliveryOrder": 0,
             },
             {
                 "referenceId": "codegraph:C-Projects-main:runtime.ts",
                 "referenceType": "codegraph",
                 "required": False,
+                "deliveryOrder": 1,
             },
         ], key=lambda item: item["referenceId"])
         assert not {

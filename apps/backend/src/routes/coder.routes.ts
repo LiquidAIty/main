@@ -59,6 +59,7 @@ import {
   fetchDoorwayContext,
   fetchUnifiedModelContext,
   beginAgentAssignmentOnPython,
+  fetchAgentCardContext,
   finishAgentAssignmentOnPython,
   transitionGraphViewsOnPython,
 } from '../services/autogen/autogenOrchestratorClient';
@@ -568,6 +569,34 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     return res.json({ ok: result.status === 'completed', result });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'run_configured_card_failed' });
+  }
+});
+
+router.get('/agentgraph/card-context', async (req, res) => {
+  const projectId = String(req.query.projectId || '').trim();
+  const deckId = String(req.query.deckId || '').trim();
+  const conversationId = String(req.query.conversationId || '').trim();
+  const receiverCardId = String(req.query.receiverCardId || '').trim();
+  const assignmentId = String(req.query.assignmentId || '').trim();
+  if (!projectId || !deckId || !conversationId || !receiverCardId) {
+    return res.status(400).json({
+      ok: false,
+      error: 'project_deck_conversation_receiver_required',
+    });
+  }
+  try {
+    return res.json(await fetchAgentCardContext({
+      projectId,
+      deckId,
+      conversationId,
+      receiverCardId,
+      ...(assignmentId ? { assignmentId } : {}),
+    }));
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'agent_card_context_failed',
+    });
   }
 });
 
