@@ -5,20 +5,36 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import UnifiedGraphSurface from './UnifiedGraphSurface';
 
 vi.mock('../codegraph/CodeGraphScene', () => ({
-  CodeGraphScene: ({ data, visualProfile }: { data: { nodes: Array<{ authority?: string; size: number }>; edges: Array<{ cross_authority?: boolean }> }; visualProfile?: string }) => <div
+  CodeGraphScene: ({ data, highlightedIds, onNodeClick, visualProfile }: { data: { nodes: Array<{ id: number; authority?: string; size: number }>; edges: Array<{ cross_authority?: boolean }> }; highlightedIds?: Set<number> | null; onNodeClick?: (node: unknown) => void; visualProfile?: string }) => <div
     data-testid="scene"
     data-profile={visualProfile}
+    data-highlighted={highlightedIds?.size || 0}
     data-think-size={Math.max(0, ...data.nodes.filter((node) => node.authority === 'thinkgraph').map((node) => node.size))}
     data-know-size={Math.max(0, ...data.nodes.filter((node) => node.authority === 'knowgraph').map((node) => node.size))}
     data-cross-edges={data.edges.filter((edge) => edge.cross_authority).length}
-  >{data.nodes.length} nodes / {data.edges.length} edges</div>,
+  >{data.nodes.length} nodes / {data.edges.length} edges
+    {data.nodes[0] ? <button type="button" onClick={() => onNodeClick?.(data.nodes[0])}>Focus first node</button> : null}
+  </div>,
 }));
 
+const availableView = {
+  viewId: 'view:focus',
+  authority: 'agentgraph',
+  status: 'active',
+  displayLabel: 'Current research',
+  producingRole: 'main_chat',
+  receivingRole: 'main_chat',
+  referenceCount: 7,
+};
+
 const payload = {
-  schemaVersion: 'unified.context.v1', projectionId: 'unified:full', warnings: [],
+  schemaVersion: 'unified.context.v1', projectionId: 'unified:focus', activeGraphViewId: availableView.viewId, warnings: [],
+  graphViews: [availableView], availableGraphViews: [availableView],
+  manifest: { schemaVersion: 'delivered-context-manifest.v1', manifestHash: 'manifest-focus', recordCount: 10, nodeCount: 7, edgeCount: 3, unresolvedReferences: [] },
+  lifecycle: { available: [availableView.viewId], selected: [availableView.viewId], attached: [availableView.viewId], consumed: [], returned: [], superseded: [] },
   counts: { selected: { thinkgraph: 2, knowgraph: 2, codegraph: 3 }, nodes: 7, edges: 3, crossAuthorityEdges: 0 },
   nodes: [
-    { id: 1, x: 0, y: 0, z: 0, label: 'Function', name: 'code', size: 4, color: '#fff', authority: 'codegraph', source_id: 'code:1' },
+    { id: 1, x: 0, y: 0, z: 0, label: 'Function', name: 'code', size: 4, color: '#fff', authority: 'codegraph', source_id: 'code:1', properties: { summary: 'Builds the context projection.', agent_interpretation: 'This is the current execution seam.' }, provenance: { source: 'Codebase Memory' } },
     { id: 2, x: 0, y: 0, z: 0, label: 'Function', name: 'code2', size: 4, color: '#fff', authority: 'codegraph', source_id: 'code:2' },
     { id: 3, x: 0, y: 0, z: 0, label: 'File', name: 'code3', size: 4, color: '#fff', authority: 'codegraph', source_id: 'code:3' },
     { id: 4, x: 0, y: 0, z: 0, label: 'Finding', name: 'think', size: 4, color: '#fff', authority: 'thinkgraph', source_id: 'think:1' },
@@ -39,7 +55,7 @@ afterEach(() => {
 });
 
 describe('UnifiedGraphSurface', () => {
-  it('renders the complete combined projection and returns only its identity', async () => {
+  it('renders only the materialized graph context and returns its identity', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => payload }));
     const onProjectionChange = vi.fn();
     render(<UnifiedGraphSurface projectId="project" conversationId="main" onProjectionChange={onProjectionChange} />);
@@ -48,9 +64,9 @@ describe('UnifiedGraphSurface', () => {
     expect(Number(screen.getByTestId('scene').getAttribute('data-think-size'))).toBeGreaterThan(16);
     expect(Number(screen.getByTestId('scene').getAttribute('data-know-size'))).toBeGreaterThan(16);
     expect(screen.getByTestId('scene').getAttribute('data-cross-edges')).toBe('0');
-    expect(screen.getByText(/Code 3 · Think 2 · Know 2/)).toBeTruthy();
+    expect(screen.getByText('Graph context · Current research')).toBeTruthy();
     expect(screen.queryByLabelText('Unified legend')).toBeNull();
-    await waitFor(() => expect(onProjectionChange).toHaveBeenCalledWith(expect.objectContaining({ projectionId: 'unified:full' })));
+    await waitFor(() => expect(onProjectionChange).toHaveBeenCalledWith(expect.objectContaining({ projectionId: 'unified:focus' })));
   });
 
   it('layer controls are display-only and do not refetch or change projection identity', async () => {
@@ -63,6 +79,20 @@ describe('UnifiedGraphSurface', () => {
     expect(screen.getByTestId('scene').textContent).toContain('5 nodes / 2 edges');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(screen.getAllByRole('button', { name: 'Solo' })).toHaveLength(3);
+  });
+
+  it('lets the human focus and remove a node from the local canvas', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => payload }));
+    render(<UnifiedGraphSurface projectId="project" conversationId="main" />);
+
+    expect((await screen.findByTestId('scene')).textContent).toContain('7 nodes / 3 edges');
+    fireEvent.click(screen.getByRole('button', { name: 'Focus first node' }));
+    expect(screen.getByTestId('scene').getAttribute('data-highlighted')).toBe('2');
+    expect(screen.getByText('Builds the context projection.')).toBeTruthy();
+    expect(screen.getByText('This is the current execution seam.')).toBeTruthy();
+    expect(screen.getByText('Codebase Memory')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove from canvas' }));
+    expect(screen.getByTestId('scene').textContent).toContain('6 nodes / 2 edges');
   });
 
   it('fails honestly when the Unified project is unresolved', () => {
