@@ -54,6 +54,23 @@ def test_saved_card_role_falls_back_to_its_runtime_binding() -> None:
     assert reference["role"] == "thinkgraph_agent"
 
 
+def test_canvas_inspect_returns_only_the_bounded_public_projection(fake_backend) -> None:
+    result = asyncio.run(cp.canvas_inspect({"projectId": "p", "deckId": "d"}))
+
+    assert result["deckRevision"] == "rev1"
+    assert result["cards"][0] == {
+        "id": "tg-card",
+        "title": "ThinkGraph Agent",
+        "runtimeBinding": "thinkgraph_agent",
+        "runtimeType": "assistant_agent",
+        "tools": ["read_thinkgraph_scope", "apply_thinkgraph_patch"],
+    }
+    assert all("prompt" not in card for card in result["cards"])
+    assert result["wires"] == [
+        {"id": "w1", "source": "worker", "target": "tg-card", "edgeType": "flow"}
+    ]
+
+
 class TestCardUpdateConfiguration:
     def test_arbitrary_runtime_and_authority_fields_rejected(self, fake_backend):
         for field in ("runtimeCode", "shell", "hiddenTools", "runAuthority", "runtimeScope", "magenticWorkers"):

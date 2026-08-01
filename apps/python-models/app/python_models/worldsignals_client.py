@@ -122,6 +122,24 @@ class WorldSignalsClient:
     def tools(self) -> dict[str, Any]:
         return self.request("GET", "/api/ai/tools")
 
+    def command_operation_classes(self, commands: list[str]) -> list[str]:
+        """Resolve command read/write classes from the live canonical manifest."""
+        entries = self.tools().get("tools")
+        by_name = {
+            str(entry.get("name") or ""): str(entry.get("type") or "").lower()
+            for entry in entries or []
+            if isinstance(entry, dict)
+        }
+        classes: list[str] = []
+        for command in commands:
+            operation_class = by_name.get(command)
+            if operation_class not in {"read", "write"}:
+                raise WorldSignalsError(
+                    f"worldsignals_command_operation_class_unavailable:{command}"
+                )
+            classes.append(operation_class)
+        return classes
+
     def command(self, command: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         _guard_command(command)
         return self.request("POST", "/api/ai/channel/command", {"cmd": command, "args": arguments or {}})

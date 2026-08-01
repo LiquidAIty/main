@@ -105,6 +105,8 @@ _STARTUP_ID = uuid4().hex
 _STARTUP_PROCESS_ID = os.getpid()
 _TRACE_LOCK = threading.Lock()
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
+_GRAPHITI_EPISODE_CONTENT_PREVIEW_CHARS = 4000
+_GRAPHITI_PROVENANCE_ITEMS_LIMIT = 200
 _ACTIVE_EXECUTION_RECEIPT: ContextVar[dict[str, Any] | None] = ContextVar(
     "liquidaity_execution_receipt", default=None
 )
@@ -232,12 +234,21 @@ def _typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any
         code, retryable = "queue_failure", True
     elif any(term in lowered for term in ("neo4j", "database", "connection refused", "service unavailable")):
         code, retryable = "database_failure", True
+    elif isinstance(value, (AttributeError, TypeError)):
+        code, retryable = "internal_handler_failure", False
     else:
         code, retryable = "provider_failure", False
+    if code in {"database_failure", "queue_failure"}:
+        category = "DEPENDENCY_UNAVAILABLE"
+    elif code == "internal_handler_failure":
+        category = "INTERNAL"
+    else:
+        category = "PROVIDER"
     return {
         "ok": False,
         "error": code,
         "failureCode": code,
+        "errorCategory": category,
         "retryable": retryable,
         "dependency": dependency,
         "detail": detail,
@@ -300,6 +311,16 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, st
     else:
         compute = "database_write"
     return {"risk": risk, "compute": compute}
+
+
+def _apply_worldsignals_receipt_classification(operation_classes: list[str]) -> None:
+    """Refine the active receipt from WorldSignals' live command manifest."""
+    receipt = _ACTIVE_EXECUTION_RECEIPT.get()
+    if receipt is None or not operation_classes:
+        return
+    read_only = all(value == "read" for value in operation_classes)
+    receipt["risk"] = "safe read" if read_only else "deterministic write"
+    receipt["compute"] = "database_read" if read_only else "database_write"
 
 
 def _tool_capability_metadata(
@@ -1028,33 +1049,87 @@ async def _graphiti_episode_entities(arguments: dict[str, Any]) -> CallToolResul
             client.get_nodes_and_edges_by_episode(normalized_ids),
             timeout=_NATIVE_TOOL_TIMEOUT_SECONDS,
         )
+        nodes_all = [_graphiti_json_value(native.to_node_result(node)) for node in results.nodes]
+        edges_all = [_graphiti_json_value(native.to_edge_result(edge)) for edge in results.edges]
     except TimeoutError as error:
         raise RuntimeError("native_graphiti_timeout:get_episode_entities") from error
     except Exception as error:
         failure = _typed_failure(error, dependency="graphiti_database")
         return CallToolResult(
-            content=[TextContent(type="text", text=json.dumps(failure))], isError=True
+            content=[TextContent(type="text", text=json.dumps(failure))],
+            structuredContent=failure,
+            isError=True,
         )
-    nodes = [native.to_node_result(node).model_dump(mode="json") for node in results.nodes]
-    edges = [native.to_edge_result(edge).model_dump(mode="json") for edge in results.edges]
+    nodes = nodes_all[:_GRAPHITI_PROVENANCE_ITEMS_LIMIT]
+    edges = edges_all[:_GRAPHITI_PROVENANCE_ITEMS_LIMIT]
     payload = {
         "ok": True,
         "state": "found_with_data" if nodes or edges else "found_without_derived_data",
         "episodeUuids": normalized_ids,
         "nodes": nodes,
         "edges": edges,
+        "availableNodeCount": len(nodes_all),
+        "availableFactCount": len(edges_all),
+        "nodesTruncated": len(nodes_all) > len(nodes),
+        "factsTruncated": len(edges_all) > len(edges),
     }
     return CallToolResult(
         content=[TextContent(type="text", text=json.dumps(payload))],
-        structuredContent={
-            "message": (
-                "Episode found with derived provenance"
-                if nodes or edges
-                else "Episode found with zero derived entities or facts"
-            ),
-            "nodes": nodes,
-            "edges": edges,
-        },
+        structuredContent=payload,
+        isError=False,
+    )
+
+
+def _graphiti_json_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if hasattr(value, "model_dump"):
+        payload = value.model_dump(mode="json")
+        if isinstance(payload, dict):
+            return payload
+    raise TypeError(f"graphiti_result_not_object:{type(value).__name__}")
+
+
+def _bound_graphiti_episode_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    bounded = dict(payload)
+    episodes = payload.get("episodes")
+    if not isinstance(episodes, list):
+        raise TypeError("graphiti_episodes_result_invalid")
+    projected: list[dict[str, Any]] = []
+    for value in episodes:
+        episode = _graphiti_json_value(value)
+        content = str(episode.pop("content", "") or "")
+        episode["contentPreview"] = content[:_GRAPHITI_EPISODE_CONTENT_PREVIEW_CHARS]
+        episode["availableContentLength"] = len(content)
+        episode["contentTruncated"] = len(content) > _GRAPHITI_EPISODE_CONTENT_PREVIEW_CHARS
+        projected.append(episode)
+    bounded["episodes"] = projected
+    return bounded
+
+
+async def _graphiti_episodes(arguments: dict[str, Any]) -> CallToolResult:
+    result = await _call_native_graphiti("get_episodes", arguments)
+    if not isinstance(result, CallToolResult) or result.isError:
+        return result
+    try:
+        payload = next(
+            json.loads(block.text)
+            for block in result.content
+            if isinstance(block, TextContent) and block.text
+        )
+        if not isinstance(payload, dict):
+            raise TypeError("graphiti_episodes_result_invalid")
+        bounded = _bound_graphiti_episode_payload(payload)
+    except (StopIteration, json.JSONDecodeError, TypeError) as error:
+        failure = _typed_failure(error, dependency="graphiti_database")
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(failure))],
+            structuredContent=failure,
+            isError=True,
+        )
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(bounded))],
+        structuredContent=bounded,
         isError=False,
     )
 
@@ -1578,88 +1653,6 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
-            name="coder.effective_tools",
-            description=(
-                "Read one saved coding card's effective tool inventory and runtime class. "
-                "Distinguishes the graph-first OpenClaude System Coder from the ordinary "
-                "Codex app-server External/General baseline without starting a model turn."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                    "cardId": {"type": "string"},
-                    "authority": {"type": "string", "enum": ["direct_main_audit", "mag_one_execution"]},
-                },
-                "required": ["projectId", "deckId", "cardId"],
-            },
-        ),
-        Tool(
-            name="coder.inspect",
-            description=(
-                "Inspect one saved coding card through its canonical runtime owner without starting a model turn. "
-                "Returns class, route, provider/model, account/model readiness, exact tools, process identity, and latest receipt."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                    "cardId": {"type": "string"},
-                    "authority": {"type": "string", "enum": ["direct_main_audit", "mag_one_execution"]},
-                },
-                "required": ["projectId", "deckId", "cardId"],
-            },
-        ),
-        Tool(
-            name="coder.stop",
-            description="Stop only the exact active process/turn owned by the selected saved coding card.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                    "cardId": {"type": "string"},
-                },
-                "required": ["projectId", "deckId", "cardId"],
-            },
-        ),
-        Tool(
-            name="coder.steer",
-            description=(
-                "Steer only the exact active session owned by the selected coding card. "
-                "Codex uses native turn/steer; OpenClaude accepts input only on a live interactive PTY."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                    "cardId": {"type": "string"},
-                    "input": {"type": "string"},
-                },
-                "required": ["projectId", "deckId", "cardId", "input"],
-            },
-        ),
-        Tool(
-            name="coder.account",
-            description=(
-                "Manage the ordinary OpenAI Coder card's native app-server ChatGPT login ceremony. "
-                "Returns login URLs/ids but never tokens or auth.json."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                    "cardId": {"type": "string"},
-                    "action": {"type": "string", "enum": ["login", "cancel", "logout"]},
-                },
-                "required": ["projectId", "deckId", "cardId", "action"],
-            },
-        ),
-        Tool(
             name="run_coder_subagent",
             description=(
                 "Main Chat only: send one approved coding assignment from the saved connected Coder card "
@@ -2093,8 +2086,6 @@ _READ_ONLY_TOOLS = {
     "graphview.list",
     "graphview.get",
     "coder.status",
-    "coder.effective_tools",
-    "coder.inspect",
     "mag_one.describe_connected_agents",
     "canvas.inspect",
     "thinkgraph.get_graph_slice",
@@ -2118,9 +2109,6 @@ _SERVER_OWNED_ARGUMENTS = {
 _MAIN_ONLY_TOOLS = {
     "run_coder_subagent",
     "run_mag_one",
-    "coder.stop",
-    "coder.steer",
-    "coder.account",
 }
 _HERMES_ONLY_TOOLS = {
     "hermes.memory_read",
@@ -2252,11 +2240,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "parentViewId",
     },
     "coder.status": set(),
-    "coder.effective_tools": {"projectId", "deckId", "cardId", "authority"},
-    "coder.inspect": {"projectId", "deckId", "cardId", "authority"},
-    "coder.stop": {"projectId", "deckId", "cardId"},
-    "coder.steer": {"projectId", "deckId", "cardId", "input"},
-    "coder.account": {"projectId", "deckId", "cardId", "action"},
     "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "approvedPrompt", "authority", "graphViewIds"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "instructionId", "conversationId"},
@@ -2298,11 +2281,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
 
 _BRIDGE_PATHS: dict[str, str] = {
     "coder.status": "coder_status",
-    "coder.effective_tools": "coder_effective_tools",
-    "coder.inspect": "coder_inspect",
-    "coder.stop": "coder_stop",
-    "coder.steer": "coder_steer",
-    "coder.account": "coder_account",
     "run_coder_subagent": "run_coder_subagent",
     "mag_one.describe_connected_agents": "describe_connected_agents",
     "run_mag_one": "run_mag_one",
@@ -2395,6 +2373,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                     if context is not None
                     else None
                 )
+            if native_name == "get_episodes":
+                return await _graphiti_episodes(native_args)
             if native_name == "get_episode_entities":
                 return await _graphiti_episode_entities(native_args)
             return await _call_native_graphiti(native_name, native_args)
@@ -2511,9 +2491,22 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                     limit=int(args.get("limit") or 25),
                 )
             elif name == "worldsignals.command":
-                result = client.command(str(args.get("command") or ""), args.get("arguments") or {})
+                command = str(args.get("command") or "")
+                operation_classes = await asyncio.to_thread(
+                    client.command_operation_classes, [command]
+                )
+                _apply_worldsignals_receipt_classification(operation_classes)
+                result = await asyncio.to_thread(
+                    client.command, command, args.get("arguments") or {}
+                )
             elif name == "worldsignals.batch":
-                result = client.batch(list(args.get("commands") or []))
+                commands = list(args.get("commands") or [])
+                operation_classes = await asyncio.to_thread(
+                    client.command_operation_classes,
+                    [str((entry or {}).get("cmd") or "") for entry in commands],
+                )
+                _apply_worldsignals_receipt_classification(operation_classes)
+                result = await asyncio.to_thread(client.batch, commands)
             else:
                 result = client.stream_events(
                     int(args.get("max_events") or 1),

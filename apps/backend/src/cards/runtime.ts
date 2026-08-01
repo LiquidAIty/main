@@ -165,6 +165,9 @@ export function resolvedMagenticOptions(
     )
     .map((edge) => nodeMap.get(edge.source === magenticCardId ? edge.target : edge.source))
     .filter((node): node is any => Boolean(node && node.kind === 'agent'))
+    // Workspace children are context/UI objects, not independently executable
+    // Mag One workers. Their owning top-level card is the runtime boundary.
+    .filter((node) => !String(node.parentGraphId || '').trim())
     .filter((node) => node?.enabled !== false && node?.runtimeOptions?.enabled !== false)
     .filter((node) => {
       // Principal roles are structurally never workers, even against stale edges.

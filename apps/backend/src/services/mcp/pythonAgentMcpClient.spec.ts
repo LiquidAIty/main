@@ -13,8 +13,8 @@ const LIVE_STACK = process.env.LIQUIDAITY_LIVE_STACK === '1';
 describe('Python Agent MCP host — real stdio discovery + calls', () => {
   it('federates the three complete native catalogs with the LiquidAIty control surface', async () => {
     const names = await listPythonAgentMcpTools();
-    expect(names).toHaveLength(87);
-    expect(new Set(names).size).toBe(87);
+    expect(names).toHaveLength(82);
+    expect(new Set(names).size).toBe(82);
     expect(names.filter((name) => name.startsWith('cbm.'))).toHaveLength(14);
     expect(names.filter((name) => name.startsWith('engraphis.'))).toHaveLength(29);
     expect(names.filter((name) => name.startsWith('graphiti.'))).toHaveLength(13);
@@ -25,11 +25,6 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'card.run_assistant_agent',
       'card.update_configuration',
       'coder.status',
-      'coder.effective_tools',
-      'coder.inspect',
-      'coder.stop',
-      'coder.steer',
-      'coder.account',
       'cbm.search_graph',
       'cbm.index_status',
       'engraphis.recall',
@@ -68,6 +63,11 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
     expect(names).not.toContain('knowgraph.ingest');
     expect(names).not.toContain('codegraph.search');
     expect(names).not.toContain('codegraph.status');
+    expect(names).not.toContain('coder.inspect');
+    expect(names).not.toContain('coder.effective_tools');
+    expect(names).not.toContain('coder.account');
+    expect(names).not.toContain('coder.stop');
+    expect(names).not.toContain('coder.steer');
     expect(names).toContain('engraphis.answer');
   }, 30_000);
 

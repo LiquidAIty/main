@@ -52,6 +52,28 @@ def test_execution_receipt_observes_the_actual_provider_client_boundary():
     assert receipt["providerSubstitution"] is False
 
 
+def test_worldsignals_receipt_uses_live_manifest_operation_class():
+    import mcp_host
+
+    read_receipt = mcp_host._execution_receipt("worldsignals.command")
+    token = mcp_host._ACTIVE_EXECUTION_RECEIPT.set(read_receipt)
+    try:
+        mcp_host._apply_worldsignals_receipt_classification(["read"])
+    finally:
+        mcp_host._ACTIVE_EXECUTION_RECEIPT.reset(token)
+    assert read_receipt["risk"] == "safe read"
+    assert read_receipt["compute"] == "database_read"
+
+    write_receipt = mcp_host._execution_receipt("worldsignals.batch")
+    token = mcp_host._ACTIVE_EXECUTION_RECEIPT.set(write_receipt)
+    try:
+        mcp_host._apply_worldsignals_receipt_classification(["read", "write"])
+    finally:
+        mcp_host._ACTIVE_EXECUTION_RECEIPT.reset(token)
+    assert write_receipt["risk"] == "deterministic write"
+    assert write_receipt["compute"] == "database_write"
+
+
 def test_graphiti_uses_knowgraph_openrouter_embedding_configuration(monkeypatch):
     import mcp_host
 
@@ -79,6 +101,40 @@ def test_graphiti_preserves_explicit_embedder_model_override(monkeypatch):
     monkeypatch.setenv("KNOWGRAPH_OPENROUTER_EMBEDDING_MODEL", "openai/ignored")
 
     assert mcp_host._graphiti_config().embedder.model == "local/embeddinggemma"
+
+
+def test_graphiti_accepts_native_dict_results_and_bounds_episode_content():
+    import mcp_host
+
+    node = {"uuid": "node-1", "name": "Knowledge graph"}
+    assert mcp_host._graphiti_json_value(node) == node
+
+    content = "x" * (mcp_host._GRAPHITI_EPISODE_CONTENT_PREVIEW_CHARS + 25)
+    bounded = mcp_host._bound_graphiti_episode_payload(
+        {
+            "message": "Episodes retrieved successfully",
+            "episodes": [
+                {
+                    "uuid": "episode-1",
+                    "name": "Source paper",
+                    "group_id": "project-1",
+                    "source": "text",
+                    "source_description": "Imported PDF",
+                    "created_at": "2026-08-01T00:00:00Z",
+                    "content": content,
+                }
+            ],
+        }
+    )
+
+    episode = bounded["episodes"][0]
+    assert "content" not in episode
+    assert episode["uuid"] == "episode-1"
+    assert episode["group_id"] == "project-1"
+    assert episode["source_description"] == "Imported PDF"
+    assert len(episode["contentPreview"]) == mcp_host._GRAPHITI_EPISODE_CONTENT_PREVIEW_CHARS
+    assert episode["availableContentLength"] == len(content)
+    assert episode["contentTruncated"] is True
 
 
 def test_call_tool_appends_canonical_receipt_and_typed_provider_failure(monkeypatch):
@@ -458,12 +514,15 @@ async def check():
         assert tool.model_dump() == native[tool.name].model_dump()
     combined = await mcp_host.list_tools()
     combined_names = [tool.name for tool in combined]
+    assert len(combined_names) == 82
     assert len(set(combined_names)) == len(combined_names)
     assert {
-        'main.context', 'canvas.inspect', 'coder.status', 'coder.effective_tools', 'coder.inspect',
-        'coder.stop', 'coder.steer', 'coder.account', 'run_coder_subagent',
+        'main.context', 'canvas.inspect', 'coder.status', 'run_coder_subagent',
         'agentgraph.inspect', 'graphview.list', 'graphview.get', 'graphview.create',
     }.issubset(set(combined_names))
+    assert {
+        'coder.inspect', 'coder.effective_tools', 'coder.account', 'coder.stop', 'coder.steer',
+    }.isdisjoint(combined_names)
     assert {
         f'engraphis.{name.removeprefix("engraphis_")}'
         for name in native
@@ -1016,11 +1075,24 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "graphview.get" in by_name
     assert "graphview.create" in by_name
     assert "coder.status" in by_name
-    assert "coder.effective_tools" in by_name
-    assert "coder.inspect" in by_name
-    assert "coder.stop" in by_name
-    assert "coder.steer" in by_name
-    assert "coder.account" in by_name
+    assert {
+        "coder.inspect",
+        "coder.effective_tools",
+        "coder.account",
+        "coder.stop",
+        "coder.steer",
+    }.isdisjoint(by_name)
+    removed_public_wrappers = {
+        "coder.inspect",
+        "coder.effective_tools",
+        "coder.account",
+        "coder.stop",
+        "coder.steer",
+    }
+    assert removed_public_wrappers.isdisjoint(mcp_host._ALLOWED_KEYS)
+    assert removed_public_wrappers.isdisjoint(mcp_host._BRIDGE_PATHS)
+    assert removed_public_wrappers.isdisjoint(mcp_host._READ_ONLY_TOOLS)
+    assert removed_public_wrappers.isdisjoint(mcp_host._MAIN_ONLY_TOOLS)
     native_names = {
         f"engraphis.{tool.name.removeprefix('engraphis_')}"
         for tool in native_engraphis_tools
@@ -1082,9 +1154,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert by_name["cbm.search_graph"].description == "Native search description."
     assert by_name["cbm.search_graph"].inputSchema == native_cbm_tools[0].inputSchema
     assert by_name["coder.status"].annotations.readOnlyHint is True
-    assert by_name["coder.effective_tools"].annotations.readOnlyHint is True
-    assert by_name["coder.inspect"].annotations.readOnlyHint is True
-    assert by_name["coder.stop"].annotations is None
     assert by_name["run_coder_subagent"].annotations is None
 
     calls = []

@@ -96,6 +96,27 @@ def test_batch_rejects_a_restricted_command_in_the_list(monkeypatch) -> None:
         client.batch([{"cmd": "get_summary"}, {"cmd": "osint_sweep"}])
 
 
+def test_command_operation_classes_come_from_the_canonical_manifest(monkeypatch) -> None:
+    client = WorldSignalsClient(base_url="http://127.0.0.1:8000", secret="")
+    monkeypatch.setattr(
+        client,
+        "tools",
+        lambda: {
+            "tools": [
+                {"name": "channel_status", "type": "read"},
+                {"name": "add_watch", "type": "write"},
+            ]
+        },
+    )
+
+    assert client.command_operation_classes(["channel_status", "add_watch"]) == [
+        "read",
+        "write",
+    ]
+    with pytest.raises(WorldSignalsError, match="operation_class_unavailable"):
+        client.command_operation_classes(["not_in_manifest"])
+
+
 # ── manifest projection: the model's context is a budget, not a dumping ground ──
 # Live upstream returns ~74,300 chars (~18.5k tokens) per capabilities call.
 

@@ -151,7 +151,6 @@ async def canvas_inspect(args: dict[str, Any]) -> dict[str, Any]:
             "title": str(node.get("title") or ""),
             "runtimeBinding": node.get("runtimeBinding"),
             "runtimeType": node.get("runtimeType"),
-            "prompt": str(node.get("prompt") or "")[:500],
             "tools": ((node.get("runtimeOptions") or {}).get("tools")) or node.get("tools") or [],
         }
         for node in deck.get("nodes") or []
