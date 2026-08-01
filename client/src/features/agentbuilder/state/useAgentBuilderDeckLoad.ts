@@ -106,22 +106,30 @@ export default function useAgentBuilderDeckLoad({
           throw new Error(String(payload.data?.error || 'deck_load_failed'));
         }
 
-        const loadResult = resolveProjectDeckLoadResult(
-          currentDeckRef.current,
+        const savedDeck =
           payload.data?.deck && typeof payload.data.deck === 'object'
             ? { ...(payload.data.deck as DeckDocument), id: builderDeckId }
-            : null,
+            : null;
+        const loadResult = resolveProjectDeckLoadResult(
+          currentDeckRef.current,
+          savedDeck,
         );
 
         recordDeckWriteReason(
           loadResult.usedFallback ? 'deck-load-default' : 'deck-load',
         );
         setDeck(loadResult.deck);
+        // Compare autosave against the actual persisted board, not the
+        // hydrated projection. One-time schema migrations must be written back
+        // instead of being mistaken for already-saved state.
+        const persistedDeck =
+          !loadResult.usedFallback && savedDeck ? savedDeck : loadResult.deck;
         lastPersistedBoardFingerprintRef.current = JSON.stringify({
-          nodes: loadResult.deck.nodes,
-          edges: loadResult.deck.edges,
+          systemToolGrantsVersion: persistedDeck.systemToolGrantsVersion,
+          nodes: persistedDeck.nodes,
+          edges: persistedDeck.edges,
         });
-        lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(loadResult.deck);
+        lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(persistedDeck);
         setDeckRevision(
           typeof payload.data?.meta?.deckRevision === 'string'
             ? payload.data.meta.deckRevision

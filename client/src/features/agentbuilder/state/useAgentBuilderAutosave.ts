@@ -62,6 +62,7 @@ export default function useAgentBuilderAutosave({
   useEffect(() => {
     if (!canvasProjectId || !stateLoaded || deckLoadBusy || deckLoadError) return;
     const boardFingerprint = JSON.stringify({
+      systemToolGrantsVersion: deck.systemToolGrantsVersion,
       nodes: deck.nodes,
       edges: deck.edges,
     });

@@ -205,7 +205,18 @@ def test_graphiti_provenance_distinguishes_missing_and_empty_episode(monkeypatch
         "episode_uuids": [episode_id]
     }))
     assert absent.isError is True
-    assert json.loads(absent.content[0].text)["failureCode"] == "episode_not_found"
+    absent_payload = json.loads(absent.content[0].text)
+    assert absent_payload["failureCode"] == "episode_not_found"
+    assert absent_payload["errorCategory"] == "NOT_FOUND"
+    assert absent.structuredContent == absent_payload
+
+    invalid = asyncio.run(mcp_host._graphiti_episode_entities({
+        "episode_uuids": ["not-a-uuid"]
+    }))
+    invalid_payload = json.loads(invalid.content[0].text)
+    assert invalid.isError is True
+    assert invalid_payload["errorCategory"] == "INVALID_ARGUMENT"
+    assert invalid.structuredContent == invalid_payload
 
     async def found(_driver, _uuid):
         return object()

@@ -144,6 +144,9 @@ export type DeckDocument = {
   edges: DeckEdge[];
   // Deprecated: Agent Canvas intentionally ignores persisted viewport.
   viewport?: DeckViewport | null;
+  // Schema marker for one-time system-card grant migrations. This is separate
+  // from `version`, which is the normal deck edit counter.
+  systemToolGrantsVersion?: number;
   version: number;
 };
 

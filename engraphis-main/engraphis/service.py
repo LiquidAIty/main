@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import re
+import ntpath
 import json
 import hashlib
 import contextvars
@@ -261,6 +262,34 @@ def _clean_name(value: Any, *, field: str) -> str:
             f"{field} may only contain letters, digits, space and . _ - / characters"
         )
     return name
+
+
+def _clean_code_repo_identity(value: Any) -> tuple[str, Optional[str]]:
+    """Validate a logical repo name or canonicalize one Windows drive path.
+
+    Code tools accept the repository identity users naturally have on Windows, but
+    generic Engraphis names keep their existing strict grammar.  Only an absolute
+    drive path is special-cased; drive-relative paths, traversal segments, UNC paths,
+    and drive roots are rejected rather than broadening ``_clean_name`` everywhere.
+    """
+    raw = _clean_text(value, field="repo", max_chars=MAX_CONTENT_CHARS)
+    drive_match = re.match(r"^([A-Za-z]):", raw)
+    if not drive_match:
+        return _clean_name(raw, field="repo"), None
+    if not re.match(r"^[A-Za-z]:[\\/]", raw):
+        raise ValidationError("repo Windows path must be absolute")
+    segments = re.split(r"[\\/]", raw[3:])
+    if any(segment == ".." for segment in segments):
+        raise ValidationError("repo Windows path must not contain traversal segments")
+    normalized = ntpath.normpath(raw.replace("/", "\\"))
+    drive, tail = ntpath.splitdrive(normalized)
+    if not drive or tail in {"", "\\"}:
+        raise ValidationError("repo Windows path must identify a repository directory")
+    canonical = f"{drive[0].upper()}:{tail}".replace("\\", "/")
+    logical_name = ntpath.basename(normalized)
+    if not logical_name or logical_name in {".", ".."}:
+        raise ValidationError("repo Windows path must identify a repository directory")
+    return canonical, _clean_name(logical_name, field="repo")
 
 
 def _validate_authenticated_principal(user: Any) -> dict[str, str]:
@@ -666,6 +695,41 @@ class MemoryService:
             if rid is None:
                 raise ValidationError(f"no repo named '{rp}' in workspace '{ws}' yet")
         return wid, rid
+
+    def _resolve_code_repo(
+        self, workspace: str, repo: str
+    ) -> tuple[str, Optional[str], str, Optional[str]]:
+        """Resolve the code-tool repo identity without creating or indexing it."""
+        ws = self._clean_ws(workspace)
+        wid = self._lookup_workspace(ws)
+        if wid is None:
+            raise ValidationError(f"no workspace named '{ws}' yet")
+        identity, path_name = _clean_code_repo_identity(repo)
+        if path_name is None:
+            return wid, self._lookup_repo(wid, identity), identity, None
+
+        rows = self.store.conn.execute(
+            "SELECT id, name, root_path FROM repos WHERE workspace_id=? ", (wid,)
+        ).fetchall()
+        exact = []
+        unnamed_root = []
+        for row in rows:
+            root_path = str(row["root_path"] or "")
+            if root_path:
+                try:
+                    canonical_root, _ = _clean_code_repo_identity(root_path)
+                except ValidationError:
+                    continue
+                if canonical_root.casefold() == identity.casefold():
+                    exact.append(row)
+            elif str(row["name"]).casefold() == path_name.casefold():
+                unnamed_root.append(row)
+        matches = exact or unnamed_root
+        if len(matches) > 1:
+            raise ValidationError(f"repo path '{identity}' is ambiguous in workspace '{ws}'")
+        rid = str(matches[0]["id"]) if matches else None
+        logical_name = str(matches[0]["name"]) if matches else path_name
+        return wid, rid, identity, logical_name
 
     def _authorize_workspace(self, ws: str) -> str:
         """Enforce the server-side workspace binding. When this instance is bound to a set
@@ -2033,11 +2097,18 @@ class MemoryService:
     def code_index_status(self, *, workspace: str, repo: str) -> dict:
         if not repo:
             raise ValidationError("repo is required for code index status")
-        wid, rid = self._require_scope(workspace, repo)
-        row = self.store.conn.execute(
-            "SELECT root_path, indexed_at, settings FROM repos WHERE id=? AND workspace_id=?",
-            (rid, wid),
-        ).fetchone()
+        wid, rid, identity, path_name = self._resolve_code_repo(workspace, repo)
+        if rid is None and path_name is None:
+            ws = self._clean_ws(workspace)
+            raise ValidationError(f"no repo named '{identity}' in workspace '{ws}' yet")
+        row = (
+            self.store.conn.execute(
+                "SELECT root_path, indexed_at, settings FROM repos WHERE id=? AND workspace_id=?",
+                (rid, wid),
+            ).fetchone()
+            if rid is not None
+            else None
+        )
         settings = _loads(row["settings"], {}) if row else {}
         report = dict(settings.get("code_graph_last_report") or {})
         languages = set(settings.get("code_graph_languages") or [])
@@ -2068,9 +2139,9 @@ class MemoryService:
                     or current_file_count != int(settings.get("code_graph_file_count") or -1)
                 ):
                     state = "index_stale"
-        stored_files = self.store.list_code_files(rid)
+        stored_files = self.store.list_code_files(rid) if rid is not None else []
         return {
-            "identity": f"{workspace}/{repo}",
+            "identity": f"{workspace}/{identity}",
             "root": root_path or None,
             "status": state,
             "generation": settings.get("code_graph_generation"),
@@ -2078,8 +2149,8 @@ class MemoryService:
             "currentFingerprint": current_fingerprint or None,
             "counts": {
                 "files": len(stored_files),
-                "symbols": self.store.count_symbols(rid),
-                "edges": self.store.count_code_edges(rid),
+                "symbols": self.store.count_symbols(rid) if rid is not None else 0,
+                "edges": self.store.count_code_edges(rid) if rid is not None else 0,
             },
             "exclusions": {
                 "dependencyAndBuildDirectories": True,
@@ -2114,8 +2185,14 @@ class MemoryService:
         if not repo:
             raise ValidationError("repo is required to index code")
         ws = self._clean_ws(workspace)
-        rp = _clean_name(repo, field="repo")
+        repo_identity, path_name = _clean_code_repo_identity(repo)
+        rp = path_name or repo_identity
         root_path = _clean_text(root_path, field="root_path", max_chars=MAX_CONTENT_CHARS)
+        if path_name is not None:
+            canonical_root, _ = _clean_code_repo_identity(root_path)
+            if canonical_root.casefold() != repo_identity.casefold():
+                raise ValidationError("repo path and root_path must identify the same directory")
+            root_path = canonical_root
         wid = self._get_or_create_workspace(ws)
         rid = self.store.get_or_create_repo(wid, rp)
         langs = None
@@ -2173,7 +2250,7 @@ class MemoryService:
             )
             raise
         out["workspace"] = ws
-        out["repo"] = rp
+        out["repo"] = repo_identity
         out["receipt"] = self.store.record_receipt(
             "index_repo", workspace_id=wid, repo_id=rid, actor="agent",
             target_count=out["files_indexed"], status="ok",
@@ -2182,7 +2259,7 @@ class MemoryService:
                       "files_removed": out["files_removed"],
                       "symbols": out["symbols"], "edges": out["edges"]},
         )
-        out["index"] = self.code_index_status(workspace=ws, repo=rp)
+        out["index"] = self.code_index_status(workspace=ws, repo=repo_identity)
         return out
 
     def search_code(self, query: str, *, workspace: str, repo: str, limit: int = 20) -> dict:
@@ -2192,7 +2269,7 @@ class MemoryService:
         status = self._require_current_code_index(workspace=workspace, repo=repo)
         if status.get("ok") is False:
             return status
-        wid, rid = self._require_scope(workspace, repo)
+        wid, rid, _identity, _logical_name = self._resolve_code_repo(workspace, repo)
         limit = max(1, min(MAX_K, int(limit)))
         result = self.engine.search_code(
             query, repo_id=rid, limit=limit,
@@ -2212,7 +2289,7 @@ class MemoryService:
         status = self._require_current_code_index(workspace=workspace, repo=repo)
         if status.get("ok") is False:
             return status
-        wid, rid = self._require_scope(workspace, repo)
+        wid, rid, _identity, _logical_name = self._resolve_code_repo(workspace, repo)
         try:
             max_depth = max(1, min(32, int(max_depth)))
         except (TypeError, ValueError):
@@ -2235,7 +2312,7 @@ class MemoryService:
         status = self._require_current_code_index(workspace=workspace, repo=repo)
         if status.get("ok") is False:
             return status
-        wid, rid = self._require_scope(workspace, repo)
+        wid, rid, _identity, _logical_name = self._resolve_code_repo(workspace, repo)
         result = self.engine.analyze_impact(
             files, repo_id=rid,
             flt=SearchFilter(
@@ -2251,7 +2328,7 @@ class MemoryService:
         status = self._require_current_code_index(workspace=workspace, repo=repo)
         if status.get("ok") is False:
             return status
-        wid, rid = self._require_scope(workspace, repo)
+        wid, rid, _identity, _logical_name = self._resolve_code_repo(workspace, repo)
         flt = SearchFilter(
             workspace_id=wid, repo_id=rid, include_ancestors=True
         )

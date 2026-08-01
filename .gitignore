@@ -15,6 +15,8 @@ tmp_*.json
 tmp_*.log
 handoff/
 db/thinkgraph-engraphis-v2.sqlite*
+# Reproducible Engraphis release-check cache stored beside the local database.
+/db/.engraphis_update_check.json
 
 # Dependency folders
 node_modules/

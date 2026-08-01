@@ -89,9 +89,9 @@ function normalizeRetiredMagenticOneDefault(card: AgentCardInstance): AgentCardI
 
 function migrateSystemToolGrants(
   card: AgentCardInstance,
-  sourceVersion: number,
+  sourceGrantVersion: number,
 ): AgentCardInstance {
-  if (sourceVersion >= SYSTEM_TOOL_GRANTS_VERSION) return card;
+  if (sourceGrantVersion >= SYSTEM_TOOL_GRANTS_VERSION) return card;
   const tools =
     card.id === 'card_main_chat'
       ? MAIN_CHAT_CONTROLLER_TOOLS
@@ -394,6 +394,7 @@ export function hydrateDeckDocument(
   if (!value || typeof value !== 'object') {
     return cloneDeckDocument(INITIAL_DECK);
   }
+  const sourceGrantVersion = Number(value.systemToolGrantsVersion) || 0;
   const hasExplicitNodes = Array.isArray(value.nodes);
   const nextEdges = Array.isArray(value.edges)
     ? normalizeDeckEdges(value.edges)
@@ -421,11 +422,12 @@ export function hydrateDeckDocument(
   const baseDeck = {
     ...hydratedDeck,
     version: Math.max(hydratedDeck.version, SYSTEM_TOOL_GRANTS_VERSION),
+    systemToolGrantsVersion: SYSTEM_TOOL_GRANTS_VERSION,
     nodes: hydratedDeck.nodes
       .filter((node) => !bannedNodeIds.has(node.id))
       .map(normalizeLocalCoderControllerCard)
       .map(normalizeRetiredMagenticOneDefault)
-      .map((node) => migrateSystemToolGrants(node, hydratedDeck.version)),
+      .map((node) => migrateSystemToolGrants(node, sourceGrantVersion)),
     edges: hydratedDeck.edges.filter(
       (edge) =>
         !bannedNodeIds.has(edge.source) && !bannedNodeIds.has(edge.target),

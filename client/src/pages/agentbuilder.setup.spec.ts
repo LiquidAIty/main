@@ -387,7 +387,8 @@ describe('agentbuilder authoring flow', () => {
 
   it('migrates stale system-card grants once without changing saved card presentation or wiring', () => {
     const stale = JSON.parse(JSON.stringify(INITIAL_DECK)) as DeckDocument;
-    stale.version = SYSTEM_TOOL_GRANTS_VERSION - 1;
+    stale.version = 77;
+    delete stale.systemToolGrantsVersion;
     const main = stale.nodes.find((node) => node.id === 'card_main_chat');
     const coder = stale.nodes.find((node) => node.id === 'card_local_coder');
     const hermes = stale.nodes.find((node) => node.id === 'card_hermes_steward');
@@ -419,7 +420,8 @@ describe('agentbuilder authoring flow', () => {
     const migratedCoder = migrated.nodes.find((node) => node.id === 'card_local_coder');
     const migratedHermes = migrated.nodes.find((node) => node.id === 'card_hermes_steward');
 
-    expect(migrated.version).toBe(SYSTEM_TOOL_GRANTS_VERSION);
+    expect(migrated.version).toBe(77);
+    expect(migrated.systemToolGrantsVersion).toBe(SYSTEM_TOOL_GRANTS_VERSION);
     expect(migratedMain?.runtimeOptions?.tools).toEqual([...MAIN_CHAT_CONTROLLER_TOOLS]);
     expect(migratedCoder?.runtimeOptions?.tools).toEqual([...LOCAL_CODER_CONTROLLER_TOOLS]);
     expect(migratedHermes?.runtimeOptions?.tools).toEqual([...HERMES_STEWARD_TOOLS]);

@@ -893,11 +893,14 @@ async def _graphiti_episode_entities(arguments: dict[str, Any]) -> CallToolResul
             "ok": False,
             "error": "invalid_identity",
             "failureCode": "invalid_identity",
+            "errorCategory": "INVALID_ARGUMENT",
             "retryable": False,
             "dependency": "graphiti_database",
         }
         return CallToolResult(
-            content=[TextContent(type="text", text=json.dumps(failure))], isError=True
+            content=[TextContent(type="text", text=json.dumps(failure))],
+            structuredContent=failure,
+            isError=True,
         )
     try:
         normalized_ids = [str(UUID(str(value))) for value in episode_ids]
@@ -906,11 +909,14 @@ async def _graphiti_episode_entities(arguments: dict[str, Any]) -> CallToolResul
             "ok": False,
             "error": "invalid_identity",
             "failureCode": "invalid_identity",
+            "errorCategory": "INVALID_ARGUMENT",
             "retryable": False,
             "dependency": "graphiti_database",
         }
         return CallToolResult(
-            content=[TextContent(type="text", text=json.dumps(failure))], isError=True
+            content=[TextContent(type="text", text=json.dumps(failure))],
+            structuredContent=failure,
+            isError=True,
         )
     native = _NATIVE_GRAPHITI_MODULE
     client = await native.graphiti_service.get_client()
@@ -932,12 +938,15 @@ async def _graphiti_episode_entities(arguments: dict[str, Any]) -> CallToolResul
                 "ok": False,
                 "error": "episode_not_found",
                 "failureCode": "episode_not_found",
+                "errorCategory": "NOT_FOUND",
                 "retryable": False,
                 "dependency": "graphiti_database",
                 "episodeUuids": missing,
             }
             return CallToolResult(
-                content=[TextContent(type="text", text=json.dumps(failure))], isError=True
+                content=[TextContent(type="text", text=json.dumps(failure))],
+                structuredContent=failure,
+                isError=True,
             )
         results = await asyncio.wait_for(
             client.get_nodes_and_edges_by_episode(normalized_ids),

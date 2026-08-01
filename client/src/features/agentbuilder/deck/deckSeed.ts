@@ -372,7 +372,8 @@ export const INITIAL_DECK: DeckDocument = {
   name: 'Agent Card Deck',
   workspaceRoot: DEFAULT_WORKSPACE_ROOT,
   promptTemplates: cloneDeckDocument(INITIAL_PROMPT_TEMPLATES),
-  version: 4,
+  systemToolGrantsVersion: 5,
+  version: 5,
   nodes: [
     {
       // The Harness front-door card. runtimeBinding 'main_chat' is the ONLY thing

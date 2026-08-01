@@ -374,6 +374,9 @@ function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument
             typeof template.content === 'string',
         )
       : [],
+    systemToolGrantsVersion: Number.isFinite(Number(raw.systemToolGrantsVersion))
+      ? Number(raw.systemToolGrantsVersion)
+      : undefined,
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
     nodes: Array.isArray(raw.nodes)
       ? raw.nodes

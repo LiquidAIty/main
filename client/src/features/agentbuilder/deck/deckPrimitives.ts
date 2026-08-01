@@ -94,7 +94,7 @@ export const HERMES_STEWARD_TOOLS = [
   'worldsignals.poll',
   'worldsignals.stream_events',
 ] as const;
-export const SYSTEM_TOOL_GRANTS_VERSION = 4;
+export const SYSTEM_TOOL_GRANTS_VERSION = 5;
 
 export function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   const normalized = safeText(value).trim().toLowerCase();
