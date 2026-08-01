@@ -6,9 +6,7 @@ import {
   parseCoderAuditResult,
   resolveCoderToolPolicy,
   resolveConsolePermissionMode,
-  resolveConsoleAuditTools,
   CODEBASE_MEMORY_MCP_SERVER,
-  CODEBASE_MEMORY_TOOL_GRANT,
   LEGACY_HARNESS_TOOL_POLICY,
   resolveEffectiveCoderToolSnapshot,
 } from './coderRuntimeContract';
@@ -52,7 +50,8 @@ afterEach(() => vi.unstubAllEnvs());
 describe('resolveCoderToolPolicy', () => {
   it('direct_main_audit is structurally read-only: native reads + CodeGraph, no edits, no shell', () => {
     const policy = resolveCoderToolPolicy('direct_main_audit');
-    expect(policy.allowedTools).toEqual(expect.arrayContaining(['Read', 'Grep', 'Glob', CODEBASE_MEMORY_TOOL_GRANT]));
+    expect(policy.allowedTools).toEqual(expect.arrayContaining(['Read', 'Grep', 'Glob']));
+    expect(policy.allowedTools).not.toContain('mcp__codebase-memory');
     // No mutating capability may be allow-listed.
     for (const forbidden of ['Edit', 'Write', 'NotebookEdit', 'Bash', 'PowerShell']) {
       expect(policy.allowedTools).not.toContain(forbidden);
@@ -66,15 +65,11 @@ describe('resolveCoderToolPolicy', () => {
   it('mag_one_execution grants implementation authority plus the native CodeGraph MCP', () => {
     const policy = resolveCoderToolPolicy('mag_one_execution');
     expect(policy.allowedTools).toEqual(expect.arrayContaining([
-      'Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'PowerShell', CODEBASE_MEMORY_TOOL_GRANT,
+      'Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'PowerShell',
     ]));
+    expect(policy.allowedTools).not.toContain('mcp__codebase-memory');
     expect(policy.allowsMutatingShell).toBe(true);
     expect(policy.codeGraphMcp).toBe(true);
-  });
-
-  it('grants the complete native CBM server catalog without copying tool names', () => {
-    expect(CODEBASE_MEMORY_TOOL_GRANT).toBe(`mcp__${CODEBASE_MEMORY_MCP_SERVER}`);
-    expect(CODEBASE_MEMORY_TOOL_GRANT).not.toContain('__search_graph');
   });
 
   it('legacy harness policy is exactly the historical shell-capable, no-edit args', () => {
@@ -118,6 +113,7 @@ describe('resolveEffectiveCoderToolSnapshot', () => {
     expect(snapshot.allowedTools).toEqual(expect.arrayContaining([
       'mcp__codebase-memory__search_graph', 'mcp__liquidaity__engraphis_search_code',
     ]));
+    expect(snapshot.allowedTools).not.toContain('mcp__codebase-memory');
     expect(Object.keys(snapshot.mcpServers)).toEqual(['codebase-memory', 'liquidaity']);
     expect(snapshot.tools.find((tool) => tool.canonicalName === 'run_local_coder')?.callable).toBe(false);
   });
@@ -129,27 +125,41 @@ describe('resolveEffectiveCoderToolSnapshot', () => {
     expect(snapshot.unresolved).toEqual(['old.tool']);
     expect(snapshot.tools.find((tool) => tool.canonicalName === 'old.tool')?.group).toBe('Unavailable');
   });
+
+  it('keeps paid and approval-required saved grants visible but unavailable to read-only audit', () => {
+    const snapshot = resolveEffectiveCoderToolSnapshot({
+      authority: 'direct_main_audit', runId: 'coder_snapshot',
+      savedTools: ['engraphis.search_code', 'engraphis.index_repo', 'research.run'],
+      catalog: [
+        descriptor('engraphis.search_code'),
+        descriptor('engraphis.index_repo', { approvalRequired: true }),
+        descriptor('research.run', { providerPossible: true }),
+      ],
+    });
+    expect(snapshot.allowedTools).toContain('mcp__liquidaity__engraphis_search_code');
+    expect(snapshot.allowedTools).not.toContain('mcp__liquidaity__engraphis_index_repo');
+    expect(snapshot.allowedTools).not.toContain('mcp__liquidaity__research_run');
+    expect(snapshot.tools.find((tool) => tool.canonicalName === 'engraphis.index_repo')).toMatchObject({
+      saved: true, enabled: false, callable: false,
+    });
+    expect(snapshot.tools.find((tool) => tool.canonicalName === 'research.run')).toMatchObject({
+      risk: 'paid', enabled: false, callable: false,
+    });
+    expect(snapshot.hasPaidTools).toBe(false);
+  });
 });
 
-describe('resolveConsoleAuditTools + audit argv (item 4)', () => {
-  it('allows only Read/Grep/Glob plus native read-only CBM tokens; denies all mutation/shell', () => {
-    const { allowedTools, disallowedTools } = resolveConsoleAuditTools();
-    expect(allowedTools).toEqual(['Read', 'Grep', 'Glob', CODEBASE_MEMORY_TOOL_GRANT]);
-    for (const forbidden of ['Bash', 'PowerShell', 'Edit', 'Write', 'NotebookEdit']) {
-      expect(allowedTools).not.toContain(forbidden);
-      expect(disallowedTools).toContain(forbidden);
-    }
-  });
-
-  it('argv carries the verified --allowedTools/--disallowedTools flags when a policy is supplied', () => {
-    const { allowedTools, disallowedTools } = resolveConsoleAuditTools();
+describe('audit argv (item 4)', () => {
+  it('argv carries the exact resolved tool grants and native denials', () => {
+    const allowedTools = ['Read', 'Grep', 'Glob', 'mcp__codebase-memory__search_graph'];
+    const disallowedTools = ['Bash', 'PowerShell', 'Edit', 'Write', 'NotebookEdit'];
     const args = buildOpenClaudeSubagentArgs({
       prompt: 'audit', model: 'm', permissionMode: 'plan', jsonSchema: {},
       mcpFlags: ['--mcp-config', '/tmp/mcp.json', '--strict-mcp-config'],
       allowedTools, disallowedTools,
     });
-    expect(args[args.indexOf('--allowedTools') + 1]).toContain('mcp__codebase-memory');
-    expect(args[args.indexOf('--allowedTools') + 1]).not.toContain('mcp__codebase-memory__search_graph');
+    expect(args[args.indexOf('--allowedTools') + 1]).toContain('mcp__codebase-memory__search_graph');
+    expect(args[args.indexOf('--allowedTools') + 1]).not.toContain('mcp__codebase-memory,');
     expect(args[args.indexOf('--allowedTools') + 1]).toContain('Read');
     expect(args[args.indexOf('--disallowedTools') + 1]).toContain('Bash');
     expect(args).toEqual(expect.arrayContaining(['--mcp-config', '/tmp/mcp.json', '--strict-mcp-config']));

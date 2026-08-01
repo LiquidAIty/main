@@ -132,9 +132,14 @@ export function resolveEffectiveCoderToolSnapshot(opts: {
     const runtimeName = isCbm
       ? runtimeMcpName(CODEBASE_MEMORY_MCP_SERVER, canonicalName.slice(4))
       : runtimeMcpName('liquidaity', canonicalName);
-    if (isCbm) needsCodeGraph = true;
-    else needsLiquidaity = true;
-    selectedMcpRuntimeNames.push(runtimeName);
+    const deniedByAuditAuthority = opts.authority === 'direct_main_audit'
+      && (descriptor.capability.approvalRequired || descriptor.capability.providerPossible);
+    const enabled = !deniedByAuditAuthority;
+    if (enabled) {
+      if (isCbm) needsCodeGraph = true;
+      else needsLiquidaity = true;
+      selectedMcpRuntimeNames.push(runtimeName);
+    }
     const group: EffectiveCoderTool['group'] = isCbm
       ? 'Codebase Memory'
       : canonicalName.startsWith('engraphis.') ? 'Engraphis' : 'Other MCP';
@@ -146,7 +151,10 @@ export function resolveEffectiveCoderToolSnapshot(opts: {
       displayName: descriptor.title || canonicalName,
       description: descriptor.description || descriptor.capability.recommendedUse,
       source: isCbm ? 'codebase_memory' : 'liquidaity_mcp', group, risk, saved: true,
-      enabled: true, callable: true, reason: `Saved grant; callable in ${opts.authority}.`,
+      enabled, callable: enabled,
+      reason: enabled
+        ? `Saved grant; callable in ${opts.authority}.`
+        : 'Saved grant is visible but denied by read-only audit authority.',
     });
   }
 
@@ -163,7 +171,6 @@ export function resolveEffectiveCoderToolSnapshot(opts: {
   });
   const allowedTools = [
     ...enabledNative,
-    ...(policy.codeGraphMcp ? [CODEBASE_MEMORY_TOOL_GRANT] : []),
     ...selectedMcpRuntimeNames,
   ];
   const disallowedTools = OPENCLAUDE_NATIVE_TOOL_CONTRACT.filter((name) => !enabledNative.has(name));
@@ -205,11 +212,6 @@ export type CoderToolPolicy = {
 /** Native CBM server name from the repository's canonical .mcp.json. */
 export const CODEBASE_MEMORY_MCP_SERVER = 'codebase-memory';
 
-// OpenClaude's server-level MCP permission. It is intentionally not a list of
-// CBM tool names: the connected native server owns discovery and this grant
-// admits whatever catalog that server actually advertises.
-export const CODEBASE_MEMORY_TOOL_GRANT = `mcp__${CODEBASE_MEMORY_MCP_SERVER}`;
-
 /**
  * The legacy `harness_subagent` policy: exactly what `run_coder_subagent` has
  * always produced (shell-capable, no file edits, dev-harness MCP only). Named
@@ -229,7 +231,10 @@ export function resolveCoderToolPolicy(mode: CoderAuthorityMode): CoderToolPolic
   if (mode === 'direct_main_audit') {
     return {
       // Read-only audit: native reads + CodeGraph, nothing that mutates the repo.
-      allowedTools: ['Read', 'Grep', 'Glob', CODEBASE_MEMORY_TOOL_GRANT],
+      // Exact CodeGraph tool grants are derived from the saved card and live
+      // catalog by resolveEffectiveCoderToolSnapshot. A server-wide grant here
+      // would silently admit destructive CBM operations that the card did not save.
+      allowedTools: ['Read', 'Grep', 'Glob'],
       disallowedTools: ['Write', 'Edit', 'NotebookEdit', 'Bash', 'PowerShell', 'WebFetch', 'WebSearch'],
       permissionMode: 'dontAsk',
       allowsMutatingShell: false,
@@ -246,7 +251,6 @@ export function resolveCoderToolPolicy(mode: CoderAuthorityMode): CoderToolPolic
       'Write',
       'Bash',
       'PowerShell',
-      CODEBASE_MEMORY_TOOL_GRANT,
     ],
     disallowedTools: ['WebFetch', 'WebSearch'],
     permissionMode: 'dontAsk',
@@ -314,21 +318,6 @@ export function buildCoderMcpServers(opts: {
     servers.liquidaity = resolvePythonAgentMcpServerSpec();
   }
   return servers;
-}
-
-/**
- * OpenClaude tool allow/deny for a read-only direct_main_audit: native reads +
- * the native Codebase Memory server; every mutating/native-shell tool denied.
- * Flag names verified from OpenClaude source (main.tsx: `--allowedTools` /
- * `--disallowedTools`). Combined with `--permission-mode plan` and the scoped
- * doorway MCP, this is defense in depth — the audit cannot Edit/Write/shell or
- * reach any write tool.
- */
-export function resolveConsoleAuditTools(): { allowedTools: string[]; disallowedTools: string[] } {
-  return {
-    allowedTools: ['Read', 'Grep', 'Glob', CODEBASE_MEMORY_TOOL_GRANT],
-    disallowedTools: ['Bash', 'PowerShell', 'Edit', 'Write', 'NotebookEdit'],
-  };
 }
 
 /**

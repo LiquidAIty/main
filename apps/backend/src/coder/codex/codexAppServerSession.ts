@@ -104,31 +104,51 @@ export class CodexAppServerSession {
     this.pending.clear();
   }
 
+  private failActiveTurn(error: Error): void {
+    if (!this.receipt || this.receipt.status !== 'running') return;
+    const endedAt = new Date().toISOString();
+    this.receipt.status = 'failed';
+    this.receipt.endedAt = endedAt;
+    this.receipt.durationMs = Date.parse(endedAt) - Date.parse(this.receipt.startedAt);
+    this.receipt.result = null;
+    this.receipt.failure = error.message;
+    const waiters = this.completionWaiters.get(this.receipt.turnId);
+    if (waiters) {
+      for (const resolve of waiters) resolve(structuredClone(this.receipt));
+      this.completionWaiters.delete(this.receipt.turnId);
+    }
+    this.activeTurnId = null;
+  }
+
   private recordNotification(method: string, params: unknown): void {
     const at = new Date().toISOString();
     this.events.push({ method, params: params ?? null, at });
     if (this.events.length > 200) this.events.shift();
     const body = params as any;
+    const eventTurnId = String(body?.turn?.id || body?.turnId || '').trim();
+    const belongsToActiveTurn = !this.receipt || !eventTurnId || eventTurnId === this.receipt.turnId;
+    const belongsToActiveReceipt = Boolean(this.receipt && belongsToActiveTurn);
     if (method === 'turn/started') {
       this.activeTurnId = String(body?.turn?.id || '') || this.activeTurnId;
     }
     if (method === 'account/login/completed') this.pendingLoginId = null;
-    if (this.receipt && (method === 'item/started' || method === 'item/completed')) {
+    if (belongsToActiveReceipt && this.receipt && (method === 'item/started' || method === 'item/completed')) {
       const itemType = String(body?.item?.type || '').trim();
       if (itemType && /command|tool|mcp/i.test(itemType)) {
         this.receipt.toolCalls.push({ method: `${method}:${itemType}`, at });
       }
     }
-    if (this.receipt && /usage/i.test(method)) this.receipt.usage = params;
-    if (method === 'item/agentMessage/delta') {
+    if (belongsToActiveReceipt && this.receipt && /usage/i.test(method)) this.receipt.usage = params;
+    if (belongsToActiveTurn && method === 'item/agentMessage/delta') {
       this.activeOutputText += String(body?.delta || '').slice(0, 32_000);
       this.activeOutputText = this.activeOutputText.slice(-500_000);
     }
-    if (method === 'item/completed' && String(body?.item?.type || '') === 'agentMessage') {
+    if (belongsToActiveTurn && method === 'item/completed' && String(body?.item?.type || '') === 'agentMessage') {
       const completedText = String(body?.item?.text || body?.item?.content || '').trim();
       if (completedText) this.activeOutputText = completedText.slice(-500_000);
     }
     if (method === 'turn/completed') {
+      if (this.receipt && eventTurnId && eventTurnId !== this.receipt.turnId) return;
       const status = String(body?.turn?.status || body?.status || '').toLowerCase();
       const endedAt = new Date().toISOString();
       if (this.receipt) {
@@ -177,13 +197,16 @@ export class CodexAppServerSession {
       if (notification.method) this.recordNotification(notification.method, notification.params);
     });
     child.once('exit', () => {
-      this.failPending(new Error('codex_app_server_exited'));
+      const error = new Error('codex_app_server_exited');
+      this.failActiveTurn(error);
+      this.failPending(error);
       this.child = null;
       this.initialized = false;
       this.activeThreadId = null;
       this.activeTurnId = null;
     });
     child.once('error', (error) => {
+      this.failActiveTurn(error);
       this.failPending(error);
       this.child = null;
       this.initialized = false;

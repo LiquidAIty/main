@@ -153,8 +153,16 @@ function task(authority?: 'direct_main_audit' | 'mag_one_execution') {
     provider: 'openrouter',
     toolSnapshot: resolveEffectiveCoderToolSnapshot({
       authority: resolvedAuthority,
-      savedTools: [],
-      catalog: [],
+      savedTools: ['cbm.search_graph'],
+      catalog: [{
+        name: 'cbm.search_graph', description: 'Search CodeGraph', inputSchema: { type: 'object' },
+        capability: {
+          surface: 'knowledge', capabilityType: 'callable_tool', graphAuthority: 'codegraph',
+          authorityClass: 'repository_structure', runtimeCompatibility: ['local_coder'],
+          cardAssignable: true, latency: 'fast', providerPossible: false, health: 'available',
+          recommendedUse: 'Search graph', verification: 'live', approvalRequired: false, deprecated: false,
+        },
+      }],
       runId: 'coder_test',
     }),
   };
@@ -188,7 +196,8 @@ describe('runOpenClaudeCodeTask (visible Console PTY)', () => {
     // only, no shell) + strict scoped MCP config.
     const args = capture.req?.args ?? [];
     expect(args[args.indexOf('--permission-mode') + 1]).toBe('plan');
-    expect(args[args.indexOf('--allowedTools') + 1]).toContain('mcp__codebase-memory');
+    expect(args[args.indexOf('--allowedTools') + 1]).toContain('mcp__codebase-memory__search_graph');
+    expect(args[args.indexOf('--allowedTools') + 1]).not.toContain('mcp__codebase-memory,');
     expect(args[args.indexOf('--allowedTools') + 1]).not.toContain('Bash');
     expect(args[args.indexOf('--disallowedTools') + 1]).toContain('Edit');
     expect(args).toContain('--strict-mcp-config');

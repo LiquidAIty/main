@@ -37,6 +37,9 @@ const runtimeMocks = vi.hoisted(() => ({
     provider: 'openrouter',
     providerModelId: 'z-ai/glm-5.2',
   })),
+  resolveCardTools: vi.fn((card: { tools?: unknown } | null) => (
+    Array.isArray(card?.tools) ? card.tools.map(String) : []
+  )),
 }));
 
 const deckMocks = vi.hoisted(() => ({
@@ -138,6 +141,7 @@ const chatSessionMocks = vi.hoisted(() => {
 
 const mcpClientMocks = vi.hoisted(() => ({
   callPythonAgentMcpTool: vi.fn(async () => ({ ok: true })),
+  listPythonAgentMcpCatalog: vi.fn(async () => []),
 }));
 
 // Shape mirrors what coder.routes.ts consumes from the unified model-context
@@ -197,6 +201,7 @@ vi.mock('../services/graphContext/cbmScopeGate', () => ({
 vi.mock('../cards/runtime', () => ({
   runConfiguredCard: runtimeMocks.runConfiguredCard,
   resolveCardModelStrict: runtimeMocks.resolveCardModelStrict,
+  resolveCardTools: runtimeMocks.resolveCardTools,
 }));
 
 vi.mock('../decks/store', () => ({
@@ -226,6 +231,7 @@ vi.mock('../coder/openclaude/session/grpcChatClient', () => ({
 
 vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
   callPythonAgentMcpTool: mcpClientMocks.callPythonAgentMcpTool,
+  listPythonAgentMcpCatalog: mcpClientMocks.listPythonAgentMcpCatalog,
 }));
 
 vi.mock('../services/autogen/autogenOrchestratorClient', () => graphViewMocks);
