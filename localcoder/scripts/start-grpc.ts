@@ -1,7 +1,6 @@
 import path from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
-import { GrpcServer, type PythonMcpConfig } from '../src/grpc/server.ts'
-import { init } from '../src/entrypoints/init.ts'
+import type { PythonMcpConfig } from '../src/grpc/server.ts'
 
 // Polyfill MACRO which is normally injected by the bundler
 Object.assign(globalThis, {
@@ -80,6 +79,13 @@ async function main() {
   console.log('Starting OpenClaude gRPC Server...')
   const repoRoot = path.resolve(import.meta.dirname, '..', '..')
   loadBackendEnv(repoRoot)
+  // These modules reference the build-time MACRO global while they initialize.
+  // Runtime imports must therefore occur only after the source-mode polyfill
+  // above has been installed. Static imports are evaluated before module code.
+  const [{ GrpcServer }, { init }] = await Promise.all([
+    import('../src/grpc/server.ts'),
+    import('../src/entrypoints/init.ts'),
+  ])
   await init()
 
   // Mirror CLI bootstrap: hydrate secure tokens and resolve provider profile

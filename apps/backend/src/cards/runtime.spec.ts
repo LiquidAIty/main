@@ -443,6 +443,33 @@ describe('Canonical Cards Runtime', () => {
     );
   });
 
+  it('includes the ordinary Codex app-server card as an external Mag One worker with no graph tools', () => {
+    const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
+    const codex = {
+      id: 'card_openai_coder', kind: 'agent', runtimeType: 'codex_app_server',
+      runtimeBinding: 'openai_coder', title: 'OpenAI Coder', tools: [],
+      runtimeOptions: { modelKey: 'gpt-5.6-sol', provider: 'openai' },
+    };
+    const edges = [{
+      id: 'edge_openai_coder_magentic_bus', source: codex.id, target: mag.id,
+      edgeType: 'magentic_option',
+    }];
+    const callable = resolvedMagenticOptions(mag.id, [mag, codex], edges);
+    const payload = buildPythonAutoGenCardRuntimePayload(
+      mag, {}, 'read only question',
+      { projectId: 'admin', deckId: 'deck_builder', allCards: [mag, codex], allEdges: edges },
+      {}, callable, '2026',
+    );
+    expect(callable.map((card) => card.id)).toEqual(['card_openai_coder']);
+    expect(payload.cardRuntime.participants).toEqual([
+      expect.objectContaining({
+        cardId: 'card_openai_coder', runtimeType: 'codex_app_server', tools: [],
+        provider: 'openai', providerModelId: 'gpt-5.6-sol',
+      }),
+    ]);
+    expect(payload.cardRuntime.runtimeScope?.pythonWorkerIds).toEqual(['card_openai_coder']);
+  });
+
   it('disconnected cards do not appear in model-visible workspace context or payload participants', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const cardConnected = { id: 'conn1', kind: 'agent', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };

@@ -53,6 +53,7 @@ export type ConsoleOutputChunk = {
 
 export type ConsoleSessionInfo = {
   id: string;
+  ownerCardId?: string | null;
   targetRoot: string;
   mode: ConsoleMode;
   state: ConsoleSessionState;
@@ -285,6 +286,7 @@ function defaultPtySpawn(): ConsoleSpawn | null {
 }
 
 type ManagerOptions = {
+  ownerCardId?: string | null;
   workspaceRoot?: string;
   env?: NodeJS.ProcessEnv;
   spawnProcess?: ConsoleSpawn;
@@ -545,9 +547,11 @@ export class OpenClaudeConsoleSessionManager {
   private readonly maxBufferChars: number;
   private readonly now: () => string;
   private readonly idFactory: () => string;
+  private readonly ownerCardId: string | null;
   private counter = 0;
 
   constructor(options: ManagerOptions = {}) {
+    this.ownerCardId = options.ownerCardId ?? null;
     this.workspaceRoot = options.workspaceRoot
       ? path.resolve(options.workspaceRoot)
       : resolveLocalCoderWorkspaceRoot(process.cwd());
@@ -648,6 +652,7 @@ export class OpenClaudeConsoleSessionManager {
     const transportMode: ConsoleTransportMode = usePty ? 'pty' : 'pipe';
     const info: ConsoleSessionInfo = {
       id: this.idFactory(),
+      ownerCardId: this.ownerCardId,
       targetRoot,
       mode,
       state: 'starting',
@@ -720,6 +725,7 @@ export class OpenClaudeConsoleSessionManager {
     const transportMode: ConsoleTransportMode = usePty ? 'pty' : 'pipe';
     const info: ConsoleSessionInfo = {
       id: this.idFactory(),
+      ownerCardId: this.ownerCardId,
       targetRoot,
       mode: 'shell',
       state: 'starting',
@@ -783,6 +789,17 @@ export class OpenClaudeConsoleSessionManager {
     return undefined;
   }
 
+  /** Resolve one live session owned by the exact card. Ambiguity fails closed. */
+  findRunningForCard(cardId: string): OpenClaudeConsoleSession | undefined {
+    const matches = [...this.sessions.values()].filter(
+      (session) =>
+        session.info.ownerCardId === cardId &&
+        (session.info.state === 'running' || session.info.state === 'starting'),
+    );
+    if (matches.length > 1) throw new Error(`coder_card_multiple_active_sessions:${cardId}`);
+    return matches[0];
+  }
+
   hasAnySession(): boolean {
     return this.sessions.size > 0;
   }
@@ -792,7 +809,9 @@ export class OpenClaudeConsoleSessionManager {
   }
 }
 
-export const openClaudeConsoleSessionManager = new OpenClaudeConsoleSessionManager();
+export const openClaudeConsoleSessionManager = new OpenClaudeConsoleSessionManager({
+  ownerCardId: 'card_local_coder',
+});
 
 type HermesManagerOptions = {
   workspaceRoot?: string;

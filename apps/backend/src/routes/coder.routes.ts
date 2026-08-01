@@ -114,6 +114,11 @@ async function resolveOpenAiCoderCard(projectId: string, cardId: string) {
   return { card, tools };
 }
 
+async function assertOpenAiCoderRequest(projectId: string, cardId: string): Promise<void> {
+  if (!projectId) throw new Error('projectId_required');
+  await resolveOpenAiCoderCard(projectId, cardId);
+}
+
 router.get('/codex-app-server/cards/:cardId/inspect', async (req, res) => {
   try {
     const projectId = String(req.query.projectId || '').trim();
@@ -126,8 +131,43 @@ router.get('/codex-app-server/cards/:cardId/inspect', async (req, res) => {
   }
 });
 
-router.get('/codex-app-server/cards/:cardId/status', (req, res) => {
-  return res.json({ ok: true, status: codexAppServerSession.status(req.params.cardId) });
+router.get('/codex-app-server/cards/:cardId/status', async (req, res) => {
+  try {
+    await assertOpenAiCoderRequest(String(req.query.projectId || '').trim(), req.params.cardId);
+    return res.json({ ok: true, status: codexAppServerSession.status(req.params.cardId) });
+  } catch (error) {
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.post('/codex-app-server/cards/:cardId/account/login', async (req, res) => {
+  try {
+    await assertOpenAiCoderRequest(String(req.body?.projectId || '').trim(), req.params.cardId);
+    const login = await codexAppServerSession.loginStart(req.params.cardId);
+    return res.json({ ok: true, login });
+  } catch (error) {
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.post('/codex-app-server/cards/:cardId/account/cancel', async (req, res) => {
+  try {
+    await assertOpenAiCoderRequest(String(req.body?.projectId || '').trim(), req.params.cardId);
+    await codexAppServerSession.loginCancel(req.params.cardId);
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.post('/codex-app-server/cards/:cardId/account/logout', async (req, res) => {
+  try {
+    await assertOpenAiCoderRequest(String(req.body?.projectId || '').trim(), req.params.cardId);
+    await codexAppServerSession.logout(req.params.cardId);
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
 });
 
 router.post('/codex-app-server/cards/:cardId/start', async (req, res) => {
@@ -152,8 +192,25 @@ router.post('/codex-app-server/cards/:cardId/start', async (req, res) => {
   }
 });
 
+router.post('/codex-app-server/cards/:cardId/await', async (req, res) => {
+  try {
+    const projectId = String(req.body?.projectId || '').trim();
+    await assertOpenAiCoderRequest(projectId, req.params.cardId);
+    const turnId = String(req.body?.turnId || '').trim();
+    if (!turnId) return res.status(400).json({ ok: false, error: 'turnId_required' });
+    const receipt = await codexAppServerSession.waitForReceipt(req.params.cardId, turnId);
+    return res.status(receipt.status === 'completed' ? 200 : 409).json({
+      ok: receipt.status === 'completed',
+      receipt,
+    });
+  } catch (error) {
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 router.post('/codex-app-server/cards/:cardId/stop', async (req, res) => {
   try {
+    await assertOpenAiCoderRequest(String(req.body?.projectId || '').trim(), req.params.cardId);
     await codexAppServerSession.stop(req.params.cardId);
     return res.json({ ok: true, status: codexAppServerSession.status(req.params.cardId) });
   } catch (error) {
@@ -163,6 +220,7 @@ router.post('/codex-app-server/cards/:cardId/stop', async (req, res) => {
 
 router.post('/codex-app-server/cards/:cardId/steer', async (req, res) => {
   try {
+    await assertOpenAiCoderRequest(String(req.body?.projectId || '').trim(), req.params.cardId);
     const input = String(req.body?.input || '').trim();
     if (!input) return res.status(400).json({ ok: false, error: 'steer_input_required' });
     await codexAppServerSession.steer(req.params.cardId, input);
@@ -321,6 +379,135 @@ router.post('/mcp-bridge/coder_effective_tools', async (req, res) => {
     });
   } catch (error) {
     return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+async function resolveCodingCard(projectId: string, deckId: string, cardId: string): Promise<any> {
+  const { deck } = await getDeckDocument(projectId, deckId);
+  const card = (deck?.nodes || []).find((node: any) => String(node?.id || '') === cardId);
+  if (!card) throw new Error(`coder_card_not_found:${cardId}`);
+  const system = card.runtimeType === 'local_coder' && card.runtimeBinding === 'local_coder';
+  const external = card.runtimeType === 'codex_app_server' && card.runtimeBinding === 'openai_coder';
+  if (!system && !external) throw new Error(`coder_card_runtime_unsupported:${cardId}`);
+  return card;
+}
+
+router.post('/mcp-bridge/coder_inspect', async (req, res) => {
+  try {
+    const projectId = String(req.body?.projectId || '').trim();
+    const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
+    const cardId = String(req.body?.cardId || '').trim();
+    const card = await resolveCodingCard(projectId, deckId, cardId);
+    const model = resolveCardModelStrict(card);
+    if (card.runtimeType === 'codex_app_server') {
+      const inspection = await codexAppServerSession.inspect(cardId);
+      return res.json({
+        ok: inspection.ready,
+        cardId,
+        agentClass: 'external_general',
+        route: 'main_mag_one_openai_coder',
+        provider: model.provider,
+        model: model.providerModelId,
+        account: inspection.account,
+        rateLimits: inspection.rateLimits,
+        modelAvailable: inspection.selectedModelAvailable,
+        readiness: inspection.state,
+        effectiveTools: [{ name: 'Codex native tool set', source: 'codex_app_server' }],
+        automaticGraphTools: [],
+        status: codexAppServerSession.status(cardId),
+        receipt: codexAppServerSession.getReceipt(cardId),
+        error: inspection.error,
+      });
+    }
+    const snapshot = resolveEffectiveCoderToolSnapshot({
+      authority: req.body?.authority === 'mag_one_execution' ? 'mag_one_execution' : 'direct_main_audit',
+      savedTools: resolveCardTools(card),
+      catalog: await listPythonAgentMcpCatalog(),
+      runId: 'inspection',
+    });
+    const runtime = await localCoderService.inspect(resolveProductChatWorkingDirectory());
+    const session = openClaudeConsoleSessionManager.findRunningForCard(cardId);
+    return res.json({
+      ok: runtime.ready && snapshot.unresolved.length === 0,
+      cardId,
+      agentClass: 'system',
+      route: 'main_system_coder_openclaude',
+      provider: model.provider,
+      model: model.providerModelId,
+      account: null,
+      modelAvailable: runtime.ready,
+      readiness: runtime.ready ? 'READY' : 'UNAVAILABLE',
+      effectiveTools: snapshot,
+      automaticGraphTools: ['CodeGraph/CBM'],
+      status: session?.info ?? { state: 'idle', ownerCardId: cardId },
+      receipt: null,
+      error: runtime.ready ? null : `openclaude_runtime_unavailable:${runtime.missing.join(',')}`,
+    });
+  } catch (error) {
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.post('/mcp-bridge/coder_stop', async (req, res) => {
+  try {
+    const projectId = String(req.body?.projectId || '').trim();
+    const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
+    const cardId = String(req.body?.cardId || '').trim();
+    const card = await resolveCodingCard(projectId, deckId, cardId);
+    if (card.runtimeType === 'codex_app_server') {
+      await codexAppServerSession.stop(cardId);
+      return res.json({ ok: true, cardId, status: codexAppServerSession.status(cardId) });
+    }
+    const session = openClaudeConsoleSessionManager.findRunningForCard(cardId);
+    if (!session) return res.status(409).json({ ok: false, error: 'openclaude_card_no_active_session' });
+    const stopped = session.stop();
+    return res.status(stopped ? 200 : 409).json({ ok: stopped, cardId, session: session.info });
+  } catch (error) {
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.post('/mcp-bridge/coder_steer', async (req, res) => {
+  try {
+    const projectId = String(req.body?.projectId || '').trim();
+    const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
+    const cardId = String(req.body?.cardId || '').trim();
+    const input = String(req.body?.input || '').trim();
+    if (!input) return res.status(400).json({ ok: false, error: 'steer_input_required' });
+    const card = await resolveCodingCard(projectId, deckId, cardId);
+    if (card.runtimeType === 'codex_app_server') {
+      await codexAppServerSession.steer(cardId, input);
+      return res.json({ ok: true, cardId, status: codexAppServerSession.status(cardId) });
+    }
+    const session = openClaudeConsoleSessionManager.findRunningForCard(cardId);
+    if (!session) return res.status(409).json({ ok: false, error: 'openclaude_card_no_active_session' });
+    if (!session.info.interactiveSupported || session.info.transportMode !== 'pty') {
+      return res.status(409).json({ ok: false, error: 'openclaude_card_steer_unsupported_noninteractive' });
+    }
+    const delivered = session.submitLine(input);
+    return res.status(delivered ? 200 : 409).json({ ok: delivered, cardId, session: session.info });
+  } catch (error) {
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.post('/mcp-bridge/coder_account', async (req, res) => {
+  try {
+    const projectId = String(req.body?.projectId || '').trim();
+    const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
+    const cardId = String(req.body?.cardId || '').trim();
+    const action = String(req.body?.action || '').trim();
+    const card = await resolveCodingCard(projectId, deckId, cardId);
+    if (card.runtimeType !== 'codex_app_server') {
+      return res.status(409).json({ ok: false, error: 'coder_account_not_supported_for_system_card' });
+    }
+    if (action === 'login') return res.json({ ok: true, login: await codexAppServerSession.loginStart(cardId) });
+    if (action === 'cancel') await codexAppServerSession.loginCancel(cardId);
+    else if (action === 'logout') await codexAppServerSession.logout(cardId);
+    else return res.status(400).json({ ok: false, error: `coder_account_action_invalid:${action}` });
+    return res.json({ ok: true, cardId, action });
+  } catch (error) {
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 

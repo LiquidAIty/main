@@ -13,8 +13,8 @@ const LIVE_STACK = process.env.LIQUIDAITY_LIVE_STACK === '1';
 describe('Python Agent MCP host — real stdio discovery + calls', () => {
   it('federates the three complete native catalogs with the LiquidAIty control surface', async () => {
     const names = await listPythonAgentMcpTools();
-    expect(names).toHaveLength(83);
-    expect(new Set(names).size).toBe(83);
+    expect(names).toHaveLength(87);
+    expect(new Set(names).size).toBe(87);
     expect(names.filter((name) => name.startsWith('cbm.'))).toHaveLength(14);
     expect(names.filter((name) => name.startsWith('engraphis.'))).toHaveLength(29);
     expect(names.filter((name) => name.startsWith('graphiti.'))).toHaveLength(13);
@@ -26,6 +26,10 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'card.update_configuration',
       'coder.status',
       'coder.effective_tools',
+      'coder.inspect',
+      'coder.stop',
+      'coder.steer',
+      'coder.account',
       'cbm.search_graph',
       'cbm.index_status',
       'engraphis.recall',

@@ -460,7 +460,8 @@ async def check():
     combined_names = [tool.name for tool in combined]
     assert len(set(combined_names)) == len(combined_names)
     assert {
-        'main.context', 'canvas.inspect', 'coder.status', 'coder.effective_tools', 'run_coder_subagent',
+        'main.context', 'canvas.inspect', 'coder.status', 'coder.effective_tools', 'coder.inspect',
+        'coder.stop', 'coder.steer', 'coder.account', 'run_coder_subagent',
         'agentgraph.inspect', 'graphview.list', 'graphview.get', 'graphview.create',
     }.issubset(set(combined_names))
     assert {
@@ -1016,6 +1017,10 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "graphview.create" in by_name
     assert "coder.status" in by_name
     assert "coder.effective_tools" in by_name
+    assert "coder.inspect" in by_name
+    assert "coder.stop" in by_name
+    assert "coder.steer" in by_name
+    assert "coder.account" in by_name
     native_names = {
         f"engraphis.{tool.name.removeprefix('engraphis_')}"
         for tool in native_engraphis_tools
@@ -1078,6 +1083,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert by_name["cbm.search_graph"].inputSchema == native_cbm_tools[0].inputSchema
     assert by_name["coder.status"].annotations.readOnlyHint is True
     assert by_name["coder.effective_tools"].annotations.readOnlyHint is True
+    assert by_name["coder.inspect"].annotations.readOnlyHint is True
+    assert by_name["coder.stop"].annotations is None
     assert by_name["run_coder_subagent"].annotations is None
 
     calls = []

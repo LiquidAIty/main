@@ -487,7 +487,7 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeType: 'codex_app_server',
       runtimeOptions: {
         provider: 'openai',
-        modelKey: 'gpt-5.3-codex',
+        modelKey: 'gpt-5.6-sol',
         tools: [],
       },
       parentGraphId: null,

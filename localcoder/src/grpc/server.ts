@@ -384,8 +384,12 @@ export class GrpcServer {
       process.exit(1)
     }
     if (!connection || connection.type !== 'connected') {
+      const detail =
+        connection?.type === 'failed' && connection.error
+          ? ` — ${connection.error}`
+          : ''
       console.error(
-        `gRPC Server: FATAL — official Python MCP host not connected (state=${connection?.type ?? 'none'}): ${command} ${hostPath}`,
+        `gRPC Server: FATAL — official Python MCP host not connected (state=${connection?.type ?? 'none'}): ${command} ${hostPath}${detail}`,
       )
       process.exit(1)
     }

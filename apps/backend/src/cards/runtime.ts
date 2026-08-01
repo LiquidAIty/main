@@ -139,7 +139,7 @@ function resolveCardBinding(card: any): string | null {
 }
 
 function isAssistLikeRuntimeType(runtimeType: string): boolean {
-  return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
+  return runtimeType === 'assistant_agent' || runtimeType === 'local_coder' || runtimeType === 'codex_app_server';
 }
 
 // Removed: resolveMagOneAgentRole (title/template substring classifier),
@@ -210,7 +210,7 @@ export function resolveDirectSubagents(
 }
 
 function isPythonAutoGenCallableRuntimeType(runtimeType: string): boolean {
-  return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
+  return runtimeType === 'assistant_agent' || runtimeType === 'local_coder' || runtimeType === 'codex_app_server';
 }
 
 function genericAssistantCardIneligibility(card: any): string | null {
@@ -395,10 +395,15 @@ export function serializeCardParticipant(head: any, allCards: any[]): Record<str
   head = normalizeLocalCoderControllerCard(head);
   const model = resolveCardModelStrict(head);
   const runtimeBinding = resolveCardBinding(head);
+  const runtimeType = resolveCardRuntimeType(head);
+  const selectedTools = resolveCardTools(head);
+  if (runtimeType === 'codex_app_server' && selectedTools.length > 0) {
+    throw new Error(`openai_coder_assigned_tools_forbidden:${selectedTools.join(',')}`);
+  }
   return {
     cardId: String(head.id || ''),
     title: String(head.title || 'Agent'),
-    runtimeType: 'assistant_agent',
+    runtimeType,
     runtimeBinding,
     summary: `Participant ${head.title || 'Agent'}`,
     allowedActions: [],
@@ -409,7 +414,7 @@ export function serializeCardParticipant(head: any, allCards: any[]): Record<str
     // manifest (it would bloat the payload and leak internal prompt text). The
     // prompt lives only in the private participant, used solely by Python to
     // set AssistantAgent.system_message — never as visible/team-description text.
-    tools: resolveCardTools(head),
+    tools: selectedTools,
     fanOut: resolveCardFanOut(head),
     isSocietyOfMind:
       Boolean(head.runtimeOptions?.isSocietyOfMind) ||
@@ -425,8 +430,9 @@ export function serializeCardPrivateParticipant(head: any): Record<string, unkno
   head = normalizeLocalCoderControllerCard(head);
   // Saved runtimeType only — no templateId/title inference. A card is whatever
   // its saved configuration says it is.
-  const mappedRuntimeType =
-    head.runtimeType === 'research_agent' || head.runtimeType === 'planner_agent'
+  const mappedRuntimeType = head.runtimeType === 'codex_app_server'
+    ? 'codex_app_server'
+    : head.runtimeType === 'research_agent' || head.runtimeType === 'planner_agent'
       ? head.runtimeType
       : 'assistant_agent';
 

@@ -188,7 +188,7 @@ class CardRuntimeConfig(BaseModel):
 
 class CardRuntimePrivateParticipant(BaseModel):
     cardId: str
-    runtimeType: Literal["assistant_agent", "research_agent", "planner_agent"]
+    runtimeType: Literal["assistant_agent", "research_agent", "planner_agent", "codex_app_server"]
     runtimeBinding: str | None = None
     prompt: str = ""
     provider: RequiredRuntimeString
@@ -204,7 +204,7 @@ class CardRuntimePrivateParticipant(BaseModel):
 class CardRuntimeParticipant(BaseModel):
     cardId: str
     title: str
-    runtimeType: Literal["assistant_agent"]
+    runtimeType: Literal["assistant_agent", "codex_app_server"]
     runtimeBinding: str | None = None
     tools: list[str] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)

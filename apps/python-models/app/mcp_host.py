@@ -1596,6 +1596,70 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="coder.inspect",
+            description=(
+                "Inspect one saved coding card through its canonical runtime owner without starting a model turn. "
+                "Returns class, route, provider/model, account/model readiness, exact tools, process identity, and latest receipt."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "deckId": {"type": "string"},
+                    "cardId": {"type": "string"},
+                    "authority": {"type": "string", "enum": ["direct_main_audit", "mag_one_execution"]},
+                },
+                "required": ["projectId", "deckId", "cardId"],
+            },
+        ),
+        Tool(
+            name="coder.stop",
+            description="Stop only the exact active process/turn owned by the selected saved coding card.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "deckId": {"type": "string"},
+                    "cardId": {"type": "string"},
+                },
+                "required": ["projectId", "deckId", "cardId"],
+            },
+        ),
+        Tool(
+            name="coder.steer",
+            description=(
+                "Steer only the exact active session owned by the selected coding card. "
+                "Codex uses native turn/steer; OpenClaude accepts input only on a live interactive PTY."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "deckId": {"type": "string"},
+                    "cardId": {"type": "string"},
+                    "input": {"type": "string"},
+                },
+                "required": ["projectId", "deckId", "cardId", "input"],
+            },
+        ),
+        Tool(
+            name="coder.account",
+            description=(
+                "Manage the ordinary OpenAI Coder card's native app-server ChatGPT login ceremony. "
+                "Returns login URLs/ids but never tokens or auth.json."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "deckId": {"type": "string"},
+                    "cardId": {"type": "string"},
+                    "action": {"type": "string", "enum": ["login", "cancel", "logout"]},
+                },
+                "required": ["projectId", "deckId", "cardId", "action"],
+            },
+        ),
+        Tool(
             name="run_coder_subagent",
             description=(
                 "Main Chat only: send one approved coding assignment from the saved connected Coder card "
@@ -2030,6 +2094,7 @@ _READ_ONLY_TOOLS = {
     "graphview.get",
     "coder.status",
     "coder.effective_tools",
+    "coder.inspect",
     "mag_one.describe_connected_agents",
     "canvas.inspect",
     "thinkgraph.get_graph_slice",
@@ -2053,6 +2118,9 @@ _SERVER_OWNED_ARGUMENTS = {
 _MAIN_ONLY_TOOLS = {
     "run_coder_subagent",
     "run_mag_one",
+    "coder.stop",
+    "coder.steer",
+    "coder.account",
 }
 _HERMES_ONLY_TOOLS = {
     "hermes.memory_read",
@@ -2185,6 +2253,10 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     },
     "coder.status": set(),
     "coder.effective_tools": {"projectId", "deckId", "cardId", "authority"},
+    "coder.inspect": {"projectId", "deckId", "cardId", "authority"},
+    "coder.stop": {"projectId", "deckId", "cardId"},
+    "coder.steer": {"projectId", "deckId", "cardId", "input"},
+    "coder.account": {"projectId", "deckId", "cardId", "action"},
     "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "approvedPrompt", "authority", "graphViewIds"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "instructionId", "conversationId"},
@@ -2227,6 +2299,10 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
 _BRIDGE_PATHS: dict[str, str] = {
     "coder.status": "coder_status",
     "coder.effective_tools": "coder_effective_tools",
+    "coder.inspect": "coder_inspect",
+    "coder.stop": "coder_stop",
+    "coder.steer": "coder_steer",
+    "coder.account": "coder_account",
     "run_coder_subagent": "run_coder_subagent",
     "mag_one.describe_connected_agents": "describe_connected_agents",
     "run_mag_one": "run_mag_one",

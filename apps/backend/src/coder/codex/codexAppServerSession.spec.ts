@@ -24,8 +24,17 @@ describe('CodexAppServerSession card ownership', () => {
     session.request = vi.fn().mockResolvedValue({});
     await session.steer('card_openai_coder', 'focus on the failing test');
     expect(session.request).toHaveBeenCalledWith('turn/steer', {
-      threadId: 'thread_1', turnId: 'turn_1',
+      threadId: 'thread_1', expectedTurnId: 'turn_1',
       input: [{ type: 'text', text: 'focus on the failing test' }],
     });
+  });
+
+  it('rejects idle Stop and Steer without dispatching', async () => {
+    const session = new CodexAppServerSession() as any;
+    session.ownerCardId = 'card_openai_coder';
+    session.request = vi.fn().mockResolvedValue({});
+    await expect(session.stop('card_openai_coder')).rejects.toThrow('codex_card_no_active_turn');
+    await expect(session.steer('card_openai_coder', 'anything')).rejects.toThrow('codex_card_no_active_turn');
+    expect(session.request).not.toHaveBeenCalled();
   });
 });
