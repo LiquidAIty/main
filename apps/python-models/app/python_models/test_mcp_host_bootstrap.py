@@ -7,12 +7,251 @@ import subprocess
 import sys
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
+
+
+def test_execution_receipt_observes_the_actual_provider_client_boundary():
+    import asyncio
+    import mcp_host
+
+    class ProviderClient:
+        async def generate_response(self, *_args, **_kwargs):
+            return SimpleNamespace(usage={"input_tokens": 2, "output_tokens": 1})
+
+    client = ProviderClient()
+    receipt = mcp_host._execution_receipt("graphiti.search_nodes")
+    token = mcp_host._ACTIVE_EXECUTION_RECEIPT.set(receipt)
+    try:
+        mcp_host._instrument_graphiti_provider_client(
+            client,
+            method_names=("generate_response",),
+            compute="api_llm",
+            dependency="graphiti_llm",
+            provider="openai",
+            model="openai/test-model",
+            base_url="https://openrouter.ai/api/v1",
+            credential_configured=True,
+        )
+        asyncio.run(client.generate_response("bounded prompt"))
+    finally:
+        mcp_host._ACTIVE_EXECUTION_RECEIPT.reset(token)
+
+    assert receipt["compute"] == "api_llm"
+    assert [call["state"] for call in receipt["providerCalls"]] == [
+        "started",
+        "completed",
+    ]
+    assert receipt["providerCalls"][-1]["baseUrlHostname"] == "openrouter.ai"
+    assert receipt["providerCalls"][-1]["credentialConfigured"] is True
+    assert receipt["providerSubstitution"] is False
+
+
+def test_call_tool_appends_canonical_receipt_and_typed_provider_failure(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    async def dispatch(name, _arguments):
+        if name == "graphiti.search_nodes":
+            return mcp_host._normalize_graphiti_result(
+                [mcp_host.TextContent(type="text", text=json.dumps({
+                    "error": "OpenAI insufficient credits for embeddings"
+                }))]
+            )
+        return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
+
+    monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
+    failed = asyncio.run(mcp_host.call_tool("graphiti.search_nodes", {"query": "x"}))
+    assert failed.isError is True
+    failure = json.loads(failed.content[0].text)
+    assert failure["failureCode"] == "insufficient_credits"
+    assert failure["retryable"] is False
+    failed_receipt = json.loads(failed.content[-1].text)["executionReceipt"]
+    assert failed_receipt["state"] == "failed"
+    assert failed_receipt["failureCode"] == "insufficient_credits"
+
+    later = asyncio.run(mcp_host.call_tool("main.context", {}))
+    assert json.loads(later[0].text)["ok"] is True
+    later_receipt = json.loads(later[-1].text)["executionReceipt"]
+    assert later_receipt["compute"] == "deterministic"
+    assert later_receipt["state"] == "completed"
+
+
+def test_catalog_contract_metadata_is_generated_from_each_tool():
+    import mcp_host
+
+    safe = mcp_host._bind_tool_execution_contract(mcp_host.Tool(
+        name="main.context",
+        description="read",
+        inputSchema={"type": "object", "properties": {}},
+    ))
+    destructive = mcp_host._bind_tool_execution_contract(mcp_host.Tool(
+        name="cbm.delete_project",
+        description="delete",
+        inputSchema={"type": "object", "properties": {}},
+    ))
+    assert safe.meta["liquidaityExecution"] == {
+        "risk": "safe read",
+        "compute": "deterministic",
+    }
+    assert destructive.meta["liquidaityExecution"]["risk"] == "destructive"
+    graphiti_status = mcp_host._bind_tool_execution_contract(mcp_host.Tool(
+        name="graphiti.get_status",
+        description="dependency health",
+        inputSchema={"type": "object", "properties": {}},
+    ))
+    assert graphiti_status.meta["liquidaityExecution"] == {
+        "risk": "safe read",
+        "compute": "database_read",
+    }
+
+
+def test_graphiti_health_is_degraded_until_both_provider_boundaries_succeed(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    class QueryResult:
+        def __aiter__(self):
+            async def records():
+                yield {"ready": 1}
+            return records()
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def run(self, _query):
+            return QueryResult()
+
+    class Driver:
+        def session(self):
+            return Session()
+
+    class Service:
+        async def get_client(self):
+            return SimpleNamespace(driver=Driver())
+
+    class Queue:
+        def get_queue_size(self, _group):
+            return 0
+
+        def is_worker_running(self, _group):
+            return False
+
+    providers = SimpleNamespace(openai=SimpleNamespace(
+        api_key="configured", api_url="https://openrouter.ai/api/v1"
+    ))
+    config = SimpleNamespace(
+        database=SimpleNamespace(provider="neo4j"),
+        llm=SimpleNamespace(provider="openai", model="model", providers=providers),
+        embedder=SimpleNamespace(provider="openai", model="embed", providers=providers),
+        graphiti=SimpleNamespace(group_id="liquidaity-project"),
+    )
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_MODULE", SimpleNamespace(
+        config=config, graphiti_service=Service(), queue_service=Queue()
+    ))
+    monkeypatch.setattr(mcp_host, "_GRAPHITI_PROVIDER_HEALTH", {
+        "last_success": None, "last_failure": None
+    })
+
+    result = asyncio.run(mcp_host._graphiti_dependency_health())
+    payload = json.loads(result.content[0].text)
+    assert payload["database"]["state"] == "ready"
+    assert payload["status"] == "degraded"
+    assert payload["llm"]["state"] == "configured_unverified"
+    assert payload["llm"]["provider"] == "openrouter"
+    assert payload["embedding"]["state"] == "configured_unverified"
+    assert payload["activeProviderProbePerformed"] is False
+    assert result.structuredContent["status"] == "degraded"
+
+
+def test_graphiti_provenance_distinguishes_missing_and_empty_episode(monkeypatch):
+    import asyncio
+    import mcp_host
+    from graphiti_core.errors import NodeNotFoundError
+    from graphiti_core.nodes import EpisodicNode
+
+    episode_id = "d26a9c66-2481-4a23-b608-7e2322d53c40"
+
+    class Client:
+        driver = object()
+
+        async def get_nodes_and_edges_by_episode(self, _ids):
+            return SimpleNamespace(nodes=[], edges=[])
+
+    class Service:
+        async def get_client(self):
+            return Client()
+
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_MODULE", SimpleNamespace(
+        graphiti_service=Service(),
+        to_node_result=lambda value: value,
+        to_edge_result=lambda value: value,
+    ))
+
+    async def missing(_driver, uuid):
+        raise NodeNotFoundError(uuid)
+
+    monkeypatch.setattr(EpisodicNode, "get_by_uuid", missing)
+    absent = asyncio.run(mcp_host._graphiti_episode_entities({
+        "episode_uuids": [episode_id]
+    }))
+    assert absent.isError is True
+    assert json.loads(absent.content[0].text)["failureCode"] == "episode_not_found"
+
+    async def found(_driver, _uuid):
+        return object()
+
+    monkeypatch.setattr(EpisodicNode, "get_by_uuid", found)
+    empty = asyncio.run(mcp_host._graphiti_episode_entities({
+        "episode_uuids": [episode_id]
+    }))
+    payload = json.loads(empty.content[0].text)
+    assert payload["ok"] is True
+    assert payload["state"] == "found_without_derived_data"
+    assert empty.structuredContent["message"] == (
+        "Episode found with zero derived entities or facts"
+    )
+
+
+def test_graphiti_timeout_cancels_work_and_later_dispatch_recovers(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    cancelled = False
+
+    class NativeMcp:
+        async def call_tool(self, name, _arguments):
+            nonlocal cancelled
+            if name == "slow":
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled = True
+                    raise
+            return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
+
+    monkeypatch.setattr(
+        mcp_host, "_NATIVE_GRAPHITI_MODULE", SimpleNamespace(mcp=NativeMcp())
+    )
+    monkeypatch.setattr(mcp_host, "_NATIVE_TOOL_TIMEOUT_SECONDS", 0.01)
+
+    async def run():
+        with pytest.raises(RuntimeError, match="native_graphiti_timeout:slow"):
+            await mcp_host._call_native_graphiti("slow", {})
+        return await mcp_host._call_native_graphiti("later", {})
+
+    later = asyncio.run(run())
+    assert cancelled is True
+    assert json.loads(later.content[0].text)["ok"] is True
 
 
 def _run_in_script_launch_context(code: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
@@ -255,8 +494,8 @@ def test_native_engraphis_hung_call_does_not_block_later_native_dispatch(monkeyp
         return later, await asyncio.wait_for(hung, timeout=1)
 
     later, hung = asyncio.run(check())
-    assert later[0][0] is native_result
-    assert hung[0][0] is native_result
+    assert later.content[0] is native_result
+    assert hung.content[0] is native_result
     assert [call[:2] for call in calls] == [
         ("engraphis_hung", {"request": 1}),
         ("engraphis_stats", {"request": 2}),
@@ -296,7 +535,7 @@ async def check():
         'error': 'tool_handler_failed:NativeFailure',
     }
     normal = await mcp_host.call_tool('engraphis.normal_call', {'value': 2})
-    assert json.loads(normal[0].text) == {
+    assert json.loads(normal.content[0].text) == {
         'name': 'engraphis_normal_call',
         'arguments': {'value': 2},
     }
@@ -372,6 +611,37 @@ def test_native_cbm_replaces_a_stale_process_without_retrying_a_tool(monkeypatch
     assert mcp_host._NATIVE_CBM_CLIENT is None
     assert mcp_host._NATIVE_CBM_TOOLS is None
     assert mcp_host._NATIVE_CBM_NAMES == frozenset()
+
+
+def test_native_cbm_timeout_retires_the_session_without_retrying(monkeypatch):
+    import mcp_host
+
+    class TimedOutClient:
+        def __init__(self):
+            self.closed = False
+            self.calls = 0
+
+        def is_running(self):
+            return True
+
+        def call_tool(self, _name, _arguments):
+            self.calls += 1
+            raise RuntimeError("native_cbm_timeout:tools/call")
+
+        def close(self):
+            self.closed = True
+
+    client = TimedOutClient()
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_CLIENT", client)
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_TOOLS", ())
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_NAMES", frozenset())
+
+    with pytest.raises(RuntimeError, match="native_cbm_timeout:tools/call"):
+        mcp_host._call_native_cbm("search_graph", {"project": "C-Projects-main"})
+
+    assert client.calls == 1
+    assert client.closed is True
+    assert mcp_host._NATIVE_CBM_CLIENT is None
 
 
 def test_main_dispatches_coder_and_only_an_approved_mag_one_instruction():
@@ -618,7 +888,17 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
                 },
                 "required": ["query"],
             },
-        )
+        ),
+        mcp_host.Tool(
+            name="engraphis_answer",
+            title="Answer",
+            description="Native Engraphis grounded answer.",
+            inputSchema={
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        ),
     ]
     native_graphiti_tools = [
         mcp_host.Tool(
@@ -675,6 +955,20 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     tools = asyncio.run(mcp_host.list_tools())
     by_name = {tool.name: tool for tool in tools}
     assert len(tools) == len(by_name)
+    for tool in tools:
+        contract = tool.meta["liquidaityExecution"]
+        assert contract["compute"] in {
+            "deterministic", "database_read", "database_write", "local_embedding",
+            "api_embedding", "api_llm", "mixed", "unknown",
+        }
+        assert contract["risk"] in {
+            "safe read", "deterministic write", "paid/provider-backed",
+            "background", "destructive", "runtime-launching",
+        }
+        assert (
+            tool.name in mcp_host._ALLOWED_KEYS
+            or tool.name.startswith(tuple(mcp_host._NATIVE_PREFIXES.values()))
+        ), f"advertised but undispatchable: {tool.name}"
     assert "main.context" in by_name
     assert "agentgraph.inspect" in by_name
     assert "graphview.list" in by_name
@@ -706,6 +1000,10 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "codegraph.status" not in by_name
     assert "codegraph.search" not in by_name
     assert {"cbm.search_graph", "cbm.index_status"}.issubset(by_name)
+    assert by_name["cbm.search_graph"].meta["liquidaityExecution"] == {
+        "risk": "safe read",
+        "compute": "database_read",
+    }
     assert {"graphiti.get_status", "graphiti.search_nodes"}.issubset(by_name)
     assert "thinkgraph.persist_graph_view" not in by_name
     assert "run_coder_subagent" in by_name
@@ -787,10 +1085,13 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     asyncio.run(mcp_host.call_tool("engraphis.recall", {"query": "Main", "limit": 3}))
     assert calls[-1] == ("engraphis_recall", {"query": "Main", "limit": 3})
 
-    asyncio.run(
+    cbm_result = asyncio.run(
         mcp_host.call_tool("cbm.search_graph", {"project": "C-Projects-main"})
     )
     assert calls[-1] == ("search_graph", {"project": "C-Projects-main"})
+    cbm_receipt = json.loads(cbm_result.content[-1].text)["executionReceipt"]
+    assert cbm_receipt["risk"] == "safe read"
+    assert cbm_receipt["compute"] == "database_read"
 
     asyncio.run(mcp_host.call_tool("graphiti.search_nodes", {"query": "Main"}))
     assert calls[-1] == (

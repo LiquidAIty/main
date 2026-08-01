@@ -578,3 +578,40 @@ def test_hydration_resolves_selected_graph_view_and_saved_card_reference(
 def test_empty_agentgraph_context_sections_render_nothing() -> None:
     assert rq.build_query_context([], []) == ""
     assert rq._render_selected_graph_views([]) == ""
+
+
+def test_saved_hermes_runtime_binding_authorizes_its_graph_view(monkeypatch) -> None:
+    from app import control_plane
+    from app.python_models import agentgraph
+
+    deck = {
+        "nodes": [{
+            "id": "card_hermes_steward",
+            "kind": "agent",
+            "title": "Hermes",
+            "runtimeType": "assistant_agent",
+            "runtimeBinding": "hermes_steward",
+            "runtimeOptions": {"tools": []},
+        }]
+    }
+    saved = control_plane.resolve_saved_card_reference(
+        "project-one", "deck_builder", "card_hermes_steward", deck=deck
+    )
+    assert saved["role"] == "hermes_steward"
+
+    view = {
+        "viewId": "graphview:hermes",
+        "receivingRole": "hermes_steward",
+        "references": [],
+    }
+    monkeypatch.setattr(
+        agentgraph, "list_graph_views", lambda **_kwargs: {"views": [view]}
+    )
+    resolved = rq._resolve_selected_graph_views(
+        project_id="project-one",
+        conversation_id="conversation-one",
+        receiver_card_id=saved["cardId"],
+        receiver_role=saved["role"],
+        graph_view_ids=["graphview:hermes"],
+    )
+    assert resolved == [view]

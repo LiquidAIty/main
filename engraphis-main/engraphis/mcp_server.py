@@ -98,9 +98,23 @@ def _ok(payload: dict) -> str:
 def _err(exc: Exception) -> str:
     """Actionable, safe error string (never leaks internals)."""
     if isinstance(exc, ValidationError):
-        return f"Error: {exc}"
+        return json.dumps({
+            "ok": False,
+            "error": "validation_error",
+            "failureCode": "validation_error",
+            "retryable": False,
+            "dependency": "engraphis",
+            "detail": str(exc),
+        }, ensure_ascii=False)
     logger.error("MCP tool operation failed (%s)", type(exc).__name__)
-    return "Error: operation failed. Check the Engraphis server logs for details."
+    return json.dumps({
+        "ok": False,
+        "error": "engraphis_operation_failed",
+        "failureCode": "engraphis_operation_failed",
+        "retryable": False,
+        "dependency": "engraphis",
+        "detail": "Operation failed. Check the Engraphis server logs for details.",
+    })
 
 
 _READ_ONLY_TOOLS = frozenset({

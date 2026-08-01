@@ -345,6 +345,34 @@ def test_index_repo_accepts_normalized_language_alias(tmp_path):
     assert res["files_indexed"] >= 1 and res["symbols"] >= 1
 
 
+def test_code_tools_fail_honestly_when_projection_is_missing_or_stale(tmp_path):
+    from engraphis.service import MemoryService
+
+    svc = MemoryService.create(":memory:")
+    svc.remember("Repository exists without a code projection", workspace="w", repo="r")
+
+    missing = svc.search_code("anything", workspace="w", repo="r")
+    assert missing["ok"] is False
+    assert missing["failureCode"] == "not_indexed"
+    assert missing["index"]["counts"] == {"files": 0, "symbols": 0, "edges": 0}
+
+    (tmp_path / "app.py").write_text("def live():\n    return 1\n")
+    indexed = svc.index_repo(workspace="w", repo="r", root_path=str(tmp_path))
+    assert indexed["index"]["status"] == "ready"
+    assert indexed["index"]["generation"].startswith("codeindex_")
+    assert indexed["index"]["fingerprint"]
+
+    ready = svc.search_code("live", workspace="w", repo="r")
+    assert ready["index"]["status"] == "ready"
+    assert ready["symbols"]
+
+    (tmp_path / "app.py").write_text("def changed():\n    return 2\n")
+    stale = svc.code_impact(["app.py"], workspace="w", repo="r")
+    assert stale["ok"] is False
+    assert stale["failureCode"] == "index_stale"
+    assert "risk" not in stale
+
+
 # ── tree-sitter-specific behavior (skipped if the optional extra isn't installed) ──
 #
 # NB: this must be a *per-test* skip, not a module-level ``pytest.importorskip`` — the

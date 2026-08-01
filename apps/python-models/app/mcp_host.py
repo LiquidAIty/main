@@ -45,9 +45,10 @@ import sys
 import threading
 import time
 from collections import deque
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 # Bootstrap the package root onto sys.path. The gRPC harness launches this host as a
 # SCRIPT (`python .../apps/python-models/app/mcp_host.py`), so sys.path[0] is the
@@ -62,6 +63,7 @@ if _PACKAGE_ROOT not in sys.path:
 
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
@@ -102,6 +104,15 @@ OAUTH_ENFORCED = os.environ.get("LIQUIDAITY_MCP_OAUTH_ENFORCED", "false").strip(
 _STARTUP_ID = uuid4().hex
 _STARTUP_PROCESS_ID = os.getpid()
 _TRACE_LOCK = threading.Lock()
+_NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
+_ACTIVE_EXECUTION_RECEIPT: ContextVar[dict[str, Any] | None] = ContextVar(
+    "liquidaity_execution_receipt", default=None
+)
+_GRAPHITI_PROVIDER_HEALTH_LOCK = threading.Lock()
+_GRAPHITI_PROVIDER_HEALTH: dict[str, Any] = {
+    "last_success": None,
+    "last_failure": None,
+}
 
 
 def _safe_hash(value: Any) -> str:
@@ -172,6 +183,247 @@ def _catalog_identity(tools: list[Tool]) -> tuple[int, str]:
         ).encode("utf-8")
     ).hexdigest()
     return len(descriptors), digest
+
+
+def _safe_hostname(url: str) -> str:
+    try:
+        return str(urlsplit(str(url or "")).hostname or "")
+    except ValueError:
+        return ""
+
+
+def _provider_identity(configured_provider: str, base_url: str) -> str:
+    """Expose the transport provider while preserving Graphiti's client type."""
+    hostname = _safe_hostname(base_url).lower()
+    if hostname == "openrouter.ai" or hostname.endswith(".openrouter.ai"):
+        return "openrouter"
+    if hostname == "api.openai.com" or hostname.endswith(".api.openai.com"):
+        return "openai"
+    return str(configured_provider or "unknown")
+
+
+def _sanitize_failure_detail(value: Any) -> str:
+    detail = str(value or "").replace("\r", " ").replace("\n", " ")[:500]
+    detail = re.sub(r"https?://[^\s/]+[^\s]*", "<remote-url>", detail)
+    detail = re.sub(
+        r"(?i)(api[-_ ]?key|authorization|bearer|token|password)\s*[:=]\s*[^\s,;]+",
+        r"\1=<redacted>",
+        detail,
+    )
+    return detail
+
+
+def _typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any]:
+    detail = _sanitize_failure_detail(value)
+    lowered = detail.lower()
+    if any(term in lowered for term in ("insufficient", "credit", "quota exceeded")):
+        code, retryable = "insufficient_credits", False
+    elif any(term in lowered for term in ("unauthorized", "authentication", "invalid api key", "401")):
+        code, retryable = "authentication_failed", False
+    elif any(term in lowered for term in ("rate limit", "too many requests", "429")):
+        code, retryable = "rate_limited", True
+    elif any(term in lowered for term in ("timeout", "timed out", "deadline")):
+        code, retryable = "timeout", True
+    elif "dimension" in lowered and any(term in lowered for term in ("embedding", "vector")):
+        code, retryable = "embedding_dimension_mismatch", False
+    elif any(term in lowered for term in ("malformed", "invalid json", "model output", "validation error")):
+        code, retryable = "malformed_model_output", False
+    elif any(term in lowered for term in ("queue", "worker")):
+        code, retryable = "queue_failure", True
+    elif any(term in lowered for term in ("neo4j", "database", "connection refused", "service unavailable")):
+        code, retryable = "database_failure", True
+    else:
+        code, retryable = "provider_failure", False
+    return {
+        "ok": False,
+        "error": code,
+        "failureCode": code,
+        "retryable": retryable,
+        "dependency": dependency,
+        "detail": detail,
+    }
+
+
+def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, str]:
+    """Classify the canonical catalog without duplicating its membership."""
+    annotation_payload = (
+        annotations.model_dump(exclude_none=True)
+        if hasattr(annotations, "model_dump")
+        else dict(annotations or {})
+    )
+    graphiti_database_reads = {
+        "graphiti.get_status",
+        "graphiti.get_episodes",
+        "graphiti.get_episode_entities",
+        "graphiti.get_entity_edge",
+    }
+    read_only = (
+        bool(annotation_payload.get("readOnlyHint"))
+        or name in _READ_ONLY_TOOLS
+        or name in graphiti_database_reads
+    )
+    if name.startswith("cbm."):
+        read_only = name.removeprefix("cbm.") not in {
+            "index_repository", "delete_project", "manage_adr", "ingest_traces"
+        }
+    destructive = bool(annotation_payload.get("destructiveHint"))
+    if destructive or name in {"cbm.delete_project", "graphiti.delete_episode", "engraphis.forget"}:
+        risk = "destructive"
+    elif name in {"run_coder_subagent", "run_mag_one", "card.run_assistant_agent"}:
+        risk = "runtime-launching"
+    elif name in {"engraphis.index_repo", "cbm.index_repository"} or name.startswith("graphiti.add_"):
+        risk = "background"
+    elif name.startswith("graphiti.") and name not in {
+        "graphiti.get_status", "graphiti.get_episodes", "graphiti.get_episode_entities",
+        "graphiti.get_entity_edge",
+    } or name == "web_search":
+        risk = "paid/provider-backed"
+    elif read_only:
+        risk = "safe read"
+    else:
+        risk = "deterministic write"
+
+    if name.startswith("graphiti."):
+        compute = "database_read" if name in graphiti_database_reads else "mixed"
+    elif name.startswith("engraphis."):
+        compute = (
+            "local_embedding"
+            if name in {"engraphis.recall", "engraphis.recall_grounded", "engraphis.answer"}
+            else "database_read" if read_only else "database_write"
+        )
+    elif name.startswith("cbm."):
+        compute = "database_read" if read_only else "database_write"
+    elif name in {"main.context", "coder.status", "worldsignals.capabilities"}:
+        compute = "deterministic"
+    elif read_only:
+        compute = "database_read"
+    else:
+        compute = "database_write"
+    return {"risk": risk, "compute": compute}
+
+
+def _observe_provider_call(
+    *,
+    compute: str,
+    dependency: str,
+    provider: str,
+    model: str,
+    base_url: str,
+    credential_configured: bool,
+    state: str,
+    started_at: str,
+    duration_ms: int | None = None,
+    failure: dict[str, Any] | None = None,
+    usage: Any = None,
+) -> None:
+    event = {
+        "compute": compute,
+        "dependency": dependency,
+        "provider": provider,
+        "model": model,
+        "local": not bool(_safe_hostname(base_url)),
+        "baseUrlHostname": _safe_hostname(base_url),
+        "credentialConfigured": bool(credential_configured),
+        "state": state,
+        "startedAt": started_at,
+        "providerSubstitution": False,
+    }
+    if duration_ms is not None:
+        event["durationMs"] = duration_ms
+    if usage is not None:
+        event["usage"] = usage
+    if failure is not None:
+        event["failureCode"] = failure.get("failureCode")
+    receipt = _ACTIVE_EXECUTION_RECEIPT.get()
+    if receipt is not None:
+        calls = receipt.setdefault("providerCalls", [])
+        calls.append(event)
+        observed = {call.get("compute") for call in calls if call.get("compute")}
+        receipt["compute"] = next(iter(observed)) if len(observed) == 1 else "mixed"
+        receipt["providerSubstitution"] = False
+    if state in {"completed", "failed"}:
+        record = dict(event)
+        if failure is not None:
+            record["failure"] = failure
+        with _GRAPHITI_PROVIDER_HEALTH_LOCK:
+            _GRAPHITI_PROVIDER_HEALTH[
+                "last_success" if state == "completed" else "last_failure"
+            ] = record
+            _GRAPHITI_PROVIDER_HEALTH[
+                f"{dependency}:{'last_success' if state == 'completed' else 'last_failure'}"
+            ] = record
+
+
+def _instrument_graphiti_provider_client(
+    client: Any,
+    *,
+    method_names: tuple[str, ...],
+    compute: str,
+    dependency: str,
+    provider: str,
+    model: str,
+    base_url: str,
+    credential_configured: bool,
+) -> None:
+    marker = "_liquidaity_observed_methods"
+    observed = set(getattr(client, marker, set()))
+    for method_name in method_names:
+        if method_name in observed:
+            continue
+        original = getattr(client, method_name, None)
+        if not callable(original):
+            continue
+
+        async def observed_call(*args: Any, _original=original, **kwargs: Any):
+            started_clock = time.monotonic()
+            started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            _observe_provider_call(
+                compute=compute,
+                dependency=dependency,
+                provider=provider,
+                model=model,
+                base_url=base_url,
+                credential_configured=credential_configured,
+                state="started",
+                started_at=started_at,
+            )
+            try:
+                result = await _original(*args, **kwargs)
+            except Exception as error:
+                failure = _typed_failure(error, dependency=dependency)
+                _observe_provider_call(
+                    compute=compute,
+                    dependency=dependency,
+                    provider=provider,
+                    model=model,
+                    base_url=base_url,
+                    credential_configured=credential_configured,
+                    state="failed",
+                    started_at=started_at,
+                    duration_ms=int((time.monotonic() - started_clock) * 1000),
+                    failure=failure,
+                )
+                raise
+            usage = getattr(result, "usage", None)
+            if hasattr(usage, "model_dump"):
+                usage = usage.model_dump(exclude_none=True)
+            _observe_provider_call(
+                compute=compute,
+                dependency=dependency,
+                provider=provider,
+                model=model,
+                base_url=base_url,
+                credential_configured=credential_configured,
+                state="completed",
+                started_at=started_at,
+                duration_ms=int((time.monotonic() - started_clock) * 1000),
+                usage=usage,
+            )
+            return result
+
+        setattr(client, method_name, observed_call)
+        observed.add(method_name)
+    setattr(client, marker, observed)
 
 
 @dataclass(frozen=True)
@@ -251,6 +503,7 @@ _NATIVE_CBM_INIT_LOCK = threading.Lock()
 _NATIVE_GRAPHITI_MODULE: Any | None = None
 _NATIVE_GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_GRAPHITI_NAMES: frozenset[str] = frozenset()
+_TOOL_EXECUTION_CONTRACTS: dict[str, dict[str, str]] = {}
 
 _NATIVE_PREFIXES = {
     "cbm": "cbm.",
@@ -390,6 +643,14 @@ def _graphiti_config():
     )
 
 
+def _graphiti_provider_settings(section: Any) -> Any:
+    provider_name = str(section.provider).lower()
+    settings = getattr(section.providers, provider_name, None)
+    if settings is None:
+        raise RuntimeError(f"graphiti_provider_configuration_missing:{provider_name}")
+    return settings
+
+
 async def _initialize_native_graphiti() -> None:
     """Initialize the installed official Graphiti MCP server exactly once."""
     global _NATIVE_GRAPHITI_MODULE, _NATIVE_GRAPHITI_NAMES, _NATIVE_GRAPHITI_TOOLS
@@ -404,6 +665,44 @@ async def _initialize_native_graphiti() -> None:
     native.graphiti_client = await native.graphiti_service.get_client()
     native.semaphore = native.graphiti_service.semaphore
     await native.queue_service.initialize(native.graphiti_client)
+    llm_provider = _graphiti_provider_settings(native.config.llm)
+    embedder_provider = _graphiti_provider_settings(native.config.embedder)
+    _instrument_graphiti_provider_client(
+        native.graphiti_client.llm_client,
+        method_names=("generate_response",),
+        compute="api_llm",
+        dependency="graphiti_llm",
+        provider=_provider_identity(
+            str(native.config.llm.provider), str(llm_provider.api_url or "")
+        ),
+        model=str(native.config.llm.model),
+        base_url=str(llm_provider.api_url or ""),
+        credential_configured=bool(llm_provider.api_key),
+    )
+    _instrument_graphiti_provider_client(
+        native.graphiti_client.embedder,
+        method_names=("create", "create_batch"),
+        compute="api_embedding",
+        dependency="graphiti_embedding",
+        provider=_provider_identity(
+            str(native.config.embedder.provider), str(embedder_provider.api_url or "")
+        ),
+        model=str(native.config.embedder.model),
+        base_url=str(embedder_provider.api_url or ""),
+        credential_configured=bool(embedder_provider.api_key),
+    )
+    _instrument_graphiti_provider_client(
+        native.graphiti_client.cross_encoder,
+        method_names=("rank",),
+        compute="api_llm",
+        dependency="graphiti_reranker",
+        provider=_provider_identity(
+            str(native.config.llm.provider), str(llm_provider.api_url or "")
+        ),
+        model=str(native.config.llm.model),
+        base_url=str(llm_provider.api_url or ""),
+        credential_configured=bool(llm_provider.api_key),
+    )
     tools = tuple(await native.mcp.list_tools())
     names = [tool.name for tool in tools]
     if len(names) != len(set(names)):
@@ -421,7 +720,258 @@ async def _native_graphiti_tools() -> list[Tool]:
 async def _call_native_graphiti(name: str, arguments: dict[str, Any]):
     if _NATIVE_GRAPHITI_MODULE is None:
         raise RuntimeError("native_graphiti_not_initialized")
-    return await _NATIVE_GRAPHITI_MODULE.mcp.call_tool(name, arguments)
+    try:
+        result = await asyncio.wait_for(
+            _NATIVE_GRAPHITI_MODULE.mcp.call_tool(name, arguments),
+            timeout=_NATIVE_TOOL_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as error:
+        raise RuntimeError(f"native_graphiti_timeout:{name}") from error
+    return _normalize_graphiti_result(result)
+
+
+def _normalize_graphiti_result(result: Any) -> Any:
+    return _normalize_native_tool_result(result, dependency="graphiti")
+
+
+def _normalize_native_tool_result(result: Any, *, dependency: str) -> Any:
+    structured: Any = None
+    if isinstance(result, tuple) and len(result) == 2 and isinstance(result[0], list):
+        blocks = result[0]
+        structured = result[1]
+    else:
+        blocks = result.content if isinstance(result, CallToolResult) else result
+    if not isinstance(blocks, list):
+        return result
+    for block in blocks:
+        text = getattr(block, "text", "")
+        if not isinstance(text, str) or not text:
+            continue
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            if text.startswith("Error:"):
+                failure = _typed_failure(text, dependency=dependency)
+                return CallToolResult(
+                    content=[TextContent(type="text", text=json.dumps(failure))],
+                    isError=True,
+                )
+            continue
+        if isinstance(payload, dict) and payload.get("error"):
+            failure = (
+                payload
+                if payload.get("failureCode")
+                else _typed_failure(payload["error"], dependency=dependency)
+            )
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps(failure))],
+                isError=True,
+            )
+    if isinstance(result, CallToolResult):
+        return result
+    return CallToolResult(
+        content=blocks,
+        structuredContent=structured if isinstance(structured, dict) else None,
+        isError=False,
+    )
+
+
+async def _graphiti_dependency_health(group_id: str | None = None) -> CallToolResult:
+    if _NATIVE_GRAPHITI_MODULE is None:
+        raise RuntimeError("native_graphiti_not_initialized")
+    native = _NATIVE_GRAPHITI_MODULE
+    config = native.config
+    database_error = ""
+    try:
+        client = await native.graphiti_service.get_client()
+        async with asyncio.timeout(5.0):
+            async with client.driver.session() as session:
+                query_result = await session.run("RETURN 1 AS ready")
+                if query_result:
+                    _ = [record async for record in query_result]
+        database_state = "ready"
+    except Exception as error:
+        database_state = "failed"
+        database_error = _sanitize_failure_detail(error)
+
+    llm_provider = _graphiti_provider_settings(config.llm)
+    embedder_provider = _graphiti_provider_settings(config.embedder)
+    llm_configured = bool(llm_provider.api_key and llm_provider.api_url and config.llm.model)
+    embedding_configured = bool(
+        embedder_provider.api_key and embedder_provider.api_url and config.embedder.model
+    )
+    group_id = str(group_id or config.graphiti.group_id or "")
+    queue_service = getattr(native, "queue_service", None)
+    queue_size = queue_service.get_queue_size(group_id) if queue_service else 0
+    worker_running = queue_service.is_worker_running(group_id) if queue_service else False
+    with _GRAPHITI_PROVIDER_HEALTH_LOCK:
+        last_success = copy.deepcopy(_GRAPHITI_PROVIDER_HEALTH["last_success"])
+        last_failure = copy.deepcopy(_GRAPHITI_PROVIDER_HEALTH["last_failure"])
+        llm_success = copy.deepcopy(_GRAPHITI_PROVIDER_HEALTH.get("graphiti_llm:last_success"))
+        llm_failure = copy.deepcopy(_GRAPHITI_PROVIDER_HEALTH.get("graphiti_llm:last_failure"))
+        embedding_success = copy.deepcopy(
+            _GRAPHITI_PROVIDER_HEALTH.get("graphiti_embedding:last_success")
+        )
+        embedding_failure = copy.deepcopy(
+            _GRAPHITI_PROVIDER_HEALTH.get("graphiti_embedding:last_failure")
+        )
+    llm_verified = bool(llm_success) and not (
+        llm_failure
+        and str(llm_failure.get("startedAt") or "")
+        >= str(llm_success.get("startedAt") or "")
+    )
+    embedding_verified = bool(embedding_success) and not (
+        embedding_failure
+        and str(embedding_failure.get("startedAt") or "")
+        >= str(embedding_success.get("startedAt") or "")
+    )
+    provider_verified = llm_verified and embedding_verified
+    if database_state == "failed":
+        overall = "failed"
+    elif not llm_configured or not embedding_configured or not provider_verified:
+        overall = "degraded"
+    else:
+        overall = "ready"
+    payload = {
+        "status": overall,
+        "overall": overall,
+        "activeProviderProbePerformed": False,
+        "database": {
+            "state": database_state,
+            "provider": str(config.database.provider),
+            "error": database_error or None,
+        },
+        "llm": {
+            "state": "configured_unverified" if llm_configured and not llm_verified else (
+                "ready" if llm_configured else "failed"
+            ),
+            "provider": _provider_identity(
+                str(config.llm.provider), str(llm_provider.api_url or "")
+            ),
+            "model": str(config.llm.model),
+            "baseUrlHostname": _safe_hostname(str(llm_provider.api_url or "")),
+            "credentialConfigured": bool(llm_provider.api_key),
+        },
+        "embedding": {
+            "state": "configured_unverified" if embedding_configured and not embedding_verified else (
+                "ready" if embedding_configured else "failed"
+            ),
+            "provider": _provider_identity(
+                str(config.embedder.provider), str(embedder_provider.api_url or "")
+            ),
+            "model": str(config.embedder.model),
+            "baseUrlHostname": _safe_hostname(str(embedder_provider.api_url or "")),
+            "credentialConfigured": bool(embedder_provider.api_key),
+        },
+        "backgroundQueue": {
+            "state": "running" if worker_running else "idle",
+            "queued": queue_size,
+        },
+        "lastSuccessfulProviderOperation": last_success,
+        "lastFailedProviderOperation": last_failure,
+    }
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(payload))],
+        structuredContent={
+            "status": overall,
+            "message": (
+                "Graphiti dependencies are ready"
+                if overall == "ready"
+                else "Graphiti dependencies require attention; inspect dependency health"
+            ),
+        },
+        isError=overall == "failed",
+    )
+
+
+async def _graphiti_episode_entities(arguments: dict[str, Any]) -> CallToolResult | list[TextContent]:
+    if _NATIVE_GRAPHITI_MODULE is None:
+        raise RuntimeError("native_graphiti_not_initialized")
+    episode_ids = arguments.get("episode_uuids")
+    if not isinstance(episode_ids, list) or not episode_ids:
+        failure = {
+            "ok": False,
+            "error": "invalid_identity",
+            "failureCode": "invalid_identity",
+            "retryable": False,
+            "dependency": "graphiti_database",
+        }
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(failure))], isError=True
+        )
+    try:
+        normalized_ids = [str(UUID(str(value))) for value in episode_ids]
+    except (TypeError, ValueError, AttributeError):
+        failure = {
+            "ok": False,
+            "error": "invalid_identity",
+            "failureCode": "invalid_identity",
+            "retryable": False,
+            "dependency": "graphiti_database",
+        }
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(failure))], isError=True
+        )
+    native = _NATIVE_GRAPHITI_MODULE
+    client = await native.graphiti_service.get_client()
+    from graphiti_core.errors import NodeNotFoundError
+    from graphiti_core.nodes import EpisodicNode
+
+    missing: list[str] = []
+    try:
+        for episode_id in normalized_ids:
+            try:
+                await asyncio.wait_for(
+                    EpisodicNode.get_by_uuid(client.driver, episode_id),
+                    timeout=_NATIVE_TOOL_TIMEOUT_SECONDS,
+                )
+            except NodeNotFoundError:
+                missing.append(episode_id)
+        if missing:
+            failure = {
+                "ok": False,
+                "error": "episode_not_found",
+                "failureCode": "episode_not_found",
+                "retryable": False,
+                "dependency": "graphiti_database",
+                "episodeUuids": missing,
+            }
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps(failure))], isError=True
+            )
+        results = await asyncio.wait_for(
+            client.get_nodes_and_edges_by_episode(normalized_ids),
+            timeout=_NATIVE_TOOL_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as error:
+        raise RuntimeError("native_graphiti_timeout:get_episode_entities") from error
+    except Exception as error:
+        failure = _typed_failure(error, dependency="graphiti_database")
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(failure))], isError=True
+        )
+    nodes = [native.to_node_result(node).model_dump(mode="json") for node in results.nodes]
+    edges = [native.to_edge_result(edge).model_dump(mode="json") for edge in results.edges]
+    payload = {
+        "ok": True,
+        "state": "found_with_data" if nodes or edges else "found_without_derived_data",
+        "episodeUuids": normalized_ids,
+        "nodes": nodes,
+        "edges": edges,
+    }
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(payload))],
+        structuredContent={
+            "message": (
+                "Episode found with derived provenance"
+                if nodes or edges
+                else "Episode found with zero derived entities or facts"
+            ),
+            "nodes": nodes,
+            "edges": edges,
+        },
+        isError=False,
+    )
 
 
 async def _close_native_graphiti() -> None:
@@ -667,7 +1217,16 @@ def _call_native_cbm(name: str, arguments: dict[str, Any]) -> CallToolResult:
     _initialize_native_cbm_sync()
     if _NATIVE_CBM_CLIENT is None:
         raise RuntimeError("native_cbm_not_initialized")
-    return _NATIVE_CBM_CLIENT.call_tool(name, arguments)
+    try:
+        return _NATIVE_CBM_CLIENT.call_tool(name, arguments)
+    except RuntimeError as error:
+        # A timed-out JSON-RPC request can still leave a late response queued in
+        # the persistent stdio session. Retire that exact native process so the
+        # next dispatch starts one clean session instead of consuming stale
+        # protocol state. Do not retry the timed-out operation implicitly.
+        if str(error).startswith("native_cbm_timeout:"):
+            _close_native_cbm()
+        raise
 
 
 def _close_native_cbm() -> None:
@@ -1337,6 +1896,12 @@ async def list_tools() -> list[Tool]:
     if len(names) != len(set(names)):
         duplicates = sorted({name for name in names if names.count(name) > 1})
         raise RuntimeError("federated_duplicate_tool_name:" + ",".join(duplicates))
+    tools = [_bind_tool_execution_contract(tool) for tool in tools]
+    _TOOL_EXECUTION_CONTRACTS.clear()
+    _TOOL_EXECUTION_CONTRACTS.update({
+        tool.name: dict((tool.meta or {}).get("liquidaityExecution") or {})
+        for tool in tools
+    })
     context = _authenticated_main_context()
     if context is None:
         published = tools
@@ -1392,6 +1957,16 @@ _HERMES_ONLY_TOOLS = {
     "hermes.write_report",
     "write_mag_one_instructions",
 }
+
+
+def _bind_tool_execution_contract(tool: Tool) -> Tool:
+    payload = tool.model_dump(by_alias=True, exclude_none=True)
+    meta = dict(payload.get("_meta") or {})
+    meta["liquidaityExecution"] = _tool_execution_contract(
+        tool.name, tool.annotations
+    )
+    payload["_meta"] = meta
+    return Tool.model_validate(payload)
 
 
 def _enforce_tool_caller(name: str, args: dict[str, Any]) -> str | None:
@@ -1575,13 +2150,14 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
         await _initialize_native_engraphis()
         native_name = "engraphis_" + name.removeprefix(_NATIVE_PREFIXES["engraphis"])
         if native_name in _NATIVE_ENGRAPHIS_NAMES:
-            return await asyncio.to_thread(
+            result = await asyncio.to_thread(
                 asyncio.run,
                 _native_engraphis_mcp().call_tool(
                     native_name,
                     dict(arguments or {}),
                 ),
             )
+            return _normalize_native_tool_result(result, dependency="engraphis")
     if name.startswith(_NATIVE_PREFIXES["cbm"]):
         await _native_cbm_tools()
         native_name = name.removeprefix(_NATIVE_PREFIXES["cbm"])
@@ -1629,6 +2205,14 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                     native_args["group_id"] = group_id
                 if "group_ids" in native_properties:
                     native_args["group_ids"] = [group_id]
+            if native_name == "get_status":
+                return await _graphiti_dependency_health(
+                    graphiti_project_group_id(str(context["projectId"]))
+                    if context is not None
+                    else None
+                )
+            if native_name == "get_episode_entities":
+                return await _graphiti_episode_entities(native_args)
             return await _call_native_graphiti(native_name, native_args)
     allowed = _ALLOWED_KEYS.get(name)
     if allowed is None:
@@ -1788,8 +2372,61 @@ def _tool_result_category(result: Any) -> str:
     return "success"
 
 
+def _execution_receipt(name: str) -> dict[str, Any]:
+    contract = _TOOL_EXECUTION_CONTRACTS.get(name) or _tool_execution_contract(name)
+    known = name in _ALLOWED_KEYS or any(
+        name.startswith(prefix) for prefix in _NATIVE_PREFIXES.values()
+    )
+    return {
+        "schema": "liquidaity.execution-receipt.v1",
+        "tool": name,
+        "correlationId": f"mcp:{uuid4()}",
+        "operationPhase": "dispatch",
+        "compute": contract["compute"] if known else "unknown",
+        "risk": contract["risk"] if known else "unknown",
+        "local": True,
+        "startedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "state": "running",
+        "providerSubstitution": False,
+        "providerCalls": [],
+    }
+
+
+def _failure_code_from_result(result: Any) -> str | None:
+    blocks = result.content if isinstance(result, CallToolResult) else result
+    if not isinstance(blocks, list):
+        return None
+    for block in blocks:
+        try:
+            payload = json.loads(str(getattr(block, "text", "") or ""))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            failure = payload.get("failureCode") or payload.get("error")
+            if failure:
+                return str(failure)[:160]
+    return None
+
+
+def _attach_execution_receipt(result: Any, receipt: dict[str, Any]) -> Any:
+    block = TextContent(
+        type="text",
+        text=json.dumps({"executionReceipt": receipt}, ensure_ascii=False),
+    )
+    if isinstance(result, CallToolResult):
+        payload = result.model_dump(exclude_none=True)
+        payload["content"] = [*result.content, block]
+        return CallToolResult.model_validate(payload)
+    if isinstance(result, list):
+        return [*result, block]
+    return CallToolResult(content=[TextContent(type="text", text=str(result)), block])
+
+
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
+    started_clock = time.monotonic()
+    receipt = _execution_receipt(str(name or ""))
+    receipt_token = _ACTIVE_EXECUTION_RECEIPT.set(receipt)
     trace_fields = {
         "mcp_method": "tools/call",
         "tool_name": str(name or "")[:160],
@@ -1799,6 +2436,11 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     try:
         result = await _dispatch_tool(name, arguments)
         result_category = _tool_result_category(result)
+        receipt["durationMs"] = int((time.monotonic() - started_clock) * 1000)
+        receipt["state"] = "failed" if result_category == "tool_error" else "completed"
+        receipt["failureCode"] = (
+            _failure_code_from_result(result) if result_category == "tool_error" else None
+        )
         _trace(
             "tool_call_completed",
             **trace_fields,
@@ -1807,9 +2449,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             completed=True,
         )
         if result_category == "tool_error" and isinstance(result, list):
-            return CallToolResult(content=result, isError=True)
-        return result
+            result = CallToolResult(content=result, isError=True)
+        return _attach_execution_receipt(result, receipt)
     except Exception as error:
+        receipt["durationMs"] = int((time.monotonic() - started_clock) * 1000)
+        receipt["state"] = "failed"
+        receipt["failureCode"] = _typed_failure(error).get("failureCode")
         _trace(
             "tool_call_failed",
             **trace_fields,
@@ -1818,7 +2463,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             exception_class=error.__class__.__name__,
             completed=True,
         )
-        return CallToolResult(
+        result = CallToolResult(
             content=[
                 TextContent(
                     type="text",
@@ -1832,6 +2477,9 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             ],
             isError=True,
         )
+        return _attach_execution_receipt(result, receipt)
+    finally:
+        _ACTIVE_EXECUTION_RECEIPT.reset(receipt_token)
 
 
 async def _run_stdio() -> None:

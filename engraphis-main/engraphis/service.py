@@ -1997,6 +1997,114 @@ class MemoryService:
         return out
 
     # ── code-symbol graph ────────────────────────────────────────────────────────
+    @staticmethod
+    def _code_projection_fingerprint(
+        root_path: str, *, languages: Optional[set[str]] = None, max_files: int = 5_000
+    ) -> tuple[str, int, bool]:
+        """Fingerprint the bounded source inventory without parsing or embeddings."""
+        from engraphis.backends.codegraph import detect_lang, iter_source_files
+
+        root = Path(root_path).expanduser().resolve()
+        digest = hashlib.sha256()
+        count = 0
+        complete = True
+        for file_path in iter_source_files(str(root)):
+            lang = detect_lang(file_path)
+            if lang is None or (languages and lang not in languages):
+                continue
+            if count >= max_files:
+                complete = False
+                break
+            path = Path(file_path)
+            try:
+                relative = path.resolve().relative_to(root).as_posix()
+                stat = path.stat()
+            except (OSError, ValueError):
+                complete = False
+                continue
+            digest.update(
+                f"{relative}\0{stat.st_size}\0{getattr(stat, 'st_mtime_ns', 0)}\n".encode(
+                    "utf-8"
+                )
+            )
+            count += 1
+        return digest.hexdigest(), count, complete
+
+    def code_index_status(self, *, workspace: str, repo: str) -> dict:
+        if not repo:
+            raise ValidationError("repo is required for code index status")
+        wid, rid = self._require_scope(workspace, repo)
+        row = self.store.conn.execute(
+            "SELECT root_path, indexed_at, settings FROM repos WHERE id=? AND workspace_id=?",
+            (rid, wid),
+        ).fetchone()
+        settings = _loads(row["settings"], {}) if row else {}
+        report = dict(settings.get("code_graph_last_report") or {})
+        languages = set(settings.get("code_graph_languages") or [])
+        root_path = str(row["root_path"] or "") if row else ""
+        state = "ready"
+        current_fingerprint = ""
+        current_file_count = 0
+        inventory_complete = False
+        if not row or row["indexed_at"] is None:
+            state = "not_indexed"
+        elif settings.get("code_graph_last_failure"):
+            state = "index_failed"
+        elif not bool(report.get("scan_complete")):
+            state = "index_incomplete"
+        elif not settings.get("code_graph_fingerprint") or not root_path:
+            state = "index_stale"
+        else:
+            try:
+                current_fingerprint, current_file_count, inventory_complete = (
+                    self._code_projection_fingerprint(root_path, languages=languages or None)
+                )
+            except (OSError, ValueError):
+                state = "index_stale"
+            else:
+                if (
+                    not inventory_complete
+                    or current_fingerprint != settings.get("code_graph_fingerprint")
+                    or current_file_count != int(settings.get("code_graph_file_count") or -1)
+                ):
+                    state = "index_stale"
+        stored_files = self.store.list_code_files(rid)
+        return {
+            "identity": f"{workspace}/{repo}",
+            "root": root_path or None,
+            "status": state,
+            "generation": settings.get("code_graph_generation"),
+            "fingerprint": settings.get("code_graph_fingerprint"),
+            "currentFingerprint": current_fingerprint or None,
+            "counts": {
+                "files": len(stored_files),
+                "symbols": self.store.count_symbols(rid),
+                "edges": self.store.count_code_edges(rid),
+            },
+            "exclusions": {
+                "dependencyAndBuildDirectories": True,
+                "engraphisIgnore": str(Path(root_path) / ".engraphisignore")
+                if root_path
+                else None,
+            },
+            "indexedAt": row["indexed_at"] if row else None,
+            "lastFailure": settings.get("code_graph_last_failure"),
+            "lastReport": report,
+        }
+
+    def _require_current_code_index(self, *, workspace: str, repo: str) -> dict:
+        status = self.code_index_status(workspace=workspace, repo=repo)
+        if status["status"] != "ready":
+            return {
+                "ok": False,
+                "error": status["status"],
+                "failureCode": status["status"],
+                "retryable": status["status"] in {"index_incomplete", "index_failed"},
+                "dependency": "engraphis_code_projection",
+                "index": status,
+            }
+        return status
+
     def index_repo(self, *, workspace: str, repo: str, root_path: str,
                    languages: Optional[list] = None) -> dict:
         """Index (or re-index) a repo's code graph. Like ``remember``/``start_session``,
@@ -2024,7 +2132,46 @@ class MemoryService:
                     f"Supported: {', '.join(sorted(supported))}. "
                     "Omit 'languages' to index every supported language found."
                 )
-        out = self.engine.index_repo(rid, root_path, languages=langs)
+        try:
+            out = self.engine.index_repo(rid, root_path, languages=langs)
+            fingerprint, file_count, inventory_complete = self._code_projection_fingerprint(
+                out["root_path"], languages=langs
+            )
+            generation = make_id("codeindex")
+            self.store.update_repo_index(
+                rid,
+                root_path=out["root_path"],
+                primary_lang=max(out.get("languages") or {}, key=(out.get("languages") or {}).get)
+                if out.get("languages")
+                else "",
+                settings={
+                    "code_graph_generation": generation,
+                    "code_graph_fingerprint": fingerprint,
+                    "code_graph_file_count": file_count,
+                    "code_graph_last_failure": None,
+                    "code_graph_last_report": {
+                        "files_scanned": out["files_scanned"],
+                        "files_indexed": out["files_indexed"],
+                        "files_unchanged": out["files_unchanged"],
+                        "files_removed": out["files_removed"],
+                        "files_failed": out["files_failed"],
+                        "files_skipped": out["files_skipped"],
+                        "scan_complete": bool(
+                            out["scan_complete"]
+                            and inventory_complete
+                            and not out["files_failed"]
+                            and not out["files_skipped"]
+                        ),
+                    },
+                },
+            )
+        except Exception as error:
+            self.store.update_repo_index(
+                rid,
+                root_path=root_path,
+                settings={"code_graph_last_failure": type(error).__name__},
+            )
+            raise
         out["workspace"] = ws
         out["repo"] = rp
         out["receipt"] = self.store.record_receipt(
@@ -2035,20 +2182,26 @@ class MemoryService:
                       "files_removed": out["files_removed"],
                       "symbols": out["symbols"], "edges": out["edges"]},
         )
+        out["index"] = self.code_index_status(workspace=ws, repo=rp)
         return out
 
     def search_code(self, query: str, *, workspace: str, repo: str, limit: int = 20) -> dict:
         if not repo:
             raise ValidationError("repo is required to search code")
         query = _clean_text(query, field="query", max_chars=MAX_CONTENT_CHARS)
+        status = self._require_current_code_index(workspace=workspace, repo=repo)
+        if status.get("ok") is False:
+            return status
         wid, rid = self._require_scope(workspace, repo)
         limit = max(1, min(MAX_K, int(limit)))
-        return self.engine.search_code(
+        result = self.engine.search_code(
             query, repo_id=rid, limit=limit,
             flt=SearchFilter(
                 workspace_id=wid, repo_id=rid, include_ancestors=True
             ),
         )
+        result["index"] = status
+        return result
 
     def code_path(self, source: str, target: str, *, workspace: str, repo: str,
                   max_depth: int = 8) -> dict:
@@ -2056,17 +2209,22 @@ class MemoryService:
             raise ValidationError("repo is required for a code path query")
         source = _clean_text(source, field="source", max_chars=500)
         target = _clean_text(target, field="target", max_chars=500)
+        status = self._require_current_code_index(workspace=workspace, repo=repo)
+        if status.get("ok") is False:
+            return status
         wid, rid = self._require_scope(workspace, repo)
         try:
             max_depth = max(1, min(32, int(max_depth)))
         except (TypeError, ValueError):
             raise ValidationError("max_depth must be an integer")
-        return self.engine.code_path(
+        result = self.engine.code_path(
             source, target, repo_id=rid, max_depth=max_depth,
             flt=SearchFilter(
                 workspace_id=wid, repo_id=rid, include_ancestors=True
             ),
         )
+        result["index"] = status
+        return result
 
     def code_impact(self, changed_files: list, *, workspace: str, repo: str) -> dict:
         if not repo:
@@ -2074,17 +2232,25 @@ class MemoryService:
         files = _clean_string_list(
             changed_files, field="changed_files", max_items=2_000, max_chars=4_000
         )
+        status = self._require_current_code_index(workspace=workspace, repo=repo)
+        if status.get("ok") is False:
+            return status
         wid, rid = self._require_scope(workspace, repo)
-        return self.engine.analyze_impact(
+        result = self.engine.analyze_impact(
             files, repo_id=rid,
             flt=SearchFilter(
                 workspace_id=wid, repo_id=rid, include_ancestors=True
             ),
         )
+        result["index"] = status
+        return result
 
     def export_code_graph(self, *, workspace: str, repo: str) -> dict:
         if not repo:
             raise ValidationError("repo is required to export a code graph")
+        status = self._require_current_code_index(workspace=workspace, repo=repo)
+        if status.get("ok") is False:
+            return status
         wid, rid = self._require_scope(workspace, repo)
         flt = SearchFilter(
             workspace_id=wid, repo_id=rid, include_ancestors=True
@@ -2098,6 +2264,7 @@ class MemoryService:
             "graph_html": self.engine.code_graph_html(
                 repo_id=rid, payload=graph, flt=flt
             ),
+            "index": status,
         }
 
     # ── inspection (powers the Memory Inspector UI) ─────────────────────────────

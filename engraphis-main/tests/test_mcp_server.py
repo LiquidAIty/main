@@ -14,6 +14,14 @@ pytest.importorskip("mcp", reason="optional 'mcp' extra not installed")
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _assert_typed_error(output: str, code: str = "validation_error") -> dict:
+    payload = json.loads(output)
+    assert payload["ok"] is False
+    assert payload["failureCode"] == code
+    assert payload["dependency"] == "engraphis"
+    return payload
+
+
 def test_stdio_server_default_log_level_is_quiet():
     from engraphis.mcp_server import mcp
     assert mcp.settings.log_level == "WARNING"
@@ -22,7 +30,9 @@ def test_stdio_server_default_log_level_is_quiet():
 def test_unexpected_tool_failure_does_not_leak_exception_text():
     from engraphis.mcp_server import _err
     output = _err(RuntimeError("token=SECRET C:/private/customer.db"))
-    assert output.startswith("Error:")
+    payload = json.loads(output)
+    assert payload["ok"] is False
+    assert payload["failureCode"] == "engraphis_operation_failed"
     assert "SECRET" not in output and "private" not in output
 
 
@@ -261,7 +271,7 @@ def test_grounded_recall_tool_returns_flat_answer_payload(monkeypatch):
 def test_tool_returns_actionable_error_on_bad_input(monkeypatch):
     srv = _module_with_memory_db(monkeypatch)
     out = srv.engraphis_remember(content="", workspace="acme")  # empty content -> service rejects
-    assert out.startswith("Error:")
+    _assert_typed_error(out)
 
 
 def test_why_and_timeline_tools(monkeypatch):
@@ -315,7 +325,7 @@ def test_governance_tools_forget_pin_correct(monkeypatch):
     assert forgotten["status"] == "forgotten"
 
     err = srv.engraphis_forget(memory_id="mem_does_not_exist", workspace="acme")
-    assert err.startswith("Error:")
+    _assert_typed_error(err)
 
 
 def test_promote_tool_widens_scope(monkeypatch):
@@ -339,10 +349,11 @@ def test_governance_tools_reject_wrong_workspace(monkeypatch):
     out = json.loads(srv.engraphis_remember(content="Alpha's private fact.", workspace="alpha"))
     json.loads(srv.engraphis_remember(content="anchor", workspace="beta"))
 
-    assert srv.engraphis_pin(memory_id=out["id"], workspace="beta").startswith("Error:")
-    assert srv.engraphis_forget(memory_id=out["id"], workspace="beta").startswith("Error:")
-    assert srv.engraphis_correct(memory_id=out["id"], new_content="tampered",
-                                 workspace="beta").startswith("Error:")
+    _assert_typed_error(srv.engraphis_pin(memory_id=out["id"], workspace="beta"))
+    _assert_typed_error(srv.engraphis_forget(memory_id=out["id"], workspace="beta"))
+    _assert_typed_error(srv.engraphis_correct(
+        memory_id=out["id"], new_content="tampered", workspace="beta"
+    ))
 
     # untouched: still live under its real workspace
     r = json.loads(srv.engraphis_recall(query="private fact", workspace="alpha"))
@@ -369,7 +380,7 @@ def test_link_tool_rejects_wrong_workspace(monkeypatch):
     a = json.loads(srv.engraphis_remember(content="Alpha's fact.", workspace="alpha"))
     b = json.loads(srv.engraphis_remember(content="Beta's fact.", workspace="beta"))
     err = srv.engraphis_link(a=a["id"], b=b["id"], workspace="alpha")
-    assert err.startswith("Error:")
+    _assert_typed_error(err)
 
 
 def test_index_repo_and_search_code_tools(monkeypatch, tmp_path):
