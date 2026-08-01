@@ -302,6 +302,72 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, st
     return {"risk": risk, "compute": compute}
 
 
+def _tool_capability_metadata(
+    name: str,
+    execution: dict[str, str],
+) -> dict[str, Any]:
+    """Describe how one canonical MCP tool belongs in the card editor.
+
+    This is generated metadata on the existing catalog entry, not a second tool
+    registry. Context records and GraphViews are deliberately not represented as
+    tools here; this metadata describes only callable operations.
+    """
+    if name.startswith(("thinkgraph.", "engraphis.")):
+        graph_authority = "thinkgraph"
+        authority_class = "project_reasoning"
+    elif name.startswith("graphiti."):
+        graph_authority = "knowgraph"
+        authority_class = "knowledge_provenance"
+    elif name.startswith("cbm."):
+        graph_authority = "codegraph"
+        authority_class = "repository_structure"
+    elif name.startswith(("agentgraph.", "graphview.")):
+        graph_authority = "agentgraph"
+        authority_class = "assignment_lineage"
+    elif name.startswith("hermes.memory_"):
+        graph_authority = "agentgraph"
+        authority_class = "agent_memory"
+    else:
+        graph_authority = None
+        authority_class = "application"
+
+    card_assignable = name != "main.context"
+    surface = "knowledge" if graph_authority else "tools"
+    if not card_assignable:
+        surface = "system"
+
+    compute = execution["compute"]
+    latency = (
+        "slow"
+        if compute in {"local_embedding", "api_embedding", "api_llm", "mixed"}
+        else "medium"
+        if compute == "database_write"
+        else "fast"
+    )
+    provider_possible = compute in {"api_embedding", "api_llm", "mixed"} or execution["risk"] == "paid/provider-backed"
+    return {
+        "surface": surface,
+        "capabilityType": "callable_tool",
+        "graphAuthority": graph_authority,
+        "authorityClass": authority_class,
+        "runtimeCompatibility": ["harness_mcp"],
+        "cardAssignable": card_assignable,
+        "latency": latency,
+        "providerPossible": provider_possible,
+        # Discovery proves the capability is catalogued, not that every native
+        # dependency is currently healthy. Calls and receipts remain authoritative.
+        "health": "unknown",
+        "recommendedUse": (
+            "Operate on or retrieve from the card's graph-backed knowledge."
+            if graph_authority
+            else "Perform an explicit task action."
+        ),
+        "verification": "execution_receipt",
+        "approvalRequired": execution["risk"] != "safe read",
+        "deprecated": False,
+    }
+
+
 def _observe_provider_call(
     *,
     compute: str,
@@ -599,8 +665,11 @@ def _graphiti_config():
     from config.schema import GraphitiConfig
 
     openrouter_key = os.environ.get("OPENROUTER_API_KEY") or None
-    openrouter_url = os.environ.get("OPENROUTER_BASE_URL") or "https://openrouter.ai/api/v1"
-    openai_key = os.environ.get("OPENAI_API_KEY") or None
+    openrouter_url = (
+        os.environ.get("OPENROUTER_OPENAI_BASE_URL")
+        or os.environ.get("OPENROUTER_BASE_URL")
+        or "https://openrouter.ai/api/v1"
+    )
     return GraphitiConfig(
         database={
             "provider": "neo4j",
@@ -628,11 +697,18 @@ def _graphiti_config():
         },
         embedder={
             "provider": "openai",
-            "model": os.environ.get("GRAPHITI_EMBEDDER_MODEL", "text-embedding-3-small"),
+            "model": (
+                os.environ.get("GRAPHITI_EMBEDDER_MODEL")
+                or os.environ.get("KNOWGRAPH_OPENROUTER_EMBEDDING_MODEL")
+                or "openai/text-embedding-3-large"
+            ),
+            "dimensions": int(
+                os.environ.get("KNOWGRAPH_OPENROUTER_EMBEDDING_DIM") or 3072
+            ),
             "providers": {
                 "openai": {
-                    "api_key": openai_key,
-                    "api_url": os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                    "api_key": openrouter_key,
+                    "api_url": openrouter_url,
                 }
             },
         },
@@ -1502,6 +1578,24 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
+            name="coder.effective_tools",
+            description=(
+                "Read one saved coding card's effective tool inventory and runtime class. "
+                "Distinguishes the graph-first OpenClaude System Coder from the ordinary "
+                "Codex app-server External/General baseline without starting a model turn."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "deckId": {"type": "string"},
+                    "cardId": {"type": "string"},
+                    "authority": {"type": "string", "enum": ["direct_main_audit", "mag_one_execution"]},
+                },
+                "required": ["projectId", "deckId", "cardId"],
+            },
+        ),
+        Tool(
             name="run_coder_subagent",
             description=(
                 "Main Chat only: send one approved coding assignment from the saved connected Coder card "
@@ -1935,6 +2029,7 @@ _READ_ONLY_TOOLS = {
     "graphview.list",
     "graphview.get",
     "coder.status",
+    "coder.effective_tools",
     "mag_one.describe_connected_agents",
     "canvas.inspect",
     "thinkgraph.get_graph_slice",
@@ -1971,9 +2066,11 @@ _HERMES_ONLY_TOOLS = {
 def _bind_tool_execution_contract(tool: Tool) -> Tool:
     payload = tool.model_dump(by_alias=True, exclude_none=True)
     meta = dict(payload.get("_meta") or {})
-    meta["liquidaityExecution"] = _tool_execution_contract(
+    execution = _tool_execution_contract(
         tool.name, tool.annotations
     )
+    meta["liquidaityExecution"] = execution
+    meta["liquidaityCapability"] = _tool_capability_metadata(tool.name, execution)
     payload["_meta"] = meta
     return Tool.model_validate(payload)
 
@@ -2087,6 +2184,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "parentViewId",
     },
     "coder.status": set(),
+    "coder.effective_tools": {"projectId", "deckId", "cardId", "authority"},
     "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "approvedPrompt", "authority", "graphViewIds"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "instructionId", "conversationId"},
@@ -2128,6 +2226,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
 
 _BRIDGE_PATHS: dict[str, str] = {
     "coder.status": "coder_status",
+    "coder.effective_tools": "coder_effective_tools",
     "run_coder_subagent": "run_coder_subagent",
     "mag_one.describe_connected_agents": "describe_connected_agents",
     "run_mag_one": "run_mag_one",

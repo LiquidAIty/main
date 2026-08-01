@@ -19,7 +19,7 @@ function firstExisting(candidates: string[], kind: string): string {
   throw new Error(`python_agent_mcp_${kind}_not_found: checked ${candidates.join(' | ')}`);
 }
 
-function resolvePythonCommand(): string {
+export function resolvePythonAgentMcpCommand(): string {
   const fromEnv = String(process.env.LIQUIDAITY_PY_MCP_PYTHON || '').trim();
   if (fromEnv && existsSync(fromEnv)) return fromEnv;
   return firstExisting(
@@ -31,7 +31,7 @@ function resolvePythonCommand(): string {
   );
 }
 
-function resolveHostPath(): string {
+export function resolvePythonAgentMcpHostPath(): string {
   const fromEnv = String(process.env.LIQUIDAITY_PY_MCP_HOST || '').trim();
   if (fromEnv && existsSync(fromEnv)) return fromEnv;
   return firstExisting(
@@ -47,8 +47,8 @@ let clientPromise: Promise<Client> | null = null;
 
 async function connect(): Promise<Client> {
   const transport = new StdioClientTransport({
-    command: resolvePythonCommand(),
-    args: [resolveHostPath()],
+    command: resolvePythonAgentMcpCommand(),
+    args: [resolvePythonAgentMcpHostPath()],
     env: { ...process.env } as Record<string, string>,
   });
   const client = new Client({ name: 'liquidaity-harness', version: '0.1.0' });
@@ -71,6 +71,44 @@ function getClient(): Promise<Client> {
 }
 
 export type PythonMcpToolResult = { ok: boolean; [key: string]: unknown };
+
+export type PythonMcpCapabilityMetadata = {
+  surface: 'knowledge' | 'tools' | 'system';
+  capabilityType: 'callable_tool';
+  graphAuthority: 'thinkgraph' | 'knowgraph' | 'codegraph' | 'agentgraph' | null;
+  authorityClass: string;
+  runtimeCompatibility: string[];
+  cardAssignable: boolean;
+  latency: 'fast' | 'medium' | 'slow';
+  providerPossible: boolean;
+  health: string;
+  recommendedUse: string;
+  verification: string;
+  approvalRequired: boolean;
+  deprecated: boolean;
+};
+
+export type PythonMcpToolDescriptor = {
+  name: string;
+  title?: string;
+  description?: string;
+  inputSchema: Record<string, unknown>;
+  capability: PythonMcpCapabilityMetadata;
+};
+
+/** The repository-owned stdio server used by both the persistent Harness
+ * client and bounded Coder runs. Keeping path resolution here prevents the two
+ * consumers from drifting onto different Python hosts. */
+export function resolvePythonAgentMcpServerSpec(): {
+  type: 'stdio'; command: string; args: string[]; env: Record<string, string>;
+} {
+  return {
+    type: 'stdio',
+    command: resolvePythonAgentMcpCommand(),
+    args: [resolvePythonAgentMcpHostPath()],
+    env: {},
+  };
+}
 
 /** Call one tool on the Python Agent MCP host and parse its JSON text result. */
 export async function callPythonAgentMcpTool(
@@ -97,9 +135,28 @@ export async function callPythonAgentMcpTool(
   return parsed as PythonMcpToolResult;
 }
 
-/** List the tools the Python Agent MCP host exposes (discovery proof). */
-export async function listPythonAgentMcpTools(): Promise<string[]> {
+/** Read the generated card-facing projection of the canonical MCP catalog. */
+export async function listPythonAgentMcpCatalog(): Promise<PythonMcpToolDescriptor[]> {
   const client = await getClient();
   const result = await client.listTools();
-  return (result.tools || []).map((tool) => tool.name).sort();
+  return (result.tools || [])
+    .map((tool) => {
+      const capability = (tool._meta as Record<string, unknown> | undefined)?.liquidaityCapability;
+      if (!capability || typeof capability !== 'object' || Array.isArray(capability)) {
+        throw new Error(`python_agent_mcp_capability_metadata_missing: ${tool.name}`);
+      }
+      return {
+        name: tool.name,
+        ...(tool.title ? { title: tool.title } : {}),
+        ...(tool.description ? { description: tool.description } : {}),
+        inputSchema: tool.inputSchema as Record<string, unknown>,
+        capability: capability as PythonMcpCapabilityMetadata,
+      };
+    })
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+/** List only names for runtime grant validation, derived from the same catalog. */
+export async function listPythonAgentMcpTools(): Promise<string[]> {
+  return (await listPythonAgentMcpCatalog()).map((tool) => tool.name);
 }

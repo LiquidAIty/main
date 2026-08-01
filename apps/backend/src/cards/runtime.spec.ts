@@ -5,7 +5,24 @@ import {
   resolveDirectSubagents,
   buildPythonAutoGenCardRuntimePayload,
   runCardWithContract,
+  resolveCardModelStrict,
 } from './runtime';
+
+describe('saved GPT comparison models', () => {
+  it.each([
+    'openai/gpt-5.6-luna',
+    'openai/gpt-5.6-terra',
+    'openai/gpt-5.6-sol',
+  ])('resolves %s through the saved OpenRouter card contract', (modelKey) => {
+    expect(
+      resolveCardModelStrict({
+        id: 'card_test',
+        runtimeType: 'assistant_agent',
+        runtimeOptions: { provider: 'openrouter', modelKey },
+      }),
+    ).toEqual({ provider: 'openrouter', providerModelId: modelKey });
+  });
+});
 
 // C-1 regressed twice because an unrecognised edgeType silently normalised to
 // 'flow' — the one type that grants invocation authority. These lock that shut.

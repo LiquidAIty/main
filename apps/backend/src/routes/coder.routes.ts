@@ -9,7 +9,7 @@ import {
   openClaudeConsoleSessionManager,
   type ConsoleMode,
 } from '../coder/openclaude/console/consoleSession';
-import { runConfiguredCard, resolveCardModelStrict } from '../cards/runtime';
+import { runConfiguredCard, resolveCardModelStrict, resolveCardTools } from '../cards/runtime';
 import { resolveProductChatWorkingDirectory } from '../coder/workspaceRoot';
 import {
   describeConnectedAgents,
@@ -63,9 +63,114 @@ import {
   finishAgentAssignmentOnPython,
   transitionGraphViewsOnPython,
 } from '../services/autogen/autogenOrchestratorClient';
+import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
+import {
+  resolveEffectiveCoderToolSnapshot,
+  type CoderAuthorityMode,
+} from '../coder/execution/coderRuntimeContract';
+import { codexAppServerSession } from '../coder/codex/codexAppServerSession';
 
 const router = Router();
 const DEFAULT_CODER_CONNECTOR_COMPLETION_WINDOW_MS = 20_000;
+
+router.get('/tool-library', async (req, res) => {
+  try {
+    const tools = await listPythonAgentMcpCatalog();
+    const projectId = String(req.query.projectId || '').trim();
+    const cardId = String(req.query.cardId || '').trim();
+    if (!projectId || !cardId) return res.json({ ok: true, tools });
+    const deckId = String(req.query.deckId || BUILDER_DECK_ID);
+    const authority: CoderAuthorityMode = req.query.authority === 'mag_one_execution'
+      ? 'mag_one_execution'
+      : 'direct_main_audit';
+    const { deck } = await getDeckDocument(projectId, deckId);
+    const card = (deck?.nodes || []).find((node: any) => String(node?.id || '') === cardId);
+    if (!card) return res.status(404).json({ ok: false, error: `coder_card_not_found: ${cardId}` });
+    const snapshot = resolveEffectiveCoderToolSnapshot({
+      authority,
+      savedTools: resolveCardTools(card),
+      catalog: tools,
+      runId: 'preview',
+    });
+    return res.json({ ok: true, tools, snapshot });
+  } catch (error) {
+    return res.status(503).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'python_agent_mcp_catalog_unavailable',
+      tools: [],
+    });
+  }
+});
+
+async function resolveOpenAiCoderCard(projectId: string, cardId: string) {
+  const { deck } = await getDeckDocument(projectId, BUILDER_DECK_ID);
+  const card = (deck?.nodes || []).find((node: any) => String(node?.id || '') === cardId) as any;
+  if (!card) throw new Error(`openai_coder_card_not_found:${cardId}`);
+  if (card.runtimeType !== 'codex_app_server' || card.runtimeBinding !== 'openai_coder') {
+    throw new Error(`openai_coder_card_runtime_mismatch:${cardId}`);
+  }
+  const tools = resolveCardTools(card);
+  if (tools.length) throw new Error(`openai_coder_assigned_tools_forbidden:${tools.join(',')}`);
+  return { card, tools };
+}
+
+router.get('/codex-app-server/cards/:cardId/inspect', async (req, res) => {
+  try {
+    const projectId = String(req.query.projectId || '').trim();
+    if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
+    await resolveOpenAiCoderCard(projectId, req.params.cardId);
+    const inspection = await codexAppServerSession.inspect(req.params.cardId);
+    return res.status(inspection.ready ? 200 : 424).json({ ok: inspection.ready, inspection });
+  } catch (error) {
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.get('/codex-app-server/cards/:cardId/status', (req, res) => {
+  return res.json({ ok: true, status: codexAppServerSession.status(req.params.cardId) });
+});
+
+router.post('/codex-app-server/cards/:cardId/start', async (req, res) => {
+  try {
+    const projectId = String(req.body?.projectId || '').trim();
+    const { card, tools } = await resolveOpenAiCoderCard(projectId, req.params.cardId);
+    if (tools.length) throw new Error('openai_coder_assigned_tool_bridge_not_wired');
+    const model = resolveCardModelStrict(card);
+    const assignment = String(req.body?.assignment || '').trim();
+    if (!assignment) return res.status(400).json({ ok: false, error: 'assignment_required' });
+    const started = await codexAppServerSession.start({
+      cardId: req.params.cardId,
+      model: model.providerModelId,
+      cwd: resolveProductChatWorkingDirectory(),
+      assignment,
+      approvalPolicy: String(req.body?.approvalPolicy || 'untrusted'),
+      sandbox: String(req.body?.sandbox || 'read-only'),
+    });
+    return res.json({ ok: true, started });
+  } catch (error) {
+    return res.status(424).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.post('/codex-app-server/cards/:cardId/stop', async (req, res) => {
+  try {
+    await codexAppServerSession.stop(req.params.cardId);
+    return res.json({ ok: true, status: codexAppServerSession.status(req.params.cardId) });
+  } catch (error) {
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.post('/codex-app-server/cards/:cardId/steer', async (req, res) => {
+  try {
+    const input = String(req.body?.input || '').trim();
+    if (!input) return res.status(400).json({ ok: false, error: 'steer_input_required' });
+    await codexAppServerSession.steer(req.params.cardId, input);
+    return res.json({ ok: true, status: codexAppServerSession.status(req.params.cardId) });
+  } catch (error) {
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
 
 export function resolveCoderConnectorCompletionWindowMs(): number {
   const configured = Number(process.env.LIQUIDAITY_CODER_CONNECTOR_COMPLETION_WINDOW_MS);
@@ -172,6 +277,53 @@ router.post('/mcp-bridge/run_mag_one', async (req, res) => {
   }
 });
 
+router.post('/mcp-bridge/coder_effective_tools', async (req, res) => {
+  try {
+    const projectId = String(req.body?.projectId || '').trim();
+    const deckId = String(req.body?.deckId || BUILDER_DECK_ID);
+    const cardId = String(req.body?.cardId || '').trim();
+    const { deck } = await getDeckDocument(projectId, deckId);
+    const card = (deck?.nodes || []).find((node: any) => String(node?.id || '') === cardId) as any;
+    if (!card) return res.status(404).json({ ok: false, error: `coder_card_not_found:${cardId}` });
+    if (card.runtimeType === 'codex_app_server' && card.runtimeBinding === 'openai_coder') {
+      const savedTools = resolveCardTools(card);
+      return res.status(savedTools.length ? 409 : 200).json({
+        ok: savedTools.length === 0,
+        cardId,
+        agentClass: 'external_general',
+        runtime: 'codex_app_server',
+        savedTools,
+        effectiveTools: [{ name: 'Codex native tool set', source: 'codex_app_server' }],
+        runtimeControls: ['Start', 'Stop', 'Steer'],
+        automaticGraphTools: [],
+        status: codexAppServerSession.status(cardId),
+        ...(savedTools.length ? { error: `openai_coder_assigned_tools_forbidden:${savedTools.join(',')}` } : {}),
+      });
+    }
+    if (card.runtimeType !== 'local_coder' || card.runtimeBinding !== 'local_coder') {
+      return res.status(409).json({ ok: false, error: `coder_card_runtime_unsupported:${cardId}` });
+    }
+    const authority: CoderAuthorityMode = req.body?.authority === 'mag_one_execution'
+      ? 'mag_one_execution'
+      : 'direct_main_audit';
+    const snapshot = resolveEffectiveCoderToolSnapshot({
+      authority,
+      savedTools: resolveCardTools(card),
+      catalog: await listPythonAgentMcpCatalog(),
+      runId: 'inspection',
+    });
+    return res.json({
+      ok: snapshot.unresolved.length === 0,
+      cardId,
+      agentClass: 'system',
+      runtime: 'openclaude',
+      snapshot,
+    });
+  } catch (error) {
+    return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
   try {
     const body = req.body || {};
@@ -188,10 +340,9 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
     const card = nodes.find((node) => String((node as { id?: unknown })?.id || '') === cardId);
     if (!card) return res.status(404).json({ ok: false, error: `coder_card_not_found: ${cardId}` });
     const model = resolveCardModelStrict(card);
-    const authority =
-      body.authority === 'mag_one_execution' || body.authority === 'direct_main_audit'
-        ? body.authority
-        : undefined;
+    const authority: CoderAuthorityMode = body.authority === 'mag_one_execution'
+      ? 'mag_one_execution'
+      : 'direct_main_audit';
     if (authority === 'direct_main_audit') {
       const main = await resolveMainChatRuntimeConfig(
         deriveSessionId(projectId, conversationId),
@@ -252,6 +403,20 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
       card && typeof card === 'object'
         ? ((card as { runtimeOptions?: Record<string, unknown> }).runtimeOptions || {})
         : {};
+    const childRunId = `coder_${randomUUID()}`;
+    const toolSnapshot = resolveEffectiveCoderToolSnapshot({
+      authority,
+      savedTools: resolveCardTools(card),
+      catalog: await listPythonAgentMcpCatalog(),
+      runId: childRunId,
+    });
+    if (toolSnapshot.unresolved.length > 0) {
+      return res.status(424).json({
+        ok: false,
+        error: `coder_saved_tools_unresolved:${toolSnapshot.unresolved.join(',')}`,
+        toolSnapshot,
+      });
+    }
     const outerAssignment = await beginAgentAssignmentOnPython({
       projectId,
       deckId,
@@ -287,6 +452,7 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
         });
       }
       const result = await runOpenClaudeCodeTask({
+        runId: childRunId,
         parentRunId: String(body.parentRunId || ''),
         correlationId: assignmentCorrelationId,
         projectId,
@@ -297,6 +463,7 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
         authority,
         model: model.providerModelId,
         provider: model.provider,
+        toolSnapshot,
       }, {
         onSessionStarted: announceStarted,
       });

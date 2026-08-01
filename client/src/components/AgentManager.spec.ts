@@ -1,11 +1,88 @@
+// @vitest-environment jsdom
+
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { buildActiveAgentManagerLocalConfig } from './AgentManager';
+import {
+  buildActiveAgentManagerLocalConfig,
+  buildAssignmentContextProjection,
+  contextGraphLayers,
+} from './AgentManager';
+import { GPT_CARD_MODEL_PRESETS } from '../features/agentbuilder/deck/deckPrimitives';
 
 describe('AgentManager active builder config', () => {
+  it('offers the three OpenRouter GPT comparison presets without choosing one automatically', () => {
+    expect(GPT_CARD_MODEL_PRESETS).toEqual([
+      { label: 'Luna', modelKey: 'openai/gpt-5.6-luna' },
+      { label: 'Terra', modelKey: 'openai/gpt-5.6-terra' },
+      { label: 'Sol', modelKey: 'openai/gpt-5.6-sol' },
+    ]);
+  });
+
+  it('projects only the materialized graph layers selected for the card context', () => {
+    const runContext = {
+      assignment: {
+        assignmentId: 'assignment:one',
+        correlationId: 'corr:one',
+        instruction: 'Review the selected evidence.',
+        state: 'claimed',
+        runTrace: {},
+        result: null,
+      },
+      deliveredContext: {
+        graphViews: [
+          { viewId: 'graphview:one', displayLabel: 'Review context', receivingRole: 'coder' },
+        ],
+        manifest: {
+          manifestHash: 'manifest:one',
+          records: [
+            {
+              authority: 'thinkgraph',
+              kind: 'node',
+              nativeId: 'thought:one',
+              representation: 'A project interpretation',
+              required: true,
+              deliveryOrder: 1,
+            },
+            {
+              authority: 'knowgraph',
+              kind: 'node',
+              nativeId: 'fact:one',
+              representation: 'A sourced fact',
+              required: true,
+              deliveryOrder: 2,
+            },
+          ],
+          unresolvedReferences: [],
+        },
+      },
+    } as any;
+
+    expect(contextGraphLayers(runContext)).toEqual([
+      'agentgraph',
+      'thinkgraph',
+      'knowgraph',
+    ]);
+    const projection = buildAssignmentContextProjection(
+      runContext,
+      'project:one',
+      ['agentgraph', 'knowgraph'],
+    );
+
+    expect(projection?.nodes.map((node) => node.id)).toEqual([
+      'agentgraph:assignment:assignment:one',
+      'agentgraph:graphview:graphview:one',
+      'knowgraph:fact:one',
+    ]);
+    expect(projection?.edges.map((edge) => edge.predicate)).toEqual([
+      'SELECTS_VIEW',
+      'DELIVERS_CONTEXT',
+    ]);
+    expect(projection?.nodes.some((node) => node.id.includes('thought:one'))).toBe(false);
+  });
+
   it('builds save payloads without legacy routing-like blackboard policy fields', () => {
     const payload = buildActiveAgentManagerLocalConfig({
       runtimeBinding: 'main_chat',

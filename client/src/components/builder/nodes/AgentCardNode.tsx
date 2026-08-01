@@ -32,6 +32,9 @@ export default function AgentCardNode({
     ? data.runtimeOptions.tools.map((tool) => String(tool).trim()).filter(Boolean)
     : [];
   const runtimeBinding = String(data?.runtimeBinding || '').trim();
+  const agentClass = runtimeBinding === 'main_chat' || runtimeBinding === 'hermes_steward' || runtimeBinding === 'local_coder'
+    ? 'System'
+    : 'External/General';
   const roleBadge = runtimeBinding === 'main_chat'
     ? 'Main'
     : runtimeBinding === 'hermes_steward'
@@ -40,6 +43,8 @@ export default function AgentCardNode({
         ? 'Mag One'
         : runtimeType === 'local_coder'
           ? 'Coder'
+          : runtimeType === 'codex_app_server'
+            ? 'Codex'
           : 'Worker';
   const graphToolCount = tools.filter((tool) => /thinkgraph|knowgraph|codegraph|hermes\.memory/.test(tool)).length;
 
@@ -172,6 +177,7 @@ export default function AgentCardNode({
           <span style={{ color: runtimeBinding === 'main_chat' ? GRAPH_THEME.accent.solar : GRAPH_THEME.accent.primary }}>
             {roleBadge}
           </span>
+          <span>· {agentClass}</span>
           <span>· {tools.length} tool{tools.length === 1 ? '' : 's'}</span>
           {graphToolCount > 0 ? <span title={`${graphToolCount} graph or memory permission${graphToolCount === 1 ? '' : 's'}`}>· graph</span> : null}
         </div>

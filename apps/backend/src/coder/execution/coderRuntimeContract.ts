@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveRepoRoot } from '../workspaceRoot';
 import {
+  resolvePythonAgentMcpServerSpec,
+  type PythonMcpToolDescriptor,
+} from '../../services/mcp/pythonAgentMcpClient';
+import {
   coderReportSchema,
   coderAuditResultSchema,
   type CoderReport,
@@ -20,6 +24,171 @@ import {
  * composition for the live console session in one place.
  */
 export type CoderAuthorityMode = 'direct_main_audit' | 'mag_one_execution';
+
+export type EffectiveCoderTool = {
+  canonicalName: string;
+  runtimeName: string | null;
+  displayName: string;
+  description: string;
+  source: 'openclaude_native' | 'codebase_memory' | 'liquidaity_mcp' | 'runtime_control' | 'saved_unavailable';
+  group: 'Native' | 'Codebase Memory' | 'Engraphis' | 'Other MCP' | 'Runtime controls' | 'Unavailable';
+  risk: 'read' | 'write' | 'shell' | 'network' | 'paid' | 'control';
+  saved: boolean;
+  enabled: boolean;
+  callable: boolean;
+  reason: string;
+};
+
+export type EffectiveCoderToolSnapshot = {
+  authority: CoderAuthorityMode;
+  permissionMode: ConsolePermissionMode;
+  allowsShell: boolean;
+  allowsWrite: boolean;
+  allowsNetwork: boolean;
+  hasPaidTools: boolean;
+  unresolved: string[];
+  nativeTools: string[];
+  allowedTools: string[];
+  disallowedTools: string[];
+  mcpServers: Record<string, McpServerSpec>;
+  tools: EffectiveCoderTool[];
+  counts: { saved: number; enabled: number; callable: number; unavailable: number };
+};
+
+const OPENCLAUDE_NATIVE_TOOL_CONTRACT = [
+  'Read', 'Grep', 'Glob', 'Edit', 'Write', 'NotebookEdit', 'Bash', 'PowerShell',
+  'WebFetch', 'WebSearch', 'Agent', 'Skill', 'TaskCreate', 'TaskGet', 'TaskList',
+  'TaskOutput', 'TaskStop', 'TaskUpdate', 'ToolSearch',
+] as const;
+
+function normalizeMcpName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function runtimeMcpName(server: string, tool: string): string {
+  return `mcp__${normalizeMcpName(server)}__${normalizeMcpName(tool)}`;
+}
+
+function nativeRisk(name: string): EffectiveCoderTool['risk'] {
+  if (['Edit', 'Write', 'NotebookEdit'].includes(name)) return 'write';
+  if (['Bash', 'PowerShell'].includes(name)) return 'shell';
+  if (['WebFetch', 'WebSearch'].includes(name)) return 'network';
+  return name.startsWith('Task') || name === 'Agent' ? 'control' : 'read';
+}
+
+/** Resolve one immutable, complete view of the tools a Coder run may actually
+ * invoke. The live Python MCP catalog remains catalog authority; this function
+ * only combines it with saved grants and the checked-in OpenClaude contract. */
+export function resolveEffectiveCoderToolSnapshot(opts: {
+  authority: CoderAuthorityMode;
+  savedTools: string[];
+  catalog: PythonMcpToolDescriptor[];
+  runId: string;
+}): EffectiveCoderToolSnapshot {
+  const policy = resolveCoderToolPolicy(opts.authority);
+  const saved = [...new Set(opts.savedTools.map((name) => String(name).trim()).filter(Boolean))];
+  const catalog = new Map(opts.catalog.map((tool) => [tool.name, tool]));
+  const enabledNative = new Set(policy.allowedTools.filter((name) => !name.startsWith('mcp__')));
+  const tools: EffectiveCoderTool[] = OPENCLAUDE_NATIVE_TOOL_CONTRACT.map((name) => ({
+    canonicalName: name,
+    runtimeName: name,
+    displayName: name,
+    description: 'OpenClaude native tool.',
+    source: 'openclaude_native',
+    group: 'Native',
+    risk: nativeRisk(name),
+    saved: false,
+    enabled: enabledNative.has(name),
+    callable: enabledNative.has(name),
+    reason: enabledNative.has(name) ? `Allowed by ${opts.authority}.` : `Denied by ${opts.authority}.`,
+  }));
+  const unresolved: string[] = [];
+  const selectedMcpRuntimeNames: string[] = [];
+  let needsLiquidaity = false;
+  let needsCodeGraph = policy.codeGraphMcp;
+
+  for (const canonicalName of saved) {
+    if (canonicalName === 'run_local_coder') {
+      tools.push({
+        canonicalName, runtimeName: null, displayName: 'Run Local Coder',
+        description: 'Required controller doorway that starts this Coder; it is not callable from inside its own run.',
+        source: 'runtime_control', group: 'Runtime controls', risk: 'control', saved: true,
+        enabled: true, callable: false, reason: 'Controller capability; recursion is intentionally disabled.',
+      });
+      continue;
+    }
+    const descriptor = catalog.get(canonicalName);
+    if (!descriptor) {
+      unresolved.push(canonicalName);
+      tools.push({
+        canonicalName, runtimeName: null, displayName: canonicalName,
+        description: 'Saved grant is absent from the live canonical catalog.',
+        source: 'saved_unavailable', group: 'Unavailable', risk: 'control', saved: true,
+        enabled: false, callable: false, reason: 'Unavailable in the live Python MCP catalog.',
+      });
+      continue;
+    }
+    const isCbm = canonicalName.startsWith('cbm.');
+    const runtimeName = isCbm
+      ? runtimeMcpName(CODEBASE_MEMORY_MCP_SERVER, canonicalName.slice(4))
+      : runtimeMcpName('liquidaity', canonicalName);
+    if (isCbm) needsCodeGraph = true;
+    else needsLiquidaity = true;
+    selectedMcpRuntimeNames.push(runtimeName);
+    const group: EffectiveCoderTool['group'] = isCbm
+      ? 'Codebase Memory'
+      : canonicalName.startsWith('engraphis.') ? 'Engraphis' : 'Other MCP';
+    const risk: EffectiveCoderTool['risk'] = descriptor.capability.providerPossible
+      ? 'paid'
+      : descriptor.capability.approvalRequired ? 'write' : 'read';
+    tools.push({
+      canonicalName, runtimeName,
+      displayName: descriptor.title || canonicalName,
+      description: descriptor.description || descriptor.capability.recommendedUse,
+      source: isCbm ? 'codebase_memory' : 'liquidaity_mcp', group, risk, saved: true,
+      enabled: true, callable: true, reason: `Saved grant; callable in ${opts.authority}.`,
+    });
+  }
+
+  tools.push({
+    canonicalName: 'Stop', runtimeName: null, displayName: 'Stop',
+    description: 'Stops the one live OpenClaude process owned by this session.',
+    source: 'runtime_control', group: 'Runtime controls', risk: 'control', saved: false,
+    enabled: true, callable: false, reason: 'Available to the user through the canonical session owner.',
+  });
+  const mcpServers = buildCoderMcpServers({
+    runId: opts.runId,
+    includeCodeGraph: needsCodeGraph,
+    includeLiquidaity: needsLiquidaity,
+  });
+  const allowedTools = [
+    ...enabledNative,
+    ...(policy.codeGraphMcp ? [CODEBASE_MEMORY_TOOL_GRANT] : []),
+    ...selectedMcpRuntimeNames,
+  ];
+  const disallowedTools = OPENCLAUDE_NATIVE_TOOL_CONTRACT.filter((name) => !enabledNative.has(name));
+  const snapshot: EffectiveCoderToolSnapshot = {
+    authority: opts.authority,
+    permissionMode: resolveConsolePermissionMode(opts.authority),
+    allowsShell: policy.allowsMutatingShell,
+    allowsWrite: enabledNative.has('Edit') || enabledNative.has('Write'),
+    allowsNetwork: enabledNative.has('WebFetch') || enabledNative.has('WebSearch'),
+    hasPaidTools: tools.some((tool) => tool.enabled && tool.risk === 'paid'),
+    unresolved,
+    nativeTools: [...enabledNative],
+    allowedTools,
+    disallowedTools,
+    mcpServers,
+    tools,
+    counts: {
+      saved: saved.length,
+      enabled: tools.filter((tool) => tool.enabled).length,
+      callable: tools.filter((tool) => tool.callable).length,
+      unavailable: tools.filter((tool) => tool.source === 'saved_unavailable').length,
+    },
+  };
+  return Object.freeze(snapshot);
+}
 
 export type CoderToolPolicy = {
   /** `--allowedTools` — with `--permission-mode dontAsk`, everything NOT listed is auto-denied. */
@@ -131,6 +300,7 @@ function resolveNativeCodebaseMemoryServer(): McpServerSpec {
 export function buildCoderMcpServers(opts: {
   runId: string;
   includeCodeGraph: boolean;
+  includeLiquidaity?: boolean;
 }): Record<string, McpServerSpec> {
   const servers: Record<string, McpServerSpec> = {};
   if (opts.includeCodeGraph) {
@@ -139,6 +309,9 @@ export function buildCoderMcpServers(opts: {
       ...native,
       env: { ...native.env, LIQUIDAITY_CODER_RUN_ID: opts.runId },
     };
+  }
+  if (opts.includeLiquidaity) {
+    servers.liquidaity = resolvePythonAgentMcpServerSpec();
   }
   return servers;
 }
@@ -183,6 +356,7 @@ export function buildOpenClaudeSubagentArgs(opts: {
   mcpFlags?: string[];
   allowedTools?: string[];
   disallowedTools?: string[];
+  nativeTools?: string[];
 }): string[] {
   const toolFlags: string[] = [];
   if (opts.allowedTools && opts.allowedTools.length > 0) {
@@ -199,6 +373,7 @@ export function buildOpenClaudeSubagentArgs(opts: {
     '--json-schema',
     JSON.stringify(opts.jsonSchema),
     ...(opts.mcpFlags ?? []),
+    ...(opts.nativeTools ? ['--tools', opts.nativeTools.join(',')] : []),
     ...toolFlags,
     '--permission-mode',
     opts.permissionMode,

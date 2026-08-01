@@ -152,7 +152,20 @@ async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<strin
   const seed = String(projectId || '').trim();
   if (!seed) return [];
 
-  const scopeIds = new Set<string>([seed]);
+  const scopeIds = new Set<string>();
+  const addScopeId = (rawValue: unknown) => {
+    const value = String(rawValue || '').trim();
+    if (!value) return;
+    scopeIds.add(value);
+
+    // Graphiti namespaces project data with the canonical prefix defined by
+    // services/knowgraph/graphiti_identity.py. Keep aliases for legacy data,
+    // but always include the namespace used by the live native importer.
+    if (/^[A-Za-z0-9_-]+$/.test(value) && !value.startsWith('liquidaity-')) {
+      scopeIds.add(`liquidaity-${value}`);
+    }
+  };
+  addScopeId(seed);
   try {
     const result = await pool.query(
       `
@@ -171,8 +184,7 @@ async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<strin
     const row = result?.rows?.[0] as { id?: string; name?: string; code?: string } | undefined;
     if (row) {
       for (const rawValue of [row.id, row.name, row.code]) {
-        const value = String(rawValue || '').trim();
-        if (value) scopeIds.add(value);
+        addScopeId(rawValue);
       }
     }
   } catch (error: any) {
@@ -193,8 +205,7 @@ async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<strin
       [Array.from(scopeIds)],
     );
     for (const r of attach.rows as Array<{ scope?: string }>) {
-      const v = String(r.scope || '').trim();
-      if (v) scopeIds.add(v);
+      addScopeId(r.scope);
     }
   } catch (error: any) {
     console.warn('[KNOWGRAPH][SCOPE] attachment resolution failed:', error?.message || error);
@@ -682,6 +693,7 @@ function buildMultipartForm(
   documentId: string,
   file: UploadedFile,
   guidance?: {
+    promptTemplate?: string | null;
     organizingPrinciple?: string | null;
     entityTaxonomy?: any | null;
     relationshipTaxonomy?: any | null;
@@ -696,6 +708,9 @@ function buildMultipartForm(
     new Blob([file.buffer], { type: file.mimetype || 'application/pdf' }),
     file.originalname || `${documentId}.pdf`,
   );
+  if (guidance?.promptTemplate) {
+    form.append('prompt_template', guidance.promptTemplate);
+  }
   if (guidance?.organizingPrinciple) {
     form.append('organizing_principle', guidance.organizingPrinciple);
   }
@@ -819,6 +834,7 @@ async function proxyKnowgraphPdfIngest(input: {
   for (const baseUrl of baseUrls) {
     try {
       const form = buildMultipartForm(projectId, documentId, file, {
+        promptTemplate: resolved.systemPrompt,
         organizingPrinciple: resolved.organizingPrinciple ?? null,
         entityTaxonomy: resolved.entityTaxonomy ?? null,
         relationshipTaxonomy: resolved.relationshipTaxonomy ?? null,

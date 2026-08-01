@@ -89,11 +89,15 @@ def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_to
     monkeypatch,
 ):
     events: list[str] = []
+    model_configs: list[tuple[str, str, float | None, int | None]] = []
     tasks: list[str] = []
     attached_tools: list[str] = []
     authorities: list[dict[str, str] | None] = []
     context = _context_pack("transport placeholder")
     context.cardRuntime.runtimeScope = {"deckId": "deck_builder"}
+    context.cardRuntime.runtimeOptions = {"temperature": 0.4, "maxTokens": 2400}
+    context.cardRuntime.participants[0].providerModelId = "openai/gpt-5.6-luna"
+    context.cardRuntime.participants[1].providerModelId = "openai/gpt-5.6-sol"
     context.agentAssignment = AgentAssignmentRequest(
         instructionId="instruction:one",
         senderCardId="card_main_chat",
@@ -124,13 +128,22 @@ def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_to
         )
 
     monkeypatch.setattr(mac.rq, "hydrate_assignment_context", hydrate)
-    monkeypatch.setattr(
-        mac,
-        "_build_model_client",
-        lambda _config: (events.append("model") or SimpleNamespace()),
-    )
+    def build_model(config):
+        events.append("model")
+        model_configs.append(
+            (
+                config.provider,
+                config.provider_model_id,
+                config.temperature,
+                config.max_tokens,
+            )
+        )
+        return SimpleNamespace()
 
-    def build(_context, _client, *, extra_tools=None):
+    monkeypatch.setattr(mac, "_build_model_client", build_model)
+
+    def build(_context, participant_clients, *, extra_tools=None):
+        assert len(participant_clients) == 2
         attached_tools.extend(tool.name for tool in (extra_tools or []))
         return [SimpleNamespace()]
 
@@ -162,7 +175,12 @@ def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_to
     response = asyncio.run(mac.run_native_magentic_mission(context))
 
     assert response.ok is True
-    assert events == ["hydrated", "model"]
+    assert events == ["hydrated", "model", "model", "model"]
+    assert model_configs == [
+        ("openrouter", MODEL, 0.4, 2400),
+        ("openrouter", "openai/gpt-5.6-luna", None, None),
+        ("openrouter", "openai/gpt-5.6-sol", None, None),
+    ]
     assert tasks == ["Approved task.\n\ngraphview:query:one"]
     assert attached_tools == []
     assert authorities == [
@@ -197,6 +215,22 @@ def test_selected_tool_attaches_real_functiontool_to_that_participant():
     assert "calculator" in research_tool_names
     assert all(isinstance(tool, FunctionTool) for tool in research._tools)
     assert [tool.name for tool in plain._tools] == []
+
+
+def test_each_participant_receives_its_own_saved_card_model_client():
+    first = _FakeToolClient()
+    second = _FakeToolClient()
+    research, plain = mac._build_participants(
+        _tools_context([]),
+        [first, second],
+    )
+    assert research._model_client is first
+    assert plain._model_client is second
+
+
+def test_participant_model_client_count_mismatch_fails_loudly():
+    with pytest.raises(RuntimeError, match="participant_model_count_mismatch"):
+        mac._build_participants(_tools_context([]), [_FakeToolClient()])
 
 
 def test_unknown_tool_id_fails_loudly_not_silently_dropped():

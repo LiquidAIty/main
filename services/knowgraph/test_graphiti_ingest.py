@@ -12,14 +12,18 @@ import ingest
 
 
 class FakeGraphDriver:
-    def __init__(self, *, existing: bool = False) -> None:
-        self.existing = existing
+    def __init__(self, *, existing_episode_id: str | None = None) -> None:
+        self.existing_episode_id = existing_episode_id
         self.queries: list[tuple[str, dict]] = []
         self.closed = False
 
     async def execute_query(self, cypher: str, **params):
         self.queries.append((cypher, params))
-        rows = [{"uuid": params["episode_id"]}] if self.existing and "LIMIT 1" in cypher else []
+        rows = (
+            [{"uuid": self.existing_episode_id}]
+            if self.existing_episode_id and "LIMIT 1" in cypher
+            else []
+        )
         return SimpleNamespace(records=rows)
 
     async def close(self) -> None:
@@ -27,13 +31,17 @@ class FakeGraphDriver:
 
 
 class FakeGraphiti:
-    def __init__(self, *, existing: bool = False) -> None:
-        self.driver = FakeGraphDriver(existing=existing)
+    def __init__(self, *, existing_episode_id: str | None = None) -> None:
+        self.driver = FakeGraphDriver(existing_episode_id=existing_episode_id)
         self.add_calls: list[dict] = []
 
     async def add_episode(self, **kwargs):
         self.add_calls.append(kwargs)
-        return SimpleNamespace(nodes=["entity"], edges=["fact"])
+        return SimpleNamespace(
+            episode=SimpleNamespace(uuid="graphiti-episode-1"),
+            nodes=["entity"],
+            edges=["fact"],
+        )
 
 
 def _runtime():
@@ -91,6 +99,46 @@ class GraphitiIngestTests(unittest.TestCase):
         )
         self.assertEqual(parsed, datetime(2026, 6, 30, 12, tzinfo=timezone.utc))
 
+    def test_large_pdf_uses_authored_top_level_outline_sections(self) -> None:
+        class FakePage:
+            def __init__(self, text: str) -> None:
+                self.text = text
+
+            def extract_text(self) -> str:
+                return self.text
+
+        class FakeDestination:
+            def __init__(self, title: str, page: int) -> None:
+                self.title = title
+                self.page = page
+
+        first = FakeDestination("Chapter 1", 0)
+        nested = FakeDestination("Nested heading", 1)
+        second = FakeDestination("Chapter 2", 2)
+        reader = SimpleNamespace(
+            pages=[FakePage("a" * 10), FakePage("b" * 10), FakePage("c" * 10)],
+            outline=[first, [nested], second],
+            get_destination_page_number=lambda destination: destination.page,
+        )
+
+        sections = ingest._pdf_source_sections(
+            reader, "book.pdf", single_episode_max_chars=15
+        )
+
+        self.assertEqual(
+            [(section.title, section.page_start, section.page_end) for section in sections],
+            [("Chapter 1", 1, 2), ("Chapter 2", 3, 3)],
+        )
+        self.assertNotIn("Nested heading", [section.title for section in sections])
+
+    def test_large_pdf_without_authored_outline_fails_closed(self) -> None:
+        page = SimpleNamespace(extract_text=lambda: "a" * 20)
+        reader = SimpleNamespace(pages=[page, page], outline=[])
+        with self.assertRaisesRegex(ValueError, "Refusing an arbitrary fixed-size split"):
+            ingest._pdf_source_sections(
+                reader, "unstructured.pdf", single_episode_max_chars=15
+            )
+
     def test_new_source_uses_one_graphiti_episode_and_records_authority(self) -> None:
         graphiti = FakeGraphiti()
         result = _run(graphiti)
@@ -102,7 +150,8 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertEqual(len(graphiti.add_calls), 1)
         call = graphiti.add_calls[0]
         self.assertEqual(call["group_id"], "liquidaity-project-1")
-        self.assertEqual(call["uuid"], result["episode_id"])
+        self.assertNotIn("uuid", call)
+        self.assertEqual(result["episode_id"], "graphiti-episode-1")
         self.assertEqual(call["custom_extraction_instructions"], "Keep claims grounded.")
         self.assertTrue(
             any("graphiti_version" in cypher for cypher, _ in graphiti.driver.queries)
@@ -110,11 +159,12 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertTrue(graphiti.driver.closed)
 
     def test_duplicate_episode_skips_graphiti_and_provider_work(self) -> None:
-        graphiti = FakeGraphiti(existing=True)
+        graphiti = FakeGraphiti(existing_episode_id="graphiti-existing-episode")
         result = _run(graphiti)
 
         self.assertTrue(result["idempotent"])
         self.assertEqual(result["status"], "already_ingested")
+        self.assertEqual(result["episode_id"], "graphiti-existing-episode")
         self.assertEqual(graphiti.add_calls, [])
         self.assertEqual(len(graphiti.driver.queries), 1)
         self.assertTrue(graphiti.driver.closed)

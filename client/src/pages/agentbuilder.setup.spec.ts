@@ -54,6 +54,7 @@ describe('agentbuilder authoring flow', () => {
       'Magentic-One',
       'Search Agent',
       'Coder',
+      'OpenAI Coder',
       'Hermes',
       'Trading Agent',
       'WorldSignals Agent',
@@ -64,6 +65,7 @@ describe('agentbuilder authoring flow', () => {
       null,
       'research_agent',
       'local_coder',
+      'openai_coder',
       'hermes_steward',
       'trading_agent',
       'worldsignals_agent',
@@ -73,6 +75,7 @@ describe('agentbuilder authoring flow', () => {
       'template_magentic',
       'template_research_agent',
       'template_local_coder',
+      'template_openai_coder',
       'template_hermes_steward',
       'template_trading_workbench',
       'template_worldsignals_agent',
@@ -93,7 +96,7 @@ describe('agentbuilder authoring flow', () => {
         edgeType: 'magentic_control',
       },
       {
-        source: 'card_local_coder',
+        source: 'card_openai_coder',
         target: 'card_magentic',
         edgeType: 'magentic_option',
       },
@@ -108,6 +111,18 @@ describe('agentbuilder authoring flow', () => {
         edgeType: 'magentic_option',
       },
     ]);
+    const systemCoder = INITIAL_DECK.nodes.find((node) => node.id === 'card_local_coder');
+    const openAiCoder = INITIAL_DECK.nodes.find((node) => node.id === 'card_openai_coder');
+    expect(systemCoder?.runtimeType).toBe('local_coder');
+    expect(systemCoder?.runtimeOptions?.tools).toContain('cbm.search_graph');
+    expect(openAiCoder).toMatchObject({
+      runtimeBinding: 'openai_coder',
+      runtimeType: 'codex_app_server',
+      runtimeOptions: { provider: 'openai', tools: [] },
+    });
+    expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_local_coder' && edge.edgeType === 'magentic_option')).toBe(false);
+    expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_openai_coder' && edge.edgeType === 'magentic_option')).toBe(true);
+    expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_main_chat' && edge.target === 'card_openai_coder')).toBe(false);
   });
 
   it('prefers a real saved deck over the fallback seed and preserves its visible chain', () => {
@@ -346,15 +361,23 @@ describe('agentbuilder authoring flow', () => {
       'card_magentic',
       'card_research_agent',
       'card_local_coder',
+      'card_openai_coder',
       'card_hermes_steward',
       'card_trading_workbench',
       'card_worldsignals_agent',
     ]);
-    expect(hydrated.edges).toEqual([]);
+    expect(hydrated.edges).toEqual([
+      expect.objectContaining({
+        id: 'edge_openai_coder_magentic_bus',
+        source: 'card_openai_coder',
+        target: 'card_magentic',
+        edgeType: 'magentic_option',
+      }),
+    ]);
     expect(hydrated.nodes.find((node) => node.id === 'card_magentic')?.runtimeOptions).toMatchObject({
       executionBackend: 'python_autogen',
       provider: 'openrouter',
-      modelKey: 'openai/gpt-5.1-chat',
+      modelKey: 'openai/gpt-5.6-terra',
     });
   });
 
@@ -373,7 +396,7 @@ describe('agentbuilder authoring flow', () => {
     const migrated = hydrateDeckDocument(retiredDefault);
     expect(migrated.nodes.find((node) => node.id === 'card_magentic')?.runtimeOptions).toMatchObject({
       provider: 'openrouter',
-      modelKey: 'openai/gpt-5.1-chat',
+      modelKey: 'openai/gpt-5.6-terra',
     });
 
     retiredMagentic.runtimeOptions.maxTurns = 3;

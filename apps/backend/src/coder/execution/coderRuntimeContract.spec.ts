@@ -10,7 +10,23 @@ import {
   CODEBASE_MEMORY_MCP_SERVER,
   CODEBASE_MEMORY_TOOL_GRANT,
   LEGACY_HARNESS_TOOL_POLICY,
+  resolveEffectiveCoderToolSnapshot,
 } from './coderRuntimeContract';
+
+const descriptor = (name: string, overrides: Record<string, unknown> = {}) => ({
+  name,
+  description: `${name} description`,
+  inputSchema: { type: 'object' },
+  capability: {
+    surface: 'knowledge' as const,
+    capabilityType: 'callable_tool' as const,
+    graphAuthority: name.startsWith('cbm.') ? 'codegraph' as const : 'thinkgraph' as const,
+    authorityClass: 'read', runtimeCompatibility: ['local_coder'], cardAssignable: true,
+    latency: 'fast' as const, providerPossible: false, health: 'available',
+    recommendedUse: 'read', verification: 'live', approvalRequired: false, deprecated: false,
+    ...overrides,
+  },
+});
 
 function validReportEnvelope(overrides: Record<string, unknown> = {}) {
   return {
@@ -87,6 +103,31 @@ describe('buildCoderMcpServers', () => {
     const servers = buildCoderMcpServers({ runId: 'coder_a', includeCodeGraph: true });
     expect(Object.keys(servers)).toEqual([CODEBASE_MEMORY_MCP_SERVER]);
     expect(servers[CODEBASE_MEMORY_MCP_SERVER].env.LIQUIDAITY_CODER_RUN_ID).toBe('coder_a');
+  });
+});
+
+describe('resolveEffectiveCoderToolSnapshot', () => {
+  it('resolves exact audit tools from saved grants and keeps the controller non-recursive', () => {
+    const snapshot = resolveEffectiveCoderToolSnapshot({
+      authority: 'direct_main_audit', runId: 'coder_snapshot',
+      savedTools: ['run_local_coder', 'cbm.search_graph', 'engraphis.search_code'],
+      catalog: [descriptor('cbm.search_graph'), descriptor('engraphis.search_code')],
+    });
+    expect(snapshot.unresolved).toEqual([]);
+    expect(snapshot.nativeTools).toEqual(['Read', 'Grep', 'Glob']);
+    expect(snapshot.allowedTools).toEqual(expect.arrayContaining([
+      'mcp__codebase-memory__search_graph', 'mcp__liquidaity__engraphis_search_code',
+    ]));
+    expect(Object.keys(snapshot.mcpServers)).toEqual(['codebase-memory', 'liquidaity']);
+    expect(snapshot.tools.find((tool) => tool.canonicalName === 'run_local_coder')?.callable).toBe(false);
+  });
+
+  it('fails preflight honestly for a saved grant absent from the live catalog', () => {
+    const snapshot = resolveEffectiveCoderToolSnapshot({
+      authority: 'mag_one_execution', runId: 'coder_snapshot', savedTools: ['old.tool'], catalog: [],
+    });
+    expect(snapshot.unresolved).toEqual(['old.tool']);
+    expect(snapshot.tools.find((tool) => tool.canonicalName === 'old.tool')?.group).toBe('Unavailable');
   });
 });
 

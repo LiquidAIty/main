@@ -170,7 +170,15 @@ def _build_participants(
     private_prompts = _private_prompt_by_card_id(context)
     participants: list[AssistantAgent] = []
     used_names: set[str] = set()
-    for i, participant in enumerate(card.participants or []):
+    configured_participants = card.participants or []
+    if isinstance(model_client, (list, tuple)) and len(model_client) != len(
+        configured_participants
+    ):
+        raise RuntimeError(
+            "card_runtime_participant_model_count_mismatch: "
+            f"participants={len(configured_participants)} clients={len(model_client)}"
+        )
+    for i, participant in enumerate(configured_participants):
         card_id = _as_text(getattr(participant, "cardId", ""))
         title = _as_text(getattr(participant, "title", "")) or card_id
         name = _safe_agent_name(title or f"Agent {i + 1}", i, used_names)
@@ -184,7 +192,9 @@ def _build_participants(
         kwargs: dict[str, Any] = {
             "name": name,
             "description": description,
-            "model_client": model_client,
+            "model_client": model_client[i]
+            if isinstance(model_client, (list, tuple))
+            else model_client,
         }
         if system_prompt:
             kwargs["system_message"] = system_prompt
@@ -490,8 +500,10 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     try:
         client = _build_model_client(
             AutoGenAgentConfig(
-                provider=context.session.modelProvider,
-                provider_model_id=context.session.providerModelId,
+                provider=single.provider,
+                provider_model_id=single.providerModelId,
+                temperature=single.temperature,
+                max_tokens=single.maxTokens,
             )
         )
         optional_bindings = [
@@ -659,13 +671,8 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
         )
     task = hydrated_assignment.model_context
 
-    client = _build_model_client(
-        AutoGenAgentConfig(
-            provider=context.session.modelProvider,
-            provider_model_id=context.session.providerModelId,
-        )
-    )
-
+    client = None
+    participant_clients: list[Any] = []
     assignment_context_token = ACTIVE_AGENT_ASSIGNMENT_CONTEXT.set(
         {
             "projectId": context.session.projectId,
@@ -675,7 +682,27 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
     )
 
     try:
-        participants = _build_participants(context, client)
+        runtime_options = context.cardRuntime.runtimeOptions or {}
+        client = _build_model_client(
+            AutoGenAgentConfig(
+                provider=context.session.modelProvider,
+                provider_model_id=context.session.providerModelId,
+                temperature=runtime_options.get("temperature"),
+                max_tokens=runtime_options.get("maxTokens"),
+            )
+        )
+        participant_clients = [
+            _build_model_client(
+                AutoGenAgentConfig(
+                    provider=participant.provider,
+                    provider_model_id=participant.providerModelId,
+                    temperature=participant.temperature,
+                    max_tokens=participant.maxTokens,
+                )
+            )
+            for participant in context.cardRuntime.participants
+        ]
+        participants = _build_participants(context, participant_clients)
         team = _CapturingMagenticOneGroupChat(
             participants=participants,
             model_client=client,
@@ -795,9 +822,10 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
         raise
     finally:
         ACTIVE_AGENT_ASSIGNMENT_CONTEXT.reset(assignment_context_token)
-        close = getattr(client, "close", None)
-        if callable(close):
-            try:
-                await close()
-            except Exception:
-                pass
+        for owned_client in [*participant_clients, client]:
+            close = getattr(owned_client, "close", None)
+            if callable(close):
+                try:
+                    await close()
+                except Exception:
+                    pass

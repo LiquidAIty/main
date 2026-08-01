@@ -919,6 +919,7 @@ export default function AgentBuilder(): React.ReactElement {
                   <AgentManager
                     key={`deck-card:${selectedCard.id}:${tab}`}
                     projectId={canvasProjectId || ''}
+                    cardId={selectedCard.id}
                     agentType="agent_builder"
                     activeTab={tab}
                     localConfig={selectedCardConfig}

@@ -13,9 +13,8 @@ function buildDocumentId(file: File): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-  const stamp = Date.now().toString(36);
-  return `${base || "attachment"}-${stamp}`;
+    .slice(0, 96);
+  return `pdf:${base || "attachment"}`;
 }
 
 function isPdfFile(file: File): boolean {
@@ -32,12 +31,12 @@ async function readJsonSafely(res: Response): Promise<any | null> {
   }
 }
 
-async function postKnowgraphIngest(file: File, projectId: string): Promise<{ response: Response; payload: any | null }> {
+async function postKnowgraphIngest(file: File, projectId: string): Promise<{ response: Response; payload: any | null; documentId: string }> {
   const formData = new FormData();
+  const documentId = buildDocumentId(file);
   formData.append("file", file);
   formData.append("project_id", projectId);
-  // Backend currently expects document_id; derive one from filename.
-  formData.append("document_id", buildDocumentId(file));
+  formData.append("document_id", documentId);
 
   const response = await fetch("/api/knowgraph/ingest", {
     method: "POST",
@@ -45,7 +44,7 @@ async function postKnowgraphIngest(file: File, projectId: string): Promise<{ res
     credentials: "include",
   });
   const payload = await readJsonSafely(response);
-  return { response, payload };
+  return { response, payload, documentId };
 }
 
 function formatUploadError(endpoint: string, status: number, body: string): string {
@@ -140,11 +139,11 @@ export default function UploadAttachment({
 
     setUploading(true);
     try {
-      let { response, payload } = await postKnowgraphIngest(file, knowledgeProjectId);
+      let { response, payload, documentId } = await postKnowgraphIngest(file, knowledgeProjectId);
 
       if (response.status === 401) {
         await ensureAnonymousSession();
-        ({ response, payload } = await postKnowgraphIngest(file, knowledgeProjectId));
+        ({ response, payload, documentId } = await postKnowgraphIngest(file, knowledgeProjectId));
       }
 
       if (!response.ok) {
@@ -160,8 +159,19 @@ export default function UploadAttachment({
       }
 
       setToastType("ok");
-      setToast("Knowledge imported");
-      window.dispatchEvent(new CustomEvent("knowledge:refresh"));
+      const sectionCount = Number(payload?.section_count || 0);
+      setToast(sectionCount > 1 ? `Knowledge imported (${sectionCount} sections)` : "Knowledge imported");
+      window.dispatchEvent(new CustomEvent("knowledge:refresh", {
+        detail: {
+          projectId: knowledgeProjectId,
+          documentId,
+          episodeIds: Array.isArray(payload?.episode_ids)
+            ? payload.episode_ids.map((id: unknown) => String(id))
+            : payload?.episode_id
+              ? [String(payload.episode_id)]
+              : [],
+        },
+      }));
       onUploaded?.();
     } catch (error: any) {
       setToastType("error");

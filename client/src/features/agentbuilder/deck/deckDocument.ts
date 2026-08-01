@@ -388,6 +388,36 @@ function seedCurrentSystemCardsIntoLegacyDeck(
   };
 }
 
+function ensureOpenAiCoderBaseline(deck: DeckDocument): DeckDocument {
+  if (deck.id !== INITIAL_DECK.id) return deck;
+  const ids = new Set(deck.nodes.map((node) => node.id));
+  // This is a bounded canonical-system migration, never a fallback merge into
+  // an arbitrary user-authored deck.
+  if (!ids.has('card_main_chat') || !ids.has('card_magentic') || !ids.has('card_local_coder')) {
+    return deck;
+  }
+  const seedCard = INITIAL_DECK.nodes.find((node) => node.id === 'card_openai_coder');
+  const seedEdge = INITIAL_DECK.edges.find((edge) => edge.id === 'edge_openai_coder_magentic_bus');
+  if (!seedCard || !seedEdge) return deck;
+  const nodes: AgentCardInstance[] = deck.nodes.some((node) => node.id === seedCard.id)
+    ? deck.nodes.map((node): AgentCardInstance => node.id !== seedCard.id ? node : {
+        ...node,
+        runtimeBinding: 'openai_coder',
+        runtimeType: 'codex_app_server',
+        runtimeOptions: {
+          ...(node.runtimeOptions || {}),
+          provider: 'openai',
+          tools: [],
+        },
+      })
+    : [...deck.nodes, cloneDeckDocument(seedCard)];
+  const edgesWithoutSystemCoderBus = deck.edges.filter((edge) => edge.id !== 'edge_coder_magentic_bus');
+  const edges = edgesWithoutSystemCoderBus.some((edge) => edge.id === seedEdge.id)
+    ? edgesWithoutSystemCoderBus
+    : [...edgesWithoutSystemCoderBus, cloneDeckDocument(seedEdge)];
+  return { ...deck, nodes, edges };
+}
+
 export function hydrateDeckDocument(
   value: Partial<DeckDocument> | null | undefined,
 ): DeckDocument {
@@ -401,7 +431,7 @@ export function hydrateDeckDocument(
     : hasExplicitNodes
       ? []
       : normalizeDeckEdges(value.edges);
-  const hydratedDeck = seedCurrentSystemCardsIntoLegacyDeck({
+  const hydratedDeck = ensureOpenAiCoderBaseline(seedCurrentSystemCardsIntoLegacyDeck({
     ...cloneDeckDocument(INITIAL_DECK),
     ...value,
     id: String(value.id || INITIAL_DECK.id).trim() || INITIAL_DECK.id,
@@ -412,7 +442,7 @@ export function hydrateDeckDocument(
     nodes: normalizeDeckNodes(value.nodes),
     edges: nextEdges,
     promptTemplates: normalizeDeckPromptTemplates(value.promptTemplates),
-  });
+  }));
   const bannedNodeIds = new Set(['card_synthesis', 'card_review']);
   const bannedPromptTemplateIds = new Set([
     'prompt_synthesis',

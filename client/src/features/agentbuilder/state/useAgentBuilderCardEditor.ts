@@ -156,6 +156,10 @@ export default function useAgentBuilderCardEditor({
           : [];
         const nextRuntimeOptions = normalizeRuntimeOptions({
           ...(nextConfig.runtime_options || {}),
+          provider: nextProvider,
+          modelKey: nextModel,
+          temperature: nextTemperature,
+          maxTokens: nextMaxTokens,
           tools: nextTools,
         });
         const nextKnowledgeSources = Array.isArray(

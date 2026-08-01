@@ -30,7 +30,7 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
                 "status": "ingested",
                 "episode_id": "episode-1",
                 "project_id": "project-1",
-                "document_id": "document-1",
+                "document_id": "pdf:document:1",
                 "source_name": "source.pdf",
                 "content_fingerprint": "sha256:proof",
                 "provider": "openrouter",
@@ -49,7 +49,8 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
                     "/ingest",
                     data={
                         "project_id": "project-1",
-                        "document_id": "document-1",
+                        "document_id": "pdf:document:1",
+                        "prompt_template": "Extract only source-backed claims.",
                         "organizing_principle": "Preserve source provenance.",
                     },
                     files={
@@ -75,7 +76,7 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
                 "status": "ingested",
                 "episode_id": "episode-1",
                 "project_id": "project-1",
-                "document_id": "document-1",
+                "document_id": "pdf:document:1",
                 "source_name": "source.pdf",
                 "content_fingerprint": "sha256:proof",
                 "provider": "openrouter",
@@ -86,12 +87,16 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
         )
         ingest_pdf.assert_awaited_once()
         args, kwargs = ingest_pdf.await_args
-        self.assertEqual(args[1:3], ("project-1", "document-1"))
+        self.assertEqual(args[1:3], ("project-1", "pdf:document:1"))
+        self.assertEqual(Path(args[0]).name, "pdf_document_1_source.pdf")
         self.assertEqual(kwargs["provider"], "openrouter")
         self.assertEqual(kwargs["model_key"], "deepseek")
         self.assertEqual(kwargs["model_id"], "deepseek/deepseek-chat")
         self.assertEqual(kwargs["agent_id"], "hermes")
         self.assertEqual(kwargs["source_name"], "source.pdf")
+        self.assertEqual(
+            kwargs["prompt_template"], "Extract only source-backed claims."
+        )
         self.assertEqual(
             kwargs["organizing_principle"], "Preserve source provenance."
         )

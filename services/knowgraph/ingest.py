@@ -38,6 +38,14 @@ class RuntimeModelConfig:
     embedding_client_kwargs: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class PdfSourceSection:
+    title: str
+    page_start: int
+    page_end: int
+    text: str
+
+
 def _required_env(name: str) -> str:
     value = os.getenv(name)
     if not value:
@@ -392,13 +400,39 @@ def _records(result: Any) -> list[Any]:
     return []
 
 
-async def _episode_exists(graphiti: Any, episode_id: str) -> bool:
+async def _find_existing_episode_id(
+    graphiti: Any,
+    *,
+    candidate_episode_id: str,
+    project_id: str,
+    document_id: str,
+    content_fingerprint: str,
+) -> str | None:
     result = await graphiti.driver.execute_query(
-        "MATCH (episode:Episodic {uuid: $episode_id}) RETURN episode.uuid AS uuid LIMIT 1",
-        episode_id=episode_id,
+        """
+        MATCH (episode:Episodic)
+        WHERE episode.uuid = $candidate_episode_id
+           OR (
+                episode.group_id = $group_id
+                AND episode.project_id = $project_id
+                AND episode.document_id = $document_id
+                AND episode.content_fingerprint = $content_fingerprint
+           )
+        RETURN episode.uuid AS uuid
+        LIMIT 1
+        """,
+        candidate_episode_id=candidate_episode_id,
+        group_id=graphiti_project_group_id(project_id),
+        project_id=project_id,
+        document_id=document_id,
+        content_fingerprint=content_fingerprint,
         routing_="r",
     )
-    return bool(_records(result))
+    records = _records(result)
+    if not records:
+        return None
+    existing_id = str(records[0].get("uuid") or "").strip()
+    return existing_id or None
 
 
 async def _record_episode_authority(
@@ -476,7 +510,7 @@ async def _ingest_episode(
 ) -> dict[str, Any]:
     from graphiti_core.nodes import EpisodeType
 
-    episode_id, content_fingerprint = _episode_identity(
+    candidate_episode_id, content_fingerprint = _episode_identity(
         project_id, document_id, text
     )
     runtime, graphiti, _database = _create_graphiti_runtime(
@@ -485,11 +519,18 @@ async def _ingest_episode(
         model_id=model_id,
     )
     try:
-        if await _episode_exists(graphiti, episode_id):
+        existing_episode_id = await _find_existing_episode_id(
+            graphiti,
+            candidate_episode_id=candidate_episode_id,
+            project_id=project_id,
+            document_id=document_id,
+            content_fingerprint=content_fingerprint,
+        )
+        if existing_episode_id:
             return {
                 "status": "already_ingested",
-                "run_id": episode_id,
-                "episode_id": episode_id,
+                "run_id": candidate_episode_id,
+                "episode_id": existing_episode_id,
                 "project_id": project_id,
                 "document_id": document_id,
                 "provider": runtime.provider,
@@ -513,10 +554,10 @@ async def _ingest_episode(
             # database name. Project scope keeps search and temporal evolution
             # isolated while the existing Neo4j driver remains the one store.
             group_id=graphiti_project_group_id(project_id),
-            uuid=episode_id,
             update_communities=False,
             custom_extraction_instructions=guidance,
         )
+        episode_id = str(result.episode.uuid)
         await _record_episode_authority(
             graphiti,
             episode_id=episode_id,
@@ -536,7 +577,7 @@ async def _ingest_episode(
         )
         return {
             "status": "ingested",
-            "run_id": episode_id,
+            "run_id": candidate_episode_id,
             "episode_id": episode_id,
             "project_id": project_id,
             "document_id": document_id,
@@ -556,6 +597,72 @@ async def _ingest_episode(
         await graphiti.driver.close()
 
 
+def _pdf_source_sections(
+    reader: Any,
+    source_name: str,
+    *,
+    single_episode_max_chars: int = 180_000,
+) -> list[PdfSourceSection]:
+    page_texts = [(page.extract_text() or "").strip() for page in reader.pages]
+    complete_text = "\n\n".join(text for text in page_texts if text).strip()
+    if not complete_text:
+        return []
+    if len(complete_text) <= single_episode_max_chars:
+        return [
+            PdfSourceSection(
+                title="Complete document",
+                page_start=1,
+                page_end=len(page_texts),
+                text=complete_text,
+            )
+        ]
+
+    starts: dict[int, list[str]] = {}
+    for item in getattr(reader, "outline", []) or []:
+        if isinstance(item, list):
+            continue
+        title = " ".join(str(getattr(item, "title", item) or "").split())
+        if not title:
+            continue
+        try:
+            page_index = int(reader.get_destination_page_number(item))
+        except Exception:
+            continue
+        if 0 <= page_index < len(page_texts):
+            starts.setdefault(page_index, []).append(title)
+
+    if len(starts) < 2:
+        raise ValueError(
+            f"Large PDF has no usable authored outline: {source_name}. "
+            "Refusing an arbitrary fixed-size split."
+        )
+    if 0 not in starts:
+        starts[0] = ["Front matter"]
+
+    ordered_starts = sorted(starts)
+    sections: list[PdfSourceSection] = []
+    for index, page_index in enumerate(ordered_starts):
+        next_page_index = (
+            ordered_starts[index + 1]
+            if index + 1 < len(ordered_starts)
+            else len(page_texts)
+        )
+        section_text = "\n\n".join(
+            text for text in page_texts[page_index:next_page_index] if text
+        ).strip()
+        if not section_text:
+            continue
+        sections.append(
+            PdfSourceSection(
+                title=" / ".join(starts[page_index]),
+                page_start=page_index + 1,
+                page_end=next_page_index,
+                text=section_text,
+            )
+        )
+    return sections
+
+
 async def ingest_pdf(
     file_path: str,
     project_id: str,
@@ -566,12 +673,13 @@ async def ingest_pdf(
     model_key: str | None = None,
     model_id: str | None = None,
     agent_id: str | None = None,
+    prompt_template: str | None = None,
     organizing_principle: Any = None,
     entity_taxonomy_json: Any = None,
     relationship_taxonomy_json: Any = None,
     extraction_policy_json: Any = None,
 ) -> dict[str, Any]:
-    """Extract PDF text locally, then ingest one Graphiti source episode."""
+    """Extract PDF text locally, then ingest source-authored Graphiti episodes."""
     source = Path(file_path)
     if not source.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
@@ -579,36 +687,93 @@ async def ingest_pdf(
         from pypdf import PdfReader
     except ImportError as exc:
         raise RuntimeError("pypdf is required for KnowGraph PDF ingestion") from exc
-    text = "\n\n".join(
-        page.extract_text() or "" for page in PdfReader(str(source)).pages
-    ).strip()
-    if not text:
+    reader = PdfReader(str(source))
+    sections = _pdf_source_sections(reader, source.name)
+    if not sections:
         raise ValueError(f"PDF contains no extractable text: {file_path}")
-    return await _ingest_episode(
-        project_id=project_id,
-        document_id=document_id,
-        text=text,
-        source_name=(source_name or source.name).strip() or source.name,
-        source_path=str(source.resolve()),
-        source_type="pdf_upload",
-        source_url=None,
-        fetched_at=None,
-        snippet=None,
-        metadata={"file_path": str(source.resolve())},
-        provider=provider,
-        model_key=model_key,
-        model_id=model_id,
-        agent_id=agent_id,
-        guidance=_guidance_text(
-            organizing_principle=organizing_principle,
-            entity_taxonomy=entity_taxonomy_json,
-            relationship_taxonomy=relationship_taxonomy_json,
-            extraction_policy=extraction_policy_json,
-        ),
-        reference_time=datetime.fromtimestamp(
-            source.stat().st_mtime, tz=timezone.utc
-        ),
+    base_source_name = (source_name or source.name).strip() or source.name
+    source_path = str(source.resolve())
+    reference_time = datetime.fromtimestamp(source.stat().st_mtime, tz=timezone.utc)
+    guidance = _guidance_text(
+        prompt_template=prompt_template,
+        organizing_principle=organizing_principle,
+        entity_taxonomy=entity_taxonomy_json,
+        relationship_taxonomy=relationship_taxonomy_json,
+        extraction_policy=extraction_policy_json,
     )
+    results: list[dict[str, Any]] = []
+    for index, section in enumerate(sections):
+        episode_body = (
+            f"SOURCE DOCUMENT: {base_source_name}\n"
+            f"SOURCE SECTION: {section.title}\n"
+            f"PDF PAGES: {section.page_start}-{section.page_end}\n\n"
+            f"{section.text}"
+        )
+        results.append(
+            await _ingest_episode(
+                project_id=project_id,
+                document_id=document_id,
+                text=episode_body,
+                source_name=f"{base_source_name} :: {section.title}",
+                source_path=source_path,
+                source_type="pdf_upload",
+                source_url=None,
+                fetched_at=None,
+                snippet=None,
+                metadata={
+                    "file_path": source_path,
+                    "source_name": base_source_name,
+                    "section_title": section.title,
+                    "page_start": section.page_start,
+                    "page_end": section.page_end,
+                    "section_index": index,
+                    "section_count": len(sections),
+                },
+                provider=provider,
+                model_key=model_key,
+                model_id=model_id,
+                agent_id=agent_id,
+                guidance=guidance,
+                reference_time=reference_time,
+            )
+        )
+
+    document_text = "\n\n".join(section.text for section in sections)
+    document_run_id, document_fingerprint = _episode_identity(
+        project_id, document_id, document_text
+    )
+    first = results[0]
+    newly_ingested = [result for result in results if not result.get("idempotent")]
+    return {
+        "status": "ingested" if newly_ingested else "already_ingested",
+        "run_id": document_run_id,
+        "episode_id": first["episode_id"],
+        "episode_ids": [result["episode_id"] for result in results],
+        "project_id": project_id,
+        "document_id": document_id,
+        "provider": first["provider"],
+        "model_key": first["model_key"],
+        "model": first["model"],
+        "agent_id": agent_id,
+        "source_url": None,
+        "source_name": base_source_name,
+        "content_fingerprint": document_fingerprint,
+        "idempotent": not newly_ingested,
+        "graphiti_version": GRAPHITI_VERSION,
+        "section_count": len(results),
+        "entity_count": sum(int(result.get("entity_count") or 0) for result in results),
+        "fact_count": sum(int(result.get("fact_count") or 0) for result in results),
+        "sections": [
+            {
+                "title": section.title,
+                "page_start": section.page_start,
+                "page_end": section.page_end,
+                "episode_id": result["episode_id"],
+                "status": result["status"],
+            }
+            for section, result in zip(sections, results, strict=True)
+        ],
+    }
 
 
 async def ingest_text_document(

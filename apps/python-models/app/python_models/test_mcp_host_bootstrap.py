@@ -52,6 +52,35 @@ def test_execution_receipt_observes_the_actual_provider_client_boundary():
     assert receipt["providerSubstitution"] is False
 
 
+def test_graphiti_uses_knowgraph_openrouter_embedding_configuration(monkeypatch):
+    import mcp_host
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "router-key")
+    monkeypatch.setenv("OPENROUTER_OPENAI_BASE_URL", "https://router.example/v1")
+    monkeypatch.setenv("KNOWGRAPH_OPENROUTER_EMBEDDING_MODEL", "openai/test-embedder")
+    monkeypatch.setenv("KNOWGRAPH_OPENROUTER_EMBEDDING_DIM", "1024")
+    monkeypatch.setenv("NEO4J_DATABASE", "knowgraph")
+    monkeypatch.delenv("GRAPHITI_EMBEDDER_MODEL", raising=False)
+
+    config = mcp_host._graphiti_config()
+
+    assert config.database.providers.neo4j.database == "knowgraph"
+    assert config.embedder.provider == "openai"
+    assert config.embedder.model == "openai/test-embedder"
+    assert config.embedder.dimensions == 1024
+    assert config.embedder.providers.openai.api_key == "router-key"
+    assert config.embedder.providers.openai.api_url == "https://router.example/v1"
+
+
+def test_graphiti_preserves_explicit_embedder_model_override(monkeypatch):
+    import mcp_host
+
+    monkeypatch.setenv("GRAPHITI_EMBEDDER_MODEL", "local/embeddinggemma")
+    monkeypatch.setenv("KNOWGRAPH_OPENROUTER_EMBEDDING_MODEL", "openai/ignored")
+
+    assert mcp_host._graphiti_config().embedder.model == "local/embeddinggemma"
+
+
 def test_call_tool_appends_canonical_receipt_and_typed_provider_failure(monkeypatch):
     import asyncio
     import mcp_host
@@ -431,7 +460,7 @@ async def check():
     combined_names = [tool.name for tool in combined]
     assert len(set(combined_names)) == len(combined_names)
     assert {
-        'main.context', 'canvas.inspect', 'coder.status', 'run_coder_subagent',
+        'main.context', 'canvas.inspect', 'coder.status', 'coder.effective_tools', 'run_coder_subagent',
         'agentgraph.inspect', 'graphview.list', 'graphview.get', 'graphview.create',
     }.issubset(set(combined_names))
     assert {
@@ -986,6 +1015,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "graphview.get" in by_name
     assert "graphview.create" in by_name
     assert "coder.status" in by_name
+    assert "coder.effective_tools" in by_name
     native_names = {
         f"engraphis.{tool.name.removeprefix('engraphis_')}"
         for tool in native_engraphis_tools
@@ -1047,6 +1077,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert by_name["cbm.search_graph"].description == "Native search description."
     assert by_name["cbm.search_graph"].inputSchema == native_cbm_tools[0].inputSchema
     assert by_name["coder.status"].annotations.readOnlyHint is True
+    assert by_name["coder.effective_tools"].annotations.readOnlyHint is True
     assert by_name["run_coder_subagent"].annotations is None
 
     calls = []

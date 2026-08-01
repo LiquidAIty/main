@@ -66,6 +66,7 @@ async def ingest(
     project_id: str = Form(...),
     document_id: str = Form(...),
     file: UploadFile = File(...),
+    prompt_template: str | None = Form(None),
     organizing_principle: str | None = Form(None),
     entity_taxonomy_json: str | None = Form(None),
     relationship_taxonomy_json: str | None = Form(None),
@@ -74,7 +75,8 @@ async def ingest(
     saved_path: Path | None = None
     try:
         filename = _sanitize_filename(file.filename or "upload.pdf")
-        saved_path = UPLOADS_DIR / f"{document_id}_{filename}"
+        storage_document_id = _sanitize_filename(document_id)
+        saved_path = UPLOADS_DIR / f"{storage_document_id}_{filename}"
         with saved_path.open("wb") as out:
             shutil.copyfileobj(file.file, out)
 
@@ -92,6 +94,7 @@ async def ingest(
             model_key=agent_model_key,
             model_id=agent_model_id,
             agent_id=agent_id,
+            prompt_template=prompt_template,
             organizing_principle=organizing_principle,
             entity_taxonomy_json=entity_taxonomy_json,
             relationship_taxonomy_json=relationship_taxonomy_json,

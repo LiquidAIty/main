@@ -7,7 +7,7 @@ import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import './nativeAuthorityGraphSurface.css';
 
-type GraphAuthority = 'thinkgraph' | 'knowgraph' | 'codegraph';
+type GraphAuthority = 'thinkgraph' | 'knowgraph' | 'codegraph' | 'agentgraph';
 
 // The server-owned graph projection contract rendered by the native surfaces.
 type GraphProjectionNode = {

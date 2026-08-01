@@ -16,12 +16,10 @@ import {
 } from '../openclaude/console/consoleSession';
 import {
   buildOpenClaudeSubagentArgs,
-  buildCoderMcpServers,
   parseOpenClaudeCoderReport,
   parseCoderAuditResult,
-  resolveConsolePermissionMode,
-  resolveConsoleAuditTools,
   type CoderAuthorityMode,
+  type EffectiveCoderToolSnapshot,
 } from './coderRuntimeContract';
 import { resolveRepoRoot } from '../workspaceRoot';
 
@@ -59,6 +57,7 @@ export type ConsoleCoderDeps = {
 /** Main's saved Coder invocation. This is an identity/prompt envelope for the
  * one existing OpenClaude Code terminal, not an adapter or runtime selector. */
 export type OpenClaudeCodeTask = {
+  runId?: string;
   parentRunId: string;
   correlationId?: string;
   projectId: string;
@@ -71,6 +70,7 @@ export type OpenClaudeCodeTask = {
   provider?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
+  toolSnapshot?: EffectiveCoderToolSnapshot;
 };
 
 type OpenClaudeCodeRun = {
@@ -147,7 +147,7 @@ function prepareOpenClaudeCodeRun(task: OpenClaudeCodeTask): OpenClaudeCodeRun {
   const approvedPrompt = String(task.approvedPrompt || '');
   if (!approvedPrompt.trim()) throw new Error('openclaude_code_prompt_empty');
   return {
-    runId: `coder_${randomUUID()}`,
+    runId: task.runId || `coder_${randomUUID()}`,
     correlationId: task.correlationId || `trace_${randomUUID()}`,
     promptHash: createHash('sha256').update(Buffer.from(approvedPrompt, 'utf8')).digest('hex'),
     parentRunId: task.parentRunId,
@@ -307,31 +307,40 @@ export async function runOpenClaudeCodeTask(
     return blocked(run, null, 'blocked', 'console_coder_model_unresolved', timeoutMs);
   }
 
-  const isAudit = run.authority === 'direct_main_audit';
-  // direct_main_audit: scoped codegraph doorway + native reads only, read-only
-  // (plan) mode, all mutation/shell denied. mag_one_execution: implementation
-  // authority (acceptEdits), no allowlist, structured CoderReport.
-  let mcpFlags: string[] | undefined;
-  let mcpConfigArtifact: string | null = null;
-  let auditTools: { allowedTools: string[]; disallowedTools: string[] } | null = null;
-  if (isAudit) {
-    const servers = buildCoderMcpServers({ runId: run.runId, includeCodeGraph: true });
-    const mcpConfig = writeRunMcpConfig(run.runId, servers);
-    if (!mcpConfig) {
-      return blocked(run, null, 'blocked', 'console_coder_mcp_config_write_failed', timeoutMs);
-    }
-    mcpConfigArtifact = mcpConfig.artifactRef;
-    mcpFlags = ['--mcp-config', mcpConfig.absolutePath, '--strict-mcp-config'];
-    auditTools = resolveConsoleAuditTools();
+  const toolSnapshot = task.toolSnapshot;
+  if (!toolSnapshot || toolSnapshot.authority !== run.authority) {
+    return blocked(run, null, 'blocked', 'console_coder_tool_snapshot_unresolved', timeoutMs);
   }
+  if (toolSnapshot.unresolved.length > 0) {
+    return blocked(
+      run,
+      null,
+      'blocked',
+      `console_coder_saved_tools_unresolved:${toolSnapshot.unresolved.join(',')}`,
+      timeoutMs,
+    );
+  }
+
+  const isAudit = run.authority === 'direct_main_audit';
+  // Both authorities use the exact preflighted snapshot. Strict MCP prevents
+  // project/global inheritance; --tools bounds native tools for implementation
+  // as well as audit.
+  let mcpConfigArtifact: string | null = null;
+  const mcpConfig = writeRunMcpConfig(run.runId, toolSnapshot.mcpServers);
+  if (!mcpConfig) {
+    return blocked(run, null, 'blocked', 'console_coder_mcp_config_write_failed', timeoutMs);
+  }
+  mcpConfigArtifact = mcpConfig.artifactRef;
+  const mcpFlags = ['--mcp-config', mcpConfig.absolutePath, '--strict-mcp-config'];
   const args = buildOpenClaudeSubagentArgs({
     prompt: run.approvedPrompt,
     model,
-    permissionMode: resolveConsolePermissionMode(run.authority),
+    permissionMode: toolSnapshot.permissionMode,
     jsonSchema: isAudit ? coderAuditResultJsonSchema : coderReportJsonSchema,
     mcpFlags,
-    allowedTools: auditTools?.allowedTools,
-    disallowedTools: auditTools?.disallowedTools,
+    allowedTools: toolSnapshot.allowedTools,
+    disallowedTools: toolSnapshot.disallowedTools,
+    nativeTools: toolSnapshot.nativeTools,
   });
 
   const started = manager.start({

@@ -17,6 +17,9 @@ handoff/
 db/thinkgraph-engraphis-v2.sqlite*
 # Reproducible Engraphis release-check cache stored beside the local database.
 /db/.engraphis_update_check.json
+# Runtime copies of user-uploaded KnowGraph documents. The original user files
+# remain outside the repo and the service recreates these copies on ingestion.
+/services/knowgraph/uploads/
 
 # Dependency folders
 node_modules/

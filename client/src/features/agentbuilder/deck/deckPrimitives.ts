@@ -30,14 +30,24 @@ export function cleanOptionalText(value: unknown): string | null {
   return text || null;
 }
 
-export const DEFAULT_CARD_MODEL_KEY = 'gpt-5.1-chat-latest';
-export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
-export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = 'openai/gpt-5.1-chat';
+export const GPT_LUNA_MODEL_KEY = 'openai/gpt-5.6-luna';
+export const GPT_TERRA_MODEL_KEY = 'openai/gpt-5.6-terra';
+export const GPT_SOL_MODEL_KEY = 'openai/gpt-5.6-sol';
+export const GPT_CARD_MODEL_PRESETS = [
+  { label: 'Luna', modelKey: GPT_LUNA_MODEL_KEY },
+  { label: 'Terra', modelKey: GPT_TERRA_MODEL_KEY },
+  { label: 'Sol', modelKey: GPT_SOL_MODEL_KEY },
+] as const;
+
+export const DEFAULT_CARD_MODEL_KEY = GPT_LUNA_MODEL_KEY;
+export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openrouter';
+export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = GPT_TERRA_MODEL_KEY;
 export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openrouter';
 // Seed default ONLY for a fresh Coder card (and the console-config fallback). NOT
 // a runtime override: once a card has a saved provider/model, that saved value is
-// authoritative. Low-cost OpenRouter default; there is no model blacklist.
-export const LOCAL_CODER_CONTROLLER_MODEL_KEY = 'z-ai/glm-5.2';
+// authoritative. Coder uses the saved Sol card default; there is no hidden
+// role-to-model fallback.
+export const LOCAL_CODER_CONTROLLER_MODEL_KEY = GPT_SOL_MODEL_KEY;
 export const LOCAL_CODER_CONTROLLER_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openrouter';
 export const LOCAL_CODER_CONTROLLER_TOOLS = [
   'run_local_coder',
@@ -101,6 +111,7 @@ export function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | nul
   if (normalized === 'assistant_agent') return 'assistant_agent';
   if (normalized === 'magentic_one') return 'magentic_one';
   if (normalized === 'local_coder') return 'local_coder';
+  if (normalized === 'codex_app_server') return 'codex_app_server';
   return null;
 }
 export function isLegacyUaCard(
@@ -151,6 +162,7 @@ export function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   const normalized = safeText(value).trim().toLowerCase();
   if (normalized === 'assist') return 'assist';
   if (normalized === 'local_coder') return 'local_coder';
+  if (normalized === 'openai_coder') return 'openai_coder';
   if (normalized === 'main_chat') return 'main_chat';
   if (normalized === 'research_agent') return 'research_agent';
   if (normalized === 'plan_agent') return 'plan_agent';

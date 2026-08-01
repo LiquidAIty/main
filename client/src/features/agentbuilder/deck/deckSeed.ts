@@ -445,8 +445,8 @@ export const INITIAL_DECK: DeckDocument = {
       // it must never claim internet access it lacks. Real source URLs it
       // proposes are fetched by Hermes through KnowGraph ingestion.
       runtimeOptions: {
-        modelKey: 'openai/gpt-5.1-chat',
-        provider: 'openrouter',
+        modelKey: DEFAULT_CARD_MODEL_KEY,
+        provider: DEFAULT_CARD_PROVIDER,
         tools: ['web_search'],
       },
       parentGraphId: null,
@@ -479,6 +479,25 @@ export const INITIAL_DECK: DeckDocument = {
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
+      id: 'card_openai_coder',
+      kind: 'agent',
+      templateId: 'template_openai_coder',
+      prompt: 'Complete the bounded Mag One assignment using only Codex-native capabilities and the tools explicitly assigned to this card. Return an honest result and execution receipt.',
+      runtimeBinding: 'openai_coder',
+      runtimeType: 'codex_app_server',
+      runtimeOptions: {
+        provider: 'openai',
+        modelKey: 'gpt-5.3-codex',
+        tools: [],
+      },
+      parentGraphId: null,
+      title: 'OpenAI Coder',
+      subtitle: 'External Codex app-server baseline',
+      position: { x: 520, y: 470 },
+      status: 'ready',
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
       id: 'card_hermes_steward',
       kind: 'agent',
       templateId: 'template_hermes_steward',
@@ -494,8 +513,8 @@ export const INITIAL_DECK: DeckDocument = {
       // Graphiti retrieval and ingestion are granted only to Hermes here.
       runtimeOptions: {
         tools: [...HERMES_STEWARD_TOOLS],
-        modelKey: 'openai/gpt-5.1-chat',
-        provider: 'openrouter',
+        modelKey: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
+        provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
       },
       parentGraphId: null,
       title: 'Hermes',
@@ -514,6 +533,10 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: 'trading_agent',
       runtimeType: 'assistant_agent',
+      runtimeOptions: {
+        modelKey: DEFAULT_CARD_MODEL_KEY,
+        provider: DEFAULT_CARD_PROVIDER,
+      },
       parentGraphId: 'workbench_trading',
       title: 'Trading Agent',
       subtitle: 'Market workspace',
@@ -544,8 +567,8 @@ export const INITIAL_DECK: DeckDocument = {
           'get_market_snapshot',
           'get_historical_bars',
         ],
-        modelKey: 'openai/gpt-5.1-chat',
-        provider: 'openrouter',
+        modelKey: DEFAULT_CARD_MODEL_KEY,
+        provider: DEFAULT_CARD_PROVIDER,
       },
       parentGraphId: null,
       title: 'WorldSignals Agent',
@@ -573,7 +596,7 @@ export const INITIAL_DECK: DeckDocument = {
       targetHandle: 'task-bus-top',
       edgeType: 'magentic_control',
     },
-    { id: 'edge_coder_magentic_bus', source: 'card_local_coder', target: 'card_magentic', targetHandle: 'bus-in-1', edgeType: 'magentic_option' },
+    { id: 'edge_openai_coder_magentic_bus', source: 'card_openai_coder', target: 'card_magentic', targetHandle: 'bus-in-1', edgeType: 'magentic_option' },
     { id: 'edge_search_magentic_bus', source: 'card_research_agent', target: 'card_magentic', targetHandle: 'bus-in-2', edgeType: 'magentic_option' },
     { id: 'edge_worldsignals_magentic_bus', source: 'card_worldsignals_agent', target: 'card_magentic', targetHandle: 'bus-in-3', edgeType: 'magentic_option' },
   ],
@@ -583,6 +606,7 @@ export const BUILDER_DECK_ID = INITIAL_DECK.id;
 export const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_assist: 'assist',
   card_local_coder: 'local_coder',
+  card_openai_coder: 'openai_coder',
   card_research_agent: 'research_agent',
   card_plan_agent: 'plan_agent',
   card_worldsignals_agent: 'worldsignals_agent',
@@ -595,6 +619,7 @@ export const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
 
 export const BASELINE_OPTIONAL_CARD_IDS = new Set([
   'card_local_coder',
+  'card_openai_coder',
   'card_worldsignals_agent',
   'card_trading_workbench',
 ]);
@@ -620,6 +645,7 @@ export const REMOVED_DEFAULT_EDGE_IDS = new Set([
   // worker; Hermes is never a Mag One participant.
   'edge_main_chat_harness_bus',
   'edge_magentic_hermes_bus',
+  'edge_coder_magentic_bus',
 ]);
 export const LEGACY_SYSTEM_CARD_IDS = new Set([
   'card_main_chat',

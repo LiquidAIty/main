@@ -3,6 +3,7 @@ import type { RuntimeBinding } from '../types';
 const RUNTIME_BINDINGS = [
   'assist',
   'local_coder',
+  'openai_coder',
   'main_chat',
   'research_agent',
   'plan_agent',
@@ -14,6 +15,7 @@ const RUNTIME_BINDINGS = [
 const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_assist: 'assist',
   card_local_coder: 'local_coder',
+  card_openai_coder: 'openai_coder',
   card_main_chat: 'main_chat',
   card_research: 'research_agent',
   card_research_agent: 'research_agent',

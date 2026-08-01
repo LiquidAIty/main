@@ -3,13 +3,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { runOpenClaudeCodeTask, type ConsoleCoderDeps } from './coderConsoleRuntime';
+import { resolveEffectiveCoderToolSnapshot } from './coderRuntimeContract';
 
 // Transcript artifacts write under resolveRepoRoot()/coder-workspace/runs — point
 // that at a temp dir so tests never touch the real tree.
 const tmpRoot = mkdtempSync(path.join(tmpdir(), 'coder-console-'));
 beforeAll(() => {
   vi.stubEnv('LIQUIDAITY_GRPC_CWD', tmpRoot);
-  const config = JSON.parse(readFileSync(path.join(process.cwd(), '.mcp.json'), 'utf8')) as {
+  const repoConfigPath = path.basename(process.cwd()).toLowerCase() === 'backend'
+    ? path.resolve(process.cwd(), '..', '..', '.mcp.json')
+    : path.join(process.cwd(), '.mcp.json');
+  const config = JSON.parse(readFileSync(repoConfigPath, 'utf8')) as {
     mcpServers: Record<string, { env?: Record<string, string> }>;
   };
   config.mcpServers['codebase-memory'].env = {
@@ -136,16 +140,23 @@ function validAuditJson(conclusion = 'audit conclusion') {
 }
 
 function task(authority?: 'direct_main_audit' | 'mag_one_execution') {
+  const resolvedAuthority = authority ?? 'direct_main_audit';
   return {
     parentRunId: 'parent_1',
     projectId: 'p1',
     deckId: 'deck_builder',
     conversationId: 'main',
     cardId: 'card_local_coder',
-    authority,
+    authority: resolvedAuthority,
     approvedPrompt: 'audit the coder runtime',
     model: MODEL,
     provider: 'openrouter',
+    toolSnapshot: resolveEffectiveCoderToolSnapshot({
+      authority: resolvedAuthority,
+      savedTools: [],
+      catalog: [],
+      runId: 'coder_test',
+    }),
   };
 }
 

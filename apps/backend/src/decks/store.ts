@@ -69,6 +69,7 @@ function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   if (normalized === 'assistant_agent') return 'assistant_agent';
   if (normalized === 'magentic_one') return 'magentic_one';
   if (normalized === 'local_coder') return 'local_coder';
+  if (normalized === 'codex_app_server') return 'codex_app_server';
   return null;
 }
 

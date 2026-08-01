@@ -217,6 +217,36 @@ class TestGuardFailureResponse:
 # shared builder reuse — the SAME code path Mag One participants use
 # --------------------------------------------------------------------------- #
 class TestSharedBuilderReuse:
+    def test_single_card_uses_its_saved_temperature_and_max_tokens(self, monkeypatch):
+        context = _context()
+        context.cardRuntime.participants[0].temperature = 0.7
+        context.cardRuntime.participants[0].maxTokens = 3210
+        captured = []
+
+        class FakeAgent:
+            async def run(self, *, task):
+                return SimpleNamespace(messages=[SimpleNamespace(content="done")])
+
+        def build_client(config):
+            captured.append(config)
+            return _FakeToolClient()
+
+        monkeypatch.setattr(mac, "_build_model_client", build_client)
+        monkeypatch.setattr(
+            mac,
+            "_build_participants",
+            lambda _context, _client: [FakeAgent()],
+        )
+
+        response = asyncio.run(mac.run_configured_card(context))
+
+        assert response.ok is True
+        assert len(captured) == 1
+        assert captured[0].provider == "openrouter"
+        assert captured[0].provider_model_id == MODEL
+        assert captured[0].temperature == 0.7
+        assert captured[0].max_tokens == 3210
+
     def test_single_participant_built_via_shared_builder(self):
         agents = mac._build_participants(_context(), _FakeToolClient())
         assert len(agents) == 1

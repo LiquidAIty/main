@@ -4,7 +4,7 @@ export const MAIN_CHAT_CARD_ID = 'card_main_chat';
 export const MAIN_CHAT_PROMPT_ID = 'prompt_main_chat';
 export const MAIN_CHAT_TEMPLATE_ID = 'template_main_chat';
 export const MAIN_CHAT_CONTROL_EDGE_ID = 'edge_main_chat_magentic_control';
-export const MAIN_CHAT_MODEL_KEY = 'z-ai/glm-5.2';
+export const MAIN_CHAT_MODEL_KEY = 'openai/gpt-5.6-luna';
 export const MAIN_CHAT_PROVIDER = 'openrouter';
 export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'thinkgraph.get_graph_slice',
