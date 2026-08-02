@@ -352,10 +352,9 @@ async def check():
     combined = await mcp_host.list_tools()
     combined_names = [tool.name for tool in combined]
     assert len(set(combined_names)) == len(combined_names)
-    authenticated = mcp_host._bind_authenticated_catalog(combined)
-    authenticated_identity = mcp_host._catalog_identity(authenticated)
-    assert authenticated_identity[0] == len(combined_names)
-    assert len(authenticated_identity[1]) == 64
+    combined_identity = mcp_host._catalog_identity(combined)
+    assert combined_identity[0] == len(combined_names)
+    assert len(combined_identity[1]) == 64
     assert {
         'main.context', 'canvas.inspect', 'coder.status', 'run_coder_subagent',
         'agentgraph.inspect',
@@ -767,6 +766,9 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
     assert verified.subject == "auth0|jeremiah"
     assert verified.claims["liquidaity"]["projectId"] == "project-1"
     assert verified.claims["liquidaity"]["mainCardId"] == "card_main_chat"
+    auditor = verifier._verify_sync(encoded({**base, "scope": "openid liquidaity.audit.read liquidaity.audit.execute"}))
+    assert auditor is not None
+    assert auditor.scopes == ["openid", "liquidaity.audit.read", "liquidaity.audit.execute"]
 
     invalid_claims = [
         {**base, "iss": "https://wrong.auth0.com/"},
@@ -793,13 +795,14 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "parentRunId": "external-main:grant-1",
         "mainCardId": "card_main_chat",
     }
+    active_scopes = ["liquidaity.audit.read", "liquidaity.audit.execute"]
     monkeypatch.setattr(
         mcp_host,
         "get_access_token",
         lambda: AccessToken(
             token="verified",
             client_id="chatgpt-client",
-            scopes=["liquidaity.main"],
+            scopes=list(active_scopes),
             subject="auth0|jeremiah",
             claims={"liquidaity": context},
         ),
@@ -981,19 +984,32 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "server owns project, deck, conversation, parent-run, and Main-card identity" in coder_tool.description
     assert "Pass the exact active" not in coder_tool.description
     assert "instructionId" not in by_name["card.run_assistant_agent"].inputSchema["properties"]
-    assert by_name["engraphis.recall"].model_dump()["securitySchemes"] == [
-        {"type": "oauth2", "scopes": ["liquidaity.main"]}
-    ]
-    assert by_name["cbm.search_graph"].model_dump()["securitySchemes"] == [
-        {"type": "oauth2", "scopes": ["liquidaity.main"]}
-    ]
-    assert by_name["graphiti.get_status"].model_dump()["securitySchemes"] == [
-        {"type": "oauth2", "scopes": ["liquidaity.main"]}
-    ]
+    assert {scheme["scopes"][0] for scheme in by_name["engraphis.recall"].model_dump()["securitySchemes"]} == {
+        "liquidaity.audit.read",
+    }
+    assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump()["securitySchemes"]} == {
+        "liquidaity.main", "liquidaity.audit.read",
+    }
+    assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {
+        "liquidaity.audit.read",
+    }
     assert by_name["cbm.search_graph"].description == "Native search description."
     assert by_name["cbm.search_graph"].inputSchema == native_cbm_tools[0].inputSchema
     assert by_name["coder.status"].annotations.readOnlyHint is True
     assert by_name["run_coder_subagent"].annotations is None
+
+    active_scopes[:] = ["liquidaity.main"]
+    main_names = {tool.name for tool in asyncio.run(mcp_host.list_tools())}
+    assert {
+        "main.context", "agentgraph.inspect", "canvas.inspect",
+        "run_coder_subagent", "run_mag_one", "cbm.search_graph",
+        "graphiti.search_nodes",
+    }.issubset(main_names)
+    assert {
+        "coder.status", "engraphis.answer", "graphiti.get_status",
+        "card.update_configuration", "canvas.upsert_wire",
+    }.isdisjoint(main_names)
+    active_scopes[:] = ["liquidaity.audit.read", "liquidaity.audit.execute"]
 
     calls = []
     class NativeMcp:
@@ -1103,6 +1119,142 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert payload["parentRunId"].startswith("req_external_main_")
     assert "agentContextId" not in payload
 
+    active_scopes[:] = ["liquidaity.main"]
+    scope_denied = asyncio.run(mcp_host.call_tool("engraphis.answer", {"query": "x"}))
+    assert scope_denied.isError is True
+    assert "tool_scope_not_authorized: engraphis.answer" in scope_denied.content[0].text
+
+
+def test_main_and_auditor_profiles_derive_from_real_canonical_catalog(monkeypatch):
+    import asyncio
+    import mcp_host
+    from mcp.server.auth.provider import AccessToken
+
+    context = {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "external-mcp:grant-1",
+        "parentRunId": "external-main:grant-1",
+        "mainCardId": "card_main_chat",
+    }
+    active_scopes: list[str] = []
+
+    def access_token():
+        if not active_scopes:
+            return None
+        return AccessToken(
+            token="verified",
+            client_id="chatgpt-client",
+            scopes=list(active_scopes),
+            subject="auth0|jeremiah",
+            claims={"liquidaity": context},
+        )
+
+    monkeypatch.setattr(mcp_host, "get_access_token", access_token)
+    canonical = asyncio.run(mcp_host.list_tools())
+    assert len(canonical) == 70
+
+    active_scopes[:] = ["liquidaity.main"]
+    main = asyncio.run(mcp_host.list_tools())
+    assert {tool.name for tool in main} == mcp_host._MAIN_PROFILE_TOOLS
+
+    active_scopes[:] = ["liquidaity.audit.read", "liquidaity.audit.execute"]
+    auditor = asyncio.run(mcp_host.list_tools())
+    assert all(
+        tool.meta["liquidaityProfile"]["risk"] != "destructive"
+        for tool in auditor
+    )
+
+    active_scopes[:] = ["liquidaity.audit.admin"]
+    admin = asyncio.run(mcp_host.list_tools())
+    assert admin
+    assert all(
+        tool.meta["liquidaityProfile"]["risk"] == "destructive"
+        for tool in admin
+    )
+    assert {tool.name for tool in auditor}.isdisjoint(tool.name for tool in admin)
+    assert {tool.name for tool in canonical} == {
+        *(tool.name for tool in auditor),
+        *(tool.name for tool in admin),
+    }
+
+
+def test_identical_native_cbm_index_requests_share_one_in_flight_call(monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from mcp.types import CallToolResult, TextContent
+    import mcp_host
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    class NativeCbm:
+        calls = 0
+
+        def call_tool(self, name, arguments):
+            assert name == "index_repository"
+            self.calls += 1
+            entered.set()
+            assert release.wait(timeout=2)
+            return CallToolResult(content=[TextContent(type="text", text="indexed")])
+
+    native = NativeCbm()
+    monkeypatch.setattr(mcp_host, "_initialize_native_cbm_sync", lambda: None)
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_CLIENT", native)
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_INDEX_IN_FLIGHT", None)
+    arguments = {"repo_path": "C:/Projects/main", "mode": "fast"}
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(mcp_host._call_native_cbm, "index_repository", arguments)
+        assert entered.wait(timeout=2)
+        second = pool.submit(mcp_host._call_native_cbm, "index_repository", dict(arguments))
+        release.set()
+        assert first.result(timeout=2).content[0].text == "indexed"
+        assert second.result(timeout=2).content[0].text == "indexed"
+
+    assert native.calls == 1
+
+
+def test_graphiti_episode_projection_is_bounded_and_full_body_is_explicit():
+    import json
+    from mcp.types import CallToolResult, TextContent
+    import mcp_host
+
+    native_payload = {
+        "message": "Episodes retrieved successfully",
+        "episodes": [{
+            "uuid": "episode-1",
+            "name": "Large source",
+            "content": "x" * 24000,
+            "created_at": "2026-08-02T00:00:00Z",
+            "source": "text",
+            "source_description": "A source",
+            "group_id": "project-1",
+        }],
+    }
+    native = CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(native_payload))],
+        structuredContent={"result": native_payload},
+    )
+
+    compact = mcp_host._bounded_graphiti_episodes(
+        native, include_body=False, preview_chars=120, response_budget=2000,
+    )
+    compact_episode = compact.structuredContent["result"]["episodes"][0]
+    assert "content" not in compact_episode
+    assert compact_episode["content_preview"] == "x" * 120
+    assert compact_episode["content_truncated"] is True
+    assert len(compact.content[0].text) <= 2000
+
+    explicit = mcp_host._bounded_graphiti_episodes(
+        native, include_body=True, preview_chars=120, response_budget=3000,
+    )
+    explicit_episode = explicit.structuredContent["result"]["episodes"][0]
+    assert "content" in explicit_episode
+    assert explicit_episode["content_truncated"] is True
+    assert explicit.structuredContent["result"]["truncated"] is True
+    assert len(explicit.content[0].text) <= 3000
+
 
 def test_oauth_principal_context_is_reused_within_one_verified_session(monkeypatch):
     import mcp_host
@@ -1208,7 +1360,12 @@ try:
         raise failure or RuntimeError('oauth_metadata_not_ready')
     assert metadata['resource'] == '{resource}'
     assert metadata['authorization_servers'] == ['https://tenant.auth0.com/']
-    assert metadata['scopes_supported'] == ['liquidaity.main']
+    assert metadata['scopes_supported'] == [
+        'liquidaity.main',
+        'liquidaity.audit.read',
+        'liquidaity.audit.execute',
+        'liquidaity.audit.admin',
+    ]
     try:
         urlopen(Request('http://127.0.0.1:{port}/mcp', data=b'{{}}', method='POST'), timeout=2)
         raise AssertionError('anonymous_mcp_was_accepted')

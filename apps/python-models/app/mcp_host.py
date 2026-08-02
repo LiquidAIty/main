@@ -43,6 +43,7 @@ import sys
 import threading
 import time
 from collections import deque
+from concurrent.futures import Future
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -96,6 +97,12 @@ AUTH0_ISSUER_URL = os.environ.get("LIQUIDAITY_AUTH0_ISSUER_URL", "").strip()
 AUTH0_AUDIENCE = os.environ.get("LIQUIDAITY_AUTH0_AUDIENCE", "").strip()
 AUTH0_CLIENT_ID = os.environ.get("LIQUIDAITY_AUTH0_CLIENT_ID", "").strip()
 AUTH0_REQUIRED_SCOPE = os.environ.get("LIQUIDAITY_AUTH0_REQUIRED_SCOPE", "liquidaity.main").strip()
+OAUTH_SCOPES = (
+    "liquidaity.main",
+    "liquidaity.audit.read",
+    "liquidaity.audit.execute",
+    "liquidaity.audit.admin",
+)
 OAUTH_ENFORCED = os.environ.get("LIQUIDAITY_MCP_OAUTH_ENFORCED", "false").strip().lower() in {
     "1", "true", "yes", "on",
 }
@@ -564,8 +571,8 @@ def _oauth_config() -> OAuthConfig:
         raise RuntimeError("oauth_audience_must_equal_resource_url")
     if not config.issuer_url.startswith("https://"):
         raise RuntimeError("oauth_issuer_must_be_https")
-    if config.required_scope != "liquidaity.main":
-        raise RuntimeError("oauth_required_scope_must_be_liquidaity.main")
+    if config.required_scope not in OAUTH_SCOPES:
+        raise RuntimeError("oauth_required_scope_not_supported")
     return config
 
 
@@ -573,6 +580,11 @@ def _authenticated_main_context() -> dict[str, Any] | None:
     access_token = get_access_token()
     context = (access_token.claims or {}).get("liquidaity") if access_token else None
     return context if isinstance(context, dict) else None
+
+
+def _authenticated_scopes() -> frozenset[str]:
+    access_token = get_access_token()
+    return frozenset(access_token.scopes or ()) if access_token else frozenset()
 
 
 class LiquidAItyServer(Server):
@@ -596,6 +608,8 @@ _NATIVE_CBM_CLIENT: "_NativeStdioMcpClient | None" = None
 _NATIVE_CBM_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_CBM_NAMES: frozenset[str] = frozenset()
 _NATIVE_CBM_INIT_LOCK = threading.Lock()
+_NATIVE_CBM_INDEX_LOCK = threading.Lock()
+_NATIVE_CBM_INDEX_IN_FLIGHT: tuple[str, Future[CallToolResult]] | None = None
 _NATIVE_GRAPHITI_MODULE: Any | None = None
 _NATIVE_GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_GRAPHITI_NAMES: frozenset[str] = frozenset()
@@ -617,6 +631,29 @@ def _namespace_native_tools(provider: str, tools: list[Tool]) -> list[Tool]:
         if provider == "engraphis":
             native_name = native_name.removeprefix("engraphis_")
         payload["name"] = prefix + native_name
+        if provider == "graphiti" and native_name == "get_episodes":
+            schema = copy.deepcopy(payload.get("inputSchema") or {})
+            properties = schema.setdefault("properties", {})
+            properties.update({
+                "include_body": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Explicitly include episode bodies; ordinary reads return previews.",
+                },
+                "body_preview_chars": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2000,
+                    "default": 400,
+                },
+                "max_response_chars": {
+                    "type": "integer",
+                    "minimum": 2000,
+                    "maximum": 100000,
+                    "default": 20000,
+                },
+            })
+            payload["inputSchema"] = schema
         result.append(Tool.model_validate(payload))
     return result
 
@@ -834,6 +871,68 @@ async def _call_native_graphiti(name: str, arguments: dict[str, Any]):
 
 def _normalize_graphiti_result(result: Any) -> Any:
     return _normalize_native_tool_result(result, dependency="graphiti")
+
+
+def _bounded_graphiti_episodes(
+    result: CallToolResult,
+    *,
+    include_body: bool,
+    preview_chars: int,
+    response_budget: int,
+) -> CallToolResult:
+    """Project native episodes into a stable, context-bounded public response."""
+    if result.isError or not isinstance(result.structuredContent, dict):
+        return result
+    native_payload = result.structuredContent.get("result")
+    if not isinstance(native_payload, dict) or not isinstance(native_payload.get("episodes"), list):
+        return result
+    projected: list[dict[str, Any]] = []
+    for native_episode in native_payload["episodes"]:
+        if not isinstance(native_episode, dict):
+            continue
+        content = str(native_episode.get("content") or "")
+        episode = {
+            key: native_episode.get(key)
+            for key in (
+                "uuid", "name", "source", "source_description", "created_at", "valid_at",
+                "reference_time", "group_id", "saga_uuid",
+            )
+            if native_episode.get(key) is not None
+        }
+        episode["content_chars"] = len(content)
+        if include_body:
+            episode["content"] = content
+        else:
+            episode["content_preview"] = content[:preview_chars]
+            episode["content_truncated"] = len(content) > preview_chars
+        projected.append(episode)
+    payload: dict[str, Any] = {
+        "message": native_payload.get("message") or "Episodes retrieved successfully",
+        "episodes": projected,
+        "bodyIncluded": include_body,
+        "responseBudgetChars": response_budget,
+        "truncated": False,
+        "omittedEpisodes": 0,
+    }
+    serialized = json.dumps(payload, ensure_ascii=False)
+    if len(serialized) > response_budget and include_body and projected:
+        overhead = len(serialized) - len(str(projected[0].get("content") or ""))
+        allowed_body = max(0, response_budget - overhead - 100)
+        original = str(projected[0].get("content") or "")
+        projected[0]["content"] = original[:allowed_body]
+        projected[0]["content_truncated"] = len(original) > allowed_body
+        payload["truncated"] = payload["truncated"] or len(original) > allowed_body
+        serialized = json.dumps(payload, ensure_ascii=False)
+    while len(serialized) > response_budget and projected:
+        projected.pop()
+        payload["omittedEpisodes"] += 1
+        payload["truncated"] = True
+        serialized = json.dumps(payload, ensure_ascii=False)
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))],
+        structuredContent={"result": payload},
+        isError=False,
+    )
 
 
 def _normalize_native_tool_result(result: Any, *, dependency: str) -> Any:
@@ -1130,6 +1229,8 @@ async def _native_cbm_tools() -> list[Tool]:
 
 
 def _call_native_cbm(name: str, arguments: dict[str, Any]) -> CallToolResult:
+    if name == "index_repository":
+        return _call_native_cbm_index(arguments)
     _initialize_native_cbm_sync()
     if _NATIVE_CBM_CLIENT is None:
         raise RuntimeError("native_cbm_not_initialized")
@@ -1143,6 +1244,41 @@ def _call_native_cbm(name: str, arguments: dict[str, Any]) -> CallToolResult:
         if str(error).startswith("native_cbm_timeout:"):
             _close_native_cbm()
         raise
+
+
+def _call_native_cbm_index(arguments: dict[str, Any]) -> CallToolResult:
+    """Coalesce identical indexing requests without spawning another CBM process."""
+    global _NATIVE_CBM_INDEX_IN_FLIGHT
+    request_key = json.dumps(arguments, sort_keys=True, separators=(",", ":"), default=str)
+    leader = False
+    with _NATIVE_CBM_INDEX_LOCK:
+        in_flight = _NATIVE_CBM_INDEX_IN_FLIGHT
+        if in_flight is None:
+            future: Future[CallToolResult] = Future()
+            _NATIVE_CBM_INDEX_IN_FLIGHT = (request_key, future)
+            leader = True
+        else:
+            active_key, future = in_flight
+            if active_key != request_key:
+                raise RuntimeError("native_cbm_index_already_in_progress")
+    if not leader:
+        return future.result()
+    try:
+        _initialize_native_cbm_sync()
+        if _NATIVE_CBM_CLIENT is None:
+            raise RuntimeError("native_cbm_not_initialized")
+        result = _NATIVE_CBM_CLIENT.call_tool("index_repository", arguments)
+        future.set_result(result)
+        return result
+    except BaseException as error:
+        future.set_exception(error)
+        if isinstance(error, RuntimeError) and str(error).startswith("native_cbm_timeout:"):
+            _close_native_cbm()
+        raise
+    finally:
+        with _NATIVE_CBM_INDEX_LOCK:
+            if _NATIVE_CBM_INDEX_IN_FLIGHT == (request_key, future):
+                _NATIVE_CBM_INDEX_IN_FLIGHT = None
 
 
 def _close_native_cbm() -> None:
@@ -1247,7 +1383,7 @@ class Auth0TokenVerifier:
                 return None
             raw_scope = claims.get("scope") or ""
             scopes = raw_scope.split() if isinstance(raw_scope, str) else [str(value) for value in raw_scope]
-            if self.config.required_scope not in scopes:
+            if not set(scopes).intersection(OAUTH_SCOPES):
                 return None
             subject = str(claims.get("sub") or "").strip()
             if not subject:
@@ -1600,6 +1736,99 @@ _HERMES_ONLY_TOOLS = {
     "write_mag_one_instructions",
 }
 
+_MAIN_PROFILE_TOOLS = frozenset({
+    "main.context",
+    "canvas.inspect",
+    "agentgraph.inspect",
+    "mag_one.describe_connected_agents",
+    "card.run_assistant_agent",
+    "run_coder_subagent",
+    "run_mag_one",
+    "engraphis.proactive_context",
+    "engraphis.recall_context",
+    "engraphis.recall_grounded",
+    "engraphis.why",
+    "engraphis.remember",
+    "engraphis.correct",
+    "cbm.list_projects",
+    "cbm.index_status",
+    "cbm.index_repository",
+    "cbm.get_architecture",
+    "cbm.search_code",
+    "cbm.search_graph",
+    "cbm.trace_path",
+    "cbm.get_code_snippet",
+    "graphiti.search_nodes",
+    "graphiti.search_memory_facts",
+    "graphiti.get_entity_edge",
+    "graphiti.get_episodes",
+    "graphiti.get_episode_entities",
+})
+
+
+def _tool_profile_metadata(name: str, execution: dict[str, str]) -> dict[str, Any]:
+    """Attach access policy to the canonical Tool registration itself."""
+    risk = execution["risk"]
+    if risk == "destructive":
+        audit_scope = "liquidaity.audit.admin"
+        profile = "admin"
+    elif risk in {
+        "deterministic write",
+        "paid/provider-backed",
+        "background",
+        "runtime-launching",
+    }:
+        audit_scope = "liquidaity.audit.execute"
+        profile = "execute"
+    else:
+        audit_scope = "liquidaity.audit.read"
+        profile = "read"
+    scopes = [audit_scope]
+    profiles = [f"auditor.{profile}"]
+    if name in _MAIN_PROFILE_TOOLS:
+        scopes.insert(0, "liquidaity.main")
+        profiles.insert(0, "main")
+    owner = next(
+        (
+            owner
+            for prefix, owner in (
+                ("engraphis.", "engraphis"),
+                ("graphiti.", "graphiti"),
+                ("cbm.", "cbm"),
+                ("agentgraph.", "agentgraph"),
+            )
+            if name.startswith(prefix)
+        ),
+        "liquidaity",
+    )
+    code_index_family = {
+        "engraphis.index_repo",
+        "engraphis.search_code",
+        "engraphis.code_path",
+        "engraphis.code_impact",
+        "engraphis.export_code_graph",
+    }
+    job_class = (
+        "admin_job"
+        if risk == "destructive"
+        else "fast_context"
+        if risk == "safe read" and execution["compute"] in {"deterministic", "database_read"}
+        else "agent_job"
+    )
+    return {
+        "owner": owner,
+        "profiles": profiles,
+        "scopes": scopes,
+        "risk": risk,
+        "compute": execution["compute"],
+        "authorityStatus": (
+            "approximate_auditor_only"
+            if name in code_index_family
+            else "canonical"
+        ),
+        "jobClass": job_class,
+    }
+
 
 def _bind_tool_execution_contract(tool: Tool) -> Tool:
     payload = tool.model_dump(by_alias=True, exclude_none=True)
@@ -1609,6 +1838,7 @@ def _bind_tool_execution_contract(tool: Tool) -> Tool:
     )
     meta["liquidaityExecution"] = execution
     meta["liquidaityCapability"] = _tool_capability_metadata(tool.name, execution)
+    meta["liquidaityProfile"] = _tool_profile_metadata(tool.name, execution)
     payload["_meta"] = meta
     return Tool.model_validate(payload)
 
@@ -1639,16 +1869,20 @@ def _enforce_tool_caller(
     return None
 
 
-def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
-    """Bind OAuth metadata and hide only identities owned by the server.
-
-    Tool names and handlers still come from the one canonical catalog assembled
-    by ``list_tools``.
-    """
-    security_schemes = [{"type": "oauth2", "scopes": [AUTH0_REQUIRED_SCOPE]}]
+def _catalog_for_scopes(tools: list[Tool], authenticated_scopes: frozenset[str]) -> list[Tool]:
+    """Project canonical Tool records through already-verified OAuth scopes."""
     result: list[Tool] = []
     for tool in tools:
         payload = tool.model_dump(by_alias=True, exclude_none=True)
+        meta = dict(payload.get("_meta") or {})
+        profile = dict(meta.get("liquidaityProfile") or {})
+        allowed_scopes = tuple(str(scope) for scope in profile.get("scopes") or ())
+        if not authenticated_scopes.intersection(allowed_scopes):
+            continue
+        security_schemes = [
+            {"type": "oauth2", "scopes": [scope]}
+            for scope in allowed_scopes
+        ]
         native_system = next(
             (system for system, prefix in _NATIVE_PREFIXES.items() if tool.name.startswith(prefix)),
             None,
@@ -1697,11 +1931,28 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
             annotations = dict(payload.get("annotations") or {})
             annotations["readOnlyHint"] = True
             payload["annotations"] = annotations
-        meta = dict(payload.get("_meta") or {})
         meta["securitySchemes"] = security_schemes
         payload["_meta"] = meta
         result.append(Tool.model_validate(payload))
     return result
+
+
+def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
+    """Derive the authenticated view from the server-owned access token."""
+    return _catalog_for_scopes(tools, _authenticated_scopes())
+
+
+def _authenticated_tool_denial(name: str) -> str | None:
+    access_token = get_access_token()
+    if access_token is None:
+        return None
+    execution = _TOOL_EXECUTION_CONTRACTS.get(name)
+    if execution is None:
+        return f"unknown_tool: {name}"
+    policy = _tool_profile_metadata(name, execution)
+    if not _authenticated_scopes().intersection(policy["scopes"]):
+        return f"tool_scope_not_authorized: {name}"
+    return None
 
 
 # Structural allow-list per tool: unexpected keys are rejected honestly, never
@@ -1762,6 +2013,12 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
 
 
 async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
+    scope_denial = _authenticated_tool_denial(name)
+    if scope_denial:
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps({"ok": False, "error": scope_denial}))],
+            isError=True,
+        )
     context = _authenticated_main_context()
     if name.startswith(_NATIVE_PREFIXES["engraphis"]):
         await _initialize_native_engraphis()
@@ -1790,6 +2047,9 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
         native_name = name.removeprefix(_NATIVE_PREFIXES["graphiti"])
         if native_name in _NATIVE_GRAPHITI_NAMES:
             native_args = dict(arguments or {})
+            include_body = bool(native_args.pop("include_body", False))
+            preview_chars = max(0, min(2000, int(native_args.pop("body_preview_chars", 400))))
+            response_budget = max(2000, min(100000, int(native_args.pop("max_response_chars", 20000))))
             if context is not None:
                 if "group_id" in native_args or "group_ids" in native_args:
                     return [
@@ -1822,7 +2082,15 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                     native_args["group_id"] = group_id
                 if "group_ids" in native_properties:
                     native_args["group_ids"] = [group_id]
-            return await _call_native_graphiti(native_name, native_args)
+            result = await _call_native_graphiti(native_name, native_args)
+            if native_name == "get_episodes" and isinstance(result, CallToolResult):
+                return _bounded_graphiti_episodes(
+                    result,
+                    include_body=include_body,
+                    preview_chars=preview_chars,
+                    response_budget=response_budget,
+                )
+            return result
     allowed = _ALLOWED_KEYS.get(name)
     if allowed is None:
         return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"unknown_tool: {name}"}))]
@@ -2171,7 +2439,7 @@ async def _run_streamable_http() -> None:
         metadata_url = build_resource_metadata_url(resource_url)
         protected_endpoint: Any = RequireAuthMiddleware(
             endpoint,
-            required_scopes=[config_values.required_scope],
+            required_scopes=[],
             resource_metadata_url=metadata_url,
         )
         protected_endpoint = AuthContextMiddleware(protected_endpoint)
@@ -2181,8 +2449,8 @@ async def _run_streamable_http() -> None:
             *create_protected_resource_routes(
                 resource_url=resource_url,
                 authorization_servers=[AnyHttpUrl(config_values.issuer_url)],
-                scopes_supported=[config_values.required_scope],
-                resource_name="LiquidAIty Main",
+                scopes_supported=list(OAUTH_SCOPES),
+                resource_name="LiquidAIty",
             ),
             Mount("/", app=protected_endpoint),
         ]

@@ -114,11 +114,19 @@ async def _catalog() -> dict[str, Any]:
     await mcp_host._native_cbm_tools()
     try:
         internal = await mcp_host.list_tools()
-        published = mcp_host._bind_authenticated_catalog(internal)
-        count, digest = mcp_host._catalog_identity(published)
-        names = [tool.name for tool in published]
+        count, digest = mcp_host._catalog_identity(internal)
+        names = [tool.name for tool in internal]
+        profiles = {}
+        for profile, scopes in {
+            "main": frozenset({"liquidaity.main"}),
+            "auditor": frozenset({"liquidaity.audit.read", "liquidaity.audit.execute"}),
+            "admin": frozenset({"liquidaity.audit.admin"}),
+        }.items():
+            visible = mcp_host._catalog_for_scopes(internal, scopes)
+            profile_count, profile_hash = mcp_host._catalog_identity(visible)
+            profiles[profile] = {"count": profile_count, "hash": profile_hash}
         matrix: list[dict[str, Any]] = []
-        for tool in published:
+        for tool in internal:
             if tool.name.startswith("engraphis."):
                 dispatchable = tool.name.removeprefix("engraphis.") in {
                     name.removeprefix("engraphis_") for name in mcp_host._NATIVE_ENGRAPHIS_NAMES
@@ -134,13 +142,13 @@ async def _catalog() -> dict[str, Any]:
                     or tool.name in DIRECT_CUSTOM_TOOLS
                 )
             execution = dict((tool.meta or {}).get("liquidaityExecution") or {})
+            profile = dict((tool.meta or {}).get("liquidaityProfile") or {})
             matrix.append(
                 {
                     "name": tool.name,
                     "risk": execution.get("risk"),
                     "compute": execution.get("compute"),
-                    "oauth": tool.model_dump(exclude_none=True).get("securitySchemes")
-                    == [{"type": "oauth2", "scopes": ["liquidaity.main"]}],
+                    "oauth": bool(profile.get("scopes")),
                     "dispatchable": dispatchable,
                 }
             )
@@ -152,6 +160,7 @@ async def _catalog() -> dict[str, Any]:
             "removedWrappersPresent": sorted(REMOVED_WRAPPERS.intersection(names)),
             "allOAuthDeclared": all(item["oauth"] for item in matrix),
             "undispatchable": [item["name"] for item in matrix if not item["dispatchable"]],
+            "profiles": profiles,
             "auditMatrix": matrix,
         }
     finally:
