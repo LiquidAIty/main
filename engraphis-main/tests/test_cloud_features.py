@@ -34,13 +34,159 @@ def _service() -> MemoryService:
     return service
 
 
-def test_snapshot_requires_explicit_consent() -> None:
-    with pytest.raises(CloudFeatureError, match="Managed compute is off"):
+def _cloud_session(monkeypatch, connected: bool) -> list:
+    """Pin whether this installation has a cloud session, and record how it was asked."""
+
+    calls: list = []
+
+    def configured(**kwargs):
+        calls.append(kwargs)
+        return connected
+
+    monkeypatch.setattr(cloud_features, "cloud_session_configured", configured)
+    return calls
+
+
+def test_a_local_installation_with_no_cloud_account_never_uploads(monkeypatch) -> None:
+    """No account means no agreement to rely on, so a purely local install is denied."""
+
+    monkeypatch.delenv("ENGRAPHIS_MANAGED_COMPUTE_CONSENT", raising=False)
+    _cloud_session(monkeypatch, connected=False)
+
+    assert cloud_features.managed_compute_consent() is False
+    with pytest.raises(
+        CloudFeatureError, match="Managed compute is turned off"
+    ) as captured:
+        build_managed_snapshot(_service(), "acme")
+
+    assert captured.value.status == 409
+    assert captured.value.code == "consent_required"
+    # The customer is never told to hand-edit an environment variable.
+    assert "ENGRAPHIS_MANAGED_COMPUTE_CONSENT" not in str(captured.value)
+
+
+def test_connecting_to_the_cloud_is_itself_the_managed_compute_consent(
+    monkeypatch,
+) -> None:
+    """Connecting accepts the terms covering managed compute; nothing else is asked for."""
+
+    monkeypatch.delenv("ENGRAPHIS_MANAGED_COMPUTE_CONSENT", raising=False)
+    calls = _cloud_session(monkeypatch, connected=True)
+
+    assert cloud_features.managed_compute_consent() is True
+
+    _, snapshot = build_managed_snapshot(_service(), "acme")
+    assert snapshot["managed_compute_consent"] is True
+    # A session without a compute URL is still an account that accepted the terms.
+    assert calls and all(call == {"require_compute": False} for call in calls)
+
+
+def test_a_connected_installation_can_be_opted_back_out(monkeypatch) -> None:
+    """``=0`` is the operator override that withdraws a connected installation."""
+
+    monkeypatch.setenv("ENGRAPHIS_MANAGED_COMPUTE_CONSENT", "0")
+    _cloud_session(monkeypatch, connected=True)
+
+    assert cloud_features.managed_compute_consent() is False
+    with pytest.raises(CloudFeatureError, match="Managed compute is turned off"):
+        build_managed_snapshot(_service(), "acme")
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_a_blank_override_defers_to_the_cloud_account(monkeypatch, blank) -> None:
+    """An empty variable is not an answer — it must not read as an opt-out."""
+
+    monkeypatch.setenv("ENGRAPHIS_MANAGED_COMPUTE_CONSENT", blank)
+    _cloud_session(monkeypatch, connected=True)
+    assert cloud_features.managed_compute_consent() is True
+
+    _cloud_session(monkeypatch, connected=False)
+    assert cloud_features.managed_compute_consent() is False
+
+
+def test_consent_is_never_the_reason_a_dashboard_fails_to_render(monkeypatch) -> None:
+    """An unreadable session file denies consent instead of raising into the view."""
+
+    monkeypatch.delenv("ENGRAPHIS_MANAGED_COMPUTE_CONSENT", raising=False)
+
+    def explode(**kwargs):
+        raise OSError("session state is unreadable")
+
+    monkeypatch.setattr(cloud_features, "cloud_session_configured", explode)
+
+    assert cloud_features.managed_compute_consent() is False
+
+
+def test_snapshot_accepts_environment_opt_in(monkeypatch) -> None:
+    """A truthy override forces consent on even with no cloud session at all."""
+
+    monkeypatch.setenv("ENGRAPHIS_MANAGED_COMPUTE_CONSENT", "yes")
+    _cloud_session(monkeypatch, connected=False)
+
+    _, snapshot = build_managed_snapshot(_service(), "acme")
+
+    assert cloud_features.managed_compute_consent() is True
+    assert snapshot["managed_compute_consent"] is True
+
+
+@pytest.mark.parametrize("status", [401, 403, 409, 503])
+def test_cloud_client_preserves_cloud_session_status(monkeypatch, status) -> None:
+    def fail_access(*args, **kwargs):
+        raise cloud_features.CloudSessionError("private session detail", status=status)
+
+    monkeypatch.setattr(cloud_features, "access_for_workspace", fail_access)
+
+    with pytest.raises(CloudFeatureError) as caught:
+        CloudFeatureClient.from_environment("ws_test")
+
+    assert caught.value.status == status
+    assert "private session detail" not in str(caught.value)
+
+
+def test_cloud_client_marks_a_missing_session_as_trial_eligible(monkeypatch) -> None:
+    def fail_access(*args, **kwargs):
+        raise cloud_features.CloudSessionError("connect first", status=401)
+
+    monkeypatch.setattr(cloud_features, "access_for_workspace", fail_access)
+    monkeypatch.setattr(
+        cloud_features, "cloud_session_configured", lambda require_compute=True: False,
+    )
+
+    with pytest.raises(CloudFeatureError) as caught:
+        CloudFeatureClient.from_environment("ws_test")
+
+    assert caught.value.status == 401
+    assert caught.value.code == "cloud_unconfigured"
+
+
+def test_cloud_client_reports_invalid_session_configuration_as_conflict(monkeypatch) -> None:
+    def fail_access(*args, **kwargs):
+        raise ValueError("private configuration detail")
+
+    monkeypatch.setattr(cloud_features, "access_for_workspace", fail_access)
+
+    with pytest.raises(CloudFeatureError) as caught:
+        CloudFeatureClient.from_environment("ws_test")
+
+    assert caught.value.status == 409
+    assert "private configuration detail" not in str(caught.value)
+
+
+def test_explicit_false_consent_cannot_be_overridden_by_environment(monkeypatch) -> None:
+    monkeypatch.setenv("ENGRAPHIS_MANAGED_COMPUTE_CONSENT", "1")
+
+    with pytest.raises(CloudFeatureError, match="Managed compute is turned off"):
         build_managed_snapshot(_service(), "acme", consent=False)
 
 
 def test_snapshot_excludes_secret_rows_before_serialization() -> None:
     service = _service()
+    service.store.conn.execute(
+        "UPDATE memories SET valid_to=20, valid_to_recorded_at=30, "
+        "subject_key='queue.worker', claim_kind='configured_value' "
+        "WHERE content LIKE 'A normal%'"
+    )
+    service.store.conn.commit()
     workspace_id, snapshot = build_managed_snapshot(
         service, "acme", consent=True, generation=7
     )
@@ -52,6 +198,10 @@ def test_snapshot_excludes_secret_rows_before_serialization() -> None:
         "A normal managed-compute memory."
     ]
     assert snapshot["memories"][0]["metadata"] == {"subject": "Queue design"}
+    assert snapshot["memories"][0]["valid_to"] == 20
+    assert snapshot["memories"][0]["valid_to_recorded_at"] == 30
+    assert snapshot["memories"][0]["subject_key"] == "queue.worker"
+    assert snapshot["memories"][0]["claim_kind"] == "configured_value"
     assert "do-not-upload" not in repr(snapshot)
     assert "metadata-secret" not in repr(snapshot)
 

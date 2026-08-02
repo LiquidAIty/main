@@ -200,8 +200,9 @@ async def query_memory_context(req: QueryContextRequest):
                     )
             answer = await asyncio.to_thread(_call)
             result["answer"] = answer
-        except Exception as e:
-            result["llm_error"] = str(e)
+        except Exception as exc:  # noqa: BLE001 - provider libraries expose many exception types
+            logger.warning("LLM query error (%s)", type(exc).__name__)
+            result["llm_error"] = "LLM service unavailable"
     return _ok(result)
 
 
@@ -444,8 +445,8 @@ async def entity_memories(entity_name: str, namespace: Optional[str] = None, lim
     for r in conn.execute(ev_sql + " ORDER BY timestamp DESC LIMIT 100", ev_params):
         try:
             _add(r["namespace"], _json.loads(r["payload"] or "{}").get("document_id"))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Entity event payload parse skipped (%s)", type(exc).__name__)
 
     # 2) broad: memories whose content mentions the entity
     m_sql = "SELECT namespace, document_id FROM memories WHERE content LIKE ? ESCAPE '\\'"
@@ -618,7 +619,10 @@ async def list_thoughts(namespace: Optional[str] = None, limit: int = 50):
     thoughts = []
     for r in rows:
         d = dict(r)
-        d["source_memory_ids"] = json.loads(d.get("source_memory_ids") or "[]")
+        try:
+            d["source_memory_ids"] = json.loads(d.get("source_memory_ids") or "[]")
+        except Exception:
+            d["source_memory_ids"] = []
         try:
             d["parsed"] = json.loads(d["content"])
         except Exception:
@@ -639,9 +643,6 @@ async def get_config():
         "embed_model": settings.embed_model,
         "loop_interval": settings.loop_interval,
         "decay_halflife_days": settings.decay_halflife_days,
-        "host": settings.host,
-        "port": settings.port,
-        "base_url": settings.base_url,
     })
 
 
@@ -706,13 +707,29 @@ async def memory_analytics():
 
 @router.get("/license")
 async def get_license():
-    """GET /memory/license — local core metadata; hosted plans live in Cloud."""
+    """GET /memory/license — the same hosted-plan answer ``/api/license`` reports.
+
+    This surface used to hardcode ``plan: "local", features: []``. That describes the
+    *local core*, not the customer: a paying Team installation was told it was on the free
+    plan here while ``/api/license`` reported Team, so two endpoints of one product
+    disagreed about what had been bought. The response keys are unchanged — this stays the
+    legacy ``{"data": ...}`` SDK shape with the same trial and grace disclosure — and only
+    the two fields that were lying now tell the truth.
+
+    Resolution is local and non-blocking (see ``v2_api._plan_entitlement``): no network
+    call happens on this path, and an unconnected installation still reports ``local``
+    with no features, exactly as before. The plan stays presentation only; Engraphis Cloud
+    remains the sole authority for every paid operation.
+    """
+    from engraphis.routes.v2_api import hosted_plan_summary
+
+    summary = hosted_plan_summary()
     return _ok({
-        "plan": "local",
-        "features": [],
+        "plan": summary["plan"],
+        "features": summary["features"],
         "cloud_managed": True,
-        "trial_seconds": 259_200,
-        "grace_seconds": 86_400,
+        "trial_seconds": licensing.TRIAL_SECONDS,
+        "grace_seconds": licensing.MAX_HOSTED_ACCOUNT_GRACE_SECONDS,
         "grace_extends_cloud_access": False,
         "upgrade_url": licensing.upgrade_url(),
     })

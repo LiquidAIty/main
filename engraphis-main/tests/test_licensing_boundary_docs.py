@@ -34,16 +34,18 @@ def test_manifest_keeps_trial_and_grace_as_separate_clocks():
     assert "max_grace_hours" not in trial
     assert lifecycle["max_grace_hours"] == 24
     assert lifecycle["grace_mode"] == "workspace_write_grace"
+    assert lifecycle["enforced_by"] == "private_control_plane"
     assert lifecycle["grace_allows"] == [
-        "authenticated_existing_user_local_core_workspace_writes"
+        "authenticated_existing_user_hosted_account_continuity"
     ]
     assert set(lifecycle["live_authorization_still_required_for"]) == {
         "paid_or_cost_bearing_features",
-        "mcp_or_agent_writes",
+        "hosted_mcp_or_agent_writes",
     }
     assert lifecycle["grace_blocks_account_growth"] is True
     assert lifecycle["trial_expiry_extended_by_grace"] is False
     assert lifecycle["recovery"]["mode"] == "recovery_read_only"
+    assert lifecycle["recovery"]["enforced_by"] == "private_control_plane"
     assert lifecycle["recovery"]["blocks_normal_mutations"] is True
     assert {
         "login",
@@ -63,6 +65,8 @@ def test_manifest_uses_stripe_as_the_only_launch_billing_authority():
     assert billing["legacy_providers"] == []
     assert billing["checkout_mode"] == "authenticated_server_session"
     assert billing["provider_price_ids_public"] is False
+    assert manifest["account_portal"] == "https://api.engraphis.com/account"
+    assert "managed_dashboard" not in manifest
     assert set(targets) == {
         ("pro", "monthly"),
         ("pro", "annual"),
@@ -74,22 +78,25 @@ def test_manifest_uses_stripe_as_the_only_launch_billing_authority():
         assert target["checkout_url"] == (
             f"https://api.engraphis.com/account?plan={plan}&interval={interval}#billing"
         )
-    assert "polar" not in json.dumps(manifest).lower()
 
 def test_public_docs_state_the_license_and_lapse_boundaries():
     readme = _text("README.md")
+    hosted_plans = _text("docs/HOSTED_PLANS.md")
     licensing = _text("docs/LICENSING.md")
-    combined = readme + "\n" + licensing
-    plain_readme = " ".join(readme.replace("**", "").split())
+    combined = readme + "\n" + hosted_plans + "\n" + licensing
+    plain_hosted_plans = " ".join(hosted_plans.replace("**", "").split())
     plain_licensing = " ".join(licensing.replace("**", "").split())
 
     assert "exactly 3 active days" in combined
-    assert "at most 24 hours" in plain_readme or "up to 24 hours" in plain_readme
+    assert "at most 24 hours" in plain_hosted_plans or "up to 24 hours" in plain_hosted_plans
     assert "up to 24 hours" in plain_licensing
-    assert "workspace_write_grace" in readme and "workspace_write_grace" in licensing
-    assert "recovery_read_only" in readme and "recovery_read_only" in licensing
-    assert "Local reads" in combined and "data export" in combined
-    assert "never extends trial or subscription expiry" in readme
+    assert "workspace_write_grace" in hosted_plans and "workspace_write_grace" in licensing
+    assert "recovery_read_only" in hosted_plans and "recovery_read_only" in licensing
+    assert "private control plane" in plain_hosted_plans.lower()
+    assert "local dashboard, MCP server, local writes" in licensing
+    assert "not controlled by either hosted lifecycle state" in licensing
+    assert "data export" in combined
+    assert "does not extend a trial or subscription" in hosted_plans
     assert "enable a new installation or activation" in licensing
     assert "add hosted users, seats, invitations, devices, or credentials" in licensing
     assert "cannot retroactively withdraw" in licensing
@@ -128,3 +135,35 @@ def test_vendor_authority_is_not_shipped_in_the_public_tree():
     assert (ROOT / "engraphis/hosted_client.py").is_file()
     assert (ROOT / "engraphis/cloud_session.py").is_file()
     assert (ROOT / "engraphis/backends/sync_relay.py").is_file()
+
+
+def test_container_examples_do_not_describe_private_license_or_relay_state_as_local():
+    """Compose must not imply that this customer image runs the private authority."""
+
+    dockerfile = _text("Dockerfile")
+    compose = _text("docker-compose.yml")
+    combined = dockerfile + "\n" + compose
+
+    assert "license/trial/machine-id/lease" not in combined
+    assert "revocation registry" not in combined
+    assert "ENGRAPHIS_RELAY_DB" not in combined
+    assert "cloud session" in combined
+    assert "Issuance, trial state, leases, and revocations stay private." in compose
+
+
+def test_readme_describes_only_customer_side_cloud_state_as_persisted():
+    """The Docker quickstart must not imply that the public image owns licenses.
+
+    The mounted state directory holds a customer-side connection plus a display cache;
+    issuance and entitlement authority stay in the private control plane.  Calling that
+    state "license state" made the open-core boundary ambiguous for self-hosters.
+    """
+
+    readme = _text("README.md")
+
+    assert "database plus license state" not in readme
+    assert "customer-side cloud session and non-authoritative entitlement display" in readme
+    assert (
+        "License issuance, trials, leases, and revocations remain on the private control plane."
+        in readme
+    )

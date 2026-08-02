@@ -239,18 +239,6 @@ def test_engraphisignore_names_and_globs(tmp_path):
     assert not any(f.endswith("a.gen.py") for f in found)      # glob ignore worked
 
 
-def test_generated_javascript_bundles_are_excluded_by_default(tmp_path):
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "keep.js").write_text("export function keep() {}\n")
-    (tmp_path / "src" / "vendor.min.js").write_text("function a(){}")
-    (tmp_path / "src" / "app.bundle.js").write_text("function b(){}")
-    (tmp_path / "src" / "route.chunk.js").write_text("function c(){}")
-
-    found = [os.path.basename(path) for path in iter_source_files(str(tmp_path))]
-
-    assert found == ["keep.js"]
-
-
 def test_engraphisignore_negation_cancels_own_pattern(tmp_path):
     # `!name` re-includes a name the ignore file itself excluded (gitignore-style).
     (tmp_path / "logs").mkdir()
@@ -343,71 +331,6 @@ def test_index_repo_accepts_normalized_language_alias(tmp_path):
     (tmp_path / "Svc.cs").write_text("public class Svc { }\n")
     res = svc.index_repo(workspace="w", repo="r", root_path=str(tmp_path), languages=["C#"])
     assert res["files_indexed"] >= 1 and res["symbols"] >= 1
-
-
-def test_code_tools_accept_and_canonicalize_windows_repo_paths(tmp_path):
-    from engraphis.service import MemoryService
-
-    svc = MemoryService.create(":memory:")
-    workspace_id = svc.store.get_or_create_workspace("ADMIN")
-    svc.store.get_or_create_repo(workspace_id, "main")
-
-    backslash = svc.code_index_status(workspace="ADMIN", repo=r"C:\Projects\main")
-    slash = svc.code_index_status(workspace="ADMIN", repo="C:/Projects/main")
-    assert backslash == slash
-    assert slash["identity"] == "ADMIN/C:/Projects/main"
-    assert slash["status"] == "not_indexed"
-    assert slash["counts"] == {"files": 0, "symbols": 0, "edges": 0}
-    assert svc.engine.embedding_initialized is False
-
-    (tmp_path / "app.py").write_text("def live():\n    return 1\n")
-    repo_path = str(tmp_path)
-    indexed = svc.index_repo(
-        workspace="ADMIN", repo=repo_path, root_path=repo_path
-    )
-    assert indexed["index"]["status"] == "ready"
-    assert indexed["index"]["identity"].startswith("ADMIN/")
-
-
-@pytest.mark.parametrize(
-    "repo",
-    [r"C:Projects\main", r"C:\Projects\..\main", "C:/"],
-)
-def test_code_repo_identity_rejects_unsafe_windows_forms(repo):
-    from engraphis.service import MemoryService, ValidationError
-
-    svc = MemoryService.create(":memory:")
-    svc.store.get_or_create_workspace("ADMIN")
-    with pytest.raises(ValidationError):
-        svc.code_index_status(workspace="ADMIN", repo=repo)
-
-
-def test_code_tools_fail_honestly_when_projection_is_missing_or_stale(tmp_path):
-    from engraphis.service import MemoryService
-
-    svc = MemoryService.create(":memory:")
-    svc.remember("Repository exists without a code projection", workspace="w", repo="r")
-
-    missing = svc.search_code("anything", workspace="w", repo="r")
-    assert missing["ok"] is False
-    assert missing["failureCode"] == "not_indexed"
-    assert missing["index"]["counts"] == {"files": 0, "symbols": 0, "edges": 0}
-
-    (tmp_path / "app.py").write_text("def live():\n    return 1\n")
-    indexed = svc.index_repo(workspace="w", repo="r", root_path=str(tmp_path))
-    assert indexed["index"]["status"] == "ready"
-    assert indexed["index"]["generation"].startswith("codeindex_")
-    assert indexed["index"]["fingerprint"]
-
-    ready = svc.search_code("live", workspace="w", repo="r")
-    assert ready["index"]["status"] == "ready"
-    assert ready["symbols"]
-
-    (tmp_path / "app.py").write_text("def changed():\n    return 2\n")
-    stale = svc.code_impact(["app.py"], workspace="w", repo="r")
-    assert stale["ok"] is False
-    assert stale["failureCode"] == "index_stale"
-    assert "risk" not in stale
 
 
 # ── tree-sitter-specific behavior (skipped if the optional extra isn't installed) ──

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import threading
 
 import numpy as np
 import pytest
@@ -29,6 +31,55 @@ class LocalTestEmbedder:
 
 def adapter(tmp_path):
     return ThinkGraphEngraphis(tmp_path / "thinkgraph.sqlite", embedder=LocalTestEmbedder())
+
+
+def test_embedding_runtime_is_lazy_and_initializes_once_for_concurrent_first_reads(tmp_path):
+    graph = adapter(tmp_path)
+    assert graph.model_info["embeddingRuntime"] == {
+        "state": "idle",
+        "loaded": False,
+        "initializations": 0,
+        "waiters": 0,
+        "durationMs": None,
+        "error": None,
+        "generatedOnInitialization": 0,
+        "persistedReembeddedOnInitialization": 0,
+    }
+    assert graph.projection("ADMIN")["counts"] == {"nodes": 0, "edges": 0}
+    assert graph.model_info["embeddingRuntime"]["state"] == "idle"
+
+    barrier = threading.Barrier(8)
+
+    def first_read():
+        barrier.wait(timeout=5)
+        return graph.engine
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        engines = list(pool.map(lambda _index: first_read(), range(8)))
+
+    assert all(engine is engines[0] for engine in engines)
+    metrics = graph.model_info["embeddingRuntime"]
+    assert metrics["state"] == "ready"
+    assert metrics["loaded"] is True
+    assert metrics["initializations"] == 1
+    assert metrics["generatedOnInitialization"] == 0
+    assert metrics["persistedReembeddedOnInitialization"] == 0
+
+
+def test_opening_persisted_memories_does_not_reembed_them(tmp_path):
+    db_path = tmp_path / "thinkgraph.sqlite"
+    writer_embedder = LocalTestEmbedder()
+    writer = ThinkGraphEngraphis(db_path, embedder=writer_embedder)
+    writer.apply_patch(authority(), patch())
+    assert sum(writer_embedder.call_sizes) > 0
+    writer.store.close()
+
+    reader_embedder = LocalTestEmbedder()
+    reader = ThinkGraphEngraphis(db_path, embedder=reader_embedder)
+    _ = reader.engine
+    assert reader_embedder.call_sizes == []
+    assert reader.model_info["embeddingRuntime"]["persistedReembeddedOnInitialization"] == 0
+    reader.store.close()
 
 
 def authority(project="ADMIN", correlation="turn-1"):

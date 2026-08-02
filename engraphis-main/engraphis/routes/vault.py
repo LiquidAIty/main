@@ -1,28 +1,97 @@
 """Vault management, file editing, folder import, memory health, bulk ops, and context preview routes."""
 from __future__ import annotations
 
+import asyncio
+import heapq
 import logging
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.routing import APIRoute
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from engraphis.engines import embedder, ingest as ingest_engine, recall as recall_engine, reweight
+from engraphis.service import MAX_IMPORT_FILES, MAX_IMPORT_RESOURCE_BYTES, MAX_IMPORT_TOTAL_BYTES
 from engraphis.engines.intelligence import auto_categorize, check_conflicts
 from engraphis.engines.reweight import retention_score
-from engraphis.stores import get_conn, now_ts
+from engraphis.stores import blob_to_vector, get_conn, now_ts
 from engraphis.stores import vaults as vault_store
 from engraphis.stores import vectors as mem_store
 
 logger = logging.getLogger("engraphis.routes.vault")
-router = APIRouter(prefix="/memory", tags=["vault-management"])
+# Multipart boundaries and per-part headers count toward the HTTP request size even
+# though they are not imported content. Keep the transport ceiling finite while allowing
+# the documented content limit plus conservative multipart overhead.
+VAULT_UPLOAD_REQUEST_BYTES = (
+    MAX_IMPORT_TOTAL_BYTES + MAX_IMPORT_FILES * 16_384 + 1024 * 1024
+)
+_UPLOAD_FORM_FIELDS = 8
+_DUPLICATE_CANDIDATE_LIMIT = 500
+_DUPLICATE_RESULT_LIMIT = 200
+_DUPLICATE_BLOCK_SIZE = 256
+
+
+class _BoundedUploadRoute(APIRoute):
+    """Parse vault uploads with their strict multipart limits before FastAPI binds files."""
+
+    def get_route_handler(self):
+        route_handler = super().get_route_handler()
+
+        async def bounded_route_handler(request: Request):
+            # FastAPI normally resolves ``UploadFile`` parameters before dependencies.
+            # Parsing here runs first and caches the bounded FormData on this same request.
+            await _bounded_upload_form(request)
+            return await route_handler(request)
+
+        return bounded_route_handler
+
+
+class _VaultRouter(APIRouter):
+    """Install the bounded parser only on the two multipart folder-import routes."""
+
+    _bounded_upload_paths = {
+        "/vaults/upload-folder",
+        "/vaults/upload-folder-smart",
+    }
+
+    def add_api_route(self, path: str, endpoint, **kwargs):
+        if path in self._bounded_upload_paths:
+            kwargs["route_class_override"] = _BoundedUploadRoute
+        return super().add_api_route(path, endpoint, **kwargs)
+
+
+router = _VaultRouter(prefix="/memory", tags=["vault-management"])
 
 
 def _ok(data: Any) -> dict[str, Any]:
     return {"data": data}
+
+
+async def _bounded_upload_form(request: Request) -> None:
+    """Parse multipart once with a strict file-count ceiling.
+
+    FastAPI otherwise parses ``UploadFile`` dependencies with Starlette's default
+    1,000-file ceiling before the route can inspect ``len(files)``. The app-level
+    middleware separately bounds bytes before this parser is allowed to spool them.
+    """
+    try:
+        await request.form(
+            max_files=MAX_IMPORT_FILES,
+            max_fields=_UPLOAD_FORM_FIELDS,
+        )
+    except StarletteHTTPException as exc:
+        detail = str(exc.detail)
+        if exc.status_code == 400 and detail.lower().startswith("too many files"):
+            raise HTTPException(
+                status_code=413,
+                detail={"error": f"too many files (max {MAX_IMPORT_FILES})"},
+            ) from exc
+        raise
 
 
 # ═══ VAULT MANAGEMENT ═══════════════════════════════════════════════════════
@@ -188,21 +257,37 @@ class FolderImportReq(BaseModel):
 @router.post("/vaults/import-folder")
 async def import_folder(req: FolderImportReq):
     """POST /memory/vaults/import-folder — import all .md files from a disk path."""
-    folder = Path(req.path).resolve()
+    # Guard against path traversal: only allow import from directories that are
+    # explicitly configured or under the user's home directory.
+    import os
+    home = os.path.realpath(str(Path.home().expanduser()))
+    allowed_roots = [home]
+    env_roots = os.environ.get("ENGRAPHIS_IMPORT_ROOTS", "")
+    if env_roots:
+        allowed_roots.extend(
+            os.path.realpath(os.path.expanduser(root))
+            for root in env_roots.split(os.pathsep)
+            if root
+        )
+    real_path = os.path.realpath(os.path.expanduser(req.path))
+    comparable_path = os.path.normcase(real_path)
+    safe_path = None
+    for root in allowed_roots:
+        comparable_root = os.path.normcase(root)
+        if comparable_path == comparable_root:
+            safe_path = comparable_root
+            break
+        root_prefix = comparable_root.rstrip(os.sep) + os.sep
+        if comparable_path.startswith(root_prefix):
+            safe_path = comparable_path
+            break
+    if safe_path is None:
+        raise HTTPException(403, "Import path must be under an allowed root (home directory or ENGRAPHIS_IMPORT_ROOTS)")
+    folder = Path(safe_path)
     if not folder.exists():
         raise HTTPException(404, f"Path not found: {req.path}")
     if not folder.is_dir():
         raise HTTPException(400, f"Not a directory: {req.path}")
-    # Guard against path traversal: only allow import from directories that are
-    # explicitly configured or under the user's home directory.
-    import os
-    home = Path.home().resolve()
-    allowed_roots = [home]
-    env_roots = os.environ.get("ENGRAPHIS_IMPORT_ROOTS", "")
-    if env_roots:
-        allowed_roots.extend(Path(r).resolve() for r in env_roots.split(os.pathsep) if r)
-    if not any(folder == r or folder.is_relative_to(r) for r in allowed_roots):
-        raise HTTPException(403, "Import path must be under an allowed root (home directory or ENGRAPHIS_IMPORT_ROOTS)")
 
     ns = req.namespace
     if not ns:
@@ -216,19 +301,27 @@ async def import_folder(req: FolderImportReq):
     import fnmatch
     files = []
     for f in folder.rglob("*"):
-        if f.is_file() and fnmatch.fnmatch(f.name, req.file_pattern):
-            if "node_modules" in str(f) or ".git" in str(f):
-                continue
-            files.append(f)
+        if not f.is_file() or not fnmatch.fnmatch(f.name, req.file_pattern):
+            continue
+        try:
+            # Read only the resolved, allowlisted file.  In particular, do not let a
+            # symlink inside an import root redirect this legacy route outside it.
+            real = f.resolve(strict=True)
+            rel = real.relative_to(folder)
+        except (OSError, ValueError):
+            continue
+        if any(part in {"node_modules", ".git"} for part in rel.parts[:-1]):
+            continue
+        files.append((real, rel))
 
     results = {"imported": 0, "errors": 0, "skipped": 0, "files": []}
-    for f in files:
+    for f, rel_path in files:
         try:
             content = f.read_text(encoding="utf-8", errors="replace")
             if not content.strip():
                 results["skipped"] += 1
                 continue
-            rel = f.relative_to(folder).as_posix()
+            rel = rel_path.as_posix()
             doc_id = rel.replace("/", "__").replace(".md", "").replace(".", "-")
             # Extract title from first H1
             import re
@@ -243,9 +336,10 @@ async def import_folder(req: FolderImportReq):
             )
             results["imported"] += 1
             results["files"].append({"path": rel, "title": title, "status": "ok"})
-        except Exception as e:
+        except Exception as exc:
+            logger.warning("Folder import file failed (%s)", type(exc).__name__)
             results["errors"] += 1
-            results["files"].append({"path": str(f), "title": "", "status": "error", "error": str(e)})
+            results["files"].append({"path": rel_path.as_posix(), "title": "", "status": "error"})
 
     return _ok({"namespace": ns, "folder": req.path, **results})
 
@@ -258,13 +352,24 @@ async def upload_folder(
 ):
     """POST /memory/vaults/upload-folder — upload multiple files as a folder (multipart).
     Use webkitdirectory in the frontend to send an entire folder."""
+    if len(files) > MAX_IMPORT_FILES:
+        raise HTTPException(status_code=413, detail={"error": f"too many files (max {MAX_IMPORT_FILES})"})
     if not vault_store.get_vault(namespace):
         vault_store.create_vault(namespace=namespace, name=namespace)
 
     results = {"imported": 0, "errors": 0, "files": []}
+    total_bytes = 0
     for f in files:
         try:
-            content = f.file.read().decode("utf-8", errors="replace")
+            raw = f.file.read(MAX_IMPORT_RESOURCE_BYTES + 1)
+            if len(raw) > MAX_IMPORT_RESOURCE_BYTES:
+                results["errors"] += 1
+                results["files"].append({"path": f.filename, "title": "", "status": "error", "error": "file too large"})
+                continue
+            total_bytes += len(raw)
+            if total_bytes > MAX_IMPORT_TOTAL_BYTES:
+                raise HTTPException(status_code=413, detail={"error": f"upload batch exceeds {MAX_IMPORT_TOTAL_BYTES} bytes"})
+            content = raw.decode("utf-8", errors="replace")
             if not content.strip():
                 continue
             import re
@@ -280,9 +385,12 @@ async def upload_folder(
             )
             results["imported"] += 1
             results["files"].append({"path": f.filename, "title": title, "status": "ok"})
-        except Exception as e:
+        except HTTPException:
+            raise
+        except Exception as exc:
             results["errors"] += 1
-            results["files"].append({"path": f.filename, "title": "", "status": "error", "error": str(e)})
+            logger.warning("Folder upload file failed (%s)", type(exc).__name__)
+            results["files"].append({"path": f.filename, "title": "", "status": "error", "error": "processing failed"})
 
     return _ok({"namespace": namespace, **results})
 
@@ -301,6 +409,8 @@ async def upload_folder_smart(
     If auto_categorize_flag is 'true', each file is classified by the LLM
     into the correct memory type. Uses batch embedding for speed."""
     import re as _re
+    if len(files) > MAX_IMPORT_FILES:
+        raise HTTPException(status_code=413, detail={"error": f"too many files (max {MAX_IMPORT_FILES})"})
     if not vault_store.get_vault(namespace):
         vault_store.create_vault(namespace=namespace, name=namespace)
 
@@ -309,9 +419,18 @@ async def upload_folder_smart(
 
     # Phase 1: Read all files and prepare content
     file_data = []
+    total_bytes = 0
     for f in files:
         try:
-            content = f.file.read().decode("utf-8", errors="replace")
+            raw = f.file.read(MAX_IMPORT_RESOURCE_BYTES + 1)
+            if len(raw) > MAX_IMPORT_RESOURCE_BYTES:
+                results["errors"] += 1
+                results["files"].append({"path": f.filename, "title": "", "status": "error", "error": "file too large"})
+                continue
+            total_bytes += len(raw)
+            if total_bytes > MAX_IMPORT_TOTAL_BYTES:
+                raise HTTPException(status_code=413, detail={"error": f"upload batch exceeds {MAX_IMPORT_TOTAL_BYTES} bytes"})
+            content = raw.decode("utf-8", errors="replace")
             if not content.strip():
                 results["skipped"] += 1
                 continue
@@ -319,16 +438,20 @@ async def upload_folder_smart(
             title = title_match.group(1).strip() if title_match else Path(f.filename).stem
             doc_id = f.filename.replace("/", "__").replace("\\", "__").replace(".md", "").replace(".", "-")
             file_data.append({"filename": f.filename, "doc_id": doc_id, "title": title, "content": content})
-        except Exception as e:
+        except HTTPException:
+            raise
+        except Exception as exc:
             results["errors"] += 1
-            results["files"].append({"path": f.filename, "title": "", "status": "error", "error": str(e)})
+            logger.warning("Smart import file read failed (%s)", type(exc).__name__)
+            results["files"].append({"path": f.filename, "title": "", "status": "error", "error": "processing failed"})
 
     # Phase 2: Batch embed all files at once (10x faster than individual)
     if file_data:
         texts = [f"{fd['title']}\n\n{fd['content']}" for fd in file_data]
         try:
             vecs = embedder.embed_batch(texts)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Batch embedding failed (%s), falling back to individual", type(exc).__name__)
             # Fallback: embed individually
             vecs = [embedder.embed(t) for t in texts]
 
@@ -388,9 +511,10 @@ async def upload_folder_smart(
                 "categorized": categorize_info is not None,
                 "confidence": categorize_info.get("confidence", 0) if categorize_info else 0,
             })
-        except Exception as e:
+        except Exception as exc:
             results["errors"] += 1
-            results["files"].append({"path": fd["filename"], "title": "", "status": "error", "error": str(e)})
+            logger.warning("Smart import ingest failed (%s)", type(exc).__name__)
+            results["files"].append({"path": fd["filename"], "title": "", "status": "error", "error": "processing failed"})
 
     return _ok({"namespace": namespace, **results})
 
@@ -429,7 +553,8 @@ async def auto_categorize_memories(req: AutoCategorizeReq):
                 "confidence": cat.get("confidence", 0),
                 "reason": cat.get("reason", ""),
             })
-        except Exception:
+        except Exception as exc:
+            logger.warning("Auto-categorize failed (%s)", type(exc).__name__)
             results["errors"] += 1
 
     return _ok(results)
@@ -453,27 +578,137 @@ async def conflict_check(req: ConflictCheckReq):
 
 # ═══ MEMORY HEALTH ══════════════════════════════════════════════════════════
 
-@router.get("/health/duplicates")
-async def find_duplicates(namespace: Optional[str] = None, threshold: float = 0.85):
-    """GET /memory/health/duplicates — find near-duplicate memories by vector similarity."""
-    candidates = mem_store.all_vectors(namespace=namespace)
+def _duplicate_pairs(
+    candidates: list[tuple[str, str, np.ndarray, dict[str, str]]],
+    threshold: float,
+) -> tuple[list[dict[str, Any]], int]:
+    """Find the strongest pairs with bounded block memory and response cardinality."""
+    groups: dict[tuple[str, int], list[tuple[str, np.ndarray, dict[str, str]]]] = (
+        defaultdict(list)
+    )
+    for namespace, document_id, vector, memory in candidates:
+        # A stale vector from an old embedding dimension must not break all health data.
+        groups[(namespace, int(vector.size))].append((document_id, vector, memory))
+
+    strongest: list[tuple[float, int, int, int, list[tuple[str, np.ndarray, dict[str, str]]], str]] = []
+    match_count = 0
+    sequence = 0
+    for (namespace, _dimension), memories in groups.items():
+        if len(memories) < 2:
+            continue
+        vectors = np.stack([item[1] for item in memories])
+        for start in range(0, len(memories), _DUPLICATE_BLOCK_SIZE):
+            stop = min(start + _DUPLICATE_BLOCK_SIZE, len(memories))
+            similarities = vectors[start:stop] @ vectors.T
+            for local_index, absolute_index in enumerate(range(start, stop)):
+                similarities[local_index, :absolute_index + 1] = -np.inf
+
+            flat = similarities.ravel()
+            matching = np.flatnonzero(flat >= threshold)
+            match_count += int(matching.size)
+            if matching.size > _DUPLICATE_RESULT_LIMIT:
+                relative = np.argpartition(
+                    flat[matching],
+                    -_DUPLICATE_RESULT_LIMIT,
+                )[-_DUPLICATE_RESULT_LIMIT:]
+                matching = matching[relative]
+
+            for flat_index in matching:
+                local_index, right_index = divmod(int(flat_index), len(memories))
+                left_index = start + local_index
+                similarity = float(similarities[local_index, right_index])
+                entry = (
+                    similarity,
+                    sequence,
+                    left_index,
+                    right_index,
+                    memories,
+                    namespace,
+                )
+                sequence += 1
+                if len(strongest) < _DUPLICATE_RESULT_LIMIT:
+                    heapq.heappush(strongest, entry)
+                elif similarity > strongest[0][0]:
+                    heapq.heapreplace(strongest, entry)
+
     duplicates = []
-    for i in range(len(candidates)):
-        for j in range(i + 1, len(candidates)):
-            id1, ns1, doc1, vec1, mem1 = candidates[i]
-            id2, ns2, doc2, vec2, mem2 = candidates[j]
-            if ns1 != ns2:
-                continue
-            sim = float(np.dot(vec1, vec2))
-            if sim >= threshold:
-                duplicates.append({
-                    "namespace": ns1,
-                    "memory_a": {"document_id": doc1, "title": mem1["title"], "content": mem1["content"][:200]},
-                    "memory_b": {"document_id": doc2, "title": mem2["title"], "content": mem2["content"][:200]},
-                    "similarity": round(sim, 4),
-                })
-    duplicates.sort(key=lambda x: x["similarity"], reverse=True)
-    return _ok({"duplicates": duplicates, "count": len(duplicates)})
+    for similarity, _, left_index, right_index, memories, namespace in sorted(
+        strongest, key=lambda item: (-item[0], item[1])
+    ):
+        left_doc, _, left_mem = memories[left_index]
+        right_doc, _, right_mem = memories[right_index]
+        duplicates.append({
+            "namespace": namespace,
+            "memory_a": {
+                "document_id": left_doc,
+                "title": left_mem["title"],
+                "content": left_mem["content"][:200],
+            },
+            "memory_b": {
+                "document_id": right_doc,
+                "title": right_mem["title"],
+                "content": right_mem["content"][:200],
+            },
+            "similarity": round(similarity, 4),
+        })
+    return duplicates, match_count
+
+
+def _duplicate_candidate_query(namespace: Optional[str]) -> tuple[str, list[Any]]:
+    """Build the bounded duplicate-candidate query without SQLite temporary sorting.
+
+    A namespaced scan is ordered by newest update through ``idx_mem_updated``. A global
+    scan instead uses descending rowid/``id`` (newest insertion), because there is no
+    global ``updated_at`` index and combining the two would force a temp B-tree.
+    """
+    sql = (
+        "SELECT namespace, document_id, vector, title, content "
+        "FROM memories WHERE vector IS NOT NULL"
+    )
+    params: list[Any] = []
+    if namespace:
+        sql += " AND namespace=?"
+        params.append(namespace)
+        sql += " ORDER BY updated_at DESC"
+    else:
+        sql += " ORDER BY id DESC"
+    return sql, params
+
+
+@router.get("/health/duplicates")
+async def find_duplicates(
+    namespace: Optional[str] = None,
+    threshold: float = Query(0.85, ge=-1.0, le=1.0),
+):
+    """Find a bounded set of strongest near-duplicates without blocking the event loop."""
+    sql, params = _duplicate_candidate_query(namespace)
+    sql += " LIMIT ?"
+    params.append(_DUPLICATE_CANDIDATE_LIMIT + 1)
+    rows = get_conn().execute(sql, params).fetchall()
+    candidate_truncated = len(rows) > _DUPLICATE_CANDIDATE_LIMIT
+    candidates = [
+        (
+            row["namespace"],
+            row["document_id"],
+            blob_to_vector(row["vector"]),
+            {"title": row["title"], "content": row["content"]},
+        )
+        for row in rows[:_DUPLICATE_CANDIDATE_LIMIT]
+    ]
+    duplicates, match_count = await asyncio.to_thread(
+        _duplicate_pairs, candidates, threshold
+    )
+    return _ok({
+        "duplicates": duplicates,
+        "count": len(duplicates),
+        "matches_considered": match_count,
+        "candidate_count": len(candidates),
+        "candidate_limit": _DUPLICATE_CANDIDATE_LIMIT,
+        "result_limit": _DUPLICATE_RESULT_LIMIT,
+        "truncated": (
+            candidate_truncated or match_count > _DUPLICATE_RESULT_LIMIT
+        ),
+    })
 
 
 @router.get("/health/stale")

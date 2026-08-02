@@ -28,6 +28,109 @@ def test_remember_then_recall_roundtrip():
     assert any("pnpm" in m["content"] for m in r["memories"])
 
 
+def test_recall_distinguishes_query_relative_rank_from_absolute_support():
+    s = _svc()
+    s.remember("Frontend repositories use pnpm for package management.",
+               workspace="acme", repo="web")
+
+    full = s.recall("which package manager do frontend repositories use?",
+                    workspace="acme", repo="web")
+    memory = full["memories"][0]
+    assert memory["score"] == memory["relative_score"]  # compatibility alias
+    assert 0.0 <= memory["absolute_support"] <= 1.0
+    assert "Query-relative" in full["score_semantics"]["relative_score"]
+    assert "[0, 1]" in full["score_semantics"]["absolute_support"]
+
+    compact = s.recall("which package manager do frontend repositories use?",
+                       workspace="acme", repo="web", response_mode="compact")
+    compact_memory = compact["memories"][0]
+    assert compact_memory["relative_score"] == compact_memory["score"]
+    assert 0.0 <= compact_memory["absolute_support"] <= 1.0
+    assert compact["score_semantics"] == full["score_semantics"]
+
+
+def test_recall_support_reuses_vector_arm_without_a_second_embedding_batch():
+    s = _svc()
+    s.remember("Frontend repositories use pnpm for package management.",
+               workspace="acme", repo="web")
+
+    class CountingEmbedder:
+        def __init__(self, wrapped):
+            self.wrapped = wrapped
+            self.batches = []
+
+        def embed(self, texts):
+            self.batches.append(list(texts))
+            return self.wrapped.embed(texts)
+
+    counter = CountingEmbedder(s.engine.recall_engine.embedder)
+    s.engine.recall_engine.embedder = counter
+    result = s.recall("which package manager do frontend repositories use?",
+                      workspace="acme", repo="web")
+
+    assert len(counter.batches) == 1
+    assert counter.batches[0] == ["which package manager do frontend repositories use?"]
+    assert result["score_semantics"]["version"] == "retrieval-support-v1"
+
+
+def test_recall_absolute_support_stays_low_for_a_weak_one_item_pool():
+    s = _svc()
+    s.remember("Production deploys to AWS ECS after approval.",
+               workspace="acme", repo="web")
+
+    result = s.recall("What sourdough hydration ratio should I use?",
+                      workspace="acme", repo="web")
+    memory = result["memories"][0]
+
+    assert memory["relative_score"] > 0.5
+    assert memory["absolute_support"] < 0.15
+
+
+def test_reworded_rate_limit_requires_claim_key_to_supersede_offline():
+    s = _svc()
+    old_text = "The API rate limit is one hundred requests every sixty seconds."
+    new_text = "Calls are capped at 500 per minute for each key."
+
+    unkeyed_old = s.remember(old_text, workspace="unkeyed", repo="api")
+    unkeyed_new = s.remember(new_text, workspace="unkeyed", repo="api")
+    assert unkeyed_new["op"] == "add"
+    assert s.store.get_memory(unkeyed_old["id"]).valid_to is None
+
+    keyed_old = s.remember(
+        old_text, workspace="keyed", repo="api", subject_key="api-rate-limit",
+        claim_kind="configured_value",
+    )
+    keyed_new = s.remember(
+        new_text, workspace="keyed", repo="api", subject_key="api-rate-limit",
+        claim_kind="configured_value",
+    )
+    assert keyed_new["op"] == "invalidate"
+    assert keyed_new["superseded"] == [keyed_old["id"]]
+    assert s.store.get_memory(keyed_old["id"]).valid_to is not None
+
+
+@pytest.mark.parametrize("method", ("remember", "ingest"))
+def test_invalid_trust_label_is_rejected_before_scope_creation(method):
+    s = _svc()
+
+    with pytest.raises(ValidationError, match="trusted must be a boolean"):
+        getattr(s, method)("untrusted input", workspace="must-not-exist", trusted="false")
+
+    assert s.list_workspaces()["workspaces"] == []
+
+
+def test_service_recall_does_not_reinforce_weak_results_by_default():
+    s = _svc()
+    stored = s.remember("The deployment target is AWS ECS.", workspace="acme", repo="web")
+    before = s.store.get_memory(stored["id"]).access_count
+
+    s.recall("unrelated lunch menu", workspace="acme", repo="web", k=1)
+    assert s.store.get_memory(stored["id"]).access_count == before
+
+    s.recall("deployment target", workspace="acme", repo="web", k=1, reinforce=True)
+    assert s.store.get_memory(stored["id"]).access_count > before
+
+
 def test_scope_isolation_by_workspace():
     s = _svc()
     s.remember("Secret alpha fact about widgets.", workspace="alpha")
@@ -180,6 +283,28 @@ def test_importance_is_clamped():
     out = s.remember("important", workspace="acme", importance=9.0)
     rec = s.store.get_memory(out["id"])
     assert rec.importance == 1.0
+
+
+def test_update_memory_preserves_metadata_changes_on_a_correction_replacement():
+    s = _svc()
+    original = s.remember(
+        "The original deployment runbook.", workspace="acme", title="Runbook",
+        mtype="semantic", importance=0.2,
+    )
+    replacement = s.correct(
+        original["id"], "The revised deployment runbook.", workspace="acme",
+    )
+
+    out = s.update_memory(
+        replacement["id"], workspace="acme", title="Deployment runbook",
+        mtype="procedural", importance=0.9,
+    )
+    saved = s.store.get_memory(replacement["id"])
+
+    assert out["updated"] == ["title", "type=procedural", "importance"]
+    assert (saved.title, saved.mtype.value, saved.importance) == (
+        "Deployment runbook", "procedural", 0.9,
+    )
 
 
 def test_provenance_recorded():
@@ -376,6 +501,103 @@ def test_timeline_orders_chronologically():
     assert out["history"][0]["valid_from"] <= out["history"][1]["valid_from"]
 
 
+@pytest.mark.parametrize(
+    ("intent", "result_key", "engine_method"),
+    [
+        ("why", "explanation", "why"),
+        ("timeline", "history", "timeline"),
+    ],
+)
+def test_intent_recall_forwards_temporal_anchors_to_secondary_reads(
+        monkeypatch, intent, result_key, engine_method):
+    s = _svc()
+    s.remember("Temporal intent anchor regression fixture.", workspace="acme", repo="web")
+    observed = {}
+
+    def observe(*args, **kwargs):
+        observed.update(kwargs)
+        return {"answer": [], "supersedes": []} if engine_method == "why" else []
+
+    monkeypatch.setattr(s.engine, engine_method, observe)
+    out = s.intent_recall(
+        "Temporal intent anchor", intent=intent, workspace="acme", repo="web",
+        as_of=10.0, valid_at=10.0, known_at=20.0,
+    )
+
+    assert result_key in out
+    assert observed["valid_at"] == 10.0
+    assert observed["known_at"] == 20.0
+
+
+def test_service_exposes_world_time_writes_and_point_in_time_recall():
+    s = _svc()
+    old = s.remember(
+        "The API rate limit is 100 requests per minute.",
+        workspace="acme",
+        repo="web",
+        valid_from=1_000.0,
+    )
+    new = s.remember(
+        "The API rate limit is 500 requests per minute.",
+        workspace="acme",
+        repo="web",
+        valid_from=2_000.0,
+    )
+
+    before = s.recall(
+        "What is the API rate limit?",
+        workspace="acme",
+        repo="web",
+        as_of=1_500.0,
+        reinforce=False,
+    )
+    after = s.recall(
+        "What is the API rate limit?",
+        workspace="acme",
+        repo="web",
+        as_of=2_500.0,
+        reinforce=False,
+    )
+    assert [memory["id"] for memory in before["memories"]] == [old["id"]]
+    assert [memory["id"] for memory in after["memories"]] == [new["id"]]
+
+
+@pytest.mark.parametrize(
+    ("method", "kwargs"),
+    [
+        ("remember", {"content": "A fact.", "workspace": "acme", "valid_from": float("nan")}),
+        ("remember", {"content": "A fact.", "workspace": "acme", "valid_from": True}),
+        ("recall", {"query": "A fact.", "workspace": "acme", "as_of": float("inf")}),
+        (
+            "grounded_recall",
+            {"query": "A fact.", "workspace": "acme", "as_of": "not-a-time"},
+        ),
+    ],
+)
+def test_service_rejects_invalid_temporal_anchors(method, kwargs):
+    s = _svc()
+    with pytest.raises(ValidationError, match="finite timestamp"):
+        getattr(s, method)(**kwargs)
+
+
+def test_service_rejects_backdated_supersession_as_validation_error():
+    s = _svc()
+    original = s.remember(
+        "The deployment window is Friday afternoon.",
+        workspace="acme",
+        valid_from=2_000.0,
+    )
+
+    with pytest.raises(ValidationError, match="cannot predate"):
+        s.remember(
+            "The deployment window is Thursday afternoon.",
+            workspace="acme",
+            valid_from=1_000.0,
+        )
+
+    assert s.store.get_memory(original["id"]).valid_to is None
+
+
 def test_recall_proactive_includes_last_session():
     s = _svc()
     s.remember("High importance convention.", workspace="acme", repo="web", importance=0.9)
@@ -384,6 +606,23 @@ def test_recall_proactive_includes_last_session():
     out = s.recall_proactive(workspace="acme", repo="web")
     assert out["memories"]
     assert out["last_session"]["open_threads"] == ["thing left undone"]
+
+
+def test_recall_proactive_filters_untrusted_before_applying_k():
+    s = _svc()
+    s.remember(
+        "A trusted project convention.", workspace="acme", repo="web",
+        importance=0.1,
+    )
+    untrusted = s.remember(
+        "A high-priority imported instruction.", workspace="acme", repo="web",
+        importance=1.0, source="import", trusted=False,
+    )
+
+    out = s.recall_proactive(workspace="acme", repo="web", k=1)
+
+    assert len(out["memories"]) == 1
+    assert out["memories"][0]["id"] != untrusted["id"]
 
 
 # ── linking & events ─────────────────────────────────────────────────────────────
@@ -433,6 +672,105 @@ def test_search_code_requires_repo():
         s.search_code("add", workspace="acme", repo="")
 
 
+def test_service_code_search_honors_bitemporal_anchors():
+    """The public service must not append present-day code to historic recall."""
+    from engraphis.core.interfaces import MemoryRecord, Scope
+
+    s = _svc()
+    workspace_id = s.store.get_or_create_workspace("acme")
+    repo_id = s.store.get_or_create_repo(workspace_id, "api")
+    symbol_id = s.store.upsert_symbol(
+        repo_id=repo_id, kind="function", name="legacy_route", fqname="legacy_route",
+        file="legacy.py", span="1-1",
+    )
+    memory_id = s.store.add_memory(MemoryRecord(
+        id="", content="legacy_route handled historic requests", title="legacy route",
+        workspace_id=workspace_id, repo_id=repo_id, scope=Scope.REPO,
+        valid_from=10.0, ingested_at=10.0,
+    ))
+    s.store.link_memory_symbol(repo_id=repo_id, symbol_id=symbol_id, memory_id=memory_id)
+    for table in ("symbols", "code_memory_links"):
+        s.store.conn.execute(
+            f"UPDATE {table} SET valid_from=10, ingested_at=10 WHERE repo_id=?", (repo_id,)
+        )
+    s.store.conn.commit()
+    s.store.close_validity(memory_id, at=20.0)
+    s.store.clear_symbols_for_file(repo_id, "legacy.py")
+    closed_at = s.store.conn.execute(
+        "SELECT valid_to FROM symbols WHERE id=?", (symbol_id,)
+    ).fetchone()["valid_to"]
+
+    current = s.search_code("legacy_route", workspace="acme", repo="api")
+    historic = s.search_code(
+        "legacy_route", workspace="acme", repo="api", valid_at=15.0,
+        known_at=float(closed_at) + 1.0,
+    )
+
+    assert current["symbols"] == []
+    assert [symbol["id"] for symbol in historic["symbols"]] == [symbol_id]
+    with pytest.raises(ValidationError, match="as_of and valid_at"):
+        s.search_code(
+            "legacy_route", workspace="acme", repo="api", as_of=14.0, valid_at=15.0
+        )
+
+
+def test_service_code_export_honors_bitemporal_anchors():
+    """Every export companion must be rendered from one anchored graph payload."""
+    from engraphis.core.interfaces import MemoryRecord, Scope
+
+    s = _svc()
+    workspace_id = s.store.get_or_create_workspace("acme")
+    repo_id = s.store.get_or_create_repo(workspace_id, "api")
+    symbol_id = s.store.upsert_symbol(
+        repo_id=repo_id, kind="function", name="legacy_route", fqname="legacy_route",
+        file="legacy.py", span="1-1",
+    )
+    memory_id = s.store.add_memory(MemoryRecord(
+        id="", content="legacy_route handled historic requests", title="legacy route",
+        workspace_id=workspace_id, repo_id=repo_id, scope=Scope.REPO,
+        valid_from=10.0, ingested_at=10.0,
+    ))
+    s.store.link_memory_symbol(
+        repo_id=repo_id, symbol_id=symbol_id, memory_id=memory_id
+    )
+    for table in ("symbols", "code_memory_links"):
+        s.store.conn.execute(
+            f"UPDATE {table} SET valid_from=10, ingested_at=10 WHERE repo_id=?",
+            (repo_id,),
+        )
+    s.store.conn.commit()
+    s.store.close_validity(memory_id, at=20.0)
+    s.store.clear_symbols_for_file(repo_id, "legacy.py")
+    learned_close = s.store.conn.execute(
+        "SELECT valid_to FROM symbols WHERE id=?", (symbol_id,)
+    ).fetchone()["valid_to"]
+
+    current = s.export_code_graph(workspace="acme", repo="api")
+    before_ingestion = s.export_code_graph(
+        workspace="acme", repo="api", valid_at=15.0, known_at=9.0,
+    )
+    historical = s.export_code_graph(
+        workspace="acme", repo="api", as_of=15.0, valid_at=15.0,
+        known_at=float(learned_close) + 1.0,
+    )
+
+    assert current["graph"]["nodes"] == []
+    assert before_ingestion["graph"]["nodes"] == []
+    assert {row["id"] for row in historical["graph"]["nodes"]} == {symbol_id}
+    assert {row["memory_id"] for row in historical["graph"]["memory_links"]} == {
+        memory_id
+    }
+    assert "- Symbols: 1" in historical["report_markdown"]
+    assert "legacy_route" in historical["graph_html"]
+    assert historical["valid_at"] == 15.0
+    assert historical["known_at"] == float(learned_close) + 1.0
+    assert historical["historical"] is True
+    with pytest.raises(ValidationError, match="as_of and valid_at"):
+        s.export_code_graph(
+            workspace="acme", repo="api", as_of=14.0, valid_at=15.0
+        )
+
+
 # ── folder / file import (dashboard "Import files & folders" section, SECURITY.md §5) ─
 
 def test_import_folder_success(tmp_path, monkeypatch):
@@ -445,7 +783,7 @@ def test_import_folder_success(tmp_path, monkeypatch):
     assert report["scanned"] == 2          # only *.md matched skip.txt is excluded
     assert report["imported"] == 1
     assert report["skipped"] == 1          # empty.md
-    r = s.recall("Postgres", workspace="acme")
+    r = s.recall("Postgres", workspace="acme", include_untrusted=True)
     assert any("Postgres" in m["content"] for m in r["memories"])
 
 
@@ -454,7 +792,7 @@ def test_import_folder_marks_untrusted(tmp_path, monkeypatch):
     monkeypatch.setenv("ENGRAPHIS_IMPORT_ROOTS", str(tmp_path))
     s = _svc()
     s.import_folder(workspace="acme", path=str(tmp_path))
-    r = s.recall("narwhals", workspace="acme")
+    r = s.recall("narwhals", workspace="acme", include_untrusted=True)
     assert r["memories"], "expected the imported memory to be recallable"
     prov = r["memories"][0]["provenance"]
     assert prov["source"] == "import" and prov["trusted"] is False
@@ -468,7 +806,7 @@ def test_import_folder_respects_file_pattern(tmp_path, monkeypatch):
     s = _svc()
     report = s.import_folder(workspace="acme", path=str(tmp_path), file_pattern="*.txt")
     assert report["scanned"] == 1 and report["imported"] == 1
-    r = s.recall("text note", workspace="acme")
+    r = s.recall("text note", workspace="acme", include_untrusted=True)
     assert any("text note" in m["content"] for m in r["memories"])
 
 
@@ -542,7 +880,7 @@ def test_import_files_success():
     ])
     assert report["imported"] == 1
     assert report["skipped"] == 1
-    r = s.recall("pangolins", workspace="acme")
+    r = s.recall("pangolins", workspace="acme", include_untrusted=True)
     assert any("pangolins" in m["content"] for m in r["memories"])
 
 
@@ -550,7 +888,7 @@ def test_import_files_marks_untrusted_with_upload_kind():
     s = _svc()
     s.import_files(workspace="acme", files=[
         {"name": "x.md", "content": "A fact about uploaded quokkas."}])
-    r = s.recall("quokkas", workspace="acme")
+    r = s.recall("quokkas", workspace="acme", include_untrusted=True)
     prov = r["memories"][0]["provenance"]
     assert prov["source"] == "import" and prov["trusted"] is False
     assert prov["kind"] == "file_upload"

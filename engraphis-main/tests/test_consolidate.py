@@ -3,9 +3,9 @@ import time
 
 import pytest
 
-from engraphis.core.consolidate import consolidate
+from engraphis.core.consolidate import _cluster_by_subject, consolidate
 from engraphis.core.engine import MemoryEngine
-from engraphis.core.interfaces import MemoryType, SearchFilter
+from engraphis.core.interfaces import MemoryRecord, MemoryType, SearchFilter
 from engraphis.service import MemoryService, ValidationError
 
 
@@ -23,6 +23,32 @@ def _engine_with_repeats():
         eng.remember(t, workspace_id=wid, repo_id=rid, mtype=MemoryType.EPISODIC,
                      resolve_conflicts=False)
     return eng, wid, rid
+
+
+def test_entity_clustering_uses_connected_components_not_first_link_assignment():
+    memories = [
+        MemoryRecord(id="mem_a", content="a"),
+        MemoryRecord(id="mem_b", content="b"),
+        MemoryRecord(id="mem_c", content="c"),
+    ]
+
+    class IncidenceStore:
+        def list_memory_entities(self, _flt, *, memory_ids=None):
+            # A bridges X and Y. A first-link implementation splits C away.
+            assert memory_ids == ["mem_a", "mem_b", "mem_c"]
+            return [
+                {"memory_id": "mem_a", "entity_id": "ent_x"},
+                {"memory_id": "mem_a", "entity_id": "ent_y"},
+                {"memory_id": "mem_b", "entity_id": "ent_x"},
+                {"memory_id": "mem_c", "entity_id": "ent_y"},
+            ]
+
+    groups = _cluster_by_subject(
+        memories, threshold=1.0, store=IncidenceStore(), flt=SearchFilter()
+    )
+    assert [[memory.id for memory in group] for group in groups] == [
+        ["mem_a", "mem_b", "mem_c"]
+    ]
 
 
 def test_service_rejects_non_finite_archive_threshold():
@@ -53,6 +79,79 @@ def test_consolidate_is_idempotent():
     assert len(first["digests_created"]) == 1
     assert len(second["digests_created"]) == 0
     assert second["skipped_already_consolidated"] >= 1
+
+
+def test_workspace_consolidation_excludes_session_memories():
+    eng = MemoryEngine.create(":memory:")
+    wid = eng.store.get_or_create_workspace("w")
+    rid = eng.store.get_or_create_repo(wid, "r")
+    sid = eng.store.start_session(wid, rid)
+    source_ids = [
+        eng.remember(
+            f"Session-only deployment incident repeat {n}.",
+            workspace_id=wid, repo_id=rid, session_id=sid, scope="session",
+            mtype=MemoryType.EPISODIC, resolve_conflicts=False,
+        )
+        for n in range(3)
+    ]
+
+    report = consolidate(eng, workspace_id=wid)
+
+    assert report["digests_created"] == []
+    assert all(eng.store.get_memory(mid).valid_to is None for mid in source_ids)
+
+
+def test_workspace_consolidation_partitions_repo_owned_sources():
+    eng = MemoryEngine.create(":memory:")
+    wid = eng.store.get_or_create_workspace("w")
+    repo_a = eng.store.get_or_create_repo(wid, "a")
+    repo_b = eng.store.get_or_create_repo(wid, "b")
+    for repo_id, marker in ((repo_a, "REPO_A"), (repo_b, "REPO_B")):
+        for n in range(3):
+            eng.remember(
+                f"Shared deployment incident {marker} run {n}.",
+                workspace_id=wid, repo_id=repo_id, mtype=MemoryType.EPISODIC,
+                resolve_conflicts=False,
+            )
+
+    report = consolidate(eng, workspace_id=wid)
+
+    assert len(report["digests_created"]) == 2
+    for entry in report["digests_created"]:
+        digest = eng.store.get_memory(entry["id"])
+        source_repos = {
+            eng.store.get_memory(source_id).repo_id for source_id in entry["consolidates"]
+        }
+        assert source_repos == {digest.repo_id}
+
+
+def test_subject_clustering_limits_entity_lookup_to_the_scanned_memories(monkeypatch):
+    eng = MemoryEngine.create(":memory:")
+    wid = eng.store.get_or_create_workspace("w")
+    scanned = eng.remember(
+        "The scanned episodic memory has entity evidence.",
+        workspace_id=wid, mtype=MemoryType.EPISODIC, resolve_conflicts=False,
+    )
+    eng.remember(
+        "An unrelated episodic memory also has entity evidence.",
+        workspace_id=wid, mtype=MemoryType.EPISODIC, resolve_conflicts=False,
+    )
+    calls = []
+    original = eng.store.list_memory_entities
+
+    def limited_lookup(flt, *, entity_ids=None, memory_ids=None, limit=None):
+        calls.append(memory_ids)
+        return original(
+            flt, entity_ids=entity_ids, memory_ids=memory_ids, limit=limit,
+        )
+
+    monkeypatch.setattr(eng.store, "list_memory_entities", limited_lookup)
+    _cluster_by_subject(
+        [eng.store.get_memory(scanned)], threshold=0.5, store=eng.store,
+        flt=SearchFilter(workspace_id=wid),
+    )
+
+    assert calls == [[scanned]]
 
 
 def test_consolidate_processes_new_members_of_an_existing_cluster():
@@ -219,6 +318,25 @@ def test_structured_consolidation_writes_typed_fact_graph_and_can_supersede_sour
     assert sum(memory.valid_to is None for memory in episodes) == 1
 
 
+def test_structured_consolidation_blocks_graph_writes_for_untrusted_sources():
+    pytest.importorskip("pydantic")
+    eng, wid, rid = _engine_with_auth_repeats()
+    eng.store.conn.execute("UPDATE memories SET provenance='{\"trusted\": false}'")
+    eng.store.conn.commit()
+
+    report = consolidate(
+        eng,
+        workspace_id=wid,
+        repo_id=rid,
+        structured=True,
+        llm=_StructuredConsolidationLLM(),
+    )
+
+    digest = eng.store.get_memory(report["digests_created"][0]["id"])
+    assert digest.provenance["trusted"] is False
+    assert eng.store.edges_in_scope(SearchFilter(workspace_id=wid, repo_id=rid)) == []
+
+
 
 def test_structured_consolidation_failure_falls_back_to_deterministic_digest():
     eng, wid, rid = _engine_with_auth_repeats()
@@ -229,6 +347,34 @@ def test_structured_consolidation_failure_falls_back_to_deterministic_digest():
     digest = eng.store.get_memory(report["digests_created"][0]["id"])
     assert "Recurring pattern" in digest.content
     assert digest.metadata["provenance"]["source"] == "consolidation"
+
+
+def test_structured_workspace_consolidation_partitions_repo_owned_sources():
+    pytest.importorskip("pydantic")
+    eng = MemoryEngine.create(":memory:")
+    wid = eng.store.get_or_create_workspace("w")
+    repo_a = eng.store.get_or_create_repo(wid, "a")
+    repo_b = eng.store.get_or_create_repo(wid, "b")
+    for repo_id, marker in ((repo_a, "REPO_A"), (repo_b, "REPO_B")):
+        for n in range(3):
+            eng.remember(
+                f"Auth incident {marker} PASETO outage run {n}.",
+                workspace_id=wid, repo_id=repo_id, mtype=MemoryType.EPISODIC,
+                resolve_conflicts=False,
+            )
+
+    report = consolidate(
+        eng, workspace_id=wid, structured=True, llm=_StructuredConsolidationLLM(),
+    )
+
+    assert len(report["digests_created"]) == 2
+    for entry in report["digests_created"]:
+        digest = eng.store.get_memory(entry["id"])
+        source_repos = {
+            eng.store.get_memory(source_id).repo_id
+            for source_id in digest.metadata["structured_consolidation"]["source_ids"]
+        }
+        assert source_repos == {digest.repo_id}
 
 
 def test_structured_consolidation_rejects_facts_without_prompt_sources():
@@ -277,6 +423,13 @@ def test_consolidate_reports_compaction_savings_on_a_real_cluster():
     eng, wid, rid = _engine_with_large_cluster()
     report = consolidate(eng, workspace_id=wid, repo_id=rid)
     comp = report["compaction"]["distilled"]
+    assert comp == {
+        "tokens_before": 230,
+        "tokens_after": 120,
+        "tokens_saved": 110,
+        "reduction_pct": 47.8,
+        "units": 1,
+    }
     assert comp["tokens_before"] > comp["tokens_after"] > 0
     assert comp["tokens_saved"] == comp["tokens_before"] - comp["tokens_after"]
     assert 0 < comp["reduction_pct"] <= 100
@@ -368,6 +521,38 @@ def test_profiles_pass_respects_min_mentions():
     assert report["profiles_created"] == []
 
 
+def test_workspace_profiles_partition_repo_owned_sources():
+    from engraphis.core.consolidate import consolidate_profiles
+    from engraphis.core.interfaces import Node
+
+    eng = MemoryEngine.create(":memory:")
+    wid = eng.store.get_or_create_workspace("w")
+    repo_a = eng.store.get_or_create_repo(wid, "a")
+    repo_b = eng.store.get_or_create_repo(wid, "b")
+    for repo_id, marker in ((repo_a, "REPO_A"), (repo_b, "REPO_B")):
+        for n in range(3):
+            eng.remember(
+                f"Aurora {marker} architectural decision {n}.",
+                workspace_id=wid, repo_id=repo_id, mtype=MemoryType.SEMANTIC,
+                resolve_conflicts=False,
+            )
+    eng.store.upsert_entity(Node(id="", name="Aurora", workspace_id=wid))
+
+    report = consolidate_profiles(eng, workspace_id=wid)
+
+    assert len(report["profiles_created"]) == 2
+    for entry in report["profiles_created"]:
+        profile = eng.store.get_memory(entry["id"])
+        source_repos = {
+            eng.store.get_memory(
+                link["b"] if link["a"] == profile.id else link["a"]
+            ).repo_id
+            for link in eng.store.get_links(profile.id)
+            if link["relation"] == "profiles"
+        }
+        assert source_repos == {profile.repo_id}
+
+
 def test_profiles_dry_run_changes_nothing():
     from engraphis.core.consolidate import consolidate_profiles
     eng, wid, rid, _ = _engine_with_entity_mentions()
@@ -441,6 +626,50 @@ def test_digest_inherits_strictest_sensitivity_and_trust_of_its_sources():
     assert set(digest.metadata["provenance"]["consolidates"]) == set(ids)
 
 
+def test_untrusted_consolidation_never_reaches_graph_extraction():
+    from engraphis.backends.graph_extractor import GraphExtraction
+
+    class RecordingGraphExtractor:
+        def __init__(self):
+            self.calls = []
+
+        def extract(self, content, *, title=""):
+            self.calls.append((content, title))
+            return GraphExtraction()
+
+    eng, wid, rid, _ = _cluster_with_one_secret_untrusted_source()
+    extractor = RecordingGraphExtractor()
+    eng.graph_extractor = extractor
+    evolved = []
+
+    def record_evolution(memory_id, *args, **kwargs):
+        evolved.append(memory_id)
+        return []
+
+    eng._evolve = record_evolution
+
+    report = consolidate(eng, workspace_id=wid, repo_id=rid)
+
+    assert report["digests_created"]
+    assert extractor.calls == []
+    assert evolved == []
+
+
+def test_unlabelled_legacy_sources_fail_closed_during_consolidation():
+    eng, wid, rid, source_ids = _cluster_with_one_secret_untrusted_source()
+    eng.store.conn.executemany(
+        "UPDATE memories SET provenance='{}' WHERE id=?",
+        [(source_id,) for source_id in source_ids],
+    )
+    eng.store.conn.commit()
+
+    report = consolidate(eng, workspace_id=wid, repo_id=rid)
+    digest = eng.store.get_memory(report["digests_created"][0]["id"])
+
+    assert digest.provenance["trusted"] is False
+    assert digest.metadata["provenance"]["trusted"] is False
+
+
 def test_profile_digest_inherits_strictest_sensitivity_and_trust():
     from engraphis.core.consolidate import consolidate_profiles
 
@@ -450,6 +679,13 @@ def test_profile_digest_inherits_strictest_sensitivity_and_trust():
         "UPDATE memories SET sensitivity='sensitive', provenance='{\"trusted\": false}' "
         "WHERE id=?", (source.id,))
     eng.store.conn.commit()
+    evolved = []
+
+    def record_evolution(memory_id, *args, **kwargs):
+        evolved.append(memory_id)
+        return []
+
+    eng._evolve = record_evolution
 
     report = consolidate_profiles(eng, workspace_id=wid, repo_id=rid)
 
@@ -457,6 +693,7 @@ def test_profile_digest_inherits_strictest_sensitivity_and_trust():
     assert profile.sensitivity == "sensitive"
     assert profile.provenance.get("trusted") is False
     assert profile.metadata["provenance"]["source"] == "profile_consolidation"
+    assert evolved == []
 
 
 # ── scan-limit regression: the type filter must run in SQL, not in Python ───────────
@@ -499,6 +736,37 @@ def test_archive_pass_sees_transients_behind_newer_semantic_rows(monkeypatch):
     report = consolidate(eng, workspace_id=wid)
 
     assert [row["id"] for row in report["archived"]] == [stale]
+
+
+def test_archive_preserves_vector_for_historical_recall():
+    eng = MemoryEngine.create(":memory:")
+    wid = eng.store.get_or_create_workspace("w")
+    stale = eng.remember(
+        "Scratch note from an old session.",
+        workspace_id=wid,
+        mtype=MemoryType.WORKING,
+        resolve_conflicts=False,
+    )
+    eng.store.conn.execute(
+        "UPDATE memories SET stability=0.01, last_access=? WHERE id=?",
+        (time.time() - 86_400, stale),
+    )
+    eng.store.conn.commit()
+
+    archived_at = time.time()
+    report = consolidate(eng, workspace_id=wid, now=archived_at)
+
+    assert [row["id"] for row in report["archived"]] == [stale]
+    assert eng.store.conn.execute(
+        "SELECT 1 FROM mem_vectors WHERE id=?", (stale,)
+    ).fetchone() is not None
+    valid_from = eng.store.get_memory(stale).valid_from
+    historical = eng.recall_engine.recall(
+        "What scratch note came from the old session?",
+        SearchFilter(workspace_id=wid, as_of=(valid_from + archived_at) / 2),
+        reinforce=False,
+    )
+    assert [chunk["id"] for chunk in historical.chunks] == [stale]
 
 
 # ── explicit local consolidation command ─────────────────────────────────────

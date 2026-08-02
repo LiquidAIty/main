@@ -29,6 +29,62 @@ def _icon_path(base: str) -> str:
     return str(Path(base) / "engraphis" / "static" / "engraphis.ico")
 
 
+def _desktop_path(system: str, home: Path) -> Path:
+    """Locate the Desktop folder using the same Windows known-folder API as installation."""
+    if system != "Windows":
+        return home / "Desktop"
+    try:
+        result = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-Command",
+                "[Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return home / "Desktop"
+    desktop = result.stdout.strip()
+    return Path(desktop) if desktop else home / "Desktop"
+
+
+def _shortcut_paths(system: str, desktop: Path, start_menu: Path, *, home: Path) -> list[Path]:
+    """Return only the exact launcher artifacts this installer owns."""
+    if system == "Windows":
+        return [
+            desktop / "Engraphis Dashboard.lnk",
+            desktop / "Engraphis Dashboard.bat",
+            start_menu / "Engraphis" / "Engraphis Dashboard.lnk",
+        ]
+    if system == "Darwin":
+        return [
+            desktop / "Engraphis Dashboard.app",
+            home / "Applications" / "Engraphis Dashboard.app",
+        ]
+    return [
+        desktop / "engraphis-dashboard.desktop",
+        home / ".local" / "share" / "applications" / "engraphis-dashboard.desktop",
+    ]
+
+
+def _remove_shortcuts(system: str, desktop: Path, start_menu: Path, *, home: Path) -> list[Path]:
+    """Remove known launcher artifacts, leaving all neighboring user files untouched."""
+    removed: list[Path] = []
+    for path in _shortcut_paths(system, desktop, start_menu, home=home):
+        try:
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+            elif path.is_dir():
+                shutil.rmtree(path)
+            else:
+                continue
+        except FileNotFoundError:
+            continue
+        removed.append(path)
+    return removed
+
+
 
 def _windows(desktop: Path, start_menu: Path, args: argparse.Namespace) -> None:
     ps_cmd = f"""
@@ -178,10 +234,23 @@ def main() -> None:
     args = ap.parse_args()
 
     system = platform.system()
-    desktop = Path.home() / "Desktop"
+    home = Path.home()
+    desktop = _desktop_path(system, home)
+    start_menu = (Path(os.environ.get("APPDATA", ""))
+                  / "Microsoft" / "Windows" / "Start Menu" / "Programs")
+
+    if args.uninstall:
+        print("Removing shortcuts...")
+        removed = _remove_shortcuts(system, desktop, start_menu, home=home)
+        if removed:
+            for path in removed:
+                print(f"  Removed: {path}")
+        else:
+            print("  No Engraphis shortcuts were found.")
+        return
 
     if not desktop.exists():
-        desktop = Path.home() / "Desktop"
+        desktop = home / "Desktop"
     if not desktop.exists():
         print("Could not locate the Desktop folder.", file=sys.stderr)
         sys.exit(1)
@@ -196,14 +265,9 @@ def main() -> None:
         if ok not in ("", "y", "yes"):
             sys.exit(0)
 
-    if args.uninstall:
-        print("Removing shortcuts...")
-        return
-
     print("Creating shortcuts...")
 
     if system == "Windows":
-        start_menu = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
         _windows(desktop, start_menu, args)
     elif system == "Darwin":
         _macos(desktop, args)

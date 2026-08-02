@@ -507,14 +507,14 @@ async def check():
     first = await mcp_host._native_engraphis_tools()
     await mcp_host._initialize_native_engraphis()
     second = await mcp_host._native_engraphis_tools()
-    assert len(native) == 29
+    assert len(native) == 31
     assert [id(tool) for tool in first] == [id(tool) for tool in second]
     assert {tool.name for tool in first} == set(native)
     for tool in first:
         assert tool.model_dump() == native[tool.name].model_dump()
     combined = await mcp_host.list_tools()
     combined_names = [tool.name for tool in combined]
-    assert len(combined_names) == 82
+    assert len(combined_names) == 84
     assert len(set(combined_names)) == len(combined_names)
     assert {
         'main.context', 'canvas.inspect', 'coder.status', 'run_coder_subagent',
@@ -533,7 +533,7 @@ asyncio.run(check())
 """
     result = _run_in_script_launch_context(code)
     assert result.returncode == 0, result.stderr
-    assert len(json.loads(result.stdout)) == 29
+    assert len(json.loads(result.stdout)) == 31
 
 
 def test_native_engraphis_uses_the_cached_local_embedding_model(monkeypatch):
@@ -847,7 +847,7 @@ async def check():
             assert len(actual) == len(set(actual))
             assert 'main.context' in actual
             assert 'agentgraph.inspect' in actual
-            assert sum(name.startswith('engraphis.') for name in actual) == 29
+            assert sum(name.startswith('engraphis.') for name in actual) == 31
             assert elapsed < 10
             print(json.dumps({{'status': 'STDIO_OK', 'count': len(actual), 'elapsed': elapsed}}))
 
@@ -999,6 +999,30 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
                 "required": ["query"],
             },
         ),
+        mcp_host.Tool(
+            name="engraphis_context_savings",
+            title="Context savings",
+            description="Native Engraphis context savings.",
+            inputSchema={"type": "object", "properties": {}},
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
+        ),
+        mcp_host.Tool(
+            name="engraphis_check_update",
+            title="Check update",
+            description="Native Engraphis update check.",
+            inputSchema={"type": "object", "properties": {}},
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": False,
+                "openWorldHint": True,
+            },
+        ),
     ]
     native_graphiti_tools = [
         mcp_host.Tool(
@@ -1115,6 +1139,15 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     }
     assert "engraphis.recall" in by_name
     assert "engraphis.answer" in by_name
+    assert by_name["engraphis.context_savings"].meta["liquidaityExecution"] == {
+        "risk": "safe read",
+        "compute": "database_read",
+    }
+    assert by_name["engraphis.check_update"].meta["liquidaityExecution"] == {
+        "risk": "paid/provider-backed",
+        "compute": "mixed",
+    }
+    assert by_name["engraphis.check_update"].meta["liquidaityCapability"]["providerPossible"] is True
     assert "codegraph.status" not in by_name
     assert "codegraph.search" not in by_name
     assert {"cbm.search_graph", "cbm.index_status"}.issubset(by_name)

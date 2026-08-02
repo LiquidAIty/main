@@ -15,7 +15,12 @@
 // lifecycle, registered Graph Views, and AgentGraph result lineage.
 
 import { getDeckDocument } from '../../../decks/store';
-import { resolvedMagenticControllers, resolvedMagenticOptions, runCardWithContract } from '../../../cards/runtime';
+import {
+  resolvedMagenticControllers,
+  resolvedMagenticOptions,
+  resolveMagenticWorkerReadiness,
+  runCardWithContract,
+} from '../../../cards/runtime';
 import { resolveRuntimeBinding } from '../../../contracts/runtimeBinding';
 
 function asString(value: unknown): string {
@@ -35,6 +40,7 @@ function resolveCardTools(card: any): string[] {
 export type AgentFlowDeps = {
   loadDeck?: typeof getDeckDocument;
   runCard?: typeof runCardWithContract;
+  resolveWorkerReadiness?: typeof resolveMagenticWorkerReadiness;
 };
 
 // ── mag_one.describe_connected_agents ─────────────────────────────────────────
@@ -48,6 +54,9 @@ export type ConnectedAgent = {
   model: { modelKey: string | null; provider: string | null };
   tools: string[];
   connected: boolean;
+  executionReady: boolean;
+  readinessState: string;
+  readinessReason: string | null;
 };
 
 export type DescribeConnectedAgentsResult = {
@@ -75,9 +84,10 @@ export async function describeConnectedAgents(
 
   const connectedAgents: ConnectedAgent[] = [];
   if (orchestrator) {
-    // Bus connectivity (magentic_option edges) is the only eligibility signal —
-    // connected = active, disconnected = inactive. No role/priority inference.
-    for (const card of resolvedMagenticOptions(asString(orchestrator.id), nodes, edges)) {
+    const connectedCards = resolvedMagenticOptions(asString(orchestrator.id), nodes, edges);
+    const resolveReadiness = deps.resolveWorkerReadiness ?? resolveMagenticWorkerReadiness;
+    for (const readiness of await resolveReadiness(connectedCards)) {
+      const card = readiness.card;
       connectedAgents.push({
         cardId: asString(card?.id),
         title: asString(card?.title) || asString(card?.id),
@@ -86,7 +96,10 @@ export async function describeConnectedAgents(
           provider: asString(card?.runtimeOptions?.provider).trim() || null,
         },
         tools: resolveCardTools(card),
-        connected: true,
+        connected: readiness.connected,
+        executionReady: readiness.executionReady,
+        readinessState: readiness.readinessState,
+        readinessReason: readiness.readinessReason,
       });
     }
   }
@@ -170,9 +183,13 @@ export async function runMagOne(
   // The eligible worker roster resolves ONLY from the live blue side
   // connections — the same resolution the runtime uses. The assignment carries
   // stable identities, not a copied roster; Main Chat and Hermes are structurally excluded.
-  const connectedParticipants = resolvedMagenticOptions(asString(orchestrator.id), nodes, edges).map(
-    (card: any) => asString(card?.id),
-  );
+  const connectedCards = resolvedMagenticOptions(asString(orchestrator.id), nodes, edges);
+  const connectedParticipants = connectedCards.map((card: any) => asString(card?.id));
+  const resolveReadiness = deps.resolveWorkerReadiness ?? resolveMagenticWorkerReadiness;
+  const readiness = await resolveReadiness(connectedCards);
+  const executionReadyCardIds = readiness
+    .filter((item) => item.executionReady)
+    .map((item) => asString(item.card?.id));
   const senderCardId = asString(mainControllers[0]?.id);
   const receiverCardId = asString(orchestrator.id);
   const result: any = await runCard(orchestrator, {}, '', {
@@ -184,6 +201,7 @@ export async function runMagOne(
     previousOutput: '',
     runId,
     agentAssignment: { instructionId, senderCardId, receiverCardId },
+    magenticExecutionReadyCardIds: executionReadyCardIds,
   });
 
   const failed = result?.status === 'error';

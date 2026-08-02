@@ -273,6 +273,7 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, st
         or name in _READ_ONLY_TOOLS
         or name in graphiti_database_reads
     )
+    open_world = bool(annotation_payload.get("openWorldHint"))
     if name.startswith("cbm."):
         read_only = name.removeprefix("cbm.") not in {
             "index_repository", "delete_project", "manage_adr", "ingest_traces"
@@ -284,6 +285,8 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, st
         risk = "runtime-launching"
     elif name in {"engraphis.index_repo", "cbm.index_repository"} or name.startswith("graphiti.add_"):
         risk = "background"
+    elif open_world:
+        risk = "paid/provider-backed"
     elif name.startswith("graphiti.") and name not in {
         "graphiti.get_status", "graphiti.get_episodes", "graphiti.get_episode_entities",
         "graphiti.get_entity_edge",
@@ -298,7 +301,9 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, st
         compute = "database_read" if name in graphiti_database_reads else "mixed"
     elif name.startswith("engraphis."):
         compute = (
-            "local_embedding"
+            "mixed"
+            if open_world
+            else "local_embedding"
             if name in {"engraphis.recall", "engraphis.recall_grounded", "engraphis.answer"}
             else "database_read" if read_only else "database_write"
         )

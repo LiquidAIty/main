@@ -25,16 +25,20 @@ The split is deliberate. Local checks in Apache-licensed code are not DRM and ca
 a fork. The paid boundary is authorization to use the official private service and its operated
 infrastructure.
 
+Cloud Sync is available with hosted Pro and Team plans. See [local and hosted plans](HOSTED_PLANS.md)
+for pricing and included services.
+
 ## Trial and grace
 
 The no-card Pro or Team trial begins after email confirmation and lasts **exactly 3 active
 days**.
 
-`workspace_write_grace` is separate. It may preserve ordinary writes to an already provisioned
-local workspace for at most **24 hours** following an authoritative entitlement denial. It never
-extends the trial or subscription, and it never grants Cloud Sync, Analytics, Automation, Auto
-Dreaming, Auto Consolidation, Team access, seats, or credentials. Cloud access may stop
-immediately even while local write grace remains.
+`workspace_write_grace` is separate and private-service enforced. It may preserve bounded
+hosted-account continuity operations for at most **24 hours** following an authoritative
+entitlement denial. It never extends the trial or subscription, and it never grants Cloud Sync,
+Analytics, Automation, Auto Dreaming, Auto Consolidation, Team access, seats, or credentials.
+Cloud access may stop immediately. The free local sync-folder primitive and local core are not
+gated by this hosted lifecycle state.
 
 ## Configure a customer installation
 
@@ -60,12 +64,26 @@ The one-shot customer client remains available for explicit sync operations:
 python -m scripts.sync \
   --db engraphis.db \
   --workspace acme \
-  --relay https://team.engraphis.com
+  --relay https://relay.engraphis.com
+```
+
+Cloud Sync is fail-closed: install `engraphis[cloud-sync]` on Python 3.10+ and provision a
+32-byte URL-safe-base64 workspace key as `ENGRAPHIS_SYNC_E2EE_KEY` on every authorized device
+before the first upload. Generate it once on a trusted device and transfer it only through your
+own secure channel; Engraphis Cloud never receives, derives, or recovers this key. For a
+one-off command, pass the same value with `--relay-e2ee-key`. A missing or malformed key stops
+Cloud Sync rather than uploading a plaintext bundle.
+
+```bash
+python -c "import base64, secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip('='))"
 ```
 
 The dashboard's **Sync now** action invokes the same customer protocol. The public package does
 not run a local auto-sync loop or ship a cron/Task Scheduler wrapper. Hosted automation belongs
-to the private service.
+to the private service. If the relay denies every attempted shared workspace because the session
+is expired, revoked, or no longer entitled, the dashboard returns to the hosted Pro/Team recovery
+CTA instead of reporting a successful empty sync. A successful empty or read-only workspace keeps
+the result partial so another workspace's denial is not misreported as a total authorization loss.
 
 ### Local folder transport
 
@@ -96,19 +114,43 @@ when both endpoints remain in the export. Inbound legacy or untrusted bundles ca
 relabel, or overwrite session-scoped state because the sync format carries no authenticated
 session owner or lifecycle contract.
 
+Bundle format v2 preserves durable claim identity and the system-time at which a
+world-time invalidation was learned. Current Engraphis accepts inbound v1 bundles for
+compatibility but exports v2. Older clients reject v2 instead of silently forwarding a
+downgraded bundle that loses those fields.
+
 Bundle input is untrusted. The client validates schema and size limits before applying records,
-rechecks workspace scope, and retains provenance/audit evidence. A relay cannot inject a record
-outside the authorized workspace merely by changing bundle fields.
+rechecks workspace scope, and retains provenance/audit evidence. Every inbound memory is re-homed
+under local `source: sync, trusted: false` provenance; a peer's serialized trust label, graph
+metadata, retention hints, or extractor output has no authority. Suspicious payloads are
+quarantined before indexing. A relay cannot inject a record outside the authorized workspace
+merely by changing bundle fields.
+
+An inbound bundle also cannot overwrite a locally approved memory with the same id. The local
+record remains the safe winner and a content-free `sync_trust_conflict` audit event records a
+competing peer payload. This intentionally favors integrity over automatic last-writer-wins for
+cross-trust collisions; promote/approve a fresh local record if the peer's information is verified.
+Likewise, unauthenticated bundle links may connect only records that remain in the untrusted
+replica; a peer cannot attach graph edges to locally approved memories.
 
 ## Security and privacy
 
-- Use HTTPS for every hosted endpoint. The public client rejects redirects, embedded URL
-  credentials, and unsafe remote targets.
+- Local-only installations send no memory content to Engraphis. **Cloud Sync encrypts eligible
+  shared-workspace changes end-to-end before they leave this device. Engraphis Cloud cannot read
+  their contents; secret and session-scoped memories stay local.** Managed compute is separate:
+  connecting an installation to Engraphis Cloud accepts its terms and enables it by default;
+  operators may opt out with `ENGRAPHIS_MANAGED_COMPUTE_CONSENT=0`. It sends a readable, bounded
+  snapshot over TLS because Engraphis Cloud must process that snapshot to produce results.
 - Treat cloud session and refresh files as credentials; keep their directory owner-only.
 - `secret` memories are excluded from managed uploads. Managed compute also rejects secret rows
   server-side.
-- Relay transport is TLS-protected, but Engraphis does not claim end-to-end encryption until a
-  client-side encrypted bundle format ships.
+- Cloud Sync's end-to-end encryption applies to sync bundles, not to managed-compute snapshots or
+  content deliberately submitted to a configured LLM provider. Those processors must be able to
+  read the submitted content to perform the requested work.
+- Cloud Sync uses a fresh ChaCha20-Poly1305 nonce for each upload and authenticates the stored
+  opaque bundle name plus workspace as associated data. The relay can store or replay ciphertext,
+  but a tampered, renamed, cross-workspace, wrong-key, or legacy plaintext bundle is rejected
+  before it reaches the merge engine.
 - Device credentials are not seats. Team seats are named organization members managed by the
   hosted control plane.
 - Revocation and expiry are authoritative server decisions. A locally modified client does not

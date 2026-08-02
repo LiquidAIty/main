@@ -5,23 +5,32 @@ import json
 import logging
 import os
 import re
+from collections.abc import Mapping
 from datetime import datetime, timezone
 
 
 _EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
 _LICENSE = re.compile(r"\bENGR1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
 _BEARER = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]{12,}")
-_ASSIGNMENT = re.compile(
-    # URL query/fragment assignments are handled parameter-by-parameter by
-    # _URL_SECRET. Do not let this environment-assignment fallback consume the rest of
-    # a URL after the first redacted value (and thereby erase later parameter names).
-    r"(?i)(?<![?&#])\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|SIGNING_KEY))="
-    r"([^\s,;&]+)")
 _SENSITIVE_NAME = (
     r"(?:[A-Z0-9_.-]*(?:TOKEN|SECRET|PASSWORD|CREDENTIAL)|"
     r"[A-Z0-9_.-]*(?:API|SIGNING|LICENSE|PRIVATE)[_-]?KEY|"
     r"KEY|AUTHORIZATION|COOKIE|SIGNATURE|SIG|CODE)"
 )
+_ASSIGNMENT = re.compile(
+    # URL query/fragment assignments are handled parameter-by-parameter by
+    # _URL_SECRET. Do not let this environment-assignment fallback consume the rest of
+    # a URL after the first redacted value (and thereby erase later parameter names).
+    # Shares _SENSITIVE_NAME with the colon and URL forms: keeping a second, shorter
+    # vocabulary here meant ``refresh_credential=...`` passed through untouched while
+    # ``"refresh_credential": ...`` was redacted -- one field, two answers, decided by
+    # which way the caller happened to render it.
+    rf"(?i)(?<![?&#])\b({_SENSITIVE_NAME})=([^\s,;&]+)")
+#: Credentials this product mints carry a self-identifying prefix (see
+#: ``device_connect.CONNECT_TOKEN_PREFIX``). Redact them on sight so a raw value that
+#: reaches a log with no adjacent field name is still not published verbatim.
+_ENGRAPHIS_CREDENTIAL = re.compile(
+    r"\bengr_(?:ct|rt|sk|access)_[A-Za-z0-9_.~+/-]{8,}")
 _COLON_SECRET = re.compile(
     rf"(?i)(?P<prefix>(?<![A-Z0-9_.-])[\"']?{_SENSITIVE_NAME}[\"']?\s*:\s*)"
     r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\s,}\]]+)"
@@ -37,6 +46,9 @@ _URL_USERINFO = re.compile(
 def redact(value: object) -> str:
     """Remove common credential and customer-identifier shapes from one log field."""
     text = str(value)
+    # Prefix-shaped credentials first: they are recognisable without a field name, so
+    # catching them here also covers the bare-value case every name-based rule misses.
+    text = _ENGRAPHIS_CREDENTIAL.sub("[credential]", text)
     text = _LICENSE.sub("[license]", text)
     text = _BEARER.sub("Bearer [redacted]", text)
     # Provider URLs can carry credentials in query parameters (Google's LLM API uses
@@ -51,6 +63,32 @@ def redact(value: object) -> str:
         lambda match: match.group("prefix") + '"[redacted]"', text)
     text = _ASSIGNMENT.sub(r"\1=[redacted]", text)
     return _EMAIL.sub("[email]", text)
+
+
+def redact_json_value(value: object, *, _depth: int = 0) -> object:
+    """Return a JSON-safe log value without preserving credential-bearing extras.
+
+    A logger's ``extra`` mapping bypasses ``LogRecord.getMessage()``, so a formatter that
+    emits those fields directly needs the same redaction boundary as an ordinary message.
+    Keep modest structure for useful operational fields while bounding hostile/cyclic values.
+    """
+    if _depth >= 8:
+        return "[redacted]"
+    if isinstance(value, Mapping):
+        result = {}
+        for key, item in value.items():
+            name = str(key)
+            result[name] = (
+                "[redacted]"
+                if re.fullmatch(_SENSITIVE_NAME, name.upper())
+                else redact_json_value(item, _depth=_depth + 1)
+            )
+        return result
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [redact_json_value(item, _depth=_depth + 1) for item in value]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return redact(value)
 
 
 class RedactedJsonFormatter(logging.Formatter):

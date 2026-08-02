@@ -1,7 +1,7 @@
 """Sleep-time consolidation (episodic→semantic distillation).
 
-Letta ships "sleep-time compute" as a cloud service; the local-first equivalent is a
-background job the *user* schedules (cron / Windows Task Scheduler / a session hook):
+The local-first implementation is a background job the *user* schedules
+(cron / Windows Task Scheduler / a session hook):
 
     python -m scripts.consolidate --db engraphis.db --workspace acme
 
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import time
 from dataclasses import replace as _replace
@@ -30,7 +31,10 @@ from typing import Any, Optional
 
 from engraphis.core import scoring
 from engraphis.core.interfaces import MemoryRecord, MemoryType, Scope, SearchFilter
+from engraphis.core.poisoning import provenance_is_trusted
 from engraphis.core.textutil import estimate_tokens, jaccard, tokenize
+
+logger = logging.getLogger(__name__)
 
 # Cluster admission: same-subject signal, deliberately the resolver's threshold.
 SUBJECT_JACCARD = 0.40
@@ -58,6 +62,9 @@ PROFILE_SCAN_LIMIT = 5000
 TRANSIENT_TYPES = [MemoryType.WORKING, MemoryType.EPISODIC]
 # Types the optional local profile pass rolls up.
 DURABLE_TYPES = [MemoryType.EPISODIC, MemoryType.SEMANTIC]
+# Session memories are private to the active task.  A workspace/repo maintenance sweep has no
+# session write context, so it must neither distill nor archive them.
+MAINTENANCE_SCOPES = [Scope.REPO, Scope.WORKSPACE, Scope.USER]
 
 _DIGEST_SYSTEM_PROMPT = (
     "You consolidate recurring episodic agent memories into one durable semantic fact. "
@@ -120,11 +127,21 @@ def consolidate(engine, *, workspace_id: str, repo_id: Optional[str] = None,
         raise ValueError("supersede_sources requires structured=True")
     store = engine.store
     now = time.time() if now is None else now
-    flt = SearchFilter(workspace_id=workspace_id, repo_id=repo_id)
+    flt = SearchFilter(workspace_id=workspace_id, repo_id=repo_id,
+                       scopes=MAINTENANCE_SCOPES)
 
     episodic = store.list_memories(
         _replace(flt, mtypes=[MemoryType.EPISODIC]), limit=DISTILL_SCAN_LIMIT)
-    clusters = _cluster_by_subject(episodic, threshold=subject_jaccard)
+    # A digest inherits its owner from its first source.  Cluster only records that have
+    # the exact same owner, otherwise a workspace sweep could write one repo's digest with
+    # another repo's content (or mix scope visibility).
+    clusters = [
+        cluster
+        for owner_memories in _partition_by_visibility_owner(episodic)
+        for cluster in _cluster_by_subject(
+            owner_memories, threshold=subject_jaccard, store=store, flt=flt,
+        )
+    ]
 
     report: dict = {"workspace_id": workspace_id, "repo_id": repo_id, "dry_run": dry_run,
                     "clusters_found": 0, "digests_created": [], "archived": [],
@@ -220,10 +237,9 @@ def consolidate(engine, *, workspace_id: str, repo_id: Optional[str] = None,
             store.close_validity(
                 m.id, actor="consolidation",
                 reason=f"retention {r:.4f} below {archive_below} (consolidation sweep)")
-            try:
-                engine.index.delete([m.id])
-            except Exception:
-                pass
+            # Preserve the vector as historical evidence. Temporal filtering keeps the
+            # archived row out of current recall while allowing an explicit ``as_of``
+            # query to reproduce the semantic result from when it was live.
 
     # ── compaction summary: the payoff of the sweep, as a number ─────────────
     report["compaction"] = {
@@ -244,11 +260,88 @@ def consolidate(engine, *, workspace_id: str, repo_id: Optional[str] = None,
 
 # ── internals ─────────────────────────────────────────────────────────────────
 
+def _visibility_owner(memory: MemoryRecord) -> tuple[str, Optional[str], Optional[str]]:
+    """Exact visibility identity a derived memory is allowed to inherit."""
+    return (Scope(memory.scope).value, memory.repo_id, memory.session_id)
+
+
+def _partition_by_visibility_owner(memories: list[MemoryRecord]) -> list[list[MemoryRecord]]:
+    """Keep source sets from distinct scope/repo/session owners disjoint."""
+    partitions: dict[tuple[str, Optional[str], Optional[str]], list[MemoryRecord]] = {}
+    for memory in memories:
+        partitions.setdefault(_visibility_owner(memory), []).append(memory)
+    return list(partitions.values())
+
+
 def _cluster_by_subject(
-    memories: list[MemoryRecord], *, threshold: float
+    memories: list[MemoryRecord], *, threshold: float, store=None,
+    flt: Optional[SearchFilter] = None,
 ) -> list[list[MemoryRecord]]:
-    """Greedy single-link clustering on token Jaccard — deterministic, order-stable
-    (memories arrive newest-first from the store; clusters keep that order)."""
+    """Cluster claim/entity evidence before falling back to token similarity.
+
+    Explicit claim identity is the strongest signal.  Persisted memory↔entity
+    incidence is next, and only records lacking either key take the older
+    deterministic Jaccard path.  Each memory appears in at most one cluster.
+    """
+    keyed: dict[tuple[str, str], list[MemoryRecord]] = {}
+    assigned: set[str] = set()
+    for memory in memories:
+        subject = (memory.subject_key or "").strip()
+        if subject:
+            keyed.setdefault((subject, (memory.claim_kind or "").strip()), []).append(memory)
+            assigned.add(memory.id)
+
+    entity_groups: list[list[MemoryRecord]] = []
+    if store is not None:
+        by_id = {memory.id: memory for memory in memories if memory.id not in assigned}
+        parent = {memory_id: memory_id for memory_id in by_id}
+        first_for_entity: dict[str, str] = {}
+        linked: set[str] = set()
+
+        def find(memory_id: str) -> str:
+            while parent[memory_id] != memory_id:
+                parent[memory_id] = parent[parent[memory_id]]
+                memory_id = parent[memory_id]
+            return memory_id
+
+        def union(left: str, right: str) -> None:
+            left_root, right_root = find(left), find(right)
+            if left_root == right_root:
+                return
+            # Stable root selection makes component construction independent of
+            # incidence-row order and therefore canonical-export friendly.
+            if left_root > right_root:
+                left_root, right_root = right_root, left_root
+            parent[right_root] = left_root
+
+        # Only the bounded consolidation scan can participate in these clusters.
+        # Restrict the database query too, rather than materializing all workspace
+        # incidence rows and discarding the unrelated majority in Python.
+        for link in store.list_memory_entities(flt, memory_ids=list(by_id)):
+            memory = by_id.get(link.get("memory_id"))
+            entity_id = str(link.get("entity_id") or "")
+            if memory is None or not entity_id:
+                continue
+            linked.add(memory.id)
+            existing = first_for_entity.setdefault(entity_id, memory.id)
+            union(existing, memory.id)
+
+        components: dict[str, list[MemoryRecord]] = {}
+        for memory in memories:
+            if memory.id in linked:
+                components.setdefault(find(memory.id), []).append(memory)
+                assigned.add(memory.id)
+        entity_groups = list(components.values())
+
+    remainder = [memory for memory in memories if memory.id not in assigned]
+    similarity = _cluster_by_similarity(remainder, threshold=threshold)
+    return [*keyed.values(), *entity_groups, *similarity]
+
+
+def _cluster_by_similarity(
+    memories: list[MemoryRecord], *, threshold: float,
+) -> list[list[MemoryRecord]]:
+    """Greedy deterministic fallback for memories without durable identity."""
     token_sets = [tokenize(f"{m.title} {m.content}") for m in memories]
     n = len(memories)
     parent = list(range(n))
@@ -296,8 +389,7 @@ def _inherit_safety(engine, memory_id: str, sources: list[MemoryRecord]) -> tupl
         [record.sensitivity or "normal"] + [(m.sensitivity or "normal") for m in sources],
         key=lambda value: _SENSITIVITY_RANK.get(value, len(_SENSITIVITY_RANK)),
     )
-    trusted = (bool((record.provenance or {}).get("trusted", True))
-               and all(bool((m.provenance or {}).get("trusted", True)) for m in sources))
+    trusted = provenance_is_trusted(record.provenance) and _sources_are_trusted(sources)
     provenance = dict(record.provenance or {})
     provenance["trusted"] = trusted
     metadata = dict(record.metadata or {})
@@ -311,6 +403,11 @@ def _inherit_safety(engine, memory_id: str, sources: list[MemoryRecord]) -> tupl
     )
     engine.store.conn.commit()
     return sensitivity, trusted
+
+
+def _sources_are_trusted(sources: list[MemoryRecord]) -> bool:
+    """Require every consolidated source to carry an explicit trust approval."""
+    return all(provenance_is_trusted(source.provenance) for source in sources)
 
 
 def _already_consolidated(store, memory_id: str) -> bool:
@@ -368,8 +465,10 @@ def _loads_lenient(raw: Any) -> Any:
         if match:
             try:
                 return json.loads(match.group(1))
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "structured output fallback parse failed (%s)", type(exc).__name__
+                )
     return {}
 
 
@@ -553,13 +652,14 @@ def _write_digest(engine, cluster: list[MemoryRecord], *, content: str, subject:
                   now: float) -> str:
     first = cluster[0]
     importance = max([m.importance or 0.0 for m in cluster] + [0.5])
+    trusted = _sources_are_trusted(cluster)
     digest_id = engine.remember(
         content,
         workspace_id=first.workspace_id, repo_id=first.repo_id,
         mtype=MemoryType.SEMANTIC, scope=Scope(first.scope),
         title=f"Consolidated: {subject}"[:200], importance=importance,
         keywords=_common_tokens(cluster, k=8),
-        metadata={"provenance": {"source": "consolidation",
+        metadata={"provenance": {"source": "consolidation", "trusted": trusted,
                                  "consolidates": [m.id for m in cluster]}},
         resolve_conflicts=False,   # the digest is new by construction
     )
@@ -588,12 +688,14 @@ def _write_structured_digests(engine, cluster: list[MemoryRecord], facts: list[d
             continue
         sources = [source_by_id[source_id] for source_id in fact_source_ids]
         first = sources[0]
+        trusted = _sources_are_trusted(sources)
         cited_sources.update(fact_source_ids)
         base_importance = max([memory.importance or 0.0 for memory in sources] + [0.5])
         importance = max(base_importance, float(fact.get("importance") or 0.0))
         metadata = {
             "provenance": {
                 "source": "structured_consolidation",
+                "trusted": trusted,
                 "consolidates": fact_source_ids,
                 "source_ids": fact_source_ids,
                 "confidence": fact.get("confidence", 0.0),
@@ -640,10 +742,7 @@ def _write_structured_digests(engine, cluster: list[MemoryRecord], facts: list[d
                 continue
             engine.store.close_validity(
                 memory.id, at=now, actor="consolidation", reason=reason)
-            try:
-                engine.index.delete([memory.id])
-            except Exception:
-                pass
+            # Preserve the source vector for historical/as_of retrieval.
     return ids
 
 
@@ -671,7 +770,8 @@ def consolidate_profiles(engine, *, workspace_id: str, repo_id: Optional[str] = 
     """
     store = engine.store
     now = time.time() if now is None else now
-    flt = SearchFilter(workspace_id=workspace_id, repo_id=repo_id)
+    flt = SearchFilter(workspace_id=workspace_id, repo_id=repo_id,
+                       scopes=MAINTENANCE_SCOPES)
     report: dict = {"workspace_id": workspace_id, "repo_id": repo_id, "dry_run": dry_run,
                     "entities_considered": 0, "profiles_created": [], "skipped_existing": 0}
 
@@ -685,26 +785,27 @@ def consolidate_profiles(engine, *, workspace_id: str, repo_id: Optional[str] = 
         if len(name) < PROFILE_MIN_NAME_LEN:
             continue
         pattern = _entity_pattern(name)
-        sources = [m for m in live if pattern.search(f"{m.title} {m.content}")]
-        if len(sources) < min_mentions:
-            continue
-        report["entities_considered"] += 1
-        if any(_in_profile(store, m.id) for m in sources):
-            report["skipped_existing"] += 1
-            continue
-        content = _build_profile_content(name, ent.ntype, sources, llm=llm)
-        t_before = sum(_mem_tokens(m) for m in sources)
-        t_after = estimate_tokens(content)
-        p_before += t_before
-        p_after += t_after
-        entry = {"entity": name, "etype": ent.ntype, "mentions": len(sources),
-                 **_compaction(t_before, t_after, len(sources))}
-        if dry_run:
-            entry["would_profile"] = [m.id for m in sources]
-        else:
-            entry["id"] = _write_profile(engine, name, ent.ntype, sources,
-                                         content=content, now=now)
-        report["profiles_created"].append(entry)
+        matching = [m for m in live if pattern.search(f"{m.title} {m.content}")]
+        for sources in _partition_by_visibility_owner(matching):
+            if len(sources) < min_mentions:
+                continue
+            report["entities_considered"] += 1
+            if any(_in_profile(store, m.id) for m in sources):
+                report["skipped_existing"] += 1
+                continue
+            content = _build_profile_content(name, ent.ntype, sources, llm=llm)
+            t_before = sum(_mem_tokens(m) for m in sources)
+            t_after = estimate_tokens(content)
+            p_before += t_before
+            p_after += t_after
+            entry = {"entity": name, "etype": ent.ntype, "mentions": len(sources),
+                     **_compaction(t_before, t_after, len(sources))}
+            if dry_run:
+                entry["would_profile"] = [m.id for m in sources]
+            else:
+                entry["id"] = _write_profile(engine, name, ent.ntype, sources,
+                                              content=content, now=now)
+            report["profiles_created"].append(entry)
 
     report["compaction"] = _compaction(p_before, p_after, len(report["profiles_created"]))
     return report
@@ -733,13 +834,15 @@ def _write_profile(engine, name: str, etype: str, sources: list[MemoryRecord],
                    *, content: str, now: float) -> str:
     first = sources[0]
     importance = max([m.importance or 0.0 for m in sources] + [0.6])
+    trusted = _sources_are_trusted(sources)
     profile_id = engine.remember(
         content,
         workspace_id=first.workspace_id, repo_id=first.repo_id,
         mtype=MemoryType.SEMANTIC, scope=Scope(first.scope),
         title=f"Profile: {name}"[:200], importance=importance,
         keywords=[name] + _common_tokens(sources, k=6),
-        metadata={"provenance": {"source": "profile_consolidation", "entity": name,
+        metadata={"provenance": {"source": "profile_consolidation", "trusted": trusted,
+                                 "entity": name,
                                  "etype": etype, "profiles": [m.id for m in sources]}},
         resolve_conflicts=False,   # a profile is new by construction
     )

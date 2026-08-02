@@ -252,6 +252,10 @@ def create_app(
     async def receipts(workspace: str, limit: int = 100):
         return svc().receipt_log(workspace=workspace, limit=limit)
 
+    @app.get("/api/context-savings")
+    async def context_savings(workspace: str, repo: Optional[str] = None):
+        return svc().context_savings(workspace=workspace, repo=repo)
+
     @app.get("/api/receipts/verify")
     async def receipts_verify(workspace: str):
         return svc().verify_receipts(workspace=workspace)
@@ -263,6 +267,9 @@ def create_app(
         layers: Optional[str] = None,
         include_code: bool = False,
         repo: Optional[str] = None,
+        as_of: Optional[float] = None,
+        valid_at: Optional[float] = None,
+        known_at: Optional[float] = None,
     ):
         selected = (
             None
@@ -276,6 +283,9 @@ def create_app(
             include_code=include_code,
             repo=repo,
             backfill=False,
+            as_of=as_of,
+            valid_at=valid_at,
+            known_at=known_at,
         )
 
     @app.get("/api/export")

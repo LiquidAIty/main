@@ -114,9 +114,9 @@ class TestPythonMcpHost:
 
         tools = asyncio.run(mcp_host.list_tools())
         names = sorted(t.name for t in tools)
-        assert len(names) == 82
+        assert len(names) == 84
         assert len(names) == len(set(names))
-        assert sum(name.startswith("engraphis.") for name in names) == 29
+        assert sum(name.startswith("engraphis.") for name in names) == 31
         assert sum(name.startswith("cbm.") for name in names) == 14
         assert sum(name.startswith("graphiti.") for name in names) == 13
         assert {

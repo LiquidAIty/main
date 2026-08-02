@@ -14,7 +14,9 @@ import hashlib
 import json
 import logging
 import math
+import os
 import re
+import tempfile
 import threading
 import time
 from collections import defaultdict, deque
@@ -27,6 +29,7 @@ from engraphis.backends.embedder_st import get_embedder
 from engraphis.backends.reranker import IdentityReranker, get_reranker
 from engraphis.backends.vector_sqlitevec import get_vector_index
 from engraphis.core import scoring
+from engraphis.core.adaptive_context import AdaptiveContextResult, fit_recent_history
 from engraphis.core.interfaces import (
     MemoryRecord,
     MemoryType,
@@ -34,9 +37,22 @@ from engraphis.core.interfaces import (
     Scope,
     SearchFilter,
 )
+from engraphis.core.poisoning import (
+    PoisoningDecision,
+    apply_quarantine_metadata,
+    assess_untrusted_payload,
+    inspection_eligible,
+    metadata_is_trusted,
+    prompt_eligible,
+    provenance_is_trusted,
+)
 from engraphis.core.recall import RecallEngine, RecallResult
-from engraphis.core.resolve import RELATED_SIM_FLOOR, ResolutionOp, resolve
-from engraphis.core.store import Store, now_ts
+from engraphis.core.retrieval_policy import (
+    CANDIDATE_DEPTH_MODES,
+    RETRIEVAL_PROFILES,
+)
+from engraphis.core.resolve import RELATED_SIM_FLOOR, Resolution, ResolutionOp, resolve
+from engraphis.core.store import Store, memory_matches_filter, now_ts
 from engraphis.core.textutil import estimate_tokens, jaccard, tokenize
 
 logger = logging.getLogger("engraphis.core.engine")
@@ -59,9 +75,14 @@ EVOLVE_MAX_LINKS = 3
 # provenance.source="structured_extractor" label — i.e. "a configured Extractor produced
 # this". See _has_structured_graph_metadata / _trusted_graph_hints.
 GRAPH_HINT_KEYS = ("entities", "relations", "structured_extraction")
+# Extractors produce these bounded metadata shapes.  Everything else in an
+# ``ExtractedFact.metadata`` mapping is untrusted extension data and must not
+# override the service-owned ingress envelope (notably provenance/quarantine).
+EXTRACTOR_METADATA_KEYS = frozenset((*GRAPH_HINT_KEYS, "chunking", "llm_extraction"))
 
 # code↔memory linking (see _CodeSymbolMatcher / _link_memory_to_code)
 CODE_LINK_MAX_LINKS = 200      # per-memory fan-out cap (unchanged behaviour)
+EMBEDDING_REBUILD_BATCH = 200
 CODE_MATCHER_CACHE_SIZE = 4    # compiled matchers kept in memory, keyed by repo
 # Alternatives per compiled sub-pattern. One giant alternation risks `re`'s internal
 # code-size limit on a big repo, so the alternation is chunked; chunking cannot change
@@ -76,6 +97,44 @@ _WORD_CHAR_RE = re.compile(r"\w")
 # nodes and edges because the export is reachable at the lowest ('viewer') role.
 CODE_EXPORT_DEFAULT_LIMIT = 5_000
 CODE_EXPORT_MAX_LIMIT = 20_000
+
+
+def _approved_local_index_roots() -> tuple[str, ...]:
+    """Return canonical roots available to the explicit local indexing capability.
+
+    ``ENGRAPHIS_INDEX_ROOTS`` is an operator-owned, path-separator-delimited allow-list.
+    ``ENGRAPHIS_HTTP_INDEX_ROOT`` is a separately configured, single HTTP boundary;
+    include it here too so the checked path handed off by the HTTP route remains usable
+    by the engine.  Configured paths must be absolute: silently resolving a relative
+    operator setting against the process working directory would make the boundary
+    deployment-dependent.
+    When it is unset, the working directory, home directory, and system temporary
+    directory preserve the local-first defaults used by ordinary agent/project checkouts.
+    """
+    def canonical_configured_root(value: str, setting: str) -> str:
+        if not os.path.isabs(value):
+            raise ValueError(f"{setting} must contain only absolute paths")
+        return os.path.normcase(os.path.realpath(os.path.expanduser(value)))
+
+    configured = [
+        canonical_configured_root(value.strip(), "ENGRAPHIS_INDEX_ROOTS")
+        for value in os.environ.get("ENGRAPHIS_INDEX_ROOTS", "").split(os.pathsep)
+        if value.strip()
+    ]
+    if configured:
+        roots = configured
+    else:
+        roots = [
+            os.path.normcase(os.path.realpath(os.getcwd())),
+            os.path.normcase(os.path.realpath(os.path.expanduser("~"))),
+            os.path.normcase(os.path.realpath(tempfile.gettempdir())),
+        ]
+
+    http_root = os.environ.get("ENGRAPHIS_HTTP_INDEX_ROOT", "").strip()
+    if http_root:
+        roots.append(canonical_configured_root(http_root, "ENGRAPHIS_HTTP_INDEX_ROOT"))
+
+    return tuple(dict.fromkeys(roots))
 
 
 def _bounded_finite(value, *, default: float, minimum: float, maximum: float) -> float:
@@ -243,26 +302,12 @@ class _CodeSymbolMatcher:
 class MemoryEngine:
     def __init__(self, store: Store, embedder, vector_index, reranker=None,
                  *, auto_evolve: bool = True, extractor=None,
-                 graph_extractor=None, retention_supervisor=None,
-                 embedding_runtime_factory=None,
-                 embedding_runtime_lease_seconds: float = 60.0) -> None:
+                 graph_extractor=None, retention_supervisor=None) -> None:
         self.store = store
+        self.embedder = embedder
+        self.index = vector_index
         self.reranker = reranker or IdentityReranker()
-        self._embedder = embedder
-        self._index = vector_index
-        self._recall_engine = (
-            RecallEngine(store, embedder, vector_index, self.reranker)
-            if embedder is not None and vector_index is not None
-            else None
-        )
-        self._embedding_runtime_factory = embedding_runtime_factory
-        self._embedding_runtime_lock = threading.Lock()
-        self._embedding_runtime_lease_seconds = max(
-            0.01, float(embedding_runtime_lease_seconds)
-        )
-        self._embedding_runtime_attempt = 0
-        self._embedding_runtime_attempt_started = 0.0
-        self._embedding_runtime_initializing = False
+        self.recall_engine = RecallEngine(store, embedder, vector_index, self.reranker)
         # Memory evolution (A-MEM-style): writing a new note also updates
         # how its neighbors are connected, so the network improves bidirectionally.
         self.auto_evolve = auto_evolve
@@ -282,100 +327,9 @@ class MemoryEngine:
         # _code_matcher for the invalidation contract.
         self._code_matchers: dict = {}
 
-    @property
-    def embedding_initialized(self) -> bool:
-        """Whether a semantic operation has initialized the vector runtime."""
-        return self._embedder is not None
-
-    def _ensure_embedding_runtime(self) -> None:
-        """Initialize embedding and vector backends at the first semantic operation.
-
-        Storage, schema, statistics, session, and relational operations never call this
-        method. Construction is committed only after both native backends succeed, so a
-        failed model load leaves the storage service usable and a later semantic call
-        can retry cleanly.
-        """
-        if self._embedder is not None and self._index is not None:
-            return
-        with self._embedding_runtime_lock:
-            if self._embedder is not None and self._index is not None:
-                return
-            if self._embedding_runtime_factory is None:
-                raise RuntimeError("embedding_runtime_unavailable")
-            now = time.monotonic()
-            if (
-                self._embedding_runtime_initializing
-                and now - self._embedding_runtime_attempt_started
-                < self._embedding_runtime_lease_seconds
-            ):
-                raise RuntimeError("embedding_runtime_initializing")
-            self._embedding_runtime_attempt += 1
-            attempt = self._embedding_runtime_attempt
-            self._embedding_runtime_attempt_started = now
-            self._embedding_runtime_initializing = True
-
-        try:
-            created_embedder, created_index = self._embedding_runtime_factory()
-        except Exception:
-            with self._embedding_runtime_lock:
-                if attempt == self._embedding_runtime_attempt:
-                    self._embedding_runtime_initializing = False
-            raise
-
-        with self._embedding_runtime_lock:
-            if self._embedder is not None and self._index is not None:
-                return
-            embedder = self._embedder or created_embedder
-            vector_index = self._index or created_index
-            recall_engine = RecallEngine(
-                self.store,
-                embedder,
-                vector_index,
-                self.reranker,
-            )
-            self._embedder = embedder
-            self._index = vector_index
-            self._recall_engine = recall_engine
-            if attempt == self._embedding_runtime_attempt:
-                self._embedding_runtime_initializing = False
-
-    @property
-    def embedder(self):
-        self._ensure_embedding_runtime()
-        return self._embedder
-
-    @embedder.setter
-    def embedder(self, value) -> None:
-        self._embedder = value
-        if value is not None and self._index is not None:
-            self._recall_engine = RecallEngine(
-                self.store, value, self._index, self.reranker
-            )
-
-    @property
-    def index(self):
-        self._ensure_embedding_runtime()
-        return self._index
-
-    @index.setter
-    def index(self, value) -> None:
-        self._index = value
-        if value is not None and self._embedder is not None:
-            self._recall_engine = RecallEngine(
-                self.store, self._embedder, value, self.reranker
-            )
-
-    @property
-    def recall_engine(self) -> RecallEngine:
-        self._ensure_embedding_runtime()
-        return self._recall_engine
-
-    @recall_engine.setter
-    def recall_engine(self, value: RecallEngine) -> None:
-        self._recall_engine = value
-
     @classmethod
     def create(cls, db_path: str = ":memory:", *, embed_model: Optional[str] = None,
+               embed_revision: Optional[str] = None,
                embed_dim: int = 384, vector_backend: str = "auto",
                rerank_model: Optional[str] = None, extractor: str = "none",
                graph_extractor: str = "none",
@@ -385,25 +339,68 @@ class MemoryEngine:
         from engraphis.backends.graph_extractor import get_graph_extractor as _get_ge
         from engraphis.backends.retention import get_retention_supervisor
         store = Store(db_path, connect=connect)
+        embedder = get_embedder(embed_model, embed_dim, revision=embed_revision)
+        index = get_vector_index(store, dim=embedder.dim, prefer=vector_backend)
         reranker = get_reranker(rerank_model)
         ext = get_extractor(extractor)
         if isinstance(ext, PassthroughExtractor):
             ext = None                       # ingest() treats None as passthrough
         ge = _get_ge(graph_extractor) if graph_extractor and graph_extractor != "none" else None
         supervisor = get_retention_supervisor(retention_supervisor)
-        def build_embedding_runtime():
-            embedder = get_embedder(embed_model, embed_dim)
-            vector_index = get_vector_index(
-                store,
-                dim=embedder.dim,
-                prefer=vector_backend,
-            )
-            return embedder, vector_index
+        engine = cls(store, embedder, index, reranker, auto_evolve=auto_evolve,
+                     extractor=ext, graph_extractor=ge,
+                     retention_supervisor=supervisor)
+        engine._rebuild_versioned_embeddings()
+        return engine
 
-        return cls(store, None, None, reranker, auto_evolve=auto_evolve,
-                   extractor=ext, graph_extractor=ge,
-                   retention_supervisor=supervisor,
-                   embedding_runtime_factory=build_embedding_runtime)
+    def _rebuild_versioned_embeddings(self) -> None:
+        """Re-embed records when an opt-in backend changes its vector mapping.
+
+        Backends advertise a durable ``embedding_identity`` and ``embedding_version``
+        only when their stored vectors need this lifecycle. The marker is committed
+        *after* every eligible record is indexed, so an interrupted rebuild safely
+        repeats on the next startup rather than leaving a mixed mapping marked current.
+        """
+        identity = str(getattr(self.embedder, "embedding_identity", "") or "").strip()
+        version = str(getattr(self.embedder, "embedding_version", "") or "").strip()
+        if not identity or not version or self.store.embedding_version(identity) == version:
+            return
+
+        rebuilt = 0
+        after_id = ""
+        while True:
+            records = self.store.list_memories_page(
+                after_id=after_id, limit=EMBEDDING_REBUILD_BATCH, include_invalid=True,
+            )
+            if not records:
+                break
+            after_id = records[-1].id
+            eligible = [
+                record for record in records
+                if inspection_eligible(record.provenance, record.metadata)
+            ]
+            if not eligible:
+                continue
+            texts = [
+                f"{record.title}\n{record.content}" if record.title else record.content
+                for record in eligible
+            ]
+            vectors = self.embedder.embed(texts)
+            # Keep the portable store-backed mirror current even when the active
+            # index is sqlite-vec, whose upsert writes only its ANN table.  A later
+            # fallback to NumPy must not compare v2 queries with stale vectors.
+            for record, vector in zip(eligible, vectors):
+                self.store.put_vector(record.id, vector)
+            self.store.conn.commit()
+            self.index.upsert([record.id for record in eligible], vectors)
+            rebuilt += len(eligible)
+
+        self.store.set_embedding_version(identity, version)
+        if rebuilt:
+            self.store.audit(
+                "system", "embedding_rebuild", identity,
+                f"version={version}; records={rebuilt}",
+            )
 
     # ── write ─────────────────────────────────────────────────────────────────
     def remember(self, content: str, *, workspace_id: str, repo_id: Optional[str] = None,
@@ -411,17 +408,18 @@ class MemoryEngine:
                  scope: Optional[Scope] = None, title: str = "", importance: float = 0.0,
                  keywords: Optional[list] = None, metadata: Optional[dict] = None,
                  valid_from: Optional[float] = None, resolve_conflicts: bool = True,
-                 candidate_k: int = 5,
+                 candidate_k: int = 5, subject_key: str = "", claim_kind: str = "",
                  _trusted_graph_keys: Optional[frozenset] = None) -> str:
-        """Store one memory. Returns the id of the *live* record: a new id for ADD/
-        INVALIDATE, or the existing memory's id if this was resolved as a NOOP
-        (near-duplicate). See ``remember_with_resolution`` for the full decision detail.
+        """Store one memory. Returns the resulting record id: a new id for ADD/
+        INVALIDATE/quarantine, or the existing memory's id if this was resolved as a
+        NOOP (near-duplicate). See ``remember_with_resolution`` for decision detail.
         """
         return self.remember_with_resolution(
             content, workspace_id=workspace_id, repo_id=repo_id, session_id=session_id,
             mtype=mtype, scope=scope, title=title, importance=importance, keywords=keywords,
             metadata=metadata, valid_from=valid_from, resolve_conflicts=resolve_conflicts,
-            candidate_k=candidate_k, _trusted_graph_keys=_trusted_graph_keys,
+            candidate_k=candidate_k, subject_key=subject_key, claim_kind=claim_kind,
+            _trusted_graph_keys=_trusted_graph_keys,
         )["id"]
 
     def remember_with_resolution(self, content: str, *, workspace_id: str,
@@ -430,6 +428,7 @@ class MemoryEngine:
                  title: str = "", importance: float = 0.0, keywords: Optional[list] = None,
                  metadata: Optional[dict] = None, valid_from: Optional[float] = None,
                  resolve_conflicts: bool = True, candidate_k: int = 5,
+                 subject_key: str = "", claim_kind: str = "",
                  _trusted_graph_keys: Optional[frozenset] = None) -> dict:
         """Store one memory with deterministic conflict resolution.
 
@@ -441,7 +440,22 @@ class MemoryEngine:
         * ``"invalidate"``  — same subject as an existing memory but new content; the old
           one's validity was closed (never deleted) and this was inserted. ``superseded``
           lists the closed id(s).
+        * ``"relate"``      — evidence shows a nearby claim but not a safe contradiction;
+          both remain live and a semantic relation is persisted.
+        * ``"quarantined"`` — an explicitly untrusted payload matched the deterministic
+          poisoning policy; retained only for governed historical inspection.
         """
+        if valid_from is not None:
+            if isinstance(valid_from, bool):
+                raise ValueError("valid_from must be a finite timestamp")
+            try:
+                valid_from = float(valid_from)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("valid_from must be a finite timestamp") from exc
+            if not math.isfinite(valid_from):
+                raise ValueError("valid_from must be a finite timestamp")
+        subject_key = str(subject_key or "").strip()
+        claim_kind = str(claim_kind or "").strip()
         scope_was_omitted = scope is None
         scope = (
             Scope.REPO if (repo_id or session_id) else Scope.WORKSPACE
@@ -464,10 +478,27 @@ class MemoryEngine:
                 raise ValueError("repo scope requires repo_id")
         if scope in (Scope.WORKSPACE, Scope.USER) and repo_id:
             raise ValueError(f"{scope.value} scope requires repo_id to be omitted")
+        # Every new record carries an explicit trust assertion.  The direct engine is
+        # a local, programmatic capability; external entry points set their own
+        # canonical ``trusted: false`` provenance before reaching this layer.  Keeping
+        # the default here preserves the core's offline API while making recall fail
+        # closed for genuinely legacy/unlabelled records.
+        write_metadata = dict(metadata or {})
+        provenance = write_metadata.get("provenance")
+        provenance = dict(provenance) if isinstance(provenance, dict) else {}
+        if "trusted" not in provenance:
+            provenance["trusted"] = True
+            provenance.setdefault("trust_origin", "local_engine")
+        provenance.setdefault("source", "local_engine")
+        write_metadata["provenance"] = provenance
+        poisoning = assess_untrusted_payload(content, title=title, metadata=write_metadata)
+        trusted_write = metadata_is_trusted(write_metadata)
         text = f"{title}\n{content}" if title else content
         # Embedding is the expensive, thread-safe part — compute it BEFORE taking the
         # write lock so concurrent writers only serialize the fast resolve+insert step.
-        vec = self.embedder.embed([text])[0]
+        # Quarantine happens before embedding: payloads retained only for inspection
+        # must never consume a vector slot or become semantic retrieval candidates.
+        vec = None if poisoning.quarantined else self.embedder.embed([text])[0]
 
         # One writer at a time from neighbor-lookup through insert/invalidate: without
         # this, two concurrent near-duplicate remembers can BOTH observe "no neighbor"
@@ -485,9 +516,11 @@ class MemoryEngine:
                 return self._resolve_and_store(
                     content, text=text, vec=vec, workspace_id=workspace_id, repo_id=repo_id,
                     session_id=session_id, mtype=mtype, scope=scope, title=title,
-                    importance=importance, keywords=keywords, metadata=metadata,
+                    importance=importance, keywords=keywords, metadata=write_metadata,
                     valid_from=valid_from, resolve_conflicts=resolve_conflicts,
-                    candidate_k=candidate_k, trusted_graph_keys=_trusted_graph_keys,
+                    candidate_k=candidate_k, subject_key=subject_key,
+                    claim_kind=claim_kind, trusted_graph_keys=_trusted_graph_keys,
+                    poisoning=poisoning, trusted_write=trusted_write,
                 )
             except BaseException:
                 if (owns_session_transaction
@@ -495,26 +528,83 @@ class MemoryEngine:
                     self.store.conn.rollback()
                 raise
 
-    def _resolve_and_store(self, content: str, *, text: str, vec: np.ndarray,
+    def _resolve_and_store(self, content: str, *, text: str, vec: Optional[np.ndarray],
                            workspace_id: str, repo_id: Optional[str],
                            session_id: Optional[str], mtype: MemoryType, scope: Scope,
                            title: str, importance: float, keywords: Optional[list],
                            metadata: Optional[dict], valid_from: Optional[float],
                            resolve_conflicts: bool, candidate_k: int,
-                           trusted_graph_keys: Optional[frozenset] = None) -> dict:
+                           subject_key: str, claim_kind: str,
+                           trusted_graph_keys: Optional[frozenset] = None,
+                           poisoning: Optional[PoisoningDecision] = None,
+                           trusted_write: bool = True) -> dict:
         """The resolve→insert body of ``remember_with_resolution``. The caller holds
         ``self._write_lock`` for the whole call (atomicity of the resolve decision).
 
         ``trusted_graph_keys`` names the ``GRAPH_HINT_KEYS`` this write's ``metadata``
         genuinely inherited from an ``Extractor``; everything else is treated as
         caller-supplied — see ``_rehome_untrusted_graph_hints``."""
+        poisoning = poisoning or PoisoningDecision(False)
         decision, neighbors = None, []
-        if resolve_conflicts:
+        # Untrusted records are retained as passive inspection evidence.  They may
+        # not deduplicate into, invalidate, relate to, reinforce, or otherwise
+        # mutate higher-trust memory; that is a trust lattice, not a detector score.
+        if resolve_conflicts and not poisoning.quarantined:
             decision, neighbors = self._resolve_against_neighbors(
                 text, vec, workspace_id=workspace_id, repo_id=repo_id,
                 session_id=session_id, scope=scope, mtype=mtype,
-                candidate_k=candidate_k,
+                candidate_k=candidate_k, subject_key=subject_key,
+                claim_kind=claim_kind, valid_at=valid_from, content=content,
+                trusted_write=trusted_write,
             )
+        if (resolve_conflicts and not poisoning.quarantined
+                and subject_key and valid_from is not None):
+            # A durable claim has a temporal identity in addition to its text. A
+            # scheduled successor can be a better prose match than the version visible
+            # at this write's effective time, but it is not the version being replaced.
+            # Select that visible predecessor directly so a backfill is spliced into the
+            # recorded chain rather than rejected for predating a future match.
+            claim_history = self.store.list_claim_history(
+                workspace_id=workspace_id, repo_id=repo_id,
+                session_id=session_id if scope == Scope.SESSION else None,
+                scope=scope, mtype=mtype, subject_key=subject_key,
+                claim_kind=claim_kind,
+            )
+            predecessors = [
+                record for record in claim_history
+                if record.valid_from is not None and record.valid_from <= valid_from
+                and (record.valid_to is None or valid_from < record.valid_to)
+                and provenance_is_trusted(record.provenance) == trusted_write
+            ]
+            if predecessors:
+                predecessor = max(
+                    predecessors,
+                    key=lambda record: (record.valid_from or float("-inf"), record.id),
+                )
+                if " ".join(content.split()).casefold() == (
+                    " ".join(predecessor.content.split()).casefold()
+                ):
+                    decision = Resolution(
+                        ResolutionOp.NOOP, target_id=predecessor.id,
+                        reason=f"exact duplicate of keyed claim {predecessor.id}",
+                    )
+                else:
+                    decision = Resolution(
+                        ResolutionOp.INVALIDATE, target_id=predecessor.id,
+                        reason=(f"supersedes temporal predecessor {predecessor.id} "
+                                f"for keyed claim"),
+                    )
+        if (decision is not None
+                and decision.op == ResolutionOp.INVALIDATE
+                and valid_from is not None):
+            previous = self.store.get_memory(decision.target_id)
+            if (previous is not None
+                    and previous.valid_from is not None
+                    and valid_from < previous.valid_from):
+                raise ValueError(
+                    "valid_from cannot predate the memory it supersedes; "
+                    "record the historical interval separately or correct the older memory"
+                )
 
         if decision is not None and decision.op == ResolutionOp.NOOP:
             self.store.reinforce(decision.target_id, boost=scoring.INTERACTION_BOOST["create"])
@@ -529,29 +619,60 @@ class MemoryEngine:
         if trusted_graph_keys is None and getattr(self._internal_writes, "depth", 0):
             trusted_graph_keys = frozenset(GRAPH_HINT_KEYS)
         meta = _rehome_untrusted_graph_hints(dict(metadata or {}), trusted_graph_keys)
+        if poisoning.quarantined:
+            # Policy values are written after caller-owned metadata. This prevents a
+            # payload from forging a trusted/quarantine-clear provenance flag.
+            meta = apply_quarantine_metadata(meta, poisoning)
         if decision is not None and decision.op == ResolutionOp.INVALIDATE:
             # Persist the supersession pointer on the new record so the chain is
             # queryable later (why/timeline/inspector), not only in the audit log.
             meta["supersedes"] = [decision.target_id]
 
-        importance, stability, retention_signal = self._retention_signal(
-            content, title=title, mtype=mtype, metadata=meta, importance=importance,
-        )
+        if poisoning.quarantined:
+            # Retained only for governance inspection: an untrusted payload must not
+            # elevate itself through caller-supplied retention supervision.
+            importance, stability, retention_signal = 0.0, 0.05, {}
+        else:
+            importance, stability, retention_signal = self._retention_signal(
+                content, title=title, mtype=mtype, metadata=meta, importance=importance,
+            )
         if retention_signal:
             meta["retention_supervision"] = retention_signal
 
+        quarantine_at = valid_from if valid_from is not None else now_ts()
         rec = MemoryRecord(
             id="", content=content, mtype=mtype, scope=scope, workspace_id=workspace_id,
             repo_id=repo_id, session_id=session_id, title=title, importance=importance,
-            stability=stability,
-            keywords=keywords or [], metadata=meta, valid_from=valid_from,
+            stability=stability, subject_key=subject_key, claim_kind=claim_kind,
+            keywords=keywords or [], metadata=meta,
+            # A zero-length validity interval retains the record/audit trail while the
+            # existing temporal filters keep it out of every normal recall arm.
+            valid_from=quarantine_at if poisoning.quarantined else valid_from,
+            valid_to=quarantine_at if poisoning.quarantined else None,
+            valid_to_recorded_at=now_ts() if poisoning.quarantined else None,
             # Lift provenance into its dedicated field/column so recall/why/timeline
             # surface it (copied, not popped: consolidate.py still reads
             # metadata["provenance"]).
             provenance=dict(meta.get("provenance") or {}),
-            embedding=vec,
+            embedding=None if poisoning.quarantined else vec,
         )
         mid = self.store.add_memory(rec)
+        if poisoning.quarantined:
+            # Deliberately content-free: a reviewer can inspect the retained record,
+            # while audit exports never reflect prompt-injection text into another UI.
+            self.store.audit(
+                "poisoning_policy", "quarantine", mid,
+                "policy=%s; reasons=%s" % (
+                    poisoning.policy, ",".join(poisoning.reasons),
+                ),
+            )
+            return {
+                "id": mid,
+                "op": "quarantined",
+                "quarantined": True,
+                "policy": poisoning.policy,
+                "reasons": list(poisoning.reasons),
+            }
         if retention_signal:
             self.store.audit(
                 retention_signal.get("source", "retention"),
@@ -574,7 +695,7 @@ class MemoryEngine:
                     "failure_type=%s" % type(exc).__name__)
             except Exception:  # noqa: BLE001
                 pass
-        if repo_id and scope != Scope.SESSION:
+        if trusted_write and repo_id and scope != Scope.SESSION:
             self._link_memory_to_code(mid, content=f"{title}\n{content}", repo_id=repo_id)
 
         # Optional graph population (backends.graph_extractor). Structured fact metadata
@@ -584,7 +705,8 @@ class MemoryEngine:
         # ``meta`` was demoted above, so any hint still under a GRAPH_HINT_KEYS name here
         # was vouched for by ingest() — the "structured_extractor" label below is earned,
         # not merely asserted by whoever built the metadata dict.
-        if scope != Scope.SESSION and self._has_structured_graph_metadata(meta):
+        if (trusted_write and scope != Scope.SESSION
+                and self._has_structured_graph_metadata(meta)):
             try:
                 from engraphis.backends.graph_extractor import (
                     StructuredMetadataGraphExtractor, feed as _graph_feed,
@@ -592,36 +714,74 @@ class MemoryEngine:
                 _graph_feed(self.store, content, workspace_id=workspace_id,
                             repo_id=repo_id, title=title,
                             extractor=StructuredMetadataGraphExtractor(meta),
-                            provenance={"source": "structured_extractor", "memory_id": mid})
+                            provenance={"source": "structured_extractor", "memory_id": mid},
+                            valid_from=rec.valid_from, ingested_at=rec.ingested_at)
             except Exception:
                 pass
-        if scope != Scope.SESSION and self.graph_extractor is not None:
+        if trusted_write and scope != Scope.SESSION and self.graph_extractor is not None:
             try:
                 from engraphis.backends.graph_extractor import feed as _graph_feed
                 _graph_feed(self.store, content, workspace_id=workspace_id,
                             repo_id=repo_id, title=title, extractor=self.graph_extractor,
-                            provenance={"source": "graph_extractor", "memory_id": mid})
+                            provenance={"source": "graph_extractor", "memory_id": mid},
+                            valid_from=rec.valid_from, ingested_at=rec.ingested_at)
             except Exception:
                 pass
+        if trusted_write and scope != Scope.SESSION:
+            self._link_memory_entities(
+                mid, f"{title}\n{content}", workspace_id=workspace_id, repo_id=repo_id,
+                valid_from=rec.valid_from,
+            )
 
         if decision is not None and decision.op == ResolutionOp.INVALIDATE:
-            self.store.close_validity(decision.target_id, reason=decision.reason)
-            try:
-                self.index.delete([decision.target_id])
-            except Exception as exc:  # noqa: BLE001 — merely stale in the index; recall
-                # re-checks validity on read, so log (don't audit) and continue.
-                logger.warning("vector-index delete failed for %s (%s)",
-                               decision.target_id, type(exc).__name__)
+            # World time closes when the replacement becomes true, not when this process
+            # happened to ingest it. This keeps backdated and scheduled facts queryable at
+            # the correct ``as_of`` anchor.
+            predecessor = self.store.get_memory(decision.target_id)
+            predecessor_end = predecessor.valid_to if predecessor is not None else None
+            if (predecessor_end is not None and rec.valid_from is not None
+                    and rec.valid_from < predecessor_end):
+                # The target was already retired by its recorded successor.  Splicing an
+                # intermediate version must shorten that historical interval, not leave
+                # the old end in place (``close_validity`` intentionally only closes live
+                # rows).  The new row inherits the old boundary below.
+                self.store.conn.execute(
+                    "UPDATE memories SET valid_to=?, valid_to_recorded_at=? WHERE id=?",
+                    (rec.valid_from, now_ts(), decision.target_id),
+                )
+                self.store.audit("system", "invalidate", decision.target_id,
+                                 decision.reason)
+                self.store.close_validity(
+                    mid, at=predecessor_end,
+                    reason="bounded by the recorded successor interval",
+                )
+            else:
+                self.store.close_validity(
+                    decision.target_id, at=rec.valid_from, reason=decision.reason
+                )
+            # Keep the superseded vector. Every vector backend applies the same temporal
+            # SearchFilter as lexical/graph retrieval, so it is hidden from current recall
+            # but remains available for historical ``as_of`` queries. Deleting it made
+            # time travel silently lose the semantic arm.
             self.store.audit("resolver", "invalidate", decision.target_id, decision.reason)
-            linked = self._evolve(mid, neighbors, exclude={decision.target_id})
+            linked = self._evolve(mid, neighbors, exclude={decision.target_id}) if trusted_write else []
             out = {"id": mid, "op": "invalidate", "superseded": [decision.target_id],
                    "reason": decision.reason}
             if linked:
                 out["linked"] = linked
             return out
 
-        linked = self._evolve(mid, neighbors)
-        out = {"id": mid, "op": "add", "reason": decision.reason if decision else ""}
+        linked = self._evolve(mid, neighbors) if trusted_write else []
+        if decision is not None and decision.op == ResolutionOp.RELATE:
+            related_to = decision.target_id
+            if related_to and not self.store.has_link(mid, related_to):
+                self.store.add_link(mid, related_to, "related", reason=decision.reason)
+            out = {
+                "id": mid, "op": "relate", "related_to": related_to,
+                "reason": decision.reason,
+            }
+        else:
+            out = {"id": mid, "op": "add", "reason": decision.reason if decision else ""}
         if linked:
             out["linked"] = linked
         return out
@@ -704,6 +864,38 @@ class MemoryEngine:
             or isinstance(structured.get("relations"), list)
         )
 
+    def _link_memory_entities(self, memory_id: str, content: str, *,
+                              workspace_id: str, repo_id: Optional[str],
+                              valid_from: Optional[float]) -> None:
+        """Persist edge-derived and exact textual entity evidence for one memory."""
+        owns_transaction = not self.store.conn.transaction_owned_by_current_thread()
+        try:
+            self.store.backfill_memory_entities_for_memory(memory_id)
+            entities = self.store.list_entities(SearchFilter(
+                # New repo memories must attach to workspace entities already
+                # visible to that repo, not only entities owned by the repo.
+                workspace_id=workspace_id, repo_id=repo_id, include_ancestors=True,
+            ))
+            for entity in entities:
+                name = (entity.name or "").strip()
+                if len(name) < 2:
+                    continue
+                if re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", content, re.IGNORECASE):
+                    self.store.link_memory_entity(
+                        memory_id=memory_id, entity_id=entity.id,
+                        workspace_id=workspace_id, repo_id=repo_id,
+                        source_kind="text_mention", confidence=0.8,
+                        valid_from=valid_from, commit=False,
+                    )
+            self.store.conn.commit()
+        except Exception:
+            # ``link_memory_entity(..., commit=False)`` opens a transaction. Never
+            # leave a failed best-effort graph enrichment transaction pinned to this
+            # thread: it could be committed by an unrelated later write.
+            if (owns_transaction
+                    and self.store.conn.transaction_owned_by_current_thread()):
+                self.store.conn.rollback()
+
     def _evolve(self, new_id: str, neighbors: list, *, exclude: Optional[set] = None) -> list[str]:
         """A-MEM-style memory evolution on write: a new memory
         auto-links to its closest still-live neighbors and gives them a small
@@ -737,7 +929,11 @@ class MemoryEngine:
 
     def _resolve_against_neighbors(self, text: str, vec: np.ndarray, *, workspace_id: str,
                                    repo_id: Optional[str], session_id: Optional[str],
-                                   scope: Scope, mtype: MemoryType, candidate_k: int):
+                                   scope: Scope, mtype: MemoryType, candidate_k: int,
+                                   subject_key: str = "", claim_kind: str = "",
+                                   valid_at: Optional[float] = None,
+                                   content: Optional[str] = None,
+                                   trusted_write: bool = True):
         """Fetch same-scope neighbors via the vector index and run the deterministic
         resolver (``core.resolve``). Returns ``(decision, neighbors)`` so the caller can
         also evolve the neighborhood. Never raises — a broken/missing index degrades to
@@ -745,23 +941,93 @@ class MemoryEngine:
         flt = SearchFilter(
             workspace_id=workspace_id, repo_id=repo_id,
             session_id=session_id if scope == Scope.SESSION else None,
-            scopes=[scope], mtypes=[mtype],
+            scopes=[scope], mtypes=[mtype], valid_at=valid_at,
         )
         try:
             hits = self.index.search(vec, candidate_k, filter=flt)
         except Exception:
-            return None, []
-        now = now_ts()
+            hits = []
+        current_fallback = False
+        if not hits and valid_at is not None:
+            # A candidate may be backdated before an already-recorded claim. That claim
+            # is intentionally outside the candidate's valid-time view, but it still
+            # has to be found so the caller can reject an impossible supersession rather
+            # than silently creating overlapping history. This fallback is only a guard
+            # for an otherwise-empty temporal neighborhood; normal scheduled resolution
+            # remains anchored at the candidate's validity time above.
+            current_filter = SearchFilter(
+                workspace_id=workspace_id, repo_id=repo_id,
+                session_id=session_id if scope == Scope.SESSION else None,
+                scopes=[scope], mtypes=[mtype],
+            )
+            try:
+                hits = self.index.search(vec, candidate_k, filter=current_filter)
+                current_fallback = True
+            except Exception:
+                pass
         neighbors = []
         for nid, sim in hits:
             nrec = self.store.get_memory(nid)
             if (nrec and nrec.workspace_id == workspace_id and nrec.repo_id == repo_id
                     and nrec.scope == scope and nrec.mtype == mtype
                     and (scope != Scope.SESSION or nrec.session_id == session_id)
-                    and nrec.expired_at is None
-                    and (nrec.valid_to is None or nrec.valid_to > now)):
+                    and provenance_is_trusted(nrec.provenance) == trusted_write
+                    and (memory_matches_filter(nrec, flt)
+                         or (current_fallback and nrec.expired_at is None
+                             and nrec.valid_to is None))):
                 neighbors.append((sim, nrec))
-        return resolve(text, neighbors), neighbors
+        if subject_key:
+            # A claim identity is authoritative, while vector retrieval is only a
+            # bounded candidate-discovery aid.  Always add its visible predecessor(s): a
+            # reworded update can have very low lexical/hash-vector similarity and fall
+            # outside top-K even though it names the exact fact being updated.  Limiting
+            # this lookup to ``valid_at`` made ordinary present-time keyed writes depend
+            # on vector rank and could let an unkeyed distractor win resolution.
+            #
+            # Visibility is essential here: ``valid_to IS NULL`` alone also includes a
+            # scheduled future successor.  An ordinary present-time write must splice
+            # before that successor, not invalidate it merely because its prose is the
+            # closest keyed match.
+            #
+            # ``resolve()`` gives exact claim identities priority over all unkeyed
+            # neighbors, and filters claim_kind there, so this remains scoped and never
+            # makes different predicates of the same subject conflict.
+            known_ids = {rec.id for _, rec in neighbors}
+            claim_history = self.store.list_claim_history(
+                workspace_id=workspace_id, repo_id=repo_id,
+                session_id=session_id if scope == Scope.SESSION else None,
+                scope=scope, mtype=mtype, subject_key=subject_key,
+                claim_kind=claim_kind,
+            )
+            authoritative = [
+                record for record in claim_history
+                if memory_matches_filter(record, flt, at=valid_at)
+                and provenance_is_trusted(record.provenance) == trusted_write
+            ]
+            if not authoritative and valid_at is not None:
+                # A backfill before the first recorded version has no visible
+                # predecessor to splice. Preserve the existing chronology guard by
+                # surfacing the earliest later version; the caller then rejects an
+                # impossible supersession instead of creating overlapping history.
+                later = [
+                    record for record in claim_history
+                    if record.expired_at is None
+                    and record.valid_from is not None
+                    and record.valid_from > valid_at
+                    and provenance_is_trusted(record.provenance) == trusted_write
+                ]
+                if later:
+                    authoritative = [min(
+                        later,
+                        key=lambda record: (record.valid_from or float("inf"), record.id),
+                    )]
+            for record in authoritative:
+                if record.id not in known_ids:
+                    neighbors.append((1.0, record))
+        return resolve(
+            text, neighbors, subject_key=subject_key, claim_kind=claim_kind,
+            candidate_content=content,
+        ), neighbors
 
     # ── ingest: extract-then-remember ───────────────────────────────────────────
     def ingest(self, text: str, *, workspace_id: str, repo_id: Optional[str] = None,
@@ -775,7 +1041,12 @@ class MemoryEngine:
         ingest never loses the write."""
         facts = None
         extracted = False
-        if self.extractor is not None:
+        # Quarantine precedes optional extraction. An explicitly untrusted payload that
+        # already matches the deterministic policy must not be sent to an LLM extractor
+        # or transformed into benign-looking derived facts before the write path has a
+        # chance to retain it safely for inspection.
+        input_poisoning = assess_untrusted_payload(text, metadata=metadata)
+        if self.extractor is not None and not input_poisoning.quarantined:
             try:
                 facts = self.extractor.extract(text)
                 extracted = bool(facts)
@@ -791,27 +1062,31 @@ class MemoryEngine:
         source_sha256 = hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
         for fact_index, f in enumerate(facts, start=1):
             fact_own = dict(getattr(f, "metadata", {}) or {})
-            if isinstance(fact_own.get("llm_extraction"), dict):
+            extracted_metadata = {
+                key: value for key, value in fact_own.items()
+                if key in EXTRACTOR_METADATA_KEYS
+            }
+            if isinstance(extracted_metadata.get("llm_extraction"), dict):
                 # Group all facts derived from one source without retaining the raw
                 # source or prompt. The dashboard activity viewer can therefore explain
                 # one input -> N memories while keeping provider payloads private.
-                fact_own["llm_extraction"] = {
-                    **fact_own["llm_extraction"],
+                extracted_metadata["llm_extraction"] = {
+                    **extracted_metadata["llm_extraction"],
                     "source_sha256": source_sha256,
                     "fact_index": fact_index,
                     "fact_count": len(facts),
                 }
             # This is the one place that can tell the two apart: ``fact_own`` is computed
             # fresh from the Extractor's real output, while ``base_metadata`` is the
-            # caller's argument. The extractor's keys win the merge, so vouching by name
-            # is exact — and a hint key present only in ``base_metadata`` stays untrusted
-            # even though it shares a name with one the extractor could have produced.
-            trusted = frozenset(k for k in GRAPH_HINT_KEYS if k in fact_own)
+            # caller's ingress envelope. Only documented extraction fields may cross
+            # that boundary, so provenance/quarantine and other authority fields remain
+            # service-owned even when an extractor returns arbitrary metadata.
+            trusted = frozenset(k for k in GRAPH_HINT_KEYS if k in extracted_metadata)
             results.append(self.remember_with_resolution(
                 f.content, workspace_id=workspace_id, repo_id=repo_id,
                 session_id=session_id, mtype=f.mtype or default_mtype, scope=scope,
                 title=f.title, importance=f.importance, keywords=f.keywords,
-                metadata={**base_metadata, **fact_own},
+                metadata={**base_metadata, **extracted_metadata},
                 resolve_conflicts=resolve_conflicts, _trusted_graph_keys=trusted,
             ))
         return {"facts": results, "count": len(results), "extracted": extracted}
@@ -841,7 +1116,9 @@ class MemoryEngine:
     # ── read ──────────────────────────────────────────────────────────────────
     def _recall_filter(self, *, workspace_id: Optional[str], repo_id: Optional[str],
                        session_id: Optional[str], scopes: Optional[list],
-                       mtypes: Optional[list], as_of: Optional[float]) -> SearchFilter:
+                       mtypes: Optional[list], as_of: Optional[float],
+                       valid_at: Optional[float] = None,
+                       known_at: Optional[float] = None) -> SearchFilter:
         """Build an ancestor-aware filter, resolving a session's parent repo in core.
 
         The service performs the same validation for friendly error payloads, but direct
@@ -859,25 +1136,253 @@ class MemoryEngine:
             repo_id = repo_id or session.get("repo_id")
         return SearchFilter(
             workspace_id=workspace_id, repo_id=repo_id, session_id=session_id,
-            scopes=scopes, mtypes=mtypes, as_of=as_of, include_ancestors=True,
+            scopes=scopes, mtypes=mtypes, as_of=as_of, valid_at=valid_at,
+            known_at=known_at, include_ancestors=True,
         )
 
     def recall(self, query: str, *, workspace_id: Optional[str] = None,
                repo_id: Optional[str] = None, session_id: Optional[str] = None,
                scopes: Optional[list] = None,
                mtypes: Optional[list] = None, as_of: Optional[float] = None,
-               k: int = 8) -> RecallResult:
+               valid_at: Optional[float] = None, known_at: Optional[float] = None,
+               k: int = 8, token_budget: Optional[int] = None,
+               retrieval_profile: str = "balanced", candidate_depth: str = "fixed",
+               diagnostics: bool = False,
+               include_untrusted: bool = False,
+               prompt_only: bool = False,
+               reinforce: bool = False) -> RecallResult:
         flt = self._recall_filter(
             workspace_id=workspace_id, repo_id=repo_id, session_id=session_id,
-            scopes=scopes, mtypes=mtypes, as_of=as_of,
+            scopes=scopes, mtypes=mtypes, as_of=as_of, valid_at=valid_at,
+            known_at=known_at,
         )
-        return self.recall_engine.recall(query, flt, k=k)
+        # Recall is observational unless the caller has an explicit use signal.
+        # Historical inspection is always observational: reinforcement would make a
+        # past reconstruction alter future ranking.
+        return self.recall_engine.recall(
+            query, flt, k=k, reinforce=bool(reinforce) and not flt.historical,
+            token_budget=token_budget, retrieval_profile=retrieval_profile,
+            candidate_depth=candidate_depth,
+            diagnostics=diagnostics,
+            include_untrusted=bool(include_untrusted),
+            prompt_only=bool(prompt_only),
+        )
+
+    def adaptive_context(
+        self,
+        query: str,
+        history: str,
+        *,
+        workspace_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        scopes: Optional[list] = None,
+        mtypes: Optional[list] = None,
+        as_of: Optional[float] = None,
+        valid_at: Optional[float] = None,
+        known_at: Optional[float] = None,
+        k: int = 8,
+        max_context_tokens: int = 4096,
+        retrieval_token_budget: Optional[int] = None,
+        confidence_floor: float = 0.25,
+        retrieval_profile: str = "balanced",
+        candidate_depth: str = "adaptive",
+        diagnostics: bool = False,
+        reinforce: bool = False,
+    ) -> AdaptiveContextResult:
+        """Choose raw history, compact recall, or a wider raw-history fallback.
+
+        The host supplies the exact history text it is considering for the next
+        model prompt.  If that text already fits ``max_context_tokens``, Engraphis
+        performs no embedding, search, or retrieval.  Otherwise it first attempts
+        a smaller packed recall.  Absolute query-to-source support (the same
+        calibrated signal used by grounded recall) decides whether to trust that
+        compact result; weak support widens back to the most recent raw history
+        that fits the overall budget.
+
+        This method never reinforces bypassed or weak retrievals.  Strong packed
+        evidence is reinforced only when the caller supplies an explicit use
+        signal through ``reinforce=True``.
+        """
+        from engraphis.core.grounded import support_scores
+
+        if isinstance(max_context_tokens, bool):
+            raise ValueError("max_context_tokens must be a non-negative integer")
+        try:
+            max_budget = int(max_context_tokens)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("max_context_tokens must be a non-negative integer") from exc
+        if max_budget < 0:
+            raise ValueError("max_context_tokens must be a non-negative integer")
+        try:
+            floor = float(confidence_floor)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("confidence_floor must be between 0 and 1") from exc
+        if not math.isfinite(floor) or not 0.0 <= floor <= 1.0:
+            raise ValueError("confidence_floor must be between 0 and 1")
+        if isinstance(k, bool):
+            raise ValueError("k must be a positive integer")
+        try:
+            k = int(k)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("k must be a positive integer") from exc
+        if k <= 0:
+            raise ValueError("k must be a positive integer")
+        retrieval_profile = str(retrieval_profile or "balanced").strip().casefold()
+        if retrieval_profile not in RETRIEVAL_PROFILES:
+            choices = ", ".join(sorted(RETRIEVAL_PROFILES))
+            raise ValueError(f"retrieval_profile must be one of: {choices}")
+        candidate_depth = str(candidate_depth or "adaptive").strip().casefold()
+        if candidate_depth not in CANDIDATE_DEPTH_MODES:
+            choices = ", ".join(sorted(CANDIDATE_DEPTH_MODES))
+            raise ValueError(f"candidate_depth must be one of: {choices}")
+
+        counter = getattr(self.recall_engine.context_packer, "count_tokens", None)
+        if not callable(counter):
+            raise ValueError("adaptive context requires a context packer token counter")
+        counter_name = str(
+            getattr(self.recall_engine.context_packer, "token_counter_identity", None)
+            or getattr(counter, "identity", None)
+            or getattr(counter, "__name__", None)
+            or type(counter).__name__
+        )
+        source_history = str(history or "")
+        history_tokens = int(counter(source_history))
+
+        if retrieval_token_budget is None:
+            retrieval_budget = min(max_budget, max(1, max_budget // 2)) if max_budget else 0
+        else:
+            if isinstance(retrieval_token_budget, bool):
+                raise ValueError(
+                    "retrieval_token_budget must be between 0 and max_context_tokens"
+                )
+            try:
+                retrieval_budget = int(retrieval_token_budget)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "retrieval_token_budget must be between 0 and max_context_tokens"
+                ) from exc
+            if not 0 <= retrieval_budget <= max_budget:
+                raise ValueError(
+                    "retrieval_token_budget must be between 0 and max_context_tokens"
+                )
+
+        if history_tokens <= max_budget:
+            return AdaptiveContextResult(
+                context=source_history,
+                mode="history_bypass",
+                reason="provided history already fits the prompt budget",
+                history_tokens=history_tokens,
+                context_tokens=history_tokens,
+                max_context_tokens=max_budget,
+                retrieval_budget_tokens=retrieval_budget,
+                token_counter=counter_name,
+            )
+
+        result = self.recall(
+            query,
+            workspace_id=workspace_id,
+            repo_id=repo_id,
+            session_id=session_id,
+            scopes=scopes,
+            mtypes=mtypes,
+            as_of=as_of,
+            valid_at=valid_at,
+            known_at=known_at,
+            k=k,
+            token_budget=retrieval_budget,
+            retrieval_profile=retrieval_profile,
+            candidate_depth=candidate_depth,
+            diagnostics=diagnostics,
+            prompt_only=True,
+            reinforce=False,
+        )
+        # Confidence must describe evidence the agent will actually see, not a
+        # high-scoring candidate that the hard-budget packer omitted.
+        packed_titles = {
+            str(chunk.get("id") or ""): " ".join(
+                str(chunk.get("title") or "").split()
+            )[:120]
+            for chunk in result.chunks
+        }
+        per_source_support = support_scores(
+            query,
+            [
+                f"{packed_titles.get(str(packed.id), '')}\n{packed.excerpt}".strip()
+                for packed in result.packed_chunks
+            ],
+            self.embedder,
+        )
+        support = max(per_source_support, default=0.0)
+        if not result.packed_chunks or support < floor:
+            wider, truncated = fit_recent_history(
+                source_history,
+                token_budget=max_budget,
+                count_tokens=counter,
+            )
+            if wider:
+                return AdaptiveContextResult(
+                    context=wider,
+                    mode="history_fallback",
+                    reason="retrieval support was weak, so raw recent history was widened",
+                    history_tokens=history_tokens,
+                    context_tokens=int(counter(wider)),
+                    max_context_tokens=max_budget,
+                    retrieval_budget_tokens=retrieval_budget,
+                    retrieval_support=support,
+                    retrieved=True,
+                    widened=True,
+                    truncated_history=truncated,
+                    token_counter=counter_name,
+                    recall=result,
+                )
+            return AdaptiveContextResult(
+                context="",
+                mode="low_confidence_abstain",
+                reason="retrieval support was weak and no raw history fit the prompt budget",
+                history_tokens=history_tokens,
+                context_tokens=0,
+                max_context_tokens=max_budget,
+                retrieval_budget_tokens=retrieval_budget,
+                retrieval_support=support,
+                retrieved=True,
+                truncated_history=truncated,
+                token_counter=counter_name,
+                recall=result,
+            )
+
+        historical = any(
+            anchor is not None for anchor in (as_of, valid_at, known_at)
+        )
+        if reinforce and not historical:
+            for packed in result.packed_chunks:
+                self.store.reinforce(
+                    packed.id,
+                    boost=scoring.INTERACTION_BOOST["recall"],
+                )
+        return AdaptiveContextResult(
+            context=result.context,
+            mode="retrieval",
+            reason="history exceeded the prompt budget and retrieved evidence was strong",
+            history_tokens=history_tokens,
+            context_tokens=int(counter(result.context)),
+            max_context_tokens=max_budget,
+            retrieval_budget_tokens=retrieval_budget,
+            retrieval_support=support,
+            retrieved=True,
+            token_counter=counter_name,
+            recall=result,
+        )
 
     def grounded_recall(self, query: str, *, workspace_id: Optional[str] = None,
                         repo_id: Optional[str] = None, session_id: Optional[str] = None,
                         scopes: Optional[list] = None,
                         mtypes: Optional[list] = None, as_of: Optional[float] = None,
+                        valid_at: Optional[float] = None, known_at: Optional[float] = None,
                         k: int = 8, llm=None, min_support: Optional[float] = None,
+                        token_budget: Optional[int] = None,
+                        retrieval_profile: str = "balanced", candidate_depth: str = "fixed",
+                        diagnostics: bool = False,
                         max_citations: int = 5, reinforce: bool = True):
         """Recall, then answer *strictly from* what was recalled — with citations and an
         explicit abstain when the evidence is too weak (``core.grounded``). Offline and
@@ -891,23 +1396,30 @@ class MemoryEngine:
         from engraphis.core import grounded as _grounded
         flt = self._recall_filter(
             workspace_id=workspace_id, repo_id=repo_id, session_id=session_id,
-            scopes=scopes, mtypes=mtypes, as_of=as_of,
+            scopes=scopes, mtypes=mtypes, as_of=as_of, valid_at=valid_at,
+            known_at=known_at,
         )
         # Recall without reinforcing here: a grounded read should reward only the memories
         # it actually cites, and an abstain should reward nothing — don't reinforce the
         # irrelevant nearest-neighbours an off-topic query happened to surface.
-        result = self.recall_engine.recall(query, flt, k=k, reinforce=False)
+        result = self.recall_engine.recall(
+            query, flt, k=k, reinforce=False, token_budget=token_budget,
+            retrieval_profile=retrieval_profile, candidate_depth=candidate_depth,
+            diagnostics=diagnostics,
+            prompt_only=True,
+        )
         floor = _grounded.GROUNDED_SUPPORT_FLOOR if min_support is None else min_support
         answer = _grounded.build_grounded_answer(query, result, self.embedder, llm=llm,
                                                  min_support=floor, max_citations=max_citations)
-        if reinforce and answer.grounded:
+        if reinforce and not flt.historical and answer.grounded:
             for cite in answer.citations:
                 if cite.get("id"):
                     self.store.reinforce(cite["id"], boost=scoring.INTERACTION_BOOST["recall"])
         return answer
 
     def why(self, query: str, *, workspace_id: str, repo_id: Optional[str] = None,
-            k: int = 5) -> dict:
+            k: int = 5, valid_at: Optional[float] = None,
+            known_at: Optional[float] = None) -> dict:
         """Rationale + history for a decision or fact: the live
         answer, plus whatever it superseded, if anything. This is the bi-temporal "why"
         that a flat-namespace store (or a plain vector store) cannot answer — the
@@ -915,6 +1427,7 @@ class MemoryEngine:
         """
         flt = SearchFilter(
             workspace_id=workspace_id, repo_id=repo_id, include_ancestors=True,
+            valid_at=valid_at, known_at=known_at,
         )
         live = [r for _, r in self._relatedness(query, flt, include_invalid=False)[:k]]
         history: list[MemoryRecord] = []
@@ -931,12 +1444,14 @@ class MemoryEngine:
         return {"answer": live, "supersedes": history}
 
     def timeline(self, query: str, *, workspace_id: str, repo_id: Optional[str] = None,
-                limit: int = 20) -> list[MemoryRecord]:
+                limit: int = 20, valid_at: Optional[float] = None,
+                known_at: Optional[float] = None) -> list[MemoryRecord]:
         """Chronological, bi-temporal history of a fact: what we believed and when.
         Includes invalidated versions; sorted by ``valid_from``.
         """
         flt = SearchFilter(
             workspace_id=workspace_id, repo_id=repo_id, include_ancestors=True,
+            valid_at=valid_at, known_at=known_at,
         )
         recs = [r for _, r in self._relatedness(query, flt, include_invalid=True)[:limit]]
         recs.sort(key=lambda r: r.valid_from or r.ingested_at or 0.0)
@@ -958,7 +1473,21 @@ class MemoryEngine:
             sem[mid] = float(np.dot(qn, vec))
         q_tokens = tokenize(query)
         out: list[tuple[float, MemoryRecord]] = []
-        for rec in self.store.list_memories(flt, include_invalid=include_invalid, limit=500):
+        records = self.store.list_memories(flt, include_invalid=include_invalid, limit=500)
+        if include_invalid and flt.known_at is not None:
+            # History must retain closed valid-time intervals, but cannot expose a
+            # record that was not known at the requested system-time snapshot.
+            records = [
+                rec for rec in records
+                if (rec.ingested_at is None or rec.ingested_at <= flt.known_at)
+                and (rec.expired_at is None or flt.known_at < rec.expired_at)
+            ]
+        for rec in records:
+            # Historical retrieval retains closed facts, not quarantined payloads.
+            # Those remain available only through governed inspection, never a normal
+            # timeline/why query that can return their original content to an agent.
+            if not inspection_eligible(rec.provenance, rec.metadata):
+                continue
             lex = jaccard(q_tokens, tokenize(f"{rec.title} {rec.content}"))
             score = max(sem.get(rec.id, 0.0), lex)
             if score > 0.05:
@@ -968,7 +1497,8 @@ class MemoryEngine:
 
     def recall_proactive(self, *, workspace_id: str, repo_id: Optional[str] = None,
                          k: int = 10, user_id: Optional[str] = None,
-                         agent: Optional[str] = None) -> dict:
+                         agent: Optional[str] = None,
+                         prompt_only: bool = False) -> dict:
         """"What should I know right now" with no explicit query — conscious/proactive
         recall: importance + recency + retention, no semantic arm,
         plus the repo's last-session handoff (open threads / summary) if there is one.
@@ -979,11 +1509,14 @@ class MemoryEngine:
         now = now_ts()
         scored = []
         for rec in self.store.list_memories(flt, limit=500):
-            w = scoring.weights_for(rec.mtype)
-            s = (w.i * (rec.importance or 0.0)
-                 + w.c * scoring.recency(rec.valid_from or rec.ingested_at, now)
-                 + w.r * scoring.retention(rec.stability, rec.last_access, now))
-            scored.append((s, rec))
+            eligible = (
+                prompt_eligible(rec.provenance, rec.metadata)
+                if prompt_only
+                else inspection_eligible(rec.provenance, rec.metadata)
+            )
+            if not eligible:
+                continue
+            scored.append((scoring.score_proactive(rec, now=now), rec))
         scored.sort(key=lambda t: t[0], reverse=True)
         top = [r for _, r in scored[:k]]
 
@@ -1005,10 +1538,8 @@ class MemoryEngine:
         if self.store.get_memory(memory_id) is None:
             raise KeyError(f"no memory with id '{memory_id}'")
         self.store.close_validity(memory_id, actor=actor, reason=reason or "forgotten by request")
-        try:
-            self.index.delete([memory_id])
-        except Exception:
-            pass
+        # Preserve the vector for explicit historical/as_of recall. Temporal filtering
+        # keeps this retired row out of the current live view.
         return {"id": memory_id, "status": "forgotten", "reason": reason}
 
     def pin(self, memory_id: str, *, pinned: bool = True, actor: str = "user") -> dict:
@@ -1054,10 +1585,8 @@ class MemoryEngine:
         if old.pinned:
             self.store.set_pinned(new_id, True)
         self.store.close_validity(memory_id, actor=actor, reason=reason or "corrected")
-        try:
-            self.index.delete([memory_id])
-        except Exception:
-            pass
+        # The old vector is historical evidence; SearchFilter validity hides it from
+        # current recall while keeping semantic time travel complete.
         return {"id": new_id, "superseded": [memory_id], "reason": reason}
 
     def promote(self, memory_id: str, target_scope: Scope, *, reason: str = "",
@@ -1072,6 +1601,10 @@ class MemoryEngine:
         old = self.store.get_memory(memory_id)
         if old is None:
             raise KeyError(f"no memory with id '{memory_id}'")
+        if not inspection_eligible(old.provenance, old.metadata):
+            raise ValueError("untrusted memory cannot be promoted: record is quarantined")
+        if not provenance_is_trusted(old.provenance):
+            raise ValueError("untrusted memory cannot be promoted; create a fresh approved local memory")
         now = now_ts()
         if (old.expired_at is not None
                 or (old.valid_from is not None and old.valid_from > now)
@@ -1170,10 +1703,7 @@ class MemoryEngine:
             old.id, actor=actor,
             reason=reason or f"promoted from {old.scope.value} to {target_scope.value}",
         )
-        try:
-            self.index.delete([old.id])
-        except Exception:
-            pass
+        # Preserve the source vector for historical/as_of inspection.
         if not self.store.has_link(promoted_id, old.id, relation="promotes"):
             self.store.add_link(
                 promoted_id, old.id, "promotes", reason=reason or "scope promotion"
@@ -1281,10 +1811,7 @@ class MemoryEngine:
         for r in sources:
             self.store.close_validity(r.id, actor=actor,
                                       reason=reason or "merged into a combined memory")
-            try:
-                self.index.delete([r.id])
-            except Exception:
-                pass
+            # Preserve source vectors for historical/as_of retrieval.
         # Linking/auditing stays a separate pass so the audit trail keeps its original
         # shape: every source's invalidate entry, then every source's merge entry.
         for r in sources:
@@ -1304,11 +1831,19 @@ class MemoryEngine:
                                if tokens_before else 0.0, "units": len(ids)}}
 
     # ── linking & events (A-MEM-style) ──────────────────────────────────────────
-    def link(self, a: str, b: str, *, relation: str = "related", layer=None,
+    def link(self, a: str, b: str, relation: str = "related", *, layer=None,
              reason: str = "") -> None:
+        records = []
         for mid in (a, b):
-            if self.store.get_memory(mid) is None:
+            record = self.store.get_memory(mid)
+            if record is None:
                 raise KeyError(f"no memory with id '{mid}'")
+            records.append(record)
+        if not all(inspection_eligible(record.provenance, record.metadata)
+                   for record in records):
+            raise ValueError("quarantined memories cannot be linked")
+        if not all(provenance_is_trusted(record.provenance) for record in records):
+            raise ValueError("links require explicitly trusted memories")
         self.store.add_link(a, b, relation, layer=layer, reason=reason)
 
     def record_event(self, kind: str, content: str, *, workspace_id: str = "",
@@ -1342,7 +1877,32 @@ class MemoryEngine:
         )
 
         indexer = get_code_indexer(prefer=prefer)
-        root = Path(root_path).expanduser().resolve()
+        # index_repo is an explicit local-filesystem capability: callers select a
+        # repository in one of the approved local roots. Canonicalizing then checking
+        # containment confines the capability to the operator's configured/default
+        # filesystem boundary. Every walked child is re-contained below before it is read.
+        # Normalize before the root-prefix check.  Keep this check at the filesystem
+        # call site (rather than hiding it in a helper) so both human review and static
+        # analysis can establish that every later path is constrained by this boundary.
+        canonical_root = os.path.normcase(
+            os.path.realpath(os.path.expanduser(os.fspath(root_path)))
+        )
+        # Retain a separator on the checked value.  This makes an approved root
+        # itself and every child use the same normalized-prefix check (and avoids
+        # accepting a sibling such as ``/work/repo-copy`` for ``/work/repo``).
+        # It also keeps the checked value, rather than the untrusted input, as
+        # the only path passed to filesystem APIs below.
+        canonical_root_with_sep = canonical_root.rstrip(os.sep) + os.sep
+        safe_root: Optional[str] = None
+        for approved_root in _approved_local_index_roots():
+            normalized_approved = os.path.normcase(os.path.realpath(approved_root))
+            approved_prefix = normalized_approved.rstrip(os.sep) + os.sep
+            if canonical_root_with_sep.startswith(approved_prefix):
+                safe_root = canonical_root_with_sep
+                break
+        if safe_root is None:
+            raise ValueError("repo root is outside approved local roots")
+        root = Path(safe_root)
         if not root.exists():
             raise ValueError(f"repo root not found: {root_path}")
         if not root.is_dir():
@@ -1371,10 +1931,14 @@ class MemoryEngine:
                 if files_scanned >= max_files:
                     scan_complete = False
                     break
-                p = Path(file_path)
+                candidate = Path(file_path)
                 try:
-                    rel = p.resolve().relative_to(root).as_posix()
-                except ValueError:
+                    # Resolve once, verify containment, then use this checked path for
+                    # every filesystem operation.  The walker skips symlinks, and this
+                    # closes the remaining defense-in-depth gap if it ever changes.
+                    source_file = candidate.resolve(strict=True)
+                    rel = source_file.relative_to(root).as_posix()
+                except (OSError, ValueError):
                     files_failed += 1
                     continue
                 files_scanned += 1
@@ -1385,11 +1949,11 @@ class MemoryEngine:
                 # of an otherwise complete scan.
                 present.add(rel)
                 try:
-                    stat = p.stat()
+                    stat = source_file.stat()
                     if stat.st_size > max_file_bytes:
                         files_skipped += 1
                         continue
-                    raw = p.read_bytes()
+                    raw = source_file.read_bytes()
                 except OSError:
                     files_failed += 1
                     continue
@@ -1479,9 +2043,12 @@ class MemoryEngine:
         """Symbol-graph + lexical code search — far cheaper than
         dumping files for structural questions, and (via ``called_by``) answers "what
         breaks if I change X" directly from the call graph."""
-        symbols = self.store.search_symbols(repo_id, query, limit=limit)
+        self._validate_code_filter(repo_id, flt)
+        symbols = self.store.search_symbols(repo_id, query, limit=limit, flt=flt)
         for s in symbols:
-            s["called_by"] = self.store.get_symbol_callers(repo_id, s["name"], limit=10)
+            s["called_by"] = self.store.get_symbol_callers(
+                repo_id, s["name"], limit=10, flt=flt
+            )
             s["linked_memories"] = self.store.memories_for_symbol(
                 repo_id, s["id"], flt=flt, limit=10
             )
@@ -1568,10 +2135,6 @@ class MemoryEngine:
             )
             if not records:
                 break
-            memory_ids = [record.id for record in records]
-            self.store.clear_code_memory_links_for_memories(
-                repo_id, memory_ids, commit=False,
-            )
             linked_per_memory = {record.id: 0 for record in records}
             symbol_cursor: Optional[tuple[str, str, str]] = None
             while True:
@@ -1607,8 +2170,9 @@ class MemoryEngine:
     def code_path(self, source: str, target: str, *, repo_id: str,
                   max_depth: int = 8, flt: Optional[SearchFilter] = None) -> dict:
         """Shortest path across definitions, calls, imports, and symbol aliases."""
-        symbols = self.store.list_symbols(repo_id)
-        stored_edges = self.store.list_code_edges(repo_id)
+        self._validate_code_filter(repo_id, flt)
+        symbols = self.store.list_symbols(repo_id, flt=flt)
+        stored_edges = self.store.list_code_edges(repo_id, flt=flt)
         adjacency: dict[str, list[tuple[str, dict, bool]]] = defaultdict(list)
         node_meta: dict[str, dict] = {}
         for sym in symbols:
@@ -1631,13 +2195,7 @@ class MemoryEngine:
             node_meta.setdefault(src, {"kind": "code", "name": src})
             node_meta.setdefault(dst, {"kind": "code", "name": dst})
         symbol_by_id = {symbol["id"]: symbol for symbol in symbols}
-        now = now_ts()
         for link in self.store.list_code_memory_links(repo_id, flt=flt):
-            if link.get("expired_at") is not None:
-                continue
-            valid_to = link.get("valid_to")
-            if valid_to is not None and now >= float(valid_to):
-                continue
             symbol = symbol_by_id.get(link.get("symbol_id"))
             if not symbol or not link.get("memory_id"):
                 continue
@@ -1750,15 +2308,17 @@ class MemoryEngine:
 
     def analyze_code_graph(self, *, repo_id: str,
                            limit: Optional[int] = None,
-                           edge_limit: Optional[int] = None) -> dict:
+                           edge_limit: Optional[int] = None,
+                           flt: Optional[SearchFilter] = None) -> dict:
         """Deterministic weighted communities, hotspots, and cross-file connections.
 
         ``limit``/``edge_limit`` bound the symbol/edge fetch. They default to ``None``
         (unbounded) so ``analyze_impact`` keeps today's exact answer; ``export_code_graph``
         passes its own caps because that payload is reachable by a ``viewer``.
         """
-        edges = self.store.list_code_edges(repo_id, limit=edge_limit)
-        symbols = self.store.list_symbols(repo_id, limit=limit)
+        self._validate_code_filter(repo_id, flt)
+        edges = self.store.list_code_edges(repo_id, limit=edge_limit, flt=flt)
+        symbols = self.store.list_symbols(repo_id, limit=limit, flt=flt)
         adjacency: dict[str, dict[str, float]] = defaultdict(dict)
         degree: dict[str, int] = defaultdict(int)
         for edge in edges:
@@ -1859,6 +2419,7 @@ class MemoryEngine:
     def analyze_impact(self, changed_files: list[str], *, repo_id: str,
                        flt: Optional[SearchFilter] = None) -> dict:
         """Estimate graph and memory impact for a git diff / PR file list."""
+        self._validate_code_filter(repo_id, flt)
         normalized = []
         seen = set()
         for file in changed_files:
@@ -1870,12 +2431,12 @@ class MemoryEngine:
             if rel and rel not in seen:
                 seen.add(rel)
                 normalized.append(rel)
-        symbols = self.store.symbols_for_files(repo_id, normalized)
+        symbols = self.store.symbols_for_files(repo_id, normalized, flt=flt)
         touched_names = {
             name for sym in symbols for name in (sym.get("name"), sym.get("fqname")) if name
         }
         touched_leaf_names = {str(name).split(".")[-1] for name in touched_names}
-        edges = self.store.list_code_edges(repo_id)
+        edges = self.store.list_code_edges(repo_id, flt=flt)
         inbound = [
             edge for edge in edges
             if edge.get("dst") in touched_names
@@ -1889,13 +2450,7 @@ class MemoryEngine:
 
         memory_mentions: dict[str, dict] = {}
         touched_symbol_ids = {symbol["id"] for symbol in symbols}
-        now = now_ts()
         for link in self.store.list_code_memory_links(repo_id, flt=flt):
-            if link.get("expired_at") is not None:
-                continue
-            valid_to = link.get("valid_to")
-            if valid_to is not None and now >= float(valid_to):
-                continue
             if link.get("symbol_id") not in touched_symbol_ids:
                 continue
             item = memory_mentions.setdefault(
@@ -1926,7 +2481,7 @@ class MemoryEngine:
                 )
                 item["symbols"].append(name)
 
-        analysis = self.analyze_code_graph(repo_id=repo_id)
+        analysis = self.analyze_code_graph(repo_id=repo_id, flt=flt)
         node_community = analysis.pop("_node_community")
         communities_affected = sorted({
             node_community[name] for name in touched_names if name in node_community
@@ -1985,16 +2540,17 @@ class MemoryEngine:
         """
         limit = max(1, min(CODE_EXPORT_MAX_LIMIT, int(limit)))
         edge_cap = max(limit * 8, 2_000)
+        self._validate_code_filter(repo_id, flt)
         analysis = self.analyze_code_graph(repo_id=repo_id, limit=limit,
-                                           edge_limit=edge_cap)
+                                           edge_limit=edge_cap, flt=flt)
         analysis.pop("_node_community", None)
         # Fetch one sentinel row beyond the payload cap so truncation stays observable
         # without materializing every indexed file in a large repository.
-        files = self.store.list_code_files(repo_id, limit=limit + 1)
+        files = self.store.list_code_files(repo_id, flt=flt, limit=limit + 1)
         truncated_files = len(files) > limit
         files = files[:limit]
-        nodes = self.store.list_symbols(repo_id, limit=limit)
-        edges = self.store.list_code_edges(repo_id, limit=edge_cap)
+        nodes = self.store.list_symbols(repo_id, limit=limit, flt=flt)
+        edges = self.store.list_code_edges(repo_id, limit=edge_cap, flt=flt)
         memory_links = self.store.list_code_memory_links(
             repo_id, flt=flt, limit=edge_cap
         )
@@ -2014,6 +2570,28 @@ class MemoryEngine:
             "memory_links": memory_links,
             "analysis": analysis,
         }
+
+    def _validate_code_filter(
+        self, repo_id: str, flt: Optional[SearchFilter]
+    ) -> None:
+        """Reject inconsistent repo/workspace filters before any code row is read.
+
+        Code-history tables are keyed by ``repo_id`` rather than duplicating a
+        workspace column. Without this check, a direct engine caller could pair a
+        workspace-A filter with a workspace-B repo id and receive B's symbols even
+        though memory reads correctly returned nothing.
+        """
+        if flt is None:
+            return
+        if flt.repo_id is not None and flt.repo_id != repo_id:
+            raise ValueError("code filter repo_id does not match the requested repo")
+        if flt.workspace_id is None:
+            return
+        row = self.store.conn.execute(
+            "SELECT workspace_id FROM repos WHERE id=?", (repo_id,)
+        ).fetchone()
+        if row is None or row["workspace_id"] != flt.workspace_id:
+            raise ValueError("code filter workspace_id does not own the requested repo")
 
     def code_graph_report(self, *, repo_id: str, payload: Optional[dict] = None,
                           flt: Optional[SearchFilter] = None) -> str:

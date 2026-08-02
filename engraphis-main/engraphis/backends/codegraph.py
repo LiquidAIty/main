@@ -716,11 +716,6 @@ _DEFAULT_EXCLUDE_DIRS = {
     # JS framework build output
     ".next", ".nuxt", ".svelte-kit", ".angular",
 }
-_DEFAULT_EXCLUDE_FILE_GLOBS = (
-    "*.min.js",
-    "*.bundle.js",
-    "*.chunk.js",
-)
 
 IGNORE_FILENAME = ".engraphisignore"
 _MAX_IGNORE_BYTES = 64 * 1024
@@ -842,11 +837,7 @@ def iter_source_files(root: str, *, exclude_dirs: Optional[set] = None,
         for fn in filenames:
             if detect_lang(fn) is None or fn in ig_names:
                 continue
-            rel_file = _rel_posix(rel_dir, fn)
-            if (
-                any(fnmatch.fnmatch(fn, pattern) for pattern in _DEFAULT_EXCLUDE_FILE_GLOBS)
-                or _glob_hit(rel_file, fn)
-            ):
+            if _glob_hit(_rel_posix(rel_dir, fn), fn):
                 continue
             full = os.path.join(dirpath, fn)
             if os.path.islink(full):  # never read a symlink target (may escape root)

@@ -161,6 +161,30 @@ def test_api_embedder_logs_no_model_endpoint_or_provider_index(monkeypatch, capl
         assert marker not in caplog.text
 
 
+def test_api_embedder_failure_logs_do_not_include_api_key(monkeypatch, caplog):
+    api_key = "embedding-api-key-should-not-escape"
+
+    class _Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def post(self, *_args, **_kwargs):
+            raise RuntimeError(api_key)
+
+    monkeypatch.setattr(httpx, "Client", _Client)
+    with caplog.at_level(logging.INFO, logger="engraphis.embedder_api"):
+        result = ApiEmbedder(model="safe-model", api_key=api_key, dim=2).embed(["hello"])
+
+    assert result.shape == (1, 2)
+    assert api_key not in caplog.text
+
+
 @pytest.mark.parametrize("status", [402, 500])
 def test_relay_http_error_discards_response_body_and_request_url(monkeypatch, status):
     url_marker = "relay-customer@example.com"
@@ -173,7 +197,7 @@ def test_relay_http_error_discards_response_body_and_request_url(monkeypatch, st
 
     monkeypatch.setattr(sync_relay, "_urlopen_no_redirect", fail)
     transport = RelayTransport(
-        "https://relay.example/%s" % url_marker, "workspace", license_key="safe-key"
+        "https://93.184.216.34/%s" % url_marker, "workspace", license_key="safe-key"
     )
 
     with pytest.raises(RelayError) as caught:
@@ -193,7 +217,7 @@ def test_relay_network_error_discards_base_url_and_reason(monkeypatch):
         lambda *_args, **_kwargs: (_ for _ in ()).throw(urllib.error.URLError(marker)),
     )
     transport = RelayTransport(
-        "https://relay.example/%s" % marker, "workspace", license_key="safe-key"
+        "https://93.184.216.34/%s" % marker, "workspace", license_key="safe-key"
     )
 
     with pytest.raises(RelayUnreachable) as caught:

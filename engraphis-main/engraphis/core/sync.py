@@ -49,6 +49,12 @@ from typing import Any, Optional
 
 from engraphis.core.graph_layers import merge_graph_layers, normalize_graph_layer
 from engraphis.core.interfaces import MemoryRecord, MemoryType, Scope, SearchFilter
+from engraphis.core.poisoning import (
+    apply_quarantine_metadata,
+    assess_untrusted_payload,
+    metadata_is_quarantined,
+    provenance_is_trusted,
+)
 from engraphis.core.store import Store, now_ts
 
 
@@ -56,7 +62,8 @@ logger = logging.getLogger("engraphis.sync")
 
 # ── bundle format ─────────────────────────────────────────────────────────────
 SYNC_FORMAT = "engraphis-sync"
-SYNC_VERSION = 1
+SYNC_VERSION = 2
+SYNC_ACCEPTED_VERSIONS = frozenset({1, 2})
 
 # ── validation caps (untrusted bundle → clamp, don't trust) ───────────────────
 MAX_MEMORIES = 200_000
@@ -78,6 +85,7 @@ MAX_WORKSPACE_NAME_CHARS = 200
 MAX_REPO_NAME_CHARS = 200
 TS_FUTURE_SKEW = 2 * 86400         # tolerate 2 days of cross-device clock skew, no more
 _VALID_SENSITIVITY = ("normal", "sensitive", "secret")
+_VALID_SCOPES = frozenset(scope.value for scope in Scope)
 
 # Strip C0/C1 control + ANSI-escape bytes (keep \t\n\r) — the same defense the rest of
 # the ingest surface applies (service.py) against hidden-instruction / terminal-injection
@@ -90,7 +98,7 @@ _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _LWW_FIELDS = (
     "title", "content", "summary", "keywords", "metadata", "mtype", "scope",
     "importance", "surprise", "sensitivity", "valid_from", "ingested_at",
-    "session_id", "provenance",
+    "session_id", "provenance", "subject_key", "claim_kind",
 )
 
 
@@ -135,6 +143,7 @@ def _label_tuple(rec: MemoryRecord) -> list:
         rec.title, rec.content, rec.summary, sorted(rec.keywords or []),
         _enum(rec.mtype), _enum(rec.scope), rec.importance, rec.surprise,
         rec.sensitivity, rec.valid_from, rec.session_id,
+        rec.subject_key, rec.claim_kind,
         json.dumps(rec.metadata or {}, sort_keys=True, default=str),
         json.dumps(rec.provenance or {}, sort_keys=True, default=str),
     ]
@@ -156,6 +165,7 @@ def merge_record(local: MemoryRecord, incoming: MemoryRecord) -> MemoryRecord:
     are taken from ``local`` here and never LWW-merged, so re-homing is never undone.
     """
     winner = local if _version_key(local) >= _version_key(incoming) else incoming
+    valid_to, valid_to_recorded_at = _merge_closure(local, incoming)
     return MemoryRecord(
         id=local.id,
         # scope pointers are always local — never merged from the remote
@@ -167,6 +177,7 @@ def merge_record(local: MemoryRecord, incoming: MemoryRecord) -> MemoryRecord:
         mtype=winner.mtype, scope=winner.scope, importance=winner.importance,
         surprise=winner.surprise, sensitivity=winner.sensitivity,
         session_id=winner.session_id, provenance=dict(winner.provenance or {}),
+        subject_key=winner.subject_key, claim_kind=winner.claim_kind,
         valid_from=winner.valid_from,
         # ``ingested_at`` is a LWW field (_LWW_FIELDS), NOT a lattice field, and it is the
         # SECOND component of _version_key. Merging it as a min-lattice made
@@ -180,12 +191,40 @@ def merge_record(local: MemoryRecord, incoming: MemoryRecord) -> MemoryRecord:
         # entirely from the winner.
         ingested_at=winner.ingested_at,
         # lattice fields: commutative joins (independent of the LWW winner)
-        valid_to=_min_nonnull(local.valid_to, incoming.valid_to),
+        valid_to=valid_to,
         expired_at=_min_nonnull(local.expired_at, incoming.expired_at),
         stability=max(local.stability, incoming.stability),
         access_count=max(local.access_count, incoming.access_count),
         last_access=_max_nonnull(local.last_access, incoming.last_access),
         pinned=bool(local.pinned or incoming.pinned),
+        valid_to_recorded_at=valid_to_recorded_at,
+    )
+
+
+def _merge_closure(
+    local: MemoryRecord, incoming: MemoryRecord,
+) -> tuple[Optional[float], Optional[float]]:
+    """Join a world-time closure with the system-time at which it was learned.
+
+    The earliest world-time closure wins. Its knowledge timestamp must travel
+    with it; independently learned equal closures use the earliest timestamp.
+    A missing timestamp is legacy v1 state whose closure was always visible, so
+    it remains ``None`` rather than being silently assigned a later time.
+    """
+    if local.valid_to is None:
+        return incoming.valid_to, (
+            incoming.valid_to_recorded_at if incoming.valid_to is not None else None
+        )
+    if incoming.valid_to is None:
+        return local.valid_to, local.valid_to_recorded_at
+    if local.valid_to < incoming.valid_to:
+        return local.valid_to, local.valid_to_recorded_at
+    if incoming.valid_to < local.valid_to:
+        return incoming.valid_to, incoming.valid_to_recorded_at
+    if local.valid_to_recorded_at is None or incoming.valid_to_recorded_at is None:
+        return local.valid_to, None
+    return local.valid_to, min(
+        local.valid_to_recorded_at, incoming.valid_to_recorded_at
     )
 
 
@@ -225,10 +264,37 @@ def inherit_store_defaults(existing: MemoryRecord, incoming: MemoryRecord) -> Me
     return incoming
 
 
+def _same_sync_payload(left: MemoryRecord, right: MemoryRecord) -> bool:
+    """Compare the synced record payload while excluding local policy envelopes.
+
+    ``metadata`` and ``provenance`` are sanitized on every external ingress.  They
+    therefore cannot decide whether a peer replay represents a new memory version.
+    The caller uses this only when the bundle omitted both fields, so an explicit
+    metadata or provenance update still flows through normal LWW resolution.
+    """
+    return (
+        left.title == right.title
+        and left.content == right.content
+        and left.summary == right.summary
+        and list(left.keywords or []) == list(right.keywords or [])
+        and left.mtype == right.mtype
+        and left.scope == right.scope
+        and left.importance == right.importance
+        and left.surprise == right.surprise
+        and left.sensitivity == right.sensitivity
+        and left.valid_from == right.valid_from
+        and left.ingested_at == right.ingested_at
+        and left.session_id == right.session_id
+        and left.subject_key == right.subject_key
+        and left.claim_kind == right.claim_kind
+    )
+
+
 def _signature(rec: MemoryRecord) -> str:
     """Fingerprint of everything sync persists — to tell 'changed' from 'no-op'."""
     return _stable_hash(_label_tuple(rec) + [
-        rec.valid_to, rec.expired_at, rec.ingested_at, rec.stability,
+        rec.valid_to, rec.valid_to_recorded_at, rec.expired_at,
+        rec.ingested_at, rec.stability,
         rec.access_count, rec.last_access, bool(rec.pinned),
     ])
 
@@ -244,8 +310,10 @@ def record_to_dict(rec: MemoryRecord) -> dict:
         "importance": rec.importance, "surprise": rec.surprise, "stability": rec.stability,
         "access_count": rec.access_count, "last_access": rec.last_access,
         "valid_from": rec.valid_from, "valid_to": rec.valid_to,
+        "valid_to_recorded_at": rec.valid_to_recorded_at,
         "ingested_at": rec.ingested_at, "expired_at": rec.expired_at,
         "pinned": bool(rec.pinned), "sensitivity": rec.sensitivity,
+        "subject_key": rec.subject_key, "claim_kind": rec.claim_kind,
         "provenance": rec.provenance or {},
     }
 
@@ -424,9 +492,12 @@ def dict_to_record(d: dict) -> Optional[MemoryRecord]:
         # (they are the version key's primary ordering / anti-poison defense).
         valid_from=_clamp_world_ts(d.get("valid_from")),
         valid_to=_clamp_world_ts(d.get("valid_to")),
+        valid_to_recorded_at=_clamp_ts(d.get("valid_to_recorded_at"), now),
         ingested_at=_clamp_ts(d.get("ingested_at"), now),
         expired_at=_clamp_ts(d.get("expired_at"), now),
         pinned=bool(d.get("pinned")), sensitivity=sens,
+        subject_key=_clamp_str(d.get("subject_key"), 512),
+        claim_kind=_clamp_str(d.get("claim_kind"), 256),
         provenance=_safe_json_obj(d.get("provenance")),
     )
 
@@ -483,7 +554,7 @@ class SyncEngine:
             repo_rows = self.store.conn.execute(
                 "SELECT id, name FROM repos WHERE workspace_id=?", (workspace_id,)).fetchall()
         ids_in = [m.id for m in mems]
-        links = self.store.links_among(ids_in) if ids_in else []
+        links = self.store.links_among(ids_in, include_invalid=True) if ids_in else []
         return {
             "format": SYNC_FORMAT, "version": SYNC_VERSION,
             "device_id": self.device_id, "created_at": now_ts(),
@@ -495,6 +566,11 @@ class SyncEngine:
                     "a": ln["a"], "b": ln["b"], "relation": ln["relation"],
                     "layer": ln.get("layer") or "semantic",
                     "reason": ln.get("reason") or "",
+                    "valid_from": ln.get("valid_from"),
+                    "valid_to": ln.get("valid_to"),
+                    "valid_to_recorded_at": ln.get("valid_to_recorded_at"),
+                    "ingested_at": ln.get("ingested_at"),
+                    "expired_at": ln.get("expired_at"),
                 }
                 for ln in links
             ],
@@ -514,7 +590,7 @@ class SyncEngine:
             raise SyncError("bundle is not an object")
         if bundle.get("format") != SYNC_FORMAT:
             raise SyncError("not an %s bundle" % SYNC_FORMAT)
-        if _as_int(bundle.get("version"), 0) != SYNC_VERSION:
+        if _as_int(bundle.get("version"), 0) not in SYNC_ACCEPTED_VERSIONS:
             raise SyncError("unsupported bundle version %r" % bundle.get("version"))
         src_device = bundle.get("device_id")
 
@@ -625,10 +701,31 @@ class SyncEngine:
             report["rejected"] += 1
             return
         rec.session_id = None
+        remote_repo_id = d.get("repo_id")
+        raw_scope = d.get("scope")
+        if raw_scope is None:
+            # Sync v1 allowed callers to omit scope. Preserve that compatibility while
+            # canonicalizing the row: a repo pointer means repo scope; otherwise the row
+            # belongs to the workspace. Never persist the old invalid repo-without-owner
+            # default produced by ``_scope(None)``.
+            rec.scope = Scope.REPO if remote_repo_id is not None else Scope.WORKSPACE
+        elif not isinstance(raw_scope, str) or raw_scope not in _VALID_SCOPES:
+            report["rejected"] += 1
+            return
+        # Scope pointers are an untrusted trust-boundary input, not merely metadata.
+        # A repo-scoped row must name one of the bundle's repos; workspace/user rows
+        # must not carry a repo pointer.  Accepting an invalid combination and then
+        # re-homing it would turn a repo-owned row into an ancestor-visible global row.
+        if rec.scope == Scope.REPO:
+            if not isinstance(remote_repo_id, str) or not remote_repo_id:
+                report["rejected"] += 1
+                return
+        elif remote_repo_id is not None:
+            report["rejected"] += 1
+            return
         # Re-home into local scope, and tag provenance with the origin device so a
         # synced-in memory stays auditable ("why is this known?" — AGENTS.md §3.6).
         rec.workspace_id = local_ws
-        remote_repo_id = d.get("repo_id")
         if remote_repo_id:
             if remote_repo_id not in repo_remap:
                 report["rejected"] += 1
@@ -642,10 +739,6 @@ class SyncEngine:
         if only_repo_id is not None and rec.repo_id != only_repo_id:
             report["rejected"] += 1
             return
-        if src_device:
-            prov = dict(rec.provenance or {})
-            prov.setdefault("synced_from_device", _clamp_str(src_device, 128))
-            rec.provenance = prov
         existing = known.get(rec.id)
         if existing is not None and existing.workspace_id != local_ws:
             # This id already lives in a DIFFERENT workspace: never let a bundle reach
@@ -664,12 +757,69 @@ class SyncEngine:
             # overwrite the local private row with a non-session scope either.
             report["rejected"] += 1
             return
+        if (existing is not None
+                and (existing.scope != rec.scope or existing.repo_id != rec.repo_id)):
+            # ``merge_record`` deliberately keeps scope pointers local.  Letting the
+            # descriptive LWW winner change ``scope`` while retaining the existing local
+            # pointer would therefore create an impossible row (for example a
+            # workspace-scoped memory still attached to a repo), and could make a
+            # repo-owned fact ancestor-visible.  Scope promotion is a local, explicit
+            # operation; a sync peer may merge a record only at its existing visibility.
+            # This also fails closed for malformed legacy rows: repairing an orphaned
+            # scope is a local migration decision, never authority delegated to a peer.
+            report["rejected"] += 1
+            return
+        if existing is not None:
+            # Sync v1 bundles predate durable claim identity. Omission means
+            # "unknown to this peer", not an instruction to erase local keys.
+            if "subject_key" not in d:
+                rec.subject_key = existing.subject_key
+            if "claim_kind" not in d:
+                rec.claim_kind = existing.claim_kind
+            if "valid_to_recorded_at" not in d and rec.valid_to == existing.valid_to:
+                rec.valid_to_recorded_at = existing.valid_to_recorded_at
         if (existing is not None and only_repo_id is not None
                 and existing.repo_id != only_repo_id):
             # The incoming row's claimed repo cannot re-home an existing memory from
             # another repo during a repo-restricted sync.
             report["rejected"] += 1
             return
+        # A peer has no authority to revise a locally approved record. Keep the
+        # local trusted fact as the safe winner; the peer's payload is never merged
+        # into its provenance, graph state, or temporal validity. This runs after
+        # all scope checks above so malformed remote rows are still rejected rather
+        # than being disguised as harmless trust conflicts.
+        if existing is not None and provenance_is_trusted(existing.provenance):
+            if not dry_run and rec.content != existing.content:
+                self.store.audit(
+                    "sync:%s" % _clamp_str(src_device or "peer", 128),
+                    "sync_trust_conflict",
+                    existing.id,
+                    "peer content ignored because local record is explicitly trusted",
+                    commit=False,
+                )
+            accepted[rec.id] = existing
+            report["unchanged"] += 1
+            return
+        # A bundle is untrusted even when it originated on a known device.  Preserve
+        # only bounded diagnostic identity and re-home all payload provenance under
+        # the local policy; a peer cannot make content trusted by serialising that
+        # bit in the bundle.  This path bypasses MemoryEngine, so it performs the
+        # same quarantine decision before it can be indexed.
+        #
+        # An idempotent replay may omit both policy-managed blobs.  Re-homing such a
+        # no-op would manufacture a provenance/metadata difference, let the hash
+        # tiebreak select it, and rewrite the otherwise identical row forever.  Keep
+        # the already-local policy envelope only when every sync-owned descriptive
+        # value is the same and the peer supplied neither blob.  Any actual content,
+        # timestamp, or metadata/provenance change still receives a fresh untrusted
+        # envelope below.
+        if (existing is not None and "metadata" not in d and "provenance" not in d
+                and _same_sync_payload(existing, inherit_store_defaults(existing, rec))):
+            rec.metadata = dict(existing.metadata or {})
+            rec.provenance = dict(existing.provenance or {})
+        else:
+            self._rehome_external_record(rec, src_device=src_device)
         if existing is None:
             if not dry_run:
                 self._write(rec, commit=False)
@@ -678,6 +828,12 @@ class SyncEngine:
                     "sync_add", rec.id,
                     f"new memory created from synced bundle (device: {src_device or 'peer'})",
                     commit=False)
+                if metadata_is_quarantined(rec.metadata):
+                    self.store.audit(
+                        "poisoning_policy", "sync_quarantine", rec.id,
+                        "synced record quarantined by deterministic policy",
+                        commit=False,
+                    )
                 known[rec.id] = rec      # write-through: a duplicate id later in this
                                          # batch must see what we just persisted
             report["added"] += 1
@@ -728,14 +884,63 @@ class SyncEngine:
             if (only_repo_id is not None
                     and (ma.repo_id != only_repo_id or mb.repo_id != only_repo_id)):
                 continue
+            # Link records carry no independent authenticated provenance. A peer
+            # therefore cannot attach an arbitrary graph edge to a locally approved
+            # memory, where it could influence graph recall despite the peer payload
+            # itself being untrusted. Links wholly inside the untrusted replica stay
+            # inspectable, but only a local trusted write may connect trusted nodes.
+            if provenance_is_trusted(ma.provenance) or provenance_is_trusted(mb.provenance):
+                continue
             pending += 1
             if pending >= APPLY_BATCH:
                 if not dry_run:
                     self.store.conn.commit()
                 pending = 0
+            # v2 bundles carry a complete bi-temporal link version. Preserve it
+            # verbatim (after the normal untrusted-input clamps), including closed
+            # intervals. v1 omitted these fields, so it retains the established
+            # grow-only/current-link merge below.
+            if ("valid_from" in ln and "ingested_at" in ln
+                    and _clamp_world_ts(ln.get("valid_from")) is not None
+                    and _clamp_ts(ln.get("ingested_at"), now_ts()) is not None):
+                valid_from = _clamp_world_ts(ln.get("valid_from"))
+                valid_to = _clamp_world_ts(ln.get("valid_to"))
+                valid_to_recorded_at = _clamp_ts(ln.get("valid_to_recorded_at"), now_ts())
+                ingested_at = _clamp_ts(ln.get("ingested_at"), now_ts())
+                expired_at = _clamp_ts(ln.get("expired_at"), now_ts())
+                existing_version = self.store.conn.execute(
+                    "SELECT 1 FROM mem_links "
+                    "WHERE ((a=? AND b=?) OR (a=? AND b=?)) AND relation=? "
+                    "AND layer=? AND reason=? AND valid_from IS ? AND valid_to IS ? "
+                    "AND valid_to_recorded_at IS ? AND ingested_at IS ? AND expired_at IS ? "
+                    "LIMIT 1",
+                    (
+                        a, b, b, a, rel, layer, reason,
+                        valid_from, valid_to, valid_to_recorded_at, ingested_at, expired_at,
+                    ),
+                ).fetchone()
+                if existing_version:
+                    continue
+                if not dry_run:
+                    inserted = self.store.add_link_version(
+                        a, b, rel, layer=layer, reason=reason,
+                        valid_from=valid_from, valid_to=valid_to,
+                        valid_to_recorded_at=valid_to_recorded_at,
+                        ingested_at=ingested_at, expired_at=expired_at,
+                        commit=False,
+                    )
+                    if inserted:
+                        self.store.audit(
+                            "sync:%s" % _clamp_str(src_device or "peer", 128),
+                            "sync_link", a,
+                            f"linked to {b} with relation {rel}", commit=False)
+                report["links_added"] += 1
+                continue
             existing_link = self.store.conn.execute(
                 "SELECT layer, reason FROM mem_links "
-                "WHERE ((a=? AND b=?) OR (a=? AND b=?)) AND relation=? LIMIT 1",
+                "WHERE ((a=? AND b=?) OR (a=? AND b=?)) AND relation=? "
+                "AND valid_to IS NULL AND expired_at IS NULL "
+                "ORDER BY rowid DESC LIMIT 1",
                 (a, b, b, a, rel),
             ).fetchone()
             if existing_link:
@@ -772,7 +977,8 @@ class SyncEngine:
         derived state coherent: re-embed for the vector arm when an embedder is wired.
 
         ``commit=False`` leaves the transaction open for the caller's batch (apply_bundle)."""
-        if self.embedder is not None:
+        quarantined = metadata_is_quarantined(rec.metadata)
+        if self.embedder is not None and not quarantined:
             try:
                 text = f"{rec.title}\n{rec.content}" if rec.title else rec.content
                 rec.embedding = self.embedder.embed([text])[0]
@@ -780,11 +986,67 @@ class SyncEngine:
                 rec.embedding = None
         # sync logs its own semantic audit (sync_add/sync_overwrite), hence audit=False
         self.store.add_memory(rec, audit=False, commit=commit)
-        if rec.embedding is not None and self.index is not None:
+        if quarantined:
+            # ``add_memory(..., embedding=None)`` deliberately leaves an existing
+            # vector untouched for ordinary metadata updates. A sync overwrite that
+            # becomes quarantined is different: retaining the prior vector leaves
+            # stale derived state for a payload the policy has removed from retrieval.
+            self.store.conn.execute("DELETE FROM mem_vectors WHERE id=?", (rec.id,))
+            if self.index is not None:
+                try:
+                    self.index.delete([rec.id])
+                except Exception:
+                    pass
+            if commit:
+                self.store.conn.commit()
+            return
+        if rec.embedding is not None and not quarantined and self.index is not None:
             try:
                 self.index.upsert([rec.id], rec.embedding.reshape(1, -1))
             except Exception:
                 pass
+
+    @staticmethod
+    def _rehome_external_record(rec: MemoryRecord, *, src_device: object) -> None:
+        """Replace peer-controlled provenance with a local untrusted envelope."""
+        upstream = rec.provenance if isinstance(rec.provenance, dict) else {}
+        upstream_source = _clamp_str(upstream.get("source"), 128)
+        device = _clamp_str(src_device, 128) if src_device else ""
+        provenance = {
+            "source": "sync",
+            "trusted": False,
+            "trust_origin": "sync_untrusted",
+        }
+        if device:
+            provenance["synced_from_device"] = device
+        metadata = dict(rec.metadata or {})
+        # Incoming control-plane keys must never survive as if this process had
+        # produced them.  Record only a bounded diagnostic summary of the upstream
+        # claim; raw source metadata remains in the peer's bundle, not local policy.
+        for key in (
+            "provenance", "quarantine", "retention_supervision", "entities",
+            "relations", "structured_extraction", "llm_extraction",
+            "structured_consolidation",
+        ):
+            metadata.pop(key, None)
+        metadata["provenance"] = dict(provenance)
+        metadata["sync_ingress"] = {
+            "source": upstream_source or "unknown",
+            "claimed_trusted": upstream.get("trusted") is True,
+            "device": device or "peer",
+        }
+        decision = assess_untrusted_payload(
+            rec.content, title=rec.title, metadata=metadata
+        )
+        if decision.quarantined:
+            metadata = apply_quarantine_metadata(metadata, decision)
+            at = rec.valid_from if rec.valid_from is not None else now_ts()
+            rec.valid_from = at
+            rec.valid_to = at
+            rec.valid_to_recorded_at = now_ts()
+            rec.embedding = None
+        rec.metadata = metadata
+        rec.provenance = dict(metadata["provenance"])
 
     # ── one round-trip over a transport ─────────────────────────────────────────
     def sync(self, transport, workspace_id: str, *, repo_id: Optional[str] = None,

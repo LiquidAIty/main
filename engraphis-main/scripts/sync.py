@@ -37,11 +37,14 @@ def main(argv=None) -> int:
                     help="Shared folder both devices can see (Dropbox/iCloud/Syncthing/…).")
     ap.add_argument("--relay", "--relay-url", dest="relay", nargs="?", const="",
                     metavar="URL",
-                    help="Managed cloud relay root (e.g. https://team.engraphis.com). "
+                    help="Managed cloud relay root (e.g. https://relay.engraphis.com). "
                          "Bare --relay uses ENGRAPHIS_RELAY_URL. Mutually exclusive with --remote.")
     ap.add_argument("--relay-token", default=None, metavar="TOKEN",
                     help="Scoped user token for the relay (defaults to ENGRAPHIS_SYNC_TOKEN "
-                         "or the token saved by the dashboard).")
+                          "or the token saved by the dashboard).")
+    ap.add_argument("--relay-e2ee-key", default=None, metavar="BASE64URL_KEY",
+                    help="32-byte URL-safe-base64 Cloud Sync key shared only with trusted "
+                         "devices (defaults to ENGRAPHIS_SYNC_E2EE_KEY; never sent to Cloud).")
     ap.add_argument("--read-only", action="store_true",
                     help="Pull only; required for a viewer token without sync:write.")
     ap.add_argument("--repo", default=None, help="Restrict the sync to one repo name.")
@@ -135,6 +138,7 @@ def main(argv=None) -> int:
                 base_url=relay_url,
                 workspace_id=args.workspace,
                 access_token=relay_token,
+                e2ee_key=args.relay_e2ee_key,
             )
         except (RelayError, ValueError) as exc:
             # A custom URL may contain credentials or signed query parameters. The
@@ -143,13 +147,21 @@ def main(argv=None) -> int:
             return 2
     else:
         try:
-            transport = get_transport("folder", root=args.remote)
+            # A dry run must not create an absent shared folder merely by opening its
+            # transport.  FolderTransport treats a missing non-creating root as empty.
+            transport = get_transport("folder", root=args.remote, create=not args.dry_run)
         except (ValueError, OSError) as exc:
             print(f"error: could not open sync folder '{args.remote}': {exc}", file=sys.stderr)
             return 2
 
+    sync_device_id = None
+    if args.dry_run:
+        # SyncEngine normally mints and persists the database's stable device id at
+        # construction. A preview must not perform even that local metadata write.
+        from engraphis.core import ids
+        sync_device_id = engine.store.get_sync_state("device_id") or ids.new_id("device")
     engine_sync = SyncEngine(engine.store, embedder=engine.embedder,
-                             vector_index=engine.index,
+                             vector_index=engine.index, device_id=sync_device_id,
                              allowed_workspaces=settings.allowed_workspaces or None)
     # Honor the same durable, fail-closed device policy as dashboard auto-sync. This
     # matters for member/admin tokens too: a device explicitly configured download-only

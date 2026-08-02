@@ -1,7 +1,7 @@
 """Baseline HTTP security response headers, shared by every FastAPI entrypoint.
 
 Added 2026-07-18. Prior to this the deployed dashboard sent NONE of these — verified
-live against the production relay: no HSTS, no ``X-Frame-Options``, no
+used in a hosted deployment: no HSTS, no ``X-Frame-Options``, no
 ``X-Content-Type-Options``, no CSP, no ``Referrer-Policy``. For a surface that hands out
 session cookies, scoped bearer credentials, and a full workspace's memories, the clickjacking and
 MIME-sniffing exposure that implies is not acceptable at GA.

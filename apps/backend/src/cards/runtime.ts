@@ -6,7 +6,11 @@ import {
   RuntimeGraphEdge,
   RuntimeGraphNode,
 } from '../contracts/runtimeContracts';
-import { orchestrateWithAutoGen, runSingleCardWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
+import {
+  orchestrateWithAutoGen,
+  requestPythonRailsJson,
+  runSingleCardWithAutoGen,
+} from '../services/autogen/autogenOrchestratorClient';
 import { getDeckDocument } from '../decks/store';
 import { resolveModel } from '../llm/models.config';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
@@ -165,9 +169,6 @@ export function resolvedMagenticOptions(
     )
     .map((edge) => nodeMap.get(edge.source === magenticCardId ? edge.target : edge.source))
     .filter((node): node is any => Boolean(node && node.kind === 'agent'))
-    // Workspace children are context/UI objects, not independently executable
-    // Mag One workers. Their owning top-level card is the runtime boundary.
-    .filter((node) => !String(node.parentGraphId || '').trim())
     .filter((node) => node?.enabled !== false && node?.runtimeOptions?.enabled !== false)
     .filter((node) => {
       // Principal roles are structurally never workers, even against stale edges.
@@ -181,6 +182,92 @@ export function resolvedMagenticOptions(
       seen.add(node.id);
       return true;
     });
+}
+
+export type MagenticWorkerReadiness = {
+  card: any;
+  connected: true;
+  executionReady: boolean;
+  readinessState: 'ready' | 'staged_runtime_missing' | 'configuration_invalid' | 'dependency_unavailable';
+  readinessReason: string | null;
+};
+
+type RuntimeToolManifestItem = {
+  id?: unknown;
+  agentCompatibility?: unknown;
+};
+
+/** Resolve execution readiness from saved card structure plus the one live Python
+ * AutoGen tool registry. Blue-edge discovery remains topology-only; this check
+ * decides which discovered cards may enter a model run. */
+export async function resolveMagenticWorkerReadiness(
+  connectedCards: any[],
+): Promise<MagenticWorkerReadiness[]> {
+  let manifestById: Map<string, RuntimeToolManifestItem>;
+  try {
+    const response = await requestPythonRailsJson('/tools/manifest', { method: 'GET' }) as any;
+    const manifest = Array.isArray(response?.tools) ? response.tools : null;
+    if (!manifest) throw new Error('autogen_tool_manifest_invalid');
+    const entries: Array<readonly [string, RuntimeToolManifestItem]> = manifest
+      .map((item: RuntimeToolManifestItem) => [String(item?.id || '').trim(), item] as const)
+      .filter((entry: readonly [string, RuntimeToolManifestItem]) => Boolean(entry[0]));
+    manifestById = new Map(entries);
+  } catch (error: any) {
+    const reason = String(error?.message || 'autogen_tool_manifest_unavailable');
+    return connectedCards.map((card) => ({
+      card,
+      connected: true,
+      executionReady: false,
+      readinessState: 'dependency_unavailable',
+      readinessReason: reason,
+    }));
+  }
+
+  return connectedCards.map((card) => {
+    const runtimeType = resolveCardRuntimeType(card);
+    if (!isPythonAutoGenCallableRuntimeType(runtimeType)) {
+      return {
+        card,
+        connected: true,
+        executionReady: false,
+        readinessState: 'staged_runtime_missing',
+        readinessReason: `magentic_runtime_not_supported: ${runtimeType}`,
+      };
+    }
+
+    try {
+      resolveCardModelStrict(card);
+      const selectedTools = resolveCardTools(card);
+      if (runtimeType === 'codex_app_server' && selectedTools.length > 0) {
+        throw new Error(`openai_coder_assigned_tools_forbidden:${selectedTools.join(',')}`);
+      }
+      for (const toolId of selectedTools) {
+        const descriptor = manifestById.get(toolId);
+        if (!descriptor) throw new Error(`card_tool_unknown: ${toolId}`);
+        const compatibility = Array.isArray(descriptor.agentCompatibility)
+          ? descriptor.agentCompatibility.map((value) => String(value))
+          : [];
+        if (compatibility.length > 0 && !compatibility.includes('assistant_agent') && !compatibility.includes('magentic_one')) {
+          throw new Error(`card_tool_runtime_incompatible: ${toolId}`);
+        }
+      }
+      return {
+        card,
+        connected: true,
+        executionReady: true,
+        readinessState: 'ready',
+        readinessReason: null,
+      };
+    } catch (error: any) {
+      return {
+        card,
+        connected: true,
+        executionReady: false,
+        readinessState: 'configuration_invalid',
+        readinessReason: String(error?.message || 'magentic_worker_configuration_invalid'),
+      };
+    }
+  });
 }
 
 /** ORANGE network resolution: the enabled cards this parent may invoke as its
@@ -810,7 +897,14 @@ export async function runCardWithContract(
   const startedAt = new Date().toISOString();
   
   if (resolveCardRuntimeType(card) === 'magentic_one') {
-    const callableHeads = resolvedMagenticOptions(card.id, context.allCards || [], context.allEdges || []);
+    const connectedHeads = resolvedMagenticOptions(card.id, context.allCards || [], context.allEdges || []);
+    const requestedReadyIds = Array.isArray(context.magenticExecutionReadyCardIds)
+      ? new Set(context.magenticExecutionReadyCardIds.map((id: unknown) => String(id)))
+      : null;
+    const readiness = requestedReadyIds
+      ? connectedHeads.map((head) => ({ card: head, executionReady: requestedReadyIds.has(String(head.id)) }))
+      : await resolveMagenticWorkerReadiness(connectedHeads);
+    const callableHeads = readiness.filter((item) => item.executionReady).map((item) => item.card);
     const mode = String((card.runtimeOptions as any)?.mode || process.env.AGENT_DISCOVERY_MODE || 'locked_research_runtime').trim();
     const isDiscoveryMode = mode === 'discovery_proposal';
 

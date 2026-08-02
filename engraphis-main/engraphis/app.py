@@ -9,7 +9,7 @@ import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,7 +24,7 @@ from engraphis.engines.embedder import warmup as _warmup_embedder
 from engraphis.logging_setup import configure_logging
 from engraphis.netutil import client_ip
 from engraphis.routes.memory import router as memory_router
-from engraphis.routes.vault import router as vault_router
+from engraphis.routes.vault import VAULT_UPLOAD_REQUEST_BYTES, router as vault_router
 from engraphis.stores import get_conn, init_db
 
 logger = logging.getLogger("engraphis")
@@ -35,6 +35,152 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 # Readiness cache: only a *successful* embedder init is cached, so a transient
 # failure is re-checked on the next probe instead of wedging the pod NotReady.
 _embedder_ok: bool = False
+_UPLOAD_LIMIT_PATHS = frozenset({
+    "/api/workspaces/import-files",
+    "/memory/vaults/upload-folder",
+    "/memory/vaults/upload-folder-smart",
+})
+
+
+class LegacyReferenceConfigurationError(RuntimeError):
+    """The retired v1 server was not given a safely isolated database."""
+
+
+def _canonical_db_path(value: Union[str, Path]) -> Path:
+    """Return a comparison-safe database path without requiring it to exist."""
+    return Path(value).expanduser().resolve(strict=False)
+
+
+def _activate_legacy_reference_db(legacy_db_path: Union[str, Path]) -> str:
+    """Point the v1-only store at an explicitly separate compatibility database.
+
+    The legacy routes use the process-global v1 ``settings.db_path``.  They are safe
+    only in their own process, and only after this guard has rejected the active v2
+    database.  Dropping any thread-local v1 connection also prevents a prior test or
+    embedder call from keeping the old database open after the switch.
+    """
+    if not str(legacy_db_path).strip():
+        raise LegacyReferenceConfigurationError(
+            "the v1 reference requires an explicit --legacy-db path"
+        )
+    legacy_path = _canonical_db_path(legacy_db_path)
+    current_v2_path = _canonical_db_path(settings.db_path)
+    if legacy_path == current_v2_path:
+        raise LegacyReferenceConfigurationError(
+            "the v1 reference database must differ from the current v2 database "
+            "(%s)" % current_v2_path
+        )
+
+    # The v1 store is intentionally process-global.  This factory is therefore an
+    # internal compatibility boundary, not a way to mount v1 beside v2 in one server.
+    from engraphis import stores as legacy_stores
+
+    connection = getattr(legacy_stores._local, "conn", None)
+    if connection is not None:
+        connection.close()
+        del legacy_stores._local.conn
+    settings.db_path = str(legacy_path)
+    return settings.db_path
+
+
+def create_legacy_reference_app(*, legacy_db_path: Union[str, Path]) -> FastAPI:
+    """Build the internal v1 compatibility application on an isolated database.
+
+    This is deliberately distinct from the public v2 server and dashboard launchers.
+    Callers must supply the legacy database explicitly; using the configured v2
+    database is rejected before any schema initialization can occur.
+    """
+    _activate_legacy_reference_db(legacy_db_path)
+    return _build_legacy_reference_app()
+
+
+class _RequestBodyTooLarge(Exception):
+    """Internal signal used by the streaming ASGI request limiter."""
+
+
+class _VaultUploadLimitMiddleware:
+    """Reject oversized file imports before multipart parsing/spooling.
+
+    ``Content-Length`` provides an immediate fast-fail. The receive wrapper is still
+    required because clients can omit or lie about that header, including HTTP/1.1
+    chunked uploads. A fronting proxy should configure an equal or lower request-body
+    ceiling; this in-process guard remains the last line of defense for direct access.
+    """
+
+    def __init__(self, app, max_bytes: int):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope["type"] != "http"
+            or scope["method"] != "POST"
+            or scope["path"].rstrip("/") not in _UPLOAD_LIMIT_PATHS
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        raw_lengths = [
+            value for name, value in scope.get("headers", [])
+            if name.lower() == b"content-length"
+        ]
+        if len(raw_lengths) > 1:
+            await JSONResponse(
+                {"error": "invalid content-length"},
+                status_code=400,
+            )(scope, receive, send)
+            return
+        if raw_lengths:
+            try:
+                declared_length = int(raw_lengths[0])
+            except (TypeError, ValueError):
+                declared_length = -1
+            if declared_length < 0:
+                await JSONResponse(
+                    {"error": "invalid content-length"},
+                    status_code=400,
+                )(scope, receive, send)
+                return
+            if declared_length > self.max_bytes:
+                await self._too_large(scope, receive, send)
+                return
+
+        received = 0
+        limit_exceeded = False
+
+        async def limited_receive():
+            nonlocal limit_exceeded, received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    limit_exceeded = True
+                    raise _RequestBodyTooLarge
+            return message
+
+        async def guarded_send(message):
+            # FastAPI converts arbitrary body-parser exceptions into a generic 400.
+            # Suppress that replacement response once our receive wrapper has observed
+            # the real cause; the middleware emits the canonical 413 below.
+            if limit_exceeded:
+                return
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, guarded_send)
+        except _RequestBodyTooLarge:
+            pass
+        if limit_exceeded:
+            await self._too_large(scope, receive, send)
+
+    async def _too_large(self, scope, receive, send):
+        await JSONResponse(
+            {
+                "error": "request body too large",
+                "max_bytes": self.max_bytes,
+            },
+            status_code=413,
+        )(scope, receive, send)
 
 
 def _embedder_ready() -> bool:
@@ -85,8 +231,8 @@ async def _lifespan(app: FastAPI):
                 pass
 
 
-def create_app() -> FastAPI:
-    """Build and configure the FastAPI application."""
+def _build_legacy_reference_app() -> FastAPI:
+    """Build the v1 compatibility/reference FastAPI application."""
     configure_logging()
     # Hosted JSON logging is credential-redacting. Keep this after the legacy logging
     # setup so it replaces that formatter, and pair it with the launcher's log_config=None
@@ -115,19 +261,51 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(
+        _VaultUploadLimitMiddleware,
+        max_bytes=VAULT_UPLOAD_REQUEST_BYTES,
+    )
 
-    # Optional bearer-token auth. Active only when ENGRAPHIS_API_TOKEN is set.
+    # Bearer-token auth when ENGRAPHIS_API_TOKEN is set; loopback-only otherwise.
     # Health-type probes (liveness + readiness) stay unauthenticated by convention.
-    _PUBLIC_PREFIXES = ("/memory/health", "/api/health", "/api/ready",
-                        "/openapi.json", "/static")
+    _PUBLIC_PROBES = frozenset({
+        "/memory/health",
+        "/api/health",
+        "/api/ready",
+        "/openapi.json",
+    })
+
+    def _public_path(path: str) -> bool:
+        # ``/memory/health/*`` contains owner data such as titles and content previews;
+        # only the exact liveness probe is public. Static files remain prefix-matched.
+        return path in _PUBLIC_PROBES or path == "/static" or path.startswith("/static/")
+
+    from engraphis.netutil import is_local_request
 
     @app.middleware("http")
     async def _require_token(request: Request, call_next):
         token = settings.api_token
-        if token and request.method != "OPTIONS" and request.url.path != "/" \
-                and not request.url.path.startswith(_PUBLIC_PREFIXES):
+        if (request.method == "OPTIONS" or request.url.path == "/"
+                or _public_path(request.url.path)):
+            return await call_next(request)
+        if token:
             if not bearer_ok(request.headers.get("authorization"), token):
                 return JSONResponse({"error": "unauthorized"}, status_code=401)
+            return await call_next(request)
+
+        # Zero-config access is loopback-only, matching dashboard_app's gate.  Without
+        # this backstop a bind-all deployment (docker-entrypoint.sh defaults
+        # ENGRAPHIS_HOST to "::") publishes /memory/export and /memory/admin/* to every
+        # reachable peer.  scripts/graph_server.py already refuses the equivalent
+        # non-loopback start; this applies the same rule to the v1 surface.
+        if not is_local_request(request):
+            return JSONResponse(
+                {
+                    "error": "remote access is disabled until ENGRAPHIS_API_TOKEN is set",
+                    "auth": "local-token-required",
+                },
+                status_code=403,
+            )
         return await call_next(request)
 
     # Optional in-process rate limiting (per-client-IP sliding window). Disabled unless
@@ -141,7 +319,7 @@ def create_app() -> FastAPI:
         @app.middleware("http")
         async def _rate_limit(request: Request, call_next):
             nonlocal _last_prune
-            if request.method == "OPTIONS" or request.url.path.startswith(_PUBLIC_PREFIXES):
+            if request.method == "OPTIONS" or _public_path(request.url.path):
                 return await call_next(request)
             client = client_ip(request)
             now = time.monotonic()
@@ -192,7 +370,7 @@ def create_app() -> FastAPI:
     app.include_router(memory_router)
     app.include_router(vault_router)
 
-    # ── probes (unauthenticated; see _PUBLIC_PREFIXES) ──────────────────────────
+    # ── probes (unauthenticated; see _PUBLIC_PROBES) ────────────────────────────
     @app.get("/api/health")
     async def api_health():
         """Liveness: the process is up and serving. No dependency checks."""
@@ -259,4 +437,36 @@ async def _consciousness_loop() -> None:
             await asyncio.sleep(backoff)
 
 
-app = create_app()
+def _create_retired_direct_app() -> FastAPI:
+    """Retire the old ``uvicorn engraphis.app:app`` deployment target safely."""
+    retired = FastAPI(
+        title="Engraphis v1 reference retired",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+
+    @retired.api_route(
+        "/{path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+        include_in_schema=False,
+    )
+    async def legacy_reference_retired(path: str):
+        return JSONResponse(
+            {
+                "error": "legacy v1 reference application is retired",
+                "detail": (
+                    "Use engraphis-dashboard or engraphis-server for v2. "
+                    "The internal v1 reference requires "
+                    "python -m scripts.legacy_reference --legacy-db <separate-path>."
+                ),
+            },
+            status_code=410,
+        )
+
+    return retired
+
+
+# Keep the historical ASGI import target inert.  A direct ``engraphis.app:app`` launch
+# must never initialize the v1 schema in the configured (normally v2) database.
+app = _create_retired_direct_app()

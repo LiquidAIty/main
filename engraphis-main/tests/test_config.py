@@ -5,13 +5,19 @@ precision win on top of hybrid retrieval) can be turned on by config
 instead of only in code. The default must stay empty so the offline/numpy-only CI path is
 unchanged (empty -> None -> IdentityReranker, no torch).
 """
+from pathlib import Path
+
 import pytest
 
 from engraphis import config
 from engraphis.config import Settings
 
 
-RETIRED_RELAY_URL = "https://engraphis-production.up.railway.app"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RETIRED_RELAY_URLS = (
+    "https://engraphis-production.up.railway.app",
+    "https://team.engraphis.com",
+)
 
 
 def test_rerank_model_defaults_to_empty(monkeypatch):
@@ -34,6 +40,29 @@ def test_cors_origins_use_engraphis_port_env(monkeypatch):
     monkeypatch.setenv("ENGRAPHIS_PORT", "9100")
     assert Settings().cors_origins == [
         "http://127.0.0.1:9100", "http://localhost:9100"]
+
+
+def test_sample_operational_config_matches_runtime_contract(monkeypatch):
+    example = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    monkeypatch.delenv("ENGRAPHIS_RATE_LIMIT", raising=False)
+    assert Settings().rate_limit == 0
+    assert "# ENGRAPHIS_RATE_LIMIT=0" in example
+
+    monkeypatch.setenv("ENGRAPHIS_WORKSPACES", "acme,personal")
+    assert Settings().allowed_workspaces == ["acme", "personal"]
+    assert "# ENGRAPHIS_WORKSPACES=acme,personal" in example
+
+    assert "http://127.0.0.1:<ENGRAPHIS_PORT>" in example
+    assert "http://localhost:<ENGRAPHIS_PORT>" in example
+    assert "These settings do not change CORS" in example
+    assert "# ENGRAPHIS_DASHBOARD_URL=https://engraphis.example.com" in example
+
+    monkeypatch.delenv("ENGRAPHIS_LLM_AUTO_EXTRACT", raising=False)
+    assert Settings().llm_auto_extract is False
+    assert "ENGRAPHIS_LLM_AUTO_EXTRACT=0" in example
+    assert "| `ENGRAPHIS_LLM_AUTO_EXTRACT` | `0` |" in readme
 
 
 def test_rerank_model_read_from_env(monkeypatch):
@@ -64,8 +93,14 @@ def test_embed_dim_defaults_to_default_model_dimension(monkeypatch):
     assert Settings().embed_dim == 384
 
 
-def test_retired_relay_url_override_is_canonicalized():
-    assert config.canonicalize_relay_url(RETIRED_RELAY_URL) == config.DEFAULT_RELAY_URL
+@pytest.mark.parametrize("url", RETIRED_RELAY_URLS)
+def test_retired_relay_url_override_is_canonicalized(url):
+    assert config.canonicalize_relay_url(url) == config.DEFAULT_RELAY_URL
+
+
+def test_customer_relay_url_is_not_rewritten():
+    url = "https://relay.customer.example/team/"
+    assert config.canonicalize_relay_url(url) == url.rstrip("/")
 
 def test_invalid_service_mode_exits_process(monkeypatch):
     """Invalid ENGRAPHIS_SERVICE_MODE must fail-closed (sys.exit), not silently fall back."""

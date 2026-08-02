@@ -1,12 +1,13 @@
 """Thin client protocol for private Engraphis managed-compute features.
 
 The open package deliberately contains no analytics, dreaming, or automatic-consolidation
-algorithm. It can prepare an explicitly consented workspace snapshot, exclude secret-classified
-memories, and send that snapshot to the separately operated Engraphis Cloud service. The service
-is authoritative for entitlements and performs all paid computation.
+algorithm. It prepares a bounded workspace snapshot, excludes secret-classified memories, and
+sends that snapshot to the separately operated Engraphis Cloud service. The service is
+authoritative for entitlements and performs all paid computation.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -14,27 +15,99 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 from urllib.parse import quote
 
 from engraphis.cloud_session import CloudSessionError, access_for_workspace
+from engraphis.cloud_session import configured as cloud_session_configured
+from engraphis.hosted_client import account_url, build_pinned_https_opener
 
 SNAPSHOT_SCHEMA = "engraphis-managed-snapshot/v1"
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024
 MAX_MEMORIES = 100_000
 MAX_TEXT_CHARS = 100_000
+_AUTOMATION_BOOTSTRAP_SCHEMA = "engraphis-automation-bootstrap/v1"
+
+
+def _truthy(value: Optional[str]) -> bool:
+    return value is not None and value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _automation_bootstrap_key(organization_id: str, workspace_id: str) -> str:
+    """Return a bounded, tenant-specific key without exposing identifiers in SQLite."""
+
+    identity = ("%s\0%s" % (organization_id, workspace_id)).encode("utf-8")
+    return "managed_automation_bootstrap:" + hashlib.sha256(identity).hexdigest()
+
+
+def automation_bootstrap_phase(
+    service: Any, organization_id: str, workspace_id: str
+) -> str:
+    """Read the durable phase of first-policy provisioning for one hosted workspace."""
+
+    key = _automation_bootstrap_key(organization_id, workspace_id)
+    row = service.store.conn.execute(
+        "SELECT value FROM sync_state WHERE key=?", (key,)
+    ).fetchone()
+    if row is None:
+        return ""
+    try:
+        value = json.loads(str(row["value"]))
+    except (TypeError, ValueError, RecursionError):
+        return ""
+    if not isinstance(value, dict) or value.get("schema") != _AUTOMATION_BOOTSTRAP_SCHEMA:
+        return ""
+    phase = str(value.get("phase") or "")
+    return phase if phase in {"snapshot_uploaded", "policy_saved"} else ""
+
+
+def save_automation_bootstrap_phase(
+    service: Any,
+    organization_id: str,
+    workspace_id: str,
+    phase: str,
+    *,
+    generation: Optional[int] = None,
+) -> None:
+    """Persist bootstrap progress so a policy-save retry never re-uploads memory."""
+
+    if phase not in {"snapshot_uploaded", "policy_saved"}:
+        raise ValueError("invalid automation bootstrap phase")
+    value = {
+        "schema": _AUTOMATION_BOOTSTRAP_SCHEMA,
+        "phase": phase,
+    }
+    if generation is not None:
+        value["generation"] = int(generation)
+    key = _automation_bootstrap_key(organization_id, workspace_id)
+    conn = service.store.conn
+    owns_transaction = not conn.transaction_owned_by_current_thread()
+    try:
+        conn.execute(
+            "INSERT INTO sync_state(key, value, updated_at) VALUES (?,?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+            "updated_at=excluded.updated_at",
+            (key, json.dumps(value, sort_keys=True, separators=(",", ":")), time.time()),
+        )
+        if owns_transaction:
+            conn.commit()
+    except BaseException:
+        if owns_transaction and conn.transaction_owned_by_current_thread():
+            conn.rollback()
+        raise
 
 
 class CloudFeatureError(RuntimeError):
     """A bounded, redacted managed-cloud failure suitable for an HTTP/UI boundary."""
 
     def __init__(self, message: str, *, status: Optional[int] = None,
-                 transient: bool = False) -> None:
+                 transient: bool = False, code: Optional[str] = None) -> None:
         super().__init__(message)
         self.status = status
         self.transient = transient
+        self.code = code
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -42,14 +115,27 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _truthy(name: str) -> bool:
-    return os.environ.get(name, "").strip().casefold() in {"1", "true", "yes", "on"}
-
-
 def managed_compute_consent() -> bool:
-    """Return the explicit opt-in flag; an entitlement alone is never consent."""
+    """Return whether this installation may upload workspace content for managed work.
 
-    return _truthy("ENGRAPHIS_MANAGED_COMPUTE_CONSENT")
+    Consent travels with the cloud account: connecting an installation to Engraphis Cloud
+    accepts the terms that cover managed compute, so a connected installation is allowed by
+    default and the customer is never asked to hand-edit an environment variable.
+
+    A local installation with no cloud session is never allowed — there is no account, so
+    there is no agreement to rely on.
+
+    ``ENGRAPHIS_MANAGED_COMPUTE_CONSENT`` remains an explicit override for operators who want
+    to force the answer either way; ``=0`` opts a connected installation back out.
+    """
+    override = os.environ.get("ENGRAPHIS_MANAGED_COMPUTE_CONSENT")
+    if override is not None and override.strip() != "":
+        return _truthy(override)
+    try:
+        return bool(cloud_session_configured(require_compute=False))
+    except Exception:
+        # Consent must never be the reason a dashboard fails to render.
+        return False
 
 
 def _public_http_error(status: int) -> tuple[str, bool]:
@@ -61,7 +147,17 @@ def _public_http_error(status: int) -> tuple[str, bool]:
     if status in {401, 403}:
         return "Engraphis Cloud authorization was rejected.", False
     if status == 402:
-        return "This hosted feature is not available for the current plan.", False
+        # 402 is the control plane's "no active paid entitlement", which a lapsed or
+        # past_due subscription reaches just as often as a genuine free plan. Name the
+        # billing page so a paying customer can fix it instead of reading a dead end.
+        return (
+            "This hosted feature needs an active Engraphis Cloud subscription. Check "
+            # Plan-neutral: upgrade_url() with no argument resolves plan="pro", which
+            # sends a lapsed Team subscriber to the Pro checkout for a product they
+            # already hold at a higher tier.
+            "billing or upgrade at %s." % account_url(),
+            False,
+        )
     if status == 404:
         return "The hosted workspace or feature was not found.", False
     if status == 409:
@@ -73,6 +169,46 @@ def _public_http_error(status: int) -> tuple[str, bool]:
     if status >= 500:
         return "Engraphis Cloud is temporarily unavailable.", True
     return "Engraphis Cloud rejected the request.", False
+
+
+def _public_session_error(status: int) -> tuple[str, bool]:
+    """Map a session-acquisition failure to fixed, actionable public copy.
+
+    ``CloudSessionError`` text is never forwarded across this boundary (it can quote local
+    state paths), but the bare status alone reads as an outage for every cause.  A customer
+    whose subscription lapsed, whose session was revoked, or who is simply offline each
+    need a different next step, and only the transient ones are worth retrying.
+    """
+
+    if status == 401:
+        return (
+            "Connect this installation to Engraphis Cloud to use hosted features.",
+            False,
+        )
+    if status == 402:
+        return (
+            "This hosted feature needs an active Engraphis Cloud subscription. Check "
+            # Plan-neutral: upgrade_url() with no argument resolves plan="pro", which
+            # sends a lapsed Team subscriber to the Pro checkout for a product they
+            # already hold at a higher tier.
+            "billing or upgrade at %s." % account_url(),
+            False,
+        )
+    if status == 403:
+        return ("Engraphis Cloud authorization was rejected.", False)
+    if status == 409:
+        return (
+            "The saved cloud session is unusable; connect this installation again.",
+            False,
+        )
+    if status == 429:
+        return ("Engraphis Cloud is temporarily busy. Try again shortly.", True)
+    if status >= 500:
+        return (
+            "Engraphis Cloud is unreachable; hosted features resume once it responds.",
+            True,
+        )
+    return ("The cloud session is unavailable.", False)
 
 
 def _metadata(value: Any) -> dict:
@@ -180,25 +316,28 @@ def build_managed_snapshot(service: Any, workspace: str, *,
 
 
 def _build_managed_snapshot_locked(service: Any, workspace: str, *,
-                                   consent: Optional[bool] = None,
-                                   generation: Optional[int] = None) -> tuple[str, dict]:
+                                    consent: Optional[bool] = None,
+                                    generation: Optional[int] = None) -> tuple[str, dict]:
     """Build the bounded client-side transport document for one local workspace.
 
-    Secret-classified rows are omitted before serialization. Sensitive (but not secret) content
-    is included only after the same explicit managed-compute consent as normal content.
+    Secret-classified rows are omitted before serialization. ``consent`` allows an
+    already-confirmed caller to pass its decision explicitly; otherwise
+    :func:`managed_compute_consent` decides, which allows cloud-connected installations and
+    denies purely local ones.
     """
 
-    allowed = managed_compute_consent() if consent is None else bool(consent)
-    if not allowed:
-        raise CloudFeatureError(
-            "Managed compute is off. Opt in before uploading workspace content by setting "
-            "ENGRAPHIS_MANAGED_COMPUTE_CONSENT=1.",
-            status=409,
-        )
     clean_workspace = service._clean_ws(workspace)
     workspace_id = service._lookup_workspace(clean_workspace)
     if not workspace_id:
         raise CloudFeatureError("The selected workspace does not exist.", status=404)
+    allowed = managed_compute_consent() if consent is None else bool(consent)
+    if not allowed:
+        raise CloudFeatureError(
+            "Managed compute is turned off for this installation, so no workspace content "
+            "was uploaded. Connect this installation to Engraphis Cloud to use it.",
+            status=409,
+            code="consent_required",
+        )
     snapshot_generation = _reserve_snapshot_generation(
         service, workspace_id, requested=generation
     )
@@ -212,7 +351,8 @@ def _build_managed_snapshot_locked(service: Any, workspace: str, *,
                                 status=413)
     rows = service.store.conn.execute(
         "SELECT id, title, content, mtype, scope, ingested_at, last_access, valid_from, "
-        "valid_to, expired_at, stability, importance, pinned, sensitivity, metadata "
+        "valid_to, valid_to_recorded_at, expired_at, subject_key, claim_kind, "
+        "stability, importance, pinned, sensitivity, metadata "
         "FROM memories WHERE workspace_id=? AND COALESCE(scope, 'workspace')!='session' "
         "ORDER BY ingested_at, id",
         (workspace_id,),
@@ -258,7 +398,10 @@ def _build_managed_snapshot_locked(service: Any, workspace: str, *,
             "last_access": float(item.get("last_access") or item.get("ingested_at") or 0),
             "valid_from": float(item.get("valid_from") or 0),
             "valid_to": item.get("valid_to"),
+            "valid_to_recorded_at": item.get("valid_to_recorded_at"),
             "expired_at": item.get("expired_at"),
+            "subject_key": str(item.get("subject_key") or ""),
+            "claim_kind": str(item.get("claim_kind") or ""),
             "stability": float(item.get("stability") or 1),
             "importance": float(item.get("importance") or 0.5),
             "pinned": bool(item.get("pinned")),
@@ -289,15 +432,37 @@ def _build_managed_snapshot_locked(service: Any, workspace: str, *,
 class CloudFeatureClient:
     base_url: str
     organization_id: str
-    access_token: str
+    # A dataclass ``__repr__`` prints every field, so the default would put a live bearer
+    # token into any traceback, log line, or debugger frame that renders this client.
+    access_token: str = field(repr=False)
     timeout_seconds: float = 15.0
 
     @classmethod
     def from_environment(cls, workspace_id: str) -> "CloudFeatureClient":
         try:
             access_token, organization_id, base_url = access_for_workspace(workspace_id)
-        except (CloudSessionError, ValueError) as exc:
-            raise CloudFeatureError(str(exc), status=503) from exc
+        except CloudSessionError as exc:
+            status = exc.status if 400 <= exc.status <= 599 else 503
+            message, transient = _public_session_error(status)
+            # A missing local session is the one 401 that can lead directly to the
+            # Cloud trial.  Keep it distinguishable from a revoked/expired session:
+            # its owner may already have an entitlement and must not be offered a
+            # second trial.  The UI still combines this code with the authoritative
+            # ``trial.available`` flag before drawing the signup surface.
+            try:
+                unconfigured = not cloud_session_configured(require_compute=True)
+            except Exception:  # noqa: BLE001 - preserve the original bounded error
+                unconfigured = False
+            raise CloudFeatureError(
+                message,
+                status=status,
+                transient=transient,
+                code="cloud_unconfigured" if status == 401 and unconfigured else None,
+            ) from exc
+        except ValueError as exc:
+            raise CloudFeatureError(
+                "The cloud session configuration is invalid.", status=409
+            ) from exc
         return cls(base_url=base_url, organization_id=organization_id,
                    access_token=access_token)
 
@@ -318,7 +483,7 @@ class CloudFeatureClient:
         request = urllib.request.Request(self.base_url + path, data=encoded,
                                          headers=headers, method=method)
         try:
-            with urllib.request.build_opener(_NoRedirect()).open(
+            with build_pinned_https_opener(_NoRedirect()).open(
                 request, timeout=self.timeout_seconds
             ) as response:
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
@@ -428,8 +593,17 @@ class CloudFeatureClient:
 def run_managed_job(service: Any, workspace: str, kind: str, *,
                     client: Optional[CloudFeatureClient] = None,
                     wait_seconds: float = 20.0) -> dict:
+    # Authorize before touching the store.  ``build_managed_snapshot`` takes an exclusive
+    # BEGIN IMMEDIATE write lock, *commits* a monotonic generation row, and serializes up
+    # to ``MAX_MEMORIES`` rows -- so a lapsed subscriber clicking a paid tab stalled every
+    # local writer and durably advanced state before being told 402.  The consent
+    # pre-check does not cover this: a lapsed account still has a saved cloud session.
+    # ``automation_set`` already gates in this order; match it.
+    resolved_id = service._lookup_workspace(service._clean_ws(workspace))
+    if not resolved_id:
+        raise CloudFeatureError("The selected workspace does not exist.", status=404)
+    cloud = client or CloudFeatureClient.from_environment(resolved_id)
     workspace_id, snapshot = build_managed_snapshot(service, workspace)
-    cloud = client or CloudFeatureClient.from_environment(workspace_id)
     receipt = cloud.upload_snapshot(workspace_id, snapshot)
     generation = int(receipt.get("generation", snapshot["generation"]))
     return cloud.run_job(workspace_id, kind, generation, wait_seconds=wait_seconds)

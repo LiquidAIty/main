@@ -9,11 +9,13 @@ shipped entry point could drive it. These tests lock the wiring in place.
 from __future__ import annotations
 
 import json
+import socket
+import base64
 
 import pytest
 
 from engraphis.backends.sync_folder import get_transport
-from engraphis.backends.sync_relay import RelayError, RelayTransport
+from engraphis.backends.sync_relay import EncryptedRelayTransport, RelayError, RelayTransport
 from engraphis.core.engine import MemoryEngine
 from engraphis.core.interfaces import SyncTransport
 from scripts.sync import main as sync_main
@@ -21,14 +23,38 @@ from scripts.sync import main as sync_main
 
 # ── factory: relay is now a first-class transport ───────────────────────────────────
 
-def test_get_transport_relay_builds_relay_transport():
+def test_get_transport_relay_builds_relay_transport(monkeypatch):
+    pytest.importorskip("cryptography")
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))
+        ],
+    )
     t = get_transport("relay", base_url="https://sync.test/", workspace_id="acme",
-                      access_token="engr_ut_" + "x" * 32)
-    assert isinstance(t, RelayTransport)
+                      access_token="engr_ut_" + "x" * 32,
+                      e2ee_key=base64.urlsafe_b64encode(b"k" * 32).decode().rstrip("="))
+    assert isinstance(t, EncryptedRelayTransport)
     assert isinstance(t, SyncTransport)          # satisfies the runtime-checkable protocol
-    assert t.base == "https://sync.test"         # trailing slash stripped
+    assert isinstance(t.relay, RelayTransport)
+    assert t.relay.base == "https://sync.test"   # trailing slash stripped
     assert t.workspace_id == "acme"
-    assert t.key == "engr_ut_" + "x" * 32
+    assert t.relay.key == "engr_ut_" + "x" * 32
+
+
+def test_get_transport_relay_refuses_to_fall_back_to_plaintext(monkeypatch):
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))
+        ],
+    )
+    monkeypatch.delenv("ENGRAPHIS_SYNC_E2EE_KEY", raising=False)
+    with pytest.raises(RelayError, match="end-to-end encryption key"):
+        get_transport("relay", base_url="https://sync.test/", workspace_id="acme",
+                      access_token="engr_ut_" + "x" * 32)
 
 
 def test_get_transport_relay_requires_base_url_and_workspace():
@@ -179,6 +205,23 @@ def test_cli_selects_folder(db_with_workspace, _capture_transport, tmp_path):
     assert rc == 0
     assert _capture_transport["kind"] == "folder"
     assert _capture_transport["kw"]["root"] == share
+    assert _capture_transport["kw"]["create"] is True
+
+
+def test_cli_folder_dry_run_does_not_create_missing_remote(db_with_workspace, tmp_path):
+    share = tmp_path / "missing-share"
+
+    rc = sync_main([
+        "--db", db_with_workspace,
+        "--workspace", "acme",
+        "--remote", str(share),
+        "--dry-run",
+    ])
+
+    assert rc == 0
+    assert not share.exists()
+    engine = MemoryEngine.create(db_with_workspace)
+    assert engine.store.get_sync_state("device_id") is None
 
 
 def test_cli_bare_relay_falls_back_to_config(db_with_workspace, _capture_transport, monkeypatch):

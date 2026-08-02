@@ -111,6 +111,11 @@ class ThinkGraphEngraphis:
         self._index: NumpyVectorIndex | None = None
         self._engine: MemoryEngine | None = None
         self._embedding_lock = RLock()
+        self._embedding_state = "idle"
+        self._embedding_initializations = 0
+        self._embedding_waiters = 0
+        self._embedding_duration_ms: int | None = None
+        self._embedding_error: str | None = None
         self.lock = RLock()
         self.store.conn.executescript(
             """
@@ -140,23 +145,37 @@ class ThinkGraphEngraphis:
     def _ensure_embedding_runtime(self) -> None:
         if self._engine is not None:
             return
+        if self._embedding_state == "initializing":
+            self._embedding_waiters += 1
         with self._embedding_lock:
             if self._engine is not None:
                 return
-            if self._embedder is None:
-                self._embedder = SentenceTransformerEmbedder(EMBED_MODEL)
-            if int(self._embedder.dim) != 384:
-                raise RuntimeError(
-                    f"thinkgraph_embedding_dimension_mismatch: {self._embedder.dim}"
+            started = time.perf_counter()
+            self._embedding_state = "initializing"
+            self._embedding_initializations += 1
+            self._embedding_error = None
+            try:
+                if self._embedder is None:
+                    self._embedder = SentenceTransformerEmbedder(EMBED_MODEL)
+                if int(self._embedder.dim) != 384:
+                    raise RuntimeError(
+                        f"thinkgraph_embedding_dimension_mismatch: {self._embedder.dim}"
+                    )
+                self._index = NumpyVectorIndex(self.store)
+                self._engine = MemoryEngine(
+                    self.store,
+                    self._embedder,
+                    self._index,
+                    IdentityReranker(),
+                    auto_evolve=False,
                 )
-            self._index = NumpyVectorIndex(self.store)
-            self._engine = MemoryEngine(
-                self.store,
-                self._embedder,
-                self._index,
-                IdentityReranker(),
-                auto_evolve=False,
-            )
+                self._embedding_state = "ready"
+            except Exception as error:
+                self._embedding_state = "failed"
+                self._embedding_error = str(error)
+                raise
+            finally:
+                self._embedding_duration_ms = round((time.perf_counter() - started) * 1000)
 
     @property
     def embedder(self) -> Any:
@@ -180,6 +199,18 @@ class ThinkGraphEngraphis:
             "normalized": True,
             "storage": self.db_path,
             "remoteEmbeddingFallback": False,
+            "embeddingRuntime": {
+                "state": self._embedding_state,
+                "loaded": self._engine is not None,
+                "initializations": self._embedding_initializations,
+                "waiters": self._embedding_waiters,
+                "durationMs": self._embedding_duration_ms,
+                "error": self._embedding_error,
+                # Engine construction reads persisted vectors through the index;
+                # it does not regenerate or rewrite them.
+                "generatedOnInitialization": 0,
+                "persistedReembeddedOnInitialization": 0,
+            },
         }
 
     def _scope(self, project_id: str) -> tuple[str, str]:
@@ -299,6 +330,7 @@ class ThinkGraphEngraphis:
             "mentionCount": mention_count,
             "updatedAt": _iso(now),
             "embedModel": EMBED_MODEL,
+            "embed_model": EMBED_MODEL,
         }
         memory_type = _mtype(kind, properties)
         vector = embedding
@@ -332,28 +364,7 @@ class ThinkGraphEngraphis:
             },
             embedding=vector,
         )
-        self.store.conn.execute(
-            """INSERT INTO memories
-               (id, workspace_id, repo_id, session_id, scope, mtype, title, content, summary,
-                keywords, metadata, importance, surprise, stability, access_count, last_access,
-                valid_from, valid_to, ingested_at, expired_at, pinned, sensitivity, provenance)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-               """,
-            (
-                record.id, record.workspace_id, record.repo_id, record.session_id,
-                record.scope.value, record.mtype.value, record.title, record.content,
-                record.summary, _json(record.keywords), _json(record.metadata),
-                record.importance, record.surprise, record.stability, record.access_count,
-                record.last_access, record.valid_from, record.valid_to, record.ingested_at,
-                record.expired_at, int(record.pinned), record.sensitivity,
-                _json(record.provenance),
-            ),
-        )
-        self.store.conn.execute(
-            "INSERT INTO mem_fts(id, title, content, keywords) VALUES(?,?,?,?)",
-            (record.id, record.title, record.content, " ".join(record.keywords)),
-        )
-        self.store.put_vector(record.id, vector, model=EMBED_MODEL)
+        self.store.add_memory(record, audit=False, commit=False)
         self.store.conn.execute(
             """INSERT INTO entities(id, workspace_id, repo_id, name, etype, canonical_id, created_at)
                VALUES(?,?,?,?,?,?,?)

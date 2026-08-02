@@ -1,6 +1,7 @@
 """Central configuration — all values sourced from env with safe defaults."""
 from __future__ import annotations
 
+import errno
 import json
 import hashlib
 import os
@@ -8,6 +9,7 @@ import re
 import sqlite3
 import stat
 import sys
+import time
 from contextlib import contextmanager
 import uuid
 from dataclasses import dataclass, field
@@ -35,6 +37,7 @@ except Exception:
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_DB_NOTICES = set()
+_WINDOWS_LOCK_RETRY_SECONDS = 0.05
 
 
 def _default_db_path(root: Path = _PROJECT_ROOT, *, os_name: Optional[str] = None,
@@ -221,6 +224,21 @@ def _cleanup_stale_migration_stages(target: Path) -> None:
                 pass
 
 
+def _lock_windows_migration_file(handle, msvcrt) -> None:
+    """Acquire the CRT lock even when its finite internal wait window expires."""
+    while True:
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            return
+        except OSError as exc:
+            # ``LK_LOCK`` only retries internally for about ten seconds. Another process
+            # may still be performing a legitimate first-run migration, so keep waiting
+            # for lock contention but surface all filesystem/programming failures.
+            if exc.errno not in (errno.EACCES, errno.EDEADLK):
+                raise
+            time.sleep(_WINDOWS_LOCK_RETRY_SECONDS)
+
+
 @contextmanager
 def _migration_lock(target: Path):
     """Serialize first-run migration across processes without a third-party lock."""
@@ -261,9 +279,17 @@ def _migration_lock(target: Path):
             handle.seek(0, os.SEEK_END)
             if handle.tell() == 0:
                 handle.write(b"\0")
-                handle.flush()
+                # Retry flush on Windows to handle concurrent file access
+                for attempt in range(10):
+                    try:
+                        handle.flush()
+                        break
+                    except PermissionError:
+                        if attempt == 9:
+                            raise
+                        time.sleep(0.01 * (2 ** attempt))  # Exponential backoff
             handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            _lock_windows_migration_file(handle, msvcrt)
         else:
             import fcntl
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
@@ -280,7 +306,18 @@ def _migration_lock(target: Path):
                     import fcntl
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         finally:
-            handle.close()
+            # Retry close on Windows to handle concurrent file access
+            if os.name == "nt":
+                for attempt in range(10):
+                    try:
+                        handle.close()
+                        break
+                    except PermissionError:
+                        if attempt == 9:
+                            raise
+                        time.sleep(0.01 * (2 ** attempt))  # Exponential backoff
+            else:
+                handle.close()
 
 
 def _prepare_installed_db_default_unlocked(root: Path, target: Path) -> Path:
@@ -421,9 +458,9 @@ def _configured_db_path(root: Path = _PROJECT_ROOT) -> str:
     return str(target)
 
 
-#: Vendor-hosted managed sync service. Customer deployments normally override this with
-#: their own dashboard URL; local Pro clients retain the managed default.
-DEFAULT_RELAY_URL = "https://team.engraphis.com"
+#: Vendor-hosted managed sync service. The authenticated account portal is at
+#: ``https://api.engraphis.com/account``; sync traffic goes to this separate relay endpoint.
+DEFAULT_RELAY_URL = "https://relay.engraphis.com"
 
 SERVICE_MODES = ("customer",)
 # The public package is a customer data plane and contains no vendor authority or hosted
@@ -435,6 +472,7 @@ DEFAULT_SERVICE_MODE = "customer"
 # managed service. Arbitrary signed URLs remain authoritative.
 RETIRED_RELAY_URLS = frozenset({
     "https://engraphis-production.up.railway.app",
+    "https://team.engraphis.com",
 })
 
 def _env(key: str, default: str = "") -> str:
@@ -577,8 +615,9 @@ class Settings:
 
     # Fact extraction on the v2 write path: "none" (default — store text as given),
     # "chunk" (deterministic, offline structure-aware chunking — knobs
-    # ENGRAPHIS_CHUNK_TOKENS/_OVERLAP/_MAX), or "llm" (distill raw text into discrete
-    # facts via the configured LLM before storing).
+    # ENGRAPHIS_CHUNK_TOKENS/_OVERLAP/_MAX and optional pinned
+    # ENGRAPHIS_CHUNK_TOKENIZER_MODEL/_REVISION), or "llm" (distill raw text into
+    # discrete facts via the configured LLM before storing).
     extractor: str = field(default_factory=lambda: _env("ENGRAPHIS_EXTRACTOR", "none").lower())
 
     llm_provider: str = field(

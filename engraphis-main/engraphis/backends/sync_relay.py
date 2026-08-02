@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import hmac
 import ipaddress
 import json
 import math
@@ -25,6 +26,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 from urllib.parse import quote, urlsplit, urlunsplit
 
+from engraphis.hosted_client import build_pinned_https_opener
 from engraphis.private_state import UnsafeStateFile, atomic_private_text, read_private_text
 
 MAX_RELAY_BUNDLE_BYTES = 64 * 1024 * 1024
@@ -44,6 +46,14 @@ MAX_PULL_FAILURE_CHARS = 200
 FATAL_PULL_STATUSES = frozenset({401, 402, 403, 429})
 MAX_SYNC_TOKEN_BYTES = 8192
 MAX_SYNC_POLICY_BYTES = 64
+SYNC_E2EE_PROTOCOL = "v1"
+# Wire framing is intentionally binary.  The relay stays a blind byte store and can never
+# mistake an encrypted bundle for its old JSON payload format.
+SYNC_E2EE_MAGIC = b"engraphis-sync-e2ee-v1\x00"
+SYNC_E2EE_KEY_BYTES = 32
+SYNC_E2EE_NONCE_BYTES = 12
+SYNC_E2EE_TAG_BYTES = 16
+SYNC_E2EE_KEY_ENV = "ENGRAPHIS_SYNC_E2EE_KEY"
 
 
 class RelayError(RuntimeError):
@@ -62,6 +72,48 @@ class RelayUnreachable(RelayError):
     """
 
 
+def decode_sync_e2ee_key(value: object) -> bytes:
+    """Decode the user-held Cloud Sync key without ever accepting a weak variant.
+
+    It is deliberately a URL-safe, unpadded base64 value for exactly 32 random bytes.
+    The Cloud service never receives this value: operators provision the same value to
+    each authorized device through their own trusted channel.
+    """
+    raw = str(value or "").strip()
+    if re.fullmatch(r"[A-Za-z0-9_-]{43}", raw) is None:
+        raise RelayError(
+            "Cloud Sync needs a 32-byte end-to-end encryption key in "
+            + SYNC_E2EE_KEY_ENV,
+            status=409,
+        )
+    try:
+        key = base64.b64decode(raw + "=", altchars=b"-_", validate=True)
+    except (ValueError, binascii.Error):
+        raise RelayError("Cloud Sync end-to-end encryption key is malformed", status=409) from None
+    if len(key) != SYNC_E2EE_KEY_BYTES:
+        raise RelayError("Cloud Sync end-to-end encryption key is malformed", status=409)
+    return key
+
+
+def configured_sync_e2ee_key(value: object = None) -> bytes:
+    """Return an explicit key or fail closed before a Cloud upload can begin."""
+    configured = os.environ.get(SYNC_E2EE_KEY_ENV) if value is None else value
+    return decode_sync_e2ee_key(configured)
+
+
+def _new_e2ee_cipher(key: bytes):
+    """Construct the optional cryptography backend lazily, preserving a NumPy-only core."""
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+        from cryptography.exceptions import InvalidTag
+    except ImportError:
+        raise RelayError(
+            "Cloud Sync encryption requires the cryptography package (Python 3.10+)",
+            status=409,
+        ) from None
+    return ChaCha20Poly1305(key), InvalidTag
+
+
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Never forward a relay bearer credential to a redirect target."""
 
@@ -70,7 +122,7 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 def _urlopen_no_redirect(req, *, timeout: float):
-    return urllib.request.build_opener(_NoRedirectHandler()).open(req, timeout=timeout)
+    return build_pinned_https_opener(_NoRedirectHandler()).open(req, timeout=timeout)
 
 
 def _validated_sync_token(value: str) -> str:
@@ -157,7 +209,7 @@ def _sync_read_only_path() -> Path:
 
 def _atomic_private_text(path: Path, value: str) -> None:
     """Atomically write one owner-only state value next to the sync credential."""
-    atomic_private_text(path, value + "\n")
+    atomic_private_text(path, value + "\n", harden_parent=True)
 
 
 def save_sync_token(token: str, *, relay_origin: Optional[str] = None) -> None:
@@ -247,7 +299,7 @@ def has_sync_token() -> bool:
 
 
 def _is_loopback_host(host: str) -> bool:
-    if host == "localhost" or host.endswith(".localhost"):
+    if host == "localhost":
         return True
     try:
         return ipaddress.ip_address(host).is_loopback
@@ -286,12 +338,13 @@ def _validated_base_url(value: str) -> str:
                     ip_obj = ipaddress.ip_address(ip)
                 except ValueError:
                     continue  # sockaddr wasn't a parseable IP; skip
-                if (ip_obj.is_private or ip_obj.is_reserved or ip_obj.is_link_local
-                        or ip_obj.is_multicast or ip_obj.is_unspecified):
+                if not ip_obj.is_global:
                     raise ValueError(
                         "relay URL must not target private/reserved IP ranges")
         except (_socket.gaierror, OSError):
-            pass  # DNS resolution failure; let the actual request fail later
+            raise ValueError(
+                "relay URL host could not be resolved to a public address"
+            ) from None
     return urlunsplit((scheme, parts.netloc, parts.path.rstrip("/"), "", ""))
 
 
@@ -306,10 +359,107 @@ def _safe_bundle_name(name: object) -> str:
     return value
 
 
+class EncryptedRelayTransport:
+    """Client-side AEAD wrapper for the managed Cloud Sync byte relay.
+
+    The wrapped relay receives only an opaque deterministic bundle name and a framed
+    ChaCha20-Poly1305 ciphertext.  The key stays on authorized devices; authentication
+    data binds each ciphertext to both its Cloud workspace and stored name, so moving,
+    renaming, modifying, or downgrading a bundle fails closed before sync parses it.
+    """
+
+    def __init__(self, relay, key: bytes) -> None:
+        workspace_id = str(getattr(relay, "workspace_id", "") or "")
+        if not workspace_id:
+            raise ValueError("encrypted relay transport requires a workspace-bound relay")
+        if not isinstance(key, (bytes, bytearray)) or len(key) != SYNC_E2EE_KEY_BYTES:
+            raise ValueError("Cloud Sync encryption key must contain exactly 32 bytes")
+        self.relay = relay
+        self.workspace_id = workspace_id
+        self._key = bytes(key)
+        self._cipher, self._invalid_tag = _new_e2ee_cipher(self._key)
+
+    def _opaque_name(self, name: object) -> str:
+        safe = _safe_bundle_name(name)
+        if not safe:
+            raise RelayError("relay bundle name is invalid")
+        digest = hmac.new(
+            self._key,
+            b"engraphis-cloud-sync-e2ee-name-v1\x00"
+            + self.workspace_id.encode("utf-8")
+            + b"\x00"
+            + safe.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return "e2ee-" + digest + ".json"
+
+    def _aad(self, stored_name: str) -> bytes:
+        return (
+            b"engraphis-cloud-sync-e2ee-v1\x00"
+            + self.workspace_id.encode("utf-8")
+            + b"\x00"
+            + stored_name.encode("ascii")
+        )
+
+    def push(self, name: str, data: bytes) -> None:
+        if not isinstance(data, (bytes, bytearray)):
+            raise RelayError("relay bundle data must be bytes")
+        # The relay cap applies to ciphertext too.  Refuse before allocating a large
+        # encrypted copy rather than relying on the wrapped transport to reject it later.
+        overhead = len(SYNC_E2EE_MAGIC) + SYNC_E2EE_NONCE_BYTES + SYNC_E2EE_TAG_BYTES
+        if len(data) > MAX_RELAY_BUNDLE_BYTES - overhead:
+            raise RelayError("relay bundle exceeded the encrypted upload safety limit")
+        stored_name = self._opaque_name(name)
+        nonce = os.urandom(SYNC_E2EE_NONCE_BYTES)
+        ciphertext = self._cipher.encrypt(nonce, bytes(data), self._aad(stored_name))
+        self.relay.push(stored_name, SYNC_E2EE_MAGIC + nonce + ciphertext)
+
+    def pull(self) -> Iterable[Tuple[str, bytes]]:
+        """Yield every authentic bundle and flag an incomplete encrypted round.
+
+        A Cloud Sync workspace may contain bundles written before E2EE existed, or a
+        relay object may have been damaged.  Neither is eligible for plaintext
+        fallback, but neither may prevent a later authenticated peer bundle from
+        being applied.  Match ``RelayTransport.pull``: fail closed for each bad
+        object, yield every valid one, then raise one sanitized error so
+        ``SyncEngine`` reports an incomplete round rather than a false success.
+        """
+        skipped = 0
+        for name, data in self.relay.pull():
+            try:
+                safe = _safe_bundle_name(name)
+                if not safe or not isinstance(data, (bytes, bytearray)):
+                    raise RelayError("relay returned an invalid encrypted bundle")
+                raw = bytes(data)
+                if not raw.startswith(SYNC_E2EE_MAGIC):
+                    raise RelayError("relay bundle requires end-to-end encryption")
+                payload = raw[len(SYNC_E2EE_MAGIC):]
+                if len(payload) < SYNC_E2EE_NONCE_BYTES + SYNC_E2EE_TAG_BYTES:
+                    raise RelayError("bundle could not be authenticated")
+                nonce = payload[:SYNC_E2EE_NONCE_BYTES]
+                ciphertext = payload[SYNC_E2EE_NONCE_BYTES:]
+                plaintext = self._cipher.decrypt(nonce, ciphertext, self._aad(safe))
+            except self._invalid_tag:
+                skipped += 1
+                continue
+            except RelayError:
+                skipped += 1
+                continue
+            yield safe, plaintext
+        if skipped:
+            raise RelayError(
+                "encrypted relay skipped %d unreadable bundle%s this round"
+                % (skipped, "" if skipped == 1 else "s")
+            )
+
+    def list_names(self) -> List[str]:
+        return self.relay.list_names()
+
+
 class RelayTransport:
     """A ``SyncTransport`` backed by the customer sync relay.
 
-    ``base_url`` is the relay root (e.g. ``https://team.engraphis.com``). ``workspace_id``
+    ``base_url`` is the relay root (e.g. ``https://relay.engraphis.com``). ``workspace_id``
     scopes bundles to one workspace. ``access_token`` must be a short-lived scoped cloud
     bearer. The legacy-named ``license_key`` parameter is accepted only as a call-site
     alias for that bearer; values with the retired ``ENGR1`` prefix are rejected. With no

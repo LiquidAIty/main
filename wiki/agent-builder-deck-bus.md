@@ -58,8 +58,12 @@ Card positions, edges, and prompt templates survive reload.
 saved card already loaded from the deck. It does not maintain a second runtime
 assignment record.
 
-**Bus**: a card with a `magentic_option` edge from the orchestrator is on the bus.
-No edge → disconnected → invisible to Mag One.
+**Bus**: an enabled card with a `magentic_option` edge from the orchestrator is
+discoverable on the bus, including a card nested in a visual/workbench parent.
+Discovery does not claim the card can execute. The backend separately validates
+its saved model/runtime configuration and selected tools against the live Python
+AutoGen tool manifest before including it in a run. No edge → disconnected →
+invisible to Mag One.
 
 **No-auto-broadcast**: cards never auto-join. Only explicit `magentic_option` edges
 connect cards to the bus. The Main Chat prompt states: "You are not a worker."
@@ -91,7 +95,8 @@ Main Chat bus edge: buildMainChatBusEdge() [mainChatControllerCard.ts:54]
 
 1. Deck is sole authority — runtime reads from `getDeckDocument`/`canvas_inspect`,
    never from browser in-memory state.
-2. Bus connectivity is edge-driven — only `magentic_option` edges. No role inference.
+2. Bus discovery is edge-driven — only `magentic_option` edges. Execution readiness
+   is a separate structural/runtime validation; neither is inferred from prompt text.
 3. `ensureMainChatControllerCard` only creates the card + edge if missing — never
    overwrites a user-modified Main Chat card.
 4. Deck persistence is CAS — concurrent saves retry rather than silent overwrite.
@@ -134,6 +139,8 @@ persists edges (UI-proven), Python `canvas_inspect` matches deck store (integrat
   code but not actual card/edge data. Verify at task time via `getDeckDocument`.
 - **Bus connectivity is a deck-edge runtime property.** CBM confirms resolution code,
   not which cards have edges. Read the deck edges at task time.
+- **Execution readiness is not connectivity.** Read the live saved-card readiness
+  fields (`executionReady`, `readinessState`, `readinessReason`) before launching.
 - **Canvas UI** (AgentCanvasPane) is CBM-verified as function nodes. Selection, edge
   drawing, drag behavior are UI-proven, not graph-traversable.
 - **Python MCP boundary** is a network call. CBM verifies the TypeScript call site,

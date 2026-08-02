@@ -28,17 +28,51 @@ def test_published_image_and_railway_template_fail_safe_to_customer_mode():
     assert local_api["value"] == "${{ secret(48) }}"
     assert local_api["secret"] is True
     assert local_api["required"] is True
+    # Railway supplies this system variable for the service's generated/custom public
+    # domain.  Feeding it into the fixed dashboard URL lets MCP-over-HTTP accept the
+    # real public Origin/Host without weakening its DNS-rebinding guard to a wildcard.
+    dashboard_url = template["variables"]["ENGRAPHIS_DASHBOARD_URL"]
+    assert dashboard_url["value"] == "https://${{RAILWAY_PUBLIC_DOMAIN}}"
+    assert dashboard_url["required"] is False
+    # Managed-compute consent travels with the cloud account. A template that shipped a
+    # hard-coded value would override that for every deployment made from it -- "0" would
+    # silently opt a connected deployment back out -- so the default must stay blank.
+    managed_consent = template["variables"]["ENGRAPHIS_MANAGED_COMPUTE_CONSENT"]
+    assert not managed_consent["value"]
+    assert managed_consent["required"] is False
     for removed in (
         "ENGRAPHIS_DEPLOYMENT_TOKEN",
         "ENGRAPHIS_LICENSE_KEY",
         "ENGRAPHIS_TEAM_MODE",
+        "RESEND_API_KEY",
     ):
         assert removed not in template["variables"]
+
+
+def test_all_public_launchers_converge_on_the_v2_service():
+    compose = _text("docker-compose.yml")
+    readme = _text("README.md")
+    launcher = _text("scripts/start_server.py")
+
+    assert "engraphis-api:" not in compose
+    assert "engraphis_v1.db" not in compose
+    assert 'command: ["engraphis-dashboard", "--no-open"]' in compose
+    assert "start_dashboard.main(args)" in launcher
+    assert "engraphis.app" not in launcher
+    assert "same v2 service" in readme
 
 
 def test_ci_and_release_audit_production_image_dependencies():
     ci = _text(".github/workflows/ci.yml")
     release = _text(".github/workflows/release.yml")
+    release_build = release.split("  build:\n", 1)[1].split("  python-matrix:\n", 1)[0]
+    release_docker = release.split("  docker-smoke:\n", 1)[1].split(
+        "  release-evidence:\n", 1
+    )[0]
+    release_evidence = release.split("  release-evidence:\n", 1)[1].split(
+        "  publish:\n", 1
+    )[0]
+    publish = release.split("  publish:\n", 1)[1].split("  github-release:\n", 1)[0]
 
     assert "Audit the exact production image dependency set" in ci
     assert "docker run --rm --entrypoint sh engraphis:ci" in ci
@@ -49,28 +83,55 @@ def test_ci_and_release_audit_production_image_dependencies():
     assert "docker-entrypoint\\.sh" in ci
     assert "railway\\.json" in ci
     assert "deploy/" in ci
-    assert '".[all,test]"' in release
-    assert "Audit production image dependencies" in release
+    assert 'build twine pip-audit ".[all,test]"' in release_build
+    assert "python -m pip_audit --local" in release_build
+    assert "docker build -t engraphis:release ." in release_docker
+    assert "Audit production image dependencies" in release_docker
+    assert "python -m pip install --no-cache-dir pip-audit" in release_docker
+    assert "python -m pip_audit --local" in release_docker
+    assert "needs: [build, python-matrix, browser-accessibility, docker-smoke]" in release_evidence
+    assert "needs: release-evidence" in publish
     assert "Browser accessibility release gate" in release
     assert "Require release tag commit to be on protected main" in release
     for version in ('"3.9"', '"3.10"', '"3.11"', '"3.12"'):
         assert version in release
 
 
+def test_ci_and_release_never_hide_skips_or_lose_the_full_stack_silently():
+    """The configured ``-q`` plus a workflow ``-q`` used to hide counts and skips."""
+
+    for path in (".github/workflows/ci.yml", ".github/workflows/release.yml"):
+        workflow = _text(path)
+        assert "python -m pytest tests/ -q" not in workflow
+        assert 'python -m pytest -o addopts="" tests/ -q -rs' in workflow
+    required = 'import fastapi, httpx, mcp, multipart, pydantic, uvicorn'
+    assert required in _text(".github/workflows/ci.yml")
+    assert required in _text(".github/workflows/release.yml")
+
+
 def test_release_builds_one_portable_open_core_wheel():
+    ci = _text(".github/workflows/ci.yml")
     release = _text(".github/workflows/release.yml")
     pyproject = _text("pyproject.toml")
 
     assert 'requires-python = ">=3.9"' in pyproject
-    for version in ("3.9", "3.10", "3.11", "3.12"):
+    for version in ("3.9", "3.10", "3.11", "3.12", "3.13", "3.14"):
         assert f'"Programming Language :: Python :: {version}"' in pyproject
+    assert 'python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]' in ci
+    assert (
+        'python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]'
+        in release
+    )
     assert not (ROOT / ".github/workflows/build-compiled-wheels.yml").exists()
     assert "cython" not in pyproject.lower()
     assert "cibuildwheel" not in release
-    assert "run: python -m build\n" in release
+    assert release.count("python -m build") == 1
+    assert "python scripts/verify_distribution_contents.py dist/*" in release
     assert "Build compiled wheels" not in release
     assert "name: Assemble distributions" not in release
     assert "needs: [build, python-matrix, browser-accessibility, docker-smoke]" in release
+    assert "  release-evidence:\n" in release
+    assert "needs: release-evidence" in release
     assert "name: python-package-distributions" in release
 
 
@@ -98,6 +159,31 @@ def test_ci_and_release_default_to_read_only_repository_permissions():
         assert "\npermissions:\n  contents: read\n" in header
 
 
+def test_codeql_workflow_fails_when_sarif_contains_findings():
+    workflow = _text(".github/workflows/codeql.yml")
+
+    # CodeQL's PR default is diff-informed and omits findings outside the
+    # patch. The release gate must instead inspect complete raw SARIF.
+    assert 'CODEQL_ACTION_DIFF_INFORMED_QUERIES: "false"' in workflow
+    assert "id: analyze" in workflow
+    assert "output: codeql-results" in workflow
+    assert (
+        'python scripts/check_codeql_sarif.py '
+        '"${{ steps.analyze.outputs.sarif-output }}"'
+    ) in workflow
+
+
+def test_ci_linter_is_bounded_to_the_verified_release_series():
+    pyproject = _text("pyproject.toml")
+
+    # A version bound alone never made the linter deterministic: ruff's *default* rule set
+    # is not stable across minor releases -- 0.16 widened it from 59 rules to 413, which
+    # would have turned `ruff check .` red on unchanged code. Pinning `select` explicitly
+    # is what actually bounds CI, so the bound and the rule set are asserted together.
+    assert pyproject.count('"ruff>=0.15.22,<0.17"') == 2
+    assert 'select = ["E4", "E7", "E9", "F"]' in pyproject
+
+
 def test_release_repair_requires_tag_sha_successful_build_publish_and_pypi_identity():
     repair = _text(".github/workflows/release.yml").split(
         "github-release-repair:", 1
@@ -108,20 +194,30 @@ def test_release_repair_requires_tag_sha_successful_build_publish_and_pypi_ident
     assert '"repos/${GH_REPO}/git/ref/tags/${RELEASE_TAG}"' in repair
     assert '"repos/${GH_REPO}/git/tags/${tag_sha}"' in repair
     assert 'test "$object_type" = "commit"' in repair
-    assert "--json databaseId,headBranch,headSha,event" in repair
+    assert "--json databaseId,headBranch,headSha,event,createdAt" in repair
     assert ".headBranch == $tag" in repair
     assert ".headSha == $sha" in repair
     assert '.event == "push"' in repair
+    assert "sort_by(.createdAt)" in repair
     assert '.name == "Build distributions"' in repair
     assert '.name == "Publish to PyPI"' in repair
+    assert '.name == "Generate public release evidence"' in repair
     assert '.name == "Assemble distributions"' not in repair
     assert repair.count('.conclusion == "success"') >= 2
     assert 'gh run download "$run_id"' in repair
+    assert 'open("release-evidence/release-evidence.json", encoding="utf-8")' in repair
+    assert 'assert evidence.get("tag") == tag' in repair
+    assert 'assert evidence.get("commit") == commit' in repair
+    assert 'assert evidence.get("package", {}).get("version") == tag.removeprefix("v")' in repair
+    assert 'hashlib.sha256(path.read_bytes()).hexdigest()' in repair
+    assert 'assert expected == actual' in repair
     assert '--repo "$GH_REPO"' in repair
     assert '.conclusion == "failure"' in repair
     assert repair.count("scripts/verify_release_artifacts.py") == 2
     assert "--allow-subset" in repair
     assert "--retries 18 --delay 10" in repair
+    assert repair.count("Freeze verified distribution set") == 1
+    assert "--dist verified-dist" in repair
     assert "skip-existing: true" in repair
     assert "id-token: write" in repair
 
@@ -147,7 +243,7 @@ def test_primary_github_release_targets_repository_without_checkout():
 def test_public_capability_and_support_docs_match_the_shipped_tree():
     server = _text("engraphis/mcp_server.py")
     tools = re.findall(r'@mcp\.tool\(\s*name="(engraphis_[^"]+)"', server)
-    assert len(tools) == len(set(tools)) == 29
+    assert len(tools) == len(set(tools)) == 31
 
     readme = _text("README.md")
     architecture = _text("docs/ARCHITECTURE_V3.md")
@@ -158,8 +254,10 @@ def test_public_capability_and_support_docs_match_the_shipped_tree():
         assert "28 MCP tools" not in content
         assert "28-tool" not in content
         assert "(28 of them)" not in content
-    assert "29 MCP tools" in architecture
-    assert "(29 of them)" in skill
+    assert "31 MCP tools" in architecture
+    assert "(31 of them)" in skill
+    assert "recall_context (compact)" in architecture
+    assert "engraphis_recall_context" in readme
     assert "`engraphis_check_update`" in readme
     for content in (skill, skill_tools, skill_scoping):
         assert "force_new" in content
@@ -168,6 +266,10 @@ def test_public_capability_and_support_docs_match_the_shipped_tree():
 
     changelog = _text("CHANGELOG.md")
     assert "ForceGraph + D3 renderer" in changelog
+    assert "## [1.1.0] - 2026-07-26" in changelog
+    assert "Public 1.1.0 hosted-connect and graph-experience release." in changelog
+    assert "## [1.0.1] - 2026-07-24" in changelog
+    assert "Public 1.0.1 client reliability release." in changelog
     assert "## [1.0.0] - 2026-07-23" in changelog
     assert "## [1.0.0] - 2026-07-19" not in changelog
     assert "Public 1.0.0 open-core GA release." in changelog
@@ -176,6 +278,11 @@ def test_public_capability_and_support_docs_match_the_shipped_tree():
         ROOT / name for name in (
             ".env.example", "AGENTS.md", "CHANGELOG.md", "NOTICE", "README.md",
             "SECURITY.md", "engraphis/config.py", "engraphis/routes/v2_api.py",
+            "engraphis/dashboard_assets/index.html",
+            "engraphis/dashboard_assets/ledger.css",
+            "engraphis/dashboard_assets/ledger.js",
+            "engraphis/classic_assets/index.html",
+            "engraphis/classic_assets/dashboard.js",
             "engraphis/static/dashboard.js", "engraphis/static/index.html",
         )
     ]
