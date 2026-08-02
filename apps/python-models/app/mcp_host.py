@@ -95,14 +95,12 @@ PUBLIC_MCP_RESOURCE_URL = os.environ.get(
 ).strip()
 AUTH0_ISSUER_URL = os.environ.get("LIQUIDAITY_AUTH0_ISSUER_URL", "").strip()
 AUTH0_AUDIENCE = os.environ.get("LIQUIDAITY_AUTH0_AUDIENCE", "").strip()
-AUTH0_CLIENT_ID = os.environ.get("LIQUIDAITY_AUTH0_CLIENT_ID", "").strip()
+AUTH0_CLIENT_ID = os.environ.get(
+    "LIQUIDAITY_AUTH0_MAIN_CLIENT_ID",
+    os.environ.get("LIQUIDAITY_AUTH0_CLIENT_ID", ""),
+).strip()
 AUTH0_REQUIRED_SCOPE = os.environ.get("LIQUIDAITY_AUTH0_REQUIRED_SCOPE", "liquidaity.main").strip()
-OAUTH_SCOPES = (
-    "liquidaity.main",
-    "liquidaity.audit.read",
-    "liquidaity.audit.execute",
-    "liquidaity.audit.admin",
-)
+OAUTH_SCOPES = ("liquidaity.main",)
 OAUTH_ENFORCED = os.environ.get("LIQUIDAITY_MCP_OAUTH_ENFORCED", "false").strip().lower() in {
     "1", "true", "yes", "on",
 }
@@ -1379,11 +1377,11 @@ class Auth0TokenVerifier:
                 options={"require": ["exp", "iat", "sub"]},
             )
             client_id = str(claims.get("azp") or claims.get("client_id") or "").strip()
-            if client_id != self.config.client_id:
-                return None
             raw_scope = claims.get("scope") or ""
             scopes = raw_scope.split() if isinstance(raw_scope, str) else [str(value) for value in raw_scope]
-            if not set(scopes).intersection(OAUTH_SCOPES):
+            if client_id != self.config.client_id:
+                return None
+            if self.config.required_scope not in scopes:
                 return None
             subject = str(claims.get("sub") or "").strip()
             if not subject:
@@ -1736,58 +1734,9 @@ _HERMES_ONLY_TOOLS = {
     "write_mag_one_instructions",
 }
 
-_MAIN_PROFILE_TOOLS = frozenset({
-    "main.context",
-    "canvas.inspect",
-    "agentgraph.inspect",
-    "mag_one.describe_connected_agents",
-    "card.run_assistant_agent",
-    "run_coder_subagent",
-    "run_mag_one",
-    "engraphis.proactive_context",
-    "engraphis.recall_context",
-    "engraphis.recall_grounded",
-    "engraphis.why",
-    "engraphis.remember",
-    "engraphis.correct",
-    "cbm.list_projects",
-    "cbm.index_status",
-    "cbm.index_repository",
-    "cbm.get_architecture",
-    "cbm.search_code",
-    "cbm.search_graph",
-    "cbm.trace_path",
-    "cbm.get_code_snippet",
-    "graphiti.search_nodes",
-    "graphiti.search_memory_facts",
-    "graphiti.get_entity_edge",
-    "graphiti.get_episodes",
-    "graphiti.get_episode_entities",
-})
-
-
-def _tool_profile_metadata(name: str, execution: dict[str, str]) -> dict[str, Any]:
-    """Attach access policy to the canonical Tool registration itself."""
+def _tool_access_metadata(name: str, execution: dict[str, str]) -> dict[str, Any]:
+    """Attach the one public OAuth grant to the canonical Tool registration."""
     risk = execution["risk"]
-    if risk == "destructive":
-        audit_scope = "liquidaity.audit.admin"
-        profile = "admin"
-    elif risk in {
-        "deterministic write",
-        "paid/provider-backed",
-        "background",
-        "runtime-launching",
-    }:
-        audit_scope = "liquidaity.audit.execute"
-        profile = "execute"
-    else:
-        audit_scope = "liquidaity.audit.read"
-        profile = "read"
-    scopes = [audit_scope]
-    profiles = [f"auditor.{profile}"]
-    if name in _MAIN_PROFILE_TOOLS:
-        scopes.insert(0, "liquidaity.main")
-        profiles.insert(0, "main")
     owner = next(
         (
             owner
@@ -1817,12 +1766,11 @@ def _tool_profile_metadata(name: str, execution: dict[str, str]) -> dict[str, An
     )
     return {
         "owner": owner,
-        "profiles": profiles,
-        "scopes": scopes,
+        "scopes": list(OAUTH_SCOPES),
         "risk": risk,
         "compute": execution["compute"],
         "authorityStatus": (
-            "approximate_auditor_only"
+            "approximate_vendor_tool"
             if name in code_index_family
             else "canonical"
         ),
@@ -1838,7 +1786,7 @@ def _bind_tool_execution_contract(tool: Tool) -> Tool:
     )
     meta["liquidaityExecution"] = execution
     meta["liquidaityCapability"] = _tool_capability_metadata(tool.name, execution)
-    meta["liquidaityProfile"] = _tool_profile_metadata(tool.name, execution)
+    meta["liquidaityAccess"] = _tool_access_metadata(tool.name, execution)
     payload["_meta"] = meta
     return Tool.model_validate(payload)
 
@@ -1870,19 +1818,14 @@ def _enforce_tool_caller(
 
 
 def _catalog_for_scopes(tools: list[Tool], authenticated_scopes: frozenset[str]) -> list[Tool]:
-    """Project canonical Tool records through already-verified OAuth scopes."""
+    """Return the full public registry when the single connector grant is present."""
+    if AUTH0_REQUIRED_SCOPE not in authenticated_scopes:
+        return []
     result: list[Tool] = []
     for tool in tools:
         payload = tool.model_dump(by_alias=True, exclude_none=True)
         meta = dict(payload.get("_meta") or {})
-        profile = dict(meta.get("liquidaityProfile") or {})
-        allowed_scopes = tuple(str(scope) for scope in profile.get("scopes") or ())
-        if not authenticated_scopes.intersection(allowed_scopes):
-            continue
-        security_schemes = [
-            {"type": "oauth2", "scopes": [scope]}
-            for scope in allowed_scopes
-        ]
+        security_schemes = [{"type": "oauth2", "scopes": list(OAUTH_SCOPES)}]
         native_system = next(
             (system for system, prefix in _NATIVE_PREFIXES.items() if tool.name.startswith(prefix)),
             None,
@@ -1946,11 +1889,9 @@ def _authenticated_tool_denial(name: str) -> str | None:
     access_token = get_access_token()
     if access_token is None:
         return None
-    execution = _TOOL_EXECUTION_CONTRACTS.get(name)
-    if execution is None:
+    if name not in _TOOL_EXECUTION_CONTRACTS:
         return f"unknown_tool: {name}"
-    policy = _tool_profile_metadata(name, execution)
-    if not _authenticated_scopes().intersection(policy["scopes"]):
+    if AUTH0_REQUIRED_SCOPE not in _authenticated_scopes():
         return f"tool_scope_not_authorized: {name}"
     return None
 

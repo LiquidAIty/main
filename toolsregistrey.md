@@ -1,8 +1,31 @@
 # LiquidAIty Tool Registry Audit
 
-This is a human audit of the one canonical Python MCP registry. It is not an executable registry, manifest, router, or second catalog. Tool names, schemas, handlers, profile metadata, and authorization remain owned by `apps/python-models/app/mcp_host.py` and the native Engraphis, Graphiti, and CBM registries it loads.
+This is a human audit of the one canonical Python MCP registry. It is not an executable registry, manifest, router, or second catalog. Tool names, schemas, handlers, and authorization remain owned by `apps/python-models/app/mcp_host.py` and the native Engraphis, Graphiti, and CBM registries it loads.
 
-Audit baseline: 70 unique canonical tools: 12 LiquidAIty/control, 31 Engraphis, 14 CBM, and 13 Graphiti. The derived profile baseline is Main 26, Auditor read/execute 64, and Admin 6. Main 26 is the requested test baseline, not the final minimal surface.
+Native inventory baseline: 70 unique tools: 12 LiquidAIty/control, 31 Engraphis, 14 CBM, and 13 Graphiti. Native inventory is retained so upstream vendor updates remain available; it is not an enabled-tool promise.
+
+## Current enablement — collapse pass one
+
+The public connector has one OAuth grant: `liquidaity.main`. During the current explicit God Mode test window, that one grant exposes all 70 tools. It is only a connector permission: it does not change saved-card tool assignments or vendor implementations.
+
+Saved-card grants are intentionally smaller than the full public test catalog:
+
+| Card | Enabled now | Explicitly off now |
+|---|---|---|
+| Main | The 19 Main tools above. | `engraphis.why`; CBM list/status/index/architecture/snippet; Graphiti episode-entity expansion. These have known scope, stale-index, or unbounded-context problems, or are not needed for the basic Main loop. |
+| System Coder | `run_local_coder`, `cbm.list_projects`, `cbm.index_status`, `cbm.search_graph`, `cbm.search_code`, `cbm.trace_path`. | CBM indexing, change/schema/architecture introspection, snippet lookup, and raw query. They remain available for deliberate connector tests; none are needed for the first bounded coding loop. |
+| Hermes | `graphiti.search_nodes`, `graphiti.search_memory_facts`, `graphiti.get_entity_edge`, `graphiti.get_episodes`, `graphiti.get_status`, `engraphis.recall_context`. | Graphiti writes/provenance expansion and delegation writes, plus `engraphis.why`. These are not part of the basic sourced-knowledge retrieval loop. |
+
+Every native tool not named in the three card rows is **off for product cards now**. It remains available through the God Mode connector for deliberate testing. No vendor implementation is patched here.
+
+### Recommended next-off candidates — do not disable yet
+
+- Engraphis approximate code-index family: `engraphis.index_repo`, `engraphis.search_code`, `engraphis.code_path`, `engraphis.code_impact`, `engraphis.export_code_graph`. CBM is the CodeGraph authority and these have stale-result evidence.
+- Engraphis lifecycle/maintenance surface: `engraphis.recall`, `engraphis.answer`, `engraphis.timeline`, `engraphis.recall_proactive`, `engraphis.pin`, `engraphis.promote`, `engraphis.link`, `engraphis.record_event`, `engraphis.start_session`, `engraphis.end_session`, `engraphis.ingest`, `engraphis.ingest_postgres_schema`, `engraphis.consolidate`, `engraphis.check_update`, and receipt/stat diagnostics. They are specialist or unproven, not first-loop needs.
+- CBM maintenance/introspection: `cbm.index_repository`, `cbm.query_graph`, `cbm.get_code_snippet`, `cbm.get_graph_schema`, `cbm.get_architecture`, `cbm.detect_changes`, `cbm.manage_adr`, and `cbm.ingest_traces`. Keep only after a focused test proves a concrete Coder workflow needs each one.
+- Graphiti writes and expensive transformations: `graphiti.add_memory`, `graphiti.delete_entity_edge`, `graphiti.delete_episode`, `graphiti.summarize_saga`, `graphiti.build_communities`, `graphiti.add_triplet`, `graphiti.get_episode_entities`, and `graphiti.clear_graph`. They are not ordinary retrieval tools.
+
+The inventory table below remains complete so each native tool name, intended behavior, evidence, and recommendation survive this collapse. Its placement column is historical audit evidence, not the live enablement authority above.
 
 ## Ratings and evidence
 
@@ -17,7 +40,7 @@ Audit baseline: 70 unique canonical tools: 12 LiquidAIty/control, 31 Engraphis, 
 
 ## Complete canonical inventory
 
-| Tool | Intended behavior | Observed audit behavior | Rate | Current placement / collapse decision |
+| Tool | Intended behavior | Observed audit behavior | Rate | Historical audit recommendation |
 |---|---|---|---|---|
 | `main.context` | Return server-owned project, deck, conversation, parent-run, and Main-card identity. | Live; bounded identity read. | F | Main + Auditor; keep. |
 | `agentgraph.inspect` | Read bounded AgentGraph assignments/results and stable references. | Live; relational/AGE read path is healthy. | F | Main + Auditor; key handoff/view tool. |
@@ -90,9 +113,9 @@ Audit baseline: 70 unique canonical tools: 12 LiquidAIty/control, 31 Engraphis, 
 | `graphiti.clear_graph` | Clear one or more Graphiti groups. | Authorization checked; not executed. | A | Admin only; details below. |
 | `graphiti.get_status` | Report Graphiti server/database health. | Live; Neo4j connected. | F | Hermes + Auditor; not needed by Main. |
 
-## The six admin tools
+## The six destructive tools
 
-These are excluded from normal Main and Auditor connectors. They require `liquidaity.audit.admin`, and visibility alone never authorizes execution.
+These are excluded from Main and every saved product card. They remain visible only because the user explicitly enabled temporary God Mode for connector testing; they are not a second connector, catalog, or profile.
 
 1. `engraphis.forget` retires one memory bi-temporally. It preserves history but changes recall truth. Prefer `engraphis.correct` when replacement content exists. Require an exact memory ID, a stated reason, and a pre-read of the target.
 2. `engraphis.consolidate` can archive decayed transient memories while producing a durable digest. It is broad maintenance, not ordinary reasoning. Require a bounded workspace, a before/after count, and explicit approval.
@@ -129,7 +152,7 @@ Main translates the headings into existing native calls. The headings are prompt
 
 ## Evidence-based collapse path
 
-The next plugin round should preserve the canonical 70-tool Auditor view so GPT can audit everything while Main remains the 26-tool specified baseline. After that audit, the strongest evidence-based Main candidate is 13 tools: the seven identity/coordination tools plus six Engraphis reasoning tools. CBM depth can move to Coder and Graphiti depth to Hermes once those delegation paths are visibly reliable. That reaches 18.6% of the current catalog without deleting native capabilities.
+The next plugin round preserves the canonical 70-tool Auditor view so GPT can audit everything while Main remains the enabled 19-tool basic surface. CBM depth stays in Coder and Graphiti depth stays in Hermes until a real test proves Main needs a specific extra tool. This is 27.1% of the native inventory without deleting vendor capabilities.
 
 Immediate collapse candidates, pending external-use confirmation:
 
@@ -137,6 +160,6 @@ Immediate collapse candidates, pending external-use confirmation:
 - remove the five stale Engraphis code-index tools if no distinct approximate audit workflow is desired;
 - keep `cbm.manage_adr` and `cbm.ingest_traces` ungranted until a real task requires them;
 - keep Graphiti saga/community/direct-triplet tools Auditor-only;
-- keep all six Admin tools outside normal connectors.
+- keep all six destructive capabilities out of Main and saved cards; test them only through Auditor when explicitly requested.
 
 Do not collapse `search` and `get` tools into generic intent routers. Discovery, stable-reference retrieval, and provenance expansion are distinct graph operations and should stay legible.

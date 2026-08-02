@@ -116,15 +116,11 @@ async def _catalog() -> dict[str, Any]:
         internal = await mcp_host.list_tools()
         count, digest = mcp_host._catalog_identity(internal)
         names = [tool.name for tool in internal]
-        profiles = {}
-        for profile, scopes in {
-            "main": frozenset({"liquidaity.main"}),
-            "auditor": frozenset({"liquidaity.audit.read", "liquidaity.audit.execute"}),
-            "admin": frozenset({"liquidaity.audit.admin"}),
-        }.items():
-            visible = mcp_host._catalog_for_scopes(internal, scopes)
-            profile_count, profile_hash = mcp_host._catalog_identity(visible)
-            profiles[profile] = {"count": profile_count, "hash": profile_hash}
+        authenticated = mcp_host._catalog_for_scopes(
+            internal,
+            frozenset({"liquidaity.main"}),
+        )
+        authenticated_count, authenticated_hash = mcp_host._catalog_identity(authenticated)
         matrix: list[dict[str, Any]] = []
         for tool in internal:
             if tool.name.startswith("engraphis."):
@@ -142,13 +138,13 @@ async def _catalog() -> dict[str, Any]:
                     or tool.name in DIRECT_CUSTOM_TOOLS
                 )
             execution = dict((tool.meta or {}).get("liquidaityExecution") or {})
-            profile = dict((tool.meta or {}).get("liquidaityProfile") or {})
+            access = dict((tool.meta or {}).get("liquidaityAccess") or {})
             matrix.append(
                 {
                     "name": tool.name,
                     "risk": execution.get("risk"),
                     "compute": execution.get("compute"),
-                    "oauth": bool(profile.get("scopes")),
+                    "oauth": access.get("scopes") == ["liquidaity.main"],
                     "dispatchable": dispatchable,
                 }
             )
@@ -160,7 +156,10 @@ async def _catalog() -> dict[str, Any]:
             "removedWrappersPresent": sorted(REMOVED_WRAPPERS.intersection(names)),
             "allOAuthDeclared": all(item["oauth"] for item in matrix),
             "undispatchable": [item["name"] for item in matrix if not item["dispatchable"]],
-            "profiles": profiles,
+            "singleScopeCatalog": {
+                "count": authenticated_count,
+                "hash": authenticated_hash,
+            },
             "auditMatrix": matrix,
         }
     finally:

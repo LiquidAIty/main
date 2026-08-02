@@ -766,10 +766,6 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
     assert verified.subject == "auth0|jeremiah"
     assert verified.claims["liquidaity"]["projectId"] == "project-1"
     assert verified.claims["liquidaity"]["mainCardId"] == "card_main_chat"
-    auditor = verifier._verify_sync(encoded({**base, "scope": "openid liquidaity.audit.read liquidaity.audit.execute"}))
-    assert auditor is not None
-    assert auditor.scopes == ["openid", "liquidaity.audit.read", "liquidaity.audit.execute"]
-
     invalid_claims = [
         {**base, "iss": "https://wrong.auth0.com/"},
         {**base, "aud": "https://wrong.example/mcp"},
@@ -795,7 +791,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "parentRunId": "external-main:grant-1",
         "mainCardId": "card_main_chat",
     }
-    active_scopes = ["liquidaity.audit.read", "liquidaity.audit.execute"]
+    active_scopes = ["liquidaity.main"]
     monkeypatch.setattr(
         mcp_host,
         "get_access_token",
@@ -984,15 +980,9 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "server owns project, deck, conversation, parent-run, and Main-card identity" in coder_tool.description
     assert "Pass the exact active" not in coder_tool.description
     assert "instructionId" not in by_name["card.run_assistant_agent"].inputSchema["properties"]
-    assert {scheme["scopes"][0] for scheme in by_name["engraphis.recall"].model_dump()["securitySchemes"]} == {
-        "liquidaity.audit.read",
-    }
-    assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump()["securitySchemes"]} == {
-        "liquidaity.main", "liquidaity.audit.read",
-    }
-    assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {
-        "liquidaity.audit.read",
-    }
+    assert {scheme["scopes"][0] for scheme in by_name["engraphis.recall"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
+    assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
+    assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert by_name["cbm.search_graph"].description == "Native search description."
     assert by_name["cbm.search_graph"].inputSchema == native_cbm_tools[0].inputSchema
     assert by_name["coder.status"].annotations.readOnlyHint is True
@@ -1008,8 +998,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert {
         "coder.status", "engraphis.answer", "graphiti.get_status",
         "card.update_configuration", "canvas.upsert_wire",
-    }.isdisjoint(main_names)
-    active_scopes[:] = ["liquidaity.audit.read", "liquidaity.audit.execute"]
+    }.issubset(main_names)
+    active_scopes[:] = ["liquidaity.main"]
 
     calls = []
     class NativeMcp:
@@ -1119,13 +1109,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert payload["parentRunId"].startswith("req_external_main_")
     assert "agentContextId" not in payload
 
-    active_scopes[:] = ["liquidaity.main"]
-    scope_denied = asyncio.run(mcp_host.call_tool("engraphis.answer", {"query": "x"}))
-    assert scope_denied.isError is True
-    assert "tool_scope_not_authorized: engraphis.answer" in scope_denied.content[0].text
-
-
-def test_main_and_auditor_profiles_derive_from_real_canonical_catalog(monkeypatch):
+def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(monkeypatch):
     import asyncio
     import mcp_host
     from mcp.server.auth.provider import AccessToken
@@ -1155,28 +1139,17 @@ def test_main_and_auditor_profiles_derive_from_real_canonical_catalog(monkeypatc
     assert len(canonical) == 70
 
     active_scopes[:] = ["liquidaity.main"]
-    main = asyncio.run(mcp_host.list_tools())
-    assert {tool.name for tool in main} == mcp_host._MAIN_PROFILE_TOOLS
+    authenticated = asyncio.run(mcp_host.list_tools())
+    assert len(authenticated) == 70
+    assert {tool.name for tool in authenticated} == {tool.name for tool in canonical}
+    main_context = asyncio.run(mcp_host.call_tool("main.context", {}))
+    assert json.loads(main_context[0].text)["ok"] is True
 
-    active_scopes[:] = ["liquidaity.audit.read", "liquidaity.audit.execute"]
-    auditor = asyncio.run(mcp_host.list_tools())
-    assert all(
-        tool.meta["liquidaityProfile"]["risk"] != "destructive"
-        for tool in auditor
-    )
-
-    active_scopes[:] = ["liquidaity.audit.admin"]
-    admin = asyncio.run(mcp_host.list_tools())
-    assert admin
-    assert all(
-        tool.meta["liquidaityProfile"]["risk"] == "destructive"
-        for tool in admin
-    )
-    assert {tool.name for tool in auditor}.isdisjoint(tool.name for tool in admin)
-    assert {tool.name for tool in canonical} == {
-        *(tool.name for tool in auditor),
-        *(tool.name for tool in admin),
-    }
+    active_scopes[:] = ["openid"]
+    assert asyncio.run(mcp_host.list_tools()) == []
+    denied = asyncio.run(mcp_host.call_tool("engraphis.recall", {"query": "x"}))
+    assert denied.isError is True
+    assert "tool_scope_not_authorized: engraphis.recall" in denied.content[0].text
 
 
 def test_identical_native_cbm_index_requests_share_one_in_flight_call(monkeypatch):
@@ -1360,12 +1333,7 @@ try:
         raise failure or RuntimeError('oauth_metadata_not_ready')
     assert metadata['resource'] == '{resource}'
     assert metadata['authorization_servers'] == ['https://tenant.auth0.com/']
-    assert metadata['scopes_supported'] == [
-        'liquidaity.main',
-        'liquidaity.audit.read',
-        'liquidaity.audit.execute',
-        'liquidaity.audit.admin',
-    ]
+    assert metadata['scopes_supported'] == ['liquidaity.main']
     try:
         urlopen(Request('http://127.0.0.1:{port}/mcp', data=b'{{}}', method='POST'), timeout=2)
         raise AssertionError('anonymous_mcp_was_accepted')
