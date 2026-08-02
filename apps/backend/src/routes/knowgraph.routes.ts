@@ -150,8 +150,8 @@ function neoNodeLabel(id: string, props: Record<string, unknown>): string {
 }
 
 async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<string[]> {
-  const seed = String(projectId || '').trim();
-  if (!seed) return [];
+  const scopeProjectId = String(projectId || '').trim();
+  if (!scopeProjectId) return [];
 
   const scopeIds = new Set<string>();
   const addScopeId = (rawValue: unknown) => {
@@ -166,7 +166,7 @@ async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<strin
       scopeIds.add(`liquidaity-${value}`);
     }
   };
-  addScopeId(seed);
+  addScopeId(scopeProjectId);
   try {
     const result = await pool.query(
       `
@@ -180,7 +180,7 @@ async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<strin
            OR lower(coalesce(code, '')) = lower($1)
         LIMIT 1
       `,
-      [seed],
+      [scopeProjectId],
     );
     const row = result?.rows?.[0] as { id?: string; name?: string; code?: string } | undefined;
     if (row) {
@@ -586,13 +586,6 @@ router.get('/expand', async (req, res) => {
     return res.status(500).json({ ok: false, error: { message } });
   }
 });
-
-/**
- * Persist the established KnowGraph example dataset (semantic seed) into project-scoped Neo4j
- * `:SemanticRecord` nodes/relationships. Shared by the dev-only /semantic-seed route AND the
- * seedKnowGraphExampleData script (which bypasses CORS/auth for local restoration). Returns an
- * HTTP-status + body so the route can relay it directly.
- */
 
 function buildMultipartForm(
   projectId: string,

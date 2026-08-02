@@ -15,7 +15,7 @@ import {
 } from '../deck/deckPrimitives';
 
 // Card identity comes from the SAVED runtime binding — never an id/template/
-// title string match. A user who renames a card, or a deck that seeds a second
+// title string match. A user who renames a card, or a deck that adds a second
 // one, keeps working; the old matchers silently didn't.
 function hasRuntimeBinding(
   card: AgentCardInstance | null | undefined,

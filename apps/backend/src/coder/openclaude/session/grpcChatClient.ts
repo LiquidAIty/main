@@ -274,35 +274,6 @@ export function selectDoorwayCards(nodes: any[], edges: any[], mode: HarnessMode
   return resolveDirectSubagents(mainChatId, allNodes, allEdges);
 }
 
-/** Resolve this turn's native doorway definitions from the persisted deck.
- * Best-effort: any resolution failure yields no definitions — it must never
- * block or alter the normal chat turn itself. */
-export async function resolveCardDoorwayDefinitions(
-  sessionId: string,
-  mode: HarnessMode,
-): Promise<Record<string, unknown>[]> {
-  const parsed = parseSessionId(sessionId);
-  if (!parsed) return [];
-  try {
-    const doc = await getDeckDocument(parsed.projectId, BUILDER_DECK_ID);
-    const availableMcpTools = await listPythonAgentMcpTools();
-    const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
-    const edges: any[] = Array.isArray((doc?.deck as any)?.edges) ? (doc!.deck as any).edges : [];
-    return selectDoorwayCards(nodes, edges, mode)
-      .map((node) =>
-        buildHarnessAgentDefinition(node, {
-          availableMcpTools,
-          allowedCardRunIds: resolveDirectSubagents(String(node.id), nodes, edges).map((child: any) =>
-            String(child.id),
-          ),
-        }),
-      )
-      .filter((def): def is Record<string, unknown> => Boolean(def));
-  } catch {
-    return [];
-  }
-}
-
 export type MainChatRuntimeConfig = {
   cardId: string;
   runtimeBinding: 'main_chat';
@@ -318,7 +289,7 @@ export type MainChatRuntimeConfig = {
   parentAllowedMcpTools: string[];
   /** The main_chat card's assigned NATIVE tools — filtered by the engine
    * BEFORE provider schema serialization. Transport-verbatim strings from the
-   * saved card; empty = the card declares no native list (legacy full pool). */
+   * saved card; empty = the card grants no native tools. */
   parentAllowedNativeTools: string[];
 };
 

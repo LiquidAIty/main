@@ -501,7 +501,7 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
     const cardId = String(body.cardId || '');
     const conversationId = String(body.conversationId || '');
     // Resolve the saved Coder card's provider/model EXACTLY as the runtime does
-    // (no hardcoded model, no deckSeed edit). Missing/mismatched config throws.
+    // (no hardcoded model, no new-project-template edit). Missing/mismatched config throws.
     const { deck } = await getDeckDocument(projectId, deckId);
     const nodes: unknown[] = Array.isArray((deck as { nodes?: unknown[] } | null)?.nodes)
       ? ((deck as { nodes: unknown[] }).nodes)
@@ -654,11 +654,7 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
       });
     }
     const result = first.result;
-    const failureStatus = result.terminalState === 'timed_out'
-      ? 408
-      : result.terminalState === 'cancelled'
-        ? 499
-        : 502;
+    const failureStatus = result.terminalState === 'cancelled' ? 499 : 502;
     return res.status(result.ok ? 200 : failureStatus).json(result);
   } catch (error) {
     return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'run_coder_subagent_failed' });
@@ -904,9 +900,8 @@ router.post('/openclaude/session/answer', (req, res) => {
 });
 
 // Load the durable project-scoped transcript for a conversation so a reload
-// restores the same chat. Returns user/assistant turns in append order. A read
-// failure (e.g. project not yet persisted) returns an empty transcript, never
-// a 500 — a fresh project simply has no history yet.
+// restores the same chat. A valid conversation with no messages returns an
+// empty transcript. A persistence failure remains a visible typed failure.
 router.get('/openclaude/session/history', async (req, res) => {
   const projectId = String(req.query?.projectId || '');
   const conversationId = String(req.query?.conversationId || 'default');
@@ -919,8 +914,15 @@ router.get('/openclaude/session/history', async (req, res) => {
       .filter((m) => m.role === 'user' || m.role === 'assistant')
       .map((m) => ({ role: m.role as 'user' | 'assistant', text: m.content }));
     return res.json({ ok: true, messages });
-  } catch {
-    return res.json({ ok: true, messages: [] });
+  } catch (error) {
+    logHarnessTrace(
+      `[harness] history read failed project=${projectId} conversation=${conversationId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
+    );
+    return res.status(500).json({
+      ok: false,
+      error: 'conversation_history_read_failed',
+      messages: [],
+    });
   }
 });
 

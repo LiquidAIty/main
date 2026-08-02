@@ -42,7 +42,7 @@ The OpenClaude-derived gRPC Harness (`localcoder`) owns the persistent Main Chat
 backend `/api/coder/openclaude/session/{chat,answer,history}` → Harness on :50051. Main remains the
 principal responder.
 
-The source deck seed defines the Hermes card as a Main sub-agent with inherited-context/tool-grant
+The new-project deck template defines the Hermes card as a Main sub-agent with inherited-context/tool-grant
 boundaries. The current ADMIN persisted deck does not contain that card, prompt, or edge, so source
 topology is not runtime proof and database recovery remains a separate reviewed task. When the
 persisted topology exists, the Harness can build a generic inherited-context `Agent` from the saved
@@ -198,7 +198,7 @@ output/stream behavior, and tool/MCP surface. Then connect exactly one bounded a
 Hermes its own terminal/UI. The OpenClaude Coder terminal remains below Main Chat.
 
 The ADMIN database currently lacks the persisted Hermes card, prompt, and edges because prior cleanup
-mutated durable data. Source/seed recovery does not restore PostgreSQL. Restore that data only through
+mutated durable data. Source-template recovery does not restore PostgreSQL. Restore that data only through
 an explicit, reviewed, read-back-proven database recovery step.
 
 ### Feature Context Resolver (deferred to Fable 6+)

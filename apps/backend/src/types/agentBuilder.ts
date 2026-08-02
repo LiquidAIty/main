@@ -3,6 +3,5 @@ export interface AgentCard {
   name: string;
   code?: string | null;
   status?: string | null;
-  hasAgentConfig: boolean;
-  project_type?: 'assist' | 'agent';
+  project_type: 'assist' | 'agent';
 }

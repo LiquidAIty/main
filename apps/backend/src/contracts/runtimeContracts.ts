@@ -16,7 +16,6 @@ export type CardRunResult = {
   endedAt: string;
   runtimeBinding?: string | null;
   runtimeType?: string | null;
-  seed?: string;
   agentAssignmentResult?: AgentAssignmentRunResult | null;
 };
 

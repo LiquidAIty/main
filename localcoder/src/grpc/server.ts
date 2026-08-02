@@ -223,8 +223,8 @@ export type NormalizedTurnUsage = {
  * testable. The engine zero-initializes its stream-accumulated result usage,
  * so an all-zero result is indistinguishable from "never populated" — it is
  * treated as a real report only when any component is > 0. The per-model
- * usage store (populated by the API client independently of stream events) is
- * the fallback source. When neither carries real numbers, usage is reported
+ * usage store (populated by the same native API client independently of stream
+ * events) is the secondary native source. When neither carries real numbers, usage is reported
  * UNAVAILABLE with null tokens — never a fabricated zero. */
 export function normalizeTurnUsage(
   resultUsage: { input_tokens?: unknown; output_tokens?: unknown } | null | undefined,
@@ -259,8 +259,7 @@ export function normalizeTurnUsage(
 }
 
 /** The parent card's native-tool grant applied to the native pool. Pure so it
- * is directly testable. Empty grant = full pool (legacy callers whose cards
- * declare no native list). When this turn carries agent definitions, the
+ * is directly testable. Empty grant = no native tools. When this turn carries agent definitions, the
  * Agent tool is canvas-granted by construction — the persisted doorway edges
  * ARE the authority to invoke children — so it always survives the filter.
  * A granted name missing from the pool is reported, never silently dropped. */

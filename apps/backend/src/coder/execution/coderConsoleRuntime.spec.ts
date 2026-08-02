@@ -216,7 +216,6 @@ describe('runOpenClaudeCodeTask (visible Console PTY)', () => {
       parentRunId: 'parent_1',
       sessionId: 'occ_fake_1',
       sessionState: 'running',
-      executionTimeoutMs: 300_000,
     }));
     session.exitWith(0);
     const result = await promise;
@@ -274,17 +273,17 @@ describe('runOpenClaudeCodeTask (visible Console PTY)', () => {
     expect(result.resultValidationStatus).toBe('malformed');
   });
 
-  it('times out once, stops the existing visible session, and reports timed_out distinctly', async () => {
+  it('does not stop a running native session without explicit cancellation', async () => {
     const session = new FakeSession('still running');
-    const result = await runOpenClaudeCodeTask(task('mag_one_execution'), {
+    const promise = runOpenClaudeCodeTask(task('mag_one_execution'), {
       manager: managerFor({ ok: true, session }),
-      timeoutMs: 5,
     });
-    expect(session.stopCalls).toBe(1);
-    expect(result.terminalState).toBe('timed_out');
-    expect(result.stopReason).toBe('console_coder_timed_out');
-    expect(result.executionTimeoutMs).toBe(5);
-    expect(result.transcriptArtifact).toMatch(/transcript\.txt$/);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(session.stopCalls).toBe(0);
+    session.exitWith(0);
+    const result = await promise;
+    expect(result.terminalState).toBe('failed');
+    expect(result.stopReason).toBeNull();
   });
 
   it.each([

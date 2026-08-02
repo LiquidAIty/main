@@ -49,15 +49,12 @@ Approved team work
 → saved Magentic-One card plus magentic_option-connected worker cards
 → backend transport
 → Python AutoGen/MagenticOneGroupChat
-→ native team execution and task-ledger artifact
+→ native team execution
 → result and job-folder artifacts
 ```
 
-The current ADMIN deck readback on 2026-07-20 contained six cards and six edges. Its Main card used
-OpenRouter `z-ai/glm-5.2`; Magentic-One used OpenRouter `openai/gpt-5.1-chat`; and Local Coder used
-OpenRouter `z-ai/glm-5.2`. Provider/model authority is per saved card, so these values can change when
-the owner edits the deck. Source seeds are defaults and compatibility anchors, not proof of current
-persisted state.
+Provider/model authority is per saved card. The source deck is used once when a project is explicitly
+created; it is never a runtime fallback and is not proof of current persisted state.
 
 ## The two coding paths
 
@@ -94,7 +91,7 @@ Primary landmarks:
 - `apps/backend/src/coder/localcoder/service.ts`
 - `apps/backend/src/cards/localCoderController.ts`
 - `apps/python-models/app/python_models/tool_registry.py`
-- `client/src/features/agentbuilder/deck/deckSeed.ts`
+- `client/src/features/agentbuilder/deck/newProjectDeck.ts`
 - `repo-intake/localcoder-boundary.md`
 
 The console is interactive and session-oriented. Local Coder is bounded and report-oriented. Neither
@@ -113,8 +110,8 @@ Important edge meanings:
 - `flow`: a directed native sub-agent invocation relationship; it does not silently activate a
   Mag One worker. Main-to-Hermes uses this same contract.
 
-Default templates and the initial source topology live in
-`client/src/features/agentbuilder/deck/deckSeed.ts`. Client hydration/normalization lives in
+The new-project template and initial topology live in
+`client/src/features/agentbuilder/deck/newProjectDeck.ts`. Client saved-document parsing lives in
 `deckDocument.ts`; backend persistence and normalization live in `apps/backend/src/decks/store.ts`;
 shared runtime resolution lives in `apps/backend/src/cards/runtime.ts`; and Python validates the
 received card graph before creating AutoGen participants.
@@ -123,14 +120,14 @@ received card graph before creating AutoGen participants.
 
 Mag One is real Microsoft AutoGen/Magentic-One on Python rails. The backend transports saved cards,
 edges, and mission input; Python builds the native participant set; bus connectivity decides
-eligibility; and the native orchestrator produces team work and the task-ledger artifact.
+eligibility; and the native orchestrator owns its private Task and Progress Ledgers.
 
 Keep:
 
 - `MagenticOneGroupChat` and the vendored AutoGen line;
 - saved worker-card selection;
 - parent/child execution and job-folder returns;
-- real task-ledger facts, plan, team, and full ledger;
+- native private Task and Progress Ledgers, with no app-authored copy or projection;
 - loud failures when a selected model, tool, card, or service is unavailable.
 
 Do not add TypeScript planning logic or a fake Mag One fallback.
@@ -247,14 +244,13 @@ proven dead. The actual source, data, tests, and adapter boundaries are protecte
 
 1. Decide whether it is a real runnable agent, a controller, or a UI/data card. Do not create a card
    for a speculative service.
-2. Add/update the typed template and default instance in `deckSeed.ts` only when new projects need it.
+2. Add/update the typed template and default instance in `newProjectDeck.ts` only when new projects need it.
 3. Keep stable IDs and update matching client/backend runtime types and normalizers.
 4. Add an explicit saved prompt, provider/model, binding, and only the tools it may call.
 5. Add the intended edge with real source/target handles. Use `magentic_option` only when the card
    should participate in Mag One.
-6. Prove hydration, save/readback, persisted-data compatibility, canvas rendering, and the focused
-   runtime path. Existing decks require an explicit reviewed migration; a seed edit alone does not
-   update them.
+6. Prove explicit new-project creation, save/readback, canvas rendering, and the focused runtime path.
+   Editing the source template never rewrites an existing saved deck.
 
 ## Adding a runtime
 
@@ -293,7 +289,7 @@ cost.
 ## Intentionally unavailable or incomplete
 
 - Actual Hermes process integration and its separate UI.
-- Persisted ADMIN Hermes/graph cards and edges; source seed presence is not database recovery.
+- Persisted ADMIN Hermes/graph cards and edges; source template presence is not database recovery.
 - Literal below-chat placement of the working OpenClaude console.
 - Full Main → actual Hermes → approved Mag One end-to-end proof.
 - Full Main → AgentGraph → Hermes/Coder product activation; the AGE store and Coder consumer exist,

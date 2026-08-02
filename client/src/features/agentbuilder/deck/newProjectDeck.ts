@@ -1,8 +1,5 @@
-// The canonical Agent Canvas seed: prompt templates, agent templates, the
-// INITIAL_DECK document. Extracted verbatim
-// from pages/agentbuilder.tsx (decomposition pass 2026-07-08). Persisted ids
-// (card_*, template_*, prompt_*, deck_builder) are STABLE saved-deck
-// identity — never rename them here.
+// The one-time new-project Agent Canvas template. Persisted ids
+// (card_*, template_*, prompt_*, deck_builder) are stable saved-deck identity.
 import type {
   AgentTemplate,
   DeckDocument,
@@ -22,7 +19,7 @@ import {
   MAGENTIC_ONE_DEFAULT_PROVIDER,
 } from './deckPrimitives';
 
-function buildSeedPromptTemplate(parts: {
+function buildPromptTemplate(parts: {
   role: string;
   goal: string;
   constraints: string;
@@ -49,7 +46,7 @@ ${parts.memoryPolicy}`;
 export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   {
     id: 'prompt_magentic',
-    content: buildSeedPromptTemplate({
+    content: buildPromptTemplate({
       role: [
         'You are Magentic-One, the team orchestrator for the visible Agent Canvas.',
       ].join('\n'),
@@ -79,7 +76,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     // The Harness driver prompt. This is the ONE LiquidAIty-specific instruction
     // layer appended (never replacing) the vendored base chat prompt — see
     // grpcChatClient.resolveMainChatSystemPrompt. Saved cards remain the runtime
-    // authority after this initial seed is created.
+    // authority after the project is created.
     content: [
       'You are Main Chat — the project principal and the only user-facing voice.',
       'Own the persistent project conversation: reason with the user, ask real clarifying questions, discuss options and tradeoffs, and answer directly. You are never a relay for another agent.',
@@ -102,7 +99,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   },
   {
     id: 'prompt_research_agent',
-    content: buildSeedPromptTemplate({
+    content: buildPromptTemplate({
       role: [
         'You are Search Agent, Hermes\'s bounded external-research specialist.',
       ].join('\n'),
@@ -126,7 +123,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   },
   {
     id: 'prompt_assist',
-    content: buildSeedPromptTemplate({
+    content: buildPromptTemplate({
       role: [
         'You are an Assist Agent, a general-purpose worker agent.',
         'You perform tasks as directed by the orchestrator or flow.',
@@ -152,7 +149,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   },
   {
     id: 'prompt_hermes_steward',
-    content: buildSeedPromptTemplate({
+    content: buildPromptTemplate({
       role: [
         'You are Hermes — Main Chat\'s already-configured native foreground reasoning subagent.',
         'You inherit Main\'s live conversation and are not the user-facing voice, project boss, Mag One worker, or automatic post-chat process.',
@@ -183,7 +180,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   },
   {
     id: 'prompt_worldsignals_agent',
-    content: buildSeedPromptTemplate({
+    content: buildPromptTemplate({
       role: [
         'You are the WorldSignals Agent — a live-world intelligence analyst.',
         'WorldSignals is the real-time physical-world data substrate (markets, energy, transport, supply chains, shipping, aviation, weather, infrastructure, news, geographic events, entities). You read it through your tools and turn a FOCUSED subject into a leverage-first briefing.',
@@ -218,7 +215,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   },
   {
     id: 'prompt_trading_workbench',
-    content: buildSeedPromptTemplate({
+    content: buildPromptTemplate({
       role: [
         'You are the Trading Agent workbench card.',
         'You represent the visible trading and market analysis workspace on the board.',
@@ -361,7 +358,6 @@ export const INITIAL_DECK: DeckDocument = {
       subtitle: 'Native Harness front door',
       position: { x: -24, y: -24 },
       status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
     },
     {
       id: 'card_magentic',
@@ -383,7 +379,6 @@ export const INITIAL_DECK: DeckDocument = {
       subtitle: 'Admin orchestrator / planner',
       position: { x: 140, y: 120 },
       status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
     },
     {
       id: 'card_research_agent',
@@ -409,7 +404,6 @@ export const INITIAL_DECK: DeckDocument = {
       subtitle: 'Web search',
       position: { x: -340, y: 140 },
       status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
     },
     {
       id: 'card_local_coder',
@@ -431,7 +425,6 @@ export const INITIAL_DECK: DeckDocument = {
       subtitle: 'Controlled code patch/test execution',
       position: { x: 520, y: 320 },
       status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
     },
     {
       id: 'card_openai_coder',
@@ -450,7 +443,6 @@ export const INITIAL_DECK: DeckDocument = {
       subtitle: 'External Codex app-server baseline',
       position: { x: 520, y: 470 },
       status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
     },
     {
       id: 'card_hermes_steward',
@@ -475,7 +467,6 @@ export const INITIAL_DECK: DeckDocument = {
       subtitle: 'Context and planning steward',
       position: { x: 260, y: 480 },
       status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
     },
     {
       id: 'card_trading_workbench',
@@ -496,7 +487,6 @@ export const INITIAL_DECK: DeckDocument = {
       subtitle: 'Market workspace',
       position: { x: 520, y: 140 },
       status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
     },
     {
       id: 'card_worldsignals_agent',
@@ -529,7 +519,6 @@ export const INITIAL_DECK: DeckDocument = {
       subtitle: 'Live-world intelligence briefings',
       position: { x: 0, y: 260 },
       status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
     },
   ],
   // The two independent connection networks (explicit type + handle semantics;

@@ -14,7 +14,7 @@ import {
 } from './deckPrimitives';
 import {
   INITIAL_DECK,
-} from './deckSeed';
+} from './newProjectDeck';
 
 function isLocalCoderControllerCard(card: AgentCardInstance | null | undefined): boolean {
   if (!card) return false;
@@ -87,7 +87,7 @@ export function hydrateDeckDocument(
   value: Partial<DeckDocument> | null | undefined,
 ): DeckDocument {
   if (!value || typeof value !== 'object') {
-    return cloneDeckDocument(INITIAL_DECK);
+    throw new Error('deck_document_required');
   }
   return {
     ...cloneDeckDocument(value),
@@ -104,42 +104,23 @@ export function hydrateDeckDocument(
 
 export function resolveProjectDeckPayload(
   deckPayload: Partial<DeckDocument> | null | undefined,
-): { deck: DeckDocument; usedFallback: boolean } {
+): { deck: DeckDocument } {
   if (!deckPayload || typeof deckPayload !== 'object') {
-    return {
-      deck: hydrateDeckDocument(INITIAL_DECK),
-      usedFallback: true,
-    };
+    throw new Error('deck_not_found');
   }
 
   return {
     deck: hydrateDeckDocument(deckPayload),
-    usedFallback: false,
   };
 }
 
 export function resolveProjectDeckLoadResult(
-  currentDeck: DeckDocument,
+  _currentDeck: DeckDocument,
   deckPayload: Partial<DeckDocument> | null | undefined,
-  preserveCurrentOnFailure = false,
 ): {
   deck: DeckDocument;
-  usedFallback: boolean;
-  preservedCurrent: boolean;
 } {
-  if (preserveCurrentOnFailure) {
-    return {
-      deck: cloneDeckDocument(currentDeck),
-      usedFallback: false,
-      preservedCurrent: true,
-    };
-  }
-
-  const resolved = resolveProjectDeckPayload(deckPayload);
-  return {
-    ...resolved,
-    preservedCurrent: false,
-  };
+  return resolveProjectDeckPayload(deckPayload);
 }
 
 export function buildProjectlessDeckDocument(): DeckDocument {

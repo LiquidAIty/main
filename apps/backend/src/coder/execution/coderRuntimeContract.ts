@@ -212,20 +212,6 @@ export type CoderToolPolicy = {
 /** Native CBM server name from the repository's canonical .mcp.json. */
 export const CODEBASE_MEMORY_MCP_SERVER = 'codebase-memory';
 
-/**
- * The legacy `harness_subagent` policy: exactly what `run_coder_subagent` has
- * always produced (shell-capable, no file edits, dev-harness MCP only). Named
- * and shared so the live path stays byte-identical until a caller opts into an
- * explicit authority mode. Do not change these tokens without a live re-proof.
- */
-export const LEGACY_HARNESS_TOOL_POLICY: CoderToolPolicy = {
-  allowedTools: ['Bash', 'PowerShell'],
-  disallowedTools: ['WebFetch', 'WebSearch', 'Write', 'Edit', 'NotebookEdit'],
-  permissionMode: 'dontAsk',
-  allowsMutatingShell: true,
-  codeGraphMcp: false,
-};
-
 /** Resolve the caller-supplied authority mode into a concrete CLI tool policy. */
 export function resolveCoderToolPolicy(mode: CoderAuthorityMode): CoderToolPolicy {
   if (mode === 'direct_main_audit') {

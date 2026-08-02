@@ -51,8 +51,15 @@ export default function useAgentBuilderMainChat({
         if (cancelled || !history) return;
         setMessages(history);
       })
-      .catch(() => {
-        // A fresh project or history read failure leaves Main Chat usable.
+      .catch((error: unknown) => {
+        if (cancelled || controller.signal.aborted) return;
+        const detail = error instanceof Error ? error.message : String(error);
+        setMessages([
+          {
+            role: 'assistant',
+            text: `Conversation history failed to load: ${detail}`,
+          },
+        ]);
       });
 
     return () => {
@@ -137,9 +144,8 @@ export default function useAgentBuilderMainChat({
             `Chat failed (${error.code}).${correlation}`,
           );
         } else if (!(error instanceof Error && error.message === 'main_empty_response')) {
-          appendAssistantText(
-            'Chat request failed before the stream opened. Route: /api/coder/openclaude/session/chat.',
-          );
+          const detail = error instanceof Error ? error.message : String(error);
+          appendAssistantText(`Chat request failed before the stream opened: ${detail}`);
         }
         throw error;
       } finally {

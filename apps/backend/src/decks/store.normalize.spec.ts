@@ -81,7 +81,6 @@ describe('deck store edge persistence', () => {
         agent_io_schema: {
           v3_state: {
             decks: { deck_builder: deck },
-            deckRuns: {},
             meta: { decks: {} },
           },
         },
@@ -180,7 +179,6 @@ describe('deck store edge persistence', () => {
         agent_io_schema: {
           v3_state: {
             decks: { deck_builder: deck },
-            deckRuns: {},
             meta: { decks: {} },
           },
         },

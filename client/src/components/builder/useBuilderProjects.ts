@@ -9,88 +9,10 @@ import {
   safeJson,
 } from "./requestGuards";
 
-function normalizeProjectCardKey(value: unknown): string {
-  return String(value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function inferProjectCardType(card: any): "assist" | "agent" {
-  const explicit = String(card?.project_type ?? "").trim().toLowerCase();
-  if (explicit === "assist" || explicit === "agent") {
-    return explicit;
-  }
-
-  const codeKey = normalizeProjectCardKey(card?.code);
-  const nameKey = normalizeProjectCardKey(card?.name);
-  const legacyAgentKeys = new Set([
-    "main-chat",
-    "kg-ingest",
-    "thinkgraph",
-    "knowgraph",
-    "neo4j",
-    "research-agent",
-    "agent-builder",
-  ]);
-
-  if (legacyAgentKeys.has(codeKey) || legacyAgentKeys.has(nameKey) || Boolean(card?.hasAgentConfig)) {
-    return "agent";
-  }
-
-  return "assist";
-}
-
 function isAdminProjectCard(card: any): boolean {
-  const rawName = String(card?.name ?? "").trim();
-  const rawCode = String(card?.code ?? "").trim();
-  if (rawName === "ADMIN") return true;
-  if (rawCode === "ADMIN") return true;
-  const codeKey = normalizeProjectCardKey(card?.code);
-  const nameKey = normalizeProjectCardKey(card?.name);
-  return codeKey === "admin" || nameKey === "admin";
-}
-
-function dedupeProjectCards(cards: any[]): any[] {
-  const byKey = new Map<string, any>();
-
-  cards.forEach((card: any) => {
-    const codeKey = normalizeProjectCardKey(card?.code);
-    const nameKey = normalizeProjectCardKey(card?.name);
-    const idKey = String(card?.id ?? "").trim();
-    const key = codeKey ? `code:${codeKey}` : nameKey ? `name:${nameKey}` : `id:${idKey}`;
-    if (!key) return;
-
-    const next = {
-      ...card,
-      project_type: inferProjectCardType(card),
-    };
-    const existing = byKey.get(key);
-    if (!existing) {
-      byKey.set(key, next);
-      return;
-    }
-
-    const existingExactAdmin = String(existing?.name ?? "").trim() === "ADMIN";
-    const nextExactAdmin = String(next?.name ?? "").trim() === "ADMIN";
-    if (!existingExactAdmin && nextExactAdmin) {
-      byKey.set(key, next);
-      return;
-    }
-
-    const existingSynthetic = Boolean(existing?.syntheticSystemDeck);
-    const nextSynthetic = Boolean(next?.syntheticSystemDeck);
-    if (existingSynthetic && !nextSynthetic) {
-      byKey.set(key, next);
-      return;
-    }
-    if (!existing?.project_type && next?.project_type) {
-      byKey.set(key, next);
-    }
-  });
-
-  return Array.from(byKey.values());
+  return [card?.name, card?.code].some(
+    (value) => String(value ?? "").trim().toUpperCase() === "ADMIN",
+  );
 }
 
 export function useBuilderProjects({
@@ -177,8 +99,12 @@ export function useBuilderProjects({
       }
 
       const rawCards = Array.isArray(data?.projects) ? data.projects : [];
-      const cards = dedupeProjectCards(rawCards);
-      const assistCards = cards.filter((card: any) => inferProjectCardType(card) === "assist");
+      const cards = rawCards.filter(
+        (card: any) =>
+          typeof card?.id === "string" &&
+          (card?.project_type === "assist" || card?.project_type === "agent"),
+      );
+      const assistCards = cards.filter((card: any) => card.project_type === "assist");
       const adminAssistCard =
         assistCards.find((card: any) => String(card?.name ?? "").trim() === "ADMIN") ??
         assistCards.find((card: any) => String(card?.code ?? "").trim() === "ADMIN") ??
@@ -211,7 +137,7 @@ export function useBuilderProjects({
   }, [activeProject, projectsApi, setActiveProjectWithUrl, workspaceView]);
 
   const assistProjects = useMemo(
-    () => projects.filter((project: any) => inferProjectCardType(project) === "assist"),
+    () => projects.filter((project: any) => project.project_type === "assist"),
     [projects],
   );
 

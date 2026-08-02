@@ -13,7 +13,7 @@ import {
   normalizeRuntimeOptions,
   normalizeRuntimeType,
 } from '../deck/deckPrimitives';
-import { INITIAL_AGENT_TEMPLATES } from '../deck/deckSeed';
+import { INITIAL_AGENT_TEMPLATES } from '../deck/newProjectDeck';
 
 type UseAgentBuilderCardEditorArgs = {
   deck: DeckDocument;

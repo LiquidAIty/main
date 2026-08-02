@@ -47,7 +47,7 @@ import {
 import RightGlassDrawer from '../components/graph/RightGlassDrawer';
 import type { AgentCardRunContext } from '../components/AgentManager';
 // Decomposed Agent Builder modules (2026-07-08): the page is composition only;
-// deck primitives/seed/document logic and rail derivation live in the feature.
+// deck primitives/new-project template/document logic and rail derivation live in the feature.
 import {
   cloneDeckDocument,
   DEFAULT_WORKSPACE_ROOT,
@@ -56,7 +56,8 @@ import {
 } from '../features/agentbuilder/deck/deckPrimitives';
 import {
   BUILDER_DECK_ID,
-} from '../features/agentbuilder/deck/deckSeed';
+  INITIAL_DECK,
+} from '../features/agentbuilder/deck/newProjectDeck';
 import {
   buildProjectlessDeckDocument,
   formatBuilderStatusMessage,
@@ -1359,7 +1360,9 @@ export default function AgentBuilder(): React.ReactElement {
 
       <AgentBuilderProjectDrawer
         activeProject={activeProject}
+        builderDeckId={BUILDER_DECK_ID}
         colors={C}
+        initialDeck={INITIAL_DECK}
         open={openDrawer === 'navigation'}
         projects={assistProjects}
         projectsApi={PROJECTS_API}

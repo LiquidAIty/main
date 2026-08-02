@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentCardInstance, DeckDocument, RuntimeBinding } from '../types/agentgraph';
 // Deck logic moved out of the page in the 2026-07-08 decomposition; the spec
 // tests the real modules directly.
-import { INITIAL_DECK } from '../features/agentbuilder/deck/deckSeed';
+import { INITIAL_DECK } from '../features/agentbuilder/deck/newProjectDeck';
 import {
   hydrateDeckDocument,
   resolveProjectDeckLoadResult,
@@ -119,7 +119,7 @@ describe('agentbuilder authoring flow', () => {
     expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_main_chat' && edge.target === 'card_openai_coder')).toBe(false);
   });
 
-  it('prefers a real saved deck over the fallback seed and preserves its visible chain', () => {
+  it('loads a real saved deck and preserves its visible chain', () => {
     const savedDeck: DeckDocument = {
       id: 'deck_builder',
       name: 'Saved Deck',
@@ -144,7 +144,6 @@ describe('agentbuilder authoring flow', () => {
 
     const loaded = resolveProjectDeckPayload(savedDeck);
 
-    expect(loaded.usedFallback).toBe(false);
     expect(loaded.deck.nodes.map((node) => node.title)).toEqual(['Saved A', 'Saved B']);
     expect(loaded.deck.edges).toEqual([
       {
@@ -167,7 +166,6 @@ describe('agentbuilder authoring flow', () => {
     const loaded = resolveProjectDeckPayload(savedDeck);
     const rehydrated = hydrateDeckDocument(JSON.parse(JSON.stringify(loaded.deck)));
 
-    expect(loaded.usedFallback).toBe(false);
     expect(rehydrated.nodes.map((node) => node.title)).toEqual(INITIAL_DECK.nodes.map((node) => node.title));
     expect(rehydrated.edges.map((edge) => ({
       source: edge.source,
@@ -180,11 +178,8 @@ describe('agentbuilder authoring flow', () => {
     })));
   });
 
-  it('uses the restored real-agent seed only for true empty-state deck loads', () => {
-    const loaded = resolveProjectDeckPayload(null);
-
-    expect(loaded.usedFallback).toBe(true);
-    expect(loaded.deck.nodes.map((node) => node.title)).toEqual(INITIAL_DECK.nodes.map((node) => node.title));
+  it('fails a missing saved deck instead of silently seeding one during load', () => {
+    expect(() => resolveProjectDeckPayload(null)).toThrow('deck_not_found');
   });
 
   it('treats trimmed saved system decks as real saved state instead of fallback display mode', () => {
@@ -212,12 +207,11 @@ describe('agentbuilder authoring flow', () => {
 
     const loaded = resolveProjectDeckPayload(truncatedSystemDeck);
 
-    expect(loaded.usedFallback).toBe(false);
     expect(loaded.deck.nodes.map((node) => node.id)).toEqual(['card_magentic']);
     expect(loaded.deck.edges).toEqual([]);
   });
 
-  it('preserves an older saved deck without merging the current seed into it', () => {
+  it('preserves a saved deck without merging the current new-project template into it', () => {
     const legacyDeck: DeckDocument = {
       id: 'deck_builder',
       name: 'Agent Card Deck',
@@ -360,7 +354,7 @@ describe('agentbuilder authoring flow', () => {
     expect(hydrated.promptTemplates.map((template) => template.id)).toContain('prompt_code_workbench');
   });
 
-  it('preserves the current deck on project load failure instead of silently replacing it with fallback', () => {
+  it('fails project load when the saved deck is missing', () => {
     const currentDeck: DeckDocument = {
       id: 'deck_builder',
       name: 'Current Deck',
@@ -376,14 +370,10 @@ describe('agentbuilder authoring flow', () => {
       edges: [],
     };
 
-    const failed = resolveProjectDeckLoadResult(currentDeck, null, true);
-
-    expect(failed.preservedCurrent).toBe(true);
-    expect(failed.usedFallback).toBe(false);
-    expect(failed.deck.nodes.map((node) => node.title)).toEqual(['Current A']);
+    expect(() => resolveProjectDeckLoadResult(currentDeck, null)).toThrow('deck_not_found');
   });
 
-  it('does not re-seed fallback edges into a real deck that saved with no edges', () => {
+  it('does not add template edges to a real deck that saved with no edges', () => {
     const hydrated = hydrateDeckDocument({
       id: 'deck_builder',
       name: 'Edge Free Deck',
@@ -430,7 +420,7 @@ describe('agentbuilder authoring flow', () => {
     ]);
   });
 
-  it('does not seed fallback chain edges into partial saved decks that already provide real cards', () => {
+  it('does not add template chain edges to partial saved decks that already provide real cards', () => {
     const hydrated = hydrateDeckDocument({
       id: 'deck_builder',
       name: 'Partial Saved Deck',
@@ -472,7 +462,6 @@ describe('agentbuilder authoring flow', () => {
     const loaded = resolveProjectDeckPayload(trimmedSavedDeck);
     const rehydrated = hydrateDeckDocument(JSON.parse(JSON.stringify(loaded.deck)));
 
-    expect(loaded.usedFallback).toBe(false);
     expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_trading_workbench');
     expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_worldsignals_agent');
   });

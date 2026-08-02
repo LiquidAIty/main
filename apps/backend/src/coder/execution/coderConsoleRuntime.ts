@@ -50,8 +50,6 @@ export type ConsoleCoderDeps = {
   /** Announces the durable run/session identity immediately after the one
    * visible OpenClaude session starts, before waiting for terminal output. */
   onSessionStarted?: (started: ConsoleCoderStarted) => void;
-  /** Injectable in focused tests; production uses the bounded environment/default value. */
-  timeoutMs?: number;
 };
 
 /** Main's saved Coder invocation. This is an identity/prompt envelope for the
@@ -69,7 +67,6 @@ export type OpenClaudeCodeTask = {
   model?: string;
   provider?: string;
   signal?: AbortSignal;
-  timeoutMs?: number;
   toolSnapshot?: EffectiveCoderToolSnapshot;
 };
 
@@ -84,7 +81,7 @@ type OpenClaudeCodeRun = {
 };
 
 export type ConsoleCoderResultKind = 'audit' | 'coder_report';
-export type ConsoleCoderTerminalState = 'completed' | 'failed' | 'cancelled' | 'timed_out';
+export type ConsoleCoderTerminalState = 'completed' | 'failed' | 'cancelled';
 export type StructuredResultValidationStatus = 'valid' | 'missing' | 'malformed' | 'not_attempted';
 
 export type ConsoleCommandEvidence = {
@@ -102,7 +99,6 @@ export type ConsoleCoderStarted = {
   promptHash: string;
   sessionId: string;
   sessionState: string;
-  executionTimeoutMs: number;
   commandEvidence: ConsoleCommandEvidence;
 };
 
@@ -117,7 +113,6 @@ export type ConsoleCoderResult = {
   terminalState: ConsoleCoderTerminalState;
   processExitCode: number | null;
   stopReason: string | null;
-  executionTimeoutMs: number;
   structuredEventCount: number;
   commandEvidence: ConsoleCommandEvidence | null;
   stdout: string | null;
@@ -132,8 +127,6 @@ export type ConsoleCoderResult = {
   error: string | null;
 };
 
-const DEFAULT_CONSOLE_EXECUTION_TIMEOUT_MS = 300_000;
-const MAX_CONSOLE_EXECUTION_TIMEOUT_MS = 900_000;
 const STOP_SETTLE_TIMEOUT_MS = 6_000;
 
 function resultKindFor(run: OpenClaudeCodeRun): ConsoleCoderResultKind {
@@ -157,18 +150,11 @@ function prepareOpenClaudeCodeRun(task: OpenClaudeCodeTask): OpenClaudeCodeRun {
   };
 }
 
-function resolveExecutionTimeoutMs(injected?: number): number {
-  const raw = injected ?? Number(process.env.LIQUIDAITY_CODER_CONSOLE_TIMEOUT_MS);
-  if (!Number.isFinite(raw) || Number(raw) <= 0) return DEFAULT_CONSOLE_EXECUTION_TIMEOUT_MS;
-  return Math.min(MAX_CONSOLE_EXECUTION_TIMEOUT_MS, Math.max(1, Math.trunc(Number(raw))));
-}
-
 function blocked(
   run: OpenClaudeCodeRun,
   sessionId: string | null,
   sessionState: string,
   error: string,
-  timeoutMs: number,
   terminalState: ConsoleCoderTerminalState = 'failed',
 ): ConsoleCoderResult {
   return {
@@ -181,8 +167,7 @@ function blocked(
     sessionState,
     terminalState,
     processExitCode: null,
-    stopReason: terminalState === 'cancelled' || terminalState === 'timed_out' ? error : null,
-    executionTimeoutMs: timeoutMs,
+    stopReason: terminalState === 'cancelled' ? error : null,
     structuredEventCount: 0,
     commandEvidence: null,
     stdout: null,
@@ -233,14 +218,13 @@ function persistTranscript(childRunId: string, transcript: string): string | nul
   }
 }
 
-type ConsoleWaitOutcome = 'terminal' | 'cancelled' | 'timed_out';
+type ConsoleWaitOutcome = 'terminal' | 'cancelled';
 
-/** Wait on the existing lifecycle stream. Cancellation/timeout stop the same
- * visible session, then retain its final bounded transcript when it settles. */
+/** Wait on the native lifecycle stream. Only explicit cancellation stops the
+ * visible session; the runtime is otherwise allowed to finish its own work. */
 function awaitSessionExit(
   session: OpenClaudeConsoleSession,
   signal: AbortSignal | undefined,
-  timeoutMs: number,
 ): Promise<ConsoleWaitOutcome> {
   return new Promise((resolve) => {
     if (session.info.state === 'exited' || session.info.state === 'failed') {
@@ -249,12 +233,10 @@ function awaitSessionExit(
     }
     let settled = false;
     let requested: Exclude<ConsoleWaitOutcome, 'terminal'> | null = null;
-    let executionTimer: NodeJS.Timeout | null = null;
     let stopSettleTimer: NodeJS.Timeout | null = null;
     const finish = (outcome: ConsoleWaitOutcome) => {
       if (settled) return;
       settled = true;
-      if (executionTimer) clearTimeout(executionTimer);
       if (stopSettleTimer) clearTimeout(stopSettleTimer);
       signal?.removeEventListener('abort', onAbort);
       unsubscribe();
@@ -281,7 +263,6 @@ function awaitSessionExit(
       onAbort();
       return;
     }
-    executionTimer = setTimeout(() => requestStop('timed_out'), timeoutMs);
   });
 }
 
@@ -296,20 +277,19 @@ export async function runOpenClaudeCodeTask(
 ): Promise<ConsoleCoderResult> {
   const run = prepareOpenClaudeCodeRun(task);
   const manager = deps.manager ?? openClaudeConsoleSessionManager;
-  const timeoutMs = resolveExecutionTimeoutMs(task.timeoutMs ?? deps.timeoutMs);
   const model = String(task.model ?? deps.model ?? '').trim();
   if (task.signal?.aborted || deps.signal?.aborted) {
-    return blocked(run, null, 'cancelled', 'console_coder_cancelled', timeoutMs, 'cancelled');
+    return blocked(run, null, 'cancelled', 'console_coder_cancelled', 'cancelled');
   }
   if (!model) {
     // Honest, loud failure — the OpenClaude runtime needs a model resolved from
     // the saved Coder card. No hidden fallback to a second coder.
-    return blocked(run, null, 'blocked', 'console_coder_model_unresolved', timeoutMs);
+    return blocked(run, null, 'blocked', 'console_coder_model_unresolved');
   }
 
   const toolSnapshot = task.toolSnapshot;
   if (!toolSnapshot || toolSnapshot.authority !== run.authority) {
-    return blocked(run, null, 'blocked', 'console_coder_tool_snapshot_unresolved', timeoutMs);
+    return blocked(run, null, 'blocked', 'console_coder_tool_snapshot_unresolved');
   }
   if (toolSnapshot.unresolved.length > 0) {
     return blocked(
@@ -317,7 +297,6 @@ export async function runOpenClaudeCodeTask(
       null,
       'blocked',
       `console_coder_saved_tools_unresolved:${toolSnapshot.unresolved.join(',')}`,
-      timeoutMs,
     );
   }
 
@@ -328,7 +307,7 @@ export async function runOpenClaudeCodeTask(
   let mcpConfigArtifact: string | null = null;
   const mcpConfig = writeRunMcpConfig(run.runId, toolSnapshot.mcpServers);
   if (!mcpConfig) {
-    return blocked(run, null, 'blocked', 'console_coder_mcp_config_write_failed', timeoutMs);
+    return blocked(run, null, 'blocked', 'console_coder_mcp_config_write_failed');
   }
   mcpConfigArtifact = mcpConfig.artifactRef;
   const mcpFlags = ['--mcp-config', mcpConfig.absolutePath, '--strict-mcp-config'];
@@ -352,7 +331,7 @@ export async function runOpenClaudeCodeTask(
     args,
   });
   if (!started.ok) {
-    return blocked(run, null, 'failed', started.error, timeoutMs);
+    return blocked(run, null, 'failed', started.error);
   }
 
   const session = started.session;
@@ -363,7 +342,6 @@ export async function runOpenClaudeCodeTask(
     promptHash: run.promptHash,
     sessionId: session.info.id,
     sessionState: session.info.state,
-    executionTimeoutMs: timeoutMs,
     commandEvidence: {
       commandPath: session.info.commandPath,
       runtimeSource: session.info.runtimeSource,
@@ -372,7 +350,7 @@ export async function runOpenClaudeCodeTask(
       model: session.info.model,
     },
   });
-  const waitOutcome = await awaitSessionExit(session, task.signal ?? deps.signal, timeoutMs);
+  const waitOutcome = await awaitSessionExit(session, task.signal ?? deps.signal);
 
   const transcript = session.transcriptText();
   const transcriptArtifact = persistTranscript(run.runId, transcript);
@@ -391,22 +369,18 @@ export async function runOpenClaudeCodeTask(
   const processOk = session.info.state === 'exited' && session.info.exitCode === 0;
   const terminalState: ConsoleCoderTerminalState = waitOutcome === 'cancelled'
     ? 'cancelled'
-    : waitOutcome === 'timed_out'
-      ? 'timed_out'
-      : processOk && structuredOk
-        ? 'completed'
-        : 'failed';
+    : processOk && structuredOk
+      ? 'completed'
+      : 'failed';
   const error = terminalState === 'completed'
     ? null
     : terminalState === 'cancelled'
       ? 'console_coder_cancelled'
-      : terminalState === 'timed_out'
-        ? 'console_coder_timed_out'
-        : !processOk
-          ? session.info.error ?? 'console_coder_process_failed'
-          : resultValidationStatus === 'missing'
-            ? 'console_coder_result_missing'
-            : 'console_coder_result_malformed';
+      : !processOk
+        ? session.info.error ?? 'console_coder_process_failed'
+        : resultValidationStatus === 'missing'
+          ? 'console_coder_result_missing'
+          : 'console_coder_result_malformed';
   const artifactRefs = [
     ...(mcpConfigArtifact ? [mcpConfigArtifact] : []),
     ...(transcriptArtifact ? [transcriptArtifact] : []),
@@ -424,7 +398,6 @@ export async function runOpenClaudeCodeTask(
     terminalState,
     processExitCode: session.info.exitCode,
     stopReason: waitOutcome === 'terminal' ? null : error,
-    executionTimeoutMs: timeoutMs,
     structuredEventCount: session.structuredEventCount(),
     commandEvidence: {
       commandPath: session.info.commandPath,

@@ -126,36 +126,47 @@ export async function streamSession(args: {
 /**
  * Load the durable project-scoped transcript for a conversation (persisted by
  * the backend `conversations/store.ts`). Returns turns in append order. A
- * fresh project or any read failure resolves to an empty array — never throws —
- * so chat always opens, with or without history.
+ * A valid fresh conversation resolves to an empty array. Transport, persistence,
+ * and malformed-response failures remain visible to the caller.
  */
 export async function loadSessionHistory(args: {
   projectId: string;
   conversationId: string;
   signal?: AbortSignal;
 }): Promise<{ role: 'assistant' | 'user'; text: string }[]> {
-  try {
-    const params = new URLSearchParams({
-      projectId: args.projectId,
-      conversationId: args.conversationId,
+  const params = new URLSearchParams({
+    projectId: args.projectId,
+    conversationId: args.conversationId,
+  });
+  const res = await fetch(`${BASE}/history?${params.toString()}`, {
+    method: 'GET',
+    credentials: 'include',
+    signal: args.signal,
+  });
+  const payload = (await res.json().catch(() => null)) as {
+    error?: unknown;
+    messages?: { role?: unknown; text?: unknown }[];
+  } | null;
+  if (!res.ok) {
+    throw new SessionStreamError({
+      code: typeof payload?.error === 'string' ? payload.error : 'conversation_history_read_failed',
+      message: `Conversation history read failed with status ${res.status}.`,
+      route: `${BASE}/history`,
+      status: res.status,
     });
-    const res = await fetch(`${BASE}/history?${params.toString()}`, {
-      method: 'GET',
-      credentials: 'include',
-      signal: args.signal,
-    });
-    if (!res.ok) return [];
-    const payload = (await res.json().catch(() => ({}))) as {
-      messages?: { role?: unknown; text?: unknown }[];
-    };
-    if (!Array.isArray(payload.messages)) return [];
-    return payload.messages
-      .map((m) => ({
-        role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
-        text: typeof m.text === 'string' ? m.text : '',
-      }))
-      .filter((m) => m.text.length > 0);
-  } catch {
-    return [];
   }
+  if (!payload || !Array.isArray(payload.messages)) {
+    throw new SessionStreamError({
+      code: 'conversation_history_response_invalid',
+      message: 'Conversation history response did not contain a messages array.',
+      route: `${BASE}/history`,
+      status: res.status,
+    });
+  }
+  return payload.messages
+    .map((m) => ({
+      role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+      text: typeof m.text === 'string' ? m.text : '',
+    }))
+    .filter((m) => m.text.length > 0);
 }

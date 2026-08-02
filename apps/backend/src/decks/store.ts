@@ -2,7 +2,7 @@
 // @graph role: deck-persistence
 // @graph relates_to: AgentBuilderWorkspace
 // @graph depends_on: Postgres
-import { createHash, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 import { pool } from '../db/pool';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
 import type {
@@ -135,8 +135,6 @@ function normalizeDeckNode(value: unknown): AgentCardInstance | null {
     raw.status === 'idle' || raw.status === 'ready' || raw.status === 'running' || raw.status === 'error'
       ? raw.status
       : undefined;
-  const cloneConfig =
-    raw.cloneConfig && typeof raw.cloneConfig === 'object' ? raw.cloneConfig : undefined;
   const overrides =
     raw.overrides && typeof raw.overrides === 'object' ? raw.overrides : undefined;
   const position =
@@ -161,7 +159,6 @@ function normalizeDeckNode(value: unknown): AgentCardInstance | null {
     position,
     overrides: overrides as AgentCardInstance['overrides'],
     status,
-    cloneConfig: cloneConfig as AgentCardInstance['cloneConfig'],
   } as AgentCardInstance;
 }
 
@@ -211,14 +208,13 @@ function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument
   return deck;
 }
 
-function hashRevision(value: unknown): string {
-  return createHash('sha1').update(JSON.stringify(value ?? null), 'utf8').digest('hex');
-}
-
-function normalizeRevisionMeta(value: unknown, fallbackValue: unknown): V3RevisionMeta {
-  const raw = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+function normalizeRevisionMeta(value: unknown): V3RevisionMeta | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const revision = String(raw.revision || '').trim();
+  if (!revision) return null;
   return {
-    revision: String(raw.revision || '').trim() || `legacy:${hashRevision(fallbackValue)}`,
+    revision,
     savedAt: typeof raw.savedAt === 'string' && raw.savedAt.trim() ? raw.savedAt.trim() : null,
   };
 }
@@ -233,22 +229,10 @@ function normalizeProjectBlob(value: unknown): V3ProjectBlob {
   const raw = normalizeJson(value, {} as Record<string, unknown>);
   const decksInput =
     raw.decks && typeof raw.decks === 'object' ? (raw.decks as Record<string, unknown>) : {};
-  const deckRunsInput =
-    raw.deckRuns && typeof raw.deckRuns === 'object'
-      ? (raw.deckRuns as Record<string, unknown>)
-      : {};
-
   const decks: Record<string, DeckDocument> = {};
   Object.entries(decksInput).forEach(([deckId, deckValue]) => {
     const deck = normalizeDeckDocument(deckValue, deckId);
     if (deck) decks[deckId] = deck;
-  });
-
-  const deckRuns: Record<string, unknown[]> = {};
-  Object.entries(deckRunsInput).forEach(([deckId, runsValue]) => {
-    // Historical run JSON is preserved byte-for-structure during ordinary
-    // deck saves, but it is no longer interpreted or exposed as live runtime.
-    deckRuns[deckId] = Array.isArray(runsValue) ? runsValue : [];
   });
 
   const rawMeta = raw.meta && typeof raw.meta === 'object' ? (raw.meta as Record<string, unknown>) : {};
@@ -259,18 +243,11 @@ function normalizeProjectBlob(value: unknown): V3ProjectBlob {
 
   return {
     decks,
-    deckRuns,
-    hiddenTelemetry:
-      raw.hiddenTelemetry && typeof raw.hiddenTelemetry === 'object'
-        ? (raw.hiddenTelemetry as Record<string, unknown>)
-        : {},
     meta: {
-      decks: Object.fromEntries(
-        Object.entries(decks).map(([deckId, deck]) => [
-          deckId,
-          normalizeRevisionMeta(rawDeckMeta[deckId], deck),
-        ]),
-      ),
+      decks: Object.fromEntries(Object.keys(decks).flatMap((deckId) => {
+        const meta = normalizeRevisionMeta(rawDeckMeta[deckId]);
+        return meta ? [[deckId, meta]] : [];
+      })),
     },
   };
 }
@@ -371,9 +348,10 @@ export async function saveDeckDocument(
   const expectedRevision = String(options?.expectedRevision || '').trim() || null;
   const nextBlob = await writeV3ProjectBlobCas(projectId, (blob) => {
     const currentDeck = blob.decks[deckId] || null;
-    const currentDeckMeta = currentDeck
-      ? blob.meta.decks[deckId] || normalizeRevisionMeta(null, currentDeck)
-      : null;
+    const currentDeckMeta = currentDeck ? blob.meta.decks[deckId] || null : null;
+    if (currentDeck && !currentDeckMeta) {
+      throw new Error('deck_revision_missing');
+    }
     if (expectedRevision && currentDeckMeta?.revision !== expectedRevision) {
       throw new Error('deck_conflict');
     }
@@ -413,15 +391,12 @@ export async function deleteDeckDocument(
       return blob;
     }
     const nextDecks = { ...blob.decks };
-    const nextDeckRuns = { ...blob.deckRuns };
     const nextDeckMeta = { ...blob.meta.decks };
     delete nextDecks[deckId];
-    delete nextDeckRuns[deckId];
     delete nextDeckMeta[deckId];
     return {
       ...blob,
       decks: nextDecks,
-      deckRuns: nextDeckRuns,
       meta: {
         ...cloneBlobMeta(blob.meta),
         decks: nextDeckMeta,

@@ -10,7 +10,6 @@ import type {
 
 type LoadResult = {
   deck: DeckDocument;
-  usedFallback: boolean;
 };
 
 type UseAgentBuilderDeckLoadArgs = {
@@ -115,13 +114,10 @@ export default function useAgentBuilderDeckLoad({
           savedDeck,
         );
 
-        recordDeckWriteReason(
-          loadResult.usedFallback ? 'deck-load-default' : 'deck-load',
-        );
+        recordDeckWriteReason('deck-load');
         setDeck(loadResult.deck);
         // Compare autosave against the actual persisted board.
-        const persistedDeck =
-          !loadResult.usedFallback && savedDeck ? savedDeck : loadResult.deck;
+        const persistedDeck = savedDeck || loadResult.deck;
         lastPersistedBoardFingerprintRef.current = JSON.stringify({
           nodes: persistedDeck.nodes,
           edges: persistedDeck.edges,
@@ -134,14 +130,12 @@ export default function useAgentBuilderDeckLoad({
         );
         setStateLoaded(true);
         setDeckLoadError(null);
-        setDeckStatusMessage(
-          loadResult.usedFallback ? 'Using default canvas.' : 'Canvas loaded.',
-        );
+        setDeckStatusMessage('Canvas loaded.');
         console.info('[builder][deck-load-proof]', {
           projectId: canvasProjectId,
           deckId: builderDeckId,
           reason: 'deck-load',
-          source: loadResult.usedFallback ? 'fallback' : 'backend_saved_deck',
+          source: 'backend_saved_deck',
           nodeCount: loadResult.deck.nodes.length,
           edgeCount: loadResult.deck.edges.length,
           revision:

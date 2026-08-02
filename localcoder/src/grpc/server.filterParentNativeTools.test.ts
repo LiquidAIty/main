@@ -39,7 +39,7 @@ describe('normalizeTurnUsage', () => {
     })
   })
 
-  it('zero-initialized result usage falls back to the per-model usage store', () => {
+  it('uses the native per-model usage store when stream result usage is unpopulated', () => {
     expect(normalizeTurnUsage(
       { input_tokens: 0, output_tokens: 0 },
       { 'openrouter/some-model': { inputTokens: 950, outputTokens: 41 } },

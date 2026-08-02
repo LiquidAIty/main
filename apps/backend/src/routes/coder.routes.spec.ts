@@ -71,7 +71,6 @@ const consoleRuntimeMocks = vi.hoisted(() => ({
     terminalState: 'completed',
     processExitCode: null,
     stopReason: null,
-    executionTimeoutMs: 300000,
     structuredEventCount: 0,
     commandEvidence: null,
     exactCommand: null,
@@ -226,6 +225,40 @@ describe('coder routes', () => {
   // vendored runtime is built or API keys are exported on the test machine.
   const BROKEN_COMMAND = 'node C:/liquidaity/nonexistent/openclaude.mjs';
 
+  it('returns an empty history only for a successful empty read', async () => {
+    chatSessionMocks.getConversationMessages.mockResolvedValueOnce([]);
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(
+        `${baseUrl}/openclaude/session/history?projectId=project-1&conversationId=main`,
+      );
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ ok: true, messages: [] });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('returns a typed failure when conversation persistence cannot be read', async () => {
+    chatSessionMocks.getConversationMessages.mockRejectedValueOnce(
+      new Error('database_connection_lost'),
+    );
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(
+        `${baseUrl}/openclaude/session/history?projectId=project-1&conversationId=main`,
+      );
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toEqual({
+        ok: false,
+        error: 'conversation_history_read_failed',
+        messages: [],
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it('reports Coder idle from the live session owner instead of AgentGraph history', async () => {
     const { server, baseUrl } = await createApiServer();
     try {
@@ -376,7 +409,6 @@ describe('coder routes', () => {
           promptHash: 'prompt-hash-1',
           sessionId: 'occ-long-1',
           sessionState: 'running',
-          executionTimeoutMs: 300_000,
           commandEvidence: {
             commandPath: 'C:/openclaude/openclaude.exe',
             runtimeSource: 'installed',

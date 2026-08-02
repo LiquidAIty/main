@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { SessionStreamError, streamSession } from './openClaudeSessionClient';
+import {
+  loadSessionHistory,
+  SessionStreamError,
+  streamSession,
+} from './openClaudeSessionClient';
 
 function sseResponse(frames: string[]): Response {
   const encoder = new TextEncoder();
@@ -92,5 +96,35 @@ describe('streamSession', () => {
       message: 'hello',
       onEvent: vi.fn(),
     })).resolves.toEqual({ finalText: '' });
+  });
+});
+
+describe('loadSessionHistory', () => {
+  it('keeps a valid fresh conversation as an empty transcript', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ ok: true, messages: [] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )));
+
+    await expect(loadSessionHistory({
+      projectId: 'project-1',
+      conversationId: 'main',
+    })).resolves.toEqual([]);
+  });
+
+  it('surfaces a persistence failure instead of substituting an empty transcript', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ ok: false, error: 'conversation_history_read_failed', messages: [] }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
+    )));
+
+    await expect(loadSessionHistory({
+      projectId: 'project-1',
+      conversationId: 'main',
+    })).rejects.toMatchObject({
+      code: 'conversation_history_read_failed',
+      status: 500,
+      route: '/api/coder/openclaude/session/history',
+    });
   });
 });

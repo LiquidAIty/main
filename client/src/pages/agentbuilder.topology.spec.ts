@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import path from 'node:path';
 
-import { INITIAL_DECK } from '../features/agentbuilder/deck/deckSeed';
+import { INITIAL_DECK } from '../features/agentbuilder/deck/newProjectDeck';
 import {
   deriveVisibleRailItems,
   isHermesConnectedToMainChat,
 } from '../features/agentbuilder/rail/railVisibility';
 
 describe('Main / Hermes / graph authority topology', () => {
-  it('seeds no graph-agent card, template, prompt, or runtime binding', () => {
+  it('defines no graph-agent card, template, prompt, or runtime binding', () => {
     const serialized = JSON.stringify(INITIAL_DECK);
     expect(serialized).not.toMatch(/thinkgraph_agent|codegraph_agent|knowgraph_agent/);
     expect(INITIAL_DECK.nodes.map((node) => node.id)).toEqual(expect.arrayContaining([
@@ -59,7 +59,7 @@ describe('Main / Hermes / graph authority topology', () => {
     ] as any)).toBe(false);
   });
 
-  it('seeds Main→Hermes invocation and only the intended workers on the blue bus', () => {
+  it('defines Main→Hermes invocation and only the intended workers on the blue bus', () => {
     expect(INITIAL_DECK.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' }),
       expect.objectContaining({ source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' }),

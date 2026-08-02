@@ -38,7 +38,7 @@ export type AgentCardRuntimeOptions = {
   tools?: string[] | null;
   /** Card-assigned NATIVE tool names for this agent's own session (e.g.
    * ['Agent'] for Main's doorway-only surface). Filtered by the engine BEFORE
-   * provider schema serialization; null = no declaration (legacy full pool). */
+   * provider schema serialization; null = no native-tool grant. */
   nativeTools?: string[] | null;
 };
 
@@ -53,11 +53,6 @@ export type AgentTemplate = {
   temperature?: number | null;
   maxTokens?: number | null;
   tools: string[];
-};
-
-export type CloneConfig = {
-  enabled: boolean;
-  seeds?: string[];
 };
 
 export type AgentCardInstance = {
@@ -75,7 +70,6 @@ export type AgentCardInstance = {
   position: { x: number; y: number };
   overrides?: Partial<AgentTemplate>;
   status?: 'idle' | 'ready' | 'running' | 'error';
-  cloneConfig?: CloneConfig;
 };
 
 export type DeckEdge = {
@@ -87,12 +81,6 @@ export type DeckEdge = {
   edgeType?: DeckEdgeType | null;
 };
 
-export type DeckViewport = {
-  x: number;
-  y: number;
-  zoom: number;
-};
-
 export type DeckDocument = {
   id: string;
   name: string;
@@ -100,8 +88,6 @@ export type DeckDocument = {
   promptTemplates: PromptTemplate[];
   nodes: AgentCardInstance[];
   edges: DeckEdge[];
-  // Deprecated: Agent Canvas intentionally ignores persisted viewport.
-  viewport?: DeckViewport | null;
   version: number;
 };
 
@@ -118,9 +104,5 @@ export type V3ProjectBlobMeta = {
 
 export type V3ProjectBlob = {
   decks: Record<string, DeckDocument>;
-  /** Opaque historical data retained during normal saves. No active route
-   * creates or interprets these retired deck-run records. */
-  deckRuns: Record<string, unknown[]>;
-  hiddenTelemetry: Record<string, unknown>;
   meta: V3ProjectBlobMeta;
 };

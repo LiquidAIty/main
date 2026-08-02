@@ -50,11 +50,6 @@ export type AgentTemplate = {
   tools: string[];
 };
 
-export type CloneConfig = {
-  enabled: boolean;
-  seeds?: string[];
-};
-
 export type AgentCardInstance = {
   id: string;
   kind?: DeckNodeKind;
@@ -70,7 +65,6 @@ export type AgentCardInstance = {
   position: { x: number; y: number };
   overrides?: Partial<AgentTemplate>;
   status?: 'idle' | 'ready' | 'running' | 'error';
-  cloneConfig?: CloneConfig;
 };
 
 export type DeckEdge = {
@@ -82,12 +76,6 @@ export type DeckEdge = {
   edgeType?: DeckEdgeType | null;
 };
 
-export type DeckViewport = {
-  x: number;
-  y: number;
-  zoom: number;
-};
-
 export type DeckDocument = {
   id: string;
   name: string;
@@ -95,8 +83,6 @@ export type DeckDocument = {
   promptTemplates: PromptTemplate[];
   nodes: AgentCardInstance[];
   edges: DeckEdge[];
-  // Deprecated: Agent Canvas intentionally ignores persisted viewport.
-  viewport?: DeckViewport | null;
   version: number;
 };
 

@@ -14,7 +14,6 @@ import {
   buildHarnessAgentDefinition,
   decodeGrpcProgressEvent,
   deriveSessionId,
-  resolveCardDoorwayDefinitions,
   resolveMainChatRuntimeConfig,
   selectDoorwayCards,
 } from './grpcChatClient';
@@ -165,10 +164,4 @@ describe('native Main / Hermes / Search doorways', () => {
     expect(hermesDefinition.system_prompt).not.toContain('[LIQUIDAITY_HERMES_ACTIVE_REPORT]');
   });
 
-  it('resolves Hermes to Search through its persisted flow edge', async () => {
-    deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [flow(main.id, hermes.id), flow(hermes.id, search.id)]));
-    const [definition] = await resolveCardDoorwayDefinitions(deriveSessionId('p1', 'c1'), 'chat') as any[];
-    expect(definition.card_id).toBe(hermes.id);
-    expect(definition.allowed_card_run_ids).toEqual([search.id]);
-  });
 });

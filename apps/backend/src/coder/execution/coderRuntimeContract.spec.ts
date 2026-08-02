@@ -7,7 +7,6 @@ import {
   resolveCoderToolPolicy,
   resolveConsolePermissionMode,
   CODEBASE_MEMORY_MCP_SERVER,
-  LEGACY_HARNESS_TOOL_POLICY,
   resolveEffectiveCoderToolSnapshot,
 } from './coderRuntimeContract';
 
@@ -72,11 +71,6 @@ describe('resolveCoderToolPolicy', () => {
     expect(policy.codeGraphMcp).toBe(true);
   });
 
-  it('legacy harness policy is exactly the historical shell-capable, no-edit args', () => {
-    expect(LEGACY_HARNESS_TOOL_POLICY.allowedTools.join(',')).toBe('Bash,PowerShell');
-    expect(LEGACY_HARNESS_TOOL_POLICY.disallowedTools.join(',')).toBe('WebFetch,WebSearch,Write,Edit,NotebookEdit');
-    expect(LEGACY_HARNESS_TOOL_POLICY.permissionMode).toBe('dontAsk');
-  });
 });
 
 describe('buildCoderMcpServers', () => {

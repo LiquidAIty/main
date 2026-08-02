@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 
 import BuilderDrawer from '../../../components/builder/BuilderDrawer';
 import { safeText } from '../deck/deckPrimitives';
+import type { DeckDocument } from '../../../types/agentgraph';
 
 type ProjectSummary = {
   id: string;
@@ -22,7 +23,9 @@ type DrawerColors = {
 
 type AgentBuilderProjectDrawerProps = {
   activeProject: string;
+  builderDeckId: string;
   colors: DrawerColors;
+  initialDeck: DeckDocument;
   open: boolean;
   projects: ProjectSummary[];
   projectsApi: string;
@@ -44,7 +47,9 @@ function errorMessage(error: unknown): string {
 
 export default function AgentBuilderProjectDrawer({
   activeProject,
+  builderDeckId,
   colors,
+  initialDeck,
   open,
   projects,
   projectsApi,
@@ -91,11 +96,30 @@ export default function AgentBuilderProjectDrawer({
             })
           : null;
       const newId = String(record?.project?.id || record?.id || '').trim();
+      if (!newId) {
+        throw new Error('project_create_missing_id');
+      }
+
+      const deckResponse = await fetch(`${projectsApi}/${newId}/decks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deckId: builderDeckId,
+          document: {
+            ...initialDeck,
+            id: builderDeckId,
+          },
+        }),
+      });
+      if (!deckResponse.ok) {
+        const text = await deckResponse.text().catch(() => '');
+        throw new Error(text || `Deck creation HTTP ${deckResponse.status}`);
+      }
 
       setShowCreateProjectForm(false);
       setNewProjectName('');
       await refreshProjects('after-create', newId);
-      if (newId) setActiveProjectWithUrl(newId);
+      setActiveProjectWithUrl(newId);
     } catch (error: unknown) {
       console.error('Create project failed', error);
       setProjectsError(`Failed to create project: ${errorMessage(error)}`);
