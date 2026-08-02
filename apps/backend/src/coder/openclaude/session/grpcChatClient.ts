@@ -205,10 +205,7 @@ export function buildHarnessAgentDefinition(
   const cardId = String(card?.id || '').trim();
   if (!cardId) return null;
   const title = String(card?.title || cardId).trim();
-  const binding = resolveRuntimeBinding(
-    card?.runtimeOptions?.binding ?? card?.runtimeBinding ?? card?.binding,
-    card?.id,
-  );
+  const binding = resolveRuntimeBinding(card?.runtimeBinding);
   if (binding === 'hermes_steward' || binding === 'research_agent') {
     const systemPrompt = typeof card?.prompt === 'string' ? card.prompt : '';
     if (!systemPrompt.trim()) return null;
@@ -269,7 +266,7 @@ export function selectDoorwayCards(nodes: any[], edges: any[], mode: HarnessMode
   const allEdges = edges || [];
   const mainChat = allNodes.find(
     (node) =>
-      resolveRuntimeBinding(node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding, node?.id) ===
+      resolveRuntimeBinding(node?.runtimeBinding) ===
       'main_chat',
   );
   const mainChatId = String(mainChat?.id || '').trim();
@@ -279,12 +276,9 @@ export function selectDoorwayCards(nodes: any[], edges: any[], mode: HarnessMode
       if (String(node?.kind || 'agent') !== 'agent') return false;
       if (String(node?.parentGraphId || '').trim()) return false;
       if (node?.enabled === false || node?.runtimeOptions?.enabled === false) return false;
-      const runtimeType = String(node?.runtimeType ?? 'assistant_agent');
+      const runtimeType = String(node?.runtimeType ?? '').trim();
       if (runtimeType !== 'assistant_agent' && runtimeType !== 'local_coder') return false;
-      const binding = resolveRuntimeBinding(
-        node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
-        node?.id,
-      );
+      const binding = resolveRuntimeBinding(node?.runtimeBinding);
       return binding !== 'main_chat';
     });
   }
@@ -355,7 +349,7 @@ function cardNativeToolGrants(card: any): string[] {
  */
 function resolveMainChatCardFromDeck(nodes: any[]): { ok: true; card: any } | { ok: false } {
   const matches = (nodes || []).filter(
-    (n) => resolveRuntimeBinding(n?.runtimeOptions?.binding ?? n?.runtimeBinding ?? n?.binding, n?.id) === 'main_chat',
+    (n) => resolveRuntimeBinding(n?.runtimeBinding) === 'main_chat',
   );
   if (matches.length !== 1) return { ok: false };
   return { ok: true, card: matches[0] };

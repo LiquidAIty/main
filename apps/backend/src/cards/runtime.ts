@@ -12,7 +12,6 @@ import { getDeckDocument } from '../decks/store';
 import { resolveModel } from '../llm/models.config';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
 import { logHarnessTrace, redactTrace } from '../services/harnessTrace';
-import { normalizeLocalCoderControllerCard } from './localCoderController';
 
 function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
   const provider = String(value ?? '').trim().toLowerCase();
@@ -114,16 +113,11 @@ export function resolvedMagenticControllers(
 }
 
 function resolveCardRuntimeType(card: any): string {
-  return card.kind === 'agent'
-    ? (card.runtimeType || 'assistant_agent')
-    : 'assistant_agent';
+  return card.kind === 'agent' ? String(card.runtimeType || '').trim() : '';
 }
 
 function resolveCardBinding(card: any): string | null {
-  const binding = resolveRuntimeBinding(
-    card?.runtimeOptions?.binding ?? card?.runtimeBinding ?? card?.binding,
-    card?.id,
-  );
+  const binding = resolveRuntimeBinding(card?.runtimeBinding);
   return binding || null;
 }
 
@@ -304,7 +298,6 @@ export function resolveCardModelStrict(card: any): {
   provider: string;
   providerModelId: string;
 } {
-  card = normalizeLocalCoderControllerCard(card);
   const modelKey = card.runtimeOptions?.modelKey;
   if (!modelKey) {
     throw new Error(
@@ -325,7 +318,6 @@ export function resolveCardModelStrict(card: any): {
  * second TypeScript registry. Python resolves and validates every id before
  * model execution. */
 export function resolveCardTools(card: any): string[] {
-  card = normalizeLocalCoderControllerCard(card);
   const fromOptions = card.runtimeOptions?.tools;
   const raw = Array.isArray(fromOptions) ? fromOptions : Array.isArray(card.tools) ? card.tools : [];
   return raw.map((tool: any) => {
@@ -344,7 +336,6 @@ export function resolveCardTools(card: any): string[] {
  * source of truth for how a canvas card becomes a Python AutoGen participant.
  */
 export function serializeCardParticipant(head: any): Record<string, unknown> {
-  head = normalizeLocalCoderControllerCard(head);
   const model = resolveCardModelStrict(head);
   const runtimeBinding = resolveCardBinding(head);
   const runtimeType = resolveCardRuntimeType(head);
@@ -370,7 +361,6 @@ export function serializeCardParticipant(head: any): Record<string, unknown> {
 }
 
 export function serializeCardPrivateParticipant(head: any): Record<string, unknown> {
-  head = normalizeLocalCoderControllerCard(head);
   // Saved runtimeType only — no templateId/title inference. A card is whatever
   // its saved configuration says it is.
   const mappedRuntimeType = head.runtimeType === 'codex_app_server'
@@ -578,7 +568,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     });
   }
 
-  const effectiveCard = normalizeLocalCoderControllerCard(card);
+  const effectiveCard = card;
   let participant: Record<string, unknown>;
   let privateParticipant: Record<string, unknown>;
   let model: { provider: string; providerModelId: string };
@@ -592,10 +582,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     return done({ status: 'failed', runtimeType, error: String(error?.message || 'card_resolution_failed') });
   }
 
-  const resolvedBinding = resolveRuntimeBinding(
-    effectiveCard?.runtimeOptions?.binding ?? effectiveCard?.runtimeBinding ?? effectiveCard?.binding,
-    effectiveCard?.id,
-  );
+  const resolvedBinding = resolveRuntimeBinding(effectiveCard?.runtimeBinding);
   const payload = {
     session: {
       sessionId: `${deckId}:${cardId}:${correlationId}`,

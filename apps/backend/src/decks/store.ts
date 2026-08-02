@@ -4,15 +4,7 @@
 // @graph depends_on: Postgres
 import { createHash, randomUUID } from 'crypto';
 import { pool } from '../db/pool';
-import { normalizeLocalCoderControllerCard } from '../cards/localCoderController';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
-import {
-  buildMainChatControlEdge,
-  buildMainChatControllerCard,
-  MAIN_CHAT_CARD_ID,
-  MAIN_CHAT_PROMPT_ID,
-  MAIN_CHAT_PROMPT_TEMPLATE,
-} from './mainChatControllerCard';
 import type {
   AgentCardInstance,
   AgentCardRuntimeOptions,
@@ -154,13 +146,13 @@ function normalizeDeckNode(value: unknown): AgentCardInstance | null {
           y: Number((raw.position as Record<string, unknown>).y) || 0,
         }
       : { x: 0, y: 0 };
-  return normalizeLocalCoderControllerCard({
+  return {
     id: String(raw.id || '').trim(),
     kind: 'agent',
     templateId: String(raw.templateId || '').trim(),
     prompt,
-    runtimeBinding: resolveRuntimeBinding(raw.runtimeBinding, raw.id),
-    runtimeType: normalizeRuntimeType(raw.runtimeType) || 'assistant_agent',
+    runtimeBinding: resolveRuntimeBinding(raw.runtimeBinding),
+    runtimeType: normalizeRuntimeType(raw.runtimeType),
     runtimeOptions: normalizeRuntimeOptions(raw.runtimeOptions),
     parentGraphId: typeof raw.parentGraphId === 'string' ? raw.parentGraphId.trim() || null : null,
     tools: cleanToolNames(raw.tools) || undefined,
@@ -170,7 +162,7 @@ function normalizeDeckNode(value: unknown): AgentCardInstance | null {
     overrides: overrides as AgentCardInstance['overrides'],
     status,
     cloneConfig: cloneConfig as AgentCardInstance['cloneConfig'],
-  } as AgentCardInstance);
+  } as AgentCardInstance;
 }
 
 function normalizeDeckEdge(value: unknown): DeckEdge | null {
@@ -186,65 +178,6 @@ function normalizeDeckEdge(value: unknown): DeckEdge | null {
     targetHandle,
     edgeType: normalizeEdgeType(raw.edgeType),
   };
-}
-
-function ensureMainChatControllerCard(deck: DeckDocument): DeckDocument {
-  if (deck.id !== BUILDER_DECK_ID) return deck;
-  const promptTemplateExists = deck.promptTemplates.some((template) => template.id === MAIN_CHAT_PROMPT_ID);
-  const promptTemplates = promptTemplateExists
-    ? deck.promptTemplates
-    : [MAIN_CHAT_PROMPT_TEMPLATE, ...deck.promptTemplates];
-  const mainChatMatches = deck.nodes.filter(
-    (node) =>
-      resolveRuntimeBinding((node.runtimeOptions as any)?.binding ?? node.runtimeBinding, node.id) ===
-      'main_chat',
-  );
-  const prompt =
-    mainChatMatches[0]?.prompt?.trim() ||
-    promptTemplates.find((template) => template.id === MAIN_CHAT_PROMPT_ID)?.content ||
-    MAIN_CHAT_PROMPT_TEMPLATE.content;
-  const nodes =
-    mainChatMatches.length === 0
-      ? [buildMainChatControllerCard(prompt), ...deck.nodes]
-      : deck.nodes.map((node) => {
-          if (node.id !== mainChatMatches[0].id) return node;
-          return normalizeDeckNode({
-            ...node,
-            id: MAIN_CHAT_CARD_ID,
-            title: node.title?.trim() || 'Main Chat / Harness',
-            subtitle: node.subtitle?.trim() || 'Native Harness front door',
-            templateId: node.templateId?.trim() || 'template_main_chat',
-            prompt,
-            runtimeBinding: 'main_chat',
-            runtimeType: 'assistant_agent',
-            runtimeOptions: {
-              ...(node.runtimeOptions || {}),
-              provider: node.runtimeOptions?.provider,
-              modelKey: node.runtimeOptions?.modelKey,
-            },
-            parentGraphId: null,
-          }) || node;
-        });
-  // Main Chat's bus relationship is CONTROL-only (dedicated top input). A
-  // legacy worker-slot edge (magentic_option into a bus-in-* handle) is
-  // retired stale wiring: drop it so Main Chat can never resolve as a worker,
-  // and ensure exactly one control edge exists.
-  const edges = deck.edges.filter(
-    (edge) =>
-      !(
-        edge.edgeType === 'magentic_option' &&
-        ((edge.source === MAIN_CHAT_CARD_ID && edge.target === 'card_magentic') ||
-          (edge.target === MAIN_CHAT_CARD_ID && edge.source === 'card_magentic'))
-      ),
-  );
-  const hasControlEdge = edges.some(
-    (edge) =>
-      edge.edgeType === 'magentic_control' &&
-      ((edge.source === MAIN_CHAT_CARD_ID && edge.target === 'card_magentic') ||
-        (edge.target === MAIN_CHAT_CARD_ID && edge.source === 'card_magentic')),
-  );
-  const finalEdges = hasControlEdge ? edges : [buildMainChatControlEdge(), ...edges];
-  return { ...deck, promptTemplates, nodes, edges: finalEdges };
 }
 
 function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument | null {
@@ -263,9 +196,6 @@ function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument
             typeof template.content === 'string',
         )
       : [],
-    systemToolGrantsVersion: Number.isFinite(Number(raw.systemToolGrantsVersion))
-      ? Number(raw.systemToolGrantsVersion)
-      : undefined,
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
     nodes: Array.isArray(raw.nodes)
       ? raw.nodes
@@ -278,7 +208,7 @@ function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument
           .filter((edge: DeckEdge | null): edge is DeckEdge => Boolean(edge))
       : [],
   };
-  return ensureMainChatControllerCard(deck);
+  return deck;
 }
 
 function hashRevision(value: unknown): string {

@@ -1,5 +1,4 @@
-// Deck document logic: normalization, hydration, legacy upgrade,
-// single-card-run scoping, and the Coder controller card normalization.
+// Deck document logic: structural normalization, hydration, and load handling.
 import type {
   AgentCardInstance,
   DeckDocument,
@@ -10,24 +9,11 @@ import { sanitizeDeckEdges } from '../../../components/builder/deckValidation';
 import {
   cleanOptionalText,
   cloneDeckDocument,
-  HERMES_STEWARD_TOOLS,
-  isLegacyUaCard,
-  LOCAL_CODER_CONTROLLER_TOOLS,
-  MAIN_CHAT_CONTROLLER_TOOLS,
-  normalizeRuntimeBinding,
   normalizeRuntimeOptions,
-  normalizeRuntimeType,
   safeText,
-  SYSTEM_TOOL_GRANTS_VERSION,
 } from './deckPrimitives';
 import {
-  BASELINE_OPTIONAL_CARD_IDS,
   INITIAL_DECK,
-  INITIAL_PROMPT_TEMPLATES,
-  LEGACY_SYSTEM_CARD_IDS,
-  REMOVED_DEFAULT_CARD_IDS,
-  REMOVED_DEFAULT_EDGE_IDS,
-  SYSTEM_CARD_RUNTIME_BINDINGS,
 } from './deckSeed';
 
 function isLocalCoderControllerCard(card: AgentCardInstance | null | undefined): boolean {
@@ -38,45 +24,6 @@ function isLocalCoderControllerCard(card: AgentCardInstance | null | undefined):
     safeText(card.runtimeType).trim().toLowerCase() === 'local_coder' ||
     safeText(card.templateId).trim().toLowerCase() === 'template_local_coder'
   );
-}
-
-function normalizeLocalCoderControllerCard(card: AgentCardInstance): AgentCardInstance {
-  if (!isLocalCoderControllerCard(card)) return card;
-  const runtimeOptions = normalizeRuntimeOptions(card.runtimeOptions) ?? {};
-  // Provider, model, and tools are saved-card authority. Hydration normalizes
-  // only the controller identity and never adds hidden grants.
-  return {
-    ...card,
-    runtimeBinding: 'local_coder',
-    runtimeType: 'local_coder',
-    runtimeOptions: {
-      ...runtimeOptions,
-    },
-  };
-}
-
-function migrateSystemToolGrants(
-  card: AgentCardInstance,
-  sourceGrantVersion: number,
-): AgentCardInstance {
-  if (sourceGrantVersion >= SYSTEM_TOOL_GRANTS_VERSION) return card;
-  const tools =
-    card.id === 'card_main_chat'
-      ? MAIN_CHAT_CONTROLLER_TOOLS
-      : card.id === 'card_local_coder'
-        ? LOCAL_CODER_CONTROLLER_TOOLS
-        : card.id === 'card_hermes_steward'
-          ? HERMES_STEWARD_TOOLS
-          : null;
-  if (!tools) return card;
-  const runtimeOptions = normalizeRuntimeOptions(card.runtimeOptions) ?? {};
-  return {
-    ...card,
-    runtimeOptions: {
-      ...runtimeOptions,
-      tools: [...tools],
-    },
-  };
 }
 
 export function resolveLocalCoderControllerConsoleConfig(
@@ -94,75 +41,22 @@ export function resolveLocalCoderControllerConsoleConfig(
 
 
 function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
-  if (!Array.isArray(value)) {
-    return cloneDeckDocument(INITIAL_DECK.nodes);
-  }
-  if (value.length === 0) {
-    return [];
-  }
-  const nextNodes = value.filter((node): node is AgentCardInstance =>
-    Boolean(
-      node &&
-      typeof node === 'object' &&
-      !REMOVED_DEFAULT_CARD_IDS.has(
-        safeText((node as Partial<AgentCardInstance>).id).trim(),
-      ) &&
-      (!safeText((node as Partial<AgentCardInstance>).kind).trim() ||
-        safeText((node as Partial<AgentCardInstance>).kind).trim().toLowerCase() === 'agent') &&
-      typeof (node as AgentCardInstance).id === 'string' &&
-      typeof (node as AgentCardInstance).templateId === 'string',
-    ),
-  );
-  const normalizedNodes =
-    nextNodes.length > 0
-      ? nextNodes.map((node) => ({
-        id: safeText(node.id).trim(),
-        kind: 'agent' as const,
-        templateId: safeText(node.templateId).trim(),
-        prompt: typeof node.prompt === 'string' ? node.prompt : '',
-        runtimeBinding: normalizeRuntimeBinding(
-          node.runtimeBinding ??
-            SYSTEM_CARD_RUNTIME_BINDINGS[safeText(node.id).trim()] ??
-            null,
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (node): node is AgentCardInstance =>
+        Boolean(
+          node &&
+            typeof node === 'object' &&
+            typeof (node as AgentCardInstance).id === 'string' &&
+            typeof (node as AgentCardInstance).templateId === 'string',
         ),
-        runtimeType:
-          normalizeRuntimeType(node.runtimeType) ?? 'assistant_agent',
-        runtimeOptions: normalizeRuntimeOptions(node.runtimeOptions),
-        parentGraphId: cleanOptionalText(node.parentGraphId),
-        title:
-          safeText(node.title || node.id).trim() || safeText(node.id).trim(),
-        subtitle: typeof node.subtitle === 'string' ? node.subtitle : undefined,
-        position:
-          node.position && typeof node.position === 'object'
-            ? {
-                x: Number((node.position as { x?: unknown }).x) || 0,
-                y: Number((node.position as { y?: unknown }).y) || 0,
-              }
-            : { x: 0, y: 0 },
-        overrides: node.overrides,
-        status:
-          node.status === 'idle' ||
-          node.status === 'ready' ||
-          node.status === 'running' ||
-          node.status === 'error'
-            ? node.status
-            : undefined,
-        cloneConfig:
-          node.cloneConfig && typeof node.cloneConfig === 'object'
-            ? node.cloneConfig
-            : undefined,
-      }))
-      : [];
-  return normalizedNodes.filter((node) => !isLegacyUaCard(node));
+    )
+    .map((node) => cloneDeckDocument(node));
 }
 
 function normalizeDeckPromptTemplates(value: unknown): PromptTemplate[] {
-  if (!Array.isArray(value)) {
-    return cloneDeckDocument(INITIAL_PROMPT_TEMPLATES);
-  }
-  if (value.length === 0) {
-    return [];
-  }
+  if (!Array.isArray(value)) return [];
   const nextPromptTemplates = value.filter(
     (template): template is PromptTemplate =>
       Boolean(
@@ -172,26 +66,13 @@ function normalizeDeckPromptTemplates(value: unknown): PromptTemplate[] {
         typeof (template as PromptTemplate).content === 'string',
       ),
   );
-  return nextPromptTemplates.length > 0
-    ? cloneDeckDocument(nextPromptTemplates)
-    : cloneDeckDocument(INITIAL_PROMPT_TEMPLATES);
+  return cloneDeckDocument(nextPromptTemplates);
 }
 
 function normalizeDeckEdges(value: unknown): DeckEdge[] {
-  if (!Array.isArray(value)) {
-    return cloneDeckDocument(INITIAL_DECK.edges);
-  }
-  return cloneDeckDocument(
-    sanitizeDeckEdges(value).filter(
-      (edge) =>
-        safeText(edge.id).trim() !== 'edge_magentic_thinkgraph' &&
-        !REMOVED_DEFAULT_EDGE_IDS.has(safeText(edge.id).trim()),
-    ).map((edge) =>
-      edge.id === 'edge_main_chat_hermes'
-        ? { ...edge, edgeType: 'flow' as const }
-        : edge,
-    ),
-  );
+  return Array.isArray(value)
+    ? cloneDeckDocument(sanitizeDeckEdges(value))
+    : [];
 }
 
 export function formatBuilderStatusMessage(
@@ -245,188 +126,23 @@ export function formatBuilderStatusMessage(
   return text;
 }
 
-function seedCurrentSystemCardsIntoLegacyDeck(
-  deck: DeckDocument,
-): DeckDocument {
-  const legacyCompatibleNodeIds = new Set([
-    ...Array.from(LEGACY_SYSTEM_CARD_IDS),
-    ...Array.from(BASELINE_OPTIONAL_CARD_IDS),
-  ]);
-  const hasOnlyLegacySystemNodes =
-    deck.nodes.length > 0 &&
-    deck.nodes.some((node) => LEGACY_SYSTEM_CARD_IDS.has(node.id)) &&
-    deck.nodes.every((node) => legacyCompatibleNodeIds.has(node.id));
-  void hasOnlyLegacySystemNodes;
-  if (!hasOnlyLegacySystemNodes) {
-    return deck;
-  }
-
-  const existingNodesById = new Map(
-    deck.nodes.map((node) => [node.id, node] as const),
-  );
-  const existingPromptTemplatesById = new Map(
-    deck.promptTemplates.map((template) => [template.id, template] as const),
-  );
-  const initialPromptTemplateIds = new Set(
-    INITIAL_PROMPT_TEMPLATES.map((template) => template.id),
-  );
-  const upgradedNodes: AgentCardInstance[] = INITIAL_DECK.nodes.map(
-    (seedNode): AgentCardInstance => {
-      const existingNode = existingNodesById.get(seedNode.id);
-      if (!existingNode) {
-        return cloneDeckDocument(seedNode);
-      }
-
-      const nextTitle =
-        seedNode.id === 'card_research' &&
-        String(existingNode.title || '').trim() === 'Research'
-          ? seedNode.title
-          : existingNode.title || seedNode.title;
-      const nextSubtitle =
-        seedNode.id === 'card_research' &&
-        String(existingNode.subtitle || '').trim() === 'Gather upstream inputs'
-          ? seedNode.subtitle
-          : existingNode.subtitle || seedNode.subtitle;
-      return {
-        ...cloneDeckDocument(seedNode),
-        ...cloneDeckDocument(existingNode),
-        kind: 'agent',
-        prompt:
-          typeof (existingNode as any).prompt === 'string'
-            ? (existingNode as any).prompt
-            : seedNode.prompt || '',
-        title: nextTitle,
-        subtitle: nextSubtitle,
-        runtimeBinding: normalizeRuntimeBinding(
-          existingNode.runtimeBinding ?? seedNode.runtimeBinding ?? null,
-        ),
-        runtimeType: normalizeRuntimeType(
-          existingNode.runtimeType ?? seedNode.runtimeType ?? 'assistant_agent',
-        ),
-        runtimeOptions: normalizeRuntimeOptions(
-          existingNode.runtimeOptions ?? seedNode.runtimeOptions ?? null,
-        ),
-        parentGraphId: cleanOptionalText(
-          existingNode.parentGraphId ?? seedNode.parentGraphId ?? null,
-        ),
-        position: existingNode.position || seedNode.position,
-        overrides: existingNode.overrides,
-        status: existingNode.status ?? seedNode.status,
-        cloneConfig: existingNode.cloneConfig ?? seedNode.cloneConfig,
-      };
-    },
-  );
-
-  const upgradedPromptTemplates = [
-    ...INITIAL_PROMPT_TEMPLATES.map((seedTemplate) =>
-      cloneDeckDocument(
-        existingPromptTemplatesById.get(seedTemplate.id) || seedTemplate,
-      ),
-    ),
-    ...deck.promptTemplates
-      .filter((template) => !initialPromptTemplateIds.has(template.id))
-      .map((template) => cloneDeckDocument(template)),
-  ];
-
-  // Preserve persisted edge state; never infer/merge seed edges during hydration.
-  // The retired authoring-compatibility filter also dropped edges that simply
-  // didn't fit the retired nested-authoring model — that deleted real user
-  // intent. The ONLY edges dropped here are ones this upgrade itself orphaned by
-  // retiring their endpoint card; an edge to a node that no longer exists is a
-  // dangling reference, not a decision. Edge TYPE is never judged: an
-  // unrecognised type is classified 'invalid' (visible, authorises nothing).
-  const upgradedNodeIds = new Set(upgradedNodes.map((node) => node.id));
-  const nextEdges = deck.edges
-    .filter((edge) => upgradedNodeIds.has(edge.source) && upgradedNodeIds.has(edge.target))
-    .map((edge) => cloneDeckDocument(edge));
-
-  return {
-    ...deck,
-    version: Math.max(deck.version, INITIAL_DECK.version),
-    promptTemplates: upgradedPromptTemplates,
-    nodes: upgradedNodes,
-    edges: nextEdges,
-  };
-}
-
-function ensureOpenAiCoderBaseline(deck: DeckDocument): DeckDocument {
-  if (deck.id !== INITIAL_DECK.id) return deck;
-  const ids = new Set(deck.nodes.map((node) => node.id));
-  // This is a bounded canonical-system migration, never a fallback merge into
-  // an arbitrary user-authored deck.
-  if (!ids.has('card_main_chat') || !ids.has('card_magentic') || !ids.has('card_local_coder')) {
-    return deck;
-  }
-  const seedCard = INITIAL_DECK.nodes.find((node) => node.id === 'card_openai_coder');
-  const seedEdge = INITIAL_DECK.edges.find((edge) => edge.id === 'edge_openai_coder_magentic_bus');
-  if (!seedCard || !seedEdge) return deck;
-  const nodes: AgentCardInstance[] = deck.nodes.some((node) => node.id === seedCard.id)
-    ? deck.nodes.map((node): AgentCardInstance => node.id !== seedCard.id ? node : {
-        ...node,
-        runtimeBinding: 'openai_coder',
-        runtimeType: 'codex_app_server',
-        runtimeOptions: {
-          ...(node.runtimeOptions || {}),
-          provider: 'openai',
-          tools: [],
-        },
-      })
-    : [...deck.nodes, cloneDeckDocument(seedCard)];
-  const edgesWithoutSystemCoderBus = deck.edges.filter((edge) => edge.id !== 'edge_coder_magentic_bus');
-  const edges = edgesWithoutSystemCoderBus.some((edge) => edge.id === seedEdge.id)
-    ? edgesWithoutSystemCoderBus
-    : [...edgesWithoutSystemCoderBus, cloneDeckDocument(seedEdge)];
-  return { ...deck, nodes, edges };
-}
-
 export function hydrateDeckDocument(
   value: Partial<DeckDocument> | null | undefined,
 ): DeckDocument {
   if (!value || typeof value !== 'object') {
     return cloneDeckDocument(INITIAL_DECK);
   }
-  const sourceGrantVersion = Number(value.systemToolGrantsVersion) || 0;
-  const hasExplicitNodes = Array.isArray(value.nodes);
-  const nextEdges = Array.isArray(value.edges)
-    ? normalizeDeckEdges(value.edges)
-    : hasExplicitNodes
-      ? []
-      : normalizeDeckEdges(value.edges);
-  const hydratedDeck = ensureOpenAiCoderBaseline(seedCurrentSystemCardsIntoLegacyDeck({
-    ...cloneDeckDocument(INITIAL_DECK),
-    ...value,
+  return {
+    ...cloneDeckDocument(value),
     id: String(value.id || INITIAL_DECK.id).trim() || INITIAL_DECK.id,
     name: String(value.name || INITIAL_DECK.name).trim() || INITIAL_DECK.name,
     version: Number.isFinite(Number(value.version))
       ? Number(value.version)
       : INITIAL_DECK.version,
     nodes: normalizeDeckNodes(value.nodes),
-    edges: nextEdges,
+    edges: normalizeDeckEdges(value.edges),
     promptTemplates: normalizeDeckPromptTemplates(value.promptTemplates),
-  }));
-  const bannedNodeIds = new Set(['card_synthesis', 'card_review']);
-  const bannedPromptTemplateIds = new Set([
-    'prompt_synthesis',
-    'prompt_review',
-    'prompt_code_workbench',
-  ]);
-  const baseDeck = {
-    ...hydratedDeck,
-    version: Math.max(hydratedDeck.version, SYSTEM_TOOL_GRANTS_VERSION),
-    systemToolGrantsVersion: SYSTEM_TOOL_GRANTS_VERSION,
-    nodes: hydratedDeck.nodes
-      .filter((node) => !bannedNodeIds.has(node.id))
-      .map(normalizeLocalCoderControllerCard)
-      .map((node) => migrateSystemToolGrants(node, sourceGrantVersion)),
-    edges: hydratedDeck.edges.filter(
-      (edge) =>
-        !bannedNodeIds.has(edge.source) && !bannedNodeIds.has(edge.target),
-    ),
-    promptTemplates: hydratedDeck.promptTemplates.filter(
-      (template) => !bannedPromptTemplateIds.has(template.id),
-    ),
   };
-  return baseDeck;
 }
 
 export function resolveProjectDeckPayload(

@@ -6,12 +6,6 @@ import type { AgentCardInstance, DeckDocument, RuntimeBinding } from '../types/a
 // tests the real modules directly.
 import { INITIAL_DECK } from '../features/agentbuilder/deck/deckSeed';
 import {
-  HERMES_STEWARD_TOOLS,
-  LOCAL_CODER_CONTROLLER_TOOLS,
-  MAIN_CHAT_CONTROLLER_TOOLS,
-  SYSTEM_TOOL_GRANTS_VERSION,
-} from '../features/agentbuilder/deck/deckPrimitives';
-import {
   hydrateDeckDocument,
   resolveProjectDeckLoadResult,
   resolveProjectDeckPayload,
@@ -223,7 +217,7 @@ describe('agentbuilder authoring flow', () => {
     expect(loaded.deck.edges).toEqual([]);
   });
 
-  it('upgrades the older saved deck_builder system deck to the current Agent Canvas seed', () => {
+  it('preserves an older saved deck without merging the current seed into it', () => {
     const legacyDeck: DeckDocument = {
       id: 'deck_builder',
       name: 'Agent Card Deck',
@@ -268,32 +262,24 @@ describe('agentbuilder authoring flow', () => {
 
     expect(hydrated.nodes.map((node) => node.id)).toEqual([
       'card_main_chat',
-      'card_magentic',
-      'card_research_agent',
-      'card_local_coder',
-      'card_openai_coder',
-      'card_hermes_steward',
-      'card_trading_workbench',
-      'card_worldsignals_agent',
+      'card_kg_ingest',
+      'card_research',
+      'card_knowgraph',
+      'card_neo4j',
     ]);
     expect(hydrated.edges).toEqual([
       expect.objectContaining({
-        id: 'edge_openai_coder_magentic_bus',
-        source: 'card_openai_coder',
-        target: 'card_magentic',
-        edgeType: 'magentic_option',
+        id: 'edge_main_chat_kg_ingest',
+        source: 'card_main_chat',
+        target: 'card_kg_ingest',
+        edgeType: 'flow',
       }),
     ]);
-    expect(hydrated.nodes.find((node) => node.id === 'card_magentic')?.runtimeOptions).toMatchObject({
-      provider: 'openrouter',
-      modelKey: 'openai/gpt-5.6-terra',
-    });
   });
 
-  it('migrates stale system-card grants once without changing saved card presentation or wiring', () => {
+  it('never replaces saved system-card tool grants during hydration', () => {
     const stale = JSON.parse(JSON.stringify(INITIAL_DECK)) as DeckDocument;
     stale.version = 77;
-    delete stale.systemToolGrantsVersion;
     const main = stale.nodes.find((node) => node.id === 'card_main_chat');
     const coder = stale.nodes.find((node) => node.id === 'card_local_coder');
     const hermes = stale.nodes.find((node) => node.id === 'card_hermes_steward');
@@ -320,17 +306,16 @@ describe('agentbuilder authoring flow', () => {
     };
     const savedEdges = JSON.parse(JSON.stringify(stale.edges));
 
-    const migrated = hydrateDeckDocument(stale);
-    const migratedMain = migrated.nodes.find((node) => node.id === 'card_main_chat');
-    const migratedCoder = migrated.nodes.find((node) => node.id === 'card_local_coder');
-    const migratedHermes = migrated.nodes.find((node) => node.id === 'card_hermes_steward');
+    const hydrated = hydrateDeckDocument(stale);
+    const hydratedMain = hydrated.nodes.find((node) => node.id === 'card_main_chat');
+    const hydratedCoder = hydrated.nodes.find((node) => node.id === 'card_local_coder');
+    const hydratedHermes = hydrated.nodes.find((node) => node.id === 'card_hermes_steward');
 
-    expect(migrated.version).toBe(77);
-    expect(migrated.systemToolGrantsVersion).toBe(SYSTEM_TOOL_GRANTS_VERSION);
-    expect(migratedMain?.runtimeOptions?.tools).toEqual([...MAIN_CHAT_CONTROLLER_TOOLS]);
-    expect(migratedCoder?.runtimeOptions?.tools).toEqual([...LOCAL_CODER_CONTROLLER_TOOLS]);
-    expect(migratedHermes?.runtimeOptions?.tools).toEqual([...HERMES_STEWARD_TOOLS]);
-    expect(migratedMain).toMatchObject({
+    expect(hydrated.version).toBe(77);
+    expect(hydratedMain?.runtimeOptions?.tools).toEqual(['engraphis.export_code_graph']);
+    expect(hydratedCoder?.runtimeOptions?.tools).toEqual(['cbm.delete_project']);
+    expect(hydratedHermes?.runtimeOptions?.tools).toEqual(['graphiti.clear_graph']);
+    expect(hydratedMain).toMatchObject({
       prompt: 'Saved Main prompt',
       position: { x: 111, y: 222 },
       runtimeOptions: {
@@ -338,28 +323,18 @@ describe('agentbuilder authoring flow', () => {
         modelKey: 'saved-main-model',
       },
     });
-    expect(migratedCoder?.runtimeOptions).toMatchObject({
+    expect(hydratedCoder?.runtimeOptions).toMatchObject({
       provider: 'openrouter',
       modelKey: 'saved-coder-model',
     });
-    expect(migratedHermes?.runtimeOptions).toMatchObject({
+    expect(hydratedHermes?.runtimeOptions).toMatchObject({
       provider: 'openrouter',
       modelKey: 'saved-hermes-model',
     });
-    expect(migrated.edges).toMatchObject(savedEdges);
-
-    if (!migratedMain) throw new Error('migrated_main_missing');
-    migratedMain.runtimeOptions = {
-      ...migratedMain.runtimeOptions,
-      tools: ['custom.saved.tool'],
-    };
-    expect(
-      hydrateDeckDocument(migrated).nodes.find((node) => node.id === 'card_main_chat')
-        ?.runtimeOptions?.tools,
-    ).toEqual(['custom.saved.tool']);
+    expect(hydrated.edges).toMatchObject(savedEdges);
   });
 
-  it('drops the retired generic Code-workbench card and prompt from saved decks', () => {
+  it('preserves saved cards and prompts instead of applying hidden tombstones', () => {
     const retiredCodeCard: AgentCardInstance = {
       id: 'card_code_workbench',
       kind: 'agent',
@@ -381,8 +356,8 @@ describe('agentbuilder authoring flow', () => {
       ],
     });
 
-    expect(hydrated.nodes.map((node) => node.id)).not.toContain('card_code_workbench');
-    expect(hydrated.promptTemplates.map((template) => template.id)).not.toContain('prompt_code_workbench');
+    expect(hydrated.nodes.map((node) => node.id)).toContain('card_code_workbench');
+    expect(hydrated.promptTemplates.map((template) => template.id)).toContain('prompt_code_workbench');
   });
 
   it('preserves the current deck on project load failure instead of silently replacing it with fallback', () => {

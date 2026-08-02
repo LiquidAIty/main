@@ -14,6 +14,7 @@ from autogen_agentchat.messages import TextMessage
 from autogen_core import CancellationToken
 
 from app.python_models import magentic_agentchat as mac
+from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
 from app.python_models.orchestration_contracts import (
     AgentAssignmentRequest,
     CardRuntimeConfig,
@@ -23,6 +24,18 @@ from app.python_models.orchestration_contracts import (
 )
 
 MODEL = "openai/gpt-5.1-chat"
+
+
+@pytest.mark.parametrize("max_tokens", [0, -1])
+def test_invalid_saved_max_tokens_fails_instead_of_using_provider_default(max_tokens: int):
+    with pytest.raises(RuntimeError, match=f"card_max_tokens_invalid: {max_tokens}"):
+        _build_model_client(
+            AutoGenAgentConfig(
+                provider="openrouter",
+                provider_model_id=MODEL,
+                max_tokens=max_tokens,
+            )
+        )
 
 
 class _FakeToolClient:

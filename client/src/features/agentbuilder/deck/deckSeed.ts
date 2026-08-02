@@ -1,5 +1,5 @@
 // The canonical Agent Canvas seed: prompt templates, agent templates, the
-// INITIAL_DECK document, and system card binding maps. Extracted verbatim
+// INITIAL_DECK document. Extracted verbatim
 // from pages/agentbuilder.tsx (decomposition pass 2026-07-08). Persisted ids
 // (card_*, template_*, prompt_*, deck_builder) are STABLE saved-deck
 // identity — never rename them here.
@@ -7,7 +7,6 @@ import type {
   AgentTemplate,
   DeckDocument,
   PromptTemplate,
-  RuntimeBinding,
 } from '../../../types/agentgraph';
 import {
   cloneDeckDocument,
@@ -79,15 +78,15 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     id: 'prompt_main_chat',
     // The Harness driver prompt. This is the ONE LiquidAIty-specific instruction
     // layer appended (never replacing) the vendored base chat prompt — see
-    // grpcChatClient.resolveMainChatSystemPrompt. Kept in sync with the backend
-    // MAIN_CHAT_PROMPT_TEMPLATE (apps/backend/src/decks/mainChatControllerCard.ts).
+    // grpcChatClient.resolveMainChatSystemPrompt. Saved cards remain the runtime
+    // authority after this initial seed is created.
     content: [
       'You are Main Chat — the project principal and the only user-facing voice.',
       'Own the persistent project conversation: reason with the user, ask real clarifying questions, discuss options and tradeoffs, and answer directly. You are never a relay for another agent.',
       '',
       'Your working context is the current project conversation and Engraphis. Use only its native engraphis.* tools; there is no replacement graph API.',
       'Your direct subagents are the cards orange-connected to you on the canvas. Invoke Hermes as a bounded foreground investigation when deeper work is useful. Invoke the Coder directly only for a bounded coding task the user has agreed to. Model judgment decides; there is no fixed cadence and no required call per turn.',
-      'Invoke Hermes whenever deeper project work would help. The Harness supplies trusted saved-card and run identity, and AGEntgraph is the sole context handoff. Call the native Agent before explanatory prose and keep its desired outcome under 80 words. Never copy graph contents into the assignment, ask Hermes to write Engraphis, pre-plan its tool calls, create a worker specification, or ask it to use a report tool merely to respond.',
+      'Invoke Hermes whenever deeper project work would help. The Harness supplies trusted saved-card and run identity, and AGEntgraph is the sole context handoff. Call the native Agent before explanatory prose. Never copy graph contents into the assignment, ask Hermes to write Engraphis, pre-plan its tool calls, create a worker specification, or ask it to use a report tool merely to respond.',
       'Hermes returns its normal useful analysis as the foreground Agent result. Use that result when answering the user; Main alone decides what enters Engraphis.',
       'Never expand a bounded Hermes request into a research plan, candidate list, tool checklist, or worker specification. Preserve the requested count and stop condition exactly.',
       '',
@@ -331,7 +330,6 @@ export const INITIAL_DECK: DeckDocument = {
   name: 'Agent Card Deck',
   workspaceRoot: DEFAULT_WORKSPACE_ROOT,
   promptTemplates: cloneDeckDocument(INITIAL_PROMPT_TEMPLATES),
-  systemToolGrantsVersion: 6,
   version: 5,
   nodes: [
     {
@@ -558,54 +556,3 @@ export const INITIAL_DECK: DeckDocument = {
 };
 
 export const BUILDER_DECK_ID = INITIAL_DECK.id;
-export const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
-  card_assist: 'assist',
-  card_local_coder: 'local_coder',
-  card_openai_coder: 'openai_coder',
-  card_research_agent: 'research_agent',
-  card_plan_agent: 'plan_agent',
-  card_worldsignals_agent: 'worldsignals_agent',
-  card_trading_workbench: 'trading_agent',
-  card_hermes_steward: 'hermes_steward',
-  // Backward compatibility: legacy card IDs for existing saved decks
-  card_main_chat: 'main_chat',
-  card_research: 'research_agent',
-};
-
-export const BASELINE_OPTIONAL_CARD_IDS = new Set([
-  'card_local_coder',
-  'card_openai_coder',
-  'card_worldsignals_agent',
-  'card_trading_workbench',
-]);
-// Migration tombstones only: hydration drops these obsolete ids from stale saved decks.
-// Graph surfaces are MCP tools now, never default canvas agents; Plan Agent is
-// retired (Mag One owns team planning in Python).
-export const REMOVED_DEFAULT_CARD_IDS = new Set([
-  'card_assist',
-  'card_data_formulator_workbench',
-  'card_code_workbench',
-  'card_thinkgraph_agent',
-  'card_codegraph_agent',
-  'card_knowgraph_agent',
-  'card_plan_agent',
-]);
-export const REMOVED_DEFAULT_EDGE_IDS = new Set([
-  'edge_magentic_research',
-  'edge_magentic_assist',
-  'edge_knowgraph_research',
-  'edge_research_codegraph',
-  'edge_codegraph_thinkgraph',
-  // Retired bus wiring: Main Chat is control-only (task-bus-top), never a
-  // worker; Hermes is never a Mag One participant.
-  'edge_main_chat_harness_bus',
-  'edge_magentic_hermes_bus',
-  'edge_coder_magentic_bus',
-]);
-export const LEGACY_SYSTEM_CARD_IDS = new Set([
-  'card_main_chat',
-  'card_kg_ingest',
-  'card_research',
-  'card_knowgraph',
-  'card_neo4j',
-]);

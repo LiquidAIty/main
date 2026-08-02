@@ -32,17 +32,6 @@ class AutoGenAgentConfig(BaseModel):
     max_tokens: int | None = None
 
 
-MAGENTIC_SAFE_OPENROUTER_PREFIXES = (
-    "openai/gpt-5.1-chat",
-    "openai/gpt-5.1-chat-",
-    "z-ai/glm-5.2",
-)
-MAGENTIC_SAFE_OPENAI_PREFIXES = (
-    "gpt-5.1-chat",
-    "gpt-5.1-chat-",
-    "gpt-5.1-chat-latest",
-)
-
 # Model name fragments whose real APIs support OpenAI-style function calling
 # and JSON mode. autogen-core 0.4.4 enforces these flags loudly: a model
 # without function_calling cannot receive tools, and a model without
@@ -100,23 +89,6 @@ def _requires_max_completion_tokens(provider: str, model_name: str) -> bool:
     return normalized_provider == "openai" and normalized_model.startswith("gpt-5")
 
 
-def _assert_magentic_safe_model(config: AutoGenAgentConfig) -> None:
-    provider = str(config.provider or "").strip().lower()
-    model_name = _normalize_model_name(config.provider_model_id)
-    if provider == "openrouter":
-        if any(model_name.startswith(prefix) for prefix in MAGENTIC_SAFE_OPENROUTER_PREFIXES):
-            return
-    elif provider == "openai":
-        if any(model_name.startswith(prefix) for prefix in MAGENTIC_SAFE_OPENAI_PREFIXES):
-            return
-
-    raise RuntimeError(
-        "magentic_model_not_approved: "
-        f"provider={provider or 'unknown'} model={config.provider_model_id or 'unknown'} "
-        "allowed=openrouter:openai/gpt-5.1-chat*,z-ai/glm-5.2,openai:gpt-5.1-chat*"
-    )
-
-
 def _build_model_client(config: AutoGenAgentConfig) -> OpenAIChatCompletionClient:
     provider = str(config.provider or "").strip().lower()
     model_name = str(config.provider_model_id or "").strip()
@@ -131,15 +103,8 @@ def _build_model_client(config: AutoGenAgentConfig) -> OpenAIChatCompletionClien
     temperature = config.temperature if config.temperature is not None else 0.2
 
     max_tokens = config.max_tokens
-    if max_tokens is not None:
-        try:
-            max_tokens = int(max_tokens)
-            if max_tokens <= 0:
-                print(f"normalized invalid maxTokens value {max_tokens} -> provider default")
-                max_tokens = None
-        except (ValueError, TypeError):
-            print(f"normalized invalid maxTokens value {max_tokens} -> provider default")
-            max_tokens = None
+    if max_tokens is not None and max_tokens <= 0:
+        raise RuntimeError(f"card_max_tokens_invalid: {max_tokens}")
 
     if provider == "openrouter":
         api_key = os.getenv("OPENROUTER_API_KEY", "").strip()

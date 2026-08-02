@@ -58,6 +58,49 @@ describe('deck store runtime-options tool persistence', () => {
 });
 
 describe('deck store edge persistence', () => {
+  it('does not inject Main, prompt templates, or control edges into saved state', async () => {
+    const deck = {
+      id: 'deck_builder',
+      name: 'Saved Minimal Deck',
+      version: 9,
+      promptTemplates: [],
+      nodes: [{
+        id: 'saved-card',
+        kind: 'agent',
+        templateId: 'saved-template',
+        title: 'Saved Card',
+        runtimeBinding: 'research_agent',
+        runtimeType: 'assistant_agent',
+        runtimeOptions: { provider: 'openrouter', modelKey: 'saved/model', tools: ['saved.tool'] },
+        position: { x: 1, y: 2 },
+      }],
+      edges: [],
+    };
+    dbMocks.query.mockResolvedValueOnce({
+      rows: [{
+        agent_io_schema: {
+          v3_state: {
+            decks: { deck_builder: deck },
+            deckRuns: {},
+            meta: { decks: {} },
+          },
+        },
+      }],
+    });
+
+    const result = await getDeckDocument('project-one', 'deck_builder');
+
+    expect(result.deck?.nodes).toHaveLength(1);
+    expect(result.deck?.nodes[0]).toMatchObject({
+      id: 'saved-card',
+      runtimeBinding: 'research_agent',
+      runtimeType: 'assistant_agent',
+      runtimeOptions: { provider: 'openrouter', modelKey: 'saved/model', tools: ['saved.tool'] },
+    });
+    expect(result.deck?.promptTemplates).toEqual([]);
+    expect(result.deck?.edges).toEqual([]);
+  });
+
   it('preserves a directed Main-to-Hermes flow edge exactly as saved', async () => {
     const deck = {
       id: 'deck_builder',

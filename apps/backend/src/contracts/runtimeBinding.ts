@@ -12,19 +12,6 @@ const RUNTIME_BINDINGS = [
   'hermes_steward',
 ] as const satisfies RuntimeBinding[];
 
-const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
-  card_assist: 'assist',
-  card_local_coder: 'local_coder',
-  card_openai_coder: 'openai_coder',
-  card_main_chat: 'main_chat',
-  card_research: 'research_agent',
-  card_research_agent: 'research_agent',
-  card_plan_agent: 'plan_agent',
-  card_worldsignals_agent: 'worldsignals_agent',
-  card_trading_workbench: 'trading_agent',
-  card_hermes_steward: 'hermes_steward',
-};
-
 function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   const normalized = String(value || '').trim().toLowerCase();
   return RUNTIME_BINDINGS.includes(normalized as RuntimeBinding)
@@ -32,10 +19,6 @@ function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
     : null;
 }
 
-export function resolveRuntimeBinding(value: unknown, cardId?: unknown): RuntimeBinding | null {
-  return (
-    normalizeRuntimeBinding(value) ||
-    SYSTEM_CARD_RUNTIME_BINDINGS[String(cardId || '').trim()] ||
-    null
-  );
+export function resolveRuntimeBinding(value: unknown): RuntimeBinding | null {
+  return normalizeRuntimeBinding(value);
 }

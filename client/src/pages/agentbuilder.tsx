@@ -846,7 +846,6 @@ export default function AgentBuilder(): React.ReactElement {
       onDeckPersistProof: (entry) => {
         if (entry.ok) {
           lastPersistedBoardFingerprintRef.current = JSON.stringify({
-            systemToolGrantsVersion: deck.systemToolGrantsVersion,
             nodes: deck.nodes,
             edges: deck.edges,
           });

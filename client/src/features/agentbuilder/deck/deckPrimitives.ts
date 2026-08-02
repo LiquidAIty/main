@@ -111,8 +111,6 @@ export const HERMES_STEWARD_TOOLS = [
   'write_mag_one_instructions',
   'card.run_assistant_agent',
 ] as const;
-export const SYSTEM_TOOL_GRANTS_VERSION = 7;
-
 export function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   const normalized = safeText(value).trim().toLowerCase();
   if (normalized === 'assistant_agent') return 'assistant_agent';

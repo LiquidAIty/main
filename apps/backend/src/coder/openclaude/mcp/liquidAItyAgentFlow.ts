@@ -167,10 +167,7 @@ export async function runMagOne(
   }
   const mainControllers = resolvedMagenticControllers(asString(orchestrator.id), nodes, edges).filter(
     (card) =>
-      resolveRuntimeBinding(
-        card?.runtimeOptions?.binding ?? card?.runtimeBinding ?? card?.binding,
-        card?.id,
-      ) === 'main_chat',
+      resolveRuntimeBinding(card?.runtimeBinding) === 'main_chat',
   );
   if (mainControllers.length !== 1) {
     throw new Error('run_mag_one_main_control_not_authorized: exactly one live main_chat magentic_control edge is required');

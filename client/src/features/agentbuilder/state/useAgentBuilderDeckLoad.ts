@@ -119,13 +119,10 @@ export default function useAgentBuilderDeckLoad({
           loadResult.usedFallback ? 'deck-load-default' : 'deck-load',
         );
         setDeck(loadResult.deck);
-        // Compare autosave against the actual persisted board, not the
-        // hydrated projection. One-time schema migrations must be written back
-        // instead of being mistaken for already-saved state.
+        // Compare autosave against the actual persisted board.
         const persistedDeck =
           !loadResult.usedFallback && savedDeck ? savedDeck : loadResult.deck;
         lastPersistedBoardFingerprintRef.current = JSON.stringify({
-          systemToolGrantsVersion: persistedDeck.systemToolGrantsVersion,
           nodes: persistedDeck.nodes,
           edges: persistedDeck.edges,
         });

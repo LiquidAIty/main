@@ -102,7 +102,6 @@ export type DeckDocument = {
   edges: DeckEdge[];
   // Deprecated: Agent Canvas intentionally ignores persisted viewport.
   viewport?: DeckViewport | null;
-  systemToolGrantsVersion?: number;
   version: number;
 };
 
