@@ -32,7 +32,7 @@ import { resolveRepoRoot } from '../workspaceRoot';
  * shared OpenClaude argv builder + report parser (also used by the headless
  * LocalCoder job). The structured final result is parsed from the session's raw
  * stdout by authority mode: `direct_main_audit` → a validated audit result +
- * CodeGraphViewContract; `mag_one_execution` → the existing validated CoderReport.
+ * CodeGraph projection contract; `mag_one_execution` → the existing validated CoderReport.
  * The redacted terminal transcript is preserved as an artifact.
  *
  * This is the direct Main-to-terminal path — there is no headless fallback.

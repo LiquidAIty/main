@@ -37,8 +37,8 @@ export class SessionStreamError extends Error {
   }
 }
 
-/** Which Harness surface the turn runs in. Chat mode exposes only the
- * ThinkGraph doorway; canvas (Agent Builder / Edit) mode exposes every eligible
+/** Which Harness surface the turn runs in. Chat mode exposes only Main's saved
+ * direct-subagent doorway; canvas (Agent Builder / Edit) mode exposes every eligible
  * saved card as a direct saved-card doorway. Explicit — never inferred. */
 type HarnessMode = 'chat' | 'canvas';
 
@@ -47,11 +47,6 @@ export async function streamSession(args: {
   conversationId: string;
   message: string;
   mode?: HarnessMode;
-  /** Projection IDENTITY only — the server resolves the persisted projection
-   * and derives the model context. The browser never carries graph membership. */
-  projectionId?: string;
-  activeGraphViewId?: string;
-  knowgraphScope?: string;
   onEvent: (event: NativeSessionEvent) => void;
   signal?: AbortSignal;
 }): Promise<{ finalText: string }> {
@@ -65,9 +60,6 @@ export async function streamSession(args: {
       message: args.message,
       // Default 'chat' when omitted (backend also defaults to chat).
       mode: args.mode === 'canvas' ? 'canvas' : 'chat',
-      ...(args.projectionId ? { projectionId: args.projectionId } : {}),
-      ...(args.activeGraphViewId ? { activeGraphViewId: args.activeGraphViewId } : {}),
-      ...(args.knowgraphScope ? { knowgraphScope: args.knowgraphScope } : {}),
     }),
     signal: args.signal,
   });

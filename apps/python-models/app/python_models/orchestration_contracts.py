@@ -39,64 +39,6 @@ class ToolSpec(BaseModel):
         return value
 
 
-class TripletInput(BaseModel):
-    entityA: str
-    relationshipType: str
-    entityB: str
-    confidence: float | None = None
-    source: str | None = None
-
-
-class GapInput(BaseModel):
-    entityA: str
-    relationshipType: str
-    entityB: str
-    gapType: str
-    priority: str = "high"
-    reason: str = ""
-    evidenceCount: int = 0
-    contradictionCount: int = 0
-    existingRelationTypes: list[str] = Field(default_factory=list)
-    lastEvidenceAt: str | None = None
-
-
-class SearchTaskInput(BaseModel):
-    query: str
-    intent: str = "verify"
-    priority: str = "high"
-    gap: GapInput | None = None
-    triplet: TripletInput | None = None
-
-
-class BlackboardSnapshot(BaseModel):
-    current_goal: str | None = None
-    what_matters_now: list[str] = Field(default_factory=list)
-    open_questions: list[str] = Field(default_factory=list)
-    findings: list[str] = Field(default_factory=list)
-    suggestions: list[str] = Field(default_factory=list)
-    next_options: list[str] = Field(default_factory=list)
-    next_move: str | None = None
-    updated_at: str | None = None
-    store: dict[str, str] = Field(default_factory=dict)
-
-
-class BlackboardEntry(BaseModel):
-    field: Literal[
-        "current_goal",
-        "what_matters_now",
-        "open_questions",
-        "findings",
-        "suggestions",
-        "next_options",
-        "next_move",
-    ]
-    mode: Literal["set", "append"] = "append"
-    valueText: str | None = None
-    valueList: list[str] = Field(default_factory=list)
-    sourceAgent: str
-    summary: str | None = None
-
-
 class ProjectSession(BaseModel):
     sessionId: str
     projectId: str
@@ -181,7 +123,6 @@ class CardRuntimeConfig(BaseModel):
     runtimeOptions: dict = Field(default_factory=dict)
     assistant: dict | None = None
     magentic: dict | None = None
-    runtimeScope: dict | None = None
     graph: CardRuntimeGraph | None = None
     participants: list["CardRuntimeParticipant"] = Field(default_factory=list)
     privateParticipants: list["CardRuntimePrivateParticipant"] = Field(default_factory=list)
@@ -207,10 +148,6 @@ class CardRuntimeParticipant(BaseModel):
     runtimeType: Literal["assistant_agent", "codex_app_server"]
     runtimeBinding: str | None = None
     tools: list[str] = Field(default_factory=list)
-    skills: list[str] = Field(default_factory=list)
-    personas: list[str] = Field(default_factory=list)
-    knowledgeSources: list[str] = Field(default_factory=list)
-    connectedTo: str | None = None
     prompt: str = ""
     fanOut: CardFanOutConfig | None = None
     isSocietyOfMind: bool = False
@@ -222,27 +159,6 @@ class CardRuntimeParticipant(BaseModel):
     _no_default_models = field_validator("provider", "providerModelId")(
         _reject_default_model_value
     )
-
-
-class WorkspaceObjectContext(BaseModel):
-    activeSurface: str | None = None
-    activeWorkbench: str | None = None
-    connectedWorkbenchAgent: bool | None = None
-    repoPath: str | None = None
-    workspaceRoot: str | None = None
-    graphSource: str | None = None
-    analysisStatus: str | None = None
-    workspaceView: str | None = None
-    selectedNodeId: str | None = None
-    selectedNodeName: str | None = None
-    selectedObjectId: str | None = None
-    selectedObjectType: str | None = None
-    selectedObjectTitle: str | None = None
-    selectedText: str | None = None
-    openObjectSummary: str | None = None
-    activeMagenticParticipants: list[str] = Field(default_factory=list)
-    availableCanvasAgents: list[str] = Field(default_factory=list)
-    excludedAgents: list[str] = Field(default_factory=list)
 
 
 class AutoGenMessage(BaseModel):
@@ -258,195 +174,20 @@ class AutoGenMessage(BaseModel):
     content: str
 
 
-class ModelCallProof(BaseModel):
-    """Evidence that a real ``model_client.create`` call happened. No fake IDs."""
-
-    label: str
-    provider: str
-    model: str
-    clientClass: str
-    startedAt: float
-    finishedAt: float
-    latencyMs: int
-    responseType: str
-    excerpt: str
-    responseId: str | None = None
-    usage: dict[str, Any] | None = None
-
-
-class TaskLedgerArtifact(BaseModel):
-    """The real AutoGen 0.7.5 Magentic-One Task Ledger output, preserved verbatim.
-
-    ``factsResponse`` / ``planResponse`` are the exact model outputs from the
-    facts and plan prompt calls. ``taskLedgerResponse`` is the full Task Ledger
-    text AutoGen assembles via ``ORCHESTRATOR_TASK_LEDGER_FULL_PROMPT``. Nothing
-    is split into invented fields or steps. Mag One's native Task Ledger is the
-    task breakdown — there is no post-run PlanFlow projection.
-    """
-
-    source: Literal["autogen_0_7_5_magentic_one"] = "autogen_0_7_5_magentic_one"
-    phase: Literal["task_ledger"] = "task_ledger"
-    factsResponse: str
-    planResponse: str
-    taskLedgerResponse: str
-    teamDescription: str
-    modelCallProof: list[ModelCallProof] = Field(default_factory=list)
-
-
-class ProgressLedgerReference(BaseModel):
-    """Identify-only reference to the Progress Ledger. It is never started here."""
-
-    identified: bool = True
-    promptConstant: str = "ORCHESTRATOR_PROGRESS_LEDGER_PROMPT"
-    methods: list[str] = Field(default_factory=lambda: ["_orchestrate_step", "_reenter_outer_loop"])
-    sourceFile: str = (
-        "autogen-agentchat/.../teams/_group_chat/_magentic_one/_magentic_one_orchestrator.py"
-    )
-    started: bool = False
-    implemented: bool = False
-    rendered: bool = False
-
-
-class PlanContext(BaseModel):
-    anchor: str = ""
-    whatChanged: list[str] = Field(default_factory=list)
-    openQuestions: list[str] = Field(default_factory=list)
-    sources: list[str] = Field(default_factory=list)
-    deltaSummary: str = ""
-    status: Literal["draft", "grounded", "revised"] = "draft"
-    # Raw AutoGen-derived state only. The app never constructs these from parsed
-    # text; they are populated only when AutoGen itself returns structured output
-    # (e.g. the orchestrator's Progress Ledger JSON). Otherwise they stay None and
-    # the real AutoGen messages/events carry the Task Ledger text.
-    task_ledger: dict[str, Any] | None = None
-    progress_ledger: dict[str, Any] | None = None
-
-
-class ThinkGraphContext(BaseModel):
-    priorityEntities: list[str] = Field(default_factory=list)
-    priorityRelationships: list[str] = Field(default_factory=list)
-    triplets: list[TripletInput] = Field(default_factory=list)
-    openQuestions: list[str] = Field(default_factory=list)
-
-
-class KnowGraphFactInput(BaseModel):
-    entityA: str
-    relationshipType: str
-    entityB: str
-    confidence: float | None = None
-    documentId: str | None = None
-    sourceName: str | None = None
-    fetchedAt: str | None = None
-
-
-class KnowGraphEvidenceInput(BaseModel):
-    title: str
-    url: str
-    snippet: str
-    documentId: str | None = None
-    fetchedAt: str | None = None
-
-
-class KnowGraphContext(BaseModel):
-    gaps: list[GapInput] = Field(default_factory=list)
-    graphFacts: list[KnowGraphFactInput] = Field(default_factory=list)
-    evidence: list[KnowGraphEvidenceInput] = Field(default_factory=list)
-    researchDocumentCount: int = 0
-
-
-class AttachmentInput(BaseModel):
-    documentId: str
-    fileName: str
-
-
 class AgentAssignmentRequest(BaseModel):
     """Stable identities needed for Python to create and claim one assignment."""
 
     instructionId: RequiredRuntimeString
     senderCardId: RequiredRuntimeString
     receiverCardId: RequiredRuntimeString
-    graphViewIds: list[RequiredRuntimeString] = Field(default_factory=list, max_length=16)
 
 
 class ContextPack(BaseModel):
     session: ProjectSession
     userText: str
     conversationId: str = ""
-    priorAssistantText: str = ""
-    systemPrompt: str = ""
-    blackboard: BlackboardSnapshot = Field(default_factory=BlackboardSnapshot)
-    plan: PlanContext = Field(default_factory=PlanContext)
-    thinkGraph: ThinkGraphContext = Field(default_factory=ThinkGraphContext)
-    knowGraph: KnowGraphContext = Field(default_factory=KnowGraphContext)
-    attachments: list[AttachmentInput] = Field(default_factory=list)
-    maxResearchTasks: int = 6
-    workspaceObjectContext: WorkspaceObjectContext | None = None
     agentAssignment: AgentAssignmentRequest | None = None
     cardRuntime: CardRuntimeConfig | None = None
-
-
-class AssistantResponseReport(BaseModel):
-    kind: Literal["assistant_response"] = "assistant_response"
-    sourceAgent: str
-    summary: str
-    finalResponseText: str
-
-
-class PlanUpdateReport(BaseModel):
-    kind: Literal["plan_update"] = "plan_update"
-    sourceAgent: str
-    summary: str
-    plan: PlanContext
-
-
-class BlackboardWriteReport(BaseModel):
-    kind: Literal["blackboard_write"] = "blackboard_write"
-    sourceAgent: str
-    summary: str
-    entries: list[BlackboardEntry] = Field(default_factory=list)
-
-
-class ThinkGraphUpdateReport(BaseModel):
-    kind: Literal["thinkgraph_update"] = "thinkgraph_update"
-    sourceAgent: str
-    summary: str
-    priorityEntities: list[str] = Field(default_factory=list)
-    triplets: list[TripletInput] = Field(default_factory=list)
-    openQuestions: list[str] = Field(default_factory=list)
-
-
-class KnowGraphUpdateReport(BaseModel):
-    kind: Literal["knowgraph_update"] = "knowgraph_update"
-    sourceAgent: str
-    summary: str
-    searchTasks: list[SearchTaskInput] = Field(default_factory=list)
-    priorityEntities: list[str] = Field(default_factory=list)
-    priorityRelationships: list[str] = Field(default_factory=list)
-    triplets: list[TripletInput] = Field(default_factory=list)
-    gaps: list[GapInput] = Field(default_factory=list)
-    openQuestions: list[str] = Field(default_factory=list)
-
-
-class OrchestratorMetrics(BaseModel):
-    elapsedMs: int = 0
-    turnsUsed: int = 0
-    reportBackCount: int = 0
-    blackboardWriteCount: int = 0
-    searchTaskCount: int = 0
-    refinementApplied: bool = False
-
-
-class LedgerTrace(BaseModel):
-    """Honest trace of the Mag One pipeline mapping."""
-    source: Literal["python_magone"] = "python_magone"
-    referenceFiles: list[str] = Field(default_factory=list)
-    referenceClasses: list[str] = Field(default_factory=list)
-    referenceMethods: list[str] = Field(default_factory=list)
-    promptConstants: list[str] = Field(default_factory=list)
-
-    canvasTeamCompiled: bool = False
-    taskLedgerProduced: bool = False
-    blocker: str | None = None
 
 
 class OrchestratorRunResponse(BaseModel):
@@ -455,7 +196,6 @@ class OrchestratorRunResponse(BaseModel):
     assignmentId: str | None = None
     instructionId: str | None = None
     resultId: str | None = None
-    ledgerTrace: LedgerTrace = Field(default_factory=LedgerTrace)
     stopReason: str | None = None
     # finalResponseText is the real last AutoGen message text (never an app-authored
     # summary). It is data only; the conversation panel does not auto-render it.
@@ -464,22 +204,4 @@ class OrchestratorRunResponse(BaseModel):
     # run_stream.
     autogenMessages: list[AutoGenMessage] = Field(default_factory=list)
     autogenEvents: list[AutoGenMessage] = Field(default_factory=list)
-    # The real Task Ledger artifact (facts/plan/full text + model-call proof).
-    # None only if AutoGen produced no Task Ledger output.
-    taskLedgerArtifact: TaskLedgerArtifact | None = None
-    # Progress Ledger is identify-only in this scope: referenced, never started.
-    progressLedgerReference: ProgressLedgerReference | None = None
     error: str | None = None
-    blackboardEntries: list[BlackboardEntry] = Field(default_factory=list)
-    plan: PlanContext
-    thinkGraph: ThinkGraphContext
-    knowGraph: KnowGraphUpdateReport
-    reportBacks: list[
-        AssistantResponseReport
-        | PlanUpdateReport
-        | BlackboardWriteReport
-        | ThinkGraphUpdateReport
-        | KnowGraphUpdateReport
-    ] = Field(default_factory=list)
-    transcript: list[str] = Field(default_factory=list)
-    metrics: OrchestratorMetrics = Field(default_factory=OrchestratorMetrics)

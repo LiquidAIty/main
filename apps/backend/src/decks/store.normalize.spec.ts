@@ -38,19 +38,18 @@ describe('deck store runtime-options provider persistence', () => {
 
 // Persistence proof: a card's SELECTED tool ids survive the deck-store sanitizer
 // verbatim — the save/load roundtrip can never rewrite, reorder-filter, or
-// substitute a card's tool assignment (the ThinkGraph card depends on exactly
-// [read_thinkgraph_scope, apply_thinkgraph_patch] surviving).
+// substitute a card's tool assignment.
 describe('deck store runtime-options tool persistence', () => {
   it('preserves selected tool ids exactly as saved', () => {
     const out = normalizeRuntimeOptions({
-      tools: ['read_thinkgraph_scope', 'apply_thinkgraph_patch'],
+      tools: ['worldsignals.capabilities', 'worldsignals.command'],
     });
-    expect(out?.tools).toEqual(['read_thinkgraph_scope', 'apply_thinkgraph_patch']);
+    expect(out?.tools).toEqual(['worldsignals.capabilities', 'worldsignals.command']);
   });
 
   it('trims whitespace but never renames or invents tool ids', () => {
-    const out = normalizeRuntimeOptions({ tools: ['  read_thinkgraph_scope  ', '', 42] });
-    expect(out?.tools).toEqual(['read_thinkgraph_scope']);
+    const out = normalizeRuntimeOptions({ tools: ['  worldsignals.capabilities  ', '', 42] });
+    expect(out?.tools).toEqual(['worldsignals.capabilities']);
   });
 
   it('an absent selection stays absent — no default tools are injected', () => {

@@ -99,7 +99,7 @@ describe('AgentGraph-native Mag One flow', () => {
 
   it('transports only stable assignment identities to the Python-owned runtime', async () => {
     const runCard = vi.fn(
-      async (_card: any, _agent: any, _taskText: string, _context: any) => ({
+      async (_card: any, _taskText: string, _context: any) => ({
       status: 'success',
       output: 'done',
       agentAssignmentResult: {
@@ -117,7 +117,7 @@ describe('AgentGraph-native Mag One flow', () => {
       deps(runCard),
     );
     expect(runCard).toHaveBeenCalledOnce();
-    const [card, _agent, taskText, context] = runCard.mock.calls[0];
+    const [card, taskText, context] = runCard.mock.calls[0];
     expect(card.id).toBe('card_mag_one');
     expect(taskText).toBe('');
     expect(context.agentAssignment).toEqual({
@@ -125,7 +125,6 @@ describe('AgentGraph-native Mag One flow', () => {
       senderCardId: 'card_main_chat',
       receiverCardId: 'card_mag_one',
     });
-    expect(context.magenticExecutionReadyCardIds).toEqual(['card_worker']);
     expect(JSON.stringify(context)).not.toContain('prompt.md');
     expect(JSON.stringify(context)).not.toContain('workspaceRoot');
     expect(result.assignmentId).toBe('assignment:run-1');

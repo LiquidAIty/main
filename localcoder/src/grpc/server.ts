@@ -15,14 +15,6 @@ import { collectContextData } from '../commands/context/context-noninteractive.j
 
 const PROTO_PATH = path.resolve(import.meta.dirname, '../proto/openclaude.proto')
 
-// The bounded READ-ONLY ThinkGraph slice tool the official Python MCP host
-// exposes (apps/python-models/app/mcp_host.py: thinkgraph.get_graph_slice),
-// qualified per the runtime's own MCP naming (mcp__<clientName>__<normalizedToolName>,
-// see services/mcp/mcpStringUtils.ts) for the 'liquidaity' client this server
-// connects. There is NO model-facing graph-write tool: live ThinkGraph writes
-// happen only inside a real configured ThinkGraph card run (card.run_assistant_agent
-// → Python runConfiguredCard → the card's own scoped apply_thinkgraph_patch tool).
-const THINKGRAPH_READ_TOOL_NAME = 'mcp__liquidaity__thinkgraph_get_graph_slice'
 const MAG_ONE_DESCRIBE_TOOL_NAME = 'mcp__liquidaity__mag_one_describe_connected_agents'
 
 // The one MCP control tool a card doorway child calls to run its bound saved
@@ -30,12 +22,13 @@ const MAG_ONE_DESCRIBE_TOOL_NAME = 'mcp__liquidaity__mag_one_describe_connected_
 // official Python MCP host, qualified per the runtime's own MCP naming).
 const CARD_RUN_CONTROL_TOOL_NAME = 'mcp__liquidaity__card_run_assistant_agent'
 const IDENTITY_BOUND_TOOL_NAMES = new Set([
+  'mcp__liquidaity__agentgraph_inspect',
+  'mcp__liquidaity__mag_one_describe_connected_agents',
+  'mcp__liquidaity__canvas_inspect',
+  'mcp__liquidaity__card_update_configuration',
+  'mcp__liquidaity__canvas_upsert_wire',
   'mcp__liquidaity__run_coder_subagent',
   'mcp__liquidaity__run_mag_one',
-  'mcp__liquidaity__hermes_memory_read',
-  'mcp__liquidaity__hermes_memory_write',
-  'mcp__liquidaity__hermes_read_report',
-  'mcp__liquidaity__hermes_write_report',
   'mcp__liquidaity__write_mag_one_instructions',
 ])
 
@@ -73,26 +66,39 @@ export function bindServerOwnedToolCaller(params: {
   const normalizedName = params.toolName.replace(/^mcp__liquidaity__/, '')
   const identity: Record<string, unknown> = {}
   if ([
+    'agentgraph_inspect',
+    'mag_one_describe_connected_agents',
+    'canvas_inspect',
+    'card_update_configuration',
+    'canvas_upsert_wire',
     'run_coder_subagent',
     'run_mag_one',
-    'hermes_memory_read',
-    'hermes_memory_write',
     'write_mag_one_instructions',
   ].includes(normalizedName)) {
     identity.projectId = params.projectId
   }
   if ([
+    'agentgraph_inspect',
+    'mag_one_describe_connected_agents',
+    'canvas_inspect',
+    'card_update_configuration',
+    'canvas_upsert_wire',
     'run_coder_subagent',
     'run_mag_one',
     'write_mag_one_instructions',
   ].includes(normalizedName)) {
     identity.deckId = params.deckId
+  }
+  if ([
+    'agentgraph_inspect',
+    'run_coder_subagent',
+    'run_mag_one',
+    'write_mag_one_instructions',
+  ].includes(normalizedName)) {
     identity.conversationId = params.conversationId
   }
   if ([
     'run_coder_subagent',
-    'hermes_read_report',
-    'hermes_write_report',
   ].includes(normalizedName)) {
     identity.parentRunId = params.parentRunId
   }
@@ -195,14 +201,12 @@ export type PythonMcpConfig = {
   hostPath: string
 }
 
-/** Fail-closed startup check: the control-surface tools the card architecture
- * depends on must exist in the actually-fetched Python MCP tool pool — the
- * card-run doorway tool, the bounded READ-ONLY ThinkGraph slice, and the live
- * Mag One roster read used by native Hermes. There is
- * no model-facing write tool to require. Pure so it is directly testable. */
+/** Fail-closed startup check for the two structural MCP controls used by the
+ * Harness. Graph tools are card-owned Knowledge grants and may be disabled;
+ * no Engraphis, Graphiti, or CBM tool is a global Harness prerequisite. */
 export function missingRequiredHarnessTools(toolNames: string[]): string[] {
   const pool = new Set(toolNames)
-  return [CARD_RUN_CONTROL_TOOL_NAME, THINKGRAPH_READ_TOOL_NAME, MAG_ONE_DESCRIBE_TOOL_NAME].filter(
+  return [CARD_RUN_CONTROL_TOOL_NAME, MAG_ONE_DESCRIBE_TOOL_NAME].filter(
     name => !pool.has(name),
   )
 }
@@ -265,7 +269,11 @@ export function filterParentNativeTools<T extends { name: string }>(
   allowedNativeTools: readonly string[],
   hasAgentDefinitions: boolean,
 ): T[] {
-  if (allowedNativeTools.length === 0) return [...nativePool]
+  if (allowedNativeTools.length === 0) {
+    return hasAgentDefinitions
+      ? nativePool.filter(tool => tool.name === 'Agent')
+      : []
+  }
   const allowed = new Set(allowedNativeTools)
   if (hasAgentDefinitions) allowed.add('Agent')
   const filtered = nativePool.filter(tool => allowed.has(tool.name))
@@ -366,7 +374,7 @@ export class GrpcServer {
   }
 
   /** Connect the official Python MCP host for the server's lifetime. Any
-   * failure (spawn, handshake, tool fetch, missing ThinkGraph tools) is one
+   * failure (spawn, handshake, or tool fetch) is one
    * exact fatal startup error — chat never starts against a broken registry. */
   private async connectOfficialPythonMcp(): Promise<void> {
     const { serverName, command, hostPath } = this.pythonMcp
@@ -516,16 +524,15 @@ export class GrpcServer {
           )
           const sessionParts = parseSessionIdParts(sessionId)
 
-          // The PARENT session's MCP surface = the saved parent card's Tools
-          // selection (backend-sent). Empty list = full pool (back-compat).
+          // The PARENT session's MCP surface = the saved parent card's exact
+          // Tools selection (backend-sent). Empty means none; never a hidden
+          // full-pool fallback.
           // Children still resolve their own allowed_tools from the full
           // server-lifetime pool via appState.mcp.tools.
           const parentAllowedMcpTools: string[] = Array.isArray(req.parent_allowed_mcp_tools)
             ? req.parent_allowed_mcp_tools.map(String).filter(Boolean)
             : []
-          const parentMcpTools = parentAllowedMcpTools.length > 0
-            ? this.mcpTools.filter(tool => parentAllowedMcpTools.includes(tool.name))
-            : this.mcpTools
+          const parentMcpTools = this.mcpTools.filter(tool => parentAllowedMcpTools.includes(tool.name))
 
           // The PARENT session's native tool grant (the saved card's assigned
           // native tools), applied BEFORE provider schema serialization —
@@ -625,9 +632,7 @@ export class GrpcServer {
               }
 
               // No interactive human-confirmation gate: every other tool call is
-              // allowed to proceed immediately. There is no model-facing
-              // ThinkGraph write tool — live graph writes happen only inside the
-              // configured ThinkGraph card run reached through the doorway above.
+              // allowed to proceed immediately.
               return { behavior: 'allow' }
             },
             getAppState: () => appState,

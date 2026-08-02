@@ -36,23 +36,11 @@ function resolveOrchestratorCardModel(card: any): {
   maxTokens: number | null;
 } {
   const modelKey = card.runtimeOptions?.modelKey;
-  if (!modelKey) {
-    throw new Error(
-      `card_model_config_missing: cardId=${card.id} runtimeType=${card.runtimeType}`,
-    );
-  }
-  const resolved = resolveModel(modelKey);
-  const registryProvider = resolved.provider;
-  const uiProvider = normalizeProvider(card.runtimeOptions?.provider);
-  if (uiProvider && uiProvider !== registryProvider) {
-    throw new Error(
-      `card_model_config_mismatch: cardId=${card.id} uiProvider=${uiProvider} registryProvider=${registryProvider}`,
-    );
-  }
+  const resolved = resolveCardModelStrict(card);
   return {
-    provider: registryProvider,
+    provider: resolved.provider,
     modelKey,
-    providerModelId: resolved.id,
+    providerModelId: resolved.providerModelId,
     temperature: coerceNumber(card.runtimeOptions?.temperature, null),
     maxTokens: coerceNumber(card.runtimeOptions?.maxTokens, null),
   };
@@ -314,8 +302,7 @@ function genericAssistantCardIneligibility(card: any): string | null {
   return null;
 }
 
-/** Exported for the dev agent harness (dev.routes.ts) so a dry-run probe
- * resolves a card's model EXACTLY the way the runtime does — same throws. */
+/** Resolve the saved card model exactly once for every card-owned execution path. */
 export function resolveCardModelStrict(card: any): {
   provider: string;
   providerModelId: string;
@@ -495,11 +482,6 @@ export function serializeCardParticipant(head: any, allCards: any[]): Record<str
     title: String(head.title || 'Agent'),
     runtimeType,
     runtimeBinding,
-    summary: `Participant ${head.title || 'Agent'}`,
-    allowedActions: [],
-    inputContract: 'text',
-    outputContract: 'text',
-    callable: true,
     // NOTE: the full role prompt is intentionally NOT in the public participant
     // manifest (it would bloat the payload and leak internal prompt text). The
     // prompt lives only in the private participant, used solely by Python to
@@ -543,7 +525,6 @@ export function serializeCardPrivateParticipant(head: any): Record<string, unkno
 
 export function buildPythonAutoGenCardRuntimePayload(
   card: any,
-  effectiveAgent: any,
   runtimeInput: string,
   context: any,
   modelConfig: any,
@@ -580,20 +561,15 @@ export function buildPythonAutoGenCardRuntimePayload(
     },
   );
 
-  const safeRuntimeOptions = { ...(card.runtimeOptions || {}) };
-  const rawMaxTokens = safeRuntimeOptions.maxTokens;
-  if (rawMaxTokens !== undefined && rawMaxTokens !== null) {
-    const numMaxTokens = Number(rawMaxTokens);
-    if (Number.isFinite(numMaxTokens) && numMaxTokens > 0) {
-      safeRuntimeOptions.maxTokens = numMaxTokens;
-    } else {
-      delete safeRuntimeOptions.maxTokens;
-    }
+  const safeRuntimeOptions: Record<string, unknown> = {
+    deckId: String(context.deckId || ''),
+  };
+  for (const key of ['temperature', 'maxTokens', 'maxTurns'] as const) {
+    const value = Number(card.runtimeOptions?.[key]);
+    if (Number.isFinite(value) && value > 0) safeRuntimeOptions[key] = value;
   }
 
-  // The mission input passes through normally. No deterministic keyword classifier
-  // and no mutation of the prior assistant text — native Mag One owns interpretation.
-  const priorAssistantText = String(context.previousOutput || '').trim();
+  // The mission input passes through normally. Native Mag One owns interpretation.
   const payload: PythonAutoGenPayloadShape = {
     session: {
       sessionId,
@@ -609,18 +585,6 @@ export function buildPythonAutoGenCardRuntimePayload(
       startedAt,
     },
     userText: runtimeInput,
-    priorAssistantText,
-    systemPrompt,
-    plan: undefined,
-    thinkGraph: undefined,
-    knowGraph: undefined,
-    blackboard: {
-      current_goal: '',
-      what_matters_now: [],
-      open_questions: [],
-      findings: [],
-    },
-    workspaceObjectContext: context.workspaceObjectContext ?? undefined,
     // Stable assignment identities only; Python owns claim and hydration.
     agentAssignment: context.agentAssignment ?? undefined,
     cardRuntime: {
@@ -632,19 +596,6 @@ export function buildPythonAutoGenCardRuntimePayload(
       graph: runtimeGraph,
       participants,
       privateParticipants,
-      runtimeScope: {
-        projectId: String(context.projectId || ''),
-        deckId: String(context.deckId || ''),
-        magenticCardId: card.id,
-        visibleNodeIds: [card.id, ...callableHeads.map((h) => h.id)],
-        visibleEdgeIds: (context.allEdges || [])
-          .filter((e: any) => e.source === card.id || e.target === card.id)
-          .map((e: any) => e.id),
-        resolvedMagenticOptionIds: callableHeads.map((h) => h.id),
-        pythonWorkerIds: supportedHeads.map((h) => h.id),
-        calledAgentIds: [],
-        excludedAgentIds: [],
-      }
     }
   };
 
@@ -657,7 +608,7 @@ export function buildPythonAutoGenCardRuntimePayload(
 // resolvers the Mag One path uses (resolveCardModelStrict / resolveCardTools /
 // serializeCardParticipant). No fallback model, no substitute card, no plain completion.
 
-const SINGLE_CARD_RUN_ARG_KEYS = ['projectId', 'deckId', 'cardId', 'correlationId', 'input', 'conversationId', 'instructionId', 'senderCardId', 'parentRunId', 'graphViewIds', 'runAuthority'] as const;
+const SINGLE_CARD_RUN_ARG_KEYS = ['projectId', 'deckId', 'cardId', 'correlationId', 'input', 'conversationId', 'instructionId', 'senderCardId', 'parentRunId'] as const;
 
 export type ConfiguredCardRunArgs = {
   projectId: string;
@@ -673,13 +624,6 @@ export type ConfiguredCardRunArgs = {
   instructionId?: string;
   senderCardId?: string;
   parentRunId?: string;
-  /** Stable persisted Graph View identities selected for this assignment.
-   * Python resolves their bounded payloads from ThinkGraph. */
-  graphViewIds?: string[];
-  /** Server-authored trusted run context (e.g. ThinkGraph source-pair authority),
-   * transported to the Python runtime via cardRuntime.runtimeScope. Never
-   * browser-supplied — callers of this function are backend control-plane code. */
-  runAuthority?: Record<string, string>;
 };
 
 export type ConfiguredCardRunResult = {
@@ -745,9 +689,6 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
   const instructionId = String(args?.instructionId || '').trim();
   const senderCardId = String(args?.senderCardId || '').trim();
   const parentRunId = String(args?.parentRunId || '').trim();
-  const graphViewIds = (Array.isArray(args?.graphViewIds) ? args.graphViewIds : [])
-    .map((value) => String(value || '').trim())
-    .filter(Boolean);
   if (!projectId || !deckId || !cardId || !correlationId || !input) {
     return done({ status: 'failed', error: 'card_run_args_incomplete' });
   }
@@ -792,18 +733,10 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     return done({ status: 'failed', runtimeType, error: String(error?.message || 'card_resolution_failed') });
   }
 
-  // Explicit trusted caller authority is transported unchanged. Native Hermes
-  // writes ThinkGraph through the Harness MCP tool; configured AutoGen cards do
-  // not gain graph authority from a binding or card id.
   const resolvedBinding = resolveRuntimeBinding(
     effectiveCard?.runtimeOptions?.binding ?? effectiveCard?.runtimeBinding ?? effectiveCard?.binding,
     effectiveCard?.id,
   );
-  const runAuthority =
-    args.runAuthority && Object.keys(args.runAuthority).length > 0
-      ? args.runAuthority
-      : undefined;
-
   const payload = {
     session: {
       sessionId: `${deckId}:${cardId}:${correlationId}`,
@@ -825,7 +758,6 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
             instructionId,
             senderCardId: senderCardId || cardId,
             receiverCardId: cardId,
-            ...(graphViewIds.length ? { graphViewIds } : {}),
           },
         }
       : {}),
@@ -839,17 +771,13 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       runtimeOptions: { deckId },
       participants: [participant],
       privateParticipants: [privateParticipant],
-      ...(runAuthority ? { runtimeScope: runAuthority } : {}),
     },
   };
 
   // The decisive diagnostic line: the card IS being run in Python now — with which
-  // resolved binding, whether scoped write-authority armed (thinkgraph_card_run vs
-  // none), and exactly which tools it carries. If a ThinkGraph write never happens,
-  // this line shows whether authority/tools were the cause.
+  // resolved binding and exactly which tools it carries.
   logHarnessTrace(
     `[agent] card ${cardId} invoking-python binding=${resolvedBinding || 'none'} ` +
-      `authority=${runAuthority ? String((runAuthority as any).kind || 'set') : 'none'} ` +
       `tools=[${(Array.isArray((participant as any).tools) ? (participant as any).tools : []).join(',') || 'none'}]`,
   );
   try {
@@ -890,7 +818,6 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
 
 export async function runCardWithContract(
   card: any,
-  effectiveAgent: any,
   input: string,
   context: any
 ): Promise<CardRunResult> {
@@ -898,20 +825,13 @@ export async function runCardWithContract(
   
   if (resolveCardRuntimeType(card) === 'magentic_one') {
     const connectedHeads = resolvedMagenticOptions(card.id, context.allCards || [], context.allEdges || []);
-    const requestedReadyIds = Array.isArray(context.magenticExecutionReadyCardIds)
-      ? new Set(context.magenticExecutionReadyCardIds.map((id: unknown) => String(id)))
-      : null;
-    const readiness = requestedReadyIds
-      ? connectedHeads.map((head) => ({ card: head, executionReady: requestedReadyIds.has(String(head.id)) }))
-      : await resolveMagenticWorkerReadiness(connectedHeads);
+    const readiness = await resolveMagenticWorkerReadiness(connectedHeads);
     const callableHeads = readiness.filter((item) => item.executionReady).map((item) => item.card);
-    const mode = String((card.runtimeOptions as any)?.mode || process.env.AGENT_DISCOVERY_MODE || 'locked_research_runtime').trim();
-    const isDiscoveryMode = mode === 'discovery_proposal';
 
     // Bus eligibility is the only requirement: native Mag One needs at least one
     // connected worker on the magentic_option bus. No approval gate, no
     // participant-gate — that poison was removed.
-    if (!isDiscoveryMode && callableHeads.length === 0) {
+    if (callableHeads.length === 0) {
       throw new Error('magentic_runtime_no_current_bus_connected_participants');
     }
     
@@ -919,7 +839,6 @@ export async function runCardWithContract(
 
     const payload = buildPythonAutoGenCardRuntimePayload(
       card,
-      effectiveAgent,
       input,
       context,
       modelConfig,
@@ -929,49 +848,23 @@ export async function runCardWithContract(
 
     // Call the Python AutoGen rails. Mock success is not allowed on this route.
     let finalText = '';
-    let magenticPlan: Record<string, unknown> | null = null;
-    // Honest TaskLedger trace from the real Python Magentic-One path.
-    let ledgerTrace: Record<string, unknown> | undefined;
     let agentAssignmentResult: AgentAssignmentRunResult | null = null;
     try {
         console.log('[runCardWithContract] executing Python AutoGen rails route.');
-        const sidecarResponse = await orchestrateWithAutoGen(payload as any);
+        const railsResponse = await orchestrateWithAutoGen(payload as any);
 
-        // Transport only. The real AutoGen output is the messages/events the
-        // Python rails output captured verbatim from run_stream, plus the orchestrator's own
-        // Progress Ledger JSON when the inner loop ran. The backend authors no
-        // ledger, no summary, and does not parse message text into runtime state.
-        // finalResponseText is the real chat answer: the workbench renders it in
-        // chat for non-plan turns, and the AgentCanvas projection ignores it (it is
-        // built only from the taskLedgerArtifact, never finalResponseText).
-        finalText = String(sidecarResponse.finalResponseText || '').trim();
-        const autogenMessages = Array.isArray((sidecarResponse as any).autogenMessages)
-          ? (sidecarResponse as any).autogenMessages
-          : [];
-        const autogenEvents = Array.isArray((sidecarResponse as any).autogenEvents)
-          ? (sidecarResponse as any).autogenEvents
-          : [];
-        const taskLedgerArtifact = (sidecarResponse as any).taskLedgerArtifact ?? null;
-        const progressLedgerReference = (sidecarResponse as any).progressLedgerReference ?? null;
-        magenticPlan = {
-          autogenMessages,
-          autogenEvents,
-          ...(taskLedgerArtifact ? { taskLedgerArtifact } : {}),
-          ...(progressLedgerReference ? { progressLedgerReference } : {}),
-        };
-        ledgerTrace =
-          sidecarResponse.ledgerTrace && typeof sidecarResponse.ledgerTrace === 'object'
-            ? (sidecarResponse.ledgerTrace as Record<string, unknown>)
-            : undefined;
-        const assignmentId = String((sidecarResponse as any).assignmentId || '').trim();
+        // Transport only. Python rails owns the native AutoGen run. The backend
+        // does not inspect or reconstruct Mag One's Task or Progress Ledgers.
+        finalText = String(railsResponse.finalResponseText || '').trim();
+        const assignmentId = String((railsResponse as any).assignmentId || '').trim();
         if (assignmentId) {
           agentAssignmentResult = {
             assignmentId,
-            ...(String((sidecarResponse as any).instructionId || '').trim()
-              ? { instructionId: String((sidecarResponse as any).instructionId).trim() }
+            ...(String((railsResponse as any).instructionId || '').trim()
+              ? { instructionId: String((railsResponse as any).instructionId).trim() }
               : {}),
-            ...(String((sidecarResponse as any).resultId || '').trim()
-              ? { resultId: String((sidecarResponse as any).resultId).trim() }
+            ...(String((railsResponse as any).resultId || '').trim()
+              ? { resultId: String((railsResponse as any).resultId).trim() }
               : {}),
           };
         }
@@ -980,9 +873,7 @@ export async function runCardWithContract(
         throw e;
     }
 
-    // Success requires a real chat answer or a real task artifact. Empty transport is a failure.
-    const hasArtifact = Boolean((magenticPlan as any)?.taskLedgerArtifact);
-    if (!finalText && !hasArtifact) {
+    if (!finalText) {
       throw new Error('autogen_orchestrator_missing_final_response');
     }
 
@@ -994,14 +885,6 @@ export async function runCardWithContract(
       runtimeType: 'magentic_one',
       inputSummary: summarizeText(input),
       outputSummary: summarizeText(finalText),
-      // Transported Python rails artifacts for AgentCanvas projection.
-      magenticTrace:
-        Object.keys(magenticPlan || {}).length > 0 || ledgerTrace
-          ? {
-              ...(Object.keys(magenticPlan || {}).length > 0 ? { plan: magenticPlan } : {}),
-              ...(ledgerTrace ? { ledgerTrace } : {}),
-            }
-          : null,
       agentAssignmentResult,
     };
   }

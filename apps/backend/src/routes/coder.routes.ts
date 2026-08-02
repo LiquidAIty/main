@@ -23,10 +23,6 @@ import {
   type GrpcTurnHandle,
 } from '../coder/openclaude/session/grpcChatClient';
 import {
-  readHermesReport,
-  writeHermesReport,
-} from '../coder/hermes/hermesReportArtifact';
-import {
   beginConversationRun,
   cancelConversationRun,
   completeConversationRun,
@@ -35,15 +31,9 @@ import {
   listConversations,
   markConversationRunRunning,
 } from '../conversations/store';
-import {
-  applyThinkGraphPatch,
-  readThinkGraphScope,
-  type ThinkGraphPatchAuthority,
-} from '../services/thinkgraph/thinkGraphStore';
 import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/harnessTrace';
 // The app's one canonical Agent Canvas deck id, defined once on the deck store.
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
-import { pool } from '../db/pool';
 import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantStore';
 import {
   runOpenClaudeCodeTask,
@@ -51,17 +41,9 @@ import {
   type ConsoleCoderStarted,
 } from '../coder/execution/coderConsoleRuntime';
 import {
-  completeGraphViews,
-  parseGraphViewIdentities,
-  type GraphViewIdentity,
-} from '../contracts/graphView';
-import {
-  fetchDoorwayContext,
-  fetchUnifiedModelContext,
   beginAgentAssignmentOnPython,
   fetchAgentCardContext,
   finishAgentAssignmentOnPython,
-  transitionGraphViewsOnPython,
 } from '../services/autogen/autogenOrchestratorClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 import {
@@ -546,41 +528,7 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
         });
       }
     }
-    // The caller (Main's tool call) supplies persisted Graph View IDS only —
-    // never view content. The server resolves the persisted records and
-    // renders the one compact representation; a request still carrying full
-    // view JSON is rejected, no fallback.
-    if (body.graphViews !== undefined) {
-      return res.status(400).json({ ok: false, error: 'caller_graph_views_removed: pass graphViewIds — the server resolves persisted views' });
-    }
-    const graphViewIds = (Array.isArray(body.graphViewIds) ? body.graphViewIds : [])
-      .map((id: unknown) => String(id || '').trim())
-      .filter(Boolean);
-    let attachedViews: GraphViewIdentity[] = [];
-    let doorwayGraphContext = '';
-    if (graphViewIds.length > 0) {
-      const doorway = (await fetchDoorwayContext(projectId, conversationId, graphViewIds)) as {
-        views?: unknown;
-        modelContext?: unknown;
-      };
-      attachedViews = parseGraphViewIdentities(doorway?.views, { projectId, conversationId });
-      // Honest role check: a view aimed at another role is an explicit error,
-      // never silently dropped (the rendered text must match the attached set).
-      const misdirected = attachedViews.filter(
-        (view) => view.receivingRole !== 'coder' && view.receivingRole !== 'main_chat',
-      );
-      if (misdirected.length > 0) {
-        return res.status(400).json({
-          ok: false,
-          error: `graph_view_not_for_coder: ${misdirected.map((view) => view.viewId).join(', ')}`,
-        });
-      }
-      doorwayGraphContext = String(doorway?.modelContext || '');
-    }
-    const approvedPrompt = [
-      String(body.approvedPrompt || ''),
-      attachedViews.length ? doorwayGraphContext : '',
-    ].filter(Boolean).join('\n\n');
+    const approvedPrompt = String(body.approvedPrompt || '');
     const senderCardId = await resolveMainChatCardId(projectId, deckId);
     if (!senderCardId) {
       return res.status(409).json({ ok: false, error: 'main_chat_card_not_found' });
@@ -613,14 +561,10 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
       receiverCardId: cardId,
       instruction: String(body.approvedPrompt || ''),
       parentRunId: String(body.parentRunId || '') || undefined,
-      references: attachedViews.map((view) => ({
-        referenceId: view.viewId,
-        referenceType: 'graph_view',
-        required: true,
-      })),
+      references: [],
       runtime: 'openclaude',
       provider: model.provider,
-      modelKey: String(runtimeOptions.modelKey || model.providerModelId),
+      modelKey: String(runtimeOptions.modelKey),
       providerModelId: model.providerModelId,
     });
     let announceStarted!: (started: ConsoleCoderStarted) => void;
@@ -629,15 +573,6 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
     });
     const finalizationPromise = (async (): Promise<ConsoleCoderResult> => {
       try {
-      if (attachedViews.length) {
-        await transitionGraphViewsOnPython({
-          projectId,
-          conversationId,
-          viewIds: attachedViews.map((view) => view.viewId),
-          status: 'active',
-          invocationId: outerAssignment.correlationId,
-        });
-      }
       const result = await runOpenClaudeCodeTask({
         runId: childRunId,
         parentRunId: String(body.parentRunId || ''),
@@ -679,15 +614,6 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
             }]
           : [],
       });
-      if (attachedViews.length) {
-        await transitionGraphViewsOnPython({
-          projectId,
-          conversationId,
-          viewIds: attachedViews.map((view) => view.viewId),
-          status: result.ok ? 'consumed' : 'failed',
-          invocationId: result.correlationId,
-        });
-      }
       return result;
       } catch (error) {
         await finishAgentAssignmentOnPython(outerAssignment.assignmentId, {
@@ -697,15 +623,6 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
           errorCode: 'openclaude_runtime_failed',
           errorDetail: error instanceof Error ? error.message : String(error),
         });
-        if (attachedViews.length) {
-          await transitionGraphViewsOnPython({
-            projectId,
-            conversationId,
-            viewIds: attachedViews.map((view) => view.viewId),
-            status: 'failed',
-            invocationId: String(body.parentRunId || ''),
-          });
-        }
         throw error;
       }
     })();
@@ -748,154 +665,6 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
   }
 });
 
-// ── Main Chat ThinkGraph structured update (canonical writer, minted authority) ─
-// The model supplies ONLY the bounded structured update; the server mints the
-// authority from the live Main Chat card + real conversation. Same validation and
-// same one applyThinkGraphPatch writer as the ThinkGraph card path.
-router.post('/mcp-bridge/thinkgraph_submit_update', async (req, res) => {
-  const projectId = String(req.body?.projectId || '').trim();
-  const conversationId = String(req.body?.conversationId || '').trim();
-  try {
-    if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-    if (!conversationId) return res.status(400).json({ ok: false, error: 'conversationId_required' });
-    const mainCardId = await resolveMainChatCardId(projectId, BUILDER_DECK_ID);
-    if (!mainCardId) return res.status(409).json({ ok: false, error: 'main_chat_card_not_found' });
-    const authority: ThinkGraphPatchAuthority = {
-      projectId,
-      cardId: mainCardId,
-      correlationId: `main_update_${Date.now()}_${randomUUID().slice(0, 8)}`,
-      conversationId,
-    };
-    const result = await applyThinkGraphPatch(authority, {
-      resources: Array.isArray(req.body?.resources) ? req.body.resources : [],
-      relations: Array.isArray(req.body?.relations) ? req.body.relations : [],
-      statements: Array.isArray(req.body?.statements) ? req.body.statements : [],
-    });
-    return res.status(result.ok ? 200 : 422).json(result);
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_submit_update_failed' });
-  }
-});
-
-// ── Hermes SQL memory (liq_core.memory_space/memory_item, scope 'hermes') ───
-// Project-scoped private steward continuity — separate from ThinkGraph. The
-// runtime project authority is ag_catalog.projects, the same table used by
-// deck/conversation resolution. The old liq_core.project table is legacy data
-// only; never silently mirror or guess an identity from it.
-export async function resolveHermesProjectId(projectId: string): Promise<string> {
-  const normalized = String(projectId || '').trim();
-  if (!normalized) throw new Error('hermes_project_id_required');
-  const { rows } = await pool.query(
-    `SELECT id::text AS id FROM ag_catalog.projects WHERE id::text = $1 LIMIT 1`,
-    [normalized],
-  );
-  if (rows.length === 0) throw new Error(`hermes_project_not_found: ${normalized}`);
-  return String(rows[0].id);
-}
-
-async function resolveHermesMemorySpaceId(projectId: string): Promise<number> {
-  const canonicalProjectId = await resolveHermesProjectId(projectId);
-  const existing = await pool.query(
-    `SELECT memory_space_id FROM liq_core.memory_space
-     WHERE project_id = $1 AND scope = 'hermes' ORDER BY memory_space_id LIMIT 1`,
-    [canonicalProjectId],
-  );
-  if (existing.rows.length > 0) return Number(existing.rows[0].memory_space_id);
-  const created = await pool.query(
-    `INSERT INTO liq_core.memory_space (project_id, scope, label, tags, config)
-     VALUES ($1, 'hermes', 'Hermes Steward Memory', '{}', '{}') RETURNING memory_space_id`,
-    [canonicalProjectId],
-  );
-  return Number(created.rows[0].memory_space_id);
-}
-
-router.post('/mcp-bridge/hermes_memory_read', async (req, res) => {
-  try {
-    const projectId = String(req.body?.projectId || '').trim();
-    if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-    const key = String(req.body?.key || '').trim();
-    const spaceId = await resolveHermesMemorySpaceId(projectId);
-    const { rows } = key
-      ? await pool.query(
-          `SELECT key, value, updated_at FROM liq_core.memory_item
-           WHERE memory_space_id = $1 AND key = $2 ORDER BY updated_at DESC LIMIT 1`,
-          [spaceId, key],
-        )
-      : await pool.query(
-          `SELECT key, value, updated_at FROM liq_core.memory_item
-           WHERE memory_space_id = $1 ORDER BY updated_at DESC LIMIT 50`,
-          [spaceId],
-        );
-    return res.json({
-      ok: true,
-      items: rows.map((row: any) => ({ key: row.key, value: row.value, updatedAt: row.updated_at })),
-    });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'hermes_memory_read_failed' });
-  }
-});
-
-router.post('/mcp-bridge/hermes_memory_write', async (req, res) => {
-  try {
-    const projectId = String(req.body?.projectId || '').trim();
-    const key = String(req.body?.key || '').trim();
-    if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-    if (!key) return res.status(400).json({ ok: false, error: 'key_required' });
-    if (req.body?.value === undefined) return res.status(400).json({ ok: false, error: 'value_required' });
-    const valueJson = JSON.stringify(req.body.value).slice(0, 32_000);
-    const spaceId = await resolveHermesMemorySpaceId(projectId);
-    const updated = await pool.query(
-      `UPDATE liq_core.memory_item SET value = $3::jsonb
-       WHERE memory_space_id = $1 AND key = $2 RETURNING memory_item_id`,
-      [spaceId, key, valueJson],
-    );
-    if (updated.rows.length === 0) {
-      await pool.query(
-        `INSERT INTO liq_core.memory_item (memory_space_id, key, value) VALUES ($1, $2, $3::jsonb)`,
-        [spaceId, key, valueJson],
-      );
-    }
-    return res.json({ ok: true, key, stored: true });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'hermes_memory_write_failed' });
-  }
-});
-
-// Card-scoped internal tools (called by the Python ThinkGraph card run; authority
-// comes from the trusted run context the backend itself authored — never the model).
-router.post('/mcp-bridge/thinkgraph_read_scope', async (req, res) => {
-  try {
-    const authority = (req.body?.authority || {}) as Record<string, unknown>;
-    const projectId = String(authority.projectId || '');
-    const correlationId = String(authority.correlationId || '');
-    if (!projectId || !correlationId) {
-      return res.status(400).json({ ok: false, error: 'thinkgraph_scope_authority_missing' });
-    }
-    const scope = await readThinkGraphScope({ projectId, limit: Number(req.body?.limit) || undefined });
-    console.log('[THINKGRAPH][tool] read_scope project=%s correlation=%s nodes=%d', projectId, correlationId, scope.nodes.length);
-    return res.json({ ok: true, scope });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_read_scope_failed' });
-  }
-});
-
-router.post('/mcp-bridge/thinkgraph_apply_patch', async (req, res) => {
-  try {
-    const authority = (req.body?.authority || {}) as ThinkGraphPatchAuthority;
-    const patch = req.body?.patch || {};
-    const result = await applyThinkGraphPatch(authority, patch);
-    console.log(
-      '[THINKGRAPH][tool] apply_patch project=%s correlation=%s -> %s',
-      String(authority?.projectId || ''),
-      String(authority?.correlationId || ''),
-      result.ok ? result.status : `error:${result.error}`,
-    );
-    return res.status(result.ok ? 200 : 400).json(result);
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_apply_patch_failed' });
-  }
-});
-
 // run_configured_card: thin transport for the card.run_assistant_agent MCP tool.
 // Saved card identity/prompt/model/tools only — runConfiguredCard structurally
 // rejects every extra key, so no browser/MCP-supplied override can reach the run.
@@ -905,9 +674,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     // conversationId is a structural reference to the real live conversation
     // (the Harness injects it server-side for doorway calls). Card-specific authority is minted inside
     // runConfiguredCard itself — never accepted from the caller.
-    const graphViewIds = (Array.isArray(body.graphViewIds) ? body.graphViewIds : [])
-      .map((value: unknown) => String(value || '').trim())
-      .filter(Boolean);
     const result = await runConfiguredCard({
       projectId: String(body.projectId || ''),
       deckId: String(body.deckId || BUILDER_DECK_ID),
@@ -918,7 +684,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       instructionId: String(body.instructionId || ''),
       senderCardId: String(body.senderCardId || ''),
       parentRunId: String(body.parentRunId || ''),
-      ...(graphViewIds.length ? { graphViewIds } : {}),
     });
     return res.json({ ok: result.status === 'completed', result });
   } catch (error) {
@@ -959,28 +724,6 @@ router.get('/agentgraph/card-context', async (req, res) => {
 // id per (projectId, conversationId). The browser never touches gRPC.
 const activeGrpcTurns = new Map<string, GrpcTurnHandle>();
 
-router.post('/mcp-bridge/hermes_write_report', async (req, res) => {
-  try {
-    const completion = await writeHermesReport(req.body || {});
-    return res.json({ ok: true, ...completion });
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'hermes_report_write_failed';
-    return res.status(reason.includes('http_409') ? 409 : 400).json({
-      ok: false,
-      error: reason,
-    });
-  }
-});
-
-router.post('/mcp-bridge/hermes_read_report', async (req, res) => {
-  try {
-    return res.json({ ok: true, report: await readHermesReport(String(req.body?.parentRunId || '')) });
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'hermes_report_read_failed';
-    return res.status(reason.includes('http_404') ? 404 : 400).json({ ok: false, error: reason });
-  }
-});
-
 router.post('/openclaude/session/chat', async (req, res) => {
   const projectId = String(req.body?.projectId || '');
   const conversationId = String(req.body?.conversationId || 'default');
@@ -1000,65 +743,11 @@ router.post('/openclaude/session/chat', async (req, res) => {
   if (!projectId || !message) {
     return res.status(400).json({ ok: false, error: 'projectId_and_message_required' });
   }
-  // Graph context: the browser is a renderer, never the transport for graph
-  // membership. The chat request carries projection IDENTITY only; the server
-  // resolves the persisted projection and derives the compact model
-  // representation. A request still carrying view content is rejected — no
-  // silent browser-payload fallback.
-  if (req.body?.graphViews !== undefined) {
-    return res.status(400).json({
-      ok: false,
-      error: 'browser_graph_views_removed: send projectionId (+activeGraphViewId) — the server resolves graph context',
-    });
-  }
-  const projectionId = String(req.body?.projectionId || '').trim();
-  const activeGraphViewId = String(req.body?.activeGraphViewId || '').trim();
-  const knowgraphScope = String(req.body?.knowgraphScope || '').trim();
   const sessionId = deriveSessionId(projectId, conversationId);
   // One correlation id per turn for the concise backend trace. This does NOT change
   // the SSE stream or browser behavior — it only makes the real Harness events
   // (already flowing to the browser) legible in the backend dev terminal.
   const correlationId = `req_${randomUUID().slice(0, 8)}`;
-  let graphViews: GraphViewIdentity[] = [];
-  let graphContext = '';
-  let graphContextMeasurements: unknown = null;
-  if (projectionId) {
-    try {
-      const resolved = (await fetchUnifiedModelContext({
-        projectionId,
-        projectId,
-        conversationId,
-        role: 'main_chat',
-        activeGraphViewId: activeGraphViewId || undefined,
-        knowgraphScope: knowgraphScope || undefined,
-      })) as { graphViews?: unknown; modelContext?: unknown; measurements?: unknown };
-      graphViews = parseGraphViewIdentities(resolved?.graphViews, { projectId, conversationId });
-      graphContext = String(resolved?.modelContext || '');
-      graphContextMeasurements = resolved?.measurements ?? null;
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'projection_resolution_failed';
-      // 409 = the persistent graphs moved since the human looked (superseded) —
-      // the client refetches Unified and resends. Anything else is a real
-      // resolution failure. Never proceed with different context silently.
-      return res
-        .status(reason.includes('thinkgraph_http_409') ? 409 : 502)
-        .json({ ok: false, error: reason, projectionId });
-    }
-  }
-  // Compact Graph View lifecycle announcements for the browser: identity and
-  // status ONLY — the UI discovers contents by refetching its server-owned
-  // projection, never from event payloads (browser is not a membership carrier).
-  const compactGraphViewEvent = (views: GraphViewIdentity[]) => ({
-    views: views.map((view) => ({
-      viewId: view.viewId,
-      status: view.status,
-      authority: view.authority,
-      producingRole: view.producingRole,
-      receivingRole: view.receivingRole,
-      ...(view.correlationId ? { correlationId: view.correlationId } : {}),
-      ...(view.parentViewId ? { parentViewId: view.parentViewId } : {}),
-    })),
-  });
   try {
     await beginConversationRun({
       runId: correlationId,
@@ -1098,19 +787,9 @@ router.post('/openclaude/session/chat', async (req, res) => {
   };
   writeSse('session', { sessionId });
   logHarnessTrace(`[harness] request received ${`corr=${correlationId}`} project=${projectId} mode=${mode}`);
-  if (graphContext) {
-    // The exact measured graph-context cost of THIS turn, visible to the
-    // browser before the model even answers — counting, not enforcement.
-    writeSse('context_measurement', {
-      projectionId: projectionId || null,
-      characters: graphContext.length,
-      measurements: graphContextMeasurements,
-    });
-  }
   let turnFinished = false;
   let runCancelled = false;
   let terminalDoneEvent: Extract<GrpcSessionEvent, { kind: 'done' }> | null = null;
-  let activeRuntimeViews: GraphViewIdentity[] = [];
   try {
     const handle = await startGrpcTurn({
       sessionId,
@@ -1118,8 +797,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
       workingDirectory,
       mode,
       traceId: correlationId,
-      graphViews,
-      graphContext,
     }, async (event) => {
       if (turnFinished) return;
       if (event.kind === 'done') {
@@ -1146,18 +823,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
         `harness_run_persistence_failed:${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    if (handle.runtimeGraphViews.length > 0) {
-      activeRuntimeViews = handle.runtimeGraphViews;
-      await transitionGraphViewsOnPython({
-        projectId,
-        conversationId,
-        viewIds: activeRuntimeViews.map((view) => view.viewId),
-        status: 'active',
-        invocationId: correlationId,
-        runtime: activeRuntimeViews[0]?.runtime,
-      });
-      writeSse('graph_view', compactGraphViewEvent(handle.runtimeGraphViews));
-    }
     activeGrpcTurns.set(sessionId, handle);
     req.on('close', () => {
       if (turnFinished) return;
@@ -1171,17 +836,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
       });
     });
     const { finalText, usage } = await handle.done;
-    if (activeRuntimeViews.length > 0) {
-      const consumedViews = completeGraphViews(activeRuntimeViews);
-      await transitionGraphViewsOnPython({
-        projectId,
-        conversationId,
-        viewIds: consumedViews.map((view) => view.viewId),
-        status: 'consumed',
-        invocationId: correlationId,
-      });
-      writeSse('graph_view', compactGraphViewEvent(consumedViews));
-    }
     try {
       await completeConversationRun({
         runId: correlationId,
@@ -1203,15 +857,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
     );
   } catch (error) {
     turnFinished = true;
-    if (activeRuntimeViews.length > 0) {
-      await transitionGraphViewsOnPython({
-        projectId,
-        conversationId,
-        viewIds: activeRuntimeViews.map((view) => view.viewId),
-        status: 'failed',
-        invocationId: correlationId,
-      }).catch(() => null);
-    }
     const reason = error instanceof Error ? error.message : 'grpc_turn_failed';
     if (!runCancelled) {
       await failConversationRun(
@@ -1331,7 +976,6 @@ function mountConsoleSessionRoutes(prefix: string, manager: ConsoleRouteManager)
       model: typeof req.body?.model === 'string' ? req.body.model : undefined,
       provider: typeof req.body?.provider === 'string' ? req.body.provider : undefined,
       prompt: typeof req.body?.prompt === 'string' ? req.body.prompt : undefined,
-      args: Array.isArray(req.body?.args) ? req.body.args.map((a: unknown) => String(a)) : undefined,
     });
     if (!started.ok) {
       return res.status(424).json({ ok: false, error: started.error, missing: started.missing });
@@ -1417,8 +1061,7 @@ mountConsoleSessionRoutes('/openclaude/console', openClaudeConsoleSessionManager
 mountConsoleSessionRoutes('/hermes/console', hermesConsoleSessionManager);
 
 
-/** Resolve the saved Main Chat card from the live deck (binding, never a title
- * match) so the canonical ThinkGraph writer has truthful provenance. */
+/** Resolve the saved Main Chat card from the live deck by binding, never title. */
 async function resolveMainChatCardId(projectId: string, deckId: string): Promise<string | null> {
   const { deck } = await getDeckDocument(projectId, deckId);
   const card = (deck?.nodes || []).find(

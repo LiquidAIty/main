@@ -9,7 +9,7 @@
  * that already flowed to the browser SSE, so the same event is now also legible in
  * the backend terminal.
  *
- * Deeper families ([autogen] / [thinkgraph] / [coder] / [files]) are NOT emitted at
+ * Deeper subsystem families are NOT emitted at
  * this boundary today — they occur inside the Python card run and are not relayed
  * through the chat event stream — so they are intentionally absent, not faked.
  */

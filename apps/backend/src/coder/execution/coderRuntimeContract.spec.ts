@@ -18,7 +18,7 @@ const descriptor = (name: string, overrides: Record<string, unknown> = {}) => ({
   capability: {
     surface: 'knowledge' as const,
     capabilityType: 'callable_tool' as const,
-    graphAuthority: name.startsWith('cbm.') ? 'codegraph' as const : 'thinkgraph' as const,
+    graphAuthority: name.startsWith('cbm.') ? 'cbm' as const : 'engraphis' as const,
     authorityClass: 'read', runtimeCompatibility: ['local_coder'], cardAssignable: true,
     latency: 'fast' as const, providerPossible: false, health: 'available',
     recommendedUse: 'read', verification: 'live', approvalRequired: false, deprecated: false,
@@ -224,13 +224,13 @@ describe('parseCoderAuditResult (direct_main_audit)', () => {
     conclusion: 'c', repositoryRoot: 'r', repositoryIdentity: 'i', revision: 'v', freshness: 'f',
     codeGraphQuery: 'q', codeGraphNodeRefs: ['n'], files: ['a.ts'], symbols: ['s'], findings: [],
     unresolvedQuestions: [], risks: [], implementationBoundaries: [], requiredTests: [],
-    viewContract: { focusSymbols: ['s'] }, artifactRefs: [],
+    projectionContract: { focusSymbols: ['s'] }, artifactRefs: [],
   };
 
-  it('extracts a validated audit result with its CodeGraphViewContract', () => {
+  it('extracts a validated audit result with its code evidence contract', () => {
     const parsed = parseCoderAuditResult(JSON.stringify(audit));
     expect(parsed.auditResult?.conclusion).toBe('c');
-    expect(parsed.auditResult?.viewContract.focusSymbols).toEqual(['s']);
+    expect(parsed.auditResult?.projectionContract.focusSymbols).toEqual(['s']);
   });
 
   it('reads an audit nested under structured_output', () => {

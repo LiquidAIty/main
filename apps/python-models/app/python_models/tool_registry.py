@@ -19,7 +19,7 @@ import json
 import operator
 import os
 import re
-from contextvars import ContextVar, Token
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
@@ -183,48 +183,6 @@ async def get_paper_account_readiness_tool() -> dict[str, Any]:
     return result.to_dict()
 
 
-# ---------------------------------------------------------------------------
-# ThinkGraph card tools (scoped internal tools, not public Harness tools).
-#
-# Authority NEVER comes from the model: it is injected by the single-card
-# runtime (run_configured_card) from the server-authored runtimeScope via this
-# ContextVar. A call outside an authorized ThinkGraph card run fails honestly.
-# Persistence itself lives in the backend (thinkGraphStore) — these adapters
-# are transport to the mcp-bridge endpoints on loopback.
-# ---------------------------------------------------------------------------
-
-THINKGRAPH_RUN_AUTHORITY: ContextVar[dict[str, str] | None] = ContextVar(
-    "thinkgraph_run_authority", default=None
-)
-
-# Honest record of authorized patch results observed inside the CURRENT card run.
-# Set to a fresh list by the single-card runtime for profiled ThinkGraph runs; the
-# terminal-contract post-hook reads it. Never model-writable, never persisted here.
-THINKGRAPH_PATCH_EVENTS: ContextVar[list[dict[str, Any]] | None] = ContextVar(
-    "thinkgraph_patch_events", default=None
-)
-
-
-def _record_patch_event(raw_result: str) -> None:
-    events = THINKGRAPH_PATCH_EVENTS.get()
-    if events is None:
-        return
-    try:
-        parsed = json.loads(raw_result)
-    except json.JSONDecodeError:
-        return
-    if isinstance(parsed, dict) and parsed.get("ok") is True:
-        events.append(
-            {
-                "status": str(parsed.get("status") or ""),
-                "correlationId": str(parsed.get("correlationId") or ""),
-                "storedResourceIds": parsed.get("storedResourceIds") or [],
-                "storedStatementIds": parsed.get("storedStatementIds") or [],
-                "relationCount": parsed.get("relationCount") or 0,
-            }
-        )
-
-
 def _backend_base_url() -> str:
     return os.environ.get("LIQUIDAITY_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
 
@@ -249,59 +207,6 @@ def _post_backend_json_sync(path: str, payload: dict[str, Any]) -> str:
         return body or json.dumps({"ok": False, "error": f"backend_http_{err.code}"})
     except URLError as err:
         return json.dumps({"ok": False, "error": f"backend_unreachable: {err.reason}"})
-
-
-def _require_thinkgraph_authority() -> dict[str, str] | None:
-    authority = THINKGRAPH_RUN_AUTHORITY.get()
-    if not authority or authority.get("kind") != "thinkgraph_card_run":
-        return None
-    return authority
-
-
-async def read_thinkgraph_scope_tool(limit: int | None = None) -> str:
-    """ThinkGraph card tool: read the bounded active-project graph scope.
-
-    Read-only. Project scope comes from the trusted card-run authority — a call
-    outside an authorized ThinkGraph card run fails honestly.
-    """
-    authority = _require_thinkgraph_authority()
-    if authority is None:
-        return json.dumps({"ok": False, "error": "thinkgraph_authority_missing: tool is only available inside an authorized ThinkGraph card run"})
-    return await asyncio.to_thread(
-        _post_backend_json_sync,
-        "/api/coder/mcp-bridge/thinkgraph_read_scope",
-        {"authority": authority, "limit": limit if isinstance(limit, int) else None},
-    )
-
-
-async def apply_thinkgraph_patch_tool(
-    resources: list[dict[str, Any]] | None = None,
-    relations: list[dict[str, Any]] | None = None,
-    statements: list[dict[str, Any]] | None = None,
-) -> str:
-    """ThinkGraph card tool: apply ONE compact graph patch.
-
-    The model supplies only the patch body (resources / relations / statements).
-    Authority (project, card, run, source pair) is injected from the trusted run
-    context — any model-supplied authority is ignored by construction. One AGE
-    transaction, idempotent per run, complete source-pair provenance enforced by
-    the backend writer.
-    """
-    authority = _require_thinkgraph_authority()
-    if authority is None:
-        return json.dumps({"ok": False, "error": "thinkgraph_authority_missing: tool is only available inside an authorized ThinkGraph card run"})
-    patch = {
-        "resources": resources or [],
-        "relations": relations or [],
-        "statements": statements or [],
-    }
-    result = await asyncio.to_thread(
-        _post_backend_json_sync,
-        "/api/coder/mcp-bridge/thinkgraph_apply_patch",
-        {"authority": authority, "patch": patch},
-    )
-    _record_patch_event(result)
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -522,15 +427,6 @@ def build_local_coder_tool(model_provider: str, provider_model_id: str) -> Funct
 # ToolRegistry.
 # ---------------------------------------------------------------------------
 
-# Canonical capability id (stored on cards, exposed by the harness MCP surface)
-# → this runtime's registered implementation. One explicit table, never a
-# rename sweep and never a duplicate registration.
-CANONICAL_TOOL_ALIASES: dict[str, str] = {
-    "thinkgraph.get_graph_slice": "read_thinkgraph_scope",
-    "thinkgraph.submit_update": "apply_thinkgraph_patch",
-}
-
-
 class ToolRegistry:
     """Resolves selected card tools to real FunctionTools, loudly or not at all."""
 
@@ -558,14 +454,7 @@ class ToolRegistry:
         canonical_name = str(name or "").strip()
         if not canonical_name:
             raise RuntimeError("card_tool_name_empty")
-        # Canonical capability ids (the names cards store, shared with the
-        # harness MCP surface) resolve to this runtime's own implementation.
-        # Only proven same-capability pairs are aliased. The ThinkGraph pair is
-        # this runtime's read/write of the same authority.
-        # Anything else stays loudly unknown: a capability without an adapter
-        # in THIS runtime must fail here, never silently degrade.
-        implementation_name = CANONICAL_TOOL_ALIASES.get(canonical_name, canonical_name)
-        spec = self._specs.get(implementation_name)
+        spec = self._specs.get(canonical_name)
         if spec is None:
             raise RuntimeError(
                 f"card_tool_unknown: {canonical_name} (known: {','.join(self.known_names())})"
@@ -577,7 +466,7 @@ class ToolRegistry:
         if not spec.inputSchema or not spec.outputSchema:
             raise RuntimeError(f"card_tool_schema_missing: {canonical_name}")
         return FunctionTool(
-            self._adapters[implementation_name],
+            self._adapters[canonical_name],
             description=spec.description,
             name=spec.name,
         )
@@ -662,53 +551,6 @@ def build_default_tool_registry() -> ToolRegistry:
         (ToolSpec(name="worldsignals.stream_events", description="Read a bounded set of real-time events from the WorldSignals SSE channel.", enabled=True, inputSchema={"type": "object", "properties": {"max_events": {"type": "integer", "minimum": 1, "maximum": 20, "default": 1}, "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 30, "default": 15}}, "required": [], "additionalProperties": False}, outputSchema={"type": "object"}), assignment_worldsignals_stream_events),
     ]:
         registry.register(spec, adapter)
-    registry.register(
-        ToolSpec(
-            name="read_thinkgraph_scope",
-            description=(
-                "ThinkGraph card only: read the bounded active-project ThinkGraph scope "
-                "(record ids, labels, kinds, provenance) so patches avoid duplicates. "
-                "Read-only; scope comes from the trusted card-run authority."
-            ),
-            enabled=True,
-            inputSchema={
-                "type": "object",
-                "properties": {"limit": {"type": "number"}},
-                "required": [],
-            },
-            outputSchema={"type": "string", "description": "JSON bounded scope with provenance"},
-        ),
-        read_thinkgraph_scope_tool,
-    )
-    registry.register(
-        ToolSpec(
-            name="apply_thinkgraph_patch",
-            description=(
-                "Apply ONE graph patch. EXACT input shape — "
-                'resources: [{"id": string, "label": string, "properties"?: {key: string|number|bool}}]; '
-                'relations: [{"a": resourceId, "b": resourceId}]; '
-                'statements: [{"id": string, "subject": resourceId, "predicateTerm": string, '
-                '"object": resourceId, "rationale"?: string, "review"?: string, '
-                '"properties"?: {key: string|number|bool}}]. '
-                "A subject or object resourceId that does not resolve to an existing or "
-                "newly-declared resource in this same patch causes the whole patch to be rejected. "
-                "Authority (project, card, run, source pair) comes from the trusted run context; "
-                "one transaction, idempotent per run."
-            ),
-            enabled=True,
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "resources": {"type": "array", "items": {"type": "object"}},
-                    "relations": {"type": "array", "items": {"type": "object"}},
-                    "statements": {"type": "array", "items": {"type": "object"}},
-                },
-                "required": [],
-            },
-            outputSchema={"type": "string", "description": "JSON honest applied/duplicate/empty result"},
-        ),
-        apply_thinkgraph_patch_tool,
-    )
     registry.register(
         ToolSpec(
             name="run_local_coder",
@@ -954,17 +796,6 @@ DEFAULT_TOOL_REGISTRY = build_default_tool_registry()
 # Per-tool display metadata. Anything not listed falls back to safe defaults
 # derived from the registered ToolSpec.
 _TOOL_DISPLAY_METADATA: dict[str, dict[str, Any]] = {
-    # ThinkGraph card-scoped tools: attachable ONLY on assistant_agent cards (the
-    # ThinkGraph card). They execute only inside an authorized ThinkGraph card run
-    # (trusted run authority) — attaching them elsewhere fails honestly at run time.
-    "read_thinkgraph_scope": {
-        "displayName": "ThinkGraph Scope (read)",
-        "agentCompatibility": ["assistant_agent"],
-    },
-    "apply_thinkgraph_patch": {
-        "displayName": "ThinkGraph Patch (authorized write)",
-        "agentCompatibility": ["assistant_agent"],
-    },
     "run_local_coder": {
         "displayName": "Local Coder",
         "agentCompatibility": ["magentic_one", "assistant_agent"],

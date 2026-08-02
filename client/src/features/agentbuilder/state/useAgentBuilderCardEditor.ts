@@ -33,23 +33,6 @@ function resolveAgentTemplate(
   );
 }
 
-function sameStringArray(
-  left: string[] | undefined,
-  right: string[] | undefined,
-): boolean {
-  const a = Array.isArray(left) ? left : [];
-  const b = Array.isArray(right) ? right : [];
-  if (a.length !== b.length) return false;
-  return a.every((value, index) => value === b[index]);
-}
-
-function sameObjectShape(
-  left: Record<string, unknown> | null | undefined,
-  right: Record<string, unknown> | null | undefined,
-): boolean {
-  return JSON.stringify(left || null) === JSON.stringify(right || null);
-}
-
 function compactAgentOverrides(
   overrides: Partial<AgentTemplate>,
 ): Partial<AgentTemplate> | undefined {
@@ -106,14 +89,6 @@ export default function useAgentBuilderCardEditor({
         : Array.isArray(selectedCard.tools)
           ? selectedCard.tools
           : effectiveAgent?.tools || [],
-      knowledge_sources: effectiveAgent?.knowledgeSources || [],
-      response_format: effectiveAgent?.ioSchema
-        ? {
-            type: 'json_schema',
-            name: 'card_schema',
-            schema: effectiveAgent.ioSchema,
-          }
-        : null,
     };
   }, [effectiveAgent, selectedCard]);
 
@@ -162,23 +137,6 @@ export default function useAgentBuilderCardEditor({
           maxTokens: nextMaxTokens,
           tools: nextTools,
         });
-        const nextKnowledgeSources = Array.isArray(
-          nextConfig.knowledge_sources,
-        )
-          ? nextConfig.knowledge_sources
-              .filter(
-                (entry): entry is string => typeof entry === 'string',
-              )
-              .map((entry) => entry.trim())
-              .filter(Boolean)
-          : [];
-        const nextIoSchema =
-          nextConfig.response_format?.type === 'json_schema' &&
-          nextConfig.response_format?.schema &&
-          typeof nextConfig.response_format.schema === 'object'
-            ? (nextConfig.response_format.schema as Record<string, unknown>)
-            : null;
-
         const nextOverrides = compactAgentOverrides({
           ...(selectedCard.overrides || {}),
           provider:
@@ -200,18 +158,6 @@ export default function useAgentBuilderCardEditor({
             nextMaxTokens !== (selectedTemplate.maxTokens ?? null)
               ? nextMaxTokens
               : undefined,
-          knowledgeSources: !sameStringArray(
-            nextKnowledgeSources,
-            selectedTemplate?.knowledgeSources,
-          )
-            ? nextKnowledgeSources
-            : undefined,
-          ioSchema: !sameObjectShape(
-            nextIoSchema,
-            selectedTemplate?.ioSchema,
-          )
-            ? nextIoSchema || undefined
-            : undefined,
         });
 
         return {

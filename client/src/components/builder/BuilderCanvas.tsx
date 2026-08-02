@@ -254,7 +254,7 @@ const MAG_ONE_CONTROL_HANDLE = 'task-bus-top';
 
 /** Classify a user-drawn connection into the REAL runtime edge types:
  * bus top handle → 'magentic_control'; any other bus connection →
- * 'magentic_option'; Main→Hermes → 'hermes_observe'; agent→agent → 'flow'
+ * 'magentic_option'; ordinary directed agent invocation → 'flow'
  * (a directional Call: source may invoke target). The browser only labels
  * what the user drew — authority is resolved server-side from the persisted type. */
 function resolveCanvasConnectionEdgeType(
@@ -269,12 +269,6 @@ function resolveCanvasConnectionEdgeType(
   const sourceNode = nodeMap.get(connection.source);
   const targetNode = nodeMap.get(connection.target);
   if (!sourceNode || !targetNode) return null;
-
-  // Hermes observation: any card→Hermes connection is an observe edge.
-  // Hermes→other connections remain 'flow' (invocation).
-  if (targetNode.id === 'card_hermes_steward' || targetNode.runtimeBinding === 'hermes_steward') {
-    return 'hermes_observe';
-  }
 
   const sourceIsBus = normalizeRuntimeType(sourceNode.runtimeType) === 'magentic_one';
   const targetIsBus = normalizeRuntimeType(targetNode.runtimeType) === 'magentic_one';

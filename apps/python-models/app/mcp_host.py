@@ -10,7 +10,6 @@ Exposes this application tool surface plus the dynamically discovered native
 Engraphis, Codebase Memory, and official Graphiti MCP registries:
   * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
   * run_mag_one                      (Main-only approved AgentGraph assignment)
-  * thinkgraph.get_graph_slice       (bounded product projection)
   * web_search                       (real Tavily search; Search Agent only by grant)
   * canvas.inspect / card.update_configuration / canvas.upsert_wire /
     card.run_assistant_agent         (user-directed Harness control surface;
@@ -23,8 +22,7 @@ to Python handlers (app/control_plane.py) which own validation/policy and use th
 existing backend deck routes. No semantics,
 no fallback lives in this host.
 
-ThinkGraph mutation is an explicit Main Chat grant; official Graphiti ingestion
-is an explicit Hermes-only grant. Native tools keep their upstream schemas,
+Official Graphiti ingestion is an explicit Hermes-only grant. Native tools keep their upstream schemas,
 annotations, dispatch, and results; this host adds only provider namespaces and
 authentication. Graph authorities never appear as cards or conversational agents.
 """
@@ -48,7 +46,7 @@ from collections import deque
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 # Bootstrap the package root onto sys.path. The gRPC harness launches this host as a
 # SCRIPT (`python .../apps/python-models/app/mcp_host.py`), so sys.path[0] is the
@@ -105,8 +103,6 @@ _STARTUP_ID = uuid4().hex
 _STARTUP_PROCESS_ID = os.getpid()
 _TRACE_LOCK = threading.Lock()
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
-_GRAPHITI_EPISODE_CONTENT_PREVIEW_CHARS = 4000
-_GRAPHITI_PROVENANCE_ITEMS_LIMIT = 200
 _ACTIVE_EXECUTION_RECEIPT: ContextVar[dict[str, Any] | None] = ContextVar(
     "liquidaity_execution_receipt", default=None
 )
@@ -268,10 +264,18 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, st
         "graphiti.get_episode_entities",
         "graphiti.get_entity_edge",
     }
+    engraphis_context_reads = {
+        "engraphis.answer",
+        "engraphis.proactive_context",
+        "engraphis.recall",
+        "engraphis.recall_context",
+        "engraphis.recall_grounded",
+    }
     read_only = (
         bool(annotation_payload.get("readOnlyHint"))
         or name in _READ_ONLY_TOOLS
         or name in graphiti_database_reads
+        or name in engraphis_context_reads
     )
     open_world = bool(annotation_payload.get("openWorldHint"))
     if name.startswith("cbm."):
@@ -279,7 +283,13 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, st
             "index_repository", "delete_project", "manage_adr", "ingest_traces"
         }
     destructive = bool(annotation_payload.get("destructiveHint"))
-    if destructive or name in {"cbm.delete_project", "graphiti.delete_episode", "engraphis.forget"}:
+    if destructive or name in {
+        "cbm.delete_project",
+        "engraphis.forget",
+        "graphiti.clear_graph",
+        "graphiti.delete_entity_edge",
+        "graphiti.delete_episode",
+    }:
         risk = "destructive"
     elif name in {"run_coder_subagent", "run_mag_one", "card.run_assistant_agent"}:
         risk = "runtime-launching"
@@ -287,10 +297,10 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, st
         risk = "background"
     elif open_world:
         risk = "paid/provider-backed"
-    elif name.startswith("graphiti.") and name not in {
-        "graphiti.get_status", "graphiti.get_episodes", "graphiti.get_episode_entities",
-        "graphiti.get_entity_edge",
-    } or name == "web_search":
+    elif (
+        name.startswith("graphiti.")
+        and name not in graphiti_database_reads
+    ) or name == "web_search":
         risk = "paid/provider-backed"
     elif read_only:
         risk = "safe read"
@@ -304,28 +314,26 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, st
             "mixed"
             if open_world
             else "local_embedding"
-            if name in {"engraphis.recall", "engraphis.recall_grounded", "engraphis.answer"}
+            if name in {
+                "engraphis.answer",
+                "engraphis.proactive_context",
+                "engraphis.recall",
+                "engraphis.recall_context",
+                "engraphis.recall_grounded",
+            }
             else "database_read" if read_only else "database_write"
         )
     elif name.startswith("cbm."):
         compute = "database_read" if read_only else "database_write"
-    elif name in {"main.context", "coder.status", "worldsignals.capabilities"}:
+    elif name in {"main.context", "coder.status"}:
         compute = "deterministic"
+    elif name == "web_search":
+        compute = "mixed"
     elif read_only:
         compute = "database_read"
     else:
         compute = "database_write"
     return {"risk": risk, "compute": compute}
-
-
-def _apply_worldsignals_receipt_classification(operation_classes: list[str]) -> None:
-    """Refine the active receipt from WorldSignals' live command manifest."""
-    receipt = _ACTIVE_EXECUTION_RECEIPT.get()
-    if receipt is None or not operation_classes:
-        return
-    read_only = all(value == "read" for value in operation_classes)
-    receipt["risk"] = "safe read" if read_only else "deterministic write"
-    receipt["compute"] = "database_read" if read_only else "database_write"
 
 
 def _tool_capability_metadata(
@@ -335,19 +343,19 @@ def _tool_capability_metadata(
     """Describe how one canonical MCP tool belongs in the card editor.
 
     This is generated metadata on the existing catalog entry, not a second tool
-    registry. Context records and GraphViews are deliberately not represented as
+    registry. Context records and visual projections are deliberately not represented as
     tools here; this metadata describes only callable operations.
     """
-    if name.startswith(("thinkgraph.", "engraphis.")):
-        graph_authority = "thinkgraph"
+    if name.startswith("engraphis."):
+        graph_authority = "engraphis"
         authority_class = "project_reasoning"
     elif name.startswith("graphiti."):
-        graph_authority = "knowgraph"
+        graph_authority = "graphiti"
         authority_class = "knowledge_provenance"
     elif name.startswith("cbm."):
-        graph_authority = "codegraph"
+        graph_authority = "cbm"
         authority_class = "repository_structure"
-    elif name.startswith(("agentgraph.", "graphview.")):
+    elif name.startswith("agentgraph."):
         graph_authority = "agentgraph"
         authority_class = "assignment_lineage"
     elif name.startswith("hermes.memory_"):
@@ -603,7 +611,6 @@ _NATIVE_PREFIXES = {
     "graphiti": "graphiti.",
 }
 
-
 def _namespace_native_tools(provider: str, tools: list[Tool]) -> list[Tool]:
     """Add only a generated routing prefix; preserve every upstream field."""
     prefix = _NATIVE_PREFIXES[provider]
@@ -632,7 +639,7 @@ async def list_resources() -> list[Any]:
 
 
 def _load_native_engraphis_mcp():
-    """Import Engraphis' FastMCP registry after binding ThinkGraph's database."""
+    """Import Engraphis' FastMCP registry with its repository-owned database."""
     repo_root = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
     # This host is the local LiquidAIty workbench boundary. The configured
     # SentenceTransformer model is already cached locally; allowing Hugging Face
@@ -641,10 +648,7 @@ def _load_native_engraphis_mcp():
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault(
         "ENGRAPHIS_DB_PATH",
-        os.environ.get(
-            "THINKGRAPH_ENGRAPHIS_DB",
-            os.path.join(repo_root, "db", "thinkgraph-engraphis-v2.sqlite"),
-        ),
+        os.path.join(repo_root, "db", "thinkgraph-engraphis-v2.sqlite"),
     )
     from engraphis.mcp_server import mcp
 
@@ -878,265 +882,8 @@ def _normalize_native_tool_result(result: Any, *, dependency: str) -> Any:
     )
 
 
-async def _graphiti_dependency_health(group_id: str | None = None) -> CallToolResult:
-    if _NATIVE_GRAPHITI_MODULE is None:
-        raise RuntimeError("native_graphiti_not_initialized")
-    native = _NATIVE_GRAPHITI_MODULE
-    config = native.config
-    database_error = ""
-    try:
-        client = await native.graphiti_service.get_client()
-        async with asyncio.timeout(5.0):
-            async with client.driver.session() as session:
-                query_result = await session.run("RETURN 1 AS ready")
-                if query_result:
-                    _ = [record async for record in query_result]
-        database_state = "ready"
-    except Exception as error:
-        database_state = "failed"
-        database_error = _sanitize_failure_detail(error)
-
-    llm_provider = _graphiti_provider_settings(config.llm)
-    embedder_provider = _graphiti_provider_settings(config.embedder)
-    llm_configured = bool(llm_provider.api_key and llm_provider.api_url and config.llm.model)
-    embedding_configured = bool(
-        embedder_provider.api_key and embedder_provider.api_url and config.embedder.model
-    )
-    group_id = str(group_id or config.graphiti.group_id or "")
-    queue_service = getattr(native, "queue_service", None)
-    queue_size = queue_service.get_queue_size(group_id) if queue_service else 0
-    worker_running = queue_service.is_worker_running(group_id) if queue_service else False
-    with _GRAPHITI_PROVIDER_HEALTH_LOCK:
-        last_success = copy.deepcopy(_GRAPHITI_PROVIDER_HEALTH["last_success"])
-        last_failure = copy.deepcopy(_GRAPHITI_PROVIDER_HEALTH["last_failure"])
-        llm_success = copy.deepcopy(_GRAPHITI_PROVIDER_HEALTH.get("graphiti_llm:last_success"))
-        llm_failure = copy.deepcopy(_GRAPHITI_PROVIDER_HEALTH.get("graphiti_llm:last_failure"))
-        embedding_success = copy.deepcopy(
-            _GRAPHITI_PROVIDER_HEALTH.get("graphiti_embedding:last_success")
-        )
-        embedding_failure = copy.deepcopy(
-            _GRAPHITI_PROVIDER_HEALTH.get("graphiti_embedding:last_failure")
-        )
-    llm_verified = bool(llm_success) and not (
-        llm_failure
-        and str(llm_failure.get("startedAt") or "")
-        >= str(llm_success.get("startedAt") or "")
-    )
-    embedding_verified = bool(embedding_success) and not (
-        embedding_failure
-        and str(embedding_failure.get("startedAt") or "")
-        >= str(embedding_success.get("startedAt") or "")
-    )
-    provider_verified = llm_verified and embedding_verified
-    if database_state == "failed":
-        overall = "failed"
-    elif not llm_configured or not embedding_configured or not provider_verified:
-        overall = "degraded"
-    else:
-        overall = "ready"
-    payload = {
-        "status": overall,
-        "overall": overall,
-        "activeProviderProbePerformed": False,
-        "database": {
-            "state": database_state,
-            "provider": str(config.database.provider),
-            "error": database_error or None,
-        },
-        "llm": {
-            "state": "configured_unverified" if llm_configured and not llm_verified else (
-                "ready" if llm_configured else "failed"
-            ),
-            "provider": _provider_identity(
-                str(config.llm.provider), str(llm_provider.api_url or "")
-            ),
-            "model": str(config.llm.model),
-            "baseUrlHostname": _safe_hostname(str(llm_provider.api_url or "")),
-            "credentialConfigured": bool(llm_provider.api_key),
-        },
-        "embedding": {
-            "state": "configured_unverified" if embedding_configured and not embedding_verified else (
-                "ready" if embedding_configured else "failed"
-            ),
-            "provider": _provider_identity(
-                str(config.embedder.provider), str(embedder_provider.api_url or "")
-            ),
-            "model": str(config.embedder.model),
-            "baseUrlHostname": _safe_hostname(str(embedder_provider.api_url or "")),
-            "credentialConfigured": bool(embedder_provider.api_key),
-        },
-        "backgroundQueue": {
-            "state": "running" if worker_running else "idle",
-            "queued": queue_size,
-        },
-        "lastSuccessfulProviderOperation": last_success,
-        "lastFailedProviderOperation": last_failure,
-    }
-    return CallToolResult(
-        content=[TextContent(type="text", text=json.dumps(payload))],
-        structuredContent={
-            "status": overall,
-            "message": (
-                "Graphiti dependencies are ready"
-                if overall == "ready"
-                else "Graphiti dependencies require attention; inspect dependency health"
-            ),
-        },
-        isError=overall == "failed",
-    )
 
 
-async def _graphiti_episode_entities(arguments: dict[str, Any]) -> CallToolResult | list[TextContent]:
-    if _NATIVE_GRAPHITI_MODULE is None:
-        raise RuntimeError("native_graphiti_not_initialized")
-    episode_ids = arguments.get("episode_uuids")
-    if not isinstance(episode_ids, list) or not episode_ids:
-        failure = {
-            "ok": False,
-            "error": "invalid_identity",
-            "failureCode": "invalid_identity",
-            "errorCategory": "INVALID_ARGUMENT",
-            "retryable": False,
-            "dependency": "graphiti_database",
-        }
-        return CallToolResult(
-            content=[TextContent(type="text", text=json.dumps(failure))],
-            structuredContent=failure,
-            isError=True,
-        )
-    try:
-        normalized_ids = [str(UUID(str(value))) for value in episode_ids]
-    except (TypeError, ValueError, AttributeError):
-        failure = {
-            "ok": False,
-            "error": "invalid_identity",
-            "failureCode": "invalid_identity",
-            "errorCategory": "INVALID_ARGUMENT",
-            "retryable": False,
-            "dependency": "graphiti_database",
-        }
-        return CallToolResult(
-            content=[TextContent(type="text", text=json.dumps(failure))],
-            structuredContent=failure,
-            isError=True,
-        )
-    native = _NATIVE_GRAPHITI_MODULE
-    client = await native.graphiti_service.get_client()
-    from graphiti_core.errors import NodeNotFoundError
-    from graphiti_core.nodes import EpisodicNode
-
-    missing: list[str] = []
-    try:
-        for episode_id in normalized_ids:
-            try:
-                await asyncio.wait_for(
-                    EpisodicNode.get_by_uuid(client.driver, episode_id),
-                    timeout=_NATIVE_TOOL_TIMEOUT_SECONDS,
-                )
-            except NodeNotFoundError:
-                missing.append(episode_id)
-        if missing:
-            failure = {
-                "ok": False,
-                "error": "episode_not_found",
-                "failureCode": "episode_not_found",
-                "errorCategory": "NOT_FOUND",
-                "retryable": False,
-                "dependency": "graphiti_database",
-                "episodeUuids": missing,
-            }
-            return CallToolResult(
-                content=[TextContent(type="text", text=json.dumps(failure))],
-                structuredContent=failure,
-                isError=True,
-            )
-        results = await asyncio.wait_for(
-            client.get_nodes_and_edges_by_episode(normalized_ids),
-            timeout=_NATIVE_TOOL_TIMEOUT_SECONDS,
-        )
-        nodes_all = [_graphiti_json_value(native.to_node_result(node)) for node in results.nodes]
-        edges_all = [_graphiti_json_value(native.to_edge_result(edge)) for edge in results.edges]
-    except TimeoutError as error:
-        raise RuntimeError("native_graphiti_timeout:get_episode_entities") from error
-    except Exception as error:
-        failure = _typed_failure(error, dependency="graphiti_database")
-        return CallToolResult(
-            content=[TextContent(type="text", text=json.dumps(failure))],
-            structuredContent=failure,
-            isError=True,
-        )
-    nodes = nodes_all[:_GRAPHITI_PROVENANCE_ITEMS_LIMIT]
-    edges = edges_all[:_GRAPHITI_PROVENANCE_ITEMS_LIMIT]
-    payload = {
-        "ok": True,
-        "state": "found_with_data" if nodes or edges else "found_without_derived_data",
-        "episodeUuids": normalized_ids,
-        "nodes": nodes,
-        "edges": edges,
-        "availableNodeCount": len(nodes_all),
-        "availableFactCount": len(edges_all),
-        "nodesTruncated": len(nodes_all) > len(nodes),
-        "factsTruncated": len(edges_all) > len(edges),
-    }
-    return CallToolResult(
-        content=[TextContent(type="text", text=json.dumps(payload))],
-        structuredContent=payload,
-        isError=False,
-    )
-
-
-def _graphiti_json_value(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return dict(value)
-    if hasattr(value, "model_dump"):
-        payload = value.model_dump(mode="json")
-        if isinstance(payload, dict):
-            return payload
-    raise TypeError(f"graphiti_result_not_object:{type(value).__name__}")
-
-
-def _bound_graphiti_episode_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    bounded = dict(payload)
-    episodes = payload.get("episodes")
-    if not isinstance(episodes, list):
-        raise TypeError("graphiti_episodes_result_invalid")
-    projected: list[dict[str, Any]] = []
-    for value in episodes:
-        episode = _graphiti_json_value(value)
-        content = str(episode.pop("content", "") or "")
-        episode["contentPreview"] = content[:_GRAPHITI_EPISODE_CONTENT_PREVIEW_CHARS]
-        episode["availableContentLength"] = len(content)
-        episode["contentTruncated"] = len(content) > _GRAPHITI_EPISODE_CONTENT_PREVIEW_CHARS
-        projected.append(episode)
-    bounded["episodes"] = projected
-    return bounded
-
-
-async def _graphiti_episodes(arguments: dict[str, Any]) -> CallToolResult:
-    result = await _call_native_graphiti("get_episodes", arguments)
-    if not isinstance(result, CallToolResult) or result.isError:
-        return result
-    try:
-        payload = next(
-            json.loads(block.text)
-            for block in result.content
-            if isinstance(block, TextContent) and block.text
-        )
-        if not isinstance(payload, dict):
-            raise TypeError("graphiti_episodes_result_invalid")
-        bounded = _bound_graphiti_episode_payload(payload)
-    except (StopIteration, json.JSONDecodeError, TypeError) as error:
-        failure = _typed_failure(error, dependency="graphiti_database")
-        return CallToolResult(
-            content=[TextContent(type="text", text=json.dumps(failure))],
-            structuredContent=failure,
-            isError=True,
-        )
-    return CallToolResult(
-        content=[TextContent(type="text", text=json.dumps(bounded))],
-        structuredContent=bounded,
-        isError=False,
-    )
 
 
 async def _close_native_graphiti() -> None:
@@ -1334,7 +1081,15 @@ def _native_cbm_config() -> tuple[str, list[str], str]:
     args = configured.get("args") or []
     if not command or not isinstance(args, list):
         raise RuntimeError("native_cbm_stdio_config_invalid")
-    return command, [str(arg) for arg in args], repo_root
+    resolved_args = [str(arg) for arg in args]
+    if os.getenv("LIQUIDAITY_CBM_UI_ENABLED", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }:
+        ui_port = int(os.getenv("LIQUIDAITY_CBM_UI_PORT", "9749"))
+        if not 1 <= ui_port <= 65535:
+            raise RuntimeError("native_cbm_ui_port_invalid")
+        resolved_args.extend(["--ui=true", f"--port={ui_port}"])
+    return command, resolved_args, repo_root
 
 
 def _initialize_native_cbm_sync() -> None:
@@ -1559,96 +1314,6 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="graphview.list",
-            description=(
-                "List bounded AgentGraph reference views for the current project and conversation. "
-                "Returns stable view identities and pointers only; source graph records and "
-                "artifacts remain in their canonical authorities."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "conversationId": {"type": "string"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
-                    "projectWide": {"type": "boolean", "default": False},
-                },
-                "required": ["projectId", "conversationId"],
-            },
-        ),
-        Tool(
-            name="graphview.get",
-            description=(
-                "Read one exact AgentGraph reference view by stable viewId. Returns pointer "
-                "identities only and fails honestly when the view is absent."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "conversationId": {"type": "string"},
-                    "viewId": {"type": "string"},
-                    "projectWide": {"type": "boolean", "default": False},
-                },
-                "required": ["projectId", "conversationId", "viewId"],
-            },
-        ),
-        Tool(
-            name="graphview.create",
-            description=(
-                "Create one bounded AgentGraph view containing stable references to canonical "
-                "graphs, artifacts, or real-time outputs. Never accepts copied graph records, "
-                "relationships, raw SQL, or raw Cypher."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "conversationId": {"type": "string"},
-                    "correlationId": {"type": "string"},
-                    "displayLabel": {"type": "string"},
-                    "receivingRole": {"type": "string"},
-                    "references": {
-                        "type": "array",
-                        "maxItems": 128,
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "properties": {
-                                "referenceId": {"type": "string"},
-                                "referenceType": {
-                                    "type": "string",
-                                    "enum": [
-                                        "artifact",
-                                        "codegraph",
-                                        "conversation_message",
-                                        "database",
-                                        "knowgraph",
-                                        "native_session",
-                                        "query_execution",
-                                        "registered_query",
-                                        "thinkgraph",
-                                        "worldsignals",
-                                    ],
-                                },
-                                "required": {"type": "boolean", "default": False},
-                            },
-                            "required": ["referenceId", "referenceType"],
-                        },
-                    },
-                    "note": {"type": "string"},
-                    "parentViewId": {"type": "string"},
-                },
-                "required": [
-                    "projectId",
-                    "conversationId",
-                    "correlationId",
-                    "displayLabel",
-                    "references",
-                ],
-            },
-        ),
-        Tool(
             name="coder.status",
             description=(
                 "Read the canonical OpenClaude Coder session/process state. Reports running only "
@@ -1663,7 +1328,7 @@ async def list_tools() -> list[Tool]:
                 "Main Chat only: send one approved coding assignment from the saved connected Coder card "
                 "directly to the existing visible OpenClaude Code terminal. The server owns project, deck, "
                 "conversation, parent-run, and Main-card identity. Callers provide approvedPrompt, the saved "
-                "Coder cardId, optional authority, and optional persisted graphViewIds. Returns the linked child "
+                "Coder cardId and optional authority. Returns the linked child "
                 "run, the coder session/thread id, structured command evidence, and the CoderReport verbatim."
             ),
             inputSchema={
@@ -1676,11 +1341,6 @@ async def list_tools() -> list[Tool]:
                     "cardId": {"type": "string"},
                     "approvedPrompt": {"type": "string"},
                     "authority": {"type": "string", "enum": ["direct_main_audit", "mag_one_execution"]},
-                    "graphViewIds": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                            "description": "AgentGraph reference-view ids to attach. IDs only; canonical graph and artifact payloads remain behind their native tools.",
-                    },
                 },
                 "required": ["parentRunId", "projectId", "deckId", "conversationId", "cardId", "approvedPrompt"],
             },
@@ -1708,8 +1368,9 @@ async def list_tools() -> list[Tool]:
             name="run_mag_one",
             description=(
                 "Main Chat only: submit one existing AgentGraph instruction identity. "
-                "Python creates and transactionally claims the assignment, hydrates the exact "
-                "relational instruction, and gives that text to native MagenticOneGroupChat. "
+                "Python creates and transactionally claims the assignment, reads its exact "
+                "instruction and sender-selected native references, and gives that handoff to "
+                "native MagenticOneGroupChat. "
                 "The backend resolves the live worker roster from blue SIDE connections; never type "
                 "a roster. Execute only on an explicit user request — Hermes never launches Mag One."
             ),
@@ -1736,29 +1397,6 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "instructions": {"type": "string"},
-                    "operationReferences": {
-                        "type": "array",
-                        "maxItems": 16,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "operationId": {"type": "string"},
-                                "version": {"type": "integer", "minimum": 1},
-                                "executionRole": {
-                                    "type": "string",
-                                    "enum": ["required_context", "optional_tool"],
-                                },
-                                "parameters": {"type": "object"},
-                                "explanation": {"type": "string"},
-                            },
-                            "required": [
-                                "operationId",
-                                "version",
-                                "executionRole",
-                            ],
-                            "additionalProperties": False,
-                        },
-                    },
                 },
                 "required": ["instructions"],
                 "additionalProperties": False,
@@ -1789,7 +1427,23 @@ async def list_tools() -> list[Tool]:
                     "projectId": {"type": "string"},
                     "deckId": {"type": "string"},
                     "cardId": {"type": "string"},
-                    "updates": {"type": "object"},
+                    "updates": {
+                        "type": "object",
+                        "properties": {
+                            "prompt": {"type": "string"},
+                            "title": {"type": "string"},
+                            "modelKey": {"type": "string"},
+                            "provider": {"type": "string"},
+                            "temperature": {"type": "number"},
+                            "maxTokens": {"type": "integer", "minimum": 1},
+                            "tools": {
+                                "type": "array",
+                                "items": {"type": "string", "minLength": 1},
+                            },
+                        },
+                        "minProperties": 1,
+                        "additionalProperties": False,
+                    },
                 },
                 "required": ["projectId", "deckId", "cardId", "updates"],
             },
@@ -1806,115 +1460,22 @@ async def list_tools() -> list[Tool]:
                     "projectId": {"type": "string"},
                     "deckId": {"type": "string"},
                     "op": {"type": "string", "enum": ["upsert", "remove"]},
-                    "wire": {"type": "object"},
+                    "wire": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "source": {"type": "string"},
+                            "target": {"type": "string"},
+                            "edgeType": {
+                                "type": "string",
+                                "enum": ["flow", "magentic_option"],
+                                "default": "flow",
+                            },
+                        },
+                        "additionalProperties": False,
+                    },
                 },
                 "required": ["projectId", "deckId", "op", "wire"],
-            },
-        ),
-        Tool(
-            name="thinkgraph.get_graph_slice",
-            description=(
-                "Bounded READ-ONLY slice of stored ThinkGraph project reasoning (resources, "
-                "statements, relations, provenance pointers). No write authority exists here."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {"projectId": {"type": "string"}, "limit": {"type": "integer"}},
-                "required": ["projectId"],
-            },
-        ),
-        Tool(
-            name="thinkgraph.submit_update",
-            description=(
-                "Main Chat only: submit zero or ONE bounded structured ThinkGraph update after "
-                "reviewing the turn or Hermes findings. Required shape: "
-                "each resource is {id, label, kind?, properties?}; each relation is {a, b, tag?}; "
-                "each statement is {id, subject, predicateTerm, object, rationale?, review?, tag?, properties?}. "
-                "Statement subject and object MUST be resource ids in this update or existing project resources; "
-                "labels and ids must be short, stable, and never paragraph text. Minimal valid example: "
-                "resources:[{id:'investigation:dup-entity',label:'Duplicate entity handling',kind:'question'},"
-                "{id:'system:knowgraph',label:'KnowGraph',kind:'system'}], "
-                "statements:[{id:'statement:dup-entity-question',subject:'investigation:dup-entity',"
-                "predicateTerm:'term:questions',object:'system:knowgraph',rationale:'Verify entity identity merge behavior.',"
-                "review:'provisional'}]. To update an investigation, reuse its stable resource id and add only compact "
-                "resources/statements. An empty resources/relations/statements payload is an explicit no-op. "
-                "Pass real projectId and conversationId; authority/correlation are server-minted. Never store a transcript, "
-                "raw tool output, hidden reasoning, or an unchanged generic summary. If validation fails, "
-                "return that one error and finish—never retry by guessing another shape."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "conversationId": {"type": "string"},
-                    "resources": {"type": "array", "items": {"type": "object", "required": ["id", "label"], "properties": {"id": {"type": "string"}, "label": {"type": "string"}, "kind": {"type": "string"}, "properties": {"type": "object", "additionalProperties": {"type": ["string", "number", "boolean"]}}}}},
-                    "relations": {"type": "array", "items": {"type": "object", "required": ["a", "b"], "properties": {"a": {"type": "string"}, "b": {"type": "string"}, "tag": {"type": "string"}}}},
-                    "statements": {"type": "array", "items": {"type": "object", "required": ["id", "subject", "predicateTerm", "object"], "properties": {"id": {"type": "string"}, "subject": {"type": "string"}, "predicateTerm": {"type": "string"}, "object": {"type": "string"}, "rationale": {"type": "string"}, "review": {"type": "string"}, "tag": {"type": "string"}, "properties": {"type": "object", "additionalProperties": {"type": ["string", "number", "boolean"]}}}}},
-                },
-                "required": ["projectId", "conversationId"],
-            },
-        ),
-        Tool(
-            name="hermes.memory_read",
-            description=(
-                "Hermes only: read your project-scoped SQL memory (private steward continuity — "
-                "prior judgments, patterns, draft state). Omit key to list recent items."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {"projectId": {"type": "string"}, "key": {"type": "string"}},
-                "required": ["projectId"],
-            },
-        ),
-        Tool(
-            name="hermes.memory_write",
-            description=(
-                "Hermes only: upsert one key/value item in your project-scoped SQL memory. "
-                "Separate from ThinkGraph — this is your private continuity, not shared project "
-                "reasoning."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "key": {"type": "string"},
-                    "value": {},
-                },
-                "required": ["projectId", "key", "value"],
-            },
-        ),
-        Tool(
-            name="hermes.read_report",
-            description=(
-                "Hermes only: read the exact durable result linked to this native parentRunId. "
-                "The server resolves its AgentGraph assignment directly; no latest-report scan."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {"parentRunId": {"type": "string"}},
-                "required": ["parentRunId"],
-            },
-        ),
-        Tool(
-            name="hermes.write_report",
-            description=(
-                "Hermes only: finish one exact AgentGraph assignment with a durable report result. "
-                "The server resolves project, conversation, instruction, and native session identity "
-                "from parentRunId; never supply them. Include only real stable "
-                "ThinkGraph node ids, KnowGraph refs, and CodeGraph refs. On success, return "
-                "the completion metadata exactly; do not repeat the report body to Main Chat."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "parentRunId": {"type": "string"},
-                    "reportMarkdown": {"type": "string"},
-                    "summary": {"type": "string"},
-                    "thinkGraphNodeIds": {"type": "array", "items": {"type": "string"}},
-                    "knowGraphRefs": {"type": "array", "items": {"type": "string"}},
-                    "codeGraphRefs": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["parentRunId", "reportMarkdown", "summary"],
             },
         ),
         Tool(
@@ -1927,75 +1488,14 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string"},
-                    "max_results": {"type": "integer", "default": 5},
+                    "max_results": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10,
+                        "default": 5,
+                    },
                 },
                 "required": ["query"],
-            },
-        ),
-        Tool(
-            name="worldsignals.capabilities",
-            description=(
-                "Read a bounded live WorldSignals capability/command view. Filter by domain, "
-                "exact command, keyword, or read/write operation class; an exact command match "
-                "returns that command's current parameter schema."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "domain": {"type": "string"},
-                    "command": {"type": "string"},
-                    "keyword": {"type": "string"},
-                    "operation_class": {"type": "string", "enum": ["read", "write"]},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 25},
-                },
-                "required": [],
-            },
-        ),
-        Tool(
-            name="worldsignals.command",
-            description="Run one real command from the live WorldSignals command manifest.",
-            inputSchema={
-                "type": "object",
-                "properties": {"command": {"type": "string"}, "arguments": {"type": "object"}},
-                "required": ["command"],
-            },
-        ),
-        Tool(
-            name="worldsignals.batch",
-            description="Run up to twenty real WorldSignals commands through its batch channel.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "commands": {
-                        "type": "array",
-                        "maxItems": 20,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "cmd": {"type": "string", "minLength": 1},
-                                "args": {"type": "object"},
-                            },
-                            "required": ["cmd"],
-                            "additionalProperties": False,
-                        },
-                    }
-                },
-                "required": ["commands"],
-                "additionalProperties": False,
-            },
-        ),
-        Tool(
-            name="worldsignals.poll",
-            description="Poll completed command results and pending WorldSignals tasks.",
-            inputSchema={"type": "object", "properties": {}, "required": []},
-        ),
-        Tool(
-            name="worldsignals.stream_events",
-            description="Read a bounded set of real-time events from the WorldSignals SSE channel.",
-            inputSchema={
-                "type": "object",
-                "properties": {"max_events": {"type": "integer", "default": 1}, "timeout_seconds": {"type": "integer", "default": 15}},
-                "required": [],
             },
         ),
         Tool(
@@ -2032,15 +1532,6 @@ async def list_tools() -> list[Tool]:
                     "originatingRunId": {
                         "type": "string",
                         "description": "Server-owned parent Harness turn identity for an inter-agent doorway call.",
-                    },
-                    "graphViewIds": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "maxItems": 16,
-                        "description": (
-                            "Stable AgentGraph reference-view identities selected for this assignment. "
-                            "Referenced data stays in its canonical authority and is resolved on demand."
-                        ),
                     },
                     "input": {"type": "string"},
                 },
@@ -2088,15 +1579,9 @@ async def list_tools() -> list[Tool]:
 _READ_ONLY_TOOLS = {
     "main.context",
     "agentgraph.inspect",
-    "graphview.list",
-    "graphview.get",
     "coder.status",
     "mag_one.describe_connected_agents",
     "canvas.inspect",
-    "thinkgraph.get_graph_slice",
-    "worldsignals.capabilities",
-    "worldsignals.poll",
-    "worldsignals.stream_events",
 }
 _SERVER_OWNED_ARGUMENTS = {
     "projectId",
@@ -2116,10 +1601,6 @@ _MAIN_ONLY_TOOLS = {
     "run_mag_one",
 }
 _HERMES_ONLY_TOOLS = {
-    "hermes.memory_read",
-    "hermes.memory_write",
-    "hermes.read_report",
-    "hermes.write_report",
     "write_mag_one_instructions",
 }
 
@@ -2136,7 +1617,12 @@ def _bind_tool_execution_contract(tool: Tool) -> Tool:
     return Tool.model_validate(payload)
 
 
-def _enforce_tool_caller(name: str, args: dict[str, Any]) -> str | None:
+def _enforce_tool_caller(
+    name: str,
+    args: dict[str, Any],
+    *,
+    authenticated_external: bool = False,
+) -> str | None:
     expected = (
         "main_chat"
         if name in _MAIN_ONLY_TOOLS
@@ -2144,10 +1630,12 @@ def _enforce_tool_caller(name: str, args: dict[str, Any]) -> str | None:
         if name in _HERMES_ONLY_TOOLS
         else None
     )
-    if expected is None:
-        return None
     card_id = str(args.pop("_callerCardId", "") or "").strip()
     binding = str(args.pop("_callerRuntimeBinding", "") or "").strip()
+    if authenticated_external:
+        return None
+    if expected is None:
+        return None
     if not card_id or not binding:
         return "tool_caller_identity_unavailable"
     if binding != expected:
@@ -2232,33 +1720,15 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "limit",
         "projectWide",
     },
-    "graphview.list": {"projectId", "conversationId", "limit", "projectWide"},
-    "graphview.get": {"projectId", "conversationId", "viewId", "projectWide"},
-    "graphview.create": {
-        "projectId",
-        "conversationId",
-        "correlationId",
-        "displayLabel",
-        "receivingRole",
-        "references",
-        "note",
-        "parentViewId",
-    },
     "coder.status": set(),
-    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "approvedPrompt", "authority", "graphViewIds"},
+    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "approvedPrompt", "authority"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "instructionId", "conversationId"},
-    "thinkgraph.submit_update": {"projectId", "conversationId", "resources", "relations", "statements"},
-    "hermes.memory_read": {"projectId", "key"},
-    "hermes.memory_write": {"projectId", "key", "value"},
-    "hermes.read_report": {"parentRunId"},
-    "hermes.write_report": {"parentRunId", "reportMarkdown", "summary", "thinkGraphNodeIds", "knowGraphRefs", "codeGraphRefs"},
     "write_mag_one_instructions": {
         "projectId",
         "deckId",
         "conversationId",
         "instructions",
-        "operationReferences",
     },
     "canvas.inspect": {"projectId", "deckId"},
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
@@ -2272,16 +1742,9 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "instructionId",
         "originatingAgentId",
         "originatingRunId",
-        "graphViewIds",
         "input",
     },
-    "thinkgraph.get_graph_slice": {"projectId", "limit"},
     "web_search": {"query", "max_results"},
-    "worldsignals.capabilities": {"domain", "command", "keyword", "operation_class", "limit"},
-    "worldsignals.command": {"command", "arguments"},
-    "worldsignals.batch": {"commands"},
-    "worldsignals.poll": set(),
-    "worldsignals.stream_events": {"max_events", "timeout_seconds"},
 }
 
 _BRIDGE_PATHS: dict[str, str] = {
@@ -2289,25 +1752,16 @@ _BRIDGE_PATHS: dict[str, str] = {
     "run_coder_subagent": "run_coder_subagent",
     "mag_one.describe_connected_agents": "describe_connected_agents",
     "run_mag_one": "run_mag_one",
-    "thinkgraph.submit_update": "thinkgraph_submit_update",
-    "hermes.memory_read": "hermes_memory_read",
-    "hermes.memory_write": "hermes_memory_write",
-    "hermes.read_report": "hermes_read_report",
-    "hermes.write_report": "hermes_write_report",
 }
 
 # Control tools dispatch to the Python control-plane handlers (app/control_plane.py).
 # Imported lazily so bridge-only usage never requires the psycopg dependency chain.
 _CONTROL_HANDLER_NAMES: dict[str, str] = {
     "agentgraph.inspect": "agentgraph_inspect",
-    "graphview.list": "graph_view_list",
-    "graphview.get": "graph_view_get",
-    "graphview.create": "graph_view_create",
     "canvas.inspect": "canvas_inspect",
     "card.update_configuration": "card_update_configuration",
     "canvas.upsert_wire": "canvas_upsert_wire",
     "card.run_assistant_agent": "card_run_assistant_agent",
-    "thinkgraph.get_graph_slice": "thinkgraph_get_graph_slice",
 }
 
 
@@ -2372,16 +1826,6 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                     native_args["group_id"] = group_id
                 if "group_ids" in native_properties:
                     native_args["group_ids"] = [group_id]
-            if native_name == "get_status":
-                return await _graphiti_dependency_health(
-                    graphiti_project_group_id(str(context["projectId"]))
-                    if context is not None
-                    else None
-                )
-            if native_name == "get_episodes":
-                return await _graphiti_episodes(native_args)
-            if native_name == "get_episode_entities":
-                return await _graphiti_episode_entities(native_args)
             return await _call_native_graphiti(native_name, native_args)
     allowed = _ALLOWED_KEYS.get(name)
     if allowed is None:
@@ -2408,11 +1852,15 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                 args["parentRunId"] = f"req_external_main_{uuid4()}"
             if name in _MAIN_ONLY_TOOLS or name in _HERMES_ONLY_TOOLS:
                 args["_callerCardId"] = str(context["mainCardId"])
-                args["_callerRuntimeBinding"] = "main_chat"
+                args["_callerRuntimeBinding"] = "external_gpt"
         except (KeyError, RuntimeError, ValueError) as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
     caller_card_id = str(args.get("_callerCardId", "") or "").strip()
-    caller_error = _enforce_tool_caller(name, args)
+    caller_error = _enforce_tool_caller(
+        name,
+        args,
+        authenticated_external=context is not None,
+    )
     if caller_error:
         return [
             TextContent(
@@ -2439,7 +1887,6 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
                 conversation_id=str(args.get("conversationId") or ""),
                 body=args.get("instructions"),
                 prepared_by_card_id=caller_card_id,
-                operation_references=args.get("operationReferences"),
             )
             return [TextContent(type="text", text=json.dumps(result))]
         except agentgraph.AgentGraphError as err:
@@ -2477,49 +1924,6 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
             max_results=int(args.get("max_results") or 5),
         )
         return [TextContent(type="text", text=result)]
-    if name.startswith("worldsignals."):
-        from app.python_models.worldsignals_client import (
-            WorldSignalsClient,
-            WorldSignalsError,
-            worldsignals_capabilities,
-        )
-
-        client = WorldSignalsClient()
-        try:
-            if name == "worldsignals.capabilities":
-                result = await asyncio.to_thread(
-                    worldsignals_capabilities,
-                    domain=args.get("domain"),
-                    command=args.get("command"),
-                    keyword=args.get("keyword"),
-                    operation_class=args.get("operation_class"),
-                    limit=int(args.get("limit") or 25),
-                )
-            elif name == "worldsignals.command":
-                command = str(args.get("command") or "")
-                operation_classes = await asyncio.to_thread(
-                    client.command_operation_classes, [command]
-                )
-                _apply_worldsignals_receipt_classification(operation_classes)
-                result = await asyncio.to_thread(
-                    client.command, command, args.get("arguments") or {}
-                )
-            elif name == "worldsignals.batch":
-                commands = list(args.get("commands") or [])
-                operation_classes = await asyncio.to_thread(
-                    client.command_operation_classes,
-                    [str((entry or {}).get("cmd") or "") for entry in commands],
-                )
-                _apply_worldsignals_receipt_classification(operation_classes)
-                result = await asyncio.to_thread(client.batch, commands)
-            else:
-                result = client.stream_events(
-                    int(args.get("max_events") or 1),
-                    int(args.get("timeout_seconds") or 15),
-                ) if name == "worldsignals.stream_events" else client.poll()
-            return [TextContent(type="text", text=json.dumps({"ok": True, "result": result}))]
-        except WorldSignalsError as err:
-            return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
     handler_name = _CONTROL_HANDLER_NAMES.get(name)
     if handler_name is not None:
         from app import control_plane

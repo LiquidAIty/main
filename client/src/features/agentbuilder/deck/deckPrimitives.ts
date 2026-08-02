@@ -43,7 +43,7 @@ export const DEFAULT_CARD_MODEL_KEY = GPT_LUNA_MODEL_KEY;
 export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openrouter';
 export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = GPT_TERRA_MODEL_KEY;
 export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openrouter';
-// Seed default ONLY for a fresh Coder card (and the console-config fallback). NOT
+// Seed default ONLY for a fresh Coder card. NOT
 // a runtime override: once a card has a saved provider/model, that saved value is
 // authoritative. Coder uses the saved Sol card default; there is no hidden
 // role-to-model fallback.
@@ -61,33 +61,45 @@ export const LOCAL_CODER_CONTROLLER_TOOLS = [
   'cbm.list_projects',
   'cbm.index_status',
   'cbm.detect_changes',
+] as const;
+export const MAIN_CHAT_CONTROLLER_TOOLS = [
+  'engraphis.remember',
+  'engraphis.recall',
+  'engraphis.recall_context',
+  'engraphis.recall_grounded',
+  'engraphis.answer',
+  'engraphis.why',
+  'engraphis.timeline',
+  'engraphis.recall_proactive',
+  'engraphis.proactive_context',
+  'engraphis.forget',
+  'engraphis.pin',
+  'engraphis.correct',
+  'engraphis.promote',
+  'engraphis.link',
+  'engraphis.record_event',
   'engraphis.index_repo',
   'engraphis.search_code',
   'engraphis.code_path',
   'engraphis.code_impact',
   'engraphis.export_code_graph',
-] as const;
-export const MAIN_CHAT_CONTROLLER_TOOLS = [
-  'thinkgraph.get_graph_slice',
-  'thinkgraph.submit_update',
-  'engraphis.recall',
-  'engraphis.recall_grounded',
+  'engraphis.start_session',
+  'engraphis.end_session',
+  'engraphis.receipts',
+  'engraphis.context_savings',
+  'engraphis.verify_receipts',
+  'engraphis.export_receipts',
+  'engraphis.stats',
+  'engraphis.check_update',
+  'engraphis.ingest',
+  'engraphis.ingest_postgres_schema',
+  'engraphis.consolidate',
   'canvas.inspect',
   'mag_one.describe_connected_agents',
   'run_mag_one',
   'run_coder_subagent',
 ] as const;
 export const HERMES_STEWARD_TOOLS = [
-  'thinkgraph.get_graph_slice',
-  'engraphis.recall',
-  'engraphis.recall_grounded',
-  'engraphis.why',
-  'engraphis.timeline',
-  'engraphis.receipts',
-  'engraphis.search_code',
-  'engraphis.code_path',
-  'cbm.search_graph',
-  'cbm.get_code_snippet',
   'graphiti.search_nodes',
   'graphiti.search_memory_facts',
   'graphiti.get_entity_edge',
@@ -98,13 +110,8 @@ export const HERMES_STEWARD_TOOLS = [
   'graphiti.add_triplet',
   'write_mag_one_instructions',
   'card.run_assistant_agent',
-  'worldsignals.capabilities',
-  'worldsignals.command',
-  'worldsignals.batch',
-  'worldsignals.poll',
-  'worldsignals.stream_events',
 ] as const;
-export const SYSTEM_TOOL_GRANTS_VERSION = 5;
+export const SYSTEM_TOOL_GRANTS_VERSION = 7;
 
 export function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   const normalized = safeText(value).trim().toLowerCase();
@@ -147,7 +154,6 @@ export function normalizeDeckEdgeType(value: unknown): DeckEdgeType {
   if (type === 'magentic_option') return 'magentic_option';
   if (type === 'magentic_control') return 'magentic_control';
   if (type === 'flow') return 'flow';
-  if (type === 'hermes_observe') return 'hermes_observe';
   return 'invalid';
 }
 

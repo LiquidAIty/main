@@ -52,28 +52,6 @@ def test_execution_receipt_observes_the_actual_provider_client_boundary():
     assert receipt["providerSubstitution"] is False
 
 
-def test_worldsignals_receipt_uses_live_manifest_operation_class():
-    import mcp_host
-
-    read_receipt = mcp_host._execution_receipt("worldsignals.command")
-    token = mcp_host._ACTIVE_EXECUTION_RECEIPT.set(read_receipt)
-    try:
-        mcp_host._apply_worldsignals_receipt_classification(["read"])
-    finally:
-        mcp_host._ACTIVE_EXECUTION_RECEIPT.reset(token)
-    assert read_receipt["risk"] == "safe read"
-    assert read_receipt["compute"] == "database_read"
-
-    write_receipt = mcp_host._execution_receipt("worldsignals.batch")
-    token = mcp_host._ACTIVE_EXECUTION_RECEIPT.set(write_receipt)
-    try:
-        mcp_host._apply_worldsignals_receipt_classification(["read", "write"])
-    finally:
-        mcp_host._ACTIVE_EXECUTION_RECEIPT.reset(token)
-    assert write_receipt["risk"] == "deterministic write"
-    assert write_receipt["compute"] == "database_write"
-
-
 def test_graphiti_uses_knowgraph_openrouter_embedding_configuration(monkeypatch):
     import mcp_host
 
@@ -101,40 +79,6 @@ def test_graphiti_preserves_explicit_embedder_model_override(monkeypatch):
     monkeypatch.setenv("KNOWGRAPH_OPENROUTER_EMBEDDING_MODEL", "openai/ignored")
 
     assert mcp_host._graphiti_config().embedder.model == "local/embeddinggemma"
-
-
-def test_graphiti_accepts_native_dict_results_and_bounds_episode_content():
-    import mcp_host
-
-    node = {"uuid": "node-1", "name": "Knowledge graph"}
-    assert mcp_host._graphiti_json_value(node) == node
-
-    content = "x" * (mcp_host._GRAPHITI_EPISODE_CONTENT_PREVIEW_CHARS + 25)
-    bounded = mcp_host._bound_graphiti_episode_payload(
-        {
-            "message": "Episodes retrieved successfully",
-            "episodes": [
-                {
-                    "uuid": "episode-1",
-                    "name": "Source paper",
-                    "group_id": "project-1",
-                    "source": "text",
-                    "source_description": "Imported PDF",
-                    "created_at": "2026-08-01T00:00:00Z",
-                    "content": content,
-                }
-            ],
-        }
-    )
-
-    episode = bounded["episodes"][0]
-    assert "content" not in episode
-    assert episode["uuid"] == "episode-1"
-    assert episode["group_id"] == "project-1"
-    assert episode["source_description"] == "Imported PDF"
-    assert len(episode["contentPreview"]) == mcp_host._GRAPHITI_EPISODE_CONTENT_PREVIEW_CHARS
-    assert episode["availableContentLength"] == len(content)
-    assert episode["contentTruncated"] is True
 
 
 def test_call_tool_appends_canonical_receipt_and_typed_provider_failure(monkeypatch):
@@ -194,128 +138,18 @@ def test_catalog_contract_metadata_is_generated_from_each_tool():
         "risk": "safe read",
         "compute": "database_read",
     }
-
-
-def test_graphiti_health_is_degraded_until_both_provider_boundaries_succeed(monkeypatch):
-    import asyncio
-    import mcp_host
-
-    class QueryResult:
-        def __aiter__(self):
-            async def records():
-                yield {"ready": 1}
-            return records()
-
-    class Session:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return None
-
-        async def run(self, _query):
-            return QueryResult()
-
-    class Driver:
-        def session(self):
-            return Session()
-
-    class Service:
-        async def get_client(self):
-            return SimpleNamespace(driver=Driver())
-
-    class Queue:
-        def get_queue_size(self, _group):
-            return 0
-
-        def is_worker_running(self, _group):
-            return False
-
-    providers = SimpleNamespace(openai=SimpleNamespace(
-        api_key="configured", api_url="https://openrouter.ai/api/v1"
-    ))
-    config = SimpleNamespace(
-        database=SimpleNamespace(provider="neo4j"),
-        llm=SimpleNamespace(provider="openai", model="model", providers=providers),
-        embedder=SimpleNamespace(provider="openai", model="embed", providers=providers),
-        graphiti=SimpleNamespace(group_id="liquidaity-project"),
-    )
-    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_MODULE", SimpleNamespace(
-        config=config, graphiti_service=Service(), queue_service=Queue()
-    ))
-    monkeypatch.setattr(mcp_host, "_GRAPHITI_PROVIDER_HEALTH", {
-        "last_success": None, "last_failure": None
-    })
-
-    result = asyncio.run(mcp_host._graphiti_dependency_health())
-    payload = json.loads(result.content[0].text)
-    assert payload["database"]["state"] == "ready"
-    assert payload["status"] == "degraded"
-    assert payload["llm"]["state"] == "configured_unverified"
-    assert payload["llm"]["provider"] == "openrouter"
-    assert payload["embedding"]["state"] == "configured_unverified"
-    assert payload["activeProviderProbePerformed"] is False
-    assert result.structuredContent["status"] == "degraded"
-
-
-def test_graphiti_provenance_distinguishes_missing_and_empty_episode(monkeypatch):
-    import asyncio
-    import mcp_host
-    from graphiti_core.errors import NodeNotFoundError
-    from graphiti_core.nodes import EpisodicNode
-
-    episode_id = "d26a9c66-2481-4a23-b608-7e2322d53c40"
-
-    class Client:
-        driver = object()
-
-        async def get_nodes_and_edges_by_episode(self, _ids):
-            return SimpleNamespace(nodes=[], edges=[])
-
-    class Service:
-        async def get_client(self):
-            return Client()
-
-    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_MODULE", SimpleNamespace(
-        graphiti_service=Service(),
-        to_node_result=lambda value: value,
-        to_edge_result=lambda value: value,
-    ))
-
-    async def missing(_driver, uuid):
-        raise NodeNotFoundError(uuid)
-
-    monkeypatch.setattr(EpisodicNode, "get_by_uuid", missing)
-    absent = asyncio.run(mcp_host._graphiti_episode_entities({
-        "episode_uuids": [episode_id]
-    }))
-    assert absent.isError is True
-    absent_payload = json.loads(absent.content[0].text)
-    assert absent_payload["failureCode"] == "episode_not_found"
-    assert absent_payload["errorCategory"] == "NOT_FOUND"
-    assert absent.structuredContent == absent_payload
-
-    invalid = asyncio.run(mcp_host._graphiti_episode_entities({
-        "episode_uuids": ["not-a-uuid"]
-    }))
-    invalid_payload = json.loads(invalid.content[0].text)
-    assert invalid.isError is True
-    assert invalid_payload["errorCategory"] == "INVALID_ARGUMENT"
-    assert invalid.structuredContent == invalid_payload
-
-    async def found(_driver, _uuid):
-        return object()
-
-    monkeypatch.setattr(EpisodicNode, "get_by_uuid", found)
-    empty = asyncio.run(mcp_host._graphiti_episode_entities({
-        "episode_uuids": [episode_id]
-    }))
-    payload = json.loads(empty.content[0].text)
-    assert payload["ok"] is True
-    assert payload["state"] == "found_without_derived_data"
-    assert empty.structuredContent["message"] == (
-        "Episode found with zero derived entities or facts"
-    )
+    assert mcp_host._tool_execution_contract("engraphis.recall_context") == {
+        "risk": "safe read",
+        "compute": "local_embedding",
+    }
+    assert mcp_host._tool_execution_contract("graphiti.clear_graph") == {
+        "risk": "destructive",
+        "compute": "mixed",
+    }
+    assert mcp_host._tool_execution_contract("web_search") == {
+        "risk": "paid/provider-backed",
+        "compute": "mixed",
+    }
 
 
 def test_graphiti_timeout_cancels_work_and_later_dispatch_recovers(monkeypatch):
@@ -393,23 +227,18 @@ async def check():
     assert 'approvedPrompt' in coder.inputSchema['properties']
     assert 'adapter' not in coder.inputSchema['properties']
     assert 'instructionId' in by_name['card.run_assistant_agent'].inputSchema['properties']
-    operation_refs = by_name['write_mag_one_instructions'].inputSchema['properties']['operationReferences']
-    assert operation_refs['items']['properties']['executionRole']['enum'] == ['required_context', 'optional_tool']
+    assert set(by_name['write_mag_one_instructions'].inputSchema['properties']) == {'instructions'}
     assert by_name['run_mag_one'].inputSchema['required'] == ['instructionId', 'projectId', 'deckId']
     assert 'main.context' in by_name
     assert 'agentgraph.inspect' in by_name
-    assert 'graphview.list' in by_name
-    assert 'graphview.get' in by_name
-    assert 'graphview.create' in by_name
     assert 'coder.status' in by_name
     assert all(
         tool.inputSchema.get('additionalProperties') is False
         for name, tool in by_name.items()
         if not name.startswith(('engraphis.', 'cbm.', 'graphiti.'))
     )
-    worldsignals = by_name['worldsignals.capabilities'].inputSchema
-    assert worldsignals['properties']['operation_class']['enum'] == ['read', 'write']
-    assert {'domain', 'command', 'keyword', 'operation_class', 'limit'} == set(worldsignals['properties'])
+    assert not any(name.startswith('worldsignals.') for name in by_name)
+    assert len(by_name) == len(set(by_name))
     print(json.dumps({name: tool.model_dump() for name, tool in by_name.items()}, sort_keys=True))
 asyncio.run(check())
 """
@@ -453,7 +282,7 @@ def test_catalog_identity_covers_the_complete_frozen_tool_descriptor():
     assert mcp_host._catalog_identity([original])[1] != mcp_host._catalog_identity([changed])[1]
 
 
-def test_mag_one_instruction_authoring_persists_operation_references(monkeypatch):
+def test_mag_one_instruction_authoring_persists_the_exact_instruction(monkeypatch):
     import asyncio
     import json
     import mcp_host
@@ -480,21 +309,12 @@ def test_mag_one_instruction_authoring_persists_operation_references(monkeypatch
                 "deckId": "deck_builder",
                 "conversationId": "main",
                 "instructions": "Approved task.",
-                "operationReferences": [
-                    {
-                        "operationId": "agentgraph.active_context_identities",
-                        "version": 2,
-                        "executionRole": "required_context",
-                        "parameters": {"project_id": "project-1"},
-                    }
-                ],
             },
         )
     )
 
     assert json.loads(result[0].text)["instructionId"] == "instruction:one"
-    assert captured[0]["operation_references"][0]["version"] == 2
-    assert captured[0]["operation_references"][0]["executionRole"] == "required_context"
+    assert captured[0]["body"] == "Approved task."
     assert captured[0]["prepared_by_card_id"] == "card_hermes"
 
 
@@ -508,27 +328,31 @@ async def check():
     await mcp_host._initialize_native_engraphis()
     second = await mcp_host._native_engraphis_tools()
     assert len(native) == 31
+    assert set(native) == {tool.name for tool in first}
+    assert len(first) == 31
     assert [id(tool) for tool in first] == [id(tool) for tool in second]
     assert {tool.name for tool in first} == set(native)
     for tool in first:
         assert tool.model_dump() == native[tool.name].model_dump()
     combined = await mcp_host.list_tools()
     combined_names = [tool.name for tool in combined]
-    assert len(combined_names) == 84
     assert len(set(combined_names)) == len(combined_names)
+    authenticated = mcp_host._bind_authenticated_catalog(combined)
+    authenticated_identity = mcp_host._catalog_identity(authenticated)
+    assert authenticated_identity[0] == len(combined_names)
+    assert len(authenticated_identity[1]) == 64
     assert {
         'main.context', 'canvas.inspect', 'coder.status', 'run_coder_subagent',
-        'agentgraph.inspect', 'graphview.list', 'graphview.get', 'graphview.create',
+        'agentgraph.inspect',
     }.issubset(set(combined_names))
     assert {
         'coder.inspect', 'coder.effective_tools', 'coder.account', 'coder.stop', 'coder.steer',
     }.isdisjoint(combined_names)
     assert {
-        f'engraphis.{name.removeprefix("engraphis_")}'
-        for name in native
+        f'engraphis.{name.removeprefix("engraphis_")}' for name in set(native)
     }.issubset(combined_names)
     assert not set(native).intersection(combined_names)
-    print(json.dumps(sorted(native)))
+    print(json.dumps(sorted(tool.name for tool in first)))
 asyncio.run(check())
 """
     result = _run_in_script_launch_context(code)
@@ -713,6 +537,21 @@ def test_native_cbm_replaces_a_stale_process_without_retrying_a_tool(monkeypatch
     assert mcp_host._NATIVE_CBM_NAMES == frozenset()
 
 
+def test_http_mcp_enables_native_cbm_ui_without_changing_shared_config(monkeypatch):
+    import mcp_host
+
+    monkeypatch.delenv("LIQUIDAITY_CBM_UI_ENABLED", raising=False)
+    monkeypatch.delenv("LIQUIDAITY_CBM_UI_PORT", raising=False)
+    _command, default_args, _cwd = mcp_host._native_cbm_config()
+    assert "--ui=true" not in default_args
+    assert not any(arg.startswith("--port=") for arg in default_args)
+
+    monkeypatch.setenv("LIQUIDAITY_CBM_UI_ENABLED", "true")
+    monkeypatch.setenv("LIQUIDAITY_CBM_UI_PORT", "9749")
+    _command, http_args, _cwd = mcp_host._native_cbm_config()
+    assert http_args[-2:] == ["--ui=true", "--port=9749"]
+
+
 def test_native_cbm_timeout_retires_the_session_without_retrying(monkeypatch):
     import mcp_host
 
@@ -766,7 +605,6 @@ async def check():
         {'path': 'run_coder_subagent', 'payload': coder},
         {'path': 'run_mag_one', 'payload': mag},
     ]
-    assert all(call['path'] != 'hermes_read_report' for call in calls)
     print('UNGATED_CANONICAL_DISPATCH_OK')
 asyncio.run(check())
 """
@@ -999,30 +837,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
                 "required": ["query"],
             },
         ),
-        mcp_host.Tool(
-            name="engraphis_context_savings",
-            title="Context savings",
-            description="Native Engraphis context savings.",
-            inputSchema={"type": "object", "properties": {}},
-            annotations={
-                "readOnlyHint": True,
-                "destructiveHint": False,
-                "idempotentHint": True,
-                "openWorldHint": False,
-            },
-        ),
-        mcp_host.Tool(
-            name="engraphis_check_update",
-            title="Check update",
-            description="Native Engraphis update check.",
-            inputSchema={"type": "object", "properties": {}},
-            annotations={
-                "readOnlyHint": False,
-                "destructiveHint": False,
-                "idempotentHint": False,
-                "openWorldHint": True,
-            },
-        ),
     ]
     native_graphiti_tools = [
         mcp_host.Tool(
@@ -1095,9 +909,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         ), f"advertised but undispatchable: {tool.name}"
     assert "main.context" in by_name
     assert "agentgraph.inspect" in by_name
-    assert "graphview.list" in by_name
-    assert "graphview.get" in by_name
-    assert "graphview.create" in by_name
     assert "coder.status" in by_name
     assert {
         "coder.inspect",
@@ -1130,24 +941,9 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         for name, tool in by_name.items()
         if name not in native_names
     )
-    assert set(by_name["worldsignals.capabilities"].inputSchema["properties"]) == {
-        "domain",
-        "command",
-        "keyword",
-        "operation_class",
-        "limit",
-    }
+    assert not any(name.startswith("worldsignals.") for name in by_name)
     assert "engraphis.recall" in by_name
     assert "engraphis.answer" in by_name
-    assert by_name["engraphis.context_savings"].meta["liquidaityExecution"] == {
-        "risk": "safe read",
-        "compute": "database_read",
-    }
-    assert by_name["engraphis.check_update"].meta["liquidaityExecution"] == {
-        "risk": "paid/provider-backed",
-        "compute": "mixed",
-    }
-    assert by_name["engraphis.check_update"].meta["liquidaityCapability"]["providerPossible"] is True
     assert "codegraph.status" not in by_name
     assert "codegraph.search" not in by_name
     assert {"cbm.search_graph", "cbm.index_status"}.issubset(by_name)
@@ -1156,7 +952,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "compute": "database_read",
     }
     assert {"graphiti.get_status", "graphiti.search_nodes"}.issubset(by_name)
-    assert "thinkgraph.persist_graph_view" not in by_name
     assert "run_coder_subagent" in by_name
     assert "run_mag_one" in by_name
     coder_tool = by_name["run_coder_subagent"]
@@ -1164,7 +959,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "approvedPrompt",
         "cardId",
         "authority",
-        "graphViewIds",
     }
     assert "projectId" not in coder_tool.inputSchema["properties"]
     assert "parentRunId" not in coder_tool.inputSchema["properties"]
@@ -1174,7 +968,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "server owns project, deck, conversation, parent-run, and Main-card identity" in coder_tool.description
     assert "Pass the exact active" not in coder_tool.description
     assert "instructionId" not in by_name["card.run_assistant_agent"].inputSchema["properties"]
-    assert "graphViewIds" in by_name["card.run_assistant_agent"].inputSchema["properties"]
     assert by_name["engraphis.recall"].model_dump()["securitySchemes"] == [
         {"type": "oauth2", "scopes": ["liquidaity.main"]}
     ]
@@ -1265,25 +1058,17 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "mainCardId": "card_main_chat",
     }
 
-    hermes_only = asyncio.run(
-        mcp_host.call_tool("hermes.memory_write", {"key": "scope", "value": "denied"})
-    )
-    assert hermes_only.isError is True
-    assert "requires hermes_steward" in hermes_only.content[0].text
-
     asyncio.run(mcp_host.call_tool("coder.status", {}))
     assert calls[-1] == ("coder_status", {})
 
     asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
         "cardId": "card_agent",
-        "graphViewIds": ["graphview:one"],
-        "input": "Use the bounded context.",
+        "input": "Use the assigned context.",
     }))
     path, payload = calls[-1]
     assert path == "card_run_assistant_agent"
     assert payload["originatingAgentId"] == "card_main_chat"
     assert payload["originatingRunId"] == "external-main:grant-1"
-    assert payload["graphViewIds"] == ["graphview:one"]
 
     denied = asyncio.run(mcp_host.call_tool("run_coder_subagent", {
         "projectId": "spoofed",

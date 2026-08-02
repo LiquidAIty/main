@@ -6,10 +6,6 @@ import type {
   RuntimeBinding,
 } from '../types/agentgraph';
 import { GPT_CARD_MODEL_PRESETS } from '../features/agentbuilder/deck/deckPrimitives';
-import {
-  NativeThinkGraphSurface,
-  type GraphProjectionV1,
-} from './knowledge/NativeAuthorityGraphSurface';
 
 type KnowledgeGraphLayer = 'agentgraph' | 'thinkgraph' | 'knowgraph' | 'codegraph';
 
@@ -57,13 +53,6 @@ type EffectiveCoderToolSnapshot = {
     callable: boolean;
     reason: string;
   }>;
-};
-
-const GRAPH_LAYER_LABELS: Record<KnowledgeGraphLayer, string> = {
-  agentgraph: 'AgentGraph',
-  thinkgraph: 'ThinkGraph',
-  knowgraph: 'KnowGraph',
-  codegraph: 'CodeGraph',
 };
 
 let cardCapabilityCatalogRequest: Promise<CardCapability[]> | null = null;
@@ -156,192 +145,7 @@ export type AgentCardRunContext = {
       errorCode?: string | null;
     };
   } | null;
-  deliveredContext: {
-    projectionId: string;
-    graphViews: Array<{
-      viewId: string;
-      displayLabel?: string;
-      receivingRole?: string;
-    }>;
-    manifest: {
-      manifestHash: string;
-      records: Array<{
-        authority: string;
-        kind: 'node' | 'edge';
-        nativeId: string;
-        nativeRevision?: string | null;
-        sourceId?: string | null;
-        targetId?: string | null;
-        predicate?: string | null;
-        required: boolean;
-        deliveryOrder: number;
-        representation: string;
-        representationHash: string;
-        characters: number;
-      }>;
-      unresolvedReferences: Array<{
-        referenceId: string;
-        referenceType: string;
-        required: boolean;
-        reason: string;
-      }>;
-    };
-  } | null;
 };
-
-function normalizeContextLayer(authority: string): KnowledgeGraphLayer | null {
-  const normalized = String(authority || '').trim().toLowerCase();
-  if (normalized === 'agentgraph' || normalized === 'graphview') return 'agentgraph';
-  if (normalized === 'thinkgraph' || normalized === 'engraphis') return 'thinkgraph';
-  if (normalized === 'knowgraph' || normalized === 'graphiti' || normalized === 'neo4j') return 'knowgraph';
-  if (normalized === 'codegraph' || normalized === 'cbm') return 'codegraph';
-  return null;
-}
-
-export function contextGraphLayers(runContext: AgentCardRunContext | null | undefined): KnowledgeGraphLayer[] {
-  const layers = new Set<KnowledgeGraphLayer>();
-  if (runContext?.assignment || runContext?.deliveredContext?.graphViews.length) {
-    layers.add('agentgraph');
-  }
-  for (const record of runContext?.deliveredContext?.manifest.records || []) {
-    const layer = normalizeContextLayer(record.authority);
-    if (layer) layers.add(layer);
-  }
-  return (Object.keys(GRAPH_LAYER_LABELS) as KnowledgeGraphLayer[]).filter((layer) => layers.has(layer));
-}
-
-export function buildAssignmentContextProjection(
-  runContext: AgentCardRunContext | null | undefined,
-  projectId: string,
-  visibleLayers: KnowledgeGraphLayer[],
-): GraphProjectionV1 | null {
-  const assignment = runContext?.assignment;
-  const delivered = runContext?.deliveredContext;
-  if (!assignment && !delivered) return null;
-
-  const visible = new Set(visibleLayers);
-  const nodes = new Map<string, GraphProjectionV1['nodes'][number]>();
-  const edges = new Map<string, GraphProjectionV1['edges'][number]>();
-  const assignmentNodeId = assignment ? `agentgraph:assignment:${assignment.assignmentId}` : null;
-
-  if (assignment && assignmentNodeId && visible.has('agentgraph')) {
-    nodes.set(assignmentNodeId, {
-      id: assignmentNodeId,
-      canonicalId: assignment.assignmentId,
-      label: assignment.instruction,
-      type: 'Assignment',
-      authority: 'agentgraph',
-      currentState: assignment.state,
-      mentionCount: 1,
-      properties: {
-        assignmentId: assignment.assignmentId,
-        correlationId: assignment.correlationId,
-        state: assignment.state,
-      },
-    });
-  }
-
-  if (visible.has('agentgraph')) {
-    for (const view of delivered?.graphViews || []) {
-      const viewNodeId = `agentgraph:graphview:${view.viewId}`;
-      nodes.set(viewNodeId, {
-        id: viewNodeId,
-        canonicalId: view.viewId,
-        label: view.displayLabel || view.viewId,
-        type: 'GraphView',
-        authority: 'agentgraph',
-        mentionCount: 1,
-        properties: { receivingRole: view.receivingRole || null },
-      });
-      if (assignmentNodeId && nodes.has(assignmentNodeId)) {
-        const edgeId = `${assignmentNodeId}:SELECTS:${viewNodeId}`;
-        edges.set(edgeId, {
-          id: edgeId,
-          source: assignmentNodeId,
-          target: viewNodeId,
-          predicate: 'SELECTS_VIEW',
-          mentionCount: 1,
-        });
-      }
-    }
-  }
-
-  const nodeIdFor = (authority: string, nativeId: string) => `${authority}:${nativeId}`;
-  for (const record of delivered?.manifest.records || []) {
-    const layer = normalizeContextLayer(record.authority);
-    if (!layer || !visible.has(layer) || record.kind !== 'node') continue;
-    const nodeId = nodeIdFor(record.authority, record.nativeId);
-    nodes.set(nodeId, {
-      id: nodeId,
-      canonicalId: record.nativeId,
-      label: record.representation || record.nativeId,
-      type: 'ContextRecord',
-      authority: layer,
-      mentionCount: 1,
-      properties: {
-        nativeRevision: record.nativeRevision || null,
-        required: record.required,
-        deliveryOrder: record.deliveryOrder,
-        representation: record.representation,
-      },
-      provenance: { sourceAuthority: record.authority },
-    });
-    if (assignmentNodeId && nodes.has(assignmentNodeId)) {
-      const edgeId = `${assignmentNodeId}:CONTEXT:${nodeId}`;
-      edges.set(edgeId, {
-        id: edgeId,
-        source: assignmentNodeId,
-        target: nodeId,
-        predicate: 'DELIVERS_CONTEXT',
-        mentionCount: 1,
-      });
-    }
-  }
-
-  for (const record of delivered?.manifest.records || []) {
-    const layer = normalizeContextLayer(record.authority);
-    if (!layer || !visible.has(layer) || record.kind !== 'edge') continue;
-    const source = record.sourceId ? nodeIdFor(record.authority, record.sourceId) : null;
-    const target = record.targetId ? nodeIdFor(record.authority, record.targetId) : null;
-    if (!source || !target) continue;
-    for (const [nodeId, nativeId] of [[source, record.sourceId], [target, record.targetId]] as const) {
-      if (!nodes.has(nodeId)) {
-        nodes.set(nodeId, {
-          id: nodeId,
-          canonicalId: nativeId || nodeId,
-          label: nativeId || nodeId,
-          type: 'ContextReference',
-          authority: layer,
-          mentionCount: 1,
-          properties: { deliveredByEdge: record.nativeId },
-        });
-      }
-    }
-    edges.set(`${record.authority}:${record.nativeId}`, {
-      id: `${record.authority}:${record.nativeId}`,
-      source,
-      target,
-      predicate: record.predicate || 'RELATES_TO',
-      mentionCount: 1,
-      properties: {
-        required: record.required,
-        deliveryOrder: record.deliveryOrder,
-        representation: record.representation,
-      },
-      provenance: { sourceAuthority: record.authority },
-    });
-  }
-
-  return {
-    schemaVersion: 'agentgraph.assignment-context.projection.v1',
-    authority: 'agentgraph',
-    projectId,
-    revision: delivered?.manifest.manifestHash,
-    counts: { nodes: nodes.size, edges: edges.size },
-    nodes: [...nodes.values()],
-    edges: [...edges.values()],
-  };
-}
 
 export type AgentManagerLocalConfig = {
   runtime_binding?: RuntimeBinding | null;
@@ -354,8 +158,6 @@ export type AgentManagerLocalConfig = {
   max_tokens?: number | null;
   prompt_template?: string | null;
   tools?: unknown[];
-  knowledge_sources?: unknown[];
-  response_format?: any | null;
 };
 
 function parsePromptTemplate(template: string): {
@@ -457,16 +259,6 @@ function parseListText(value: string): string[] {
     .filter(Boolean);
 }
 
-function parseJsonValue(value: string): any | null {
-  const text = String(value || '').trim();
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
 export function buildActiveAgentManagerLocalConfig(input: {
   runtimeBinding: RuntimeBinding | '';
   provider: 'openai' | 'openrouter' | '';
@@ -475,8 +267,6 @@ export function buildActiveAgentManagerLocalConfig(input: {
   maxTokens: number | '';
   promptTemplate: string;
   toolsText: string;
-  knowledgeText: string;
-  responseFormatText: string;
 }): AgentManagerLocalConfig {
   return {
     runtime_binding: input.runtimeBinding || null,
@@ -486,8 +276,6 @@ export function buildActiveAgentManagerLocalConfig(input: {
     max_tokens: typeof input.maxTokens === 'number' ? input.maxTokens : null,
     prompt_template: input.promptTemplate,
     tools: parseListText(input.toolsText),
-    knowledge_sources: parseListText(input.knowledgeText),
-    response_format: parseJsonValue(input.responseFormatText),
   };
 }
 
@@ -522,15 +310,12 @@ export function AgentManager({
   });
   const [promptPartsTouched, setPromptPartsTouched] = useState(false);
   const [toolsText, setToolsText] = useState('');
-  const [knowledgeText, setKnowledgeText] = useState('');
-  const [responseFormatText, setResponseFormatText] = useState('');
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [capabilityCatalog, setCapabilityCatalog] = useState<CardCapability[]>([]);
   const [capabilityCatalogError, setCapabilityCatalogError] = useState<string | null>(null);
   const [capabilityCatalogLoading, setCapabilityCatalogLoading] = useState(true);
   const [knowledgeToolSearch, setKnowledgeToolSearch] = useState('');
   const [ordinaryToolSearch, setOrdinaryToolSearch] = useState('');
-  const [visibleGraphLayers, setVisibleGraphLayers] = useState<KnowledgeGraphLayer[]>([]);
   const [coderAuthority, setCoderAuthority] = useState<'direct_main_audit' | 'mag_one_execution'>('direct_main_audit');
   const [effectiveToolSnapshot, setEffectiveToolSnapshot] = useState<EffectiveCoderToolSnapshot | null>(null);
   const [codexRuntimeState, setCodexRuntimeState] = useState<Record<string, unknown> | null>(null);
@@ -602,29 +387,8 @@ export function AgentManager({
             .join('\n')
         : '',
     );
-    setKnowledgeText(
-      Array.isArray(localConfig.knowledge_sources)
-        ? localConfig.knowledge_sources
-            .filter((entry): entry is string => typeof entry === 'string')
-            .join('\n')
-        : '',
-    );
-    setResponseFormatText(
-      localConfig.response_format ? JSON.stringify(localConfig.response_format, null, 2) : '',
-    );
     setSaveMessage(null);
   }, [isLocalConfigMode, localConfig]);
-
-  const availableGraphLayers = useMemo(() => contextGraphLayers(runContext), [runContext]);
-  const availableGraphLayerKey = availableGraphLayers.join('|');
-
-  useEffect(() => {
-    setVisibleGraphLayers(
-      availableGraphLayerKey
-        ? availableGraphLayerKey.split('|') as KnowledgeGraphLayer[]
-        : [],
-    );
-  }, [availableGraphLayerKey]);
 
   const savedTools = useMemo(() => parseListText(toolsText), [toolsText]);
   const capabilityByName = useMemo(
@@ -655,11 +419,6 @@ export function AgentManager({
       .filter((tool) => !query || `${tool.name} ${tool.title || ''} ${tool.description || ''}`.toLowerCase().includes(query))
       .slice(0, 20);
   }, [capabilityCatalog, ordinaryToolSearch, savedTools]);
-  const contextProjection = useMemo(
-    () => buildAssignmentContextProjection(runContext, projectId, visibleGraphLayers),
-    [projectId, runContext, visibleGraphLayers],
-  );
-
   const addSavedTool = (name: string) => {
     if (savedTools.includes(name)) return;
     setToolsText([...savedTools, name].join('\n'));
@@ -713,8 +472,6 @@ export function AgentManager({
         maxTokens,
         promptTemplate: promptPartsTouched ? serializePromptFields(promptParts) : promptText,
         toolsText,
-        knowledgeText,
-        responseFormatText,
       });
     void onSaveLocalConfig({
       ...localConfig,
@@ -917,15 +674,13 @@ export function AgentManager({
                   ? runContextError
                   : runContext?.assignment?.instruction || 'No assignment has been delivered to this card.'}
             </pre>
-            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-              Graph context delivered after the task
-            </div>
+            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Selected context references</div>
             <pre style={{ whiteSpace: 'pre-wrap', color: '#91A9B8', fontSize: 10, maxHeight: 240, overflow: 'auto' }}>
-              {runContext?.deliveredContext?.manifest.records.length
-                ? runContext.deliveredContext.manifest.records
-                    .map((record) => record.representation)
+              {runContext?.assignment?.contextReferences.length
+                ? runContext.assignment.contextReferences
+                    .map((reference) => `${reference.referenceType}:${reference.referenceId}${reference.required ? ' [required]' : ''}`)
                     .join('\n')
-                : 'No graph records delivered.'}
+                : 'No context references selected for this assignment.'}
             </pre>
           </div>
         </div>
@@ -936,12 +691,11 @@ export function AgentManager({
       if (runtimeBinding === 'openai_coder') {
         return (
           <div style={{ color: '#91A9B8', fontSize: 11 }}>
-            External/General Codex baseline: no automatic Knowledge Assignment, GraphView hydration, CBM, or Engraphis tools.
+            External/General Codex baseline: no automatic Knowledge Assignment, CBM, or Engraphis tools.
           </div>
         );
       }
       const assignment = runContext?.assignment;
-      const delivered = runContext?.deliveredContext;
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {runContextLoading ? <div style={{ color: '#91A9B8' }}>Loading canonical AgentGraph context…</div> : null}
@@ -950,62 +704,17 @@ export function AgentManager({
             <div style={{ color: '#91A9B8' }}>This card has no delivered assignment yet.</div>
           ) : null}
           <section>
-            <div style={{ color: '#E0DED5', fontWeight: 600 }}>Context graph layers</div>
-            <div style={{ color: '#91A9B8', fontSize: 11, marginTop: 4 }}>
-              These pills change which materialized authority layers are visible. They do not fetch, replace, or execute context.
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 8 }}>
-              {availableGraphLayers.map((layer) => {
-                const active = visibleGraphLayers.includes(layer);
-                return (
-                  <button
-                    key={layer}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => setVisibleGraphLayers((current) => (
-                      current.includes(layer)
-                        ? current.filter((entry) => entry !== layer)
-                        : [...current, layer]
-                    ))}
-                    style={{
-                      border: `1px solid ${active ? '#77C8C4' : '#46545A'}`,
-                      borderRadius: 999,
-                      background: active ? 'rgba(79, 162, 173, 0.22)' : '#252A2C',
-                      color: active ? '#C8F3F0' : '#91A9B8',
-                      padding: '5px 10px',
-                      cursor: 'pointer',
-                      fontSize: 11,
-                    }}
-                  >
-                    {GRAPH_LAYER_LABELS[layer]}
-                  </button>
-                );
-              })}
-              {availableGraphLayers.length === 0 ? (
-                <span style={{ color: '#91A9B8', fontSize: 11 }}>No graph layer has materialized for this card yet.</span>
-              ) : null}
-            </div>
-          </section>
-
-          <section>
             <div style={{ color: '#E0DED5', fontWeight: 600 }}>Assigned context</div>
             <div style={{ color: '#91A9B8', fontSize: 11, marginTop: 4 }}>
-              AgentGraph retains this assignment context until the card receives a newer assignment.
+              AGEntgraph retains the exact assignment and stable native references until the card receives a newer assignment. A visual projection must hydrate the native records the agent actually reads; reference IDs are not rendered as fake graph data.
             </div>
-            {contextProjection?.nodes.length ? (
-              <div style={{ height: 380, minHeight: 380, marginTop: 8, overflow: 'hidden', border: '1px solid #344247', borderRadius: 8 }}>
-                <NativeThinkGraphSurface
-                  projection={contextProjection}
-                  status="ready"
-                  error={null}
-                  authority="agentgraph"
-                />
-              </div>
-            ) : (
-              <div style={{ color: '#91A9B8', fontSize: 11, marginTop: 8 }}>
-                The latest assignment has no visible materialized graph records.
-              </div>
-            )}
+            <pre style={{ whiteSpace: 'pre-wrap', color: '#91A9B8', fontSize: 10, maxHeight: 240, overflow: 'auto', marginTop: 8 }}>
+              {assignment?.contextReferences.length
+                ? assignment.contextReferences
+                    .map((reference) => `${reference.referenceType}:${reference.referenceId}${reference.required ? ' [required]' : ''}`)
+                    .join('\n')
+                : 'The latest assignment has no native context references.'}
+            </pre>
           </section>
 
           <section>
@@ -1013,13 +722,8 @@ export function AgentManager({
             <div style={{ marginTop: 7, padding: 8, border: '1px solid #344247', borderRadius: 6, color: '#B9C7CC', fontSize: 11 }}>
               {assignment
                 ? `Assignment ${assignment.assignmentId} · ${assignment.state}`
-                : 'No AgentGraph assignment materialized.'}
+                : 'No AgentGraph assignment.'}
             </div>
-            {(delivered?.graphViews || []).map((view) => (
-              <div key={view.viewId} style={{ marginTop: 6, padding: 8, border: '1px solid #344247', borderRadius: 6, color: '#B9C7CC', fontSize: 11 }}>
-                GraphView {view.displayLabel || view.viewId} · {view.receivingRole || 'receiver unavailable'}
-              </div>
-            ))}
           </section>
 
           <section>
@@ -1063,22 +767,9 @@ export function AgentManager({
             <details>
               <summary style={{ color: '#B9D9DC', cursor: 'pointer', fontSize: 11 }}>Assignment, provenance, and result details</summary>
               <pre style={{ whiteSpace: 'pre-wrap', color: '#D5E4E8', fontSize: 11 }}>{assignment.instruction}</pre>
-              <div style={{ color: '#91A9B8', fontSize: 11 }}>
-                {delivered
-                  ? `${delivered.manifest.records.length} records · manifest ${delivered.manifest.manifestHash.slice(0, 12)}`
-                  : 'No GraphView attached.'}
-              </div>
-              {(delivered?.manifest.records || []).map((record) => (
-                <details key={`${record.authority}:${record.kind}:${record.nativeId}`} style={{ marginTop: 8 }}>
-                  <summary style={{ color: '#B9D9DC', cursor: 'pointer', fontSize: 11 }}>
-                    {record.deliveryOrder}. {record.authority} {record.kind} · {record.nativeId}{record.required ? ' · required' : ''}
-                  </summary>
-                  <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#91A9B8', fontSize: 10 }}>{record.representation}</pre>
-                </details>
-              ))}
-              {(delivered?.manifest.unresolvedReferences || []).map((reference) => (
-                <div key={`${reference.referenceType}:${reference.referenceId}`} style={{ color: '#FFB0A6', fontSize: 11 }}>
-                  Unavailable: {reference.referenceType}:{reference.referenceId} · {reference.reason}
+              {(assignment.contextReferences || []).map((reference) => (
+                <div key={`${reference.referenceType}:${reference.referenceId}`} style={{ color: '#91A9B8', fontSize: 11 }}>
+                  {reference.referenceType}:{reference.referenceId}{reference.required ? ' · required' : ''}
                 </div>
               ))}
               <div style={{ color: '#91A9B8', fontSize: 11, marginTop: 8 }}>

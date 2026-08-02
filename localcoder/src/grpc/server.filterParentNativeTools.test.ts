@@ -12,8 +12,9 @@ const pool = [
 ]
 
 describe('filterParentNativeTools', () => {
-  it('empty grant keeps the full pool (legacy callers with no card native list)', () => {
-    expect(filterParentNativeTools(pool, [], true).map(t => t.name)).toEqual(pool.map(t => t.name))
+  it('empty grant exposes no native tools except the visible Agent doorway', () => {
+    expect(filterParentNativeTools(pool, [], true).map(t => t.name)).toEqual(['Agent'])
+    expect(filterParentNativeTools(pool, [], false)).toEqual([])
   })
 
   it('a granted list narrows the parent schemas to exactly the grant', () => {
@@ -74,15 +75,16 @@ describe('resolveCardRunControlCall execution authority', () => {
   const base = {
     cardIdByAgentType: new Map([
       ['card_hermes_steward', 'card_hermes_steward'],
-      ['card_thinkgraph_agent', 'card_thinkgraph_agent'],
+      ['card_saved_worker', 'card_saved_worker'],
     ]),
     projectId: 'p1',
     conversationId: 'main',
     correlationId: 'corr-1',
+    originatingRunId: 'run-1',
     allowedCardRunIdsByAgentType: new Map([['card_hermes_steward', ['card_research_agent']]]),
     selfCardRunByAgentType: new Map([
       ['card_hermes_steward', false],
-      ['card_thinkgraph_agent', true],
+      ['card_saved_worker', true],
     ]),
   }
 
@@ -103,8 +105,8 @@ describe('resolveCardRunControlCall execution authority', () => {
   })
 
   it('a template doorway child still runs its own bound card', () => {
-    const allowed = resolveCardRunControlCall({ ...base, input: {}, agentType: 'card_thinkgraph_agent' })
-    expect('updatedInput' in allowed && allowed.updatedInput.cardId).toBe('card_thinkgraph_agent')
+    const allowed = resolveCardRunControlCall({ ...base, input: {}, agentType: 'card_saved_worker' })
+    expect('updatedInput' in allowed && allowed.updatedInput.cardId).toBe('card_saved_worker')
   })
 
   it('unauthorized targets stay denied regardless of execution authority', () => {

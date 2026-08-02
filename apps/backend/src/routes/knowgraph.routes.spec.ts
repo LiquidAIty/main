@@ -6,15 +6,21 @@ import router from './knowgraph.routes';
 
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
-  resolveKnowgraphPipelineConfig: vi.fn(),
+  getDeckDocument: vi.fn(),
+  resolveCardModelStrict: vi.fn(),
 }));
 
 vi.mock('../db/pool', () => ({
   pool: { query: mocks.poolQuery },
 }));
 
-vi.mock('../services/resolveAgents', () => ({
-  resolveKnowgraphPipelineConfig: mocks.resolveKnowgraphPipelineConfig,
+vi.mock('../decks/store', () => ({
+  BUILDER_DECK_ID: 'deck_builder',
+  getDeckDocument: mocks.getDeckDocument,
+}));
+
+vi.mock('../cards/runtime', () => ({
+  resolveCardModelStrict: mocks.resolveCardModelStrict,
 }));
 
 async function createApiServer(userId?: string): Promise<{ server: Server; baseUrl: string }> {
@@ -50,7 +56,8 @@ function uploadBody(projectId: string): FormData {
 afterEach(() => {
   vi.restoreAllMocks();
   mocks.poolQuery.mockReset();
-  mocks.resolveKnowgraphPipelineConfig.mockReset();
+  mocks.getDeckDocument.mockReset();
+  mocks.resolveCardModelStrict.mockReset();
   delete process.env.KNOWGRAPH_URL;
 });
 
@@ -58,15 +65,18 @@ describe('KnowGraph PDF upload project authority', () => {
   it('resolves the authenticated project selector to its canonical id before Graphiti ingest', async () => {
     process.env.KNOWGRAPH_URL = 'http://knowgraph.test';
     mocks.poolQuery.mockResolvedValueOnce({ rows: [{ id: 'project-canonical' }] });
-    mocks.resolveKnowgraphPipelineConfig.mockResolvedValueOnce({
-      agentId: 'hermes',
+    mocks.getDeckDocument.mockResolvedValueOnce({
+      deck: {
+        nodes: [{
+          id: 'card_hermes_steward',
+          prompt: 'Preserve source provenance.',
+          runtimeOptions: { provider: 'openrouter', modelKey: 'deepseek' },
+        }],
+      },
+    });
+    mocks.resolveCardModelStrict.mockReturnValueOnce({
       provider: 'openrouter',
-      modelKey: 'deepseek',
       providerModelId: 'deepseek/deepseek-chat',
-      organizingPrinciple: null,
-      entityTaxonomy: null,
-      relationshipTaxonomy: null,
-      extractionPolicy: null,
     });
     const realFetch = globalThis.fetch.bind(globalThis);
     const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
@@ -98,9 +108,9 @@ describe('KnowGraph PDF upload project authority', () => {
         'user-1',
         'project-alias',
       ]);
-      expect(mocks.resolveKnowgraphPipelineConfig).toHaveBeenCalledWith(
-        'project-canonical',
-        '/api/knowgraph/ingest',
+      expect(mocks.getDeckDocument).toHaveBeenCalledWith('project-canonical', 'deck_builder');
+      expect(mocks.resolveCardModelStrict).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'card_hermes_steward' }),
       );
       const forwardedCall = upstreamFetch.mock.calls.find(([input]) =>
         String(input).startsWith('http://knowgraph.test/'),
@@ -123,7 +133,8 @@ describe('KnowGraph PDF upload project authority', () => {
         body: uploadBody('someone-elses-project'),
       });
       expect(response.status).toBe(404);
-      expect(mocks.resolveKnowgraphPipelineConfig).not.toHaveBeenCalled();
+      expect(mocks.getDeckDocument).not.toHaveBeenCalled();
+      expect(mocks.resolveCardModelStrict).not.toHaveBeenCalled();
       expect(upstreamFetch).toHaveBeenCalledTimes(1);
     } finally {
       await closeServer(server);
@@ -140,7 +151,8 @@ describe('KnowGraph PDF upload project authority', () => {
       });
       expect(response.status).toBe(401);
       expect(mocks.poolQuery).not.toHaveBeenCalled();
-      expect(mocks.resolveKnowgraphPipelineConfig).not.toHaveBeenCalled();
+      expect(mocks.getDeckDocument).not.toHaveBeenCalled();
+      expect(mocks.resolveCardModelStrict).not.toHaveBeenCalled();
       expect(upstreamFetch).toHaveBeenCalledTimes(1);
     } finally {
       await closeServer(server);

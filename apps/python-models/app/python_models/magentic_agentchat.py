@@ -29,45 +29,16 @@ from autogen_agentchat.teams import MagenticOneGroupChat
 from autogen_core import CancellationToken
 
 from app.python_models import agentgraph as ag
-from app.python_models import registered_queries as rq
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
 from app.python_models.tool_registry import (
     ACTIVE_AGENT_ASSIGNMENT_CONTEXT,
     DEFAULT_TOOL_REGISTRY,
-    THINKGRAPH_RUN_AUTHORITY,
     build_local_coder_tool,
 )
 from app.python_models.orchestration_contracts import (
     ContextPack,
-    KnowGraphUpdateReport,
-    LedgerTrace,
-    OrchestratorMetrics,
     OrchestratorRunResponse,
-    TaskLedgerArtifact,
 )
-
-
-class _CapturingMagenticOneGroupChat(MagenticOneGroupChat):
-    """Real MagenticOneGroupChat that records its real MagenticOneOrchestrator
-    instance so the genuine Task Ledger state (``_facts`` / ``_plan`` / full
-    ledger, produced by the real outer-loop model calls in ``handle_start``) can
-    be read after the run. It does NOT change orchestration behavior and does NOT
-    recreate any Magentic-One prompt — it only keeps a handle to the real object.
-    """
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.orchestrator_instance: Any | None = None
-
-    def _create_group_chat_manager_factory(self, *args: Any, **kwargs: Any):
-        base_factory = super()._create_group_chat_manager_factory(*args, **kwargs)
-
-        def factory() -> Any:
-            instance = base_factory()
-            self.orchestrator_instance = instance
-            return instance
-
-        return factory
 
 
 def _post_codex_backend(path: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
@@ -146,39 +117,6 @@ class _CodexAppServerAgent(BaseChatAgent):
 
     async def on_reset(self, cancellation_token: CancellationToken) -> None:
         return None
-
-
-def _real_task_ledger_artifact(orchestrator: Any) -> TaskLedgerArtifact | None:
-    """Build the Task Ledger artifact from the REAL orchestrator state only.
-
-    Source: ``MagenticOneOrchestrator._facts`` / ``._plan`` (real facts/plan model
-    call outputs) + ``_get_task_ledger_full_prompt`` (the real full ledger AutoGen
-    assembles). Never derived from finalResponseText or chat messages. Returns None
-    if the orchestrator did not produce a Task Ledger (no fabrication).
-    """
-    if orchestrator is None:
-        return None
-    facts = _as_text(getattr(orchestrator, "_facts", ""))
-    plan = _as_text(getattr(orchestrator, "_plan", ""))
-    if not facts and not plan:
-        return None
-    team_description = _as_text(getattr(orchestrator, "_team_description", ""))
-    full = ""
-    builder = getattr(orchestrator, "_get_task_ledger_full_prompt", None)
-    if callable(builder):
-        try:
-            full = _as_text(
-                builder(_as_text(getattr(orchestrator, "_task", "")), team_description, facts, plan)
-            )
-        except Exception:
-            full = ""
-    return TaskLedgerArtifact(
-        factsResponse=facts,
-        planResponse=plan,
-        taskLedgerResponse=full,
-        teamDescription=team_description,
-        modelCallProof=[],
-    )
 
 
 def _as_text(value: Any) -> str:
@@ -277,13 +215,13 @@ def _build_participants(
         if runtime_type == "codex_app_server":
             if list(getattr(participant, "tools", []) or []):
                 raise RuntimeError(f"openai_coder_assigned_tools_forbidden:{card_id}")
-            scope = getattr(card, "runtimeScope", None) or {}
+            runtime_options = getattr(card, "runtimeOptions", None) or {}
             participants.append(
                 _CodexAppServerAgent(
                     name,
                     description,
                     project_id=context.session.projectId,
-                    deck_id=_as_text(scope.get("deckId")),
+                    deck_id=_as_text(runtime_options.get("deckId")),
                     card_id=card_id,
                 )
             )
@@ -416,13 +354,13 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
 
     The saved card supplies its existing AutoGen identity and runtime configuration.
     AgentGraph supplies the durable assignment, bounded context references, and
-    operation references hydrated for this execution.
+    direct context references for this execution.
     """
     assignment_id: str | None = None
     instruction_id: str | None = None
     result_id: str | None = None
     claim_token: str | None = None
-    hydrated_assignment: rq.HydratedAssignmentContext | None = None
+    hydrated_assignment: dict[str, Any] | None = None
 
     guard = _validate_single_card_context(context)
     if guard:
@@ -432,9 +370,6 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             assignmentId=assignment_id,
             finalResponseText="",
             error=guard,
-            plan=context.plan,
-            thinkGraph=context.thinkGraph,
-            knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary="no_run"),
         )
 
     async def _fail(error: str, summary: str) -> OrchestratorRunResponse:
@@ -454,36 +389,17 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                 result_id = str(completed.get("resultId") or "") or None
             except Exception as persistence_error:
                 durable_error = f"; outer_assignment_persist_failed: {persistence_error}"
-        if hydrated_assignment is not None and hydrated_assignment.graph_view_ids:
-            try:
-                await asyncio.to_thread(
-                    ag.transition_graph_views,
-                    project_id=context.session.projectId,
-                    conversation_id=_as_text(context.conversationId) or "main",
-                    view_ids=list(hydrated_assignment.graph_view_ids),
-                    status="failed",
-                    correlation_id=context.session.turnId,
-                )
-            except Exception as view_error:
-                durable_error += f"; graph_view_failure_transition_failed: {view_error}"
         return OrchestratorRunResponse(
             ok=False,
             session=context.session,
             **_assignment_fields(),
             finalResponseText="",
             error=error + durable_error,
-            plan=context.plan,
-            thinkGraph=context.thinkGraph,
-            knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary=summary),
         )
 
-    runtime_scope = getattr(context.cardRuntime, "runtimeScope", None)
     runtime_options = getattr(context.cardRuntime, "runtimeOptions", None) or {}
     single = context.cardRuntime.participants[0]
-    deck_id = _as_text(
-        (runtime_options.get("deckId") if isinstance(runtime_options, dict) else "")
-        or (runtime_scope.get("deckId") if isinstance(runtime_scope, dict) else "")
-    )
+    deck_id = _as_text(runtime_options.get("deckId") if isinstance(runtime_options, dict) else "")
     def _assignment_fields() -> dict:
         return {
             "assignmentId": assignment_id,
@@ -526,27 +442,28 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         )
         assignment_id = assignment["assignmentId"]
         hydrated_assignment = await asyncio.to_thread(
-            rq.hydrate_assignment_context,
+            ag.read_assignment,
+            project_id=context.session.projectId,
+            assignment_id=assignment_id,
+            receiving_card_id=single.cardId,
+        )
+        claimed = await asyncio.to_thread(
+            ag.claim_assignment,
             project_id=context.session.projectId,
             assignment_id=assignment_id,
             receiver_card_id=single.cardId,
-            graph_view_ids=request.graphViewIds if request is not None else None,
-            runtime_type="assistant_agent",
-            runtime_provider=context.session.modelProvider,
-            runtime_model_key=context.session.modelKey,
-            runtime_provider_model_id=context.session.providerModelId,
         )
-        claim_token = hydrated_assignment.claim_token
-        instruction_body = hydrated_assignment.instruction
-        if hydrated_assignment.graph_view_ids:
-            await asyncio.to_thread(
-                ag.transition_graph_views,
-                project_id=context.session.projectId,
-                conversation_id=_as_text(context.conversationId) or "main",
-                view_ids=list(hydrated_assignment.graph_view_ids),
-                status="active",
-                correlation_id=context.session.turnId,
-            )
+        claim_token = claimed["claimToken"]
+        instruction_body = str(hydrated_assignment["instruction"])
+        await asyncio.to_thread(
+            ag.record_assignment_runtime_context,
+            project_id=context.session.projectId,
+            assignment_id=assignment_id,
+            runtime="assistant_agent",
+            provider=context.session.modelProvider,
+            model_key=context.session.modelKey,
+            provider_model_id=context.session.providerModelId,
+        )
     except Exception as err:
         durable_error = ""
         if assignment_id is not None:
@@ -569,24 +486,10 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             **_assignment_fields(),
             finalResponseText="",
             error=f"agentgraph_assignment_begin_failed: {err}{durable_error}",
-            plan=context.plan,
-            thinkGraph=context.thinkGraph,
-            knowGraph=KnowGraphUpdateReport(
-                sourceAgent="single_card",
-                summary="agentgraph_assignment_begin_failed",
-            ),
         )
 
     client = None
 
-    # Trusted run authority for scoped card tools (e.g. ThinkGraph): server-authored
-    # runtimeScope only — the model never supplies authority. Set for the duration of
-    # this run and always reset, so no authority leaks across runs.
-    authority_token = None
-    if isinstance(runtime_scope, dict) and runtime_scope.get("kind") == "thinkgraph_card_run":
-        authority_token = THINKGRAPH_RUN_AUTHORITY.set(
-            {str(k): str(v) for k, v in runtime_scope.items()}
-        )
     assignment_context_token = ACTIVE_AGENT_ASSIGNMENT_CONTEXT.set(
         {
             "projectId": context.session.projectId,
@@ -606,28 +509,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                 max_tokens=single.maxTokens,
             )
         )
-        optional_bindings = [
-            binding
-            for binding in hydrated_assignment.optional_bindings
-            if binding.delivery_mode == "optional"
-        ]
-        query_tools = (
-            [
-                rq.build_bound_query_tool(
-                    optional_bindings,
-                    correlation_id=context.session.turnId,
-                    assignment_id=assignment_id,
-                    conversation_id=_as_text(context.conversationId),
-                )
-            ]
-            if optional_bindings
-            else []
-        )
-        participants = (
-            _build_participants(context, client, extra_tools=query_tools)
-            if query_tools
-            else _build_participants(context, client)
-        )
+        participants = _build_participants(context, client)
         # The guard guarantees exactly one real configured participant, so the
         # default-"Assist" branch of _build_participants is unreachable here.
         agent = participants[0]
@@ -635,7 +517,24 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         # still required by the transport guard, but is not duplicated into the
         # model task when a durable handoff is present. Standalone calls without
         # AgentGraph continue to use their ordinary userText unchanged.
-        task = hydrated_assignment.model_context
+        reference_lines = [
+            f"- {reference['referenceType']}:{reference['referenceId']}"
+            + (" [required]" if reference.get("required") else "")
+            for reference in hydrated_assignment.get("contextReferences") or []
+        ]
+        task = "\n\n".join(
+            part
+            for part in [
+                "[AGENTGRAPH_ASSIGNMENT]",
+                f"assignmentId: {assignment_id}",
+                f"instructionId: {instruction_id}",
+                "Exact instruction:",
+                instruction_body,
+                "\n".join(["[AGENTGRAPH_CONTEXT_REFERENCES]", *reference_lines])
+                if reference_lines else "",
+            ]
+            if part
+        )
         result = await agent.run(task=task)
 
         final_text = _final_text_from_result(result)
@@ -665,25 +564,12 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             tool_evidence=_tool_evidence_from_result(result),
         )
         result_id = str(completed.get("resultId") or "") or None
-        if hydrated_assignment.graph_view_ids:
-            await asyncio.to_thread(
-                ag.transition_graph_views,
-                project_id=context.session.projectId,
-                conversation_id=_as_text(context.conversationId) or "main",
-                view_ids=list(hydrated_assignment.graph_view_ids),
-                status="consumed",
-                correlation_id=context.session.turnId,
-            )
         assignment_fields = _assignment_fields()
 
         return OrchestratorRunResponse(
             ok=True,
             session=context.session,
             finalResponseText=final_text,
-            plan=context.plan,
-            thinkGraph=context.thinkGraph,
-            knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary="single_card_run"),
-            transcript=[run_info],
             **assignment_fields,
         )
     except Exception as err:  # honest runtime failure — no retry, no fallback
@@ -693,8 +579,6 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         )
     finally:
         ACTIVE_AGENT_ASSIGNMENT_CONTEXT.reset(assignment_context_token)
-        if authority_token is not None:
-            THINKGRAPH_RUN_AUTHORITY.reset(authority_token)
         if client is not None:
             close = getattr(client, "close", None)
             if callable(close):
@@ -735,12 +619,12 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             assignmentId=assignment["assignmentId"] if "assignment" in locals() else None,
             finalResponseText="",
             error="agentgraph_assignment_required",
-            plan=context.plan,
-            thinkGraph=context.thinkGraph,
-            knowGraph=KnowGraphUpdateReport(sourceAgent="magentic_one", summary="no_run"),
         )
-    runtime_scope = getattr(context.cardRuntime, "runtimeScope", None) or {}
-    deck_id = _as_text(runtime_scope.get("deckId"))
+    runtime_options = getattr(context.cardRuntime, "runtimeOptions", None) or {}
+    deck_id = _as_text(runtime_options.get("deckId"))
+    assignment_id: str | None = None
+    claim_token: str | None = None
+    result_id: str | None = None
     try:
         assignment = await asyncio.to_thread(
             ag.create_assignment,
@@ -753,23 +637,69 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             instruction_id=request.instructionId,
             parent_correlation_id=_as_text(context.session.runId) or None,
         )
+        assignment_id = assignment["assignmentId"]
         hydrated_assignment = await asyncio.to_thread(
-            rq.hydrate_assignment_context,
+            ag.read_assignment,
             project_id=context.session.projectId,
-            assignment_id=assignment["assignmentId"],
+            assignment_id=assignment_id,
+            receiving_card_id=request.receiverCardId,
+        )
+        claimed = await asyncio.to_thread(
+            ag.claim_assignment,
+            project_id=context.session.projectId,
+            assignment_id=assignment_id,
             receiver_card_id=request.receiverCardId,
         )
+        claim_token = claimed["claimToken"]
+        await asyncio.to_thread(
+            ag.record_assignment_runtime_context,
+            project_id=context.session.projectId,
+            assignment_id=assignment_id,
+            runtime="magentic_one",
+            provider=context.session.modelProvider,
+            model_key=context.session.modelKey,
+            provider_model_id=context.session.providerModelId,
+        )
     except Exception as err:
+        durable_error = ""
+        if assignment_id is not None:
+            try:
+                cancelled = await asyncio.to_thread(
+                    ag.cancel_assignment,
+                    project_id=context.session.projectId,
+                    assignment_id=assignment_id,
+                    requested_by_card_id=request.senderCardId,
+                    reason=f"agentgraph_assignment_begin_failed: {err}",
+                )
+                result_id = str(cancelled.get("resultId") or "") or None
+            except Exception as persistence_error:
+                durable_error = f"; outer_assignment_cancel_failed: {persistence_error}"
         return OrchestratorRunResponse(
             ok=False,
             session=context.session,
+            assignmentId=assignment_id,
+            resultId=result_id,
             finalResponseText="",
-            error=f"agentgraph_assignment_claim_failed: {err}",
-            plan=context.plan,
-            thinkGraph=context.thinkGraph,
-            knowGraph=KnowGraphUpdateReport(sourceAgent="magentic_one", summary="no_run"),
+            error=f"agentgraph_assignment_begin_failed: {err}{durable_error}",
         )
-    task = hydrated_assignment.model_context
+    reference_lines = [
+        f"- {reference['referenceType']}:{reference['referenceId']}"
+        + (" [required]" if reference.get("required") else "")
+        for reference in hydrated_assignment.get("contextReferences") or []
+    ]
+    task = "\n\n".join(
+        part
+        for part in [
+            "[AGENTGRAPH_ASSIGNMENT]",
+            f"assignmentId: {assignment_id}",
+            f"instructionId: {request.instructionId}",
+            "Exact instruction:",
+            str(hydrated_assignment["instruction"]),
+            "\n".join(["[AGENTGRAPH_CONTEXT_REFERENCES]", *reference_lines])
+            if reference_lines else "",
+        ]
+        if part
+    )
 
     client = None
     participant_clients: list[Any] = []
@@ -805,7 +735,7 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             for participant in context.cardRuntime.participants
         ]
         participants = _build_participants(context, participant_clients)
-        team = _CapturingMagenticOneGroupChat(
+        team = MagenticOneGroupChat(
             participants=participants,
             model_client=client,
             max_turns=_read_max_turns(context),
@@ -847,14 +777,6 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             else:
                 autogen_messages.append(payload)
 
-        # Real Task Ledger artifact, read from the captured orchestrator's actual
-        # state — NOT from finalResponseText / chat text. None if the orchestrator
-        # produced no Task Ledger (no fabrication for PlanFlow).
-        task_ledger_artifact = _real_task_ledger_artifact(getattr(team, "orchestrator_instance", None))
-
-        # Safe metadata only (no full prompt / no raw ledger text) — proves the run
-        # is real AutoGen and whether a Task Ledger artifact was captured. No post-run
-        # PlanFlow projection: Mag One's native Task Ledger is the task breakdown.
         print(
             "[magentic] run_stream meta:",
             {
@@ -863,7 +785,6 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
                 "message_types": sorted({m["type"] for m in autogen_messages}),
                 "sources": sorted({m["source"] for m in autogen_messages}),
                 "stop_reason": stop_reason,
-                "has_task_ledger_artifact": task_ledger_artifact is not None,
             },
         )
 
@@ -871,57 +792,51 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
         completed = await asyncio.to_thread(
             ag.finish_assignment,
             project_id=context.session.projectId,
-            assignment_id=assignment["assignmentId"],
-            claim_token=hydrated_assignment.claim_token,
+            assignment_id=assignment_id,
+            claim_token=claim_token,
             status="completed" if ok else "failed",
             output=final_response_text or None,
             error_code=completion_error,
             error_detail=completion_error,
         )
+        result_id = str(completed.get("resultId") or "") or None
         return OrchestratorRunResponse(
             ok=ok,
             session=context.session,
-            assignmentId=assignment["assignmentId"],
-            ledgerTrace=LedgerTrace(
-                source="python_magone",
-                referenceFiles=[
-                    "autogen-main/python/packages/autogen-agentchat/src/autogen_agentchat/teams/_group_chat/_magentic_one/_magentic_one_group_chat.py",
-                    "autogen-main/python/packages/autogen-agentchat/src/autogen_agentchat/teams/_group_chat/_magentic_one/_magentic_one_orchestrator.py",
-                ],
-                referenceClasses=["MagenticOneGroupChat", "MagenticOneOrchestrator"],
-                referenceMethods=["handle_start", "_reenter_outer_loop", "_orchestrate_step", "run_stream"],
-                canvasTeamCompiled=len(participants) > 0,
-            ),
+            assignmentId=assignment_id,
+            instructionId=request.instructionId,
+            resultId=result_id,
             stopReason=stop_reason,
             finalResponseText=final_response_text,
             autogenMessages=autogen_messages,
             autogenEvents=autogen_events,
-            taskLedgerArtifact=task_ledger_artifact,
-            progressLedgerReference=None,
             error=completion_error,
-            plan=context.plan,
-            thinkGraph=context.thinkGraph,
-            knowGraph=KnowGraphUpdateReport(
-                sourceAgent="magentic_one",
-                summary="run_complete" if ok else completion_error or "run_failed",
-            ),
-            transcript=[],
-            metrics=OrchestratorMetrics(
-                turnsUsed=len(autogen_messages),
-                reportBackCount=len(autogen_messages),
-            ),
         )
     except Exception as err:
-        await asyncio.to_thread(
-            ag.finish_assignment,
-            project_id=context.session.projectId,
-            assignment_id=assignment["assignmentId"],
-            claim_token=hydrated_assignment.claim_token,
-            status="failed",
-            error_code="magentic_run_failed",
-            error_detail=str(err),
+        durable_error = ""
+        if assignment_id is not None and claim_token is not None:
+            try:
+                failed = await asyncio.to_thread(
+                    ag.finish_assignment,
+                    project_id=context.session.projectId,
+                    assignment_id=assignment_id,
+                    claim_token=claim_token,
+                    status="failed",
+                    error_code="magentic_run_failed",
+                    error_detail=str(err),
+                )
+                result_id = str(failed.get("resultId") or "") or None
+            except Exception as persistence_error:
+                durable_error = f"; outer_assignment_persist_failed: {persistence_error}"
+        return OrchestratorRunResponse(
+            ok=False,
+            session=context.session,
+            assignmentId=assignment_id,
+            instructionId=request.instructionId,
+            resultId=result_id,
+            finalResponseText="",
+            error=f"magentic_run_failed: {err}{durable_error}",
         )
-        raise
     finally:
         ACTIVE_AGENT_ASSIGNMENT_CONTEXT.reset(assignment_context_token)
         for owned_client in [*participant_clients, client]:

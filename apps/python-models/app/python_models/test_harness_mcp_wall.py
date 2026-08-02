@@ -53,28 +53,8 @@ class TestBackendHarnessMcpClientWall:
     def test_control_plane_mcp_client_is_a_thin_mcp_client(self):
         source = _read("apps/backend/src/services/mcp/pythonAgentMcpClient.ts")
         assert "@modelcontextprotocol/sdk" in source
-        for forbidden in ("from '../../db", "thinkGraphStore", "runCypherOnGraph", "neo4j", "pg'"):
+        for forbidden in ("from '../../db", "runCypherOnGraph", "neo4j", "pg'"):
             assert forbidden not in source, f"mcp client gained direct capability: {forbidden}"
-
-    def test_chat_route_never_reintroduces_the_obsolete_pair_processor(self):
-        # The user/assistant pair architecture was deleted. Hermes performs only
-        # explicit bounded foreground updates through the native MCP surface.
-        source = _read("apps/backend/src/routes/coder.routes.ts")
-        for forbidden in (
-            "processThinkGraphPair",
-            "process_conversation_pair",
-            "thinkgraph_process_pair",
-        ):
-            assert forbidden not in source, f"pair architecture reappeared in coder.routes.ts: {forbidden}"
-
-    def test_pair_processor_module_is_deleted(self):
-        # The obsolete module and its spec must not exist on disk.
-        for relative in (
-            "apps/backend/src/services/thinkgraph/processThinkGraphPair.ts",
-            "apps/backend/src/services/thinkgraph/processThinkGraphPair.spec.ts",
-        ):
-            assert not (REPO_ROOT / relative).exists(), f"pair module still present: {relative}"
-
 
 class TestPythonMcpHostIsThin:
     def test_host_module_has_no_direct_db_or_graph_imports(self):
@@ -82,28 +62,9 @@ class TestPythonMcpHostIsThin:
         for forbidden in ("import psycopg", "import neo4j", "from psycopg", "from neo4j", "ag_catalog"):
             assert forbidden not in source, f"mcp host gained direct dependency: {forbidden}"
 
-    def test_host_never_exposes_graph_agent_or_pair_tools(self):
-        source = _read("apps/python-models/app/mcp_host.py")
-        for forbidden in (
-            'name="thinkgraph.apply_live_patch"',
-            'name="apply_thinkgraph_patch"',
-            'name="read_thinkgraph_scope"',
-            'name="thinkgraph.process_conversation_pair"',
-            'name="thinkgraph_agent"',
-            'name="codegraph_agent"',
-            'name="knowgraph_agent"',
-            "thinkgraph_live_agent_turn",
-            "_validate_live_authority",
-            "_apply_live_patch",
-            "taskLedgerArtifact",
-        ):
-            assert forbidden not in source, f"host regressed: {forbidden}"
-
     def test_host_exposes_the_native_authority_surface(self):
         source = _read("apps/python-models/app/mcp_host.py")
         assert 'name="card.run_assistant_agent"' in source
-        assert 'name="thinkgraph.get_graph_slice"' in source
-        assert 'name="thinkgraph.submit_update"' in source
         assert "from engraphis.mcp_server import mcp" in source
         assert 'tools.extend(_namespace_native_tools(provider, native_tools))' in source
         assert '"engraphis": await _native_engraphis_tools()' in source
@@ -113,7 +74,6 @@ class TestPythonMcpHostIsThin:
         assert 'name="knowgraph.ingest"' not in source
         assert 'name="codegraph.search"' not in source
         assert 'name="codegraph.status"' not in source
-        assert 'name="thinkgraph.persist_graph_view"' not in source
         assert 'name="web_search"' in source
 
 

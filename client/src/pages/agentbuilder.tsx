@@ -35,7 +35,6 @@ import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuild
 import AgentBuilderProjectDrawer from '../features/agentbuilder/project/AgentBuilderProjectDrawer';
 import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
-import useAgentBuilderThinkGraphProjection from '../features/agentbuilder/state/useAgentBuilderThinkGraphProjection';
 import TradingUI from './tradingui';
 import { resolveDeckWorkspaceRoot } from '../features/agentbuilder/state/deckWorkspaceRoot';
 import {
@@ -46,7 +45,6 @@ import {
   graphDrawerSectionStyle,
 } from '../components/graph/graphVisualTokens';
 import RightGlassDrawer from '../components/graph/RightGlassDrawer';
-import type { UnifiedProjectionIdentity } from '../components/knowledge/UnifiedGraphSurface';
 import type { AgentCardRunContext } from '../components/AgentManager';
 // Decomposed Agent Builder modules (2026-07-08): the page is composition only;
 // deck primitives/seed/document logic and rail derivation live in the feature.
@@ -195,7 +193,7 @@ const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
 // reasoning, external evidence, or repository reality from that canvas.
-type KnowledgeSurfaceKind = KnowledgeGraphKind | 'unified';
+type KnowledgeSurfaceKind = KnowledgeGraphKind;
 const PROJECTS_API = '/api/projects';
 const EMPTY_PROJECT_MESSAGES: AgentBuilderChatMessage[] = [];
 
@@ -315,8 +313,8 @@ export default function AgentBuilder(): React.ReactElement {
     [deck, workspaceView],
   );
   const {
-    objectDrawerOpen,
-    setObjectDrawerOpen,
+    inspectorDrawerOpen,
+    setInspectorDrawerOpen,
     selectedCardId,
     setSelectedCardId,
     selectedEdgeId,
@@ -353,20 +351,8 @@ export default function AgentBuilder(): React.ReactElement {
     [deck.nodes],
   );
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
-    useState<KnowledgeSurfaceKind>('unified');
+    useState<KnowledgeSurfaceKind>('knowgraph');
   const conversationId = 'main';
-  const [activeProjection, setActiveProjection] = useState<UnifiedProjectionIdentity | null>(null);
-  const handleProjectionChange = useCallback((next: UnifiedProjectionIdentity | null) => {
-    setActiveProjection((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
-  }, []);
-  useEffect(() => {
-    setActiveProjection(null);
-  }, [activeProject, conversationId]);
-  const thinkGraphProjection = useAgentBuilderThinkGraphProjection({
-    activeProject,
-    knowledgeGraphKind,
-    workspaceView,
-  });
 
   // CodeGraph repository identity is resolved from the authoritative CBM index.
   // The canonical ready project wins over stale same-root validation indexes.
@@ -399,7 +385,6 @@ export default function AgentBuilder(): React.ReactElement {
     nativeSessionBusy,
     setMessages,
   } = useAgentBuilderMainChat({
-    activeProjection,
     canvasProjectId,
     conversationId,
     initialMessages: EMPTY_PROJECT_MESSAGES,
@@ -779,7 +764,7 @@ export default function AgentBuilder(): React.ReactElement {
       // Canvas selection always opens the saved-card editor. Agent app surfaces
       // are opened from their connected rail icons.
       setHermesConsoleOpen(false);
-      setObjectDrawerOpen(Boolean(selectedNode));
+      setInspectorDrawerOpen(Boolean(selectedNode));
       const isMagenticSelection = Boolean(
         selectedNode &&
           normalizeRuntimeType(selectedNode.runtimeType) === 'magentic_one',
@@ -809,14 +794,14 @@ export default function AgentBuilder(): React.ReactElement {
     const hermesCard = deck.nodes.find(isHermesStewardCard);
     if (!hermesCard) return;
     setWorkspaceView('canvas');
-    setObjectDrawerOpen(false);
+    setInspectorDrawerOpen(false);
     setHermesConsoleOpen(true);
-  }, [deck.nodes, setObjectDrawerOpen]);
+  }, [deck.nodes, setInspectorDrawerOpen]);
 
   const handleSelectEdge = useCallback(
     (edgeId: string | null) => {
       recordUiOnlyAction('edge-selection');
-      setObjectDrawerOpen(false);
+      setInspectorDrawerOpen(false);
       setBuilderCanvasFocusRequest((current) => ({
         kind: 'deck',
         cardId: null,
@@ -1015,22 +1000,22 @@ export default function AgentBuilder(): React.ReactElement {
     activeProjectLatestRef.current = activeProject;
   }, [activeProject]);
 
-  const objectDrawerRole = useMemo<'agent' | 'worldsignal' | null>(() => {
+  const inspectorDrawerRole = useMemo<'agent' | 'worldsignal' | null>(() => {
     if (workspaceView === 'canvas' && selectedCard) return 'agent';
     // The canonical Inspector also serves the WorldSignals companion surface —
     // same drawer, same renderer, section requested by the vendor controls.
     if (workspaceView === 'worldsignal' && worldSignalInspectorSection) return 'worldsignal';
     return null;
   }, [selectedCard, workspaceView, worldSignalInspectorSection]);
-  const isObjectDrawerVisible =
-    objectDrawerRole === 'worldsignal'
+  const isInspectorDrawerVisible =
+    inspectorDrawerRole === 'worldsignal'
       ? true
-      : objectDrawerOpen && objectDrawerRole !== null;
-  const objectDrawerDefaultWidth = AGENT_EDITOR_DEFAULT_WIDTH;
-  const objectDrawerStorageKey = 'liquidaity.drawer.object.agent.v2.width';
+      : inspectorDrawerOpen && inspectorDrawerRole !== null;
+  const inspectorDrawerDefaultWidth = AGENT_EDITOR_DEFAULT_WIDTH;
+  const inspectorDrawerStorageKey = 'liquidaity.drawer.inspector.agent.v1.width';
 
-  const closeObjectDrawer = useCallback(() => {
-    setObjectDrawerOpen(false);
+  const closeInspectorDrawer = useCallback(() => {
+    setInspectorDrawerOpen(false);
     setSelectedCardId(null);
     setSelectedEdgeId(null);
     setBuilderCanvasFocusRequest((current) => ({
@@ -1144,13 +1129,10 @@ export default function AgentBuilder(): React.ReactElement {
             projectId={activeProject || null}
             codeGraphProjectName={codeGraphProjectName || null}
             codeGraphProjectError={codeGraphProjectError}
-            conversationId={conversationId || null}
             kind={knowledgeGraphKind}
             minHeight={minHeight}
             surfaceRole={surfaceRole}
-            thinkGraphProjection={thinkGraphProjection}
             onKindChange={setKnowledgeGraphKind}
-            onProjectionChange={handleProjectionChange}
           />
         </KnowledgeSurfaceErrorBoundary>
       </div>
@@ -1158,7 +1140,7 @@ export default function AgentBuilder(): React.ReactElement {
   };
 
   const showCanvasWorkspace = useCallback(() => {
-    closeObjectDrawer();
+    closeInspectorDrawer();
     setWorkspaceView('canvas');
     const params = new URLSearchParams(window.location.search);
     params.delete('workspace');
@@ -1170,12 +1152,12 @@ export default function AgentBuilder(): React.ReactElement {
     );
     // Camera focus only — pan to the agent/bus zone on the same scene.
     setCanvasFocusZone({ zone: 'agents', nonce: Date.now() });
-  }, [closeObjectDrawer]);
+  }, [closeInspectorDrawer]);
 
   const showKnowledgeWorkspace = useCallback(() => {
-    closeObjectDrawer();
+    closeInspectorDrawer();
     setWorkspaceView('knowledge');
-    setKnowledgeGraphKind('unified');
+    setKnowledgeGraphKind('knowgraph');
     const params = new URLSearchParams(window.location.search);
     params.set('workspace', 'knowledge');
     window.history.replaceState(
@@ -1183,17 +1165,17 @@ export default function AgentBuilder(): React.ReactElement {
       '',
       `${window.location.pathname}?${params.toString()}`,
     );
-  }, [closeObjectDrawer]);
+  }, [closeInspectorDrawer]);
 
   const showTradingWorkspace = useCallback(() => {
-    closeObjectDrawer();
+    closeInspectorDrawer();
     setWorkspaceView('trading');
-  }, [closeObjectDrawer]);
+  }, [closeInspectorDrawer]);
 
   const showWorldsignalWorkspace = useCallback(() => {
-    closeObjectDrawer();
+    closeInspectorDrawer();
     setWorkspaceView('worldsignal');
-  }, [closeObjectDrawer]);
+  }, [closeInspectorDrawer]);
 
   const handleCompanionTabClick = useCallback((nextTab: string) => {
     setTab(nextTab);
@@ -1241,31 +1223,31 @@ export default function AgentBuilder(): React.ReactElement {
   );
 
   const workspaceDrawer =
-    objectDrawerRole !== null ? (
+    inspectorDrawerRole !== null ? (
       <RightGlassDrawer
-        isOpen={isObjectDrawerVisible}
+        isOpen={isInspectorDrawerVisible}
         title={
-          objectDrawerRole === 'worldsignal'
+          inspectorDrawerRole === 'worldsignal'
             ? 'WorldSignals'
             : safeText(selectedCard?.title || 'Agent')
         }
         onClose={
-          objectDrawerRole === 'worldsignal' ? closeWorldSignalInspector : closeObjectDrawer
+          inspectorDrawerRole === 'worldsignal' ? closeWorldSignalInspector : closeInspectorDrawer
         }
         movable
-        defaultWidth={objectDrawerDefaultWidth}
+        defaultWidth={inspectorDrawerDefaultWidth}
         minWidth={300}
         maxWidth={560}
         storageKey={
-          objectDrawerRole === 'worldsignal'
-            ? 'liquidaity.drawer.object.worldsignal.v1.width'
-            : objectDrawerStorageKey
+          inspectorDrawerRole === 'worldsignal'
+            ? 'liquidaity.drawer.inspector.worldsignal.v1.width'
+            : inspectorDrawerStorageKey
         }
-        dataTestId="workspace-object-drawer"
+        dataTestId="workspace-inspector-drawer"
         right={12}
         top={48}
       >
-        {objectDrawerRole === 'worldsignal' && worldSignalInspectorSection ? (
+        {inspectorDrawerRole === 'worldsignal' && worldSignalInspectorSection ? (
           <div
             className="flex min-w-0 flex-wrap"
             style={graphCompanionTabGroupStyle({
@@ -1293,14 +1275,14 @@ export default function AgentBuilder(): React.ReactElement {
             })}
           </div>
         ) : null}
-        {objectDrawerRole === 'worldsignal' && worldSignalInspectorSection ? (
+        {inspectorDrawerRole === 'worldsignal' && worldSignalInspectorSection ? (
           <WorldSignalsInspectorPanel
             section={worldSignalInspectorSection}
             bridge={worldSignalBridge}
             layerState={worldSignalLayerState}
           />
         ) : null}
-        {objectDrawerRole === 'agent' && activeTabs.length > 0 ? (
+        {inspectorDrawerRole === 'agent' && activeTabs.length > 0 ? (
           <div
             className="flex min-w-0 flex-wrap"
             style={graphCompanionTabGroupStyle({
@@ -1328,7 +1310,7 @@ export default function AgentBuilder(): React.ReactElement {
             })}
           </div>
         ) : null}
-        {objectDrawerRole === 'agent' ? (
+        {inspectorDrawerRole === 'agent' ? (
           <div
             data-testid="companion-surface-editor"
             style={{

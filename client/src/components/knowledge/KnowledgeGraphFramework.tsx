@@ -1,11 +1,8 @@
 import { Suspense, lazy } from 'react';
 
 import { GRAPH_THEME, graphDrawerSectionStyle } from '../graph/graphVisualTokens';
-import type { UnifiedProjectionIdentity } from './UnifiedGraphSurface';
 import type { KnowledgeGraphKind } from '../../types/agentgraph';
-import type { ThinkGraphProjectionState } from '../../features/agentbuilder/state/useAgentBuilderThinkGraphProjection';
 
-const UnifiedGraphSurface = lazy(() => import('./UnifiedGraphSurface'));
 const NativeCodeGraphSurface = lazy(async () => {
   const mod = await import('./NativeAuthorityGraphSurface');
   return { default: mod.NativeCodeGraphSurface };
@@ -14,16 +11,10 @@ const NativeKnowGraphSurface = lazy(async () => {
   const mod = await import('./NativeAuthorityGraphSurface');
   return { default: mod.NativeKnowGraphSurface };
 });
-const NativeThinkGraphSurface = lazy(async () => {
-  const mod = await import('./NativeAuthorityGraphSurface');
-  return { default: mod.NativeThinkGraphSurface };
-});
 
-type KnowledgeSurfaceKind = KnowledgeGraphKind | 'unified';
+type KnowledgeSurfaceKind = KnowledgeGraphKind;
 
 const GRAPH_AUTHORITIES: readonly KnowledgeSurfaceKind[] = [
-  'unified',
-  'thinkgraph',
   'knowgraph',
   'codegraph',
 ];
@@ -32,26 +23,20 @@ type Props = {
   projectId: string | null;
   codeGraphProjectName: string | null;
   codeGraphProjectError: string | null;
-  conversationId: string | null;
   kind: KnowledgeSurfaceKind;
   minHeight?: number;
   surfaceRole?: 'large' | 'companion';
-  thinkGraphProjection: ThinkGraphProjectionState;
   onKindChange: (kind: KnowledgeSurfaceKind) => void;
-  onProjectionChange: (identity: UnifiedProjectionIdentity | null) => void;
 };
 
 export default function KnowledgeGraphFramework({
   projectId,
   codeGraphProjectName,
   codeGraphProjectError,
-  conversationId,
   kind,
   minHeight = 280,
   surfaceRole = minHeight > 320 ? 'large' : 'companion',
-  thinkGraphProjection,
   onKindChange,
-  onProjectionChange,
 }: Props) {
   return (
     <div
@@ -76,9 +61,7 @@ export default function KnowledgeGraphFramework({
               color: authority === kind ? '#a9ecdf' : '#8fb3c8',
             }}
           >
-            {authority === 'unified'
-              ? 'Unified'
-              : `${authority.slice(0, -5)[0].toUpperCase()}${authority.slice(1, -5)}Graph`}
+            {`${authority.slice(0, -5)[0].toUpperCase()}${authority.slice(1, -5)}Graph`}
           </button>
         ))}
       </div>
@@ -122,22 +105,9 @@ export default function KnowledgeGraphFramework({
           ) : (
             <NativeCodeGraphSurface project={codeGraphProjectName} />
           )
-        ) : kind === 'thinkgraph' ? (
-          <NativeThinkGraphSurface
-            projection={thinkGraphProjection.projection}
-            status={thinkGraphProjection.status}
-            error={thinkGraphProjection.error}
-          />
         ) : kind === 'knowgraph' ? (
           <NativeKnowGraphSurface projectId={projectId ?? ''} />
-        ) : (
-          <UnifiedGraphSurface
-            projectId={projectId ?? ''}
-            conversationId={conversationId ?? ''}
-            onProjectionChange={onProjectionChange}
-            onOpenAuthority={onKindChange}
-          />
-        )}
+        ) : null}
       </Suspense>
     </div>
   );

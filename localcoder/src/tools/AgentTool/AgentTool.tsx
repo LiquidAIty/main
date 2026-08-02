@@ -578,7 +578,7 @@ export const AgentTool = buildTool({
       } catch (error) {
         logForDebugging(`Failed to get system prompt for agent ${selectedAgent.agentType}: ${errorMessage(error)}`);
       }
-      // A named inherit_parent agent (saved Hermes / ThinkGraph card) receives
+      // A named inherit_parent saved-card agent receives
       // the live parent conversation ONLY through forkContextMessages below;
       // runAgent's filterIncompleteToolCalls() already strips the parent's
       // still-unresolved tool_use for THIS Agent call, so no placeholder
@@ -708,7 +708,7 @@ export const AgentTool = buildTool({
       } : undefined,
       availableTools: isForkPath ? toolUseContext.options.tools : workerTools,
       // Context inheritance is unlocked for isForkPath AND any named agent
-      // declaring contextMode: 'inherit_parent' (e.g. a saved ThinkGraph
+      // declaring contextMode: 'inherit_parent' (e.g. a saved-card
       // card). availableTools/override/useExactTools above stay isForkPath-
       // only, so an inherit_parent named agent still gets its OWN resolved
       // tool pool and OWN system prompt via runAgent's normal fallback path.

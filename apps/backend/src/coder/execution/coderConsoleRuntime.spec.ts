@@ -134,7 +134,7 @@ function validAuditJson(conclusion = 'audit conclusion') {
     risks: [],
     implementationBoundaries: ['read-only'],
     requiredTests: ['coderConsoleRuntime.spec.ts'],
-    viewContract: { projectId: 'p1', focusSymbols: ['runOpenClaudeCodeTask'], focusPaths: ['apps/backend/src/coder/execution/coderConsoleRuntime.ts'] },
+    projectionContract: { projectId: 'p1', focusSymbols: ['runOpenClaudeCodeTask'], focusPaths: ['apps/backend/src/coder/execution/coderConsoleRuntime.ts'] },
     artifactRefs: [],
   });
 }
@@ -157,7 +157,7 @@ function task(authority?: 'direct_main_audit' | 'mag_one_execution') {
       catalog: [{
         name: 'cbm.search_graph', description: 'Search CodeGraph', inputSchema: { type: 'object' },
         capability: {
-          surface: 'knowledge', capabilityType: 'callable_tool', graphAuthority: 'codegraph',
+          surface: 'knowledge', capabilityType: 'callable_tool', graphAuthority: 'cbm',
           authorityClass: 'repository_structure', runtimeCompatibility: ['local_coder'],
           cardAssignable: true, latency: 'fast', providerPossible: false, health: 'available',
           recommendedUse: 'Search graph', verification: 'live', approvalRequired: false, deprecated: false,
@@ -169,7 +169,7 @@ function task(authority?: 'direct_main_audit' | 'mag_one_execution') {
 }
 
 describe('runOpenClaudeCodeTask (visible Console PTY)', () => {
-  it('direct_main_audit returns a validated audit result + CodeGraphViewContract, report null, transcript persisted', async () => {
+  it('direct_main_audit returns a validated audit result with code evidence, report null, transcript persisted', async () => {
     const session = new FakeSession(validAuditJson('audited by console'));
     const p = task('direct_main_audit');
     const capture: { req?: { args?: string[] } } = {};
@@ -179,7 +179,7 @@ describe('runOpenClaudeCodeTask (visible Console PTY)', () => {
     expect(result.ok).toBe(true);
     expect(result.resultKind).toBe('audit');
     expect(result.auditResult?.conclusion).toBe('audited by console');
-    expect(result.auditResult?.viewContract.focusSymbols).toContain('runOpenClaudeCodeTask');
+    expect(result.auditResult?.projectionContract.focusSymbols).toContain('runOpenClaudeCodeTask');
     expect(result.report).toBeNull();
     expect(result.childRunId).toMatch(/^coder_/);
     expect(result.correlationId).toMatch(/^trace_/);

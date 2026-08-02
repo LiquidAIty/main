@@ -4,9 +4,7 @@ import express from 'express';
 import { describe, expect, it, vi } from 'vitest';
 // Static imports: NodeNext ESM rejects extensionless dynamic import('./coder.routes')
 // after the '.routes' infix strip. vitest hoists vi.mock() above these.
-import router, {
-  resolveHermesProjectId,
-} from './coder.routes';
+import router from './coder.routes';
 
 const planningMocks = vi.hoisted(() => ({
   packet: {
@@ -134,7 +132,6 @@ const chatSessionMocks = vi.hoisted(() => {
       modelKey: 'gpt-5.1-chat-latest',
       providerModelId: 'gpt-5.1-chat-latest',
     },
-    runtimeGraphViews: [],
   }));
   return mocks;
 });
@@ -144,19 +141,7 @@ const mcpClientMocks = vi.hoisted(() => ({
   listPythonAgentMcpCatalog: vi.fn(async () => []),
 }));
 
-// Shape mirrors what coder.routes.ts consumes from the unified model-context
-// response (graphViews array, modelContext text, measurements object or null).
-// Typing the mock return stops TS from narrowing measurements to literal `null`
-// and graphViews to `never[]`, which would reject the richer override values.
-type UnifiedModelContextResult = {
-  ok: boolean;
-  projectionId?: string;
-  graphViews: Record<string, unknown>[];
-  modelContext: string;
-  measurements: { characters: number; estimatedTokens: number } | null;
-};
-
-const graphViewMocks = vi.hoisted(() => ({
+const orchestratorMocks = vi.hoisted(() => ({
   beginAgentAssignmentOnPython: vi.fn(async (payload: { correlationId: string }) => ({
     ok: true as const,
     assignmentId: 'assignment:coder-test',
@@ -166,28 +151,6 @@ const graphViewMocks = vi.hoisted(() => ({
     state: 'running' as const,
   })),
   finishAgentAssignmentOnPython: vi.fn(async () => ({ ok: true })),
-  fetchGraphViewsFromPython: vi.fn(async () => ({ ok: true, views: [] })),
-  fetchUnifiedModelContext: vi.fn<() => Promise<UnifiedModelContextResult>>(async () => ({
-    ok: true,
-    graphViews: [],
-    modelContext: '',
-    measurements: null,
-  })),
-  fetchDoorwayContext: vi.fn(async (): Promise<{
-    ok: boolean;
-    views: Record<string, unknown>[];
-    modelContext: string;
-  }> => ({ ok: true, views: [], modelContext: '' })),
-  transitionGraphViewsOnPython: vi.fn(async () => ({ ok: true, views: [] })),
-  requestPythonRailsJson: vi.fn(async (path: string) => (
-    path.includes('/agentgraph/hermes/reports/')
-      ? { ok: true, report: null }
-      : {
-          ok: true,
-          reportId: 'agentresult:hermes:req_not_active',
-          assignmentId: 'assignment:hermes:req_not_active',
-        }
-  )),
 }));
 
 const dbMocks = vi.hoisted(() => ({
@@ -234,7 +197,7 @@ vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
   listPythonAgentMcpCatalog: mcpClientMocks.listPythonAgentMcpCatalog,
 }));
 
-vi.mock('../services/autogen/autogenOrchestratorClient', () => graphViewMocks);
+vi.mock('../services/autogen/autogenOrchestratorClient', () => orchestratorMocks);
 
 vi.mock('../db/pool', () => ({
   pool: { query: dbMocks.query },
@@ -255,25 +218,6 @@ async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
-}
-
-function coderGraphView(overrides: Record<string, unknown> = {}) {
-  return {
-    schemaVersion: 'graph-view.v1',
-    viewId: 'codegraph:selected-1',
-    authority: 'agentgraph',
-    status: 'candidate',
-    projectId: 'project-1',
-    conversationId: 'main',
-    displayLabel: 'Selected code references',
-    producingRole: 'main_chat',
-    receivingRole: 'coder',
-    references: [{ referenceId: 'symbol:one', referenceType: 'codegraph', required: true }],
-    referenceCount: 1,
-    createdAt: '2026-07-23T00:00:00Z',
-    updatedAt: '2026-07-23T00:00:00Z',
-    ...overrides,
-  };
 }
 
 describe('coder routes', () => {
@@ -317,7 +261,6 @@ describe('coder routes', () => {
           instructionId: 'instruction:one',
           senderCardId: 'card_main_chat',
           parentRunId: 'req_1234abcd',
-          graphViewIds: ['graphview:one'],
           input: 'Use the stored handoff.',
         }),
       });
@@ -331,7 +274,6 @@ describe('coder routes', () => {
         instructionId: 'instruction:one',
         senderCardId: 'card_main_chat',
         parentRunId: 'req_1234abcd',
-        graphViewIds: ['graphview:one'],
         input: 'Use the stored handoff.',
       });
     } finally {
@@ -405,7 +347,6 @@ describe('coder routes', () => {
           cardId: 'card_local_coder',
           authority: 'direct_main_audit',
           approvedPrompt: 'Inspect selected code.',
-          graphViewIds: ['codegraph:selected-1'],
         }),
       });
       expect(response.status).toBe(403);
@@ -419,167 +360,10 @@ describe('coder routes', () => {
     }
   });
 
-  it.each([
-    ['fabricated', 'graph_view_unknown: codegraph:fabricated'],
-    ['cross-scope', 'graph_view_scope_mismatch: codegraph:selected-1'],
-  ])('propagates a canonical ThinkGraph %s rejection before model execution', async (_label, error) => {
-    chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
-      doorwayDefinitions: [{ card_id: 'card_local_coder' }],
-    });
-    graphViewMocks.fetchDoorwayContext.mockRejectedValueOnce(new Error(error));
-    consoleRuntimeMocks.runOpenClaudeCodeTask.mockClear();
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          parentRunId: 'parent-1',
-          projectId: 'project-1',
-          deckId: 'deck_builder',
-          conversationId: 'main',
-          cardId: 'card_local_coder',
-          authority: 'direct_main_audit',
-          approvedPrompt: 'Inspect selected code.',
-          graphViewIds: ['codegraph:selected-1'],
-        }),
-      });
-      expect(response.status).toBe(400);
-      await expect(response.json()).resolves.toEqual({ ok: false, error });
-      expect(consoleRuntimeMocks.runOpenClaudeCodeTask).not.toHaveBeenCalled();
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  it('resolves one persisted Coder-targeted Graph View before execution', async () => {
-    chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
-      doorwayDefinitions: [{ card_id: 'card_local_coder' }],
-    });
-    graphViewMocks.fetchDoorwayContext.mockResolvedValueOnce({
-      ok: true,
-      views: [coderGraphView()],
-      modelContext: '[LIQUIDAITY_GRAPH_CONTEXT]\n- symbol:one',
-    });
-    graphViewMocks.transitionGraphViewsOnPython.mockClear();
-    graphViewMocks.beginAgentAssignmentOnPython.mockClear();
-    graphViewMocks.finishAgentAssignmentOnPython.mockClear();
-    consoleRuntimeMocks.runOpenClaudeCodeTask.mockClear();
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          parentRunId: 'parent-1',
-          projectId: 'project-1',
-          deckId: 'deck_builder',
-          conversationId: 'main',
-          cardId: 'card_local_coder',
-          authority: 'direct_main_audit',
-          approvedPrompt: 'Inspect selected code.',
-          graphViewIds: ['codegraph:selected-1'],
-        }),
-      });
-      expect(response.status).toBe(200);
-      expect(consoleRuntimeMocks.runOpenClaudeCodeTask).toHaveBeenCalledWith(
-        expect.objectContaining({
-          approvedPrompt: expect.stringContaining('[LIQUIDAITY_GRAPH_CONTEXT]\n- symbol:one'),
-          correlationId: expect.stringMatching(/^coder:/),
-        }),
-        expect.objectContaining({ onSessionStarted: expect.any(Function) }),
-      );
-      expect(graphViewMocks.beginAgentAssignmentOnPython).toHaveBeenCalledWith(expect.objectContaining({
-        projectId: 'project-1',
-        deckId: 'deck_builder',
-        conversationId: 'main',
-        senderCardId: 'card_main_chat',
-        receiverCardId: 'card_local_coder',
-        instruction: 'Inspect selected code.',
-        references: [{
-          referenceId: 'codegraph:selected-1',
-          referenceType: 'graph_view',
-          required: true,
-        }],
-        runtime: 'openclaude',
-        provider: 'openrouter',
-        providerModelId: 'z-ai/glm-5.2',
-      }));
-      expect(graphViewMocks.finishAgentAssignmentOnPython).toHaveBeenCalledWith(
-        'assignment:coder-test',
-        expect.objectContaining({
-          projectId: 'project-1',
-          claimToken: 'claim:coder-test',
-          status: 'completed',
-        }),
-      );
-      expect(graphViewMocks.fetchDoorwayContext).toHaveBeenCalledWith(
-        'project-1',
-        'main',
-        ['codegraph:selected-1'],
-      );
-      expect(graphViewMocks.transitionGraphViewsOnPython).toHaveBeenNthCalledWith(1, expect.objectContaining({
-        viewIds: ['codegraph:selected-1'],
-        status: 'active',
-      }));
-      expect(graphViewMocks.transitionGraphViewsOnPython).toHaveBeenNthCalledWith(2, expect.objectContaining({
-        viewIds: ['codegraph:selected-1'],
-        status: 'consumed',
-      }));
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  it('preserves the exact order of multiple selected Graph View IDs without carrying view contents', async () => {
-    chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
-      doorwayDefinitions: [{ card_id: 'card_local_coder' }],
-    });
-    graphViewMocks.fetchDoorwayContext.mockResolvedValueOnce({
-      ok: true,
-      views: [
-        coderGraphView({ viewId: 'codegraph:selected-2' }),
-        coderGraphView({
-          viewId: 'thinkgraph:selected-1',
-          references: [{ referenceId: 'decision:one', referenceType: 'thinkgraph', required: true }],
-        }),
-      ],
-      modelContext: '[LIQUIDAITY_GRAPH_CONTEXT]\n- exact selected context',
-    });
-    consoleRuntimeMocks.runOpenClaudeCodeTask.mockClear();
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          parentRunId: 'parent-1',
-          projectId: 'project-1',
-          deckId: 'deck_builder',
-          conversationId: 'main',
-          cardId: 'card_local_coder',
-          authority: 'direct_main_audit',
-          approvedPrompt: 'Inspect selected code.',
-          graphViewIds: ['codegraph:selected-2', 'thinkgraph:selected-1'],
-        }),
-      });
-      expect(response.status).toBe(200);
-      expect(graphViewMocks.fetchDoorwayContext).toHaveBeenCalledWith(
-        'project-1',
-        'main',
-        ['codegraph:selected-2', 'thinkgraph:selected-1'],
-      );
-      const doorwayViews = (await graphViewMocks.fetchDoorwayContext.mock.results.at(-1)?.value)?.views;
-      expect(doorwayViews?.every((view: Record<string, unknown>) => !('records' in view))).toBe(true);
-    } finally {
-      await closeServer(server);
-    }
-  });
-
   it('returns the durable AgentGraph and OpenClaude identities before a long Coder run completes', async () => {
     const previousWindow = process.env.LIQUIDAITY_CODER_CONNECTOR_COMPLETION_WINDOW_MS;
     process.env.LIQUIDAITY_CODER_CONNECTOR_COMPLETION_WINDOW_MS = '5';
-    graphViewMocks.finishAgentAssignmentOnPython.mockClear();
+    orchestratorMocks.finishAgentAssignmentOnPython.mockClear();
     consoleRuntimeMocks.runOpenClaudeCodeTask.mockImplementationOnce(
       async (
         _request: unknown,
@@ -629,7 +413,7 @@ describe('coder routes', () => {
         sessionId: 'occ-long-1',
         sessionState: 'running',
       });
-      expect(graphViewMocks.finishAgentAssignmentOnPython).not.toHaveBeenCalled();
+      expect(orchestratorMocks.finishAgentAssignmentOnPython).not.toHaveBeenCalled();
     } finally {
       if (previousWindow === undefined) {
         delete process.env.LIQUIDAITY_CODER_CONNECTOR_COMPLETION_WINDOW_MS;
@@ -650,35 +434,6 @@ describe('coder routes', () => {
       else process.env.LOCALCODER_COMMAND = previous;
     }
   }
-
-  it('transports Hermes report reads and writes to exact AgentGraph parent-run paths', async () => {
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/hermes_write_report`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parentRunId: 'req_1234abcd', reportMarkdown: '# Report', summary: 'Exact run.' }),
-      });
-      await expect(response.json()).resolves.toMatchObject({
-        ok: true,
-        assignmentId: 'assignment:hermes:req_not_active',
-      });
-      expect(response.status).toBe(200);
-      const readResponse = await fetch(`${baseUrl}/mcp-bridge/hermes_read_report`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parentRunId: 'req_1234abcd' }),
-      });
-      await expect(readResponse.json()).resolves.toEqual({ ok: true, report: null });
-      expect(readResponse.status).toBe(200);
-      expect(graphViewMocks.requestPythonRailsJson).toHaveBeenCalledWith(
-        expect.stringContaining('/agentgraph/hermes/reports/req_1234abcd'),
-        { method: 'GET' },
-      );
-    } finally {
-      await closeServer(server);
-    }
-  });
 
   it('returns 424 with an exact blocker from the LocalCoder status route when nothing runnable', async () => {
     await withBrokenRuntime(async () => {
@@ -768,88 +523,7 @@ describe('coder routes', () => {
   });
 
   describe('/openclaude/session/chat', () => {
-    it('rejects browser-supplied Graph View content — the browser is never the membership authority', async () => {
-      const { server, baseUrl } = await createApiServer();
-      try {
-        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            projectId: 'project-1', conversationId: 'main', message: 'Use this.',
-            graphViews: [{ viewId: 'spoofed-view', authority: 'codegraph' }],
-          }),
-        });
-        expect(response.status).toBe(400);
-        await expect(response.json()).resolves.toMatchObject({ ok: false, error: expect.stringContaining('browser_graph_views_removed') });
-        expect(chatSessionMocks.startGrpcTurn).not.toHaveBeenCalledWith(expect.objectContaining({ message: 'Use this.' }), expect.anything());
-      } finally {
-        await closeServer(server);
-      }
-    });
-
-    it('resolves the projection server-side by id and delivers compact context, activating and consuming the same views', async () => {
-      const serverView = {
-        schemaVersion: 'graph-view.v1', viewId: 'codegraph:server-1', authority: 'agentgraph', status: 'candidate',
-        projectId: 'project-1', conversationId: 'main', displayLabel: 'Selected code references',
-        producingRole: 'main_chat', receivingRole: 'main_chat',
-        references: [{ referenceId: 'symbol:one', referenceType: 'codegraph', required: true }],
-        referenceCount: 1, createdAt: '2026-07-15T00:00:00Z', updatedAt: '2026-07-15T01:00:00Z',
-      };
-      const compact = '[LIQUIDAITY_GRAPH_CONTEXT]\nprojection: unified:abc123 | project: project-1 | conversation: main | role: main_chat\n- [Function] one (symbol:one)';
-      graphViewMocks.fetchUnifiedModelContext.mockResolvedValueOnce({
-        ok: true, projectionId: 'unified:abc123', graphViews: [serverView], modelContext: compact,
-        measurements: { characters: compact.length, estimatedTokens: 40 },
-      });
-      const activeView = { ...serverView, status: 'active', correlationId: 'req-1', runtime: { provider: 'openai', model: 'gpt-5.1-chat-latest', role: 'main_chat', invocationId: 'req-1', attachedAt: '2026-07-15T01:00:00Z', includedReferences: 1, contextCharacters: compact.length, estimatedTokens: 40 } };
-      chatSessionMocks.startGrpcTurn.mockImplementationOnce(async () => ({
-        done: Promise.resolve({ finalText: 'Used bounded context.', usage: chatSessionMocks.usage }), cancel: vi.fn(), answer: vi.fn(),
-        resolved: { cardId: 'card_main_chat', provider: 'openai', modelKey: 'gpt-5.1-chat-latest', providerModelId: 'gpt-5.1-chat-latest' },
-        runtimeGraphViews: [activeView],
-      }));
-      const { server, baseUrl } = await createApiServer();
-      try {
-        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: 'project-1', conversationId: 'main', message: 'Use this.', projectionId: 'unified:abc123' }),
-        });
-        const body = await response.text();
-        expect(graphViewMocks.fetchUnifiedModelContext).toHaveBeenCalledWith(expect.objectContaining({
-          projectionId: 'unified:abc123', projectId: 'project-1', conversationId: 'main', role: 'main_chat',
-        }));
-        const supplied = chatSessionMocks.startGrpcTurn.mock.calls.at(-1)?.[0] as any;
-        // The turn receives the compact text + the server-resolved views (server scope preserved).
-        expect(supplied.graphContext).toBe(compact);
-        expect(supplied.graphViews[0]).toMatchObject({ viewId: 'codegraph:server-1', projectId: 'project-1', conversationId: 'main', status: 'candidate' });
-        // Measured context cost is surfaced to the browser before the answer.
-        expect(body).toContain('event: context_measurement');
-        expect(body).toContain('unified:abc123');
-        // Lifecycle unchanged: active views consumed at turn end.
-        expect(body).toContain('event: graph_view');
-        expect(body).toContain('"status":"consumed"');
-      } finally {
-        await closeServer(server);
-      }
-    });
-
-    it('fails honestly when the projection cannot be resolved — never a silent contextless fallback', async () => {
-      graphViewMocks.fetchUnifiedModelContext.mockRejectedValueOnce(new Error('thinkgraph_http_409:projection_superseded: current is unified:def456'));
-      const { server, baseUrl } = await createApiServer();
-      try {
-        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: 'project-1', conversationId: 'main', message: 'Use this.', projectionId: 'unified:stale' }),
-        });
-        expect(response.status).toBe(409);
-        await expect(response.json()).resolves.toMatchObject({
-          ok: false,
-          error: expect.stringContaining('projection_superseded'),
-          projectionId: 'unified:stale',
-        });
-      } finally {
-        await closeServer(server);
-      }
-    });
-
-    it('persists one durable conversation run and never dispatches the old post-chat ThinkGraph pair handoff', async () => {
+    it('persists one durable conversation run without a post-chat graph handoff', async () => {
       chatSessionMocks.beginConversationRun.mockClear();
       chatSessionMocks.markConversationRunRunning.mockClear();
       chatSessionMocks.completeConversationRun.mockClear();
@@ -916,7 +590,6 @@ describe('coder routes', () => {
             modelKey: 'gpt-5.1-chat-latest',
             providerModelId: 'gpt-5.1-chat-latest',
           },
-          runtimeGraphViews: [],
         };
       });
       const { server, baseUrl } = await createApiServer();
@@ -1007,22 +680,4 @@ describe('coder routes', () => {
     });
   });
 
-});
-
-describe('Hermes memory project authority', () => {
-  it('accepts the real ag_catalog project id and returns that exact identity', async () => {
-    const projectId = '20ac92da-01fd-4cf6-97cc-0672421e751a';
-    dbMocks.query.mockResolvedValueOnce({ rows: [{ id: projectId }] });
-    await expect(resolveHermesProjectId(projectId)).resolves.toBe(projectId);
-    expect(dbMocks.query).toHaveBeenLastCalledWith(
-      expect.stringContaining('FROM ag_catalog.projects'),
-      [projectId],
-    );
-  });
-
-  it('fails visibly for an unknown project and never guesses a legacy identity', async () => {
-    const unknown = '00000000-0000-0000-0000-000000000404';
-    dbMocks.query.mockResolvedValueOnce({ rows: [] });
-    await expect(resolveHermesProjectId(unknown)).rejects.toThrow(`hermes_project_not_found: ${unknown}`);
-  });
 });

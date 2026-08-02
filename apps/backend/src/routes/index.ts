@@ -4,11 +4,9 @@ import auth from './auth.routes';
 import { authMiddleware } from '../middleware/auth';
 import coder from './coder.routes';
 import knowgraphRoutes from './knowgraph.routes';
-import thinkgraphRoutes from './thinkgraph.routes';
 import projectsRoutes from './projects.routes';
 import decksRoutes from './decks.routes';
 import worldsignalRoutes from './worldsignal.routes';
-import unifiedRoutes from './unified.routes';
 
 const router = Router();
 
@@ -19,8 +17,6 @@ router.use('/auth', auth);
 router.use('/health', health);
 router.use('/coder', authMiddleware, coder);
 router.use('/knowgraph', authMiddleware, knowgraphRoutes);
-router.use('/thinkgraph', authMiddleware, thinkgraphRoutes);
-router.use('/unified', authMiddleware, unifiedRoutes);
 router.use('/worldsignal', authMiddleware, worldsignalRoutes);
 router.use('/projects', authMiddleware, projectsRoutes);
 router.use('/projects', authMiddleware, decksRoutes);

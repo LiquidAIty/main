@@ -60,7 +60,7 @@ is a known bounded UI mismatch, not the intended product boundary.
 `apps/python-models/app/mcp_host.py` (Python) is the single MCP server. Spawned over stdio by backend
 `services/mcp/pythonAgentMcpClient.ts`, consumed by the gRPC harness. Tools: `canvas.inspect`,
 `card.update_configuration`, `canvas.upsert_wire`, `card.run_assistant_agent`, `run_mag_one`,
-`mag_one.describe_connected_agents`, `thinkgraph.get_graph_slice`.
+`mag_one.describe_connected_agents`, plus the native Engraphis, Graphiti, and CBM catalogs.
 There is **no TS MCP server** — TS is only the client. Each tool bridges to a backend
 `/api/coder/mcp-bridge/*` handler, so state has one authority.
 
@@ -218,7 +218,7 @@ explicitly selected wiki/*.md feature manifest(s)
 Agent usefulness comes first. Graph UI filtering is a later consumer of the same
 resolver output. Do not build visual CodeGraph filtering before feature-context
 loading works. Do not create an automatic feature classifier or phrase-based router —
-primary and supporting features are selected by the planner, Task Ledger, or current
+primary and supporting features are selected by the planner, current CoderPacket, or current
 SPEC, never inferred by the resolver.
 
 ## Durable docs

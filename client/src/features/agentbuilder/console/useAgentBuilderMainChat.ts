@@ -2,12 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { waitForBackendReady } from '../../../components/builder/backendReadiness';
 import {
-  EMPTY_HERMES_TERMINAL_STATE,
-  reduceHermesTerminalEvent,
-} from '../../../components/hermes/HermesConsole';
-import type { HermesTerminalState } from '../../../components/hermes/HermesConsole';
-import type { UnifiedProjectionIdentity } from '../../../components/knowledge/UnifiedGraphSurface';
-import {
   loadSessionHistory,
   SessionStreamError,
   streamSession,
@@ -19,7 +13,6 @@ export type AgentBuilderChatMessage = {
 };
 
 type UseAgentBuilderMainChatArgs = {
-  activeProjection: UnifiedProjectionIdentity | null;
   canvasProjectId: string;
   conversationId: string;
   initialMessages: AgentBuilderChatMessage[];
@@ -27,16 +20,12 @@ type UseAgentBuilderMainChatArgs = {
 };
 
 export default function useAgentBuilderMainChat({
-  activeProjection,
   canvasProjectId,
   conversationId,
   initialMessages,
   workspaceView,
 }: UseAgentBuilderMainChatArgs) {
   const [nativeSessionBusy, setNativeSessionBusy] = useState(false);
-  const [hermesTerminal, setHermesTerminal] = useState<HermesTerminalState>(
-    EMPTY_HERMES_TERMINAL_STATE,
-  );
   const [messages, setMessages] =
     useState<AgentBuilderChatMessage[]>(initialMessages);
 
@@ -44,11 +33,9 @@ export default function useAgentBuilderMainChat({
     const projectId = canvasProjectId;
     if (!projectId) {
       setMessages([]);
-      setHermesTerminal(EMPTY_HERMES_TERMINAL_STATE);
       return;
     }
 
-    setHermesTerminal(EMPTY_HERMES_TERMINAL_STATE);
     const controller = new AbortController();
     let cancelled = false;
     waitForBackendReady({ signal: controller.signal })
@@ -123,21 +110,7 @@ export default function useAgentBuilderMainChat({
           conversationId,
           message: trimmed,
           mode: workspaceView === 'canvas' ? 'canvas' : 'chat',
-          ...(activeProjection?.role === 'main_chat'
-            ? {
-                projectionId: activeProjection.projectionId,
-                ...(activeProjection.activeGraphViewId
-                  ? { activeGraphViewId: activeProjection.activeGraphViewId }
-                  : {}),
-                ...(activeProjection.knowgraphScope
-                  ? { knowgraphScope: activeProjection.knowgraphScope }
-                  : {}),
-              }
-            : {}),
           onEvent: (event) => {
-            setHermesTerminal((current) =>
-              reduceHermesTerminalEvent(current, event),
-            );
             if (event.kind === 'text') {
               appendAssistantText(
                 String((event as { text?: unknown }).text || ''),
@@ -156,15 +129,6 @@ export default function useAgentBuilderMainChat({
         }
         return completedText || assistantText.trim();
       } catch (error: unknown) {
-        setHermesTerminal((current) =>
-          reduceHermesTerminalEvent(current, {
-            kind: 'error',
-            message:
-              error instanceof Error
-                ? error.message
-                : 'Hermes stream cancelled.',
-          }),
-        );
         if (error instanceof SessionStreamError) {
           const correlation = error.correlationId
             ? ` Correlation: ${error.correlationId}.`
@@ -183,7 +147,6 @@ export default function useAgentBuilderMainChat({
       }
     },
     [
-      activeProjection,
       canvasProjectId,
       conversationId,
       nativeSessionBusy,
@@ -202,7 +165,6 @@ export default function useAgentBuilderMainChat({
 
   return {
     handleNativeSend,
-    hermesTerminal,
     messages,
     nativeSessionBusy,
     requestMainText,

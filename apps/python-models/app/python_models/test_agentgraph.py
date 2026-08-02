@@ -109,8 +109,7 @@ def test_assignment_claim_finish_and_hydration() -> None:
         assert hydrated["runTrace"]["runtime"] == "assistant_agent"
         assert hydrated["runTrace"]["provider"] == "openrouter"
         assert hydrated["runTrace"]["providerModelId"] == "provider/model"
-        assert hydrated["operationReferences"][0]["operationId"] == "agentgraph.active_context_identities"
-        assert hydrated["operationReferences"][0]["executionRole"] == "optional_tool"
+        assert "operationReferences" not in hydrated
         assert "body" not in hydrated["ageIdentity"]["instruction"]
         scoped = ag.inspect_assignments(
             project_id=PROJECT_ID,
@@ -139,7 +138,6 @@ def test_assignment_claim_finish_and_hydration() -> None:
     finally:
         connection.rollback()
         connection.close()
-
 
 def test_sender_can_cancel_pending_assignment_idempotently() -> None:
     correlation = f"agentgraph-cancel-{uuid4().hex}"
@@ -251,120 +249,6 @@ def test_worldsignals_reference_is_relational_and_linked_to_assignment_in_age() 
                 },
             )
         assert rows
-    finally:
-        connection.rollback()
-        connection.close()
-
-
-def test_graph_view_keeps_only_agentgraph_metadata_and_reference_identities() -> None:
-    connection = connect_postgres(autocommit=False)
-    try:
-        view = ag.create_graph_view(
-            project_id=PROJECT_ID,
-            conversation_id="main",
-            correlation_id=f"graphview-test-{uuid4().hex}",
-            display_label="Bounded agent context",
-            references=[
-                {
-                    "referenceId": "thinkgraph:decision:kg01",
-                    "referenceType": "thinkgraph",
-                    "required": True,
-                },
-                {
-                    "referenceId": "codegraph:C-Projects-main:runtime.ts",
-                    "referenceType": "codegraph",
-                    "required": False,
-                },
-            ],
-            connection=connection,
-        )
-        exact = ag.get_graph_view(
-            project_id=PROJECT_ID,
-            conversation_id="main",
-            view_id=view["view"]["viewId"],
-            connection=connection,
-        )["view"]
-        assert exact["authority"] == "agentgraph"
-        assert sorted(
-            exact["references"], key=lambda item: item["referenceId"]
-        ) == sorted([
-            {
-                "referenceId": "thinkgraph:decision:kg01",
-                "referenceType": "thinkgraph",
-                "required": True,
-                "deliveryOrder": 0,
-            },
-            {
-                "referenceId": "codegraph:C-Projects-main:runtime.ts",
-                "referenceType": "codegraph",
-                "required": False,
-                "deliveryOrder": 1,
-            },
-        ], key=lambda item: item["referenceId"])
-        assert not {
-            "records",
-            "relationships",
-            "includedCanonicalNodeIds",
-            "rootCanonicalNodeIds",
-            "query",
-            "filter",
-        }.intersection(exact)
-        listed = ag.list_graph_views(
-            project_id=PROJECT_ID,
-            conversation_id="main",
-            limit=50,
-            connection=connection,
-        )["views"]
-        assert any(item["viewId"] == view["view"]["viewId"] for item in listed)
-        active = ag.transition_graph_views(
-            project_id=PROJECT_ID,
-            conversation_id="main",
-            view_ids=[view["view"]["viewId"]],
-            status="active",
-            connection=connection,
-        )
-        assert active[0]["status"] == "active"
-    finally:
-        connection.rollback()
-        connection.close()
-
-
-def test_instruction_references_reject_raw_query_and_unknown_versions() -> None:
-    connection = connect_postgres(autocommit=False)
-    try:
-        with pytest.raises(ag.AgentGraphError, match="keys_unknown"):
-            ag.create_instruction(
-                project_id=PROJECT_ID,
-                deck_id=DECK_ID,
-                conversation_id="main",
-                body="Invalid raw statement.",
-                operation_references=[
-                    {
-                        "operationId": "agentgraph.active_context_identities",
-                        "version": 2,
-                        "executionRole": "required_context",
-                        "parameters": {"project_id": PROJECT_ID},
-                        "sql": "SELECT 1",
-                    }
-                ],
-                connection=connection,
-            )
-        with pytest.raises(ag.AgentGraphError, match="registered_query_not_found"):
-            ag.create_instruction(
-                project_id=PROJECT_ID,
-                deck_id=DECK_ID,
-                conversation_id="main",
-                body="Unknown operation.",
-                operation_references=[
-                    {
-                        "operationId": "agentgraph.missing",
-                        "version": 1,
-                        "executionRole": "required_context",
-                        "parameters": {},
-                    }
-                ],
-                connection=connection,
-            )
     finally:
         connection.rollback()
         connection.close()

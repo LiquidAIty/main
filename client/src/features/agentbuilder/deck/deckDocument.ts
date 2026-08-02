@@ -12,12 +12,8 @@ import {
   cloneDeckDocument,
   HERMES_STEWARD_TOOLS,
   isLegacyUaCard,
-  LOCAL_CODER_CONTROLLER_MODEL_KEY,
-  LOCAL_CODER_CONTROLLER_PROVIDER,
   LOCAL_CODER_CONTROLLER_TOOLS,
   MAIN_CHAT_CONTROLLER_TOOLS,
-  MAGENTIC_ONE_DEFAULT_MODEL_KEY,
-  MAGENTIC_ONE_DEFAULT_PROVIDER,
   normalizeRuntimeBinding,
   normalizeRuntimeOptions,
   normalizeRuntimeType,
@@ -26,7 +22,6 @@ import {
 } from './deckPrimitives';
 import {
   BASELINE_OPTIONAL_CARD_IDS,
-  INITIAL_AGENT_TEMPLATES,
   INITIAL_DECK,
   INITIAL_PROMPT_TEMPLATES,
   LEGACY_SYSTEM_CARD_IDS,
@@ -60,33 +55,6 @@ function normalizeLocalCoderControllerCard(card: AgentCardInstance): AgentCardIn
   };
 }
 
-/**
- * Upgrade only the exact retired Magentic-One seed configuration. A user who
- * deliberately chose GLM keeps it; the uncustomized old default moves to the
- * Mag One's current card default on hydration.
- */
-function normalizeRetiredMagenticOneDefault(card: AgentCardInstance): AgentCardInstance {
-  if (card.id !== 'card_magentic' || card.templateId !== 'template_magentic') return card;
-  const runtimeOptions = normalizeRuntimeOptions(card.runtimeOptions) ?? {};
-  if (
-    runtimeOptions.executionBackend !== 'python_autogen' ||
-    runtimeOptions.provider !== 'openrouter' ||
-    runtimeOptions.modelKey !== 'z-ai/glm-5.2' ||
-    runtimeOptions.maxTurns !== 2 ||
-    runtimeOptions.maxStalls !== 1
-  ) {
-    return card;
-  }
-  return {
-    ...card,
-    runtimeOptions: {
-      ...runtimeOptions,
-      provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
-      modelKey: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
-    },
-  };
-}
-
 function migrateSystemToolGrants(
   card: AgentCardInstance,
   sourceGrantVersion: number,
@@ -116,21 +84,11 @@ export function resolveLocalCoderControllerConsoleConfig(
 ): { provider: string; model: string } {
   const card = deck.nodes.find(isLocalCoderControllerCard) || null;
   const runtimeOptions = normalizeRuntimeOptions(card?.runtimeOptions) ?? {};
-  const template =
-    INITIAL_AGENT_TEMPLATES.find((candidate) => candidate.id === card?.templateId) ||
-    INITIAL_AGENT_TEMPLATES.find((candidate) => candidate.id === 'template_local_coder') ||
-    null;
-  // Resolve from the saved card, then the template, then the seed default — no
-  // blacklist, no forced override.
+  // The saved card is the only runtime authority. Missing values remain empty
+  // so the terminal fails honestly instead of selecting an unseen model.
   return {
-    provider:
-      cleanOptionalText(runtimeOptions.provider) ||
-      cleanOptionalText(template?.provider) ||
-      LOCAL_CODER_CONTROLLER_PROVIDER,
-    model:
-      cleanOptionalText(runtimeOptions.modelKey) ||
-      cleanOptionalText(template?.model) ||
-      LOCAL_CODER_CONTROLLER_MODEL_KEY,
+    provider: cleanOptionalText(runtimeOptions.provider) || '',
+    model: cleanOptionalText(runtimeOptions.modelKey) || '',
   };
 }
 
@@ -229,6 +187,10 @@ function normalizeDeckEdges(value: unknown): DeckEdge[] {
       (edge) =>
         safeText(edge.id).trim() !== 'edge_magentic_thinkgraph' &&
         !REMOVED_DEFAULT_EDGE_IDS.has(safeText(edge.id).trim()),
+    ).map((edge) =>
+      edge.id === 'edge_main_chat_hermes'
+        ? { ...edge, edgeType: 'flow' as const }
+        : edge,
     ),
   );
 }
@@ -456,7 +418,6 @@ export function hydrateDeckDocument(
     nodes: hydratedDeck.nodes
       .filter((node) => !bannedNodeIds.has(node.id))
       .map(normalizeLocalCoderControllerCard)
-      .map(normalizeRetiredMagenticOneDefault)
       .map((node) => migrateSystemToolGrants(node, sourceGrantVersion)),
     edges: hydratedDeck.edges.filter(
       (edge) =>

@@ -75,7 +75,7 @@ export type PythonMcpToolResult = { ok: boolean; [key: string]: unknown };
 export type PythonMcpCapabilityMetadata = {
   surface: 'knowledge' | 'tools' | 'system';
   capabilityType: 'callable_tool';
-  graphAuthority: 'thinkgraph' | 'knowgraph' | 'codegraph' | 'agentgraph' | null;
+  graphAuthority: 'engraphis' | 'graphiti' | 'cbm' | 'agentgraph' | null;
   authorityClass: string;
   runtimeCompatibility: string[];
   cardAssignable: boolean;

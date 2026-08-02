@@ -280,96 +280,6 @@ async def canvas_upsert_wire(args: dict[str, Any]) -> dict[str, Any]:
     return await asyncio.to_thread(_apply)
 
 
-# ---------------------------------------------------------------------------
-# thinkgraph.get_graph_slice — bounded READ of stored project reasoning.
-# Main and Hermes read the same project projection through MCP. Main's separate
-# submit tool owns writes; Hermes never receives that grant.
-# ---------------------------------------------------------------------------
-
-
-async def thinkgraph_get_graph_slice(args: dict[str, Any]) -> dict[str, Any]:
-    _require(args, "projectId")
-    project_id = str(args["projectId"]).strip()
-    limit = args.get("limit")
-    query = f"/api/thinkgraph/graph-view?projectId={project_id}"
-    if isinstance(limit, int) and limit > 0:
-        query += f"&limit={min(limit, 2000)}"
-    result = await asyncio.to_thread(_backend_json, "GET", query)
-    if not result.get("ok", True) and result.get("error"):
-        raise ControlPlaneError(f"thinkgraph_slice_failed: {result.get('error')}")
-    return {"ok": True, "projectId": project_id, **{k: v for k, v in result.items() if k != "ok"}}
-
-
-# ---------------------------------------------------------------------------
-# graphview.* — bounded AgentGraph reference views, never copied graph payloads.
-# ---------------------------------------------------------------------------
-
-
-async def graph_view_list(args: dict[str, Any]) -> dict[str, Any]:
-    _require(args, "projectId", "conversationId")
-    project_id = str(args["projectId"]).strip()
-    conversation_id = str(args["conversationId"]).strip()
-    project_wide = args.get("projectWide") is True
-    limit = args.get("limit")
-    bounded_limit = max(1, min(int(limit), 50)) if isinstance(limit, int) else 20
-    result = await asyncio.to_thread(
-        ag.list_graph_views,
-        project_id=project_id,
-        conversation_id=None if project_wide else conversation_id,
-        limit=bounded_limit,
-    )
-    views = list(result.get("views") or [])
-    return {
-        "ok": True,
-        "projectId": project_id,
-        "conversationId": conversation_id,
-        "readScope": "project" if project_wide else "conversation",
-        "views": views,
-    }
-
-
-async def graph_view_get(args: dict[str, Any]) -> dict[str, Any]:
-    _require(args, "projectId", "conversationId", "viewId")
-    project_id = str(args["projectId"]).strip()
-    conversation_id = str(args["conversationId"]).strip()
-    project_wide = args.get("projectWide") is True
-    view_id = str(args["viewId"]).strip()
-    try:
-        return await asyncio.to_thread(
-            ag.get_graph_view,
-            project_id=project_id,
-            conversation_id=None if project_wide else conversation_id,
-            view_id=view_id,
-        )
-    except ag.AgentGraphError as error:
-        raise ControlPlaneError(str(error)) from error
-
-
-async def graph_view_create(args: dict[str, Any]) -> dict[str, Any]:
-    _require(args, "projectId", "conversationId", "correlationId", "displayLabel", "references")
-    project_id = str(args["projectId"]).strip()
-    conversation_id = str(args["conversationId"]).strip()
-    correlation_id = str(args["correlationId"]).strip()
-    references = args.get("references")
-    if not isinstance(references, list):
-        raise ControlPlaneError("graph_view_references_invalid")
-    try:
-        return await asyncio.to_thread(
-            ag.create_graph_view,
-            project_id=project_id,
-            conversation_id=conversation_id,
-            correlation_id=correlation_id,
-            display_label=str(args["displayLabel"]).strip(),
-            references=references,
-            producing_role="main_chat",
-            receiving_role=str(args.get("receivingRole") or "main_chat").strip(),
-            parent_view_id=str(args.get("parentViewId") or "").strip() or None,
-            note=str(args.get("note") or "").strip() or None,
-        )
-    except ag.AgentGraphError as error:
-        raise ControlPlaneError(str(error)) from error
-
-
 async def agentgraph_inspect(args: dict[str, Any]) -> dict[str, Any]:
     _require(args, "projectId", "deckId", "conversationId")
     project_wide = args.get("projectWide") is True
@@ -411,13 +321,6 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
     instruction_id = str(args.get("instructionId") or "").strip()
     originating_agent_id = str(args.get("originatingAgentId") or "").strip()
     originating_run_id = str(args.get("originatingRunId") or "").strip()
-    graph_view_ids = [
-        str(value).strip()
-        for value in (args.get("graphViewIds") or [])
-        if str(value).strip()
-    ]
-    if len(graph_view_ids) > 16 or len(graph_view_ids) != len(set(graph_view_ids)):
-        raise ControlPlaneError("agentgraph_graph_view_ids_invalid")
     project_id = str(args["projectId"]).strip()
     card_id = str(args["cardId"]).strip()
     correlation_id = str(args["correlationId"]).strip()
@@ -455,7 +358,6 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
         **({"instructionId": instruction_id} if instruction_id else {}),
         **({"senderCardId": originating_agent_id} if instruction_id else {}),
         **({"parentRunId": originating_run_id} if originating_run_id else {}),
-        **({"graphViewIds": graph_view_ids} if graph_view_ids else {}),
         "input": instruction,
     }
 

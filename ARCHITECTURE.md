@@ -186,7 +186,7 @@ fourth data authority.
 
 PostgreSQL AGE is the sole AgentGraph authority. It stores exact Markdown agent handoffs, sender and
 receiver identity, and minimal result/derivation lineage. It does not copy, proxy, expand, or merge
-ThinkGraph, KnowGraph, CodeGraph, Graph Views, tools, models, or Card Canvas configuration.
+the native graph authorities, tools, models, or Card Canvas configuration.
 
 ## Trading and retained specialists
 

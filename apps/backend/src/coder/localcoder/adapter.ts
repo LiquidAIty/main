@@ -507,7 +507,7 @@ function createRuntimeDiagnostics(
   env: NodeJS.ProcessEnv,
   mcpMode: 'production' | 'disabled',
 ): LocalCoderRuntimeDiagnostics {
-  const model = String(packet.providerModelId || env.OPENAI_MODEL || '');
+  const model = String(packet.providerModelId || '');
   return {
     commandPath: '',
     argvShape: [],
@@ -743,6 +743,7 @@ export class LocalCoderAdapter {
 
   private envMissing(packet?: CoderPacket): string[] {
     const missing: string[] = [];
+    if (!packet) return missing;
     const provider = String(packet?.modelProvider || 'openai').trim().toLowerCase();
     const apiKey =
       provider === 'openrouter'
@@ -751,8 +752,8 @@ export class LocalCoderAdapter {
     if (!apiKey) {
       missing.push('localcoder_env_missing: OPENAI_API_KEY');
     }
-    if (!String(packet?.providerModelId || this.env.OPENAI_MODEL || '').trim()) {
-      missing.push('localcoder_model_missing: providerModelId_or_OPENAI_MODEL');
+    if (!String(packet.providerModelId || '').trim()) {
+      missing.push('localcoder_model_missing: providerModelId');
     }
     return missing;
   }
@@ -877,7 +878,7 @@ export class LocalCoderAdapter {
     // subagent) — see buildOpenClaudeSubagentArgs.
     return buildOpenClaudeSubagentArgs({
       prompt,
-      model: String(packet.providerModelId || this.env.OPENAI_MODEL),
+      model: String(packet.providerModelId),
       permissionMode: deriveLocalCoderPermissionMode(packet),
       jsonSchema: coderReportJsonSchema,
       mcpFlags,
@@ -979,7 +980,7 @@ export class LocalCoderAdapter {
     }
     runtimeDiagnostics.commandPath = runtime.describe;
 
-    const envMissing = this.envMissing();
+    const envMissing = this.envMissing(packet);
     if (envMissing.length > 0) {
       return {
         report: buildBlockedReport(packet.id, envMissing.join('; '), setupCommand),
@@ -1020,7 +1021,7 @@ export class LocalCoderAdapter {
                 OPENAI_BASE_URL: String(this.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1'),
               }
             : {}),
-          OPENAI_MODEL: String(packet.providerModelId || this.env.OPENAI_MODEL || ''),
+          OPENAI_MODEL: String(packet.providerModelId),
           CLAUDE_CODE_USE_OPENAI: '1',
         },
         shell: runtime.shell,

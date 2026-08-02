@@ -5,7 +5,6 @@
 @status active
 @related_to magentic-one-runtime
 @related_to no-fake-surfaces
-@related_to planflow-no-deterministic-projection
 
 ## Vector Summary
 
@@ -16,9 +15,8 @@ A sleep/echo script is never proof. If the answer does not appear in the chat pa
 
 ## How To Run The Test
 
-1. Confirm all three dev services are listening: frontend 5173, backend 4000, Python rails 8003.
-   - If 8003 is missing the chat goes silent (rails down). Start the whole stack with `npm run dev:all`,
-     or start only the rails with `npm run dev:autogen` (uvicorn app.main:app on 127.0.0.1:8003).
+1. Start the canonical full stack once with `npm run dev:fresh`, then confirm frontend 5173,
+   backend 4000, and Python rails 8003 are listening. Do not launch individual services.
 2. Open Agent Builder in the running app for the real loaded project (do not invent a project/deck id;
    use the one already open in the URL, e.g. `?projectId=...`, with its real deck and its real
    magentic_one card already on the canvas).
@@ -34,19 +32,15 @@ A sleep/echo script is never proof. If the answer does not appear in the chat pa
 @guardrail id=how-to-run-a-test.no-compile-only-claim
 @guardrail id=how-to-run-a-test.no-curl-200-claim
 @guardrail id=how-to-run-a-test.no-fake-script
-@guardrail id=how-to-run-a-test.artifact-never-suppresses-answer
 
 * PASS only when the real model answer renders in the chat UI.
 * Never claim success from `npx tsc --noEmit` alone — compile is not behavior.
 * Never claim success from a curl HTTP 200 alone — that bypasses the UI and does not prove chat render.
 * Never run a `sleep`/`echo`/no-op script and report a fabricated "200"/"ok" result.
-* The Task Ledger artifact may exist on the same turn; it must NEVER replace or hide the real answer.
 
 ## Known Failure Modes
 
 @note id=how-to-run-a-test.rails-down Python rails (8003) not running -> every send fails with PYTHON_AUTOGEN_RAILS_UNAVAILABLE. Fix: start the rails, do not fake an answer.
-@note id=how-to-run-a-test.answer-suppressed Chat shows "Task Ledger artifact captured on canvas" / "Plan created on canvas" instead of the real answer -> a suppression gate is hiding finalText whenever taskLedgerArtifact exists. Fix: real finalText wins for chat; artifact is a separate surface.
-
 ## Query Patterns
 
-@query id=how-to-run-a-test.run "send a cheap marked prompt through the real Agent Builder chat UI and confirm the real Magentic-One answer renders in the chat panel; rails 8003 up; artifact must not suppress the answer"
+@query id=how-to-run-a-test.run "send a cheap marked prompt through the real Agent Builder chat UI and confirm the real Magentic-One answer renders in the chat panel with the canonical full stack running"

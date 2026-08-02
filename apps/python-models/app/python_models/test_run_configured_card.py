@@ -2,7 +2,7 @@
 
 Proves: the structural guard is honest (magentic runtime rejected, orchestrator
 mismatch rejected, participant count enforced, empty task rejected), a guard
-failure produces zero Task Ledger output, and the single participant is built
+failure starts no model, and the single participant is built
 through the SAME shared builder the Mag One path uses (same tool registry with
 loud unknown-tool failure — never silently dropped).
 """
@@ -69,15 +69,16 @@ def _durable_outer_boundaries(monkeypatch):
         lambda **kwargs: {"assignmentId": f"assignment:{kwargs['correlation_id']}"},
     )
     monkeypatch.setattr(
-        mac.rq,
-        "hydrate_assignment_context",
-        lambda **kwargs: mac.rq.HydratedAssignmentContext(
-            instruction="run",
-            claim_token="claim:test",
-            optional_bindings=(),
-            model_context="run",
-        ),
+        mac.ag,
+        "read_assignment",
+        lambda **_kwargs: {"instruction": "run", "contextReferences": []},
     )
+    monkeypatch.setattr(
+        mac.ag,
+        "claim_assignment",
+        lambda **_kwargs: {"claimToken": "claim:test"},
+    )
+    monkeypatch.setattr(mac.ag, "record_assignment_runtime_context", lambda **_kwargs: None)
     monkeypatch.setattr(
         mac.ag,
         "finish_assignment",
@@ -119,25 +120,24 @@ class TestSingleCardGuard:
 
 
 # --------------------------------------------------------------------------- #
-# guard failure path — honest error, zero Task Ledger, no model client built
+# guard failure path — honest error, no model client built
 # --------------------------------------------------------------------------- #
 class TestGuardFailureResponse:
-    def test_guard_failure_returns_honest_error_and_no_task_ledger(self):
+    def test_guard_failure_returns_honest_error(self):
         response = asyncio.run(mac.run_configured_card(_context(participants=[])))
         assert response.ok is False
         assert "single_card_participant_count_invalid" in (response.error or "")
         assert response.finalResponseText == ""
-        assert response.taskLedgerArtifact is None
         assert response.session.turnId == "corr-1"  # correlation preserved
 
-    def test_assignment_hydration_failure_starts_no_model(self, monkeypatch):
+    def test_assignment_read_failure_starts_no_model(self, monkeypatch):
         model_calls: list[str] = []
         cancelled: list[dict[str, object]] = []
         monkeypatch.setattr(
-            mac.rq,
-            "hydrate_assignment_context",
+            mac.ag,
+            "read_assignment",
             lambda **_kwargs: (_ for _ in ()).throw(
-                RuntimeError("registered_operation_materialization_failed")
+                RuntimeError("assignment_reference_read_failed")
             ),
         )
         monkeypatch.setattr(
@@ -160,7 +160,7 @@ class TestGuardFailureResponse:
         response = asyncio.run(mac.run_configured_card(_context()))
 
         assert response.ok is False
-        assert "registered_operation_materialization_failed" in (response.error or "")
+        assert "assignment_reference_read_failed" in (response.error or "")
         assert model_calls == []
         assert response.assignmentId == "assignment:corr-1"
         assert response.resultId == "agentresult:assignment:corr-1"
@@ -171,7 +171,7 @@ class TestGuardFailureResponse:
                 "requested_by_card_id": "tg",
                 "reason": (
                     "agentgraph_assignment_begin_failed: "
-                    "registered_operation_materialization_failed"
+                    "assignment_reference_read_failed"
                 ),
             }
         ]
@@ -289,61 +289,3 @@ class TestAssignmentToolAuthority:
             }
         ]
         assert mac.ACTIVE_AGENT_ASSIGNMENT_CONTEXT.get() is None
-
-
-class TestRegisteredQueryContext:
-    def test_required_view_materializes_before_model_and_optional_stays_callable(
-        self, monkeypatch
-    ):
-        events: list[str] = []
-        tasks: list[str] = []
-        attached_tools: list[str] = []
-        optional = mac.rq.QueryBinding(
-            project_id="p",
-            card_id="tg",
-            binding_id="optional_detail",
-            query_id="project.detail",
-            query_version=1,
-            delivery_mode="optional",
-            parameters={},
-        )
-        class FakeAgent:
-            async def run(self, *, task):
-                tasks.append(task)
-                return SimpleNamespace(messages=[SimpleNamespace(content="done")])
-
-        def hydrate(**kwargs):
-            events.append("materialized")
-            return mac.rq.HydratedAssignmentContext(
-                instruction="Use registered context.",
-                claim_token="claim:test",
-                optional_bindings=(optional,),
-                model_context=(
-                    "materialized context\n"
-                    "graphview:query:one\n"
-                    '{"fact":"bounded"}\n'
-                    "optional_detail: project.detail@v1"
-                ),
-            )
-
-        monkeypatch.setattr(mac.rq, "hydrate_assignment_context", hydrate)
-        monkeypatch.setattr(
-            mac,
-            "_build_model_client",
-            lambda _config: (events.append("model") or _FakeToolClient()),
-        )
-
-        def build(_context, _client, *, extra_tools=None):
-            attached_tools.extend(tool.name for tool in (extra_tools or []))
-            return [FakeAgent()]
-
-        monkeypatch.setattr(mac, "_build_participants", build)
-
-        response = asyncio.run(mac.run_configured_card(_context("Use registered context.")))
-
-        assert response.ok is True
-        assert events == ["materialized", "model"]
-        assert attached_tools == ["execute_registered_query"]
-        assert "graphview:query:one" in tasks[0]
-        assert '{"fact":"bounded"}' in tasks[0]
-        assert "optional_detail: project.detail@v1" in tasks[0]

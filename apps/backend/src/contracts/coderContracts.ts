@@ -68,11 +68,10 @@ export type CoderPacket = z.infer<typeof coderPacketSchema>;
 export type CoderReport = z.infer<typeof coderReportSchema>;
 
 // ── direct_main_audit structured result ──────────────────────────────────────
-// A read-only audit returns a concise conclusion + a FILTERED CodeGraph view
-// (CodeGraphViewContract fields mirrored from client/src/components/codegraph/types.ts)
-// + evidence — NOT a CoderReport. The view only references canonical CodeGraph node
+// A read-only audit returns a concise conclusion + a filtered CodeGraph projection
+// contract + evidence — NOT a CoderReport. The projection only references canonical CodeGraph node
 // IDs / files / symbols; Coder annotations stay in the audit body, never rewriting facts.
-const codeGraphViewContractSchema = z.object({
+const codeGraphProjectionContractSchema = z.object({
   projectId: z.string().nullable().optional(),
   focusPaths: z.array(z.string()).optional(),
   focusSymbols: z.array(z.string()).optional(),
@@ -97,11 +96,11 @@ export const coderAuditResultSchema = z.object({
   risks: z.array(z.string()),
   implementationBoundaries: z.array(z.string()),
   requiredTests: z.array(z.string()),
-  viewContract: codeGraphViewContractSchema,
+  projectionContract: codeGraphProjectionContractSchema,
   artifactRefs: z.array(z.string()),
 }).strict();
 
-export type CodeGraphViewContractResult = z.infer<typeof codeGraphViewContractSchema>;
+export type CodeGraphProjectionContractResult = z.infer<typeof codeGraphProjectionContractSchema>;
 export type CoderAuditResult = z.infer<typeof coderAuditResultSchema>;
 
 export const coderAuditResultJsonSchema = {
@@ -111,7 +110,7 @@ export const coderAuditResultJsonSchema = {
     'conclusion', 'repositoryRoot', 'repositoryIdentity', 'revision', 'freshness',
     'codeGraphQuery', 'codeGraphNodeRefs', 'files', 'symbols', 'findings',
     'unresolvedQuestions', 'risks', 'implementationBoundaries', 'requiredTests',
-    'viewContract', 'artifactRefs',
+    'projectionContract', 'artifactRefs',
   ],
   properties: {
     conclusion: { type: 'string', minLength: 1 },
@@ -128,7 +127,7 @@ export const coderAuditResultJsonSchema = {
     risks: { type: 'array', items: { type: 'string' } },
     implementationBoundaries: { type: 'array', items: { type: 'string' } },
     requiredTests: { type: 'array', items: { type: 'string' } },
-    viewContract: {
+    projectionContract: {
       type: 'object',
       additionalProperties: false,
       properties: {

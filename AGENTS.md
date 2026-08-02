@@ -248,7 +248,7 @@ from the live codebase.
 Before a coding task touching a known feature, the explicitly selected feature
 manifest(s) are loaded and their anchors are re-resolved through live CBM.
 
-Primary and supporting features are selected by the Planner, Task Ledger, or current
+Primary and supporting features are selected by the Planner, current CoderPacket, or current
 SPEC — never inferred by regex, phrase routing, or automatic classification.
 
 After a coding task completes, the CoderReport identifies affected feature IDs and
@@ -336,7 +336,7 @@ task node
 → bounded CoderPacket
 → coder execution
 → CoderReport with proof
-→ Progress Ledger result
+→ AGEntgraph result receipt
 → reusable lesson becomes skill candidate
 → user approves or edits skill
 → skill saved to skills/*.md
@@ -360,11 +360,9 @@ The first launch wedge is the coding loop:
 
 ```txt
 user chat
-→ planner context pull
+→ reviewed AGEntgraph assignment
 → real Magentic-One / AutoGen through Python rails
-→ real Task Ledger artifact
-→ PlanFlow task nodes
-→ Go / Run review
+→ native team result
 → one bounded CoderPacket
 → coder
 → structured CoderReport
@@ -422,39 +420,9 @@ Python rails restart/reload required: yes
 
 Do not nag repeatedly.
 
-## Real Task Ledger Law
+## Native AutoGen Ledger Boundary
 
-The Task Ledger is real.
-
-It comes from:
-
-```txt
-Python rails
-→ AutoGen / Magentic-One
-→ taskLedgerArtifact
-```
-
-The real Task Ledger may include:
-
-```txt
-team composition
-agent assignments
-which agents are planned to be used
-what the agent team plans to do
-facts gathered
-internal plan
-full task ledger
-runtime/provenance
-model-call proof
-```
-
-This is correct and required.
-
-Do not remove team composition.
-
-Do not remove agent assignment planning.
-
-Do not dumb the Task Ledger down.
+Task and Progress Ledgers are private native AutoGen / Magentic-One runtime state.
 
 Do not override AutoGen defaults.
 
@@ -462,9 +430,13 @@ Do not edit vendored AutoGen.
 
 Do not override `_get_task_ledger_plan_prompt`.
 
-Do not replace the real Task Ledger with frontend/backend fake data.
+Do not subclass Magentic One to capture its orchestrator.
 
-If the real Task Ledger output is ugly, expose the real state. Do not hide it with deterministic cleanup.
+Do not read `_facts`, `_plan`, `_team_description`, or other private ledger state.
+
+Do not reconstruct, transport, project, trace, or render Task/Progress Ledger artifacts.
+
+Do not replace native ledgers with frontend/backend fake data.
 
 ## Deterministic Content Logic Ban
 
@@ -632,7 +604,7 @@ fresh CBM / CodeGraph evidence
 relevant SkillsGraph / Neo4j skills
 specific skills/*.md files
 KnowGraph only when relevant
-recent Progress Ledger results
+recent AGEntgraph results
 ```
 
 Codebase Memory / CodeGraph is the structural map.
@@ -651,15 +623,8 @@ Skills update only for reusable procedures, boundaries, proof rules, failed atte
 
 PlanFlow is the durable task-object canvas.
 
-PlanFlow must be fed by real artifacts, not chat text.
-
-Allowed source:
-
-```txt
-taskLedgerArtifact.planResponse
-```
-
-Forbidden sources:
+PlanFlow task creation is not currently wired. Until a separately reviewed native contract exists,
+it must fail closed. Forbidden sources include:
 
 ```txt
 finalResponseText
@@ -668,8 +633,6 @@ chat text
 fallback assistant text
 fake task objects
 ```
-
-PlanFlow may render task nodes from the real Task Ledger artifact.
 
 PlanFlow must not deterministically rewrite task text.
 

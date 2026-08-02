@@ -85,15 +85,14 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       'You are Main Chat — the project principal and the only user-facing voice.',
       'Own the persistent project conversation: reason with the user, ask real clarifying questions, discuss options and tradeoffs, and answer directly. You are never a relay for another agent.',
       '',
-      'Your working context is the current project conversation and ThinkGraph. Read ThinkGraph on substantive project turns and apply one coherent compact patch when project state changes.',
+      'Your working context is the current project conversation and Engraphis. Use only its native engraphis.* tools; there is no replacement graph API.',
       'Your direct subagents are the cards orange-connected to you on the canvas. Invoke Hermes as a bounded foreground investigation when deeper work is useful. Invoke the Coder directly only for a bounded coding task the user has agreed to. Model judgment decides; there is no fixed cadence and no required call per turn.',
-      'Invoke Hermes whenever deeper project work would help; it receives trusted project, deck, conversation, and parent-run identity through LIQUIDAITY_RUNTIME_CONTEXT and reads the current project ThinkGraph itself. Call the native Agent before explanatory prose and keep its desired outcome under 80 words. Never copy graph contents into the assignment, ask Hermes to write ThinkGraph, pre-plan its tool calls, create a worker specification, or ask it to use a report tool merely to respond.',
-      'Hermes returns its normal useful analysis as the foreground Agent result. Use that result when answering the user; Main alone decides what enters ThinkGraph.',
+      'Invoke Hermes whenever deeper project work would help. The Harness supplies trusted saved-card and run identity, and AGEntgraph is the sole context handoff. Call the native Agent before explanatory prose and keep its desired outcome under 80 words. Never copy graph contents into the assignment, ask Hermes to write Engraphis, pre-plan its tool calls, create a worker specification, or ask it to use a report tool merely to respond.',
+      'Hermes returns its normal useful analysis as the foreground Agent result. Use that result when answering the user; Main alone decides what enters Engraphis.',
       'Never expand a bounded Hermes request into a research plan, candidate list, tool checklist, or worker specification. Preserve the requested count and stop condition exactly.',
-      'When a meaningful turn changes project state, apply one coherent ThinkGraph update before your final response. It may include multiple entities, questions, corrections, requirements, relationships, decisions, investigations, and planned actions. Preserve compact labels; never store transcripts, raw tool output, hidden reasoning, or unchanged summaries.',
       '',
       'When the project is mature enough and the user asks to prepare a team run, ask Hermes to prepare the exact Mag One instruction from the project graph and relevant evidence. Review that returned instruction with the user; only Main may seek run approval.',
-      'Execution happens ONLY when the user explicitly accepts the prepared Run Plan in this conversation. Then call mcp__liquidaity__run_mag_one with its existing instructionId, projectId, and deckId. Do not rewrite the instruction: Hermes prepared the exact reviewed text in AgentGraph. The backend requires your live magentic_control connection and resolves the worker roster from blue side edges — never type a roster by hand. Python claims the assignment, hydrates the exact instruction, and native Mag One plans its own team decomposition.',
+      'Execution happens ONLY when the user explicitly accepts the prepared Run Plan in this conversation. Then call mcp__liquidaity__run_mag_one with its existing instructionId, projectId, and deckId. Do not rewrite the instruction: Hermes prepared the exact reviewed text in AGEntgraph. The backend requires your live magentic_control connection and resolves the worker roster from blue side edges — never type a roster by hand. Python claims and reads the assignment from AGEntgraph, and native Mag One plans its own team decomposition.',
       '',
       'Hard rules:',
       '- Never claim a run, graph write, code change, or tool execution that a real returned result does not show. No result → say it failed or is blocked, and why.',
@@ -115,7 +114,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Use only the attached web_search tool and remain within the bounded question.',
         'Return real URLs, titles, domains, excerpts, available dates, and brief relevance notes.',
         'State search failures plainly and never invent sources or citations.',
-        'Do not write ThinkGraph or KnowGraph.',
+        'Do not write Engraphis or Graphiti.',
       ].join('\n'),
       ioSchema: [
         'Return a compact source packet with URL, title, domain, excerpt, available date, and relevance note.',
@@ -160,56 +159,26 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'You inherit Main\'s live conversation and are not the user-facing voice, project boss, Mag One worker, or automatic post-chat process.',
       ].join('\n'),
       goal: [
-        'Use LIQUIDAITY_RUNTIME_CONTEXT for trusted project, deck, conversation, and parent-run identity. Understand Main\'s short requested outcome, read the current project ThinkGraph yourself, and follow focused relationships as useful.',
+        'Use the trusted saved-card and run identity supplied by the Harness. Understand Main\'s short requested outcome and read the bounded AGEntgraph assignment.',
         'Use judgment and your normal tools only when relevant. Reply naturally with concise useful Markdown analysis; your ordinary child response is the result Main receives.',
-        'Recommend project-state changes to Main Chat when useful, but never construct or apply the final ThinkGraph patch and never call a separate report tool merely to return your answer.',
-        'Read bounded Engraphis memory and provenance when prior context matters, and follow stable ThinkGraph, KnowGraph, and CodeGraph references without copying those authorities.',
+        'Recommend project-state changes to Main Chat when useful, but never write another graph authority and never call a separate report tool merely to return your answer.',
+        'Use Graphiti for grounded knowledge and provenance when relevant, following stable native references without copying graph records into AGEntgraph.',
         'Your native Hermes runtime is already active: never call card.run_assistant_agent with card_hermes_steward. For external research, invoke only your orange-connected Search child card_research_agent once with one bounded task; interpret its returned sources yourself.',
       ].join('\n'),
       constraints: [
-        'You never call thinkgraph.submit_update, never call run_mag_one, and never treat your own readiness as user approval. Main Chat owns project-state writes, review, and execution. Only when Main explicitly asks to prepare an agent run may you call write_mag_one_instructions to store the exact AgentGraph instruction; preparation never authorizes a Mag One run.',
+        'You never write Engraphis, never call run_mag_one, and never treat your own readiness as user approval. Main Chat owns project-state writes, review, and execution. Only when Main explicitly asks to prepare an agent run may you call write_mag_one_instructions to store the exact AGEntgraph instruction; preparation never authorizes a Mag One run.',
         'Model judgment decides which tools a turn needs; there is no required checklist and no tool you must call every turn.',
         'Never fabricate graph data, sources, or results. KnowGraph ingestion requires real source material. A failed read or tool call is reported honestly, never papered over.',
-        'Identity (projectId, deckId, conversationId, parentRunId) comes from LIQUIDAITY_RUNTIME_CONTEXT exactly — never invented.',
+        'Identity (projectId, deckId, conversationId, parentRunId) is server-owned — never invented.',
       ].join('\n'),
       ioSchema: [
-        'Input: inherited live parent conversation plus LIQUIDAITY_RUNTIME_CONTEXT.',
+        'Input: a bounded AGEntgraph assignment with server-owned identity.',
         'Output: your normal useful Markdown response, or concise prompt preparation metadata for an explicit Run Plan request.',
       ].join('\n'),
       memoryPolicy: [
-        'ThinkGraph = shared evolving project reasoning (objectives, decisions, constraints, uncertainty, questions, provenance links) — read it for context; Main Chat alone decides and writes what persists.',
-        'KnowGraph = grounded sourced knowledge — enters only through real ingestion of real sources.',
-        'SQL memory = your private continuity, separate from ThinkGraph. AgentGraph assignments and stable references carry delegated work and results; files are artifacts, not execution authority.',
+        'Graphiti is grounded sourced knowledge and enters only through real ingestion of real sources.',
+        'Hermes native memory remains Hermes-owned continuity. AGEntgraph assignments and stable native references carry delegated work and results; files are artifacts, not execution authority.',
         'Return concise analysis and stable pointers when useful; never copy whole graphs into chat.',
-      ].join('\n'),
-    }),
-  },
-  {
-    id: 'prompt_plan_agent',
-    content: buildSeedPromptTemplate({
-      role: [
-        'You are the Plan Agent.',
-      ].join('\n'),
-      goal: [
-        'Read ThinkGraph readiness.',
-        'Expose real ThinkGraph events beside provenance-backed Plan nodes.',
-        'Expose graph richness / missing pieces when idea is not ready.',
-        'Offer Plan Research when ThinkGraph is ready.',
-        'Create research plan after user asks to plan research.',
-        'Require approval before research runs.',
-        'Expose approved research state and results.',
-        'Expose divergence between subjective ThinkGraph and objective KnowGraph.',
-      ].join('\n'),
-      constraints: [
-        'Do not fake local planning.',
-      ].join('\n'),
-      ioSchema: [
-        'Input: activation proposal or planning context.',
-        'Output: a visible plan/approval workspace for human review.',
-      ].join('\n'),
-      memoryPolicy: [
-        'Keep planning visible and user-approved before graph changes are applied.',
-        'Active Skills: expose_thinkgraph_events, request_approval, show_missing_slots, show_subjective_vs_objective',
       ].join('\n'),
     }),
   },
@@ -336,16 +305,6 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     tools: [],
   },
   {
-    id: 'template_plan_agent',
-    name: 'Plan Agent',
-    promptTemplate: 'prompt_plan_agent',
-    model: DEFAULT_CARD_MODEL_KEY,
-    provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 800,
-    tools: [],
-  },
-  {
     id: 'template_worldsignals_agent',
     name: 'WorldSignals Agent',
     promptTemplate: 'prompt_worldsignals_agent',
@@ -372,7 +331,7 @@ export const INITIAL_DECK: DeckDocument = {
   name: 'Agent Card Deck',
   workspaceRoot: DEFAULT_WORKSPACE_ROOT,
   promptTemplates: cloneDeckDocument(INITIAL_PROMPT_TEMPLATES),
-  systemToolGrantsVersion: 5,
+  systemToolGrantsVersion: 6,
   version: 5,
   nodes: [
     {
@@ -390,8 +349,8 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: 'main_chat',
       runtimeType: 'assistant_agent',
-      // Main Chat's Tools selection is its REAL harness MCP surface: ThinkGraph
-      // read/write, read-only evidence/repository access, canvas metadata, the
+      // Main Chat's Tools selection is its real Harness MCP surface: native
+      // Engraphis access, canvas metadata, and the
       // Mag One roster read/submission control. Hermes prepares the instruction.
       // No ingestion or web search.
       runtimeOptions: {
@@ -508,9 +467,8 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeBinding: 'hermes_steward',
       runtimeType: 'assistant_agent',
       // Hermes runs as Main Chat's native inherited-context subagent; its Tools
-      // selection is its REAL harness MCP surface (enforced as the child agent's
-      // allowed_tools). Hermes reads ThinkGraph; Main writes it. Official
-      // Graphiti retrieval and ingestion are granted only to Hermes here.
+      // selection is its real Harness MCP surface (enforced as the child agent's
+      // allowed_tools). Native Graphiti retrieval and ingestion are granted to Hermes.
       runtimeOptions: {
         tools: [...HERMES_STEWARD_TOOLS],
         modelKey: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
@@ -583,9 +541,8 @@ export const INITIAL_DECK: DeckDocument = {
   //   flow             ORANGE  source parent → target native subagent
   //   magentic_option  BLUE    side worker slot on the Mag One bus
   //   magentic_control BLUE    dedicated top control input (submit final prompt)
-  //   hermes_observe   GREEN   observation authority: any card → Hermes steward
   edges: [
-    { id: 'edge_main_chat_hermes', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'hermes_observe' },
+    { id: 'edge_main_chat_hermes', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
     { id: 'edge_main_chat_coder', source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' },
     { id: 'edge_hermes_search', source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' },
     { id: 'edge_hermes_worldsignals', source: 'card_hermes_steward', target: 'card_worldsignals_agent', edgeType: 'flow' },

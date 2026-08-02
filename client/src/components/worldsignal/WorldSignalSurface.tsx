@@ -188,11 +188,6 @@ export default function WorldSignalSurface({
           apiBaseUrl: WORLDSIGNALS_API_BASE,
           assetBaseUrl: EMBED_BASE,
           initialEnabledLayerIds: saved?.enabledLayerIds,
-          onSelectionChange: (selection) => {
-            window.dispatchEvent(
-              new CustomEvent('worldsignals:selected-object', { detail: selection }),
-            );
-          },
           onInspectorSectionRequest: (section) => {
             callbacksRef.current.onInspectorSectionRequest?.(section);
           },

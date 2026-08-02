@@ -265,7 +265,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
     expect(interactive.ok).toBe(true);
   });
 
-  it('uses --help argv verbatim when explicit args are provided (smoke path)', () => {
+  it('uses the bounded execution argv verbatim when explicit args are provided', () => {
     const child = new FakeChild();
     const { manager, spawnProcess } = managerWith(child);
     manager.start({ targetRoot: tmpdir(), mode: 'interactive', args: ['--help'] });

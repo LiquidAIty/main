@@ -22,7 +22,7 @@ const mockGetDeck = getDeckDocument as unknown as ReturnType<typeof vi.fn>;
 const mockRunCard = runSingleCardWithAutoGen as unknown as ReturnType<typeof vi.fn>;
 
 const AGENT_CARD = {
-  id: 'card_thinkgraph_agent',
+  id: 'card_saved_worker',
   kind: 'agent',
   title: 'ThinkGraph Agent',
   runtimeType: 'assistant_agent',
@@ -53,7 +53,7 @@ function deckWith(nodes: any[], edges: any[] = []) {
 const ARGS = {
   projectId: 'proj-1',
   deckId: 'deck_builder',
-  cardId: 'card_thinkgraph_agent',
+  cardId: 'card_saved_worker',
   correlationId: 'corr-123',
   input: 'summarize the completed pair',
 };
@@ -157,7 +157,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.session.route).toBe('single_card');
     expect(payload.cardRuntime.runtimeType).toBe('assistant_agent');
     expect(payload.cardRuntime.participants).toHaveLength(1);
-    expect(payload.cardRuntime.participants[0].cardId).toBe('card_thinkgraph_agent');
+    expect(payload.cardRuntime.participants[0].cardId).toBe('card_saved_worker');
     expect(payload.cardRuntime.privateParticipants[0].prompt).toBe('You are the ThinkGraph agent.');
     // The configured card's model — resolved server-side, never caller-supplied.
     expect(payload.session.modelKey).toBe('gpt-5-nano');
@@ -244,7 +244,6 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
       conversationId: 'conv-7',
       instructionId: 'instruction:one',
       senderCardId: 'card_main_chat',
-      graphViewIds: ['graphview:one', 'graphview:two'],
     });
 
     const payload = mockRunCard.mock.calls[0][0];
@@ -252,8 +251,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.agentAssignment).toEqual({
       instructionId: 'instruction:one',
       senderCardId: 'card_main_chat',
-      receiverCardId: 'card_thinkgraph_agent',
-      graphViewIds: ['graphview:one', 'graphview:two'],
+      receiverCardId: 'card_saved_worker',
     });
     expect(JSON.stringify(payload)).not.toContain('stored Markdown');
   });
@@ -331,58 +329,23 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(result.error).toContain('PYTHON_AUTOGEN_RAILS_UNAVAILABLE');
   });
 
-  it('never mints graph authority from a configured-card binding or conversation', async () => {
-    mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
-    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'ok' });
-    await runConfiguredCard({ ...ARGS, conversationId: 'conv-7' });
-    const payload = mockRunCard.mock.calls[0][0];
-    expect(payload.cardRuntime.runtimeScope).toBeUndefined();
-  });
-
-  it('mints NO authority without a real conversation', async () => {
-    mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
-    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'ok' });
-    await runConfiguredCard(ARGS);
-    const payload = mockRunCard.mock.calls[0][0];
-    expect(payload.cardRuntime.runtimeScope).toBeUndefined();
-  });
-
-  it('does not give a configured Hermes card native Harness graph authority', async () => {
-    const HERMES_CARD = {
-      ...AGENT_CARD,
-      id: 'card_hermes_steward',
-      title: 'Hermes Steward',
-      runtimeBinding: 'hermes_steward',
-    };
-    mockGetDeck.mockResolvedValue(deckWith([HERMES_CARD]));
-    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'ok' });
-    await runConfiguredCard({ ...ARGS, cardId: 'card_hermes_steward', conversationId: 'conv-7' });
-    const payload = mockRunCard.mock.calls[0][0];
-    expect(payload.cardRuntime.runtimeScope).toBeUndefined();
-  });
-
-  it('never mints thinkgraph authority for a non-thinkgraph card, conversation or not', async () => {
-    mockGetDeck.mockResolvedValue(
-      deckWith([{ ...AGENT_CARD, id: 'card_research_agent', runtimeBinding: 'research_agent' }]),
-    );
-    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'ok' });
-    await runConfiguredCard({ ...ARGS, cardId: 'card_research_agent', conversationId: 'conv-7' });
-    const payload = mockRunCard.mock.calls[0][0];
-    expect(payload.cardRuntime.runtimeScope).toBeUndefined();
-  });
-
-  it('an explicit caller runAuthority always wins untouched (never overwritten by the minted default)', async () => {
+  it('rejects caller-supplied runAuthority as a runtime override', async () => {
     mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
     mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'ok' });
     const explicitAuthority = {
-      kind: 'thinkgraph_card_run',
+      kind: 'hidden_scope',
       projectId: 'proj-1',
-      cardId: 'card_thinkgraph_agent',
+      cardId: 'card_saved_worker',
       correlationId: 'corr-123',
       conversationId: 'conv-7',
     };
-    await runConfiguredCard({ ...ARGS, conversationId: 'conv-OTHER', runAuthority: explicitAuthority });
-    const payload = mockRunCard.mock.calls[0][0];
-    expect(payload.cardRuntime.runtimeScope).toEqual(explicitAuthority);
+    const result = await runConfiguredCard({
+      ...ARGS,
+      conversationId: 'conv-OTHER',
+      runAuthority: explicitAuthority,
+    } as any);
+    expect(result.status).toBe('failed');
+    expect(result.error).toContain('card_run_overrides_rejected: runAuthority');
+    expect(mockRunCard).not.toHaveBeenCalled();
   });
 });

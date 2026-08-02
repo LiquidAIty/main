@@ -19,20 +19,7 @@ export type CardRunResult = {
   seed?: string;
   inputSummary?: string;
   outputSummary?: string;
-  magenticTrace?: Record<string, unknown> | null;
   agentAssignmentResult?: AgentAssignmentRunResult | null;
-};
-
-export type RuntimeScope = {
-  projectId: string;
-  deckId: string;
-  magenticCardId: string;
-  visibleNodeIds: string[];
-  visibleEdgeIds: string[];
-  resolvedMagenticOptionIds: string[];
-  pythonWorkerIds: string[];
-  calledAgentIds: string[];
-  excludedAgentIds: Array<{ id: string; reason: string }>;
 };
 
 export type RuntimeGraphNode = {
@@ -69,13 +56,6 @@ export type RuntimeGraph = {
 export type PythonAutoGenPayloadShape = {
   session: Record<string, any>;
   userText: string;
-  priorAssistantText: string;
-  systemPrompt: string;
-  plan?: Record<string, any>;
-  thinkGraph?: Record<string, any>;
-  knowGraph?: Record<string, any>;
-  blackboard?: Record<string, any>;
-  workspaceObjectContext?: Record<string, any>;
   // Stable identities only. Python creates/claims the assignment and hydrates
   // the exact relational instruction.
   agentAssignment?: { instructionId: string; senderCardId: string; receiverCardId: string };
@@ -88,6 +68,5 @@ export type PythonAutoGenPayloadShape = {
     graph: RuntimeGraph;
     participants: any[];
     privateParticipants?: any[];
-    runtimeScope?: RuntimeScope;
   };
 };

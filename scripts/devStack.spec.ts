@@ -171,12 +171,12 @@ describe('isLiquidAItyOwnedDevProcess — fresh stops ONLY grounded LiquidAIty o
     const p = {
       pid: 16,
       name: 'ngrok.exe',
-      commandLine: 'ngrok http --domain=exemption-unstable-wolverine.ngrok-free.dev 8765',
+      commandLine: 'ngrok http 8765 --url=https://exemption-unstable-wolverine.ngrok-free.dev',
     };
     expect(isLiquidAItyOwnedDevProcess(p, REPO)).toEqual({ owned: true, role: 'tunnel' });
     expect(
       isLiquidAItyOwnedDevProcess(
-        { ...p, commandLine: 'ngrok http --domain=another-domain.ngrok-free.dev 8765' },
+        { ...p, commandLine: 'ngrok http 8765 --url=https://another-domain.ngrok-free.dev' },
         REPO,
       ).owned,
     ).toBe(false);

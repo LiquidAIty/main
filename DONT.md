@@ -277,9 +277,9 @@ The items below are the major deletion events. Every one "worked" before it was 
   - Moved bounded GraphView reference/lineage persistence out of ThinkGraph/Engraphis and into
     AgentGraph. Deleted the ThinkGraph GraphView writer, its full `records_json` /
     `relationships_json` copies, and the corresponding persisted Engraphis records.
-  - Deleted the disconnected Ask Main / selected-graph-object overlay from client, backend, and
+  - Deleted the disconnected Ask Main / selected-graph overlay from client, backend, and
     Python rails. It duplicated server-owned graph resolution and never became a working
-    object-aware Main interaction.
+    Main interaction.
   - Deleted the separate TypeScript `LIQUIDAITY_INVESTIGATION_CONTEXT` packet. Hermes now receives
     only the generic server-owned runtime identities; its actual result still returns through the
     existing Python AgentGraph authority.

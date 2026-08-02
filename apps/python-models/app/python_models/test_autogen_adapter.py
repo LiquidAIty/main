@@ -1,9 +1,9 @@
 """Focused adapter contract coverage. No network/model call.
 
 Proves: connected agents are passed as plain names, the empty-message branch is
-an honest error, app-authored scaffold runtimes stay removed while the real
-AutoGen Task Ledger artifact path remains allowed, and card-selected tools are
-attached as real AutoGen FunctionTools only when selected (without executing).
+an honest error, app-authored scaffold and ledger interception stay removed,
+and card-selected tools are attached as real AutoGen FunctionTools only when
+selected (without executing).
 """
 import asyncio
 from types import SimpleNamespace
@@ -87,7 +87,7 @@ def test_mag_one_without_agentgraph_assignment_fails_before_a_model_call():
     assert res.finalResponseText == ""
 
 
-def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_tool(
+def test_mag_one_reads_agentgraph_text_and_native_references_before_model(
     monkeypatch,
 ):
     events: list[str] = []
@@ -96,8 +96,11 @@ def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_to
     attached_tools: list[str] = []
     authorities: list[dict[str, str] | None] = []
     context = _context_pack("transport placeholder")
-    context.cardRuntime.runtimeScope = {"deckId": "deck_builder"}
-    context.cardRuntime.runtimeOptions = {"temperature": 0.4, "maxTokens": 2400}
+    context.cardRuntime.runtimeOptions = {
+        "deckId": "deck_builder",
+        "temperature": 0.4,
+        "maxTokens": 2400,
+    }
     context.cardRuntime.participants[0].providerModelId = "openai/gpt-5.6-luna"
     context.cardRuntime.participants[1].providerModelId = "openai/gpt-5.6-sol"
     context.agentAssignment = AgentAssignmentRequest(
@@ -105,31 +108,36 @@ def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_to
         senderCardId="card_main_chat",
         receiverCardId="orch",
     )
-    optional = mac.rq.QueryBinding(
-        project_id="p",
-        card_id="orch",
-        binding_id="optional_detail",
-        query_id="agentgraph.detail",
-        query_version=1,
-        delivery_mode="optional",
-        parameters={},
-    )
     monkeypatch.setattr(
         mac.ag,
         "create_assignment",
         lambda **_kwargs: {"assignmentId": "assignment:t"},
     )
-
-    def hydrate(**kwargs):
-        events.append("hydrated")
-        return mac.rq.HydratedAssignmentContext(
-            instruction="Approved task.",
-            claim_token="claim:one",
-            optional_bindings=(optional,),
-            model_context="Approved task.\n\ngraphview:query:one",
-        )
-
-    monkeypatch.setattr(mac.rq, "hydrate_assignment_context", hydrate)
+    monkeypatch.setattr(
+        mac.ag,
+        "read_assignment",
+        lambda **_kwargs: events.append("read") or {
+            "instruction": "Approved task.",
+            "contextReferences": [
+                {
+                    "referenceType": "engraphis",
+                    "referenceId": "record:one",
+                    "required": True,
+                },
+                {
+                    "referenceType": "cbm",
+                    "referenceId": "symbol:two",
+                    "required": False,
+                },
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        mac.ag,
+        "claim_assignment",
+        lambda **_kwargs: events.append("claimed") or {"claimToken": "claim:one"},
+    )
+    monkeypatch.setattr(mac.ag, "record_assignment_runtime_context", lambda **_kwargs: None)
     def build_model(config):
         events.append("model")
         model_configs.append(
@@ -152,8 +160,6 @@ def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_to
     monkeypatch.setattr(mac, "_build_participants", build)
 
     class FakeTeam:
-        orchestrator_instance = None
-
         def __init__(self, **_kwargs):
             pass
 
@@ -167,7 +173,7 @@ def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_to
                 stop_reason="complete",
             )
 
-    monkeypatch.setattr(mac, "_CapturingMagenticOneGroupChat", FakeTeam)
+    monkeypatch.setattr(mac, "MagenticOneGroupChat", FakeTeam)
     monkeypatch.setattr(
         mac.ag,
         "finish_assignment",
@@ -177,13 +183,22 @@ def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_to
     response = asyncio.run(mac.run_native_magentic_mission(context))
 
     assert response.ok is True
-    assert events == ["hydrated", "model", "model", "model"]
+    assert events == ["read", "claimed", "model", "model", "model"]
     assert model_configs == [
         ("openrouter", MODEL, 0.4, 2400),
         ("openrouter", "openai/gpt-5.6-luna", None, None),
         ("openrouter", "openai/gpt-5.6-sol", None, None),
     ]
-    assert tasks == ["Approved task.\n\ngraphview:query:one"]
+    assert tasks == [
+        "[AGENTGRAPH_ASSIGNMENT]\n\n"
+        "assignmentId: assignment:t\n\n"
+        "instructionId: instruction:one\n\n"
+        "Exact instruction:\n\n"
+        "Approved task.\n\n"
+        "[AGENTGRAPH_CONTEXT_REFERENCES]\n"
+        "- engraphis:record:one [required]\n"
+        "- cbm:symbol:two"
+    ]
     assert attached_tools == []
     assert authorities == [
         {
@@ -194,9 +209,7 @@ def test_mag_one_hydrates_agentgraph_context_before_model_and_scopes_optional_to
     ]
     assert mac.ACTIVE_AGENT_ASSIGNMENT_CONTEXT.get() is None
 
-def test_app_authored_scaffold_runtime_is_gone_but_real_task_ledger_artifact_allowed():
-    # Removed: app-authored scaffold / fake local Task Ledger classes.
-    # Allowed: real AutoGen adapter helpers that expose the real taskLedgerArtifact.
+def test_app_authored_scaffold_and_ledger_interception_are_gone():
     for symbol in [
         "select_final_chat_response",
         "_SCAFFOLD_MARKERS",
@@ -205,6 +218,8 @@ def test_app_authored_scaffold_runtime_is_gone_but_real_task_ledger_artifact_all
         "LiquidAItyTaskLedgerGroupChat",
         "_progress_ledger_reference",
         "compile_connected_agents",
+        "_CapturingMagenticOneGroupChat",
+        "_real_task_ledger_artifact",
     ]:
         assert not hasattr(mac, symbol), f"{symbol} must be removed"
     assert hasattr(mac, "run_native_magentic_mission")
@@ -233,7 +248,7 @@ def test_each_participant_receives_its_own_saved_card_model_client():
 def test_codex_app_server_participant_uses_the_saved_external_card_boundary(monkeypatch):
     card = CardRuntimeConfig(
         cardId="orch", title="Mag One", runtimeType="magentic_one",
-        runtimeScope={"deckId": "deck_builder"},
+        runtimeOptions={"deckId": "deck_builder"},
         participants=[CardRuntimeParticipant(
             cardId="card_openai_coder", title="OpenAI Coder",
             runtimeType="codex_app_server", runtimeBinding="openai_coder",

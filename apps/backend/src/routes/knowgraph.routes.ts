@@ -7,7 +7,8 @@ import axios from 'axios';
 import { Router } from 'express';
 import multer from 'multer';
 import { pool } from '../db/pool';
-import { resolveKnowgraphPipelineConfig } from '../services/resolveAgents';
+import { resolveCardModelStrict } from '../cards/runtime';
+import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { isDevTestModeEnabled } from '../services/devTest';
 
 const router = Router();
@@ -189,26 +190,6 @@ async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<strin
     }
   } catch (error: any) {
     console.warn('[KNOWGRAPH][SCOPE] project alias resolution failed:', error?.message || error);
-  }
-
-  // Attached knowledge scopes (project-context): a selected LiquidAIty project may ATTACH
-  // additional KnowGraph scopes (e.g. an imported book kept under its own canonical scope)
-  // WITHOUT moving or copying any records. This is the ATTACHES_KNOWLEDGE_SCOPE contract.
-  try {
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS liq_core.knowgraph_scope_attachment (
-         project_id text NOT NULL, scope text NOT NULL, label text,
-         attached_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (project_id, scope))`,
-    );
-    const attach = await pool.query(
-      `SELECT scope FROM liq_core.knowgraph_scope_attachment WHERE project_id = ANY($1::text[])`,
-      [Array.from(scopeIds)],
-    );
-    for (const r of attach.rows as Array<{ scope?: string }>) {
-      addScopeId(r.scope);
-    }
-  } catch (error: any) {
-    console.warn('[KNOWGRAPH][SCOPE] attachment resolution failed:', error?.message || error);
   }
 
   return Array.from(scopeIds);
@@ -507,56 +488,25 @@ async function queryKnowGraphExpand(
   }
 }
 
-function buildKnowgraphBaseUrls(): string[] {
+function knowgraphBaseUrl(): string {
   const configured = (process.env.KNOWGRAPH_URL || '').trim();
-  const localDefault = 'http://localhost:8001';
-
-  if (!configured) {
-    return [localDefault];
-  }
-
-  const primary = trimBaseUrl(configured);
-  const urls = [primary];
-
-  // If a local backend accidentally points at the Docker DNS name, retry localhost.
-  if (/^https?:\/\/knowgraph(?::\d+)?(?:\/|$)/i.test(primary)) {
-    urls.push(localDefault);
-  }
-
-  return Array.from(new Set(urls));
+  return trimBaseUrl(configured || 'http://localhost:8001');
 }
 
 async function proxyKnowgraphGetJson(pathname: string, query?: Record<string, string | string[]>): Promise<{
   status: number;
   data: any;
 }> {
-  const baseUrls = buildKnowgraphBaseUrls();
-  let lastError: any;
-
-  for (const baseUrl of baseUrls) {
-    try {
-      const search = new URLSearchParams();
-      Object.entries(query || {}).forEach(([key, value]) => {
-        (Array.isArray(value) ? value : [value]).forEach((item) => search.append(key, item));
-      });
-      const url = `${baseUrl}${pathname}${search.toString() ? `?${search.toString()}` : ''}`;
-      const response = await axios.get(url, {
-        timeout: 8000,
-        validateStatus: () => true,
-      });
-      return { status: response.status, data: response.data };
-    } catch (error: any) {
-      lastError = error;
-      const code = String(error?.code || '');
-      const canRetryNetworkLookup =
-        !error?.response && (code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN');
-      if (!canRetryNetworkLookup) {
-        break;
-      }
-    }
-  }
-
-  throw lastError;
+  const search = new URLSearchParams();
+  Object.entries(query || {}).forEach(([key, value]) => {
+    (Array.isArray(value) ? value : [value]).forEach((item) => search.append(key, item));
+  });
+  const url = `${knowgraphBaseUrl()}${pathname}${search.toString() ? `?${search.toString()}` : ''}`;
+  const response = await axios.get(url, {
+    timeout: 8000,
+    validateStatus: () => true,
+  });
+  return { status: response.status, data: response.data };
 }
 
 router.get('/health', async (_req, res) => {
@@ -606,50 +556,6 @@ router.get('/scopes', async (_req, res) => {
   }
 });
 
-// Project-context: attach / list KnowGraph scopes for a selected LiquidAIty project.
-// No records are moved — the project simply references the scope so its KnowGraph view
-// can include it. resolveKnowGraphProjectScopeIds reads these attachments.
-router.get('/scope-attachment', async (req, res) => {
-  try {
-    const projectId = String(req.query?.projectId || '').trim();
-    if (!projectId) return res.status(400).json({ ok: false, error: { message: 'projectId required' } });
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS liq_core.knowgraph_scope_attachment (
-         project_id text NOT NULL, scope text NOT NULL, label text,
-         attached_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (project_id, scope))`,
-    );
-    const r = await pool.query(
-      `SELECT scope, label FROM liq_core.knowgraph_scope_attachment WHERE project_id = $1 ORDER BY attached_at`,
-      [projectId],
-    );
-    return res.json({ ok: true, projectId, attachments: r.rows });
-  } catch (error: any) {
-    return res.status(500).json({ ok: false, error: { message: error?.message || 'scope attachment read failed' } });
-  }
-});
-
-router.post('/scope-attachment', async (req, res) => {
-  try {
-    const projectId = String(req.body?.projectId || '').trim();
-    const scope = String(req.body?.scope || '').trim();
-    const label = String(req.body?.label || '').trim() || null;
-    if (!projectId || !scope) return res.status(400).json({ ok: false, error: { message: 'projectId and scope required' } });
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS liq_core.knowgraph_scope_attachment (
-         project_id text NOT NULL, scope text NOT NULL, label text,
-         attached_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (project_id, scope))`,
-    );
-    await pool.query(
-      `INSERT INTO liq_core.knowgraph_scope_attachment (project_id, scope, label) VALUES ($1, $2, $3)
-       ON CONFLICT (project_id, scope) DO UPDATE SET label = EXCLUDED.label`,
-      [projectId, scope, label],
-    );
-    return res.json({ ok: true, projectId, scope, label });
-  } catch (error: any) {
-    return res.status(500).json({ ok: false, error: { message: error?.message || 'scope attachment write failed' } });
-  }
-});
-
 router.get('/expand', async (req, res) => {
   try {
     const projectId =
@@ -692,13 +598,7 @@ function buildMultipartForm(
   projectId: string,
   documentId: string,
   file: UploadedFile,
-  guidance?: {
-    promptTemplate?: string | null;
-    organizingPrinciple?: string | null;
-    entityTaxonomy?: any | null;
-    relationshipTaxonomy?: any | null;
-    extractionPolicy?: any | null;
-  },
+  promptTemplate?: string | null,
 ): FormData {
   const form = new FormData();
   form.append('project_id', projectId);
@@ -708,22 +608,40 @@ function buildMultipartForm(
     new Blob([file.buffer], { type: file.mimetype || 'application/pdf' }),
     file.originalname || `${documentId}.pdf`,
   );
-  if (guidance?.promptTemplate) {
-    form.append('prompt_template', guidance.promptTemplate);
-  }
-  if (guidance?.organizingPrinciple) {
-    form.append('organizing_principle', guidance.organizingPrinciple);
-  }
-  if (guidance?.entityTaxonomy != null) {
-    form.append('entity_taxonomy_json', JSON.stringify(guidance.entityTaxonomy));
-  }
-  if (guidance?.relationshipTaxonomy != null) {
-    form.append('relationship_taxonomy_json', JSON.stringify(guidance.relationshipTaxonomy));
-  }
-  if (guidance?.extractionPolicy != null) {
-    form.append('extraction_policy_json', JSON.stringify(guidance.extractionPolicy));
+  if (promptTemplate) {
+    form.append('prompt_template', promptTemplate);
   }
   return form;
+}
+
+async function resolveKnowgraphCardConfig(projectId: string): Promise<{
+  agentId: string;
+  provider: string;
+  modelKey: string;
+  providerModelId: string;
+  systemPrompt: string;
+}> {
+  const { deck } = await getDeckDocument(projectId, BUILDER_DECK_ID);
+  if (!deck) {
+    throw new Error('knowgraph_builder_deck_missing');
+  }
+  const card = deck.nodes.find((node) => node.id === 'card_hermes_steward');
+  if (!card) {
+    throw new Error('knowgraph_hermes_card_missing');
+  }
+  const model = resolveCardModelStrict(card);
+  const modelKey = String(card.runtimeOptions?.modelKey || '').trim();
+  const systemPrompt = String(card.prompt || '').trim();
+  if (!systemPrompt) {
+    throw new Error('knowgraph_hermes_card_prompt_missing');
+  }
+  return {
+    agentId: card.id,
+    provider: model.provider,
+    modelKey,
+    providerModelId: model.providerModelId,
+    systemPrompt,
+  };
 }
 
 async function readResponseDataSafe(response: Response): Promise<any> {
@@ -798,16 +716,7 @@ async function proxyKnowgraphPdfIngest(input: {
     };
   }
 
-  const resolved = await resolveKnowgraphPipelineConfig(projectId, route);
-  if (!resolved) {
-    return {
-      status: 409,
-      data: {
-        ok: false,
-        error: { message: 'knowgraph_pipeline_not_configured' },
-      },
-    };
-  }
+  const resolved = await resolveKnowgraphCardConfig(projectId);
   console.log(
     '[RUNTIME_MODEL] route=%s projectId=%s agentType=%s agent_id=%s provider=%s model_key=%s provider_model_id=%s',
     route,
@@ -828,64 +737,41 @@ async function proxyKnowgraphPdfIngest(input: {
     resolved.providerModelId,
   );
 
-  const baseUrls = buildKnowgraphBaseUrls();
-  let lastError: any;
-
-  for (const baseUrl of baseUrls) {
-    try {
-      const form = buildMultipartForm(projectId, documentId, file, {
-        promptTemplate: resolved.systemPrompt,
-        organizingPrinciple: resolved.organizingPrinciple ?? null,
-        entityTaxonomy: resolved.entityTaxonomy ?? null,
-        relationshipTaxonomy: resolved.relationshipTaxonomy ?? null,
-        extractionPolicy: resolved.extractionPolicy ?? null,
-      });
-      const response = await fetch(`${baseUrl}/ingest`, {
-        method: 'POST',
-        headers: {
-          'x-agent-id': resolved.agentId,
-          'x-agent-provider': resolved.provider,
-          'x-agent-model-key': resolved.modelKey,
-          'x-agent-model-id': resolved.providerModelId,
-        },
-        body: form,
-      });
-      const data = await readResponseDataSafe(response);
-      if (response.ok) {
-        return { status: response.status, data };
-      }
-
-      const upstreamMessage = pickErrorMessage(data);
-      return {
-        status: response.status,
-        data: {
-          ok: false,
-          error: {
-            code: `knowgraph_ingest_upstream_${response.status}`,
-            message: normalizeKnowgraphIngestError(
-              upstreamMessage,
-              resolved.provider,
-              resolved.providerModelId,
-            ),
-            provider: resolved.provider,
-            model_key: resolved.modelKey,
-            provider_model_id: resolved.providerModelId,
-          },
-          upstream: data,
-        },
-      };
-    } catch (error: any) {
-      lastError = error;
-      const code = String(error?.cause?.code || error?.code || '');
-      const canRetryNetworkLookup =
-        code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN';
-      if (!canRetryNetworkLookup) {
-        break;
-      }
-    }
+  const form = buildMultipartForm(projectId, documentId, file, resolved.systemPrompt);
+  const response = await fetch(`${knowgraphBaseUrl()}/ingest`, {
+    method: 'POST',
+    headers: {
+      'x-agent-id': resolved.agentId,
+      'x-agent-provider': resolved.provider,
+      'x-agent-model-key': resolved.modelKey,
+      'x-agent-model-id': resolved.providerModelId,
+    },
+    body: form,
+  });
+  const data = await readResponseDataSafe(response);
+  if (response.ok) {
+    return { status: response.status, data };
   }
 
-  throw lastError;
+  const upstreamMessage = pickErrorMessage(data);
+  return {
+    status: response.status,
+    data: {
+      ok: false,
+      error: {
+        code: `knowgraph_ingest_upstream_${response.status}`,
+        message: normalizeKnowgraphIngestError(
+          upstreamMessage,
+          resolved.provider,
+          resolved.providerModelId,
+        ),
+        provider: resolved.provider,
+        model_key: resolved.modelKey,
+        provider_model_id: resolved.providerModelId,
+      },
+      upstream: data,
+    },
+  };
 }
 
 router.post('/ingest', knowgraphUploadSingle as any, async (req, res) => {
@@ -948,32 +834,18 @@ router.post('/ingest_web', async (req, res) => {
         error: { message: 'project_id and at least one document are required' },
       });
     }
-    const baseUrls = buildKnowgraphBaseUrls();
-    let lastError: any;
-    for (const baseUrl of baseUrls) {
-      try {
-        const response = await axios.post(
-          `${baseUrl}/ingest_web_results`,
-          {
-            project_id: projectId,
-            documents,
-            ...(req.body?.prompt_template ? { prompt_template: req.body.prompt_template } : {}),
-            ...(req.body?.organizing_principle ? { organizing_principle: req.body.organizing_principle } : {}),
-            ...(req.body?.research_focus ? { research_focus: req.body.research_focus } : {}),
-          },
-          { timeout: 300_000, validateStatus: () => true },
-        );
-        return res.status(response.status).json(response.data);
-      } catch (error: any) {
-        lastError = error;
-        const code = String(error?.code || '');
-        if (!(!error?.response && (code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN'))) {
-          break;
-        }
-      }
-    }
-    const message = lastError?.message || 'knowgraph_api_unreachable';
-    return res.status(502).json({ ok: false, error: { message } });
+    const response = await axios.post(
+      `${knowgraphBaseUrl()}/ingest_web_results`,
+      {
+        project_id: projectId,
+        documents,
+        ...(req.body?.prompt_template ? { prompt_template: req.body.prompt_template } : {}),
+        ...(req.body?.organizing_principle ? { organizing_principle: req.body.organizing_principle } : {}),
+        ...(req.body?.research_focus ? { research_focus: req.body.research_focus } : {}),
+      },
+      { timeout: 300_000, validateStatus: () => true },
+    );
+    return res.status(response.status).json(response.data);
   } catch (error: any) {
     return res.status(502).json({
       ok: false,

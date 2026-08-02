@@ -170,7 +170,7 @@ export function buildForkedMessages(
 
 /**
  * Child promptMessages for a NAMED inherit_parent agent (a saved Hermes /
- * ThinkGraph card), NOT a generic fork.
+ * saved-card worker), NOT a generic fork.
  *
  * The live parent conversation is delivered separately via runAgent's
  * forkContextMessages, where filterIncompleteToolCalls() already strips the

@@ -10,10 +10,8 @@ import {
   buildMainChatControlEdge,
   buildMainChatControllerCard,
   MAIN_CHAT_CARD_ID,
-  MAIN_CHAT_MODEL_KEY,
   MAIN_CHAT_PROMPT_ID,
   MAIN_CHAT_PROMPT_TEMPLATE,
-  MAIN_CHAT_PROVIDER,
 } from './mainChatControllerCard';
 import type {
   AgentCardInstance,
@@ -82,7 +80,6 @@ function normalizeEdgeType(value: unknown): DeckEdgeType {
   if (type === 'magentic_option') return 'magentic_option';
   if (type === 'magentic_control') return 'magentic_control';
   if (type === 'flow') return 'flow';
-  if (type === 'hermes_observe') return 'hermes_observe';
   return 'invalid';
 }
 
@@ -331,8 +328,8 @@ function ensureMainChatControllerCard(deck: DeckDocument): DeckDocument {
             runtimeType: 'assistant_agent',
             runtimeOptions: {
               ...(node.runtimeOptions || {}),
-              provider: node.runtimeOptions?.provider || MAIN_CHAT_PROVIDER,
-              modelKey: node.runtimeOptions?.modelKey || MAIN_CHAT_MODEL_KEY,
+              provider: node.runtimeOptions?.provider,
+              modelKey: node.runtimeOptions?.modelKey,
             },
             parentGraphId: null,
           }) || node;

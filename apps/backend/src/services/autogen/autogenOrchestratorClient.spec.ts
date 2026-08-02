@@ -7,7 +7,7 @@ describe('autogenOrchestratorClient', () => {
 
   beforeEach(() => {
     process.env = { ...envSnapshot };
-    process.env.AUTOGEN_ORCHESTRATOR_URL = 'http://autogen-sidecar:8001';
+    process.env.AUTOGEN_ORCHESTRATOR_URL = 'http://python-rails:8001';
     process.env.PYTHON_MODELS_URL = 'http://python-models:8001';
     process.env.AUTOGEN_ORCHESTRATOR_TIMEOUT_MS = '5000';
   });
@@ -41,7 +41,7 @@ describe('autogenOrchestratorClient', () => {
 
     expect(result.finalResponseText).toBe('from Python rails');
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://autogen-sidecar:8001/autogen/orchestrate',
+      'http://python-rails:8001/autogen/orchestrate',
       expect.objectContaining({
         method: 'POST',
       }),

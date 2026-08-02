@@ -20,14 +20,5 @@ export function resolveEffectiveAgent(
     ...template,
     ...overrides,
     tools: selectedTools,
-    skills: Array.isArray(overrides.skills) ? overrides.skills : template.skills,
-    personas: Array.isArray(overrides.personas) ? overrides.personas : template.personas,
-    knowledgeSources: Array.isArray(overrides.knowledgeSources)
-      ? overrides.knowledgeSources
-      : template.knowledgeSources,
-    ioSchema:
-      overrides.ioSchema && typeof overrides.ioSchema === 'object'
-        ? overrides.ioSchema
-        : template.ioSchema,
   };
 }

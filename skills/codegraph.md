@@ -26,8 +26,8 @@ NOT another TypeScript planner/context-packet subsystem.
 
 No `graphContextBuilder`, no `CoderContextPacket` planner maze, no PlanFlow prepare
 endpoint, no Task Ledger grounding, no ThinkGraph-derived code packet, no duplicate
-TypeScript code-reasoning engine. The thin MCP carrier (`cbmMcpCaller`) connects to
-the codebase-memory MCP server; that is the only TypeScript that should exist here.
+TypeScript code-reasoning engine, and no TypeScript CBM carrier. The coding runtime
+connects to the native codebase-memory MCP server through its ordinary MCP configuration.
 
 ## Rules
 

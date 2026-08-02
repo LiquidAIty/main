@@ -83,17 +83,14 @@ describe('Edge authority: only an explicit type grants anything', () => {
       .toEqual(['card_main_chat']);
   });
 
-  it('the Main → Hermes hermes_observe edge authorizes observation but excludes from direct subagents (flow-only)', () => {
-    // hermes_observe grants observation authority without making Hermes a direct-invocation subagent.
+  it('the Main → Hermes flow edge exposes Hermes directly but never as a Mag One worker', () => {
     const persisted = [
       { id: 'edge_main_chat_magentic_control', source: 'card_main_chat', target: 'card_magentic', edgeType: 'magentic_control' },
-      { id: 'edge_yt562bl6', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'hermes_observe' },
+      { id: 'edge_main_chat_hermes', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
       { id: 'edge_k0psgj4i', source: 'card_research_agent', target: 'card_magentic', edgeType: 'magentic_option' },
     ];
-    // Hermes is authorized by hermes_observe but NOT a direct subagent (resolveDirectSubagents requires 'flow')
     expect(resolveDirectSubagents('card_main_chat', cards, persisted).map((d: any) => d.id))
-      .not.toContain('card_hermes_steward');
-    // Hermes stays structurally excluded from the worker roster regardless.
+      .toContain('card_hermes_steward');
     expect(resolvedMagenticOptions('card_magentic', cards, persisted).map((w: any) => w.id))
       .not.toContain('card_hermes_steward');
   });
@@ -107,10 +104,10 @@ describe('Canonical Cards Runtime', () => {
     // error — never the coder-console gate, and never a coder dispatch/timeout.
     const card = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     await expect(
-      runCardWithContract(card, {}, 'can you do a code audit', { allCards: [card], allEdges: [] }),
+      runCardWithContract(card, 'can you do a code audit', { allCards: [card], allEdges: [] }),
     ).rejects.toThrow('magentic_runtime_no_current_bus_connected_participants');
     await expect(
-      runCardWithContract(card, {}, 'can you do a code audit', { allCards: [card], allEdges: [] }),
+      runCardWithContract(card, 'can you do a code audit', { allCards: [card], allEdges: [] }),
     ).rejects.not.toThrow(/MAGONE_CODER_CONSOLE_BLOCKED_PARTICIPANT_GATE/);
   });
 
@@ -130,7 +127,7 @@ describe('Canonical Cards Runtime', () => {
     }));
     const callable = resolvedMagenticOptions(mag.id, allCards, allEdges);
     const payload = buildPythonAutoGenCardRuntimePayload(
-      mag, {}, 'fix the code', { projectId: 'admin', deckId: 'deck', allCards, allEdges }, {}, callable, '2026',
+      mag, 'fix the code', { projectId: 'admin', deckId: 'deck', allCards, allEdges }, {}, callable, '2026',
     );
 
     // No TypeScript coder packet is ever attached to a planning turn. Retired
@@ -140,8 +137,6 @@ describe('Canonical Cards Runtime', () => {
     expect(untypedPayload.codingWorkflowPacket).toBeUndefined();
     // The capability manifest carries no intent/workflow classifier at all.
     expect((untypedPayload.routingManifest as any)?.intent).toBeUndefined();
-    const runtimeScope = payload.cardRuntime.runtimeScope as unknown as Record<string, unknown> | undefined;
-    expect((runtimeScope?.routingDiagnostics as any)?.workflowType).toBeUndefined();
     // Native team: every bus-connected agent participates, including the Local Coder
     // (no project-specific participant filtering). Execution is the Run route only.
     expect(payload.cardRuntime.participants.map((p) => p.cardId)).toContain('coder');
@@ -190,10 +185,10 @@ describe('Canonical Cards Runtime', () => {
       runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.1-chat-latest' },
     };
     const think = {
-      id: 'card_thinkgraph_agent',
+      id: 'card_saved_worker',
       kind: 'agent',
       runtimeType: 'assistant_agent',
-      runtimeBinding: 'thinkgraph_agent',
+      runtimeBinding: 'saved_worker',
       runtimeOptions: { modelKey: 'gpt-5-nano' },
     };
     const edges = [
@@ -202,7 +197,7 @@ describe('Canonical Cards Runtime', () => {
     ];
 
     const resolved = resolvedMagenticOptions(cardM.id, [cardM, mainChat, think], edges);
-    expect(resolved.map((node) => node.id)).toEqual(['card_thinkgraph_agent']);
+    expect(resolved.map((node) => node.id)).toEqual(['card_saved_worker']);
   });
 
   it('resolves magentic_control separately from worker options', () => {
@@ -229,7 +224,6 @@ describe('Canonical Cards Runtime', () => {
   it('passes mission input through normally and preserves prior assistant text (no keyword classifier)', () => {
     const payload = buildPythonAutoGenCardRuntimePayload(
       { id: 'mag1' },
-      {},
       'test',
       { previousOutput: 'Some Apollo 11 text' },
       {},
@@ -238,14 +232,13 @@ describe('Canonical Cards Runtime', () => {
     );
     // No deterministic keyword classifier: 'test'/'go'/'hello' no longer strip the
     // prior assistant text — the mission passes through unchanged.
-    expect(payload.priorAssistantText).toBe('Some Apollo 11 text');
+    expect(payload).not.toHaveProperty('priorAssistantText');
     expect(payload.userText).toBe('test');
   });
 
   it('maxTokens 0 or invalid is omitted/normalized', () => {
     const payload = buildPythonAutoGenCardRuntimePayload(
       { id: 'mag1', runtimeOptions: { maxTokens: 0 } },
-      {},
       'test input',
       {},
       {},
@@ -265,23 +258,23 @@ describe('Canonical Cards Runtime', () => {
     const allEdges = [{ id: 'e', source: research.id, target: cardM.id, edgeType: 'magentic_option' }];
     const callable = resolvedMagenticOptions(cardM.id, allCards, allEdges);
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, {}, 'do research', { projectId: 'p', deckId: 'd', allCards, allEdges }, {}, callable, '2026',
+      cardM, 'do research', { projectId: 'p', deckId: 'd', allCards, allEdges }, {}, callable, '2026',
     );
     const participant = payload.cardRuntime.participants.find((p) => p.cardId === 'research');
     expect(participant?.tools).toContain('calculator');
   });
 
-  it('does not add ThinkGraph authority to the Mag One runtime scope', () => {
+  it('passes a worker tool selection without adding hidden graph authority', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const think = {
       id: 'think',
       kind: 'agent',
       runtimeType: 'assistant_agent',
-      runtimeBinding: 'thinkgraph_agent',
+      runtimeBinding: 'world_signals',
       runtimeOptions: {
         modelKey: 'z-ai/glm-5.2',
         provider: 'openrouter',
-        tools: ['read_thinkgraph_scope', 'apply_thinkgraph_patch'],
+        tools: ['worldsignals.capabilities', 'worldsignals.command'],
       },
     };
     const plan = {
@@ -297,57 +290,28 @@ describe('Canonical Cards Runtime', () => {
     }));
     const callable = resolvedMagenticOptions(cardM.id, allCards, allEdges);
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, {}, 'probe graph tools', { projectId: 'project-1', deckId: 'deck', allCards, allEdges }, {}, callable, '2026',
+      cardM, 'probe graph tools', { projectId: 'project-1', deckId: 'deck', allCards, allEdges }, {}, callable, '2026',
     );
 
-    expect((payload.cardRuntime.runtimeScope as any)?.thinkGraphReadAuthority).toBeUndefined();
     expect(payload.cardRuntime.participants.find((p) => p.cardId === 'think')?.tools).toEqual([
-      'read_thinkgraph_scope',
-      'apply_thinkgraph_patch',
+      'worldsignals.capabilities',
+      'worldsignals.command',
     ]);
   });
 
-  it('does not add hidden graph authority for non-ThinkGraph workers or ThinkGraph cards without the read tool', () => {
-    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
-    const thinkNoRead = {
-      id: 'think',
-      kind: 'agent',
-      runtimeType: 'assistant_agent',
-      runtimeBinding: 'thinkgraph_agent',
-      runtimeOptions: { modelKey: 'z-ai/glm-5.2', provider: 'openrouter', tools: ['calculator'] },
-    };
-    const researchWithReadToolButWrongBinding = {
-      id: 'research',
-      kind: 'agent',
-      runtimeType: 'assistant_agent',
-      runtimeBinding: 'research_agent',
-      runtimeOptions: { modelKey: 'z-ai/glm-5.2', provider: 'openrouter', tools: ['read_thinkgraph_scope'] },
-    };
-    const allCards = [cardM, thinkNoRead, researchWithReadToolButWrongBinding];
-    const allEdges = [thinkNoRead, researchWithReadToolButWrongBinding].map((agent) => ({
-      id: `edge-${agent.id}`, source: agent.id, target: cardM.id, edgeType: 'magentic_option',
-    }));
-    const callable = resolvedMagenticOptions(cardM.id, allCards, allEdges);
-    const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, {}, 'probe graph tools', { projectId: 'project-1', deckId: 'deck', allCards, allEdges }, {}, callable, '2026',
-    );
-
-    expect((payload.cardRuntime.runtimeScope as any)?.thinkGraphReadAuthority).toBeUndefined();
-  });
-
-  it('contains no prompt packet graph authority field or hard-coded mission strings in the Mag One runtime scope', () => {
+  it('contains no prompt packet graph authority field or hard-coded mission strings in the Mag One payload', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const think = {
       id: 'think',
       kind: 'agent',
       runtimeType: 'assistant_agent',
-      runtimeBinding: 'thinkgraph_agent',
-      runtimeOptions: { modelKey: 'z-ai/glm-5.2', provider: 'openrouter', tools: ['read_thinkgraph_scope'] },
+      runtimeBinding: 'world_signals',
+      runtimeOptions: { modelKey: 'z-ai/glm-5.2', provider: 'openrouter', tools: ['worldsignals.capabilities'] },
     };
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, {}, 'generic task', { projectId: 'project-1', deckId: 'deck', allCards: [cardM, think], allEdges: [] }, {}, [think], '2026',
+      cardM, 'generic task', { projectId: 'project-1', deckId: 'deck', allCards: [cardM, think], allEdges: [] }, {}, [think], '2026',
     );
-    const raw = JSON.stringify(payload.cardRuntime.runtimeScope);
+    const raw = JSON.stringify(payload);
     expect(raw).not.toContain('thinkGraphReadAuthority');
     expect(raw).not.toContain('magone_graph_tool_probe');
     expect(raw).not.toContain('trading');
@@ -360,14 +324,14 @@ describe('Canonical Cards Runtime', () => {
     const cardA = { id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
     const context = { deckId: 'deck1', allCards: [cardM, cardA], allEdges: [] };
 
-    const payload = buildPythonAutoGenCardRuntimePayload(cardM, {}, 'hello', context, {}, [cardA], '2026');
+    const payload = buildPythonAutoGenCardRuntimePayload(cardM, 'hello', context, {}, [cardA], '2026');
 
     expect(payload.session.orchestrator).toBe('magentic_one');
     // System prompt is EXACTLY the card's own prompt — no backend-authored global
     // coding persona is prepended.
-    expect(payload.systemPrompt).toBe('test system prompt');
-    expect(payload.systemPrompt).not.toContain('disconnected cards are ineligible');
-    expect(payload.cardRuntime.runtimeScope?.pythonWorkerIds).toContain('agentA');
+    expect(payload.cardRuntime.prompt).toBe('test system prompt');
+    expect(payload.cardRuntime.prompt).not.toContain('disconnected cards are ineligible');
+    expect(payload.cardRuntime.participants.map((participant) => participant.cardId)).toContain('agentA');
     // Ensure task_ledger, progress_ledger are completely absent
     expect((payload as any).task_ledger).toBeUndefined();
     expect((payload as any).progress_ledger).toBeUndefined();
@@ -384,15 +348,15 @@ describe('Canonical Cards Runtime', () => {
     };
     const cardA = { id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, {}, 'Continue RDW research', { allCards: [cardM, cardA], allEdges: [] }, {}, [cardA], '2026',
+      cardM, 'Continue RDW research', { allCards: [cardM, cardA], allEdges: [] }, {}, [cardA], '2026',
     );
     // No grounding field on the payload and no grounding/ActiveGraphContext prose in
     // the system prompt — the system prompt is exactly the card prompt.
     expect((payload as any).taskLedgerGroundingContext).toBeUndefined();
     expect((payload as any).activeGraphContext).toBeUndefined();
-    expect(payload.systemPrompt).toBe('sys');
-    expect(payload.systemPrompt).not.toContain('graphGroundingContext');
-    expect(payload.systemPrompt).not.toMatch(/READ it before creating tasks/i);
+    expect(payload.cardRuntime.prompt).toBe('sys');
+    expect(payload.cardRuntime.prompt).not.toContain('graphGroundingContext');
+    expect(payload.cardRuntime.prompt).not.toMatch(/READ it before creating tasks/i);
     // The forced task-ledger output contract is gone from the payload entirely.
     expect((payload.cardRuntime as any).taskLedgerOutputContract).toBeUndefined();
     // No approval gate rides the payload.
@@ -414,7 +378,7 @@ describe('Canonical Cards Runtime', () => {
       title: 'Local Coder',
       runtimeOptions: { modelKey: 'z-ai/glm-5.2', provider: 'openrouter' },
     };
-    const think = { id: 'think', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'thinkgraph_agent', title: 'ThinkGraph Agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
+    const think = { id: 'worker', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'saved_worker', title: 'Saved Worker', runtimeOptions: { modelKey: 'gpt-5-nano' } };
     const allCards = [mag, plan, codegraph, coder, think];
     const allEdges = [plan, codegraph, coder, think].map((agent) => ({
       id: `edge-${agent.id}`,
@@ -425,7 +389,6 @@ describe('Canonical Cards Runtime', () => {
     const callable = resolvedMagenticOptions(mag.id, allCards, allEdges);
     const payload = buildPythonAutoGenCardRuntimePayload(
       mag,
-      {},
       'fix the code',
       { projectId: 'admin', deckId: 'deck', allCards, allEdges },
       {},
@@ -437,9 +400,8 @@ describe('Canonical Cards Runtime', () => {
     // and a python worker like any other bus-connected agent — no filtering, no
     // role classification, no dispatch packet.
     expect(payload.cardRuntime.participants.map((agent) => agent.cardId)).toContain('coder');
-    expect(payload.cardRuntime.runtimeScope?.pythonWorkerIds).toContain('coder');
     expect(payload.cardRuntime.participants.map((agent) => agent.cardId)).toEqual(
-      expect.arrayContaining(['plan', 'codegraph', 'think']),
+      expect.arrayContaining(['plan', 'codegraph', 'worker']),
     );
   });
 
@@ -456,7 +418,7 @@ describe('Canonical Cards Runtime', () => {
     }];
     const callable = resolvedMagenticOptions(mag.id, [mag, codex], edges);
     const payload = buildPythonAutoGenCardRuntimePayload(
-      mag, {}, 'read only question',
+      mag, 'read only question',
       { projectId: 'admin', deckId: 'deck_builder', allCards: [mag, codex], allEdges: edges },
       {}, callable, '2026',
     );
@@ -467,7 +429,6 @@ describe('Canonical Cards Runtime', () => {
         provider: 'openai', providerModelId: 'gpt-5.6-sol',
       }),
     ]);
-    expect(payload.cardRuntime.runtimeScope?.pythonWorkerIds).toEqual(['card_openai_coder']);
   });
 
   it('disconnected cards do not appear in model-visible workspace context or payload participants', () => {
@@ -485,22 +446,13 @@ describe('Canonical Cards Runtime', () => {
     const callableHeads = resolvedMagenticOptions(cardM.id, context.allCards, context.allEdges);
 
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, {}, 'hello', context, {}, callableHeads, '2026'
+      cardM, 'hello', context, {}, callableHeads, '2026'
     );
 
     // disconnected cards should not be in participants
     expect(payload.cardRuntime.participants.map(p => p.cardId)).not.toContain('disc1');
     expect(payload.cardRuntime.participants.map(p => p.cardId)).toContain('conn1');
 
-    // disconnected cards should not be in visibleNodeIds
-    expect(payload.cardRuntime.runtimeScope?.visibleNodeIds).not.toContain('disc1');
-    expect(payload.cardRuntime.runtimeScope?.visibleNodeIds).toContain('conn1');
-
-    // excludedAgentIds should be completely empty to prevent leakage
-    expect(payload.cardRuntime.runtimeScope?.excludedAgentIds).toEqual([]);
-
-    // workspaceObjectContext should be completely undefined to prevent global leak
-    expect(payload.workspaceObjectContext).toBeUndefined();
   });
 
   it('flow-only cards do not become callable participants', () => {
@@ -516,11 +468,10 @@ describe('Canonical Cards Runtime', () => {
     const callableHeads = resolvedMagenticOptions(cardM.id, context.allCards, context.allEdges);
 
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, {}, 'hello', context, {}, callableHeads, '2026'
+      cardM, 'hello', context, {}, callableHeads, '2026'
     );
 
     expect(payload.cardRuntime.participants.map(p => p.cardId)).not.toContain('flow1');
-    expect(payload.cardRuntime.runtimeScope?.visibleNodeIds).not.toContain('flow1');
   });
 
   // T002 — Failing tests: card-selected model config must propagate to payload exactly.
@@ -538,7 +489,7 @@ describe('Canonical Cards Runtime', () => {
     };
 
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, {}, 'test', {}, {}, [cardA], '2026',
+      cardM, 'test', {}, {}, [cardA], '2026',
     );
 
     const priv = payload.cardRuntime.privateParticipants?.[0];
@@ -561,7 +512,7 @@ describe('Canonical Cards Runtime', () => {
     };
 
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, {}, 'test', {}, {}, [cardA], '2026',
+      cardM, 'test', {}, {}, [cardA], '2026',
     );
 
     const pub = payload.cardRuntime.participants?.[0];
@@ -575,7 +526,7 @@ describe('Canonical Cards Runtime', () => {
     const cardA = { id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent' };
 
     expect(() =>
-      buildPythonAutoGenCardRuntimePayload(cardM, {}, 'test', {}, {}, [cardA], '2026'),
+      buildPythonAutoGenCardRuntimePayload(cardM, 'test', {}, {}, [cardA], '2026'),
     ).toThrow('card_model_config_missing');
   });
 
@@ -590,7 +541,7 @@ describe('Canonical Cards Runtime', () => {
     };
 
     expect(() =>
-      buildPythonAutoGenCardRuntimePayload(cardM, {}, 'test', {}, {}, [cardA], '2026'),
+      buildPythonAutoGenCardRuntimePayload(cardM, 'test', {}, {}, [cardA], '2026'),
     ).toThrow('card_model_config_mismatch');
   });
 
@@ -616,7 +567,7 @@ describe('Canonical Cards Runtime', () => {
     };
 
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, {}, 'hello', context, { provider: 'openai', providerModelId: 'gpt-5.1-chat-latest' },
+      cardM, 'hello', context, { provider: 'openai', providerModelId: 'gpt-5.1-chat-latest' },
       [cardA, cardB], '2026',
     );
 
@@ -664,7 +615,7 @@ describe('Canonical Cards Runtime', () => {
     };
 
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, {}, 'hello', context, {}, [cardFan, cardSom], '2026',
+      cardM, 'hello', context, {}, [cardFan, cardSom], '2026',
     );
 
     const fanParticipant = payload.cardRuntime.participants.find((p) => p.cardId === 'fan1');
@@ -705,7 +656,7 @@ describe('Canonical Cards Runtime', () => {
     const context = { deckId: 'deck1', allCards: [cardM, cardSom, child], allEdges: [] };
 
     expect(() =>
-      buildPythonAutoGenCardRuntimePayload(cardM, {}, 'hello', context, {}, [cardSom], '2026'),
+      buildPythonAutoGenCardRuntimePayload(cardM, 'hello', context, {}, [cardSom], '2026'),
     ).toThrow('card_model_config_missing');
   });
 
@@ -716,7 +667,7 @@ describe('Canonical Cards Runtime', () => {
       runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['made_up_tool'] },
     };
 
-    const payload = buildPythonAutoGenCardRuntimePayload(cardM, {}, 'test', {}, {}, [cardA], '2026');
+    const payload = buildPythonAutoGenCardRuntimePayload(cardM, 'test', {}, {}, [cardA], '2026');
     const participant = payload.cardRuntime.participants.find((entry) => entry.cardId === 'agentA');
     expect(participant?.tools).toEqual(['made_up_tool']);
   });
@@ -729,7 +680,7 @@ describe('Canonical Cards Runtime', () => {
     };
 
     expect(() =>
-      buildPythonAutoGenCardRuntimePayload(cardM, {}, 'test', {}, {}, [cardA], '2026'),
+      buildPythonAutoGenCardRuntimePayload(cardM, 'test', {}, {}, [cardA], '2026'),
     ).toThrow('card_tool_name_empty');
   });
 
@@ -740,7 +691,7 @@ describe('Canonical Cards Runtime', () => {
       runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['current_datetime', 'calculator'] },
     };
 
-    const payload = buildPythonAutoGenCardRuntimePayload(cardM, {}, 'test', {}, {}, [cardA], '2026');
+    const payload = buildPythonAutoGenCardRuntimePayload(cardM, 'test', {}, {}, [cardA], '2026');
     const participant = payload.cardRuntime.participants.find((p) => p.cardId === 'agentA');
     expect(participant?.tools).toEqual(['current_datetime', 'calculator']);
   });
@@ -755,7 +706,7 @@ describe('Canonical Cards Runtime', () => {
     };
 
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, {}, 'test', {}, {}, [cardA], '2026',
+      cardM, 'test', {}, {}, [cardA], '2026',
     );
 
     const priv = payload.cardRuntime.privateParticipants?.[0];

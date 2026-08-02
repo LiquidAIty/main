@@ -8,6 +8,8 @@ $env:LIQUIDAITY_AUTH0_AUDIENCE = 'https://exemption-unstable-wolverine.ngrok-fre
 $env:LIQUIDAITY_AUTH0_CLIENT_ID = 'xBb72662qIvqibSf7SdCJZm8G4cL28ud'
 $env:LIQUIDAITY_AUTH0_REQUIRED_SCOPE = 'liquidaity.main'
 $env:LIQUIDAITY_MCP_OAUTH_ENFORCED = 'true'
+$env:LIQUIDAITY_CBM_UI_ENABLED = 'true'
+$env:LIQUIDAITY_CBM_UI_PORT = '9749'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $python = Join-Path $repoRoot 'apps\python-models\.venv\Scripts\python.exe'

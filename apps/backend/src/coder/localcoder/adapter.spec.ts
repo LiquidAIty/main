@@ -27,6 +27,8 @@ function packet(repoPath: string): CoderPacket {
     proofRequired: ['Compile.'],
     reportFormat: 'CoderReport JSON',
     stopConditions: ['Stop after one job.'],
+    modelProvider: 'openai',
+    providerModelId: 'gpt-5.3-codex',
   };
 }
 

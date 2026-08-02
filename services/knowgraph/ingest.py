@@ -99,7 +99,7 @@ def _serialize_metadata_json(value: Any) -> str | None:
 def _normalize_provider(provider: str | None) -> str:
     normalized = (provider or "").strip().lower()
     if not normalized:
-        return "openrouter"
+        raise RuntimeError("KnowGraph card provider is required")
     if normalized in ("openai", "openrouter"):
         return normalized
     raise RuntimeError(f"Unsupported provider: {provider}")
@@ -162,12 +162,9 @@ def _resolve_runtime_model_config(
 ) -> RuntimeModelConfig:
     normalized_provider = _normalize_provider(provider)
     requested_model_key = (model_key or "").strip() or None
-    resolved_model_id = (
-        (model_id or "").strip()
-        or requested_model_key
-        or _optional_env("KNOWGRAPH_LLM_MODEL")
-        or "gpt-4o-mini"
-    )
+    resolved_model_id = (model_id or "").strip()
+    if not resolved_model_id:
+        raise RuntimeError("KnowGraph card model is required")
     global_backend = _normalize_embedding_backend(
         _optional_env("KNOWGRAPH_EMBEDDING_BACKEND"),
         default="openai_compatible",

@@ -10,7 +10,7 @@ type UseAgentBuilderSelectionArgs = {
 export default function useAgentBuilderSelection({
   deck,
 }: UseAgentBuilderSelectionArgs) {
-  const [objectDrawerOpen, setObjectDrawerOpen] = useState(false);
+  const [inspectorDrawerOpen, setInspectorDrawerOpen] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [builderCanvasFocusRequest, setBuilderCanvasFocusRequest] =
@@ -31,8 +31,8 @@ export default function useAgentBuilderSelection({
   }, [deck.edges, selectedEdgeId]);
 
   return {
-    objectDrawerOpen,
-    setObjectDrawerOpen,
+    inspectorDrawerOpen,
+    setInspectorDrawerOpen,
     selectedCardId,
     setSelectedCardId,
     selectedEdgeId,

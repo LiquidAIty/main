@@ -15,33 +15,12 @@ const AUTOGEN_ORCHESTRATE_ENDPOINT = '/autogen/orchestrate';
 export type AutoGenOrchestratorRequest = {
   session: AutoGenOrchestratorSession;
   userText: string;
-  priorAssistantText?: string;
-  systemPrompt?: string;
-  blackboard?: Record<string, unknown>;
-  plan?: Record<string, unknown>;
-  thinkGraph?: Record<string, unknown>;
-  knowGraph?: Record<string, unknown>;
-  attachments?: Array<Record<string, unknown>>;
-  maxResearchTasks?: number;
-  workspaceObjectContext?: Record<string, unknown> | null;
   agentAssignment?: {
     instructionId: string;
     senderCardId: string;
     receiverCardId: string;
-    graphViewIds?: string[];
   };
   cardRuntime?: Record<string, unknown>;
-};
-
-export type LedgerTrace = {
-  source: 'python_magone';
-  referenceFiles?: string[];
-  referenceClasses?: string[];
-  referenceMethods?: string[];
-  promptConstants?: string[];
-  canvasTeamCompiled?: boolean;
-  taskLedgerProduced?: boolean;
-  blocker?: string | null;
 };
 
 export type AutoGenMessage = {
@@ -55,33 +34,20 @@ export type AutoGenOrchestratorResponse = {
   assignmentId?: string | null;
   instructionId?: string | null;
   resultId?: string | null;
-  // Honest per-stage trace from the real Python Magentic-One path.
-  ledgerTrace?: LedgerTrace;
   // Real last AutoGen message text (transport invariant only; not rendered in chat).
   finalResponseText?: string;
-  // The real AutoGen run output captured verbatim from run_stream.
+  // Bounded transport fields from the native AutoGen run stream.
   autogenMessages?: AutoGenMessage[];
   autogenEvents?: AutoGenMessage[];
-  // The real Task Ledger artifact (facts/plan/full text + model-call proof).
-  taskLedgerArtifact?: unknown;
-  // Progress Ledger is identify-only in this scope: referenced, never started.
-  progressLedgerReference?: unknown;
   error?: string;
   stopReason?: string | null;
-  transcript?: string[];
-  metrics?: Record<string, unknown>;
-  blackboardEntries?: Array<Record<string, unknown>>;
-  plan?: Record<string, unknown>;
-  thinkGraph?: Record<string, unknown>;
-  knowGraph?: Record<string, unknown>;
-  reportBacks?: Array<Record<string, unknown>>;
 };
 
 function trimBaseUrl(value: string): string {
   return value.replace(/\/+$/, '');
 }
 
-function buildSidecarBaseUrls(): string[] {
+function buildPythonRailsBaseUrls(): string[] {
   const configured = trimBaseUrl(String(process.env.AUTOGEN_ORCHESTRATOR_URL || '').trim());
   if (!configured) {
     throw new Error(
@@ -95,7 +61,7 @@ function formatCheckedEndpoints(baseUrls: string[]): string {
   return baseUrls.map((baseUrl) => `${baseUrl}${AUTOGEN_ORCHESTRATE_ENDPOINT}`).join(',');
 }
 
-function isRetryableSidecarError(error: any): boolean {
+function isRetryablePythonRailsError(error: any): boolean {
   const code = String(error?.cause?.code || error?.code || '').trim();
   return code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN';
 }
@@ -121,7 +87,7 @@ export async function orchestrateWithAutoGen(
   const timeout = setTimeout(() => controller.abort(), readTimeoutMs());
   try {
     let lastError: any = null;
-    const baseUrls = buildSidecarBaseUrls();
+    const baseUrls = buildPythonRailsBaseUrls();
 
     for (const baseUrl of baseUrls) {
       const endpoint = `${baseUrl}${AUTOGEN_ORCHESTRATE_ENDPOINT}`;
@@ -147,28 +113,23 @@ export async function orchestrateWithAutoGen(
           ).trim();
           throw new Error(message || 'autogen_orchestrator_failed');
         }
-        // A Task-Ledger-only run legitimately has no chat answer
-        // (finalResponseText === ''); it is still a successful run because it
-        // carries the real Task Ledger artifact. Only an entirely empty result
-        // (no answer AND no artifact) is invalid.
         const finalResponseText = String((data as any).finalResponseText || '').trim();
-        const hasArtifact = Boolean((data as any).taskLedgerArtifact);
-        if (!finalResponseText && !hasArtifact) {
+        if (!finalResponseText) {
           throw new Error('autogen_orchestrator_missing_final_response');
         }
         return data as AutoGenOrchestratorResponse;
       } catch (error: any) {
         lastError = error;
-        if (!isRetryableSidecarError(error)) {
+        if (!isRetryablePythonRailsError(error)) {
           break;
         }
       }
     }
 
-    if (lastError && isRetryableSidecarError(lastError)) {
+    if (lastError && isRetryablePythonRailsError(lastError)) {
       const checked = formatCheckedEndpoints(baseUrls);
-      console.error('[AUTOGEN_SIDECAR]', {
-        runtime: 'failed_missing_autogen_sidecar',
+      console.error('[PYTHON_RAILS]', {
+        runtime: 'failed_missing_python_rails',
         checkedEndpoints: checked,
         error: String(lastError?.message || lastError || 'unknown'),
       });
@@ -198,7 +159,7 @@ export async function runSingleCardWithAutoGen(
   const timeout = setTimeout(() => controller.abort(), readTimeoutMs());
   try {
     let lastError: any = null;
-    const baseUrls = buildSidecarBaseUrls();
+    const baseUrls = buildPythonRailsBaseUrls();
     for (const baseUrl of baseUrls) {
       const endpoint = `${baseUrl}${AUTOGEN_RUN_CARD_ENDPOINT}`;
       try {
@@ -220,7 +181,7 @@ export async function runSingleCardWithAutoGen(
         return data as AutoGenOrchestratorResponse;
       } catch (error: any) {
         lastError = error;
-        if (!isRetryableSidecarError(error)) break;
+        if (!isRetryablePythonRailsError(error)) break;
       }
     }
     if (lastError) throw lastError;
@@ -232,16 +193,15 @@ export async function runSingleCardWithAutoGen(
   }
 }
 
-const THINKGRAPH_PROJECTION_ENDPOINT = '/thinkgraph/projection';
-
-async function requestThinkGraphJson(
+/** Transport-only request to the long-lived Python rails service. */
+export async function requestPythonRailsJson(
   endpointPath: string,
   init: RequestInit,
 ): Promise<unknown> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120_000);
   try {
-    const baseUrls = buildSidecarBaseUrls();
+    const baseUrls = buildPythonRailsBaseUrls();
     let lastError: any = null;
     for (const baseUrl of baseUrls) {
       try {
@@ -249,27 +209,19 @@ async function requestThinkGraphJson(
         const text = await response.text();
         const data = text ? JSON.parse(text) : null;
         if (!response.ok) {
-          const message = String((data as any)?.detail || response.statusText || 'thinkgraph_http_error').trim();
-          throw new Error(`thinkgraph_http_${response.status}:${message}`);
+          const message = String((data as any)?.detail || response.statusText || 'python_rails_http_error').trim();
+          throw new Error(`python_rails_http_${response.status}:${message}`);
         }
         return data;
       } catch (error: any) {
         lastError = error;
-        if (!isRetryableSidecarError(error)) break;
+        if (!isRetryablePythonRailsError(error)) break;
       }
     }
     throw lastError || new Error('PYTHON_AUTOGEN_RAILS_UNAVAILABLE');
   } finally {
     clearTimeout(timeout);
   }
-}
-
-/** Transport-only request to the long-lived Python rails service. */
-export async function requestPythonRailsJson(
-  endpointPath: string,
-  init: RequestInit,
-): Promise<unknown> {
-  return requestThinkGraphJson(endpointPath, init);
 }
 
 export type BegunAgentAssignment = {
@@ -301,7 +253,7 @@ export async function beginAgentAssignmentOnPython(payload: {
   modelKey?: string;
   providerModelId?: string;
 }): Promise<BegunAgentAssignment> {
-  return requestThinkGraphJson('/agentgraph/assignments/begin', {
+  return requestPythonRailsJson('/agentgraph/assignments/begin', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -326,7 +278,7 @@ export async function finishAgentAssignmentOnPython(
     }>;
   },
 ): Promise<unknown> {
-  return requestThinkGraphJson(
+  return requestPythonRailsJson(
     `/agentgraph/assignments/${encodeURIComponent(assignmentId)}/finish`,
     {
       method: 'POST',
@@ -349,107 +301,8 @@ export async function fetchAgentCardContext(params: {
     conversationId: params.conversationId,
   });
   if (params.assignmentId) query.set('assignmentId', params.assignmentId);
-  return requestThinkGraphJson(
+  return requestPythonRailsJson(
     `/agentgraph/cards/${encodeURIComponent(params.receiverCardId)}/context?${query.toString()}`,
     { method: 'GET' },
   );
-}
-
-/**
- * Transport-only: fetch ThinkGraphProjectionV1 from the Python graph authority
- * and return the body UNCHANGED. No AGE query, no shaping, no labels, no visual
- * classes here — Python owns the projection; a failure throws honestly.
- */
-export async function fetchThinkGraphProjection(
-  projectId: string,
-  limit?: number,
-): Promise<unknown> {
-  const query = new URLSearchParams({ projectId });
-  if (Number.isFinite(limit)) query.set('limit', String(limit));
-  return requestThinkGraphJson(`${THINKGRAPH_PROJECTION_ENDPOINT}?${query.toString()}`, { method: 'GET' });
-}
-
-export async function fetchUnifiedContext(params: {
-  projectId: string;
-  conversationId: string;
-  role?: string;
-  activeGraphViewId?: string;
-  knowgraphScope?: string;
-  thinkLimit?: number;
-  knowLimit?: number;
-  codeLimit?: number;
-}): Promise<unknown> {
-  const query = new URLSearchParams({
-    projectId: params.projectId,
-    conversationId: params.conversationId,
-    role: params.role || 'main_chat',
-  });
-  if (params.activeGraphViewId) query.set('activeGraphViewId', params.activeGraphViewId);
-  if (params.knowgraphScope) query.set('knowgraphScope', params.knowgraphScope);
-  if (Number.isFinite(params.thinkLimit)) query.set('thinkLimit', String(params.thinkLimit));
-  if (Number.isFinite(params.knowLimit)) query.set('knowLimit', String(params.knowLimit));
-  if (Number.isFinite(params.codeLimit)) query.set('codeLimit', String(params.codeLimit));
-  return requestThinkGraphJson(`/unified/context?${query.toString()}`, { method: 'GET' });
-}
-
-export async function fetchThinkGraphScope(projectId: string, limit?: number): Promise<unknown> {
-  const query = new URLSearchParams({ projectId });
-  if (Number.isFinite(limit)) query.set('limit', String(limit));
-  return requestThinkGraphJson(`/thinkgraph/scope?${query.toString()}`, { method: 'GET' });
-}
-
-export async function applyThinkGraphPatchOnPython(authority: unknown, patch: unknown): Promise<unknown> {
-  return requestThinkGraphJson('/thinkgraph/apply-patch', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ authority, patch }),
-  });
-}
-
-export async function transitionGraphViewsOnPython(params: {
-  projectId: string;
-  conversationId: string;
-  viewIds: string[];
-  status: 'active' | 'consumed' | 'failed';
-  invocationId?: string;
-  runtime?: unknown;
-}): Promise<unknown> {
-  return requestThinkGraphJson('/agentgraph/graph-views/transition', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  });
-}
-
-/** Resolve the compact model representation for a projection the user saw.
- * Python rebuilds deterministically from the persistent authorities and
- * requires content-hash equality with projectionId — an honest 409 when the
- * graphs moved, never a silently different context. Transport only. */
-export async function fetchUnifiedModelContext(params: {
-  projectionId: string;
-  projectId: string;
-  conversationId: string;
-  role: string;
-  activeGraphViewId?: string;
-  knowgraphScope?: string;
-}): Promise<unknown> {
-  const query = new URLSearchParams({
-    projectionId: params.projectionId,
-    projectId: params.projectId,
-    conversationId: params.conversationId,
-    role: params.role,
-  });
-  if (params.activeGraphViewId) query.set('activeGraphViewId', params.activeGraphViewId);
-  if (params.knowgraphScope) query.set('knowgraphScope', params.knowgraphScope);
-  return requestThinkGraphJson(`/unified/model-context?${query.toString()}`, { method: 'GET' });
-}
-
-/** Resolve AgentGraph reference views by id and render pointer identities only. */
-export async function fetchDoorwayContext(
-  projectId: string,
-  conversationId: string,
-  viewIds: string[],
-): Promise<unknown> {
-  const query = new URLSearchParams({ projectId, conversationId, viewIds: viewIds.join(',') });
-  return requestThinkGraphJson(`/unified/doorway-context?${query.toString()}`, { method: 'GET' });
 }

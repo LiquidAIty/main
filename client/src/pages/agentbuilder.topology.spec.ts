@@ -41,8 +41,8 @@ describe('Main / Hermes / graph authority topology', () => {
     ).toBe(false);
   });
 
-  it('does not grant Hermes visibility to legacy, reversed, or invalid edges', () => {
-    const withoutObserve = INITIAL_DECK.edges.filter((edge) => edge.edgeType !== 'hermes_observe');
+  it('requires the directed Main to Hermes flow edge', () => {
+    const withoutHermesFlow = INITIAL_DECK.edges.filter((edge) => edge.id !== 'edge_main_chat_hermes');
     const replacement = (edgeType: string, source = 'card_main_chat', target = 'card_hermes_steward') => ({
       id: `test:${edgeType}:${source}:${target}`,
       source,
@@ -50,49 +50,43 @@ describe('Main / Hermes / graph authority topology', () => {
       edgeType,
     });
     expect(isHermesConnectedToMainChat(INITIAL_DECK.nodes, [
-      ...withoutObserve,
-      replacement('flow'),
+      ...withoutHermesFlow,
+      replacement('flow', 'card_hermes_steward', 'card_main_chat'),
     ] as any)).toBe(false);
     expect(isHermesConnectedToMainChat(INITIAL_DECK.nodes, [
-      ...withoutObserve,
-      replacement('hermes_observe', 'card_hermes_steward', 'card_main_chat'),
-    ] as any)).toBe(false);
-    expect(isHermesConnectedToMainChat(INITIAL_DECK.nodes, [
-      ...withoutObserve,
+      ...withoutHermesFlow,
       replacement('invalid'),
     ] as any)).toBe(false);
   });
 
-  it('seeds Main→Hermes as hermes_observe observation edge and keeps workers blue', () => {
+  it('seeds Main→Hermes invocation and only the intended workers on the blue bus', () => {
     expect(INITIAL_DECK.edges).toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'hermes_observe' }),
+      expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' }),
       expect.objectContaining({ source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' }),
       expect.objectContaining({ source: 'card_research_agent', target: 'card_magentic', edgeType: 'magentic_option' }),
-      expect.objectContaining({ source: 'card_local_coder', target: 'card_magentic', edgeType: 'magentic_option' }),
+      expect.objectContaining({ source: 'card_openai_coder', target: 'card_magentic', edgeType: 'magentic_option' }),
+      expect.objectContaining({ source: 'card_worldsignals_agent', target: 'card_magentic', edgeType: 'magentic_option' }),
     ]));
   });
 
-  it('grants Main ThinkGraph write authority, Hermes investigation tools, and Search web only', () => {
+  it('grants Main native Engraphis tools, Hermes native Graphiti tools, and Search web only', () => {
     const byId = new Map(INITIAL_DECK.nodes.map((node) => [node.id, node]));
     const mainTools = byId.get('card_main_chat')?.runtimeOptions?.tools ?? [];
     const hermesTools = byId.get('card_hermes_steward')?.runtimeOptions?.tools ?? [];
     const searchTools = byId.get('card_research_agent')?.runtimeOptions?.tools ?? [];
     expect(mainTools).toEqual(expect.arrayContaining([
-      'thinkgraph.get_graph_slice',
-      'thinkgraph.submit_update',
-      'engraphis.engraphis_recall',
+      'engraphis.recall',
       'canvas.inspect',
     ]));
     expect(mainTools).not.toEqual(expect.arrayContaining(['knowgraph.ingest', 'web_search']));
     expect(hermesTools).toEqual(expect.arrayContaining([
-      'thinkgraph.get_graph_slice',
       'graphiti.search_nodes',
       'graphiti.add_memory',
       'graphiti.add_triplet',
       'write_mag_one_instructions',
       'card.run_assistant_agent',
     ]));
-    expect(hermesTools).not.toEqual(expect.arrayContaining(['thinkgraph.submit_update', 'web_search', 'run_mag_one', 'run_coder_subagent']));
+    expect(hermesTools).not.toEqual(expect.arrayContaining(['web_search', 'run_mag_one', 'run_coder_subagent']));
     expect(searchTools).toEqual(['web_search']);
   });
 

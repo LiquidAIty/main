@@ -57,11 +57,11 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       version: 1,
       nodes: [
         {
-          id: 'card_thinkgraph_agent',
+          id: 'card_worker_a',
           kind: 'agent',
-          templateId: 'template_thinkgraph_agent',
+          templateId: 'template_worker',
           runtimeType: 'assistant_agent',
-          title: 'ThinkGraph Agent',
+          title: 'Worker A',
           position: { x: -420, y: 140 },
         },
         {
@@ -599,10 +599,10 @@ describe('BuilderCanvas runtime-truth helpers', () => {
 
   it('supports DeckEdge sourceHandle and targetHandle fields', () => {
     const edge: DeckEdge = {
-      id: 'edge_bus_thinkgraph',
+      id: 'edge_bus_worker',
       source: 'card_magentic',
       sourceHandle: 'bus-out-1',
-      target: 'card_thinkgraph_agent',
+      target: 'card_worker_a',
       targetHandle: 'agent-in',
       edgeType: 'magentic_option',
     };
@@ -614,10 +614,10 @@ describe('BuilderCanvas runtime-truth helpers', () => {
   it('preserves handle fields when sanitizing deck edges', () => {
     const edges = sanitizeDeckEdges([
       {
-        id: 'edge_bus_thinkgraph',
+        id: 'edge_bus_worker',
         source: 'card_magentic',
         sourceHandle: 'bus-out-1',
-        target: 'card_thinkgraph_agent',
+        target: 'card_worker_a',
         targetHandle: 'agent-in',
         edgeType: 'magentic_option',
       },
@@ -625,10 +625,10 @@ describe('BuilderCanvas runtime-truth helpers', () => {
 
     expect(edges).toEqual<DeckEdge[]>([
       {
-        id: 'edge_bus_thinkgraph',
+        id: 'edge_bus_worker',
         source: 'card_magentic',
         sourceHandle: 'bus-out-1',
-        target: 'card_thinkgraph_agent',
+        target: 'card_worker_a',
         targetHandle: 'agent-in',
         edgeType: 'magentic_option',
       },
@@ -639,30 +639,30 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     const firstKey = buildDeckEdgeIdentityKey({
       source: 'card_magentic',
       sourceHandle: 'bus-out-1',
-      target: 'card_thinkgraph_agent',
+      target: 'card_worker_a',
       targetHandle: null,
       edgeType: 'magentic_option',
     });
     const secondKey = buildDeckEdgeIdentityKey({
       source: 'card_magentic',
       sourceHandle: 'bus-out-2',
-      target: 'card_thinkgraph_agent',
+      target: 'card_worker_a',
       targetHandle: null,
       edgeType: 'magentic_option',
     });
 
     expect(firstKey).not.toBe(secondKey);
-    expect(firstKey).toBe('card_magentic::bus-out-1::card_thinkgraph_agent::::magentic_option');
+    expect(firstKey).toBe('card_magentic::bus-out-1::card_worker_a::::magentic_option');
   });
 
   it('allows the same source and target through different handles but rejects exact duplicates', () => {
     const document = createBusTestDocument();
     const currentEdges: Edge[] = [
       {
-        id: 'edge_bus_thinkgraph_1',
+        id: 'edge_bus_worker_1',
         source: 'card_magentic',
         sourceHandle: 'bus-out-1',
-        target: 'card_thinkgraph_agent',
+        target: 'card_worker_a',
         targetHandle: null,
         data: { edgeType: 'magentic_option' },
       } as Edge,
@@ -674,7 +674,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         {
           source: 'card_magentic',
           sourceHandle: 'bus-out-2',
-          target: 'card_thinkgraph_agent',
+          target: 'card_worker_a',
           targetHandle: null,
         },
         currentEdges,
@@ -687,7 +687,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         {
           source: 'card_magentic',
           sourceHandle: 'bus-out-1',
-          target: 'card_thinkgraph_agent',
+          target: 'card_worker_a',
           targetHandle: null,
         },
         currentEdges,
@@ -699,10 +699,10 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     const document = createBusTestDocument();
     const currentEdges: Edge[] = [
       {
-        id: 'edge_thinkgraph_codegraph',
-        source: 'card_thinkgraph_agent',
+        id: 'edge_worker_chain',
+        source: 'card_worker_a',
         sourceHandle: null,
-        target: 'card_codegraph_agent',
+        target: 'card_worker_b',
         targetHandle: null,
         data: { edgeType: 'flow' },
       } as Edge,
@@ -712,9 +712,9 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       isPlainConnectionAllowedForDocument(
         document,
         {
-          source: 'card_thinkgraph_agent',
+          source: 'card_worker_a',
           sourceHandle: null,
-          target: 'card_codegraph_agent',
+          target: 'card_worker_b',
           targetHandle: null,
         },
         [],
@@ -725,7 +725,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       isPlainConnectionAllowedForDocument(
         document,
         {
-          source: 'card_codegraph_agent',
+          source: 'card_worker_b',
           sourceHandle: null,
           target: 'card_research_agent',
           targetHandle: null,
@@ -738,9 +738,9 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       isPlainConnectionAllowedForDocument(
         document,
         {
-          source: 'card_thinkgraph_agent',
+          source: 'card_worker_a',
           sourceHandle: null,
-          target: 'card_codegraph_agent',
+          target: 'card_worker_b',
           targetHandle: null,
         },
         currentEdges,
@@ -753,7 +753,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         {
           source: 'card_magentic',
           sourceHandle: 'bus-out-1',
-          target: 'card_thinkgraph_agent',
+          target: 'card_worker_a',
           targetHandle: null,
         },
         currentEdges,
@@ -765,10 +765,10 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     const [edge] = toFlowEdges(
       createBusTestDocument([
         {
-          id: 'edge_bus_thinkgraph',
+          id: 'edge_bus_worker',
           source: 'card_magentic',
           sourceHandle: 'bus-out-3',
-          target: 'card_thinkgraph_agent',
+          target: 'card_worker_a',
           targetHandle: 'agent-in',
           edgeType: 'magentic_option',
         },
@@ -847,7 +847,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       draggable: false,
       selectable: true,
     });
-    expect(nodes.find((node) => node.id === 'card_thinkgraph_agent')).toMatchObject({
+    expect(nodes.find((node) => node.id === 'card_worker_a')).toMatchObject({
       type: 'agentCard',
       position: { x: 180, y: 140 },
       draggable: true,
@@ -912,17 +912,17 @@ function createBusTestDocument(edges: DeckEdge[] = []): DeckDocument {
         position: { x: 40, y: 120 },
       },
       {
-        id: 'card_thinkgraph_agent',
+        id: 'card_worker_a',
         kind: 'agent',
-        templateId: 'template_thinkgraph_agent',
+        templateId: 'template_worker',
         runtimeType: 'assistant_agent',
-        title: 'ThinkGraph',
+        title: 'Worker A',
         position: { x: 180, y: 140 },
       },
       {
-        id: 'card_codegraph_agent',
+        id: 'card_worker_b',
         kind: 'agent',
-        templateId: 'template_codegraph_agent',
+        templateId: 'template_worker',
         runtimeType: 'assistant_agent',
         title: 'CodeGraph',
         position: { x: 420, y: 140 },

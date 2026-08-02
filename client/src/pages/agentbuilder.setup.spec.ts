@@ -86,7 +86,7 @@ describe('agentbuilder authoring flow', () => {
       target: edge.target,
       edgeType: edge.edgeType,
     }))).toEqual([
-      { source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'hermes_observe' },
+      { source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
       { source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' },
       { source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' },
       { source: 'card_hermes_steward', target: 'card_worldsignals_agent', edgeType: 'flow' },
@@ -434,7 +434,7 @@ describe('agentbuilder authoring flow', () => {
       ...hermes.runtimeOptions,
       provider: 'openrouter',
       modelKey: 'saved-hermes-model',
-      tools: ['hermes.memory_read', 'graphiti.clear_graph'],
+      tools: ['graphiti.clear_graph'],
     };
     const savedEdges = JSON.parse(JSON.stringify(stale.edges));
 

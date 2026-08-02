@@ -174,27 +174,25 @@ NOT layer any of the following onto native reasoning (all removed; do not reintr
   own `prompt`. A card may carry its own explicit prompt; the backend imposes none.
 * Deterministic keyword routing — the `isGenericPrompt`/`isContinuation` classifier (`test`,
   `hello`, `hi`, `run`, `go`, `continue`, `approve`, `yes`) and any mutation of
-  `priorAssistantText`/mission input. Mission input passes through unchanged.
+  mission input. Mission input passes through unchanged; there is no top-level prior-assistant,
+  plan, blackboard, graph, attachment, research-limit, or workspace-object payload.
 * Native team mutation — the `resolveMagOneAgentRole(head) !== 'local_coder'` participant filter.
   The team is exactly the bus-connected, Python-callable cards (no role exclusion).
 * Hidden graph injection — `buildGroundedTaskLedgerContext`/`renderTaskLedgerGroundingDirective`
   prose spliced into the system prompt and the `taskLedgerGroundingContext` payload field. (The
   future user-authored Plan attaches selected graph context explicitly; runtime never auto-injects.)
-* Post-run PlanFlow projection — Python `_planflow_task_objects` and the
-  `TaskLedgerArtifact.planFlowTaskObjects` / `PlanFlowTaskObject` contract branch. The native
-  `taskLedgerArtifact` (facts/plan/team/taskLedger) is the task breakdown; no extra model call.
+* Ledger interception — do not subclass Magentic One to capture its orchestrator, read private
+  `_facts` / `_plan` state, reconstruct Task Ledger artifacts, or touch the Progress Ledger.
 * Auto output-contract injection — `withMagenticTaskLedgerContractDefault` in the deck-run path.
-  Only a card's own explicitly-set `taskLedgerOutputContract` (edited in the AgentManager "Objects"
-  field) is transported; no hidden default is stamped at run time.
+  No task-ledger output-contract field is transported.
 
-Keep intact: `MagenticOneGroupChat`, vendored AutoGen task-ledger prompt / `_get_task_ledger_plan_prompt`,
-native `taskLedgerArtifact`, native execution, native team coordination, `buildTaskLedgerArtifactGraph`
-(native display — degrades to an honest empty task graph when no artifact).
+Keep intact: `MagenticOneGroupChat`, its vendored prompts and ledgers, native execution, and native
+team coordination. LiquidAIty does not inspect or reconstruct the native ledgers.
 
-@proof id=magentic-one-runtime.wrappers-removed-audit `rg -c 'MAG_ONE_CODING_RUN_SYSTEM_PROMPT|withMagenticTaskLedgerContractDefault|_planflow_task_objects|PlanFlowTaskObject|isGenericPrompt|isContinuation' client/src apps/backend/src apps/python-models/app` → zero.
+@proof id=magentic-one-runtime.wrappers-removed-audit `rg -c 'MAG_ONE_CODING_RUN_SYSTEM_PROMPT|withMagenticTaskLedgerContractDefault|_planflow_task_objects|PlanFlowTaskObject|isGenericPrompt|isContinuation|_CapturingMagenticOneGroupChat|taskLedgerArtifact' client/src apps/backend/src apps/python-models/app` → zero.
 @proof id=magentic-one-runtime.wrappers-removed-compile backend `tsc -p apps/backend/tsconfig.app.json --noEmit`=0; client tsc = 4 pre-existing unrelated; `py_compile` ok.
-@proof id=magentic-one-runtime.wrappers-removed-tests cards/runtime.spec.ts payload asserts (systemPrompt == card prompt, priorAssistantText preserved, coder participates, no grounding); deckRuntime.spec.ts 19/19; Python contracts/adapter/orchestrator 18/18.
-@limitation id=magentic-one-runtime.full-live-run a full live MagenticOneGroupChat mission needs the Python rails service + a provider key + network (real billed calls); no offline full-run fixture exists. Highest-fidelity offline proof run instead: real adapter `_build_participants` + `taskLedgerArtifact` contract tests with a fake client.
+@proof id=magentic-one-runtime.wrappers-removed-tests cards/runtime.spec.ts payload asserts card prompt remains card-bound, dead top-level context is absent, configured workers participate, and no grounding is injected; focused backend and Python contract/adapter/orchestrator tests pass.
+@limitation id=magentic-one-runtime.full-live-run a full live MagenticOneGroupChat mission needs the Python rails service + a provider key + network (real billed calls); no offline full-run fixture exists. Highest-fidelity offline proof uses the real participant adapter with a fake model client and does not inspect native ledger internals.
 
 ## Backend Workspace Root Guardrail
 

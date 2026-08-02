@@ -11,13 +11,14 @@
 //                                 regular native Mag One
 //
 // These handlers read authoritative saved topology and never mutate the deck or
-// fabricate agents/tools/outputs. Python owns instruction hydration, assignment
-// lifecycle, registered Graph Views, and AgentGraph result lineage.
+// fabricate agents/tools/outputs. Python owns assignment reads, lifecycle, typed
+// native context references, and AgentGraph result lineage.
 
 import { getDeckDocument } from '../../../decks/store';
 import {
   resolvedMagenticControllers,
   resolvedMagenticOptions,
+  resolveCardTools,
   resolveMagenticWorkerReadiness,
   runCardWithContract,
 } from '../../../cards/runtime';
@@ -29,12 +30,6 @@ function asString(value: unknown): string {
 
 function isMagenticCard(node: any): boolean {
   return asString(node?.runtimeType).trim().toLowerCase() === 'magentic_one';
-}
-
-function resolveCardTools(card: any): string[] {
-  const fromOptions = card?.runtimeOptions?.tools;
-  const raw = Array.isArray(fromOptions) ? fromOptions : Array.isArray(card?.tools) ? card.tools : [];
-  return raw.map((tool: unknown) => asString(tool).trim()).filter(Boolean);
 }
 
 export type AgentFlowDeps = {
@@ -115,12 +110,12 @@ export async function describeConnectedAgents(
 // ── run_mag_one ───────────────────────────────────────────────────────────────
 // The ONE Mag One entrypoint: a Hermes-prepared, Main-presented, user-accepted
 // AgentGraph instruction identity runs regular native Mag One. Python claims the
-// assignment and hydrates the exact instruction plus bounded registered Graph
-// Views. There is no TS prompt-to-plan adapter, task-ledger gate, approval gate,
-// or visible-flow wrapper. Mag One reasons over the hydrated job, selects among
+// assignment and reads its exact instruction plus sender-selected native graph
+// references. There is no TS prompt-to-plan adapter, task-ledger gate, approval gate,
+// or visible-flow wrapper. Mag One reasons over the assigned job, selects among
 // the connected bus-eligible workers itself, and returns its native result.
 export type RunMagOneInput = {
-  // Stable identity only. Python claims the AgentGraph assignment and hydrates
+  // Stable identity only. Python claims the AgentGraph assignment and reads
   // the exact relational instruction; TypeScript never carries task text.
   instructionId: string;
   projectId: string;
@@ -185,14 +180,9 @@ export async function runMagOne(
   // stable identities, not a copied roster; Main Chat and Hermes are structurally excluded.
   const connectedCards = resolvedMagenticOptions(asString(orchestrator.id), nodes, edges);
   const connectedParticipants = connectedCards.map((card: any) => asString(card?.id));
-  const resolveReadiness = deps.resolveWorkerReadiness ?? resolveMagenticWorkerReadiness;
-  const readiness = await resolveReadiness(connectedCards);
-  const executionReadyCardIds = readiness
-    .filter((item) => item.executionReady)
-    .map((item) => asString(item.card?.id));
   const senderCardId = asString(mainControllers[0]?.id);
   const receiverCardId = asString(orchestrator.id);
-  const result: any = await runCard(orchestrator, {}, '', {
+  const result: any = await runCard(orchestrator, '', {
     deckId,
     projectId,
     allCards: nodes,
@@ -201,7 +191,6 @@ export async function runMagOne(
     previousOutput: '',
     runId,
     agentAssignment: { instructionId, senderCardId, receiverCardId },
-    magenticExecutionReadyCardIds: executionReadyCardIds,
   });
 
   const failed = result?.status === 'error';

@@ -76,6 +76,10 @@ apps/backend/env
 .agents/**/token*
 .agents/**/credentials*
 
+# Backend-generated local users/sessions. Runtime identity lives in the active
+# database/auth provider; these machine-local JSON artifacts are not source.
+/apps/backend/.data/
+
 
 autogen-main/
 /neo4j-text2cypher/

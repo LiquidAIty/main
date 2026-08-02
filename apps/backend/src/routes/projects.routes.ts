@@ -13,7 +13,6 @@ import {
   listAgentCards,
   saveProjectState,
 } from '../services/agentBuilderStore';
-import { ensureSystemAgentConfigs } from '../services/agentConfigStore';
 
 const router = Router();
 const PROJECTS_TABLE = 'ag_catalog.projects';
@@ -100,14 +99,6 @@ router.post('/', async (req, res) => {
       projectType,
       ownerUserId,
     );
-    try {
-      await ensureSystemAgentConfigs(project.id);
-    } catch (ensureErr: any) {
-      console.warn('[projects] ensureSystemAgentConfigs failed', {
-        projectId: project.id,
-        error: ensureErr?.message || String(ensureErr),
-      });
-    }
     return res.json({ ok: true, project });
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'failed to create project' });
@@ -173,7 +164,6 @@ router.delete('/:projectId', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query('DELETE FROM ag_catalog.project_agents WHERE project_id = $1', [projectId]);
     const result = await client.query('DELETE FROM ag_catalog.projects WHERE id = $1 RETURNING id', [projectId]);
 
     if (result.rowCount === 0) {

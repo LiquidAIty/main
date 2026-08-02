@@ -81,8 +81,8 @@ test('buildAgentDefinitionsFromRequest passes the doorway tool grant through unc
   const req = {
     agent_definitions: [
       {
-        agent_type: 'card_thinkgraph_agent',
-        system_prompt: 'Run the bound ThinkGraph card.',
+        agent_type: 'card_saved_worker',
+        system_prompt: 'Run the bound saved worker card.',
         allowed_tools: ['mcp__liquidaity__card_run_assistant_agent'],
         context_mode_inherit_parent: true,
       },
@@ -101,24 +101,20 @@ test('buildAgentDefinitionsFromRequest never invents or rewrites a tool name', (
       {
         agent_type: 'some_other_card',
         system_prompt: 'Do something else.',
-        allowed_tools: ['read_thinkgraph_scope'], // an old bare name — must NOT be rewritten
+        allowed_tools: ['unknown.old_tool'], // an unknown bare name must NOT be rewritten
       },
     ],
   }
 
   const [definition] = buildAgentDefinitionsFromRequest(req)
 
-  assert.deepEqual(definition.tools, ['read_thinkgraph_scope'])
+  assert.deepEqual(definition.tools, ['unknown.old_tool'])
 })
 
-// Fail-closed startup validation: the fetched Python MCP pool must actually
-// contain the control-surface tools the card architecture depends on — the
-// card-run doorway tool and the bounded READ-ONLY ThinkGraph slice. There is
-// NO model-facing write tool to require. A card grant in deck data is never
-// treated as executable on its own.
+// Fail-closed startup validation requires structural controls only. Graph
+// tools are selected per card and are never global Harness prerequisites.
 const REQUIRED_CONTROL_TOOLS = [
   'mcp__liquidaity__card_run_assistant_agent',
-  'mcp__liquidaity__thinkgraph_get_graph_slice',
   'mcp__liquidaity__mag_one_describe_connected_agents',
 ]
 
@@ -182,9 +178,9 @@ test('QueryEngine captures the final provider payload and blocks transport', asy
     customSystemPrompt: 'SYSTEM_PROMPT_SENTINEL: deterministic transport proof',
     appendSystemPrompt: [
       harnessInstruction,
-      '[LIQUIDAITY_GRAPH_CONTEXT]',
-      'ROLE GRAPH VIEWS (1):',
-      'view: codegraph:payload-proof | records: 1',
+      '[AGENTGRAPH_CONTEXT_REFERENCES]',
+      'AGENTGRAPH CONTEXT REFERENCES (1):',
+      'cbm:payload-proof',
       `- ${fileRange}`,
     ].join('\n'),
     queryDeps,
@@ -244,7 +240,7 @@ test('QueryEngine captures the final provider payload and blocks transport', asy
     serializedBytes,
     estimatedTokens,
     toolCount: captured.tools.length,
-    graphViewCount: (systemText.match(/ROLE GRAPH VIEWS \(1\)/g) || []).length,
+    contextReferenceCount: (systemText.match(/AGENTGRAPH CONTEXT REFERENCES \(1\)/g) || []).length,
     graphEvidenceCount: (systemText.match(/repository evidence:/g) || []).length,
     uniqueFiles: uniqueFiles.size,
     uniqueSourceRanges: uniqueSourceRanges.size,
@@ -270,7 +266,7 @@ test('QueryEngine captures the final provider payload and blocks transport', asy
     serializedBytes,
     estimatedTokens,
     toolCount: 0,
-    graphViewCount: 1,
+    contextReferenceCount: 1,
     graphEvidenceCount: 1,
     uniqueFiles: 1,
     uniqueSourceRanges: 1,
@@ -383,15 +379,13 @@ test('missingRequiredHarnessTools passes only when the real qualified control to
   )
 })
 
-test('missingRequiredHarnessTools never requires a model-facing graph-write tool', () => {
-  // A pool with only the read + doorway tools (no apply_live_patch anywhere) is
-  // complete — the write tool was removed from the model-facing surface.
+test('missingRequiredHarnessTools never requires card-owned graph tools', () => {
   assert.deepEqual(missingRequiredHarnessTools(REQUIRED_CONTROL_TOOLS), [])
 })
 
 test('missingRequiredHarnessTools reports each absent tool exactly', () => {
   assert.deepEqual(
-    missingRequiredHarnessTools(['mcp__liquidaity__thinkgraph_get_graph_slice']),
+    missingRequiredHarnessTools(['mcp__liquidaity__engraphis_recall']),
     [
       'mcp__liquidaity__card_run_assistant_agent',
       'mcp__liquidaity__mag_one_describe_connected_agents',
@@ -399,7 +393,7 @@ test('missingRequiredHarnessTools reports each absent tool exactly', () => {
   )
   // Old bare names are NOT the real pool names — no alias, no translation.
   assert.deepEqual(
-    missingRequiredHarnessTools(['card.run_assistant_agent', 'thinkgraph.get_graph_slice']),
+    missingRequiredHarnessTools(['card.run_assistant_agent', 'engraphis.recall']),
     REQUIRED_CONTROL_TOOLS,
   )
 })
@@ -410,15 +404,15 @@ test('missingRequiredHarnessTools reports each absent tool exactly', () => {
 test('resolveCardRunControlCall forces the bound card and injects trusted identity', () => {
   const resolved = resolveCardRunControlCall({
     input: {
-      cardId: 'card_thinkgraph_agent',
+      cardId: 'card_saved_worker',
       input: 'do the task',
       projectId: 'forged',
       agentContextId: 'agentctx:forged',
       originatingAgentId: 'card_attacker',
       originatingRunId: 'forged-run',
     },
-    agentType: 'card_thinkgraph_agent',
-    cardIdByAgentType: new Map([['card_thinkgraph_agent', 'card_thinkgraph_agent']]),
+    agentType: 'card_saved_worker',
+    cardIdByAgentType: new Map([['card_saved_worker', 'card_saved_worker']]),
     projectId: 'proj-1',
     conversationId: 'conv-main',
     correlationId: 'corr-42',
@@ -427,20 +421,20 @@ test('resolveCardRunControlCall forces the bound card and injects trusted identi
   assert.ok('updatedInput' in resolved)
   assert.deepEqual((resolved as any).updatedInput, {
     input: 'do the task',
-    cardId: 'card_thinkgraph_agent',
+    cardId: 'card_saved_worker',
     projectId: 'proj-1',
     conversationId: 'conv-main',
     correlationId: 'corr-42',
-    originatingAgentId: 'card_thinkgraph_agent',
+    originatingAgentId: 'card_saved_worker',
     originatingRunId: 'main-turn-1',
   })
 })
 
 test('resolveCardRunControlCall denies callers that are not a doorway child of this turn', () => {
   const parentCall = resolveCardRunControlCall({
-    input: { cardId: 'card_thinkgraph_agent', input: 'task' },
+    input: { cardId: 'card_saved_worker', input: 'task' },
     agentType: undefined,
-    cardIdByAgentType: new Map([['card_thinkgraph_agent', 'card_thinkgraph_agent']]),
+    cardIdByAgentType: new Map([['card_saved_worker', 'card_saved_worker']]),
     projectId: 'proj-1',
     conversationId: 'conv-main',
     correlationId: 'corr-42',
@@ -451,7 +445,7 @@ test('resolveCardRunControlCall denies callers that are not a doorway child of t
   const unknownChild = resolveCardRunControlCall({
     input: { input: 'task' },
     agentType: 'general-purpose',
-    cardIdByAgentType: new Map([['card_thinkgraph_agent', 'card_thinkgraph_agent']]),
+    cardIdByAgentType: new Map([['card_saved_worker', 'card_saved_worker']]),
     projectId: 'proj-1',
     conversationId: 'conv-main',
     correlationId: 'corr-42',
@@ -482,8 +476,8 @@ test('resolveCardRunControlCall permits only the persisted orange child target',
 test('resolveCardRunControlCall denies when the session identity is unavailable', () => {
   const resolved = resolveCardRunControlCall({
     input: { input: 'task' },
-    agentType: 'card_thinkgraph_agent',
-    cardIdByAgentType: new Map([['card_thinkgraph_agent', 'card_thinkgraph_agent']]),
+    agentType: 'card_saved_worker',
+    cardIdByAgentType: new Map([['card_saved_worker', 'card_saved_worker']]),
     projectId: '',
     conversationId: '',
     correlationId: 'corr-42',
@@ -495,8 +489,8 @@ test('resolveCardRunControlCall denies when the session identity is unavailable'
 test('resolveCardRunControlCall denies when the parent Harness turn identity is unavailable', () => {
   const resolved = resolveCardRunControlCall({
     input: { input: 'task' },
-    agentType: 'card_thinkgraph_agent',
-    cardIdByAgentType: new Map([['card_thinkgraph_agent', 'card_thinkgraph_agent']]),
+    agentType: 'card_saved_worker',
+    cardIdByAgentType: new Map([['card_saved_worker', 'card_saved_worker']]),
     projectId: 'proj-1',
     conversationId: 'conv-main',
     correlationId: 'corr-42',
@@ -516,8 +510,8 @@ test('the doorway grant resolves into a usable child tool only from the real loa
   const [definition] = buildAgentDefinitionsFromRequest({
     agent_definitions: [
       {
-        agent_type: 'card_thinkgraph_agent',
-        system_prompt: 'Run the bound ThinkGraph card.',
+        agent_type: 'card_saved_worker',
+        system_prompt: 'Run the bound saved worker card.',
         allowed_tools: ['mcp__liquidaity__card_run_assistant_agent'],
       },
     ],
@@ -525,7 +519,7 @@ test('the doorway grant resolves into a usable child tool only from the real loa
 
   const loadedPool = [
     fakeMcpTool('mcp__liquidaity__card_run_assistant_agent'),
-    fakeMcpTool('mcp__liquidaity__thinkgraph_get_graph_slice'),
+    fakeMcpTool('mcp__liquidaity__engraphis_recall'),
     fakeMcpTool('mcp__liquidaity__canvas_inspect'),
   ]
   const resolved = resolveAgentTools(definition, loadedPool)

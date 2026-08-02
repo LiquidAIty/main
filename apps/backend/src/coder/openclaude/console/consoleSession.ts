@@ -98,7 +98,7 @@ export type StartConsoleSessionRequest = {
   provider?: string;
   /** Prompt delivered via `--print` for `print`/`task` modes. */
   prompt?: string;
-  /** Explicit argv override (e.g. ['--help']) — used by the safe smoke. */
+  /** Exact argv assembled by the bounded Coder execution path. */
   args?: string[];
 };
 
@@ -637,8 +637,8 @@ export class OpenClaudeConsoleSessionManager {
     if (!runtime.ready) {
       return { ok: false, error: 'console_runtime_unavailable', missing: runtime.missing };
     }
-    // print/task cannot really run without provider credentials; interactive and
-    // help can start and surface the CLI's own prompt/error honestly.
+    // print/task cannot really run without provider credentials; interactive
+    // sessions can start and surface the CLI's own prompt/error honestly.
     if ((mode === 'print' || mode === 'task') && runtime.envMissing.length > 0) {
       return { ok: false, error: 'console_env_missing', missing: runtime.envMissing };
     }

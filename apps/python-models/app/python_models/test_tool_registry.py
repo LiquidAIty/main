@@ -2,11 +2,14 @@
 import json
 
 from app.python_models.tool_registry import (
+    ToolRegistry,
     build_default_tool_registry,
     tool_calculator,
     tool_current_datetime,
     tool_manifest,
 )
+from app.python_models.orchestration_contracts import ToolSpec
+import pytest
 
 
 def test_calculator_evaluates_arithmetic():
@@ -38,16 +41,18 @@ def test_worldsignals_batch_uses_the_native_command_contract():
     assert command["additionalProperties"] is False
 
 
-def test_manifest_exposes_thinkgraph_tools_for_assistant_agent_cards():
-    """The card Tools tab filters by agentCompatibility, so the two scoped
-    ThinkGraph tools must be attachable on assistant_agent cards (and never on
-    the Mag One orchestrator card)."""
-    manifest = tool_manifest()
-    for tool_id in ("read_thinkgraph_scope", "apply_thinkgraph_patch"):
-        entry = next((m for m in manifest if m["id"] == tool_id), None)
-        assert entry is not None, f"{tool_id} missing from manifest"
-        assert entry["agentCompatibility"] == ["assistant_agent"]
-        assert entry["description"]
+def test_duplicate_registry_identity_is_rejected():
+    registry = ToolRegistry()
+    spec = ToolSpec(
+        name="one_tool",
+        description="One test tool.",
+        enabled=True,
+        inputSchema={"type": "object", "properties": {}, "required": []},
+        outputSchema={"type": "string"},
+    )
+    registry.register(spec, lambda: "one")
+    with pytest.raises(RuntimeError, match="card_tool_already_registered: one_tool"):
+        registry.register(spec, lambda: "two")
 
 
 def test_manifest_is_registry_backed_no_duplicate_entries():

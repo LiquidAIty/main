@@ -174,7 +174,7 @@ export function NativeKnowGraphSurface({ projectId }: { projectId: string }) {
   }, [load]);
 
   return (
-    <NativeThinkGraphSurface
+    <NativeGraphProjectionSurface
       projection={projection}
       status={status}
       error={error}
@@ -221,7 +221,6 @@ const TYPE_COLORS: Record<string, string> = {
   Goal: '#37ADAA',
   Question: '#62B0E8',
   Decision: '#7BC8C4',
-  GraphView: '#6FA8B8',
   Finding: '#91C4B3',
   CodeInspectionNeed: '#8FA9B3',
   ResearchNeed: '#6D8F99',
@@ -239,7 +238,7 @@ function shortNodeLabel(node: GraphProjectionV1['nodes'][number]): string {
   return semantic.split(/\s+/).slice(0, 3).join(' ');
 }
 
-export function NativeThinkGraphSurface({
+export function NativeGraphProjectionSurface({
   projection,
   status,
   error,

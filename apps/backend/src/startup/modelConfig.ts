@@ -5,12 +5,8 @@ import type { AgentCardInstance } from '../types';
 
 // The REAL runtime authority for every agent's provider/model is the saved
 // Agent Canvas deck (project agent_io_schema → v3_state → decks[deck_builder]),
-// resolved per-card from runtimeOptions by cards/runtime.ts. The legacy
-// ag_catalog.project_agents table is a separate seed table (defaulted to
-// openai) that no live chat path consumes — only the dead kg_ingest/neo4j/
-// research_agent resolvers and the knowgraph-ingest config read it, so it must
-// NOT be presented as the agent roster. This boot banner reads the deck so it
-// reflects real routing: graph services (ThinkGraph/KnowGraph/Neo4j) never
+// resolved per-card from runtimeOptions by cards/runtime.ts. This boot banner reads the deck so it
+// reflects real routing: graph services (Engraphis/Graphiti/Neo4j) never
 // appear as agents, and each card shows its own saved provider/model.
 
 function derivePrintableProvider(card: AgentCardInstance): string {
