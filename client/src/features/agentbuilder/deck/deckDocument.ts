@@ -80,50 +80,7 @@ export function formatBuilderStatusMessage(
   fallback: string,
 ): string {
   const text = String(message || '').trim();
-  const lower = text.toLowerCase();
-  if (!text) return fallback;
-  if (text === 'project_not_found')
-    return 'Canvas data is unavailable for this selection.';
-  if (text === 'deck_load_failed') return 'Canvas data could not be loaded.';
-  if (text === 'deck_save_failed') return 'Could not save the current board.';
-  if (text === 'card_run_failed') return 'Card run failed.';
-  if (text === 'deck_run_failed') return 'Board run failed.';
-  if (text === 'template_not_found')
-    return 'The selected card template could not be resolved.';
-  if (text === 'templates_required')
-    return 'The selected card could not be run because its template set was missing.';
-  if (text === 'card_required')
-    return 'No card was provided to the backend run path.';
-  if (
-    lower.includes('insufficient_quota') ||
-    lower.includes('quota exceeded') ||
-    (lower.includes('quota') && lower.includes('billing'))
-  ) {
-    return 'The configured model could not run because provider quota or billing is unavailable right now.';
-  }
-  if (lower.includes('rate limit') || lower.includes('too many requests')) {
-    return 'The configured model is rate-limited right now. Try this card again shortly.';
-  }
-  if (
-    lower.includes('unauthorized') ||
-    lower.includes('authentication') ||
-    lower.includes('invalid api key') ||
-    lower.includes('incorrect api key')
-  ) {
-    return 'The configured model request was rejected by the provider. Check the backend credentials for this card.';
-  }
-  if (
-    lower.includes('failed to fetch') ||
-    lower.includes('networkerror') ||
-    lower.includes('econnrefused') ||
-    lower.includes('load failed')
-  ) {
-    return 'The Builder backend is unavailable right now.';
-  }
-  if (lower.includes('timed out') || lower.includes('timeout')) {
-    return 'The configured model timed out before the card completed.';
-  }
-  return text;
+  return text || fallback;
 }
 
 export function hydrateDeckDocument(

@@ -17,8 +17,6 @@ async def orchestrate_context_pack(context: ContextPack) -> OrchestratorRunRespo
             f"orchestrator_card_required: runtimeType={context.cardRuntime.runtimeType}"
         )
 
-    # The Python rails runs the real AutoGen Task Ledger startup and returns the
-    # real Task Ledger artifact (facts/plan/full text + model-call proof) plus the
-    # real captured messages. The Progress Ledger is identify-only. The app never
-    # invents Task Ledger fields, steps, or status.
+    # Native Magentic-One owns its private Task and Progress Ledgers. Python rails
+    # returns only the messages and result the native runtime actually emitted.
     return await run_native_magentic_mission(context)

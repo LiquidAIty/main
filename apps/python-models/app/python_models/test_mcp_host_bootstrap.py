@@ -111,6 +111,21 @@ def test_call_tool_appends_canonical_receipt_and_typed_provider_failure(monkeypa
     assert later_receipt["state"] == "completed"
 
 
+def test_plain_text_does_not_hide_a_later_structured_tool_error():
+    import json
+    import mcp_host
+
+    result = [
+        mcp_host.TextContent(type="text", text="native diagnostic"),
+        mcp_host.TextContent(
+            type="text",
+            text=json.dumps({"ok": False, "error": "native_failure"}),
+        ),
+    ]
+
+    assert mcp_host._tool_result_category(result) == "tool_error"
+
+
 def test_catalog_contract_metadata_is_generated_from_each_tool():
     import mcp_host
 
@@ -731,7 +746,6 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
             "conversationId": "external-mcp:grant-1",
             "parentRunId": "external-main:grant-1",
             "mainCardId": "card_main_chat",
-            "instructions": "Persisted Main instructions.",
         } if issuer == config.issuer_url and subject == "auth0|jeremiah" else None,
     )
     now = int(time.time())
@@ -778,7 +792,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "conversationId": "external-mcp:grant-1",
         "parentRunId": "external-main:grant-1",
         "mainCardId": "card_main_chat",
-        "instructions": "Persisted Main instructions.",
     }
     monkeypatch.setattr(
         mcp_host,

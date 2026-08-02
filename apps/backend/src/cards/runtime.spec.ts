@@ -236,16 +236,15 @@ describe('Canonical Cards Runtime', () => {
     expect(payload.userText).toBe('test');
   });
 
-  it('maxTokens 0 or invalid is omitted/normalized', () => {
-    const payload = buildPythonAutoGenCardRuntimePayload(
+  it('invalid saved maxTokens fails visibly instead of being omitted', () => {
+    expect(() => buildPythonAutoGenCardRuntimePayload(
       { id: 'mag1', runtimeOptions: { maxTokens: 0 } },
       'test input',
       {},
       {},
       [{ id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } }],
       '2026'
-    );
-    expect(payload.cardRuntime.runtimeOptions.maxTokens).toBeUndefined();
+    )).toThrow('card_maxTokens_invalid');
   });
 
   it('transports a card-selected KnowGraph retrieval tool to the Python participant set', () => {
@@ -477,7 +476,7 @@ describe('Canonical Cards Runtime', () => {
   // T002 — Failing tests: card-selected model config must propagate to payload exactly.
   // These tests must fail before T003 is applied (current code hardcodes 'openrouter'/'default').
 
-  it('privateParticipants carry the participant card selected provider and providerModelId', () => {
+  it('participants carry the card-selected provider and model exactly once', () => {
     const selectedModelKey = 'gpt-5.1-chat-latest';         // real MODEL_REGISTRY key — fixture only, not a default
     const selectedProvider = 'openai';                        // MODEL_REGISTRY[selectedModelKey].provider
     const selectedProviderModelId = 'gpt-5.1-chat-latest';  // MODEL_REGISTRY[selectedModelKey].id
@@ -492,12 +491,13 @@ describe('Canonical Cards Runtime', () => {
       cardM, 'test', {}, {}, [cardA], '2026',
     );
 
-    const priv = payload.cardRuntime.privateParticipants?.[0];
-    expect(priv).toBeDefined();
-    expect(priv?.provider).toBe(selectedProvider);
-    expect(priv?.providerModelId).toBe(selectedProviderModelId);
-    expect(priv?.providerModelId).not.toBe('default');
-    expect(priv?.providerModelId).not.toBe('');
+    const participant = payload.cardRuntime.participants[0];
+    expect(participant).toBeDefined();
+    expect(participant?.provider).toBe(selectedProvider);
+    expect(participant?.providerModelId).toBe(selectedProviderModelId);
+    expect(participant?.providerModelId).not.toBe('default');
+    expect(participant?.providerModelId).not.toBe('');
+    expect(payload.cardRuntime).not.toHaveProperty('privateParticipants');
   });
 
   it('participants[] carry the same card-selected provider and providerModelId', () => {
@@ -583,10 +583,7 @@ describe('Canonical Cards Runtime', () => {
     expect(fanParticipant?.tools).toEqual(['current_datetime']);
     expect(fanParticipant?.provider).toBe('openai');
     expect(fanParticipant?.providerModelId).toBe('gpt-5-nano');
-    // The prompt is private (sent only to Python), so it lives in privateParticipants, not the
-    // public participant. That separation is intentional.
-    const fanPrivate = payload.cardRuntime.privateParticipants?.find((p) => p.cardId === 'fan1');
-    expect(fanPrivate?.prompt).toBe('Fan instructions.');
+    expect(fanParticipant?.prompt).toBe('Fan instructions.');
 
   });
 
@@ -639,11 +636,9 @@ describe('Canonical Cards Runtime', () => {
       cardM, 'test', {}, {}, [cardA], '2026',
     );
 
-    const priv = payload.cardRuntime.privateParticipants?.[0];
     const pub = payload.cardRuntime.participants?.[0];
-    expect(priv?.providerModelId).not.toBe('default');
-    expect(priv?.providerModelId).not.toBe('');
     expect(pub?.providerModelId).not.toBe('default');
     expect(pub?.providerModelId).not.toBe('');
+    expect(payload.cardRuntime).not.toHaveProperty('privateParticipants');
   });
 });

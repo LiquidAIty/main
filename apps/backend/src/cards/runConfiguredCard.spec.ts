@@ -158,7 +158,8 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.cardRuntime.runtimeType).toBe('assistant_agent');
     expect(payload.cardRuntime.participants).toHaveLength(1);
     expect(payload.cardRuntime.participants[0].cardId).toBe('card_saved_worker');
-    expect(payload.cardRuntime.privateParticipants[0].prompt).toBe('You are the ThinkGraph agent.');
+    expect(payload.cardRuntime.participants[0].prompt).toBe('You are the ThinkGraph agent.');
+    expect(payload.cardRuntime).not.toHaveProperty('privateParticipants');
     // The configured card's model — resolved server-side, never caller-supplied.
     expect(payload.session.modelKey).toBe('gpt-5-nano');
     // No Task Ledger / task-state fields ride this path.
@@ -276,7 +277,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.cardRuntime.runtimeType).toBe('assistant_agent');
     expect(payload.cardRuntime.participants[0].runtimeBinding).toBe('local_coder');
     expect(payload.cardRuntime.participants[0].tools).toEqual(['run_local_coder']);
-    expect(payload.cardRuntime.privateParticipants[0].prompt).toBe('You are the Local Coder controller.');
+    expect(payload.cardRuntime.participants[0].prompt).toBe('You are the Local Coder controller.');
   });
 
   it('preserves the card-selected Local Coder model before dispatch — no forced upgrade, no blacklist', async () => {
@@ -296,7 +297,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.session.modelKey).toBe('gpt-5-mini');
     expect(payload.session.providerModelId).toBe('gpt-5-mini');
     expect(payload.cardRuntime.participants[0].providerModelId).toBe('gpt-5-mini');
-    expect(payload.cardRuntime.privateParticipants[0].providerModelId).toBe('gpt-5-mini');
+    expect(payload.cardRuntime).not.toHaveProperty('privateParticipants');
   });
 
   it('threads the canonical assignment identity back', async () => {

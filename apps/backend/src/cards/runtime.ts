@@ -19,9 +19,17 @@ function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
   return null;
 }
 
-function coerceNumber(value: unknown, fallback: number | null): number | null {
+function readOptionalNumber(
+  value: unknown,
+  field: string,
+  options: { positive?: boolean } = {},
+): number | null {
+  if (value === undefined || value === null || value === '') return null;
   const num = Number(value);
-  return Number.isFinite(num) ? num : fallback;
+  if (!Number.isFinite(num) || (options.positive === true && num <= 0)) {
+    throw new Error(`card_${field}_invalid: ${String(value)}`);
+  }
+  return num;
 }
 
 function resolveOrchestratorCardModel(card: any): {
@@ -37,15 +45,9 @@ function resolveOrchestratorCardModel(card: any): {
     provider: resolved.provider,
     modelKey,
     providerModelId: resolved.providerModelId,
-    temperature: coerceNumber(card.runtimeOptions?.temperature, null),
-    maxTokens: coerceNumber(card.runtimeOptions?.maxTokens, null),
+    temperature: readOptionalNumber(card.runtimeOptions?.temperature, 'temperature'),
+    maxTokens: readOptionalNumber(card.runtimeOptions?.maxTokens, 'max_tokens', { positive: true }),
   };
-}
-
-function summarizeText(value: string | null | undefined, maxLength = 220): string {
-  const text = String(value || '').replace(/\s+/g, ' ').trim();
-  if (!text) return '';
-  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 3)}...`;
 }
 
 // The two independent canvas networks (persisted explicit type + handle — never
@@ -319,6 +321,9 @@ export function resolveCardModelStrict(card: any): {
  * model execution. */
 export function resolveCardTools(card: any): string[] {
   const fromOptions = card.runtimeOptions?.tools;
+  if (fromOptions !== undefined && !Array.isArray(fromOptions)) {
+    throw new Error(`card_tools_config_invalid: cardId=${card.id}`);
+  }
   const raw = Array.isArray(fromOptions) ? fromOptions : Array.isArray(card.tools) ? card.tools : [];
   return raw.map((tool: any) => {
     const name = String(tool ?? '').trim();
@@ -348,39 +353,12 @@ export function serializeCardParticipant(head: any): Record<string, unknown> {
     title: String(head.title || 'Agent'),
     runtimeType,
     runtimeBinding,
-    // NOTE: the full role prompt is intentionally NOT in the public participant
-    // manifest (it would bloat the payload and leak internal prompt text). The
-    // prompt lives only in the private participant, used solely by Python to
-    // set AssistantAgent.system_message — never as visible/team-description text.
+    prompt: String(head.prompt || ''),
     tools: selectedTools,
     provider: model.provider,
     providerModelId: model.providerModelId,
-    temperature: head.runtimeOptions?.temperature ?? null,
-    maxTokens: head.runtimeOptions?.maxTokens ?? null,
-  };
-}
-
-export function serializeCardPrivateParticipant(head: any): Record<string, unknown> {
-  // Saved runtimeType only — no templateId/title inference. A card is whatever
-  // its saved configuration says it is.
-  const mappedRuntimeType = head.runtimeType === 'codex_app_server'
-    ? 'codex_app_server'
-    : head.runtimeType === 'research_agent' || head.runtimeType === 'planner_agent'
-      ? head.runtimeType
-      : 'assistant_agent';
-
-  const model = resolveCardModelStrict(head);
-  const runtimeBinding = resolveCardBinding(head);
-
-  return {
-    cardId: String(head.id || ''),
-    runtimeType: mappedRuntimeType,
-    runtimeBinding,
-    prompt: String(head.prompt || '').trim(),
-    provider: model.provider,
-    providerModelId: model.providerModelId,
-    temperature: head.runtimeOptions?.temperature ?? null,
-    maxTokens: head.runtimeOptions?.maxTokens ?? null,
+    temperature: readOptionalNumber(head.runtimeOptions?.temperature, 'temperature'),
+    maxTokens: readOptionalNumber(head.runtimeOptions?.maxTokens, 'max_tokens', { positive: true }),
   };
 }
 
@@ -407,16 +385,14 @@ export function buildPythonAutoGenCardRuntimePayload(
     serializeCardParticipant(head),
   );
 
-  const privateParticipants = supportedHeads.map((head) =>
-    serializeCardPrivateParticipant(head),
-  );
-
   const safeRuntimeOptions: Record<string, unknown> = {
     deckId: String(context.deckId || ''),
   };
   for (const key of ['temperature', 'maxTokens', 'maxTurns'] as const) {
-    const value = Number(card.runtimeOptions?.[key]);
-    if (Number.isFinite(value) && value > 0) safeRuntimeOptions[key] = value;
+    const value = readOptionalNumber(card.runtimeOptions?.[key], key, {
+      positive: key !== 'temperature',
+    });
+    if (value !== null) safeRuntimeOptions[key] = value;
   }
 
   // The mission input passes through normally. Native Mag One owns interpretation.
@@ -444,7 +420,6 @@ export function buildPythonAutoGenCardRuntimePayload(
       prompt: systemPrompt,
       runtimeOptions: safeRuntimeOptions,
       participants,
-      privateParticipants,
     }
   };
 
@@ -570,14 +545,12 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
 
   const effectiveCard = card;
   let participant: Record<string, unknown>;
-  let privateParticipant: Record<string, unknown>;
   let model: { provider: string; providerModelId: string };
   try {
     // TypeScript resolves only saved card/model structure. Python's canonical
     // registry validates the transported tool ids before model execution.
     model = resolveCardModelStrict(effectiveCard);
     participant = serializeCardParticipant(effectiveCard);
-    privateParticipant = serializeCardPrivateParticipant(effectiveCard);
   } catch (error: any) {
     return done({ status: 'failed', runtimeType, error: String(error?.message || 'card_resolution_failed') });
   }
@@ -616,7 +589,6 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       // to resolve the saved card and its assignment-specific context.
       runtimeOptions: { deckId },
       participants: [participant],
-      privateParticipants: [privateParticipant],
     },
   };
 
@@ -672,7 +644,15 @@ export async function runCardWithContract(
   if (resolveCardRuntimeType(card) === 'magentic_one') {
     const connectedHeads = resolvedMagenticOptions(card.id, context.allCards || [], context.allEdges || []);
     const readiness = await resolveMagenticWorkerReadiness(connectedHeads);
-    const callableHeads = readiness.filter((item) => item.executionReady).map((item) => item.card);
+    const unavailable = readiness.filter((item) => !item.executionReady);
+    if (unavailable.length > 0) {
+      throw new Error(
+        `magentic_connected_worker_unavailable: ${unavailable
+          .map((item) => `${String(item.card?.id || 'unknown')}=${item.readinessReason || item.readinessState}`)
+          .join(',')}`,
+      );
+    }
+    const callableHeads = readiness.map((item) => item.card);
 
     // Bus eligibility is the only requirement: native Mag One needs at least one
     // connected worker on the magentic_option bus. No approval gate, no
@@ -729,8 +709,6 @@ export async function runCardWithContract(
       startedAt,
       endedAt: new Date().toISOString(),
       runtimeType: 'magentic_one',
-      inputSummary: summarizeText(input),
-      outputSummary: summarizeText(finalText),
       agentAssignmentResult,
     };
   }

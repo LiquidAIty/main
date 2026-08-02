@@ -17,8 +17,6 @@ export type CardRunResult = {
   runtimeBinding?: string | null;
   runtimeType?: string | null;
   seed?: string;
-  inputSummary?: string;
-  outputSummary?: string;
   agentAssignmentResult?: AgentAssignmentRunResult | null;
 };
 
@@ -35,6 +33,5 @@ export type PythonAutoGenPayloadShape = {
     prompt: string;
     runtimeOptions: Record<string, any>;
     participants: any[];
-    privateParticipants?: any[];
   };
 };

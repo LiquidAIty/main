@@ -15,7 +15,6 @@ import {
   decodeGrpcProgressEvent,
   deriveSessionId,
   resolveCardDoorwayDefinitions,
-  resolveHarnessTimeoutDeadline,
   resolveMainChatRuntimeConfig,
   selectDoorwayCards,
 } from './grpcChatClient';
@@ -86,11 +85,6 @@ describe('native Main / Hermes / Search doorways', () => {
       kind: 'progress', toolUseId: 'child-delta-1', parentToolUseId: 'hermes-agent-call',
       data: { type: 'agent_text_delta', agentId: 'agent-42', agentType: 'card_hermes_steward', text: 'live prose' },
     });
-  });
-
-  it('an extend-only bounded deadline never shortens its parent deadline', () => {
-    expect(resolveHarnessTimeoutDeadline(120_000, 50_000, 30_000, true)).toBe(120_000);
-    expect(resolveHarnessTimeoutDeadline(120_000, 110_000, 30_000, true)).toBe(140_000);
   });
 
   it('registers Hermes as a native inherited-context agent with exact MCP grants', () => {

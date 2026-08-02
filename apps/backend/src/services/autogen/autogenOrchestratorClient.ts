@@ -66,28 +66,11 @@ function isRetryablePythonRailsError(error: any): boolean {
   return code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN';
 }
 
-function readTimeoutMs(): number {
-  // A real multi-agent Magentic-One run — and especially a coder-bearing run that
-  // nests a LocalCoder CLI call (its own DEFAULT_LOCALCODER_RUN_TIMEOUT_MS is 300s)
-  // plus participant/model overhead — can run past 300s. The old 120s default /
-  // 300s ceiling (and the env override of 180s) aborted the outer fetch to the
-  // Python rails while the Python run kept going and wrote its artifact, so the run
-  // reported "This operation was aborted" despite completing the work. Default and
-  // ceiling now exceed the nested LocalCoder budget so coder runs finish instead of
-  // aborting; simple requests still return in seconds — this only bounds the worst case.
-  const raw = Number(process.env.AUTOGEN_ORCHESTRATOR_TIMEOUT_MS ?? 360_000);
-  if (!Number.isFinite(raw)) return 360_000;
-  return Math.max(2_000, Math.min(600_000, Math.floor(raw)));
-}
-
 export async function orchestrateWithAutoGen(
   payload: AutoGenOrchestratorRequest,
 ): Promise<AutoGenOrchestratorResponse> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), readTimeoutMs());
-  try {
-    let lastError: any = null;
-    const baseUrls = buildPythonRailsBaseUrls();
+  let lastError: any = null;
+  const baseUrls = buildPythonRailsBaseUrls();
 
     for (const baseUrl of baseUrls) {
       const endpoint = `${baseUrl}${AUTOGEN_ORCHESTRATE_ENDPOINT}`;
@@ -96,7 +79,6 @@ export async function orchestrateWithAutoGen(
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
-          signal: controller.signal,
         });
         const text = await response.text();
         const data = text ? JSON.parse(text) : null;
@@ -136,12 +118,9 @@ export async function orchestrateWithAutoGen(
       throw new Error(`PYTHON_AUTOGEN_RAILS_UNAVAILABLE: checkedEndpoints=${checked}`);
     }
     if (lastError) throw lastError;
-    throw new Error(
-      `PYTHON_AUTOGEN_RAILS_UNAVAILABLE: checkedEndpoints=${formatCheckedEndpoints(baseUrls)}`,
-    );
-  } finally {
-    clearTimeout(timeout);
-  }
+  throw new Error(
+    `PYTHON_AUTOGEN_RAILS_UNAVAILABLE: checkedEndpoints=${formatCheckedEndpoints(baseUrls)}`,
+  );
 }
 
 const AUTOGEN_RUN_CARD_ENDPOINT = '/autogen/run_card';
@@ -155,11 +134,8 @@ const AUTOGEN_RUN_CARD_ENDPOINT = '/autogen/run_card';
 export async function runSingleCardWithAutoGen(
   payload: AutoGenOrchestratorRequest,
 ): Promise<AutoGenOrchestratorResponse> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), readTimeoutMs());
-  try {
-    let lastError: any = null;
-    const baseUrls = buildPythonRailsBaseUrls();
+  let lastError: any = null;
+  const baseUrls = buildPythonRailsBaseUrls();
     for (const baseUrl of baseUrls) {
       const endpoint = `${baseUrl}${AUTOGEN_RUN_CARD_ENDPOINT}`;
       try {
@@ -167,7 +143,6 @@ export async function runSingleCardWithAutoGen(
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
-          signal: controller.signal,
         });
         const text = await response.text();
         const data = text ? JSON.parse(text) : null;
@@ -185,12 +160,9 @@ export async function runSingleCardWithAutoGen(
       }
     }
     if (lastError) throw lastError;
-    throw new Error(
-      `PYTHON_AUTOGEN_RAILS_UNAVAILABLE: checkedEndpoints=${baseUrls.map((b) => `${b}${AUTOGEN_RUN_CARD_ENDPOINT}`).join(',')}`,
-    );
-  } finally {
-    clearTimeout(timeout);
-  }
+  throw new Error(
+    `PYTHON_AUTOGEN_RAILS_UNAVAILABLE: checkedEndpoints=${baseUrls.map((b) => `${b}${AUTOGEN_RUN_CARD_ENDPOINT}`).join(',')}`,
+  );
 }
 
 /** Transport-only request to the long-lived Python rails service. */

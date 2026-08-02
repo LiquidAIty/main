@@ -119,20 +119,6 @@ export function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | nul
   if (normalized === 'codex_app_server') return 'codex_app_server';
   return null;
 }
-export function isLegacyUaCard(
-  card: Pick<AgentCardInstance, 'id' | 'templateId' | 'title'> | null | undefined,
-): boolean {
-  if (!card) return false;
-  const id = safeText(card.id).trim().toLowerCase();
-  const templateId = safeText(card.templateId).trim().toLowerCase();
-  const title = safeText(card.title).trim().toLowerCase();
-  return (
-    id.startsWith('card_ua_') ||
-    (id.startsWith('card_') && id.includes('anything')) ||
-    (templateId.startsWith('template_') && templateId.includes('anything')) ||
-    title === 'understand anything'
-  );
-}
 
 export function normalizeRuntimeOptions(
   value: unknown,

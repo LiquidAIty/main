@@ -72,21 +72,6 @@ class CardRuntimeConfig(BaseModel):
     assistant: dict | None = None
     magentic: dict | None = None
     participants: list["CardRuntimeParticipant"] = Field(default_factory=list)
-    privateParticipants: list["CardRuntimePrivateParticipant"] = Field(default_factory=list)
-
-class CardRuntimePrivateParticipant(BaseModel):
-    cardId: str
-    runtimeType: Literal["assistant_agent", "research_agent", "planner_agent", "codex_app_server"]
-    runtimeBinding: str | None = None
-    prompt: str = ""
-    provider: RequiredRuntimeString
-    providerModelId: RequiredRuntimeString
-    temperature: float | None = None
-    maxTokens: int | None = None
-
-    _no_default_models = field_validator("provider", "providerModelId")(
-        _reject_default_model_value
-    )
 
 
 class CardRuntimeParticipant(BaseModel):

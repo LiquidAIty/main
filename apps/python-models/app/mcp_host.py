@@ -581,14 +581,10 @@ class LiquidAItyServer(Server):
         notification_options: NotificationOptions | None = None,
         experimental_capabilities: dict[str, dict[str, Any]] | None = None,
     ):
-        options = super().create_initialization_options(
+        return super().create_initialization_options(
             notification_options or NotificationOptions(tools_changed=True),
             experimental_capabilities,
         )
-        context = _authenticated_main_context()
-        if context is not None:
-            options.instructions = str(context.get("instructions") or "") or None
-        return options
 
 
 server = LiquidAItyServer("liquidaity")
@@ -1947,14 +1943,17 @@ def _tool_result_category(result: Any) -> str:
         for block in blocks:
             text = getattr(block, "text", "")
             if isinstance(text, str) and text:
-                payload = json.loads(text)
+                try:
+                    payload = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
                 if isinstance(payload, dict) and (
                     payload.get("ok") is False
                     or bool(payload.get("error"))
                 ):
                     return "tool_error"
     except Exception:
-        return "success"
+        return "tool_error"
     return "success"
 
 

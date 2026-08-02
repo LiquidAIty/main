@@ -146,19 +146,6 @@ def connected_agent_names(context: ContextPack) -> list[str]:
     return names
 
 
-def _private_prompt_by_card_id(context: ContextPack) -> dict[str, str]:
-    card = context.cardRuntime
-    if card is None:
-        return {}
-    out: dict[str, str] = {}
-    for participant in card.privateParticipants or []:
-        card_id = _as_text(getattr(participant, "cardId", ""))
-        prompt = _as_text(getattr(participant, "prompt", ""))
-        if card_id and prompt:
-            out[card_id] = prompt
-    return out
-
-
 def _safe_agent_name(raw: str, index: int, used: set[str]) -> str:
     """AutoGen requires AssistantAgent ``name`` to be a valid Python identifier.
 
@@ -189,7 +176,6 @@ def _build_participants(
     card = context.cardRuntime
     if card is None:
         return []
-    private_prompts = _private_prompt_by_card_id(context)
     participants: list[AssistantAgent] = []
     used_names: set[str] = set()
     configured_participants = card.participants or []
@@ -209,7 +195,7 @@ def _build_participants(
             or _as_text(getattr(participant, "runtimeType", ""))
             or "assistant"
         )
-        system_prompt = _as_text(getattr(participant, "prompt", "")) or private_prompts.get(card_id, "")
+        system_prompt = _as_text(getattr(participant, "prompt", ""))
 
         runtime_type = _as_text(getattr(participant, "runtimeType", ""))
         if runtime_type == "codex_app_server":
@@ -258,11 +244,6 @@ def _build_participants(
             tools = [*tools, *extra_tools]
         if tools:
             kwargs["tools"] = tools
-            # Single-card runs need a real tool loop (e.g. read a scope, then write)
-            # inside one turn; default max_tool_iterations=1 would end the turn at
-            # the first tool summary. Mag One team behavior is unchanged.
-            if context.session.orchestrator == "assistant_agent":
-                kwargs["max_tool_iterations"] = 5
 
         participants.append(AssistantAgent(**kwargs))
 
@@ -339,8 +320,6 @@ def _tool_evidence_from_result(result: Any) -> list[dict[str, str]]:
                 ),
             }
             evidence.append(record)
-            if len(evidence) >= 64:
-                return evidence
     return evidence
 
 
@@ -588,14 +567,18 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                     pass
 
 
-def _read_max_turns(context: ContextPack) -> int:
+def _read_max_turns(context: ContextPack) -> int | None:
     runtime_options = getattr(context.cardRuntime, "runtimeOptions", None) or {}
-    raw = runtime_options.get("maxTurns", 12) if isinstance(runtime_options, dict) else 12
+    if not isinstance(runtime_options, dict) or "maxTurns" not in runtime_options:
+        return None
+    raw = runtime_options["maxTurns"]
     try:
         value = int(raw)
-    except Exception:
-        value = 12
-    return max(1, min(value, 64))
+    except (TypeError, ValueError) as error:
+        raise RuntimeError(f"card_max_turns_invalid:{raw}") from error
+    if value < 1:
+        raise RuntimeError(f"card_max_turns_invalid:{raw}")
+    return value
 
 
 def _magentic_completion_status(
@@ -735,10 +718,15 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             for participant in context.cardRuntime.participants
         ]
         participants = _build_participants(context, participant_clients)
+        team_options: dict[str, Any] = {
+            "participants": participants,
+            "model_client": client,
+        }
+        max_turns = _read_max_turns(context)
+        if max_turns is not None:
+            team_options["max_turns"] = max_turns
         team = MagenticOneGroupChat(
-            participants=participants,
-            model_client=client,
-            max_turns=_read_max_turns(context),
+            **team_options,
         )
 
         autogen_messages: list[dict[str, str]] = []

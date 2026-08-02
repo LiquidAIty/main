@@ -141,18 +141,6 @@ function parseSessionId(sessionId: string): { projectId: string; conversationId:
  * runtime's own MCP naming for the 'liquidaity' Python host (dots→underscores).
  * A fixed identity constant, not a mapping. */
 const CARD_RUN_CONTROL_TOOL = 'mcp__liquidaity__card_run_assistant_agent';
-// Default 120s; a dev/integration run may RAISE it via env (never lower it).
-const HARNESS_TURN_TIMEOUT_MS = Math.max(120_000, Number(process.env.LIQUIDAITY_HARNESS_TURN_TIMEOUT_MS) || 0);
-
-export function resolveHarnessTimeoutDeadline(
-  currentDeadlineMs: number,
-  nowMs: number,
-  timeoutMs: number,
-  extendOnly = false,
-): number {
-  const candidate = nowMs + timeoutMs;
-  return extendOnly ? Math.max(currentDeadlineMs, candidate) : candidate;
-}
 
 /** The saved card's Tools selection, filtered to harness MCP tool names — the
  * REAL per-card MCP grant (enforced as the child's allowed_tools / the
@@ -445,9 +433,6 @@ export async function startGrpcTurn(
   const call = client.Chat();
   let accumulated = '';
   let terminal = false;
-  let timeoutHandle: NodeJS.Timeout | null = null;
-  let timeoutDeadlineMs = 0;
-  let rejectDone: ((reason?: unknown) => void) | null = null;
 
   // Caller-identity resolution config. Assigned from the REAL resolved session
   // below, before call.write — no event can arrive earlier. The pre-assignment
@@ -470,25 +455,7 @@ export async function startGrpcTurn(
     }
   };
 
-  const armTimeout = (timeoutMs: number, extendOnly = false): void => {
-    const nowMs = Date.now();
-    const nextDeadlineMs = resolveHarnessTimeoutDeadline(timeoutDeadlineMs, nowMs, timeoutMs, extendOnly);
-    if (extendOnly && timeoutHandle && nextDeadlineMs === timeoutDeadlineMs) return;
-    if (timeoutHandle) clearTimeout(timeoutHandle);
-    timeoutDeadlineMs = nextDeadlineMs;
-    timeoutHandle = setTimeout(() => {
-      if (terminal) return;
-      terminal = true;
-      const error = new Error(`harness_turn_timeout:${timeoutMs}`);
-      safeOnEvent({ kind: 'error', message: error.message, code: 'harness_turn_timeout' });
-      try { call.write({ cancel: { reason: 'harness_turn_timeout' } }); } catch { /* closed */ }
-      try { call.end(); } catch { /* closed */ }
-      rejectDone?.(error);
-    }, Math.max(1, nextDeadlineMs - nowMs));
-  };
-
   const done = new Promise<{ finalText: string; usage: GrpcTurnUsage }>((resolve, reject) => {
-    rejectDone = reject;
     call.on('data', (msg: any) => {
       if (terminal) return;
       if (msg.text_chunk) {
@@ -523,7 +490,6 @@ export async function startGrpcTurn(
         });
       } else if (msg.done) {
         terminal = true;
-        if (timeoutHandle) clearTimeout(timeoutHandle);
         const finalText = msg.done.full_text || accumulated;
         const usageAvailable = Boolean(msg.done.usage_available);
         const usage: GrpcTurnUsage = {
@@ -539,7 +505,6 @@ export async function startGrpcTurn(
         try { call.end(); } catch { /* already closed */ }
       } else if (msg.error) {
         terminal = true;
-        if (timeoutHandle) clearTimeout(timeoutHandle);
         safeOnEvent({ kind: 'error', message: msg.error.message, code: msg.error.code });
         reject(new Error(msg.error.message || 'grpc_chat_error'));
         try { call.end(); } catch { /* already closed */ }
@@ -551,7 +516,6 @@ export async function startGrpcTurn(
         return;
       }
       terminal = true;
-      if (timeoutHandle) clearTimeout(timeoutHandle);
       safeOnEvent({ kind: 'error', message: err.message });
       reject(err);
     });
@@ -609,14 +573,11 @@ export async function startGrpcTurn(
     },
   });
 
-  if (!terminal) armTimeout(HARNESS_TURN_TIMEOUT_MS);
-
   return {
     answer: (promptId: string, reply: string) => {
       try { call.write({ input: { prompt_id: promptId, reply } }); } catch { /* closed */ }
     },
     cancel: () => {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
       terminal = true;
       try { call.write({ cancel: { reason: 'client_cancel' } }); } catch { /* closed */ }
       try { call.end(); } catch { /* closed */ }

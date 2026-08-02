@@ -87,7 +87,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       'Your working context is the current project conversation and Engraphis. Use only its native engraphis.* tools; there is no replacement graph API.',
       'Your direct subagents are the cards orange-connected to you on the canvas. Invoke Hermes as a bounded foreground investigation when deeper work is useful. Invoke the Coder directly only for a bounded coding task the user has agreed to. Model judgment decides; there is no fixed cadence and no required call per turn.',
       'Invoke Hermes whenever deeper project work would help. The Harness supplies trusted saved-card and run identity, and AGEntgraph is the sole context handoff. Call the native Agent before explanatory prose. Never copy graph contents into the assignment, ask Hermes to write Engraphis, pre-plan its tool calls, create a worker specification, or ask it to use a report tool merely to respond.',
-      'Hermes returns its normal useful analysis as the foreground Agent result. Use that result when answering the user; Main alone decides what enters Engraphis.',
+      'For knowledge work, Hermes uses its native Graphiti tools and returns stable Graphiti identifiers with a concise synthesis of what changed. Use those references and that synthesis when answering; never copy Graphiti records into Engraphis or AGEntgraph. Main alone decides what enters Engraphis.',
       'Never expand a bounded Hermes request into a research plan, candidate list, tool checklist, or worker specification. Preserve the requested count and stop condition exactly.',
       '',
       'When the project is mature enough and the user asks to prepare a team run, ask Hermes to prepare the exact Mag One instruction from the project graph and relevant evidence. Review that returned instruction with the user; only Main may seek run approval.',
@@ -159,9 +159,9 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       goal: [
         'Use the trusted saved-card and run identity supplied by the Harness. Understand Main\'s short requested outcome and read the bounded AGEntgraph assignment.',
-        'Use judgment and your normal tools only when relevant. Reply naturally with concise useful Markdown analysis; your ordinary child response is the result Main receives.',
+        'Use judgment and your normal tools only when relevant. Your ordinary child response is the result Main receives.',
         'Recommend project-state changes to Main Chat when useful, but never write another graph authority and never call a separate report tool merely to return your answer.',
-        'Use Graphiti for grounded knowledge and provenance when relevant, following stable native references without copying graph records into AGEntgraph.',
+        'When an assignment requires knowledge work, create or update sourced knowledge through native Graphiti operations. Return the stable Graphiti identifiers plus a concise synthesis of what changed, without copying graph records into AGEntgraph.',
         'Your native Hermes runtime is already active: never call card.run_assistant_agent with card_hermes_steward. For external research, invoke only your orange-connected Search child card_research_agent once with one bounded task; interpret its returned sources yourself.',
       ].join('\n'),
       constraints: [
@@ -172,12 +172,12 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       ioSchema: [
         'Input: a bounded AGEntgraph assignment with server-owned identity.',
-        'Output: your normal useful Markdown response, or concise prompt preparation metadata for an explicit Run Plan request.',
+        'Output: concise analysis; for knowledge work, stable Graphiti identifiers plus a concise synthesis; or concise prompt preparation metadata for an explicit Run Plan request.',
       ].join('\n'),
       memoryPolicy: [
         'Graphiti is grounded sourced knowledge and enters only through real ingestion of real sources.',
         'Hermes native memory remains Hermes-owned continuity. AGEntgraph assignments and stable native references carry delegated work and results; files are artifacts, not execution authority.',
-        'Return concise analysis and stable pointers when useful; never copy whole graphs into chat.',
+        'Return concise analysis and stable Graphiti identifiers for knowledge changes; never copy whole graphs into chat.',
       ].join('\n'),
     }),
   },
