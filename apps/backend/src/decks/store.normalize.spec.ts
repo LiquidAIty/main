@@ -7,54 +7,10 @@ vi.mock('../db/pool', () => ({
 
 import {
   getDeckDocument,
-  normalizeRuntimeOptions,
 } from './store';
 
 beforeEach(() => {
   dbMocks.query.mockReset();
-});
-
-// Persistence proof: the local SLM provider survives the deck-store sanitizer, so a
-// card's local-model selection is written into (and read back from) the deck JSON.
-describe('deck store runtime-options provider persistence', () => {
-  it('preserves the local SLM provider + model on save', () => {
-    const out = normalizeRuntimeOptions({
-      provider: 'local_openai_compatible',
-      modelKey: 'local-gemma-slm',
-    });
-    expect(out?.provider).toBe('local_openai_compatible');
-    expect(out?.modelKey).toBe('local-gemma-slm');
-  });
-
-  it('still keeps cloud providers', () => {
-    expect(normalizeRuntimeOptions({ provider: 'openai' })?.provider).toBe('openai');
-    expect(normalizeRuntimeOptions({ provider: 'openrouter' })?.provider).toBe('openrouter');
-  });
-
-  it('drops unknown providers', () => {
-    expect(normalizeRuntimeOptions({ provider: 'bogus' })?.provider).toBe(null);
-  });
-});
-
-// Persistence proof: a card's SELECTED tool ids survive the deck-store sanitizer
-// verbatim — the save/load roundtrip can never rewrite, reorder-filter, or
-// substitute a card's tool assignment.
-describe('deck store runtime-options tool persistence', () => {
-  it('preserves selected tool ids exactly as saved', () => {
-    const out = normalizeRuntimeOptions({
-      tools: ['worldsignals.capabilities', 'worldsignals.command'],
-    });
-    expect(out?.tools).toEqual(['worldsignals.capabilities', 'worldsignals.command']);
-  });
-
-  it('trims whitespace but never renames or invents tool ids', () => {
-    const out = normalizeRuntimeOptions({ tools: ['  worldsignals.capabilities  ', '', 42] });
-    expect(out?.tools).toEqual(['worldsignals.capabilities']);
-  });
-
-  it('an absent selection stays absent — no default tools are injected', () => {
-    expect(normalizeRuntimeOptions({})?.tools).toBe(null);
-  });
 });
 
 describe('deck store edge persistence', () => {
@@ -195,7 +151,34 @@ describe('deck store edge persistence', () => {
       edgeType: 'flow',
     }));
     expect(edges.find((edge) => edge.id === 'reversed')?.edgeType).toBe('flow');
-    expect(edges.find((edge) => edge.id === 'invalid')?.edgeType).toBe('invalid');
+    expect(edges.find((edge) => edge.id === 'invalid')?.edgeType).toBe('unknown_authority');
     expect(edges.find((edge) => edge.id === 'unrelated')?.edgeType).toBe('flow');
+  });
+
+  it('preserves provider, model, tools, and unknown values byte-for-byte as JSON', async () => {
+    const deck = {
+      id: 'deck_builder',
+      name: 'Exact Saved Deck',
+      version: 1,
+      promptTemplates: [],
+      nodes: [{
+        id: 'saved-card',
+        runtimeBinding: 'future_binding',
+        runtimeType: 'future_runtime',
+        runtimeOptions: {
+          provider: 'future_provider',
+          modelKey: '  exact-model-key  ',
+          tools: ['  exact.tool  ', '', 42],
+        },
+      }],
+      edges: [],
+    };
+    dbMocks.query.mockResolvedValueOnce({
+      rows: [{ agent_io_schema: { v3_state: { decks: { deck_builder: deck }, meta: { decks: {} } } } }],
+    });
+
+    const result = await getDeckDocument('project-one', 'deck_builder');
+
+    expect(result.deck).toEqual(deck);
   });
 });

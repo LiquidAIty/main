@@ -156,7 +156,7 @@ export function isLiquidAItyOwnedDevProcess(
   if (
     norm(proc.name).includes('ngrok') &&
     /\bhttp\b/.test(cmd) &&
-    /--url(?:=|\s+)https:\/\/exemption-unstable-wolverine\.ngrok-free\.dev\b/.test(cmd) &&
+    /--(?:url|domain)(?:=|\s+)(?:https:\/\/)?exemption-unstable-wolverine\.ngrok-free\.dev\b/.test(cmd) &&
     /\b8765\b/.test(cmd)
   ) {
     return { owned: true, role: 'tunnel' };
@@ -173,7 +173,7 @@ export function isLiquidAItyOwnedDevProcess(
   }
   if (
     norm(proc.name).includes('python') &&
-    /apps\/python-models\/app\/mcp_host\.py(?:\s|$)/.test(cmd)
+    /(?:apps\/python-models\/app\/)?mcp_host\.py(?:\s|$)/.test(cmd)
   ) {
     return { owned: true, role: 'mcp' };
   }

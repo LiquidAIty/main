@@ -17,25 +17,6 @@ export type OpenClaudeRunRequest = {
   terminalSteering?: boolean;
 };
 
-export type OpenClaudeRunResult = {
-  ok: boolean;
-  mode: OpenClaudeMode;
-  access: OpenClaudeAccess;
-  state: OpenClaudeState;
-  output?: string;
-  error?: string;
-  provider: OpenClaudeProvider | null;
-  model: string;
-  responseId: string | null;
-  terminal: {
-    available: boolean;
-    used: boolean;
-    envOwner: 'backend';
-    runtimeOwner: 'backend';
-    launchCommand: string | null;
-  };
-};
-
 export type OpenClaudeTerminalLaunchResult = {
   ok: boolean;
   terminalAvailable: boolean;
@@ -48,13 +29,4 @@ export type OpenClaudeTerminalLaunchResult = {
   modelKey: string;
   providerModelId: string;
   error?: string;
-};
-
-export type OpenClaudeProviderResult = {
-  text: string;
-  provider: OpenClaudeProvider;
-  model: string;
-  responseId: string | null;
-  modelKey: string;
-  providerModelId: string;
 };

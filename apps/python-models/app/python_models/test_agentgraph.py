@@ -22,14 +22,6 @@ def test_assignment_claim_finish_and_hydration() -> None:
             conversation_id="main",
             body="  Exact instruction bytes.\n",
             prepared_by_card_id="card_main_chat",
-            operation_references=[
-                {
-                    "operationId": "agentgraph.active_context_identities",
-                    "version": 2,
-                    "parameters": {"project_id": PROJECT_ID},
-                    "executionRole": "optional_tool",
-                }
-            ],
             connection=connection,
         )
         kwargs = dict(

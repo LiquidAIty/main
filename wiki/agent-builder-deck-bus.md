@@ -8,14 +8,13 @@ proof_level: cbm_anchor_verified_and_source_verified
 cbm:
   project_identity: C-Projects-main
   index_root: C:/Projects/main
-  full_index_nodes: 5273
-  full_index_edges: 10327
+  full_index_nodes: 3395
+  full_index_edges: 9902
   freshness: ready
 
 roots:
   files:
     - apps/backend/src/decks/store.ts
-    - apps/backend/src/decks/mainChatControllerCard.ts
     - apps/backend/src/cards/runtime.ts
     - apps/backend/src/routes/decks.routes.ts
     - apps/backend/src/routes/coder.routes.ts
@@ -25,8 +24,7 @@ roots:
     - client/src/features/agentbuilder/rail/railVisibility.ts
   symbols:
     - getDeckDocument / getV3ProjectBlob / saveDeckDocument / writeV3ProjectBlobCas
-    - normalizeDeckNode / normalizeDeckEdge / normalizeDeckDocument
-    - ensureMainChatControllerCard / buildMainChatControllerCard / buildMainChatBusEdge
+    - parseDeckDocument / parseProjectBlob
     - resolvedMagenticOptions / buildBusConnectedCardIds / canvas_inspect
     - AgentCanvasPane
   tests:
@@ -49,10 +47,11 @@ determine which cards participate in multi-agent work.
 **Canvas editing**: user adds cards (nodes with positions), draws bus edges, sets
 tools/models. Changes persist via `saveDeckDocument` → `writeV3ProjectBlobCas` (CAS).
 
-**Reload/readback**: `getV3ProjectBlob` → `normalizeProjectBlob` →
-`ensureMainChatControllerCard` auto-creates the Main Chat card + its bus edge
-(`card_main_chat` ↔ `card_magentic`, `edgeType='magentic_option'`) if missing.
-Card positions, edges, and prompt templates survive reload.
+**Reload/readback**: `getV3ProjectBlob` reads the PostgreSQL JSONB record and
+validates only the deck envelope and required node/edge identities. It does not
+rebuild cards, choose models, normalize tools, synthesize edges, or repair saved
+state. Card positions, edges, prompt templates, and unknown future fields survive
+reload exactly; malformed state fails clearly.
 
 **Selected-card inspector**: clicking a card in `AgentCanvasPane` selects the
 saved card already loaded from the deck. It does not maintain a second runtime
@@ -72,10 +71,9 @@ connect cards to the bus. The Main Chat prompt states: "You are not a worker."
 
 ```
 DB: agent_io_schema (JSONB, CAS via writeV3ProjectBlobCas)
-  → getV3ProjectBlob → normalizeProjectBlob → ensureMainChatControllerCard
-    → buildMainChatControllerCard / buildMainChatBusEdge (if missing)
+  → getV3ProjectBlob → parseProjectBlob (structural validation, no rewriting)
   → getDeckDocument(projectId, deckId)
-  → saveDeckDocument(projectId, deck) → writeV3ProjectBlobCas
+  → saveDeckDocument(projectId, exact deck) → writeV3ProjectBlobCas
 
 Deck routes: GET /:projectId/decks, GET/PUT /:projectId/decks/:deckId [decks.routes.ts]
 
@@ -96,8 +94,8 @@ Main Chat control edge: the persisted deck uses source='card_main_chat',
    never from browser in-memory state.
 2. Bus discovery is edge-driven — only `magentic_option` edges. Execution readiness
    is a separate structural/runtime validation; neither is inferred from prompt text.
-3. `ensureMainChatControllerCard` only creates the card + edge if missing — never
-   overwrites a user-modified Main Chat card.
+3. Persistence validates structure but never repairs, normalizes, or invents saved
+   cards, edges, models, tools, positions, or presentation fields.
 4. Deck persistence is CAS — concurrent saves retry rather than silent overwrite.
 5. `canvas_inspect` is read-only — never mutates deck state.
 
@@ -105,7 +103,7 @@ Main Chat control edge: the persisted deck uses source='card_main_chat',
 
 ```
 search_graph(project="C-Projects-main", query="getDeckDocument")
-search_graph(project="C-Projects-main", query="ensureMainChatControllerCard")
+search_graph(project="C-Projects-main", query="parseDeckDocument")
 search_graph(project="C-Projects-main", query="resolvedMagenticOptions")
 search_graph(project="C-Projects-main", query="canvas_inspect")
 
@@ -149,8 +147,7 @@ persists edges (UI-proven), Python `canvas_inspect` matches deck store (integrat
 
 | File | Why |
 |------|-----|
-| `apps/backend/src/decks/store.ts` | Deck read/write, normalization, CAS |
-| `apps/backend/src/decks/mainChatControllerCard.ts` | Main Chat card + bus edge |
+| `apps/backend/src/decks/store.ts` | Exact deck read/write, structural validation, CAS |
 | `apps/backend/src/routes/decks.routes.ts` | Deck GET/PUT endpoints |
 | `apps/backend/src/cards/runtime.ts` (lines 86-112) | resolvedMagenticOptions |
 | `apps/backend/src/services/mcp/pythonAgentMcpClient.ts` | Python MCP transport |

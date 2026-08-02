@@ -6,6 +6,7 @@ import routes from "./routes";
 import { logModelConfiguration } from "./startup/modelConfig";
 import { getDevTestJsonBodyLimit } from "./services/devTest";
 import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/requestAccess";
+import { closePythonAgentMcpClient } from "./services/mcp/pythonAgentMcpClient";
 
 const app = express();
 app.set('etag', false);
@@ -156,13 +157,15 @@ function installShutdownHooks() {
 
   const shutdown = async () => {
     const activeServer = globalThis.__liquidaityBackendServer__;
-    if (!activeServer) return;
     try {
-      await closeServer(activeServer);
+      if (activeServer) {
+        await closeServer(activeServer);
+      }
+      await closePythonAgentMcpClient();
     } catch {
       // ignore shutdown close errors
     } finally {
-      if (globalThis.__liquidaityBackendServer__ === activeServer) {
+      if (activeServer && globalThis.__liquidaityBackendServer__ === activeServer) {
         globalThis.__liquidaityBackendServer__ = undefined;
       }
     }
@@ -180,6 +183,7 @@ async function startServer() {
   const existingServer = globalThis.__liquidaityBackendServer__;
   if (existingServer) {
     await closeServer(existingServer).catch(() => undefined);
+    await closePythonAgentMcpClient().catch(() => undefined);
     if (globalThis.__liquidaityBackendServer__ === existingServer) {
       globalThis.__liquidaityBackendServer__ = undefined;
     }

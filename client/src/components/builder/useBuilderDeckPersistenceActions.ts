@@ -30,7 +30,7 @@ export function useBuilderDeckPersistenceActions({
   deckRevision,
   deckSaveAbortRef,
   formatBuilderStatusMessage,
-  hydrateDeckDocument,
+  readDeckDocument,
   setDeck,
   setDeckRevision,
   setDeckSaveBusy,
@@ -47,7 +47,7 @@ export function useBuilderDeckPersistenceActions({
   deckRevision: string | null;
   deckSaveAbortRef: MutableRefObject<AbortController | null>;
   formatBuilderStatusMessage: (message: unknown, fallback: string) => string;
-  hydrateDeckDocument: (value: Partial<DeckDocument> | null | undefined) => DeckDocument;
+  readDeckDocument: (value: Partial<DeckDocument> | null | undefined) => DeckDocument;
   setDeck: Dispatch<SetStateAction<DeckDocument>>;
   setDeckRevision: Dispatch<SetStateAction<string | null>>;
   setDeckSaveBusy: Dispatch<SetStateAction<boolean>>;
@@ -90,10 +90,7 @@ export function useBuilderDeckPersistenceActions({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          document: {
-            ...deck,
-            id: deckId,
-          },
+          document: deck,
           expectedRevision: deckRevision,
         }),
         signal: controller.signal,
@@ -130,7 +127,7 @@ export function useBuilderDeckPersistenceActions({
             }
             return currentDeck;
           }
-          return hydrateDeckDocument({ ...(data.deck as DeckDocument), id: deckId });
+          return readDeckDocument(data.deck as DeckDocument);
         });
       }
       const revisionAfter =
@@ -182,7 +179,7 @@ export function useBuilderDeckPersistenceActions({
     deckRevision,
     deckSaveAbortRef,
     formatBuilderStatusMessage,
-    hydrateDeckDocument,
+    readDeckDocument,
     recordDeckWriteReason,
     setDeck,
     setDeckRevision,

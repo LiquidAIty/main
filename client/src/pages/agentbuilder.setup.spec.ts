@@ -6,7 +6,7 @@ import type { AgentCardInstance, DeckDocument, RuntimeBinding } from '../types/a
 // tests the real modules directly.
 import { INITIAL_DECK } from '../features/agentbuilder/deck/newProjectDeck';
 import {
-  hydrateDeckDocument,
+  readDeckDocument,
   resolveProjectDeckLoadResult,
   resolveProjectDeckPayload,
 } from '../features/agentbuilder/deck/deckDocument';
@@ -149,9 +149,7 @@ describe('agentbuilder authoring flow', () => {
       {
         id: 'edge_saved_a_b',
         source: 'card_saved_a',
-        sourceHandle: null,
         target: 'card_saved_b',
-        targetHandle: null,
         edgeType: 'flow',
       },
     ]);
@@ -164,7 +162,7 @@ describe('agentbuilder authoring flow', () => {
     };
 
     const loaded = resolveProjectDeckPayload(savedDeck);
-    const rehydrated = hydrateDeckDocument(JSON.parse(JSON.stringify(loaded.deck)));
+    const rehydrated = readDeckDocument(JSON.parse(JSON.stringify(loaded.deck)));
 
     expect(rehydrated.nodes.map((node) => node.title)).toEqual(INITIAL_DECK.nodes.map((node) => node.title));
     expect(rehydrated.edges.map((edge) => ({
@@ -252,7 +250,7 @@ describe('agentbuilder authoring flow', () => {
       ],
     };
 
-    const hydrated = hydrateDeckDocument(legacyDeck);
+    const hydrated = readDeckDocument(legacyDeck);
 
     expect(hydrated.nodes.map((node) => node.id)).toEqual([
       'card_main_chat',
@@ -300,7 +298,7 @@ describe('agentbuilder authoring flow', () => {
     };
     const savedEdges = JSON.parse(JSON.stringify(stale.edges));
 
-    const hydrated = hydrateDeckDocument(stale);
+    const hydrated = readDeckDocument(stale);
     const hydratedMain = hydrated.nodes.find((node) => node.id === 'card_main_chat');
     const hydratedCoder = hydrated.nodes.find((node) => node.id === 'card_local_coder');
     const hydratedHermes = hydrated.nodes.find((node) => node.id === 'card_hermes_steward');
@@ -341,7 +339,7 @@ describe('agentbuilder authoring flow', () => {
       title: 'Code Agent',
       position: { x: 0, y: 0 },
     };
-    const hydrated = hydrateDeckDocument({
+    const hydrated = readDeckDocument({
       ...INITIAL_DECK,
       nodes: [...INITIAL_DECK.nodes, retiredCodeCard],
       promptTemplates: [
@@ -374,7 +372,7 @@ describe('agentbuilder authoring flow', () => {
   });
 
   it('does not add template edges to a real deck that saved with no edges', () => {
-    const hydrated = hydrateDeckDocument({
+    const hydrated = readDeckDocument({
       id: 'deck_builder',
       name: 'Edge Free Deck',
       version: 1,
@@ -394,7 +392,7 @@ describe('agentbuilder authoring flow', () => {
   });
 
   it('loads saved edges as topology', () => {
-    const hydrated = hydrateDeckDocument({
+    const hydrated = readDeckDocument({
       id: 'deck_builder',
       name: 'Legacy Edge Deck',
       version: 1,
@@ -412,16 +410,14 @@ describe('agentbuilder authoring flow', () => {
       {
         id: 'edge_a_b',
         source: 'card_a',
-        sourceHandle: null,
         target: 'card_b',
-        targetHandle: null,
         edgeType: 'flow',
       },
     ]);
   });
 
   it('does not add template chain edges to partial saved decks that already provide real cards', () => {
-    const hydrated = hydrateDeckDocument({
+    const hydrated = readDeckDocument({
       id: 'deck_builder',
       name: 'Partial Saved Deck',
       version: 3,
@@ -438,6 +434,7 @@ describe('agentbuilder authoring flow', () => {
           title: 'Research Agent',
         }),
       ],
+      edges: [],
     });
 
     expect(hydrated.nodes.map((node) => node.title)).toEqual([
@@ -460,7 +457,7 @@ describe('agentbuilder authoring flow', () => {
     };
 
     const loaded = resolveProjectDeckPayload(trimmedSavedDeck);
-    const rehydrated = hydrateDeckDocument(JSON.parse(JSON.stringify(loaded.deck)));
+    const rehydrated = readDeckDocument(JSON.parse(JSON.stringify(loaded.deck)));
 
     expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_trading_workbench');
     expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_worldsignals_agent');
@@ -489,11 +486,11 @@ describe('agentbuilder authoring flow', () => {
       ],
     };
 
-    const rehydrated = hydrateDeckDocument(JSON.parse(JSON.stringify(savedDeck)));
+    const rehydrated = readDeckDocument(JSON.parse(JSON.stringify(savedDeck)));
 
     expect(rehydrated.edges.map((edge) => edge.id)).toEqual(['edge_call', 'edge_typo']);
     expect(rehydrated.edges.find((edge) => edge.id === 'edge_call')?.edgeType).toBe('flow');
-    expect(rehydrated.edges.find((edge) => edge.id === 'edge_typo')?.edgeType).toBe('invalid');
+    expect(rehydrated.edges.find((edge) => edge.id === 'edge_typo')?.edgeType).toBe('reports_to');
   });
 
 });

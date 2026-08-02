@@ -166,6 +166,12 @@ describe('isLiquidAItyOwnedDevProcess — fresh stops ONLY grounded LiquidAIty o
       commandLine: 'C:\\Projects\\main\\apps\\python-models\\.venv\\Scripts\\python.exe C:\\Projects\\main\\apps\\python-models\\app\\mcp_host.py',
     };
     expect(isLiquidAItyOwnedDevProcess(p, REPO)).toEqual({ owned: true, role: 'mcp' });
+    expect(
+      isLiquidAItyOwnedDevProcess(
+        { ...p, commandLine: 'C:\\Projects\\main\\apps\\python-models\\.venv\\Scripts\\python.exe mcp_host.py' },
+        REPO,
+      ),
+    ).toEqual({ owned: true, role: 'mcp' });
   });
   it('owns only the exact public LiquidAIty ngrok tunnel', () => {
     const p = {
@@ -174,6 +180,12 @@ describe('isLiquidAItyOwnedDevProcess — fresh stops ONLY grounded LiquidAIty o
       commandLine: 'ngrok http 8765 --url=https://exemption-unstable-wolverine.ngrok-free.dev',
     };
     expect(isLiquidAItyOwnedDevProcess(p, REPO)).toEqual({ owned: true, role: 'tunnel' });
+    expect(
+      isLiquidAItyOwnedDevProcess(
+        { ...p, commandLine: 'ngrok http --domain=exemption-unstable-wolverine.ngrok-free.dev 8765' },
+        REPO,
+      ),
+    ).toEqual({ owned: true, role: 'tunnel' });
     expect(
       isLiquidAItyOwnedDevProcess(
         { ...p, commandLine: 'ngrok http 8765 --url=https://another-domain.ngrok-free.dev' },

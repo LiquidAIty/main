@@ -61,7 +61,7 @@ import {
 import {
   buildProjectlessDeckDocument,
   formatBuilderStatusMessage,
-  hydrateDeckDocument,
+  readDeckDocument,
   resolveLocalCoderControllerConsoleConfig,
   resolveProjectDeckLoadResult,
 } from '../features/agentbuilder/deck/deckDocument';
@@ -836,7 +836,7 @@ export default function AgentBuilder(): React.ReactElement {
       deckRevision,
       deckSaveAbortRef,
       formatBuilderStatusMessage,
-      hydrateDeckDocument,
+      readDeckDocument,
       setDeck,
       setDeckRevision,
       setDeckSaveBusy,

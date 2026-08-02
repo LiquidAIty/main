@@ -1,11 +1,8 @@
-// Deck document logic: structural normalization, hydration, and load handling.
+// Deck document logic: structural validation and exact saved-state loading.
 import type {
   AgentCardInstance,
   DeckDocument,
-  DeckEdge,
-  PromptTemplate,
 } from '../../../types/agentgraph';
-import { sanitizeDeckEdges } from '../../../components/builder/deckValidation';
 import {
   cleanOptionalText,
   cloneDeckDocument,
@@ -40,41 +37,6 @@ export function resolveLocalCoderControllerConsoleConfig(
 }
 
 
-function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter(
-      (node): node is AgentCardInstance =>
-        Boolean(
-          node &&
-            typeof node === 'object' &&
-            typeof (node as AgentCardInstance).id === 'string' &&
-            typeof (node as AgentCardInstance).templateId === 'string',
-        ),
-    )
-    .map((node) => cloneDeckDocument(node));
-}
-
-function normalizeDeckPromptTemplates(value: unknown): PromptTemplate[] {
-  if (!Array.isArray(value)) return [];
-  const nextPromptTemplates = value.filter(
-    (template): template is PromptTemplate =>
-      Boolean(
-        template &&
-        typeof template === 'object' &&
-        typeof (template as PromptTemplate).id === 'string' &&
-        typeof (template as PromptTemplate).content === 'string',
-      ),
-  );
-  return cloneDeckDocument(nextPromptTemplates);
-}
-
-function normalizeDeckEdges(value: unknown): DeckEdge[] {
-  return Array.isArray(value)
-    ? cloneDeckDocument(sanitizeDeckEdges(value))
-    : [];
-}
-
 export function formatBuilderStatusMessage(
   message: unknown,
   fallback: string,
@@ -83,23 +45,31 @@ export function formatBuilderStatusMessage(
   return text || fallback;
 }
 
-export function hydrateDeckDocument(
+export function readDeckDocument(
   value: Partial<DeckDocument> | null | undefined,
 ): DeckDocument {
   if (!value || typeof value !== 'object') {
     throw new Error('deck_document_required');
   }
-  return {
-    ...cloneDeckDocument(value),
-    id: String(value.id || INITIAL_DECK.id).trim() || INITIAL_DECK.id,
-    name: String(value.name || INITIAL_DECK.name).trim() || INITIAL_DECK.name,
-    version: Number.isFinite(Number(value.version))
-      ? Number(value.version)
-      : INITIAL_DECK.version,
-    nodes: normalizeDeckNodes(value.nodes),
-    edges: normalizeDeckEdges(value.edges),
-    promptTemplates: normalizeDeckPromptTemplates(value.promptTemplates),
-  };
+  if (typeof value.id !== 'string' || !value.id) throw new Error('deck_id_invalid');
+  if (typeof value.name !== 'string' || !value.name) throw new Error('deck_name_invalid');
+  if (!Number.isFinite(value.version)) throw new Error('deck_version_invalid');
+  if (!Array.isArray(value.nodes)) throw new Error('deck_nodes_invalid');
+  if (!Array.isArray(value.edges)) throw new Error('deck_edges_invalid');
+  if (!Array.isArray(value.promptTemplates)) throw new Error('deck_prompt_templates_invalid');
+  for (const node of value.nodes) {
+    if (!node || typeof node !== 'object' || typeof node.id !== 'string' || !node.id) {
+      throw new Error('deck_card_id_invalid');
+    }
+  }
+  for (const edge of value.edges) {
+    if (!edge || typeof edge !== 'object' || typeof edge.id !== 'string' || !edge.id) {
+      throw new Error('deck_edge_id_invalid');
+    }
+    if (typeof edge.source !== 'string' || !edge.source) throw new Error('deck_edge_source_invalid');
+    if (typeof edge.target !== 'string' || !edge.target) throw new Error('deck_edge_target_invalid');
+  }
+  return cloneDeckDocument(value) as DeckDocument;
 }
 
 export function resolveProjectDeckPayload(
@@ -110,7 +80,7 @@ export function resolveProjectDeckPayload(
   }
 
   return {
-    deck: hydrateDeckDocument(deckPayload),
+    deck: readDeckDocument(deckPayload),
   };
 }
 
@@ -124,7 +94,7 @@ export function resolveProjectDeckLoadResult(
 }
 
 export function buildProjectlessDeckDocument(): DeckDocument {
-  return hydrateDeckDocument({
+  return readDeckDocument({
     id: INITIAL_DECK.id,
     name: INITIAL_DECK.name,
     version: INITIAL_DECK.version,

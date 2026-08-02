@@ -101,14 +101,6 @@ function createLauncherScript(): string {
   return scriptPath;
 }
 
-function createHungLauncherScript(): string {
-  const dir = path.join(tmpdir(), `liquidaity-cli-hung-${Date.now()}-${Math.random()}`);
-  mkdirSync(dir, { recursive: true });
-  const scriptPath = path.join(dir, 'openclaude.mjs');
-  writeFileSync(scriptPath, 'setInterval(() => {}, 1000);');
-  return scriptPath;
-}
-
 /** A directory holding an `openclaude` command discoverable on PATH. */
 function createPathDir(): string {
   const dir = path.join(tmpdir(), `liquidaity-path-${Date.now()}-${Math.random()}`);
@@ -354,37 +346,6 @@ describe('LocalCoderAdapter', () => {
     expect(report.summary).toContain('localcoder_process_failed');
   });
 
-  it('applies a bounded run timeout and returns failed when the process times out', async () => {
-    const root = createRuntimeFixture();
-    let timeoutMs: number | undefined;
-    const adapter = new LocalCoderAdapter({
-      workspaceRoot: root,
-      env: {
-        PATH: '',
-        OPENAI_API_KEY: 'key',
-        OPENAI_MODEL: 'gpt-5.3-codex',
-        LOCALCODER_RUN_TIMEOUT_MS: '2500',
-      },
-      runProcess: async (_command, _args, options) => {
-        timeoutMs = options.timeoutMs;
-        return {
-          started: true,
-          exitCode: null,
-          stdout: '',
-          stderr: '',
-          error: 'process_timeout_after_2500ms',
-        };
-      },
-    });
-
-    const { report, runtimeDiagnostics } = await adapter.runWithDiagnostics(packet(root));
-
-    expect(timeoutMs).toBe(2500);
-    expect(report.status).toBe('failed');
-    expect(report.summary).toBe('localcoder_process_failed: process_timeout_after_2500ms');
-    expect(runtimeDiagnostics.runtimeStage).toBe('process_timeout');
-  });
-
   it('returns bounded redacted argv/process diagnostics without exposing the prompt or MCP temp path', async () => {
     const root = createRuntimeFixture();
     const adapter = new LocalCoderAdapter({
@@ -437,29 +398,6 @@ describe('LocalCoderAdapter', () => {
     expect(report.summary).toContain('localcoder_argv_prompt_too_large');
     expect(runtimeDiagnostics.runtimeStage).toBe('prompt_bounds');
   });
-
-  it('kills a real child process on timeout and records stage evidence', async () => {
-    const root = createBareWorkspace();
-    const script = createHungLauncherScript();
-    const adapter = new LocalCoderAdapter({
-      workspaceRoot: root,
-      env: {
-        PATH: '',
-        LOCALCODER_COMMAND: `node ${script}`,
-        OPENAI_API_KEY: 'key',
-        OPENAI_MODEL: 'gpt-5.3-codex',
-        LOCALCODER_RUN_TIMEOUT_MS: '1000',
-      },
-      diagnosticMcpMode: 'disabled',
-    });
-
-    const { report, runtimeDiagnostics } = await adapter.runWithDiagnostics(packet(root));
-
-    expect(report.status).toBe('failed');
-    expect(runtimeDiagnostics.runtimeStage).toBe('process_timeout');
-    expect(runtimeDiagnostics.timeoutKilled).toBe(true);
-    expect(runtimeDiagnostics.exitCode).not.toBe(0);
-  }, 10_000);
 
   it('captures a missing context-window warning without claiming it caused the timeout', async () => {
     const root = createRuntimeFixture();

@@ -147,15 +147,8 @@ const EXPLICIT_ENV_NAMES = [
 ] as const;
 
 const WINDOWS_EXEC_EXTENSIONS = ['.exe', '.cmd', '.bat', '.com'];
-const DEFAULT_LOCALCODER_RUN_TIMEOUT_MS = 300_000;
 const MAX_LOCALCODER_ARGV_PROMPT_CHARS = 16_000;
 const MAX_DIAGNOSTIC_LINE_CHARS = 500;
-
-function localCoderRunTimeoutMs(env: NodeJS.ProcessEnv): number {
-  const configured = Number.parseInt(String(env.LOCALCODER_RUN_TIMEOUT_MS || ''), 10);
-  if (!Number.isFinite(configured)) return DEFAULT_LOCALCODER_RUN_TIMEOUT_MS;
-  return Math.max(1_000, Math.min(3_600_000, configured));
-}
 
 export function resolveLocalCoderWorkspaceRoot(startPath: string): string {
   let candidate = path.resolve(startPath);
@@ -515,7 +508,7 @@ function createRuntimeDiagnostics(
     provider: 'openai',
     model,
     permissionMode: deriveLocalCoderPermissionMode(packet),
-    timeoutMs: localCoderRunTimeoutMs(env),
+    timeoutMs: 0,
     promptDelivery: 'argv',
     promptLength: prompt.length,
     stdinClosed: true,
@@ -1025,7 +1018,6 @@ export class LocalCoderAdapter {
           CLAUDE_CODE_USE_OPENAI: '1',
         },
         shell: runtime.shell,
-        timeoutMs: localCoderRunTimeoutMs(this.env),
       },
     );
     if (mcp.tempPath) {

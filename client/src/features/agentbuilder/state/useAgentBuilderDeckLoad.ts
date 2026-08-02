@@ -107,7 +107,7 @@ export default function useAgentBuilderDeckLoad({
 
         const savedDeck =
           payload.data?.deck && typeof payload.data.deck === 'object'
-            ? { ...(payload.data.deck as DeckDocument), id: builderDeckId }
+            ? (payload.data.deck as DeckDocument)
             : null;
         const loadResult = resolveProjectDeckLoadResult(
           currentDeckRef.current,

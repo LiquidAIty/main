@@ -70,6 +70,17 @@ function getClient(): Promise<Client> {
   return clientPromise;
 }
 
+/** Close the one backend-owned stdio transport. The backend process owns this
+ * client, so its shutdown must also terminate the Python MCP child instead of
+ * relying on parent-process death to clean up a Windows process tree. */
+export async function closePythonAgentMcpClient(): Promise<void> {
+  const pending = clientPromise;
+  clientPromise = null;
+  if (!pending) return;
+  const client = await pending;
+  await client.close();
+}
+
 export type PythonMcpToolResult = { ok: boolean; [key: string]: unknown };
 
 export type PythonMcpCapabilityMetadata = {
