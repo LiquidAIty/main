@@ -23,7 +23,6 @@ roots:
     - resolveCardTools
     - buildPythonAutoGenCardRuntimePayload
     - runCardWithContract
-    - buildRuntimeGraph
     - serializeCardParticipant
     - normalizeLocalCoderControllerCard
   routes:

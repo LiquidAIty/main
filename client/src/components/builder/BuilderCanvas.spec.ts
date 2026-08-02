@@ -271,83 +271,6 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     expect(loadedEdges).toEqual(savedEdges);
   });
 
-  it('round-trips explicit edge metadata while keeping callable and execution edges distinct', () => {
-    const flowEdges: Edge[] = [
-      {
-        id: 'edge_magentic_assist',
-        source: 'card_magentic',
-        target: 'card_assist',
-        data: {
-          edgeType: 'magentic_option',
-          metadata: {
-            role: 'callable_route',
-            priority: 1,
-          },
-        },
-      },
-      {
-        id: 'edge_assist_next',
-        source: 'card_assist',
-        target: 'card_next',
-        data: {
-          edgeType: 'flow',
-          metadata: {
-            role: 'graph_execution',
-            executionMode: 'conditional',
-            conditionLabel: 'Only when more evidence is needed',
-            mergeIntent: 'summarize_all',
-          },
-        },
-      },
-    ];
-
-    const savedEdges = mergeFlowEdgesIntoDeck(flowEdges, []);
-    const loadedEdges = sanitizeDeckEdges(JSON.parse(JSON.stringify(savedEdges)));
-
-    expect(loadedEdges).toEqual<DeckEdge[]>([
-      {
-        id: 'edge_magentic_assist',
-        source: 'card_magentic',
-        sourceHandle: null,
-        target: 'card_assist',
-        targetHandle: null,
-        edgeType: 'magentic_option',
-        metadata: {
-          role: 'callable_route',
-          executionMode: null,
-          conditionType: null,
-          conditionExpression: null,
-          conditionLabel: null,
-          priority: 1,
-          order: null,
-          weight: null,
-          mergeIntent: null,
-          legacyCompatibility: null,
-        },
-      },
-      {
-        id: 'edge_assist_next',
-        source: 'card_assist',
-        sourceHandle: null,
-        target: 'card_next',
-        targetHandle: null,
-        edgeType: 'flow',
-        metadata: {
-          role: 'graph_execution',
-          executionMode: 'conditional',
-          conditionType: null,
-          conditionExpression: null,
-          conditionLabel: 'Only when more evidence is needed',
-          priority: null,
-          order: null,
-          weight: null,
-          mergeIntent: 'summarize_all',
-          legacyCompatibility: null,
-        },
-      },
-    ]);
-  });
-
   it('marks loop and return links visually', () => {
     const loopDocument: DeckDocument = {
       id: 'deck_loop',
@@ -795,7 +718,6 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         },
         'edge_bus_research',
         'magentic_option',
-        null,
       ),
     ).toEqual<DeckEdge>({
       id: 'edge_bus_research',

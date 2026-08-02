@@ -1,4 +1,4 @@
-"""Focused coverage for the SEC API WorldSignals provider + research handoff.
+"""Focused coverage for the SEC API WorldSignals provider.
 
 No live network: every "available" path runs against an explicitly labeled PROTOCOL
 FIXTURE injected as the transport. The no-key, error, and invalid-shape paths run with
@@ -10,17 +10,13 @@ import json
 import pytest
 
 from app.python_models.sec_filing_signals import (
-    GraphRawRef,
     IssuerRef,
     SecFilingQuery,
-    SecFilingResearchProposal,
     STATUS_AVAILABLE,
     STATUS_ERROR,
     STATUS_INVALID,
     STATUS_UNCONFIGURED,
-    build_research_proposal,
     find_recent_sec_filing_signals,
-    validate_research_proposal,
 )
 
 # PROTOCOL FIXTURE — shape of a sec-api.io Query API response. This is a recorded
@@ -168,100 +164,3 @@ def test_incomplete_filing_record_is_skipped_not_fabricated():
     result = find_recent_sec_filing_signals(_explicit_query(), transport=_partial, api_key="TEST-KEY")
     assert result.status == STATUS_AVAILABLE
     assert result.envelopes == []  # skipped, never invented
-
-
-# --- Selected-filing research proposal (non-executing handoff) --------------------
-
-
-def _one_available_signal():
-    result = find_recent_sec_filing_signals(_explicit_query(limit=1), transport=_fixture_transport, api_key="TEST-KEY")
-    return result.envelopes[0]
-
-
-def test_proposal_requires_an_available_filing_signal():
-    bad = _one_available_signal()
-    object.__setattr__(bad, "status", STATUS_UNCONFIGURED)  # simulate a non-available signal
-    with pytest.raises(ValueError):
-        build_research_proposal(
-            bad, proposal_id="p1", task_id="t1", requested_research_output="summary", selection_reason="r"
-        )
-
-
-def test_proposal_defaults_to_empty_knowgraph_refs_and_validates():
-    signal = _one_available_signal()
-    proposal = build_research_proposal(
-        signal,
-        proposal_id="p1",
-        task_id="t1",
-        requested_research_output="extract risk factors",
-        selection_reason="user explicitly selected this 8-K",
-        explicit_thinkgraph_refs=[GraphRawRef("thinkgraph", "tg:task-1")],
-    )
-    assert proposal.selectedSignalRef == signal.signalId
-    assert proposal.explicitKnowGraphRefs == []  # opt-in only
-    assert validate_research_proposal(proposal) == {"ok": True, "errors": []}
-
-
-def test_proposal_rejects_cross_store_ref_mixing():
-    signal = _one_available_signal()
-    proposal = build_research_proposal(
-        signal,
-        proposal_id="p1",
-        task_id="t1",
-        requested_research_output="x",
-        selection_reason="r",
-        explicit_thinkgraph_refs=[GraphRawRef("knowgraph", "kg:x")],  # wrong store
-    )
-    assert validate_research_proposal(proposal)["ok"] is False
-
-
-def test_proposal_preserves_reversible_graph_refs():
-    signal = _one_available_signal()
-    proposal = build_research_proposal(
-        signal,
-        proposal_id="p1",
-        task_id="t1",
-        requested_research_output="x",
-        selection_reason="r",
-        explicit_knowgraph_refs=[GraphRawRef("knowgraph", "kg:rdw")],
-        explicit_thinkgraph_refs=[GraphRawRef("thinkgraph", "tg:approval-1")],
-    )
-    assert proposal.explicitKnowGraphRefs[0].rawId == "kg:rdw"
-    assert proposal.explicitThinkGraphRefs[0].graphKind == "thinkgraph"
-
-
-# --- Static full-loop fixture: no automatic merge / write / research / trade ------
-
-
-def test_static_full_loop_signal_does_not_auto_become_graph_task_or_trade():
-    # 1. explicit issuer filing signal (from the protocol fixture)
-    result = find_recent_sec_filing_signals(_explicit_query(), transport=_fixture_transport, api_key="TEST-KEY")
-    assert result.status == STATUS_AVAILABLE and result.envelopes
-
-    # 2. user selects ONE filing
-    selected = result.envelopes[0]
-
-    # 3. SecFilingResearchProposal — KnowGraph empty (no auto-attach from the ticker),
-    #    only explicit ThinkGraph task/approval refs, code scope empty.
-    proposal = build_research_proposal(
-        selected,
-        proposal_id="proposal-1",
-        task_id="task-research-rdw-8k",
-        requested_research_output="Summarize the 8-K material event",
-        selection_reason="User explicitly selected this filing for research",
-        requested_sections=["Item 8.01"],
-        explicit_thinkgraph_refs=[
-            GraphRawRef("thinkgraph", "tg:task-research-rdw-8k"),
-            GraphRawRef("thinkgraph", "tg:approval-draft"),
-        ],
-    )
-
-    # The signal did NOT automatically become a KnowGraph record, a ThinkGraph task,
-    # a Coder task, a strategy context, or a trade.
-    assert proposal.explicitKnowGraphRefs == []  # no KnowGraph promotion
-    assert proposal.codeGraphScope is None  # no Coder code scope
-    assert proposal.approvalState == "draft"  # nothing approved or executed
-    assert validate_research_proposal(proposal) == {"ok": True, "errors": []}
-    # selection stays reversible to the original filing
-    assert proposal.selectedFilingRef == selected.filing.accessionNumber
-    assert selected.sourceRefs.originalSecFilingRef.startswith("https://www.sec.gov/")

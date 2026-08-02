@@ -376,11 +376,9 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeBinding: null,
       runtimeType: 'magentic_one',
       runtimeOptions: {
-        executionBackend: 'python_autogen',
         provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
         modelKey: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
         maxTurns: 2,
-        maxStalls: 1,
       },
       parentGraphId: null,
       title: 'Magentic-One',

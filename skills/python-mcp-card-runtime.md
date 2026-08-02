@@ -22,9 +22,9 @@ canvas card (deck_builder)            ← identity, prompt, model, enabled, tool
 
 ## Rules
 
-- **Authority is runtime context, not model input.** Server-authored `runAuthority` →
-  `cardRuntime.runtimeScope` → Python `ContextVar` (set/reset around the run). A tool
-  called outside an authorized run fails honestly (`*_authority_missing`).
+- **Authority is runtime context, not model input.** AGEntgraph owns the assignment;
+  Python claims it and sets the receiving card/assignment identity in a `ContextVar`
+  around the model run. A tool called outside that assignment fails honestly.
 - **The model supplies only the payload body** (e.g. the patch). Project/card/run/pair
   identity can never be overridden from model arguments.
 - **No fallback anywhere**: missing model config, unknown tool, disabled card, rails

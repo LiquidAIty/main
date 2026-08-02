@@ -19,8 +19,7 @@ roots:
     - apps/backend/src/coder/openclaude/mcp/liquidAItyAgentFlow.ts
     - apps/backend/src/cards/runtime.ts
     - client/src/features/agentbuilder/console/HarnessChatPanel.tsx
-    - client/src/features/agentbuilder/console/consoleVisibility.ts
-    - client/src/runtime/agentCardRegistryResolver.ts
+    - client/src/features/agentbuilder/rail/railVisibility.ts
   symbols:
     - selectDoorwayCards
     - buildHarnessAgentDefinition
@@ -31,7 +30,7 @@ roots:
     - runMagOne
     - resolvedMagenticOptions
     - isLocalCoderCard
-    - resolveBusConnections
+    - isHermesConnectedToMainChat
   routes:
     - POST /openclaude/session/chat
     - POST /mcp-bridge/describe_connected_agents
@@ -175,5 +174,4 @@ surface (requires runtime observation).
 | `coder.routes.ts` (lines 185-255) | Harness chat SSE route |
 | `liquidAItyAgentFlow.ts` | Mag One describe + run |
 | `runtime.ts` (lines 86-112) | resolvedMagenticOptions |
-| `consoleVisibility.ts` | Terminal rail visibility rules |
-| `agentCardRegistryResolver.ts` | Bus connection resolution |
+| `railVisibility.ts` | Terminal rail visibility and canvas connectivity rules |

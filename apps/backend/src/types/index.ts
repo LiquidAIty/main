@@ -28,60 +28,13 @@ export type AgentCardRuntimeType =
 // (the old default) silently handed invocation authority to malformed data.
 export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'invalid';
 
-export type DeckEdgeRole =
-  | 'graph_execution'
-  | 'callable_route'
-  | 'reconcile_input'
-  | 'compatibility_legacy';
-
-export type DeckEdgeExecutionMode = 'required' | 'optional' | 'conditional';
-
-export type DeckEdgeMergeIntent =
-  | 'all_inputs'
-  | 'any_input'
-  | 'first_success'
-  | 'summarize_all'
-  | 'select_best'
-  | 'manual_review';
-
-export type DeckEdgeMetadata = {
-  role?: DeckEdgeRole | null;
-  executionMode?: DeckEdgeExecutionMode | null;
-  conditionType?: string | null;
-  conditionExpression?: string | null;
-  conditionLabel?: string | null;
-  priority?: number | null;
-  order?: number | null;
-  weight?: number | null;
-  mergeIntent?: DeckEdgeMergeIntent | null;
-  legacyCompatibility?: boolean | null;
-  loopMaxIterations?: number | null;
-  loopExitText?: string | null;
-};
-
-export type AssistExecutionMode = 'single' | 'swarm';
-
 export type AgentCardRuntimeOptions = {
   // 'local_openai_compatible' = a local SLM served over an OpenAI-compatible endpoint.
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | null;
-  executionBackend?: 'python_autogen' | null;
   modelKey?: string | null;
   temperature?: number | null;
   maxTokens?: number | null;
-  streaming?: boolean | null;
-  emitTeamEvents?: boolean | null;
-  executionMode?: AssistExecutionMode | null;
-  swarmMaxWorkers?: number | null;
-  swarmWorkerPromptTemplate?: string | null;
-  useSocietyOfMindConsolidation?: boolean | null;
   maxTurns?: number | null;
-  maxStalls?: number | null;
-  finalAnswerPrompt?: string | null;
-  selectorPrompt?: string | null;
-  allowRepeatedSpeaker?: boolean | null;
-  localCoderMode?: 'headless' | 'terminal' | null;
-  localCoderAccess?: 'read' | 'patch' | 'test' | null;
-  role?: string | null;
   tools?: string[] | null;
   /** Card-assigned NATIVE tool names for this agent's own session (e.g.
    * ['Agent'] for Main's doorway-only surface). Filtered by the engine BEFORE
@@ -132,7 +85,6 @@ export type DeckEdge = {
   target: string;
   targetHandle?: string | null;
   edgeType?: DeckEdgeType | null;
-  metadata?: DeckEdgeMetadata | null;
 };
 
 export type DeckViewport = {

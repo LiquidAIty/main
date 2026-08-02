@@ -2,9 +2,6 @@ import {
   CardRunResult,
   AgentAssignmentRunResult,
   PythonAutoGenPayloadShape,
-  RuntimeGraph,
-  RuntimeGraphEdge,
-  RuntimeGraphNode,
 } from '../contracts/runtimeContracts';
 import {
   orchestrateWithAutoGen,
@@ -340,135 +337,13 @@ export function resolveCardTools(card: any): string[] {
   });
 }
 
-function resolveCardFanOut(card: any): Record<string, any> | null {
-  card = normalizeLocalCoderControllerCard(card);
-  const fanOut = card.runtimeOptions?.fanOut;
-  if (fanOut && typeof fanOut === 'object') return fanOut;
-  // The persisted card-editor fan-out setting is executionMode='swarm'.
-  if (card.runtimeOptions?.executionMode === 'swarm') {
-    const count = coerceNumber(card.runtimeOptions?.swarmMaxWorkers, null);
-    return {
-      enabled: true,
-      count: count && count > 0 ? count : 2,
-      items: [],
-    };
-  }
-  return null;
-}
-
-function cardHasChildSubgraph(cardId: string, allCards: any[]): boolean {
-  return allCards.some((node) => String(node.parentGraphId || '').trim() === String(cardId));
-}
-
-export function buildRuntimeGraph(
-  orchestratorCard: any,
-  callableHeads: any[],
-  allCards: any[],
-  allEdges: any[],
-  orchestratorModel: { provider?: string; providerModelId?: string },
-): RuntimeGraph {
-  const headIds = new Set(callableHeads.map((head) => String(head.id)));
-  const childCards = allCards.filter((node) =>
-    headIds.has(String(node.parentGraphId || '').trim()),
-  );
-
-  const toGraphNode = (
-    card: any,
-    overrides: Partial<RuntimeGraphNode> = {},
-  ): RuntimeGraphNode => ({
-    cardId: String(card.id || ''),
-    title: String(card.title || ''),
-    kind: String(card.kind || 'agent'),
-    runtimeType: resolveCardRuntimeType(card),
-    parentGraphId: String(card.parentGraphId || '').trim() || null,
-    prompt: String(card.prompt || '').trim(),
-    role: card.runtimeOptions?.role ? String(card.runtimeOptions.role) : null,
-    tools: resolveCardTools(card),
-    fanOut: resolveCardFanOut(card),
-    isSocietyOfMind:
-      Boolean(card.runtimeOptions?.isSocietyOfMind) ||
-      cardHasChildSubgraph(card.id, allCards),
-    provider: null,
-    providerModelId: null,
-    temperature: coerceNumber(card.runtimeOptions?.temperature, null),
-    maxTokens: coerceNumber(card.runtimeOptions?.maxTokens, null),
-    ...overrides,
-  });
-
-  const nodes: RuntimeGraphNode[] = [
-    toGraphNode(orchestratorCard, {
-      runtimeType: 'magentic_one',
-      provider: orchestratorModel.provider ?? null,
-      providerModelId: orchestratorModel.providerModelId ?? null,
-      isSocietyOfMind: false,
-    }),
-  ];
-
-  for (const head of callableHeads) {
-    const model = resolveCardModelStrict(head);
-    nodes.push(
-      toGraphNode(head, {
-        provider: model.provider,
-        providerModelId: model.providerModelId,
-      }),
-    );
-  }
-
-  for (const child of childCards) {
-    const model = resolveCardModelStrict(child);
-    nodes.push(
-      toGraphNode(child, {
-        provider: model.provider,
-        providerModelId: model.providerModelId,
-        isSocietyOfMind: false,
-      }),
-    );
-  }
-
-  const includedIds = new Set(nodes.map((node) => node.cardId));
-  const edges: RuntimeGraphEdge[] = (allEdges || [])
-    .filter(
-      (edge: any) =>
-        includedIds.has(String(edge.source)) &&
-        includedIds.has(String(edge.target)) &&
-        // An unrecognised edge authorises nothing, so it must not reach the
-        // runtime graph the orchestrator reasons over.
-        normalizeEdgeType(edge.edgeType) !== 'invalid',
-    )
-    .map((edge: any) => ({
-      id: String(edge.id || `${edge.source}->${edge.target}`),
-      source: String(edge.source),
-      target: String(edge.target),
-      // Safe: the filter above already dropped every 'invalid' edge.
-      edgeType: normalizeEdgeType(edge.edgeType) as RuntimeGraphEdge['edgeType'],
-      loop:
-        edge.loop && typeof edge.loop === 'object'
-          ? edge.loop
-          : edge.data?.loop && typeof edge.data.loop === 'object'
-            ? edge.data.loop
-            : edge.metadata?.loop && typeof edge.metadata.loop === 'object'
-              ? edge.metadata.loop
-              : Number(edge.metadata?.loopMaxIterations) >= 1
-                ? {
-                    maxIterations: Number(edge.metadata.loopMaxIterations),
-                    exitOnText: edge.metadata?.loopExitText
-                      ? String(edge.metadata.loopExitText)
-                      : null,
-                  }
-                : null,
-      data: edge.data && typeof edge.data === 'object' ? edge.data : {},
-    }));
-
-  return { nodes, edges };
-}
-
 /**
  * THE one card→participant serialization, shared by the Mag One team payload and the
  * single-card runtime. Same prompt/model/tool resolution, same no-fallback throws
  * (resolveCardModelStrict / resolveCardTools). Extracted so there is exactly one
  * source of truth for how a canvas card becomes a Python AutoGen participant.
  */
-export function serializeCardParticipant(head: any, allCards: any[]): Record<string, unknown> {
+export function serializeCardParticipant(head: any): Record<string, unknown> {
   head = normalizeLocalCoderControllerCard(head);
   const model = resolveCardModelStrict(head);
   const runtimeBinding = resolveCardBinding(head);
@@ -487,10 +362,6 @@ export function serializeCardParticipant(head: any, allCards: any[]): Record<str
     // prompt lives only in the private participant, used solely by Python to
     // set AssistantAgent.system_message — never as visible/team-description text.
     tools: selectedTools,
-    fanOut: resolveCardFanOut(head),
-    isSocietyOfMind:
-      Boolean(head.runtimeOptions?.isSocietyOfMind) ||
-      cardHasChildSubgraph(head.id, allCards),
     provider: model.provider,
     providerModelId: model.providerModelId,
     temperature: head.runtimeOptions?.temperature ?? null,
@@ -543,22 +414,11 @@ export function buildPythonAutoGenCardRuntimePayload(
   const systemPrompt = String(card.prompt || '').trim();
 
   const participants = supportedHeads.map((head) =>
-    serializeCardParticipant(head, context.allCards || []),
+    serializeCardParticipant(head),
   );
 
   const privateParticipants = supportedHeads.map((head) =>
     serializeCardPrivateParticipant(head),
-  );
-
-  const runtimeGraph = buildRuntimeGraph(
-    card,
-    supportedHeads,
-    context.allCards || [],
-    context.allEdges || [],
-    {
-      provider: modelConfig?.provider,
-      providerModelId: modelConfig?.providerModelId,
-    },
   );
 
   const safeRuntimeOptions: Record<string, unknown> = {
@@ -593,7 +453,6 @@ export function buildPythonAutoGenCardRuntimePayload(
       runtimeType: 'magentic_one',
       prompt: systemPrompt,
       runtimeOptions: safeRuntimeOptions,
-      graph: runtimeGraph,
       participants,
       privateParticipants,
     }
@@ -727,7 +586,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     // TypeScript resolves only saved card/model structure. Python's canonical
     // registry validates the transported tool ids before model execution.
     model = resolveCardModelStrict(effectiveCard);
-    participant = serializeCardParticipant(effectiveCard, nodes);
+    participant = serializeCardParticipant(effectiveCard);
     privateParticipant = serializeCardPrivateParticipant(effectiveCard);
   } catch (error: any) {
     return done({ status: 'failed', runtimeType, error: String(error?.message || 'card_resolution_failed') });

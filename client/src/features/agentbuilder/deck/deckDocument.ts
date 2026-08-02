@@ -107,9 +107,8 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
       !REMOVED_DEFAULT_CARD_IDS.has(
         safeText((node as Partial<AgentCardInstance>).id).trim(),
       ) &&
-      safeText((node as Partial<AgentCardInstance>).kind)
-        .trim()
-        .toLowerCase() !== 'blackboard' &&
+      (!safeText((node as Partial<AgentCardInstance>).kind).trim() ||
+        safeText((node as Partial<AgentCardInstance>).kind).trim().toLowerCase() === 'agent') &&
       typeof (node as AgentCardInstance).id === 'string' &&
       typeof (node as AgentCardInstance).templateId === 'string',
     ),

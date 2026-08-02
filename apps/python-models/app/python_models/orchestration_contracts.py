@@ -60,58 +60,6 @@ class ProjectSession(BaseModel):
     )
 
 
-class CardFanOutConfig(BaseModel):
-    """Card-level Swarm fan-out setting. Swarm never replaces the Mag One bus."""
-
-    enabled: bool = False
-    count: int = Field(default=2, ge=1, le=8)
-    items: list[str] = Field(default_factory=list)
-
-
-class GraphEdgeLoopRule(BaseModel):
-    """Explicit exit rule for a ReactFlow loop edge. Loops without one are rejected."""
-
-    maxIterations: int = Field(ge=1, le=10)
-    exitOnText: str | None = None
-
-
-class GraphEdgeInput(BaseModel):
-    id: str = ""
-    source: RequiredRuntimeString
-    target: RequiredRuntimeString
-    edgeType: Literal["flow", "magentic_option"] = "flow"
-    loop: GraphEdgeLoopRule | None = None
-    data: dict = Field(default_factory=dict)
-
-
-class GraphNodeInput(BaseModel):
-    cardId: RequiredRuntimeString
-    title: str = ""
-    kind: str = "agent"
-    runtimeType: str = "assistant_agent"
-    parentGraphId: str | None = None
-    prompt: str = ""
-    role: str | None = None
-    tools: list[str] = Field(default_factory=list)
-    fanOut: CardFanOutConfig | None = None
-    isSocietyOfMind: bool = False
-    provider: str | None = None
-    providerModelId: str | None = None
-    temperature: float | None = None
-    maxTokens: int | None = None
-
-    _no_default_models = field_validator("provider", "providerModelId")(
-        _reject_default_model_value
-    )
-
-
-class CardRuntimeGraph(BaseModel):
-    """The strict ReactFlow graph payload: nodes/cards and edges are the source of truth."""
-
-    nodes: list[GraphNodeInput] = Field(default_factory=list)
-    edges: list[GraphEdgeInput] = Field(default_factory=list)
-
-
 class CardRuntimeConfig(BaseModel):
     cardId: str
     title: str
@@ -123,7 +71,6 @@ class CardRuntimeConfig(BaseModel):
     runtimeOptions: dict = Field(default_factory=dict)
     assistant: dict | None = None
     magentic: dict | None = None
-    graph: CardRuntimeGraph | None = None
     participants: list["CardRuntimeParticipant"] = Field(default_factory=list)
     privateParticipants: list["CardRuntimePrivateParticipant"] = Field(default_factory=list)
 
@@ -149,8 +96,6 @@ class CardRuntimeParticipant(BaseModel):
     runtimeBinding: str | None = None
     tools: list[str] = Field(default_factory=list)
     prompt: str = ""
-    fanOut: CardFanOutConfig | None = None
-    isSocietyOfMind: bool = False
     provider: RequiredRuntimeString
     providerModelId: RequiredRuntimeString
     temperature: float | None = None

@@ -6,10 +6,6 @@
 import type {
   DeckDocument,
   DeckEdge,
-  DeckEdgeExecutionMode,
-  DeckEdgeMergeIntent,
-  DeckEdgeMetadata,
-  DeckEdgeRole,
   DeckEdgeType,
 } from '../../types/agentgraph';
 import { normalizeDeckEdgeType } from '../../features/agentbuilder/deck/deckPrimitives';
@@ -42,78 +38,6 @@ type DeckValidationResult = {
   };
 };
 
-const EDGE_ROLE_VALUES = new Set<DeckEdgeRole>([
-  'graph_execution',
-  'callable_route',
-  'reconcile_input',
-  'compatibility_legacy',
-]);
-
-const EDGE_EXECUTION_MODE_VALUES = new Set<DeckEdgeExecutionMode>([
-  'required',
-  'optional',
-  'conditional',
-]);
-
-const EDGE_MERGE_INTENT_VALUES = new Set<DeckEdgeMergeIntent>([
-  'all_inputs',
-  'any_input',
-  'first_success',
-  'summarize_all',
-  'select_best',
-  'manual_review',
-]);
-
-function cleanOptionalText(value: unknown): string | null {
-  const text = String(value || '').trim();
-  return text || null;
-}
-
-function cleanOptionalNumber(value: unknown): number | null {
-  if (value == null) return null;
-  if (typeof value === 'string' && value.trim() === '') return null;
-  const normalized = Number(value);
-  return Number.isFinite(normalized) ? normalized : null;
-}
-
-function cleanOptionalBoolean(value: unknown): boolean | null {
-  return typeof value === 'boolean' ? value : null;
-}
-
-export function normalizeDeckEdgeMetadata(value: unknown): DeckEdgeMetadata | null {
-  if (!value || typeof value !== 'object') return null;
-  const raw = value as Record<string, unknown>;
-  const normalized: DeckEdgeMetadata = {
-    role: EDGE_ROLE_VALUES.has(raw.role as DeckEdgeRole) ? (raw.role as DeckEdgeRole) : null,
-    executionMode: EDGE_EXECUTION_MODE_VALUES.has(raw.executionMode as DeckEdgeExecutionMode)
-      ? (raw.executionMode as DeckEdgeExecutionMode)
-      : null,
-    conditionType: cleanOptionalText(raw.conditionType),
-    conditionExpression: cleanOptionalText(raw.conditionExpression),
-    conditionLabel: cleanOptionalText(raw.conditionLabel),
-    priority: cleanOptionalNumber(raw.priority),
-    order: cleanOptionalNumber(raw.order),
-    weight: cleanOptionalNumber(raw.weight),
-    mergeIntent: EDGE_MERGE_INTENT_VALUES.has(raw.mergeIntent as DeckEdgeMergeIntent)
-      ? (raw.mergeIntent as DeckEdgeMergeIntent)
-      : null,
-    legacyCompatibility: cleanOptionalBoolean(raw.legacyCompatibility),
-  };
-  const hasAnyValue = Object.values(normalized).some((entry) => entry !== null);
-  return hasAnyValue ? normalized : null;
-}
-
-export function buildDefaultDeckEdgeMetadata(
-  edgeType: DeckEdgeType,
-  options: { legacyCompatibility?: boolean } = {},
-): DeckEdgeMetadata | null {
-  return normalizeDeckEdgeMetadata({
-    role: edgeType === 'magentic_option' ? 'callable_route' : 'graph_execution',
-    executionMode: edgeType === 'flow' ? 'required' : null,
-    legacyCompatibility: options.legacyCompatibility === true ? true : null,
-  });
-}
-
 export function sanitizeDeckEdges(value: unknown): DeckEdge[] {
   if (!Array.isArray(value)) return [];
 
@@ -129,7 +53,6 @@ export function sanitizeDeckEdges(value: unknown): DeckEdge[] {
         ),
     )
     .map((edge) => {
-      const metadata = normalizeDeckEdgeMetadata((edge as DeckEdge).metadata);
       return {
         id: String(edge.id || '').trim(),
         source: String(edge.source || '').trim(),
@@ -137,7 +60,6 @@ export function sanitizeDeckEdges(value: unknown): DeckEdge[] {
         target: String(edge.target || '').trim(),
         targetHandle: typeof (edge as DeckEdge).targetHandle === 'string' ? (edge as DeckEdge).targetHandle : null,
         edgeType: normalizeDeckEdgeType((edge as DeckEdge).edgeType),
-        ...(metadata ? { metadata } : {}),
       };
     })
     .filter((edge) => edge.id && edge.source && edge.target);

@@ -175,7 +175,7 @@ NOT layer any of the following onto native reasoning (all removed; do not reintr
 * Deterministic keyword routing — the `isGenericPrompt`/`isContinuation` classifier (`test`,
   `hello`, `hi`, `run`, `go`, `continue`, `approve`, `yes`) and any mutation of
   mission input. Mission input passes through unchanged; there is no top-level prior-assistant,
-  plan, blackboard, graph, attachment, research-limit, or workspace-object payload.
+  plan, attachment, research-limit, or workspace-object payload.
 * Native team mutation — the `resolveMagOneAgentRole(head) !== 'local_coder'` participant filter.
   The team is exactly the bus-connected, Python-callable cards (no role exclusion).
 * Hidden graph injection — `buildGroundedTaskLedgerContext`/`renderTaskLedgerGroundingDirective`

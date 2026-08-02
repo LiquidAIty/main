@@ -110,19 +110,14 @@ Important edge meanings:
 
 - `magentic_control`: Main controls the Mag One entry point.
 - `magentic_option`: a saved worker card is eligible for Mag One participation.
-- `flow`: a product/data-flow relationship; it does not silently activate a Mag One worker.
-- `hermes_observe`: the current source-seed Main-to-Hermes pre-integration relationship; it is not
-  proof that an external Hermes process ran.
+- `flow`: a directed native sub-agent invocation relationship; it does not silently activate a
+  Mag One worker. Main-to-Hermes uses this same contract.
 
 Default templates and the initial source topology live in
 `client/src/features/agentbuilder/deck/deckSeed.ts`. Client hydration/normalization lives in
 `deckDocument.ts`; backend persistence and normalization live in `apps/backend/src/decks/store.ts`;
 shared runtime resolution lives in `apps/backend/src/cards/runtime.ts`; and Python validates the
 received card graph before creating AutoGen participants.
-
-The current ADMIN persisted deck does not contain the source-seeded Hermes card/prompt/edges or the
-source-seeded ThinkGraph/KnowGraph/CodeGraph cards. Git recovery cannot restore that database state.
-Any repair must be a separate explicit database migration or reviewed deck save with readback.
 
 ## Mag One
 
@@ -229,7 +224,7 @@ proven dead. The actual source, data, tests, and adapter boundaries are protecte
   derivation and configuration/name/subtext mutations. `client/src/components/AgentManager.tsx`
   renders the card editor.
 - Main Chat: `client/src/features/agentbuilder/console/useAgentBuilderMainChat.ts` owns transcript
-  loading, streamed Harness turns, busy/error state, and selected graph references.
+  loading, streamed Harness turns, and busy/error state.
   `client/src/components/builder/BuilderChat.tsx` renders the conversation.
 - OpenClaude console: `client/src/features/agentbuilder/console/OpenClaudeConsolePanel.tsx`,
   `openClaudeConsoleClient.ts`, and `XtermView.tsx` own the persistent terminal UI and client
@@ -243,10 +238,10 @@ proven dead. The actual source, data, tests, and adapter boundaries are protecte
   `CompanionSurfaceHost.tsx` own their actual visual regions.
 - Backend routes: `apps/backend/src/routes/index.ts` mounts the supported route families.
   `projects.routes.ts` and `decks.routes.ts` own project/deck transport; `coder.routes.ts` owns
-  Harness, Coder, console, card-control, and MCP-bridge transport; `thinkgraph.routes.ts`,
-  `knowgraph.routes.ts`, and `codegraph.routes.ts` expose their respective authorities;
-  `unified.routes.ts` reads combined bounded context; `worldsignal.routes.ts` owns the retained
-  specialist bridge; `auth.routes.ts` and `health.routes.ts` own access and liveness.
+  Harness, Coder, console, card-control, and MCP-bridge transport; `knowgraph.routes.ts` exposes
+  the KnowGraph service; `worldsignal.routes.ts` owns the retained specialist bridge;
+  `auth.routes.ts` and `health.routes.ts` own access and liveness. Engraphis, Graphiti, and CBM
+  tools are federated by the official Python MCP rather than mirrored as backend route families.
 
 ## Adding a card
 

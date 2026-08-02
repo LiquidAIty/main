@@ -22,15 +22,15 @@ roots:
     - apps/backend/src/services/mcp/pythonAgentMcpClient.ts
     - apps/python-models/app/control_plane.py
     - client/src/features/agentbuilder/canvas/AgentCanvasPane.tsx
-    - client/src/runtime/agentCardRegistryResolver.ts
+    - client/src/features/agentbuilder/rail/railVisibility.ts
   symbols:
     - getDeckDocument / getV3ProjectBlob / saveDeckDocument / writeV3ProjectBlobCas
     - normalizeDeckNode / normalizeDeckEdge / normalizeDeckDocument
     - ensureMainChatControllerCard / buildMainChatControllerCard / buildMainChatBusEdge
-    - resolvedMagenticOptions / resolveBusConnections / canvas_inspect
+    - resolvedMagenticOptions / buildBusConnectedCardIds / canvas_inspect
     - AgentCanvasPane
   tests:
-    - agentCardRegistryResolver.spec.ts
+    - agentbuilder.topology.spec.ts
     - runtime.spec.ts
 ---
 
@@ -79,16 +79,15 @@ DB: agent_io_schema (JSONB, CAS via writeV3ProjectBlobCas)
 
 Deck routes: GET /:projectId/decks, GET/PUT /:projectId/decks/:deckId [decks.routes.ts]
 
-Bus (backend): resolvedMagenticOptions(orchestratorId, nodes, edges) [runtime.ts:86]
-  → filters edges where source=orchestratorId AND edgeType='magentic_option'
+Bus (backend): resolvedMagenticOptions(orchestratorId, nodes, edges) [runtime.ts]
+  → resolves the card at the opposite endpoint of each 'magentic_option' edge
   → CBM-path-proven (callers: describeConnectedAgents, runCardWithContract)
 
-Bus (client): resolveBusConnections(cards, edges) [agentCardRegistryResolver.ts:54]
-  → finds Sol (magentic_one) → 'orchestrator'; magentic_option edges → 'connected'
-  → CBM-path-proven (callers: isLocalCoderBusConnected, spec)
+Bus (client): buildBusConnectedCardIds(nodes, edges) [railVisibility.ts]
+  → derives presentation visibility from persisted magentic_option connectivity
 
-Main Chat bus edge: buildMainChatBusEdge() [mainChatControllerCard.ts:54]
-  source='card_main_chat', target='card_magentic', edgeType='magentic_option'
+Main Chat control edge: the persisted deck uses source='card_main_chat',
+  target='card_magentic', edgeType='magentic_control', targetHandle='task-bus-top'.
 ```
 
 ## Must not break
@@ -157,4 +156,4 @@ persists edges (UI-proven), Python `canvas_inspect` matches deck store (integrat
 | `apps/backend/src/services/mcp/pythonAgentMcpClient.ts` | Python MCP transport |
 | `apps/python-models/app/control_plane.py` | canvas inspection and saved-card execution |
 | `client/src/features/agentbuilder/canvas/AgentCanvasPane.tsx` | Canvas React component |
-| `client/src/runtime/agentCardRegistryResolver.ts` | Bus connections |
+| `client/src/features/agentbuilder/rail/railVisibility.ts` | Canvas connectivity presentation |

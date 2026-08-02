@@ -73,7 +73,7 @@ def test_canvas_inspect_returns_only_the_bounded_public_projection(fake_backend)
 
 class TestCardUpdateConfiguration:
     def test_arbitrary_runtime_and_authority_fields_rejected(self, fake_backend):
-        for field in ("runtimeCode", "shell", "hiddenTools", "runAuthority", "runtimeScope", "magenticWorkers"):
+        for field in ("runtimeCode", "shell", "hiddenTools", "runAuthority", "magenticWorkers"):
             with pytest.raises(cp.ControlPlaneError, match="card_update_fields_rejected"):
                 asyncio.run(cp.card_update_configuration({
                     "projectId": "p", "deckId": "d", "cardId": "signals-card", "updates": {field: "x"},

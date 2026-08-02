@@ -2,9 +2,7 @@
 
 Read-only filing-signal intake on the Python rails. Given an EXPLICIT issuer + form
 filter + bounded time window, query the sec-api.io Query API and return typed
-``WorldSignalEnvelope`` records. An explicitly selected envelope can become a
-``SecFilingResearchProposal`` (a non-executing research handoff that reuses the
-explicit TaskContextSlice ref shape).
+``WorldSignalEnvelope`` records.
 
 Hard boundaries (enforced by tests):
   * no graph writes (KnowGraph/ThinkGraph), no task creation, no trading;
@@ -43,24 +41,6 @@ STATUS_AVAILABLE = "available"
 STATUS_UNCONFIGURED = "provider_unconfigured"
 STATUS_ERROR = "provider_error"
 STATUS_INVALID = "invalid_response"
-
-# Future approval/execution states (design constants — this module never advances
-# them or performs the actions; the proposal only records an approvalState).
-APPROVAL_STATES = (
-    "draft",
-    "research_requested",
-    "research_reviewed",
-    "coder_task_proposed",
-    "coder_task_approved",
-    "code_changed_and_tested",
-    "paper_experiment_proposed",
-    "paper_experiment_approved",
-    "paper_experiment_completed",
-    "result_reviewed",
-)
-
-GRAPH_KINDS = ("knowgraph", "thinkgraph", "codegraph")
-
 
 # ---------------------------------------------------------------------------
 # WorldSignalEnvelope contract.
@@ -386,104 +366,3 @@ def find_recent_sec_filing_signals(
         envelopes=envelopes,
         error=None,
     )
-
-
-# ---------------------------------------------------------------------------
-# Explicit selected-filing research handoff (non-executing).
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class GraphRawRef:
-    """A reference into exactly one store (mirrors the TaskContextSlice ref shape)."""
-
-    graphKind: str  # 'knowgraph' | 'thinkgraph' | 'codegraph'
-    rawId: str
-
-
-@dataclass(frozen=True)
-class SecFilingResearchProposal:
-    """A non-executing proposal that turns ONE explicitly selected filing signal into
-    the input for a future research workflow. Creating it writes nothing — no KnowGraph
-    node, no ThinkGraph task, no Research Agent call, no filing-text extraction."""
-
-    proposalId: str
-    taskId: str
-    selectedSignalRef: str  # the chosen WorldSignalEnvelope.signalId
-    selectedFilingRef: str  # the chosen filing accessionNumber
-    requestedResearchOutput: str
-    selectionReason: str
-    approvalState: str = "draft"
-    requestedSections: list[str] = field(default_factory=list)
-    explicitKnowGraphRefs: list[GraphRawRef] = field(default_factory=list)
-    explicitThinkGraphRefs: list[GraphRawRef] = field(default_factory=list)
-    codeGraphScope: Optional[dict[str, Any]] = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-def build_research_proposal(
-    signal: WorldSignalEnvelope,
-    *,
-    proposal_id: str,
-    task_id: str,
-    requested_research_output: str,
-    selection_reason: str,
-    requested_sections: Optional[list[str]] = None,
-    explicit_knowgraph_refs: Optional[list[GraphRawRef]] = None,
-    explicit_thinkgraph_refs: Optional[list[GraphRawRef]] = None,
-    code_graph_scope: Optional[dict[str, Any]] = None,
-    approval_state: str = "draft",
-) -> SecFilingResearchProposal:
-    """Build a research proposal from an explicitly selected, available filing signal.
-
-    Requires an explicit available signal that carries a filing. Performs no writes and
-    starts no research. KnowGraph refs default to empty — knowledge is opt-in only.
-    """
-    if not isinstance(signal, WorldSignalEnvelope):
-        raise TypeError("research_proposal_requires_signal_envelope")
-    if signal.status != STATUS_AVAILABLE or signal.filing is None:
-        raise ValueError("research_proposal_requires_available_filing_signal")
-    if not str(signal.signalId or "").strip():
-        raise ValueError("research_proposal_requires_explicit_signal_id")
-    return SecFilingResearchProposal(
-        proposalId=str(proposal_id),
-        taskId=str(task_id),
-        selectedSignalRef=signal.signalId,
-        selectedFilingRef=signal.filing.accessionNumber,
-        requestedResearchOutput=str(requested_research_output),
-        selectionReason=str(selection_reason),
-        approvalState=str(approval_state),
-        requestedSections=list(requested_sections or []),
-        explicitKnowGraphRefs=list(explicit_knowgraph_refs or []),
-        explicitThinkGraphRefs=list(explicit_thinkgraph_refs or []),
-        codeGraphScope=code_graph_scope,
-    )
-
-
-def validate_research_proposal(proposal: SecFilingResearchProposal) -> dict[str, Any]:
-    """Validate the proposal. Requires an explicit selected signal id + task + reason,
-    well-formed reversible refs, and a valid approvalState. Empty KnowGraph refs are
-    valid. Returns ``{ok, errors}`` so callers can fail closed."""
-    errors: list[str] = []
-    if not isinstance(proposal, SecFilingResearchProposal):
-        return {"ok": False, "errors": ["proposal_missing"]}
-    if not str(proposal.selectedSignalRef or "").strip():
-        errors.append("explicit selectedSignalRef required")
-    if not str(proposal.taskId or "").strip():
-        errors.append("taskId required")
-    if not str(proposal.selectionReason or "").strip():
-        errors.append("selectionReason required")
-    if proposal.approvalState not in APPROVAL_STATES:
-        errors.append("approvalState must be a declared workflow state")
-    for bucket, kind in (
-        (proposal.explicitThinkGraphRefs, "thinkgraph"),
-        (proposal.explicitKnowGraphRefs, "knowgraph"),
-    ):
-        for i, ref in enumerate(bucket):
-            if not isinstance(ref, GraphRawRef) or ref.graphKind != kind:
-                errors.append(f"{kind}Refs[{i}] must have graphKind '{kind}'")
-            elif not str(ref.rawId or "").strip():
-                errors.append(f"{kind}Refs[{i}] requires explicit rawId")
-    return {"ok": not errors, "errors": errors}

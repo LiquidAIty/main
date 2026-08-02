@@ -164,96 +164,6 @@ describe('agentbuilder authoring flow', () => {
     ]);
   });
 
-  it('round-trips explicit edge metadata without changing preserved topology', () => {
-    const savedDeck: DeckDocument = {
-      id: 'deck_builder',
-      name: 'Metadata Deck',
-      promptTemplates: [],
-      version: 2,
-      nodes: [
-        createCard('card_a', 'assistant_agent', { title: 'A' }),
-        createCard('card_b', 'assistant_agent', { title: 'B' }),
-        createCard('card_c', 'assistant_agent', { title: 'C' }),
-      ],
-      edges: [
-        {
-          id: 'edge_a_b',
-          source: 'card_a',
-          target: 'card_b',
-          edgeType: 'flow',
-          metadata: {
-            role: 'graph_execution',
-            executionMode: 'conditional',
-            conditionLabel: 'Only when research is stale',
-            conditionExpression: 'blackboard.store.stale === true',
-            priority: 2,
-            mergeIntent: 'summarize_all',
-          },
-        },
-        {
-          id: 'edge_a_c',
-          source: 'card_a',
-          target: 'card_c',
-          edgeType: 'flow',
-          metadata: {
-            role: 'graph_execution',
-            executionMode: 'optional',
-            order: 1,
-            legacyCompatibility: true,
-          },
-        },
-      ],
-    };
-
-    const loaded = resolveProjectDeckPayload(savedDeck);
-    const rehydrated = hydrateDeckDocument(JSON.parse(JSON.stringify(loaded.deck)));
-
-    expect(rehydrated.edges.map((edge) => ({
-      id: edge.id,
-      source: edge.source,
-      target: edge.target,
-      edgeType: edge.edgeType,
-      metadata: edge.metadata ?? null,
-    }))).toEqual([
-      {
-        id: 'edge_a_b',
-        source: 'card_a',
-        target: 'card_b',
-        edgeType: 'flow',
-        metadata: {
-          role: 'graph_execution',
-          executionMode: 'conditional',
-          conditionType: null,
-          conditionExpression: 'blackboard.store.stale === true',
-          conditionLabel: 'Only when research is stale',
-          priority: 2,
-          order: null,
-          weight: null,
-          mergeIntent: 'summarize_all',
-          legacyCompatibility: null,
-        },
-      },
-      {
-        id: 'edge_a_c',
-        source: 'card_a',
-        target: 'card_c',
-        edgeType: 'flow',
-        metadata: {
-          role: 'graph_execution',
-          executionMode: 'optional',
-          conditionType: null,
-          conditionExpression: null,
-          conditionLabel: null,
-          priority: null,
-          order: 1,
-          weight: null,
-          mergeIntent: null,
-          legacyCompatibility: true,
-        },
-      },
-    ]);
-  });
-
   it('round-trips real restored research cards with saved branch and recombine topology intact', () => {
     const savedDeck: DeckDocument = {
       ...JSON.parse(JSON.stringify(INITIAL_DECK)),
@@ -375,36 +285,8 @@ describe('agentbuilder authoring flow', () => {
       }),
     ]);
     expect(hydrated.nodes.find((node) => node.id === 'card_magentic')?.runtimeOptions).toMatchObject({
-      executionBackend: 'python_autogen',
       provider: 'openrouter',
       modelKey: 'openai/gpt-5.6-terra',
-    });
-  });
-
-  it('migrates only the exact retired Magentic-One GLM seed default', () => {
-    const retiredDefault = JSON.parse(JSON.stringify(INITIAL_DECK)) as DeckDocument;
-    const retiredMagentic = retiredDefault.nodes.find((node) => node.id === 'card_magentic');
-    if (!retiredMagentic) throw new Error('seed_magentic_missing');
-    retiredMagentic.runtimeOptions = {
-      executionBackend: 'python_autogen',
-      provider: 'openrouter',
-      modelKey: 'z-ai/glm-5.2',
-      maxTurns: 2,
-      maxStalls: 1,
-    };
-
-    const migrated = hydrateDeckDocument(retiredDefault);
-    expect(migrated.nodes.find((node) => node.id === 'card_magentic')?.runtimeOptions).toMatchObject({
-      provider: 'openrouter',
-      modelKey: 'openai/gpt-5.6-terra',
-    });
-
-    retiredMagentic.runtimeOptions.maxTurns = 3;
-    const intentionallyConfigured = hydrateDeckDocument(retiredDefault);
-    expect(intentionallyConfigured.nodes.find((node) => node.id === 'card_magentic')?.runtimeOptions).toMatchObject({
-      provider: 'openrouter',
-      modelKey: 'z-ai/glm-5.2',
-      maxTurns: 3,
     });
   });
 
@@ -546,7 +428,7 @@ describe('agentbuilder authoring flow', () => {
     expect(hydrated.edges).toEqual([]);
   });
 
-  it('loads legacy edges without inventing edge metadata', () => {
+  it('loads saved edges as topology', () => {
     const hydrated = hydrateDeckDocument({
       id: 'deck_builder',
       name: 'Legacy Edge Deck',
@@ -571,7 +453,6 @@ describe('agentbuilder authoring flow', () => {
         edgeType: 'flow',
       },
     ]);
-    expect(hydrated.edges[0]?.metadata).toBeUndefined();
   });
 
   it('does not seed fallback chain edges into partial saved decks that already provide real cards', () => {
@@ -649,73 +530,6 @@ describe('agentbuilder authoring flow', () => {
     expect(rehydrated.edges.map((edge) => edge.id)).toEqual(['edge_call', 'edge_typo']);
     expect(rehydrated.edges.find((edge) => edge.id === 'edge_call')?.edgeType).toBe('flow');
     expect(rehydrated.edges.find((edge) => edge.id === 'edge_typo')?.edgeType).toBe('invalid');
-  });
-
-  it('does not let fallback override real saved edge metadata', () => {
-    const savedDeck: DeckDocument = {
-      id: 'deck_builder',
-      name: 'Saved Metadata Deck',
-      promptTemplates: [],
-      version: 2,
-      nodes: [
-        createCard('card_saved_a', 'assistant_agent', { title: 'Saved A' }),
-        createCard('card_saved_b', 'assistant_agent', { title: 'Saved B' }),
-      ],
-      edges: [
-        {
-          id: 'edge_saved_a_b',
-          source: 'card_saved_a',
-          target: 'card_saved_b',
-          edgeType: 'flow',
-          metadata: {
-            role: 'graph_execution',
-            executionMode: 'optional',
-            mergeIntent: 'any_input',
-          },
-        },
-      ],
-    };
-
-    const loaded = resolveProjectDeckPayload(savedDeck);
-
-    expect(loaded.usedFallback).toBe(false);
-    expect(loaded.deck.edges[0]?.metadata).toMatchObject({
-      role: 'graph_execution',
-      executionMode: 'optional',
-      mergeIntent: 'any_input',
-    });
-  });
-
-  it('preserves advanced runtime options when hydrating saved legacy cards', () => {
-    const hydrated = hydrateDeckDocument({
-      id: 'deck_builder',
-      name: 'Autogen Deck',
-      version: 1,
-      promptTemplates: [],
-      nodes: [
-        // deliberately a RETIRED runtime type outside the current union
-        createCard('card_selector', 'selector' as unknown as AgentCardInstance['runtimeType'], {
-          templateId: 'template_selector',
-          title: 'Selector Head',
-          runtimeOptions: {
-            provider: 'openai',
-            modelKey: 'gpt-5-mini',
-            emitTeamEvents: true,
-            selectorPrompt: 'Pick the best worker.',
-            allowRepeatedSpeaker: false,
-          },
-        }),
-      ],
-      edges: [],
-    });
-
-    expect(hydrated.nodes[0]?.runtimeOptions).toMatchObject({
-      provider: 'openai',
-      modelKey: 'gpt-5-mini',
-      emitTeamEvents: true,
-      selectorPrompt: 'Pick the best worker.',
-      allowRepeatedSpeaker: false,
-    });
   });
 
 });
