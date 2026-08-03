@@ -111,6 +111,236 @@ def test_call_tool_appends_canonical_receipt_and_typed_provider_failure(monkeypa
     assert later_receipt["state"] == "completed"
 
 
+def test_main_context_bootstraps_once_and_is_reused_for_one_connection(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    class Session:
+        pass
+
+    session = Session()
+    context = {
+        "projectId": "project-1",
+        "deckId": "deck-1",
+        "conversationId": "conversation-1",
+        "parentRunId": "parent-1",
+        "mainCardId": "main-1",
+    }
+    calls: list[str] = []
+    original_dispatch = mcp_host._dispatch_tool
+
+    async def dispatch(name, arguments, *, _bootstrap=False):
+        if name == "main.context" and _bootstrap:
+            calls.append(name)
+        return await original_dispatch(name, arguments, _bootstrap=_bootstrap)
+
+    monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
+    monkeypatch.setattr(mcp_host, "_current_connection_session", lambda: session)
+    monkeypatch.setattr(mcp_host, "get_access_token", lambda: object())
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: dict(context))
+    monkeypatch.setattr(mcp_host, "_authenticated_tool_denial", lambda _name: None)
+
+    async def check():
+        first = await mcp_host._ensure_main_connection_context()
+        second = await mcp_host._ensure_main_connection_context()
+        visible = await mcp_host.call_tool("main.context", {})
+        return first, second, visible
+
+    first, second, visible = asyncio.run(check())
+    assert calls == ["main.context"]
+    assert first == context
+    assert second == context
+    assert json.loads(visible[0].text)["context"] == context
+
+
+def test_main_context_state_isolated_between_connections(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    class Session:
+        pass
+
+    sessions = [Session(), Session()]
+    contexts = [
+        {
+            "projectId": "project-1",
+            "deckId": "deck-1",
+            "conversationId": "conversation-1",
+            "parentRunId": "parent-1",
+            "mainCardId": "main-1",
+        },
+        {
+            "projectId": "project-2",
+            "deckId": "deck-2",
+            "conversationId": "conversation-2",
+            "parentRunId": "parent-2",
+            "mainCardId": "main-2",
+        },
+    ]
+    current = {"session": sessions[0], "context": contexts[0]}
+    monkeypatch.setattr(mcp_host, "_current_connection_session", lambda: current["session"])
+    monkeypatch.setattr(mcp_host, "get_access_token", lambda: object())
+    monkeypatch.setattr(
+        mcp_host,
+        "_authenticated_main_context",
+        lambda: dict(current["context"]),
+    )
+
+    async def check():
+        first = await mcp_host._ensure_main_connection_context()
+        current.update(session=sessions[1], context=contexts[1])
+        second = await mcp_host._ensure_main_connection_context()
+        current.update(session=sessions[0], context=contexts[1])
+        first_again = await mcp_host._ensure_main_connection_context()
+        return first, second, first_again
+
+    first, second, first_again = asyncio.run(check())
+    assert first == contexts[0]
+    assert second == contexts[1]
+    assert first_again == contexts[0]
+
+
+def test_expired_authenticated_session_fails_before_bootstrap(monkeypatch):
+    import asyncio
+    import mcp_host
+    from mcp.server.auth.provider import AccessToken
+
+    class Session:
+        pass
+
+    calls = []
+    monkeypatch.setattr(mcp_host, "_current_connection_session", lambda: Session())
+    monkeypatch.setattr(
+        mcp_host,
+        "get_access_token",
+        lambda: AccessToken(
+            token="expired",
+            client_id="chatgpt-client",
+            scopes=["liquidaity.main"],
+            expires_at=int(time.time()) - 1,
+        ),
+    )
+
+    async def dispatch(*_args, **_kwargs):
+        calls.append(True)
+
+    monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
+
+    with pytest.raises(RuntimeError, match="authentication_expired"):
+        asyncio.run(mcp_host._ensure_main_connection_context())
+    assert calls == []
+
+
+def test_authenticated_connection_reaches_read_only_handler_without_context_injection(
+    monkeypatch,
+):
+    import asyncio
+    import mcp_host
+    from app import control_plane
+    from mcp.server.auth.provider import AccessToken
+
+    class Session:
+        pass
+
+    context = {
+        "projectId": "project-1",
+        "deckId": "deck-1",
+        "conversationId": "conversation-1",
+        "parentRunId": "parent-1",
+        "mainCardId": "main-1",
+    }
+    calls = []
+    bridge_calls = []
+    session = Session()
+    monkeypatch.setattr(mcp_host, "_current_connection_session", lambda: session)
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: dict(context))
+    monkeypatch.setattr(mcp_host, "_authenticated_tool_denial", lambda _name: None)
+    monkeypatch.setattr(
+        mcp_host,
+        "get_access_token",
+        lambda: AccessToken(
+            token="verified",
+            client_id="chatgpt-client",
+            scopes=["liquidaity.main"],
+            subject="auth0|test",
+            claims={"liquidaity": context},
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_host,
+        "_bridge",
+        lambda *_args, **_kwargs: bridge_calls.append(True),
+    )
+
+    async def inspect_cards(arguments):
+        calls.append(arguments)
+        return {"ok": True, "cards": []}
+
+    monkeypatch.setattr(control_plane, "canvas_inspect", inspect_cards)
+    result = asyncio.run(mcp_host.call_tool("canvas.inspect", {}))
+
+    assert json.loads(result[0].text) == {"ok": True, "cards": []}
+    assert calls == [{"projectId": "project-1", "deckId": "deck-1"}]
+    assert bridge_calls == []
+    assert "context" not in result[0].text
+
+
+def test_lifecycle_errors_remain_typed_and_distinct(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    async def dispatch(_name, arguments):
+        raise RuntimeError(str(arguments["error"]))
+
+    monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
+
+    async def check():
+        results = {}
+        for name, message in {
+            "session": "Session terminated",
+            "auth": "authentication expired",
+            "arguments": "invalid arguments",
+            "service": "service unavailable",
+            "internal": "unexpected handler failure",
+        }.items():
+            result = await mcp_host.call_tool("test", {"error": message})
+            results[name] = json.loads(result.content[0].text)
+        return results
+
+    results = asyncio.run(check())
+    assert results["session"]["failureCode"] == "session_terminated"
+    assert results["auth"]["failureCode"] == "authentication_expired"
+    assert results["arguments"]["failureCode"] == "invalid_arguments"
+    assert results["service"]["failureCode"] == "service_unavailable"
+    assert results["internal"]["failureCode"] == "internal_failure"
+    assert results["session"]["failureCode"] != "invalid_arguments"
+    assert results["auth"]["failureCode"] != "invalid_arguments"
+
+
+def test_timed_out_call_does_not_block_completed_sibling(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    async def dispatch(name, _arguments):
+        if name == "slow":
+            await asyncio.sleep(60)
+        return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True, "name": name}))]
+
+    monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
+    monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 0.02)
+
+    async def check():
+        slow = asyncio.create_task(mcp_host.call_tool("slow", {}))
+        sibling = await asyncio.wait_for(mcp_host.call_tool("sibling", {}), timeout=0.5)
+        timed_out = await asyncio.wait_for(slow, timeout=0.5)
+        return sibling, timed_out
+
+    sibling, timed_out = asyncio.run(check())
+    assert json.loads(sibling[0].text) == {"ok": True, "name": "sibling"}
+    assert timed_out.isError is True
+    assert json.loads(timed_out.content[0].text)["failureCode"] == "timeout"
+
+
 def test_plain_text_does_not_hide_a_later_structured_tool_error():
     import json
     import mcp_host
@@ -468,10 +698,9 @@ mcp_host._NATIVE_ENGRAPHIS_NAMES = frozenset({
 async def check():
     typed = await mcp_host.call_tool('engraphis.native_failure', {'value': 1})
     assert typed.isError is True
-    assert json.loads(typed.content[0].text) == {
-        'ok': False,
-        'error': 'tool_handler_failed:NativeFailure',
-    }
+    typed_payload = json.loads(typed.content[0].text)
+    assert typed_payload["error"] == "internal_failure"
+    assert typed_payload["failureCode"] == "internal_failure"
     normal = await mcp_host.call_tool('engraphis.normal_call', {'value': 2})
     assert json.loads(normal.content[0].text) == {
         'name': 'engraphis_normal_call',
@@ -1291,10 +1520,9 @@ def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(m
     succeeded = asyncio.run(mcp_host.call_tool("canvas.inspect", {}))
 
     assert failed.isError is True
-    assert json.loads(failed.content[0].text) == {
-        "ok": False,
-        "error": "tool_handler_failed:RuntimeError",
-    }
+    failed_payload = json.loads(failed.content[0].text)
+    assert failed_payload["error"] == "database_failure"
+    assert failed_payload["failureCode"] == "database_failure"
     assert succeeded[0].type == "text"
     assert json.loads(succeeded[0].text) == {"ok": True, "cards": []}
 

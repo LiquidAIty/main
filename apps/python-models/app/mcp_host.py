@@ -45,9 +45,10 @@ import time
 from collections import deque
 from concurrent.futures import Future
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
+from weakref import WeakKeyDictionary
 
 # Bootstrap the package root onto sys.path. The gRPC harness launches this host as a
 # SCRIPT (`python .../apps/python-models/app/mcp_host.py`), so sys.path[0] is the
@@ -108,6 +109,7 @@ _STARTUP_ID = uuid4().hex
 _STARTUP_PROCESS_ID = os.getpid()
 _TRACE_LOCK = threading.Lock()
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
+_MCP_CALL_TIMEOUT_SECONDS = 30.0
 _ACTIVE_EXECUTION_RECEIPT: ContextVar[dict[str, Any] | None] = ContextVar(
     "liquidaity_execution_receipt", default=None
 )
@@ -116,6 +118,23 @@ _GRAPHITI_PROVIDER_HEALTH: dict[str, Any] = {
     "last_success": None,
     "last_failure": None,
 }
+_VERIFIED_CONTEXTS_LOCK = threading.Lock()
+_VERIFIED_CONTEXTS: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+@dataclass
+class _MainConnectionContextState:
+    attempted: bool = False
+    context: dict[str, Any] | None = None
+    failure: str | None = None
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+_MAIN_CONNECTION_CONTEXTS: WeakKeyDictionary[Any, _MainConnectionContextState] = WeakKeyDictionary()
+_MAIN_CONNECTION_CONTEXTS_LOCK = threading.Lock()
+_MAIN_CONTEXT_FIELDS = frozenset(
+    {"projectId", "deckId", "conversationId", "parentRunId", "mainCardId"}
+)
 
 
 def _safe_hash(value: Any) -> str:
@@ -164,9 +183,13 @@ def _oauth_trace_fields() -> dict[str, str]:
     access_token = get_access_token()
     if access_token is None:
         return {}
+    subject = getattr(access_token, "subject", "")
+    if not subject:
+        claims = getattr(access_token, "claims", None)
+        subject = claims.get("sub", "") if isinstance(claims, dict) else ""
     return {
-        "subject_hash": _safe_hash(access_token.subject),
-        "client_hash": _safe_hash(access_token.client_id),
+        "subject_hash": _safe_hash(subject),
+        "client_hash": _safe_hash(getattr(access_token, "client_id", "")),
     }
 
 
@@ -219,29 +242,67 @@ def _sanitize_failure_detail(value: Any) -> str:
 def _typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any]:
     detail = _sanitize_failure_detail(value)
     lowered = detail.lower()
-    if any(term in lowered for term in ("insufficient", "credit", "quota exceeded")):
+    if isinstance(value, (asyncio.TimeoutError, TimeoutError)) or any(
+        term in lowered for term in ("timeout", "timed out", "deadline")
+    ):
+        code, retryable = "timeout", True
+    elif any(
+        term in lowered
+        for term in (
+            "session terminated",
+            "session not found",
+            "session expired",
+            "session closed",
+            "transport closed",
+            "connection closed",
+        )
+    ):
+        code, retryable = "session_terminated", False
+    elif any(
+        term in lowered
+        for term in ("token expired", "token has expired", "expired token", "authentication expired", "auth expired")
+    ):
+        code, retryable = "authentication_expired", False
+    elif any(
+        term in lowered
+        for term in ("invalid argument", "invalid arguments", "invalid_argument", "invalid params")
+    ):
+        code, retryable = "invalid_arguments", False
+    elif any(term in lowered for term in ("insufficient", "credit", "quota exceeded")):
         code, retryable = "insufficient_credits", False
     elif any(term in lowered for term in ("unauthorized", "authentication", "invalid api key", "401")):
         code, retryable = "authentication_failed", False
     elif any(term in lowered for term in ("rate limit", "too many requests", "429")):
         code, retryable = "rate_limited", True
-    elif any(term in lowered for term in ("timeout", "timed out", "deadline")):
-        code, retryable = "timeout", True
     elif "dimension" in lowered and any(term in lowered for term in ("embedding", "vector")):
         code, retryable = "embedding_dimension_mismatch", False
     elif any(term in lowered for term in ("malformed", "invalid json", "model output", "validation error")):
         code, retryable = "malformed_model_output", False
     elif any(term in lowered for term in ("queue", "worker")):
         code, retryable = "queue_failure", True
-    elif any(term in lowered for term in ("neo4j", "database", "connection refused", "service unavailable")):
+    elif any(term in lowered for term in ("service unavailable", "connection refused", "backend_unreachable")):
+        code, retryable = "service_unavailable", True
+    elif any(term in lowered for term in ("neo4j", "database")):
         code, retryable = "database_failure", True
     elif isinstance(value, (AttributeError, TypeError)):
         code, retryable = "internal_handler_failure", False
     else:
-        code, retryable = "provider_failure", False
-    if code in {"database_failure", "queue_failure"}:
+        code, retryable = (
+            ("internal_failure", False)
+            if dependency == "mcp"
+            else ("provider_failure", False)
+        )
+    if code in {"database_failure", "queue_failure", "service_unavailable"}:
         category = "DEPENDENCY_UNAVAILABLE"
-    elif code == "internal_handler_failure":
+    elif code in {"authentication_expired", "authentication_failed"}:
+        category = "AUTHENTICATION"
+    elif code == "session_terminated":
+        category = "SESSION_LIFECYCLE"
+    elif code == "timeout":
+        category = "TIMEOUT"
+    elif code == "invalid_arguments":
+        category = "INVALID_ARGUMENT"
+    elif code in {"internal_handler_failure", "internal_failure"}:
         category = "INTERNAL"
     else:
         category = "PROVIDER"
@@ -576,8 +637,98 @@ def _oauth_config() -> OAuthConfig:
 
 def _authenticated_main_context() -> dict[str, Any] | None:
     access_token = get_access_token()
-    context = (access_token.claims or {}).get("liquidaity") if access_token else None
+    if access_token is None:
+        return None
+    expires_at = getattr(access_token, "expires_at", None)
+    if expires_at is not None and float(expires_at) <= time.time():
+        return None
+    claims = getattr(access_token, "claims", None)
+    context = claims.get("liquidaity") if isinstance(claims, dict) else None
+    if isinstance(context, dict):
+        return context
+    token = str(getattr(access_token, "token", "") or "")
+    with _VERIFIED_CONTEXTS_LOCK:
+        cached = _VERIFIED_CONTEXTS.get(token)
+        if cached is not None:
+            if cached[0] > time.time():
+                return dict(cached[1])
+            _VERIFIED_CONTEXTS.pop(token, None)
     return context if isinstance(context, dict) else None
+
+
+def _remember_verified_context(token: str, expires_at: int, context: dict[str, Any]) -> None:
+    with _VERIFIED_CONTEXTS_LOCK:
+        _VERIFIED_CONTEXTS[token] = (float(expires_at), dict(context))
+
+
+def _current_connection_session() -> Any | None:
+    try:
+        return server.request_context.session
+    except LookupError:
+        return None
+
+
+def _main_connection_context_state() -> _MainConnectionContextState | None:
+    session = _current_connection_session()
+    if session is None:
+        return None
+    with _MAIN_CONNECTION_CONTEXTS_LOCK:
+        state = _MAIN_CONNECTION_CONTEXTS.get(session)
+        if state is None:
+            state = _MainConnectionContextState()
+            _MAIN_CONNECTION_CONTEXTS[session] = state
+        return state
+
+
+def _context_from_main_result(result: Any) -> dict[str, Any] | None:
+    blocks = result.content if isinstance(result, CallToolResult) else result
+    if not isinstance(blocks, list):
+        return None
+    for block in blocks:
+        try:
+            payload = json.loads(str(getattr(block, "text", "") or ""))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        context = payload.get("context") if isinstance(payload, dict) else None
+        if not isinstance(context, dict) or not _MAIN_CONTEXT_FIELDS.issubset(context):
+            continue
+        return {field: str(context[field]) for field in _MAIN_CONTEXT_FIELDS}
+    return None
+
+
+async def _ensure_main_connection_context() -> dict[str, Any] | None:
+    state = _main_connection_context_state()
+    if state is None:
+        return _authenticated_main_context()
+    access_token = get_access_token()
+    if access_token is None:
+        return None
+    expires_at = getattr(access_token, "expires_at", None)
+    if expires_at is not None and float(expires_at) <= time.time():
+        raise RuntimeError("authentication_expired")
+    async with state.lock:
+        if state.attempted:
+            if state.context is not None:
+                return dict(state.context)
+            raise RuntimeError(state.failure or "main_context_unavailable")
+        state.attempted = True
+        try:
+            result = await asyncio.wait_for(
+                _dispatch_tool("main.context", {}, _bootstrap=True),
+                timeout=_MCP_CALL_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as error:
+            state.failure = "main_context_timeout"
+            raise RuntimeError(state.failure) from error
+        except Exception as error:
+            state.failure = str(_typed_failure(error).get("failureCode") or "main_context_unavailable")
+            raise
+        context = _context_from_main_result(result)
+        if context is None:
+            state.failure = "main_context_unavailable"
+            raise RuntimeError(state.failure)
+        state.context = context
+        return dict(context)
 
 
 def _authenticated_scopes() -> frozenset[str]:
@@ -1301,7 +1452,7 @@ def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
         method="POST",
     )
     try:
-        with urlopen(request, timeout=300) as response:  # noqa: S310 — loopback backend only
+        with urlopen(request, timeout=_MCP_CALL_TIMEOUT_SECONDS) as response:  # noqa: S310 — loopback backend only
             return response.read().decode("utf-8")
     except HTTPError as err:
         try:
@@ -1392,15 +1543,17 @@ class Auth0TokenVerifier:
             )
             if context is None:
                 return None
-            return AccessToken(
+            access_token = AccessToken(
                 token=token,
                 client_id=client_id,
                 scopes=scopes,
                 expires_at=int(claims["exp"]),
                 resource=self.config.resource_url,
-                subject=subject,
-                claims={**claims, "liquidaity": context},
             )
+            _remember_verified_context(token, int(claims["exp"]), context)
+            object.__setattr__(access_token, "subject", subject)
+            object.__setattr__(access_token, "claims", {**claims, "liquidaity": context})
+            return access_token
         except Exception:
             return None
 
@@ -1688,7 +1841,7 @@ async def list_tools() -> list[Tool]:
         tool.name: dict((tool.meta or {}).get("liquidaityExecution") or {})
         for tool in tools
     })
-    context = _authenticated_main_context()
+    context = await _ensure_main_connection_context()
     if context is None:
         published = tools
     else:
@@ -1953,14 +2106,28 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
 }
 
 
-async def _dispatch_tool(name: str, arguments: dict[str, Any]) -> Any:
-    scope_denial = _authenticated_tool_denial(name)
+async def _dispatch_tool(
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    _bootstrap: bool = False,
+) -> Any:
+    scope_denial = (
+        None
+        if _bootstrap and name == "main.context"
+        else _authenticated_tool_denial(name)
+    )
     if scope_denial:
         return CallToolResult(
             content=[TextContent(type="text", text=json.dumps({"ok": False, "error": scope_denial}))],
             isError=True,
         )
-    context = _authenticated_main_context()
+    if name == "main.context" and _bootstrap:
+        context = _authenticated_main_context()
+    elif name == "main.context":
+        context = await _ensure_main_connection_context()
+    else:
+        context = await _ensure_main_connection_context()
     if name.startswith(_NATIVE_PREFIXES["engraphis"]):
         await _initialize_native_engraphis()
         native_name = "engraphis_" + name.removeprefix(_NATIVE_PREFIXES["engraphis"])
@@ -2228,7 +2395,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     }
     _trace("tool_call_started", **trace_fields)
     try:
-        result = await _dispatch_tool(name, arguments)
+        result = await asyncio.wait_for(
+            _dispatch_tool(name, arguments),
+            timeout=_MCP_CALL_TIMEOUT_SECONDS,
+        )
         result_category = _tool_result_category(result)
         receipt["durationMs"] = int((time.monotonic() - started_clock) * 1000)
         receipt["state"] = "failed" if result_category == "tool_error" else "completed"
@@ -2248,7 +2418,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     except Exception as error:
         receipt["durationMs"] = int((time.monotonic() - started_clock) * 1000)
         receipt["state"] = "failed"
-        receipt["failureCode"] = _typed_failure(error).get("failureCode")
+        failure = _typed_failure(error, dependency="mcp")
+        receipt["failureCode"] = failure.get("failureCode")
         _trace(
             "tool_call_failed",
             **trace_fields,
@@ -2261,12 +2432,17 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             content=[
                 TextContent(
                     type="text",
-                    text=json.dumps(
-                        {
-                            "ok": False,
-                            "error": f"tool_handler_failed:{error.__class__.__name__}",
-                        }
-                    ),
+                    text=json.dumps({
+                        key: failure[key]
+                        for key in (
+                            "ok",
+                            "error",
+                            "failureCode",
+                            "errorCategory",
+                            "retryable",
+                            "dependency",
+                        )
+                    }),
                 )
             ],
             isError=True,
@@ -2357,7 +2533,7 @@ async def _run_streamable_http() -> None:
     session_manager = StreamableHTTPSessionManager(
         app=server,
         json_response=True,
-        stateless=True,
+        stateless=False,
         security_settings=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
 
@@ -2380,7 +2556,7 @@ async def _run_streamable_http() -> None:
         metadata_url = build_resource_metadata_url(resource_url)
         protected_endpoint: Any = RequireAuthMiddleware(
             endpoint,
-            required_scopes=[],
+            required_scopes=[config_values.required_scope],
             resource_metadata_url=metadata_url,
         )
         protected_endpoint = AuthContextMiddleware(protected_endpoint)
@@ -2390,8 +2566,8 @@ async def _run_streamable_http() -> None:
             *create_protected_resource_routes(
                 resource_url=resource_url,
                 authorization_servers=[AnyHttpUrl(config_values.issuer_url)],
-                scopes_supported=list(OAUTH_SCOPES),
-                resource_name="LiquidAIty",
+                scopes_supported=[config_values.required_scope],
+                resource_name="LiquidAIty Main",
             ),
             Mount("/", app=protected_endpoint),
         ]
