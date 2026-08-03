@@ -48,7 +48,6 @@ describe('agentbuilder authoring flow', () => {
       'Magentic-One',
       'Search Agent',
       'Coder',
-      'OpenAI Coder',
       'Hermes',
       'Trading Agent',
       'WorldSignals Agent',
@@ -59,7 +58,6 @@ describe('agentbuilder authoring flow', () => {
       null,
       'research_agent',
       'local_coder',
-      'openai_coder',
       'hermes_steward',
       'trading_agent',
       'worldsignals_agent',
@@ -69,7 +67,6 @@ describe('agentbuilder authoring flow', () => {
       'template_magentic',
       'template_research_agent',
       'template_local_coder',
-      'template_openai_coder',
       'template_hermes_steward',
       'template_trading_workbench',
       'template_worldsignals_agent',
@@ -90,11 +87,6 @@ describe('agentbuilder authoring flow', () => {
         edgeType: 'magentic_control',
       },
       {
-        source: 'card_openai_coder',
-        target: 'card_magentic',
-        edgeType: 'magentic_option',
-      },
-      {
         source: 'card_research_agent',
         target: 'card_magentic',
         edgeType: 'magentic_option',
@@ -106,17 +98,9 @@ describe('agentbuilder authoring flow', () => {
       },
     ]);
     const systemCoder = INITIAL_DECK.nodes.find((node) => node.id === 'card_local_coder');
-    const openAiCoder = INITIAL_DECK.nodes.find((node) => node.id === 'card_openai_coder');
     expect(systemCoder?.runtimeType).toBe('local_coder');
     expect(systemCoder?.runtimeOptions?.tools).toContain('cbm.search_graph');
-    expect(openAiCoder).toMatchObject({
-      runtimeBinding: 'openai_coder',
-      runtimeType: 'codex_app_server',
-      runtimeOptions: { provider: 'openai', tools: [] },
-    });
     expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_local_coder' && edge.edgeType === 'magentic_option')).toBe(false);
-    expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_openai_coder' && edge.edgeType === 'magentic_option')).toBe(true);
-    expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_main_chat' && edge.target === 'card_openai_coder')).toBe(false);
   });
 
   it('loads a real saved deck and preserves its visible chain', () => {

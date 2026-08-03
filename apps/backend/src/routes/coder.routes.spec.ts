@@ -50,7 +50,12 @@ const deckMocks = vi.hoisted(() => ({
           runtimeType: 'main_chat',
           runtimeOptions: { binding: 'main_chat' },
         },
-        { id: 'card_local_coder', kind: 'agent', runtimeType: 'local_coder' },
+        {
+          id: 'card_local_coder',
+          kind: 'agent',
+          runtimeType: 'local_coder',
+          runtimeBinding: 'local_coder',
+        },
       ],
       edges: [],
     } as any,

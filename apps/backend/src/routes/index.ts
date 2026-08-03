@@ -8,6 +8,7 @@ import thinkgraphRoutes from './thinkgraph.routes';
 import projectsRoutes from './projects.routes';
 import decksRoutes from './decks.routes';
 import worldsignalRoutes from './worldsignal.routes';
+import config from './config.routes';
 
 const router = Router();
 
@@ -16,6 +17,7 @@ router.use('/auth', auth);
 
 // Mount children exactly once. Preserve existing concrete paths.
 router.use('/health', health);
+router.use('/config', authMiddleware, config);
 router.use('/coder', authMiddleware, coder);
 router.use('/knowgraph', authMiddleware, knowgraphRoutes);
 router.use('/thinkgraph', authMiddleware, thinkgraphRoutes);

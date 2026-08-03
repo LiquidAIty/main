@@ -124,7 +124,7 @@ function resolveCardBinding(card: any): string | null {
 }
 
 function isAssistLikeRuntimeType(runtimeType: string): boolean {
-  return runtimeType === 'assistant_agent' || runtimeType === 'local_coder' || runtimeType === 'codex_app_server';
+  return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
 }
 
 // Removed: resolveMagOneAgentRole (title/template substring classifier),
@@ -219,9 +219,6 @@ export async function resolveMagenticWorkerReadiness(
     try {
       resolveCardModelStrict(card);
       const selectedTools = resolveCardTools(card);
-      if (runtimeType === 'codex_app_server' && selectedTools.length > 0) {
-        throw new Error(`openai_coder_assigned_tools_forbidden:${selectedTools.join(',')}`);
-      }
       for (const toolId of selectedTools) {
         const descriptor = manifestById.get(toolId);
         if (!descriptor) throw new Error(`card_tool_unknown: ${toolId}`);
@@ -281,7 +278,7 @@ export function resolveDirectSubagents(
 }
 
 function isPythonAutoGenCallableRuntimeType(runtimeType: string): boolean {
-  return runtimeType === 'assistant_agent' || runtimeType === 'local_coder' || runtimeType === 'codex_app_server';
+  return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
 }
 
 function genericAssistantCardIneligibility(card: any): string | null {
@@ -345,9 +342,6 @@ export function serializeCardParticipant(head: any): Record<string, unknown> {
   const runtimeBinding = resolveCardBinding(head);
   const runtimeType = resolveCardRuntimeType(head);
   const selectedTools = resolveCardTools(head);
-  if (runtimeType === 'codex_app_server' && selectedTools.length > 0) {
-    throw new Error(`openai_coder_assigned_tools_forbidden:${selectedTools.join(',')}`);
-  }
   return {
     cardId: String(head.id || ''),
     title: String(head.title || 'Agent'),

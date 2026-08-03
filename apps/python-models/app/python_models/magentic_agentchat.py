@@ -14,19 +14,12 @@ no team, no orchestrator, no Task Ledger, no fallback.
 from __future__ import annotations
 
 import asyncio
-import json
-import os
 import re
 import time
-from typing import Any, Sequence
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from typing import Any
 
-from autogen_agentchat.agents import AssistantAgent, BaseChatAgent
-from autogen_agentchat.base import Response
-from autogen_agentchat.messages import BaseChatMessage, TextMessage
+from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.teams import MagenticOneGroupChat
-from autogen_core import CancellationToken
 
 from app.python_models import agentgraph as ag
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
@@ -35,88 +28,7 @@ from app.python_models.tool_registry import (
     DEFAULT_TOOL_REGISTRY,
     build_local_coder_tool,
 )
-from app.python_models.orchestration_contracts import (
-    ContextPack,
-    OrchestratorRunResponse,
-)
-
-
-def _post_codex_backend(path: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
-    base = os.environ.get("LIQUIDAITY_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
-    request = Request(
-        f"{base}{path}",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310 -- loopback backend owner
-            value = json.loads(response.read().decode("utf-8"))
-    except HTTPError as err:
-        body = err.read().decode("utf-8")
-        try:
-            value = json.loads(body)
-        except json.JSONDecodeError:
-            value = {"ok": False, "error": f"codex_backend_http_{err.code}"}
-    except URLError as err:
-        value = {"ok": False, "error": f"codex_backend_unreachable:{err.reason}"}
-    if not isinstance(value, dict):
-        raise RuntimeError("codex_backend_response_invalid")
-    return value
-
-
-class _CodexAppServerAgent(BaseChatAgent):
-    """One ordinary Mag One worker backed by the saved Codex app-server card."""
-
-    def __init__(self, name: str, description: str, *, project_id: str, deck_id: str, card_id: str) -> None:
-        super().__init__(name, description)
-        self._project_id = project_id
-        self._deck_id = deck_id
-        self._card_id = card_id
-
-    @property
-    def produced_message_types(self) -> Sequence[type[BaseChatMessage]]:
-        return (TextMessage,)
-
-    async def on_messages(
-        self,
-        messages: Sequence[BaseChatMessage],
-        cancellation_token: CancellationToken,
-    ) -> Response:
-        assignment = next(
-            (_as_text(getattr(message, "content", "")) for message in reversed(messages) if _as_text(getattr(message, "content", ""))),
-            "",
-        )
-        if not assignment:
-            raise RuntimeError("codex_app_server_assignment_required")
-        started = await asyncio.to_thread(
-            _post_codex_backend,
-            f"/api/coder/codex-app-server/cards/{self._card_id}/start",
-            {"projectId": self._project_id, "assignment": assignment},
-            15,
-        )
-        if started.get("ok") is not True:
-            raise RuntimeError(str(started.get("error") or "codex_app_server_start_failed"))
-        turn_id = _as_text((started.get("started") or {}).get("turnId"))
-        if not turn_id:
-            raise RuntimeError("codex_app_server_turn_id_missing")
-        completed = await asyncio.to_thread(
-            _post_codex_backend,
-            f"/api/coder/codex-app-server/cards/{self._card_id}/await",
-            {"projectId": self._project_id, "turnId": turn_id},
-            125,
-        )
-        receipt = completed.get("receipt") or {}
-        if completed.get("ok") is not True:
-            raise RuntimeError(str(completed.get("error") or receipt.get("failure") or "codex_app_server_turn_failed"))
-        result = receipt.get("result") or {}
-        text = _as_text(result.get("finalText"))
-        if not text:
-            raise RuntimeError("codex_app_server_result_text_missing")
-        return Response(chat_message=TextMessage(content=text, source=self.name))
-
-    async def on_reset(self, cancellation_token: CancellationToken) -> None:
-        return None
+from app.python_models.orchestration_contracts import ContextPack, OrchestratorRunResponse
 
 
 def _as_text(value: Any) -> str:
@@ -196,22 +108,6 @@ def _build_participants(
             or "assistant"
         )
         system_prompt = _as_text(getattr(participant, "prompt", ""))
-
-        runtime_type = _as_text(getattr(participant, "runtimeType", ""))
-        if runtime_type == "codex_app_server":
-            if list(getattr(participant, "tools", []) or []):
-                raise RuntimeError(f"openai_coder_assigned_tools_forbidden:{card_id}")
-            runtime_options = getattr(card, "runtimeOptions", None) or {}
-            participants.append(
-                _CodexAppServerAgent(
-                    name,
-                    description,
-                    project_id=context.session.projectId,
-                    deck_id=_as_text(runtime_options.get("deckId")),
-                    card_id=card_id,
-                )
-            )
-            continue
 
         kwargs: dict[str, Any] = {
             "name": name,
@@ -705,9 +601,7 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             )
         )
         participant_clients = [
-            None
-            if participant.runtimeType == "codex_app_server"
-            else _build_model_client(
+            _build_model_client(
                 AutoGenAgentConfig(
                     provider=participant.provider,
                     provider_model_id=participant.providerModelId,

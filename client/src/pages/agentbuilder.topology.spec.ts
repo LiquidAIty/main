@@ -64,7 +64,6 @@ describe('Main / Hermes / graph authority topology', () => {
       expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' }),
       expect.objectContaining({ source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' }),
       expect.objectContaining({ source: 'card_research_agent', target: 'card_magentic', edgeType: 'magentic_option' }),
-      expect.objectContaining({ source: 'card_openai_coder', target: 'card_magentic', edgeType: 'magentic_option' }),
       expect.objectContaining({ source: 'card_worldsignals_agent', target: 'card_magentic', edgeType: 'magentic_option' }),
     ]));
   });

@@ -1,80 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type {
   AgentCardRuntimeOptions,
   AgentCardRuntimeType,
   RuntimeBinding,
 } from '../types/agentgraph';
-import { GPT_CARD_MODEL_PRESETS } from '../features/agentbuilder/deck/deckPrimitives';
 
-type KnowledgeGraphLayer = 'agentgraph' | 'thinkgraph' | 'knowgraph' | 'codegraph';
-
-type CardCapability = {
+type ModelOption = { key: string; label: string; providerModelId: string };
+type ToolAuthority = 'engraphis' | 'cbm' | 'graphiti';
+type ToolDescriptor = {
   name: string;
   title?: string;
   description?: string;
-  inputSchema: Record<string, unknown>;
-  capability: {
-    surface: 'knowledge' | 'tools' | 'system';
-    capabilityType: 'callable_tool';
-    graphAuthority: KnowledgeGraphLayer | null;
-    authorityClass: string;
-    runtimeCompatibility: string[];
-    cardAssignable: boolean;
-    latency: 'fast' | 'medium' | 'slow';
-    providerPossible: boolean;
-    health: string;
-    recommendedUse: string;
-    verification: string;
-    approvalRequired: boolean;
-    deprecated: boolean;
-  };
+  capability?: { graphAuthority?: string | null; cardAssignable?: boolean };
 };
-
-type EffectiveCoderToolSnapshot = {
-  authority: 'direct_main_audit' | 'mag_one_execution';
-  permissionMode: 'plan' | 'acceptEdits';
-  allowsShell: boolean;
-  allowsWrite: boolean;
-  allowsNetwork: boolean;
-  hasPaidTools: boolean;
-  unresolved: string[];
-  counts: { saved: number; enabled: number; callable: number; unavailable: number };
-  tools: Array<{
-    canonicalName: string;
-    runtimeName: string | null;
-    displayName: string;
-    description: string;
-    source: string;
-    group: string;
-    risk: string;
-    saved: boolean;
-    enabled: boolean;
-    callable: boolean;
-    reason: string;
-  }>;
-};
-
-let cardCapabilityCatalogRequest: Promise<CardCapability[]> | null = null;
-
-function loadCardCapabilityCatalog(): Promise<CardCapability[]> {
-  if (!cardCapabilityCatalogRequest) {
-    cardCapabilityCatalogRequest = fetch('/api/coder/tool-library')
-      .then(async (response) => {
-        const payload = await response.json().catch(() => null);
-        if (!response.ok || !payload?.ok || !Array.isArray(payload.tools)) {
-          throw new Error(String(payload?.error || `Tool library unavailable (HTTP ${response.status})`));
-        }
-        return payload.tools as CardCapability[];
-      })
-      .catch((error) => {
-        cardCapabilityCatalogRequest = null;
-        throw error;
-      });
-  }
-  return cardCapabilityCatalogRequest;
-}
-
 type AgentType =
   | 'agent_builder'
   | 'llm_chat'
@@ -84,7 +23,6 @@ type AgentType =
   | 'research_agent';
 
 interface AgentManagerProps {
-  projectId?: string;
   cardId?: string;
   agentType: AgentType;
   activeTab: string;
@@ -107,45 +45,13 @@ interface AgentManagerProps {
   onRunPromptTest?: () => void;
   promptTestBusy?: boolean;
   promptTestDisabled?: boolean;
+  cardName?: string;
+  cardSubtext?: string;
+  onChangeCardName?: (value: string) => void;
+  onChangeCardSubtext?: (value: string) => void;
   localConfig?: AgentManagerLocalConfig | null;
   onSaveLocalConfig?: (config: AgentManagerLocalConfig) => void | Promise<void>;
-  runContext?: AgentCardRunContext | null;
-  runContextLoading?: boolean;
-  runContextError?: string | null;
 }
-
-export type AgentCardRunContext = {
-  assignment: {
-    assignmentId: string;
-    instructionId: string;
-    instruction: string;
-    state: string;
-    correlationId: string;
-    contextReferences: Array<{
-      referenceId: string;
-      referenceType: string;
-      required: boolean;
-    }>;
-    result: {
-      resultId: string;
-      status: string;
-      output?: string | null;
-      summary?: string | null;
-      errorCode?: string | null;
-      errorDetail?: string | null;
-      toolEvidence?: Array<Record<string, unknown>>;
-    } | null;
-    runTrace: {
-      runtime?: string | null;
-      provider?: string | null;
-      modelKey?: string | null;
-      providerModelId?: string | null;
-      outcome?: string | null;
-      state?: string | null;
-      errorCode?: string | null;
-    };
-  } | null;
-};
 
 export type AgentManagerLocalConfig = {
   runtime_binding?: RuntimeBinding | null;
@@ -280,7 +186,6 @@ export function buildActiveAgentManagerLocalConfig(input: {
 }
 
 export function AgentManager({
-  projectId = '',
   cardId = '',
   activeTab,
   promptTestInput,
@@ -288,16 +193,21 @@ export function AgentManager({
   onRunPromptTest,
   promptTestBusy = false,
   promptTestDisabled = false,
+  cardName = '',
+  cardSubtext = '',
+  onChangeCardName,
+  onChangeCardSubtext,
   localConfig,
   onSaveLocalConfig,
-  runContext,
-  runContextLoading = false,
-  runContextError = null,
 }: AgentManagerProps) {
   const isLocalConfigMode = Boolean(localConfig && onSaveLocalConfig);
   const [runtimeBinding, setRuntimeBinding] = useState<RuntimeBinding | ''>('');
+  const [cardNameDraft, setCardNameDraft] = useState(cardName);
+  const [cardSubtextDraft, setCardSubtextDraft] = useState(cardSubtext);
   const [provider, setProvider] = useState<'openai' | 'openrouter' | ''>('');
   const [modelKey, setModelKey] = useState('');
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelOption[]>>({});
+  const [toolCatalog, setToolCatalog] = useState<ToolDescriptor[]>([]);
   const [temperature, setTemperature] = useState<number | ''>('');
   const [maxTokens, setMaxTokens] = useState<number | ''>('');
   const [promptText, setPromptText] = useState('');
@@ -310,33 +220,39 @@ export function AgentManager({
   });
   const [promptPartsTouched, setPromptPartsTouched] = useState(false);
   const [toolsText, setToolsText] = useState('');
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
-  const [capabilityCatalog, setCapabilityCatalog] = useState<CardCapability[]>([]);
-  const [capabilityCatalogError, setCapabilityCatalogError] = useState<string | null>(null);
-  const [capabilityCatalogLoading, setCapabilityCatalogLoading] = useState(true);
-  const [knowledgeToolSearch, setKnowledgeToolSearch] = useState('');
-  const [ordinaryToolSearch, setOrdinaryToolSearch] = useState('');
-  const [coderAuthority, setCoderAuthority] = useState<'direct_main_audit' | 'mag_one_execution'>('direct_main_audit');
-  const [effectiveToolSnapshot, setEffectiveToolSnapshot] = useState<EffectiveCoderToolSnapshot | null>(null);
-  const [codexRuntimeState, setCodexRuntimeState] = useState<Record<string, unknown> | null>(null);
-  const [codexSteerInput, setCodexSteerInput] = useState('');
-  const [codexRuntimeBusy, setCodexRuntimeBusy] = useState(false);
+  const draftDirtyRef = useRef(false);
+
+  useEffect(() => {
+    setCardNameDraft(cardName);
+    setCardSubtextDraft(cardSubtext);
+  }, [cardId, cardName, cardSubtext]);
 
   useEffect(() => {
     let active = true;
-    setCapabilityCatalogLoading(true);
-    setCapabilityCatalogError(null);
-    void loadCardCapabilityCatalog()
-      .then((tools) => {
-        if (!active) return;
-        setCapabilityCatalog(tools);
-        setCapabilityCatalogLoading(false);
+    void fetch('/api/config/models')
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(String(payload?.error || `Model registry unavailable (HTTP ${response.status})`));
+        const toOptions = (value: unknown): ModelOption[] => {
+          if (!Array.isArray(value)) return [];
+          return value.flatMap((entry) => {
+            if (!entry || typeof entry !== 'object') return [];
+            const item = entry as Record<string, unknown>;
+            const key = String(item.key || '').trim();
+            const label = String(item.label || key).trim();
+            const providerModelId = String(item.id || key).trim();
+            return key ? [{ key, label, providerModelId }] : [];
+          });
+        };
+        if (active) {
+          setModelsByProvider({
+            openai: toOptions(payload?.openai?.options),
+            openrouter: toOptions(payload?.openrouter?.options),
+          });
+        }
       })
-      .catch((error) => {
-        if (!active) return;
-        setCapabilityCatalog([]);
-        setCapabilityCatalogError(error instanceof Error ? error.message : String(error));
-        setCapabilityCatalogLoading(false);
+      .catch(() => {
+        if (active) setModelsByProvider({});
       });
     return () => {
       active = false;
@@ -344,30 +260,26 @@ export function AgentManager({
   }, []);
 
   useEffect(() => {
-    if (!projectId || !cardId) {
-      setEffectiveToolSnapshot(null);
-      return;
-    }
     let active = true;
-    const params = new URLSearchParams({ projectId, cardId, authority: coderAuthority });
-    void fetch(`/api/coder/tool-library?${params.toString()}`)
+    void fetch('/api/coder/tool-library')
       .then(async (response) => {
-        const payload = await response.json().catch(() => null);
-        if (!response.ok || !payload?.ok || !payload.snapshot) {
-          throw new Error(String(payload?.error || `Effective tools unavailable (HTTP ${response.status})`));
+        const payload = await response.json();
+        if (!response.ok || !payload?.ok || !Array.isArray(payload.tools)) {
+          throw new Error('Tool catalog unavailable');
         }
-        if (active) setEffectiveToolSnapshot(payload.snapshot as EffectiveCoderToolSnapshot);
+        if (active) setToolCatalog(payload.tools as ToolDescriptor[]);
       })
-      .catch((error) => {
-        if (!active) return;
-        setEffectiveToolSnapshot(null);
-        setCapabilityCatalogError(error instanceof Error ? error.message : String(error));
+      .catch(() => {
+        if (active) setToolCatalog([]);
       });
-    return () => { active = false; };
-  }, [projectId, cardId, coderAuthority]);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isLocalConfigMode || !localConfig) return;
+    draftDirtyRef.current = false;
     setRuntimeBinding(localConfig.runtime_binding || '');
     setProvider(
       localConfig.provider === 'openai' || localConfig.provider === 'openrouter'
@@ -387,108 +299,133 @@ export function AgentManager({
             .join('\n')
         : '',
     );
-    setSaveMessage(null);
   }, [isLocalConfigMode, localConfig]);
 
-  const savedTools = useMemo(() => parseListText(toolsText), [toolsText]);
-  const capabilityByName = useMemo(
-    () => new Map(capabilityCatalog.map((tool) => [tool.name, tool])),
-    [capabilityCatalog],
-  );
-  const selectedKnowledgeTools = useMemo(
-    () => savedTools.filter((name) => capabilityByName.get(name)?.capability.surface === 'knowledge'),
-    [capabilityByName, savedTools],
-  );
-  const selectedOrdinaryTools = useMemo(
-    () => savedTools.filter((name) => capabilityByName.get(name)?.capability.surface !== 'knowledge'),
-    [capabilityByName, savedTools],
-  );
-  const knowledgeToolChoices = useMemo(() => {
-    const query = knowledgeToolSearch.trim().toLowerCase();
-    return capabilityCatalog
-      .filter((tool) => tool.capability.cardAssignable && tool.capability.surface === 'knowledge')
-      .filter((tool) => !savedTools.includes(tool.name))
-      .filter((tool) => !query || `${tool.name} ${tool.title || ''} ${tool.description || ''}`.toLowerCase().includes(query))
-      .slice(0, 20);
-  }, [capabilityCatalog, knowledgeToolSearch, savedTools]);
-  const ordinaryToolChoices = useMemo(() => {
-    const query = ordinaryToolSearch.trim().toLowerCase();
-    return capabilityCatalog
-      .filter((tool) => tool.capability.cardAssignable && tool.capability.surface === 'tools')
-      .filter((tool) => !savedTools.includes(tool.name))
-      .filter((tool) => !query || `${tool.name} ${tool.title || ''} ${tool.description || ''}`.toLowerCase().includes(query))
-      .slice(0, 20);
-  }, [capabilityCatalog, ordinaryToolSearch, savedTools]);
-  const addSavedTool = (name: string) => {
-    if (savedTools.includes(name)) return;
-    setToolsText([...savedTools, name].join('\n'));
-    setSaveMessage(null);
+  const markDraftDirty = () => {
+    draftDirtyRef.current = true;
   };
 
-  const removeSavedTool = (name: string) => {
-    setToolsText(savedTools.filter((tool) => tool !== name).join('\n'));
-    setSaveMessage(null);
-  };
-
-  const moveSavedTool = (name: string, direction: -1 | 1) => {
-    const index = savedTools.indexOf(name);
-    const target = index + direction;
-    if (index < 0 || target < 0 || target >= savedTools.length) return;
-    const next = [...savedTools];
-    [next[index], next[target]] = [next[target], next[index]];
-    setToolsText(next.join('\n'));
-    setSaveMessage(null);
-  };
-
-  const callCodexCard = async (operation: 'inspect' | 'start' | 'stop' | 'steer') => {
-    if (!cardId || !projectId) return;
-    setCodexRuntimeBusy(true);
-    try {
-      const isInspect = operation === 'inspect';
-      const response = await fetch(`/api/coder/codex-app-server/cards/${encodeURIComponent(cardId)}/${operation}${isInspect ? `?projectId=${encodeURIComponent(projectId)}` : ''}`, {
-        method: isInspect ? 'GET' : 'POST',
-        headers: isInspect ? undefined : { 'Content-Type': 'application/json' },
-        body: isInspect ? undefined : JSON.stringify({
-          projectId,
-          ...(operation === 'start' ? { assignment: promptTestInput || 'Inspect the assigned repository question and report the result.' } : {}),
-          ...(operation === 'steer' ? { input: codexSteerInput } : {}),
-        }),
-      });
-      const payload = await response.json().catch(() => null);
-      setCodexRuntimeState(payload || { ok: false, error: `HTTP ${response.status}` });
-      if (response.ok && operation === 'steer') setCodexSteerInput('');
-    } finally {
-      setCodexRuntimeBusy(false);
+  useEffect(() => {
+    if (!isLocalConfigMode || !localConfig || !onSaveLocalConfig || !draftDirtyRef.current) {
+      return;
     }
-  };
-
-  const save = () => {
-    if (!onSaveLocalConfig) return;
+    draftDirtyRef.current = false;
     const editedConfig = buildActiveAgentManagerLocalConfig({
-        runtimeBinding,
-        provider,
-        modelKey,
-        temperature,
-        maxTokens,
-        promptTemplate: promptPartsTouched ? serializePromptFields(promptParts) : promptText,
-        toolsText,
-      });
+      runtimeBinding,
+      provider,
+      modelKey,
+      temperature,
+      maxTokens,
+      promptTemplate: promptPartsTouched ? serializePromptFields(promptParts) : promptText,
+      toolsText,
+    });
     void onSaveLocalConfig({
       ...localConfig,
       ...editedConfig,
       provider:
         provider ||
-        (localConfig?.provider === 'local_openai_compatible'
+        (localConfig.provider === 'local_openai_compatible'
           ? 'local_openai_compatible'
           : editedConfig.provider),
     });
-    setSaveMessage('Saved.');
+  }, [
+    isLocalConfigMode,
+    localConfig,
+    onSaveLocalConfig,
+    runtimeBinding,
+    provider,
+    modelKey,
+    temperature,
+    maxTokens,
+    promptText,
+    promptParts,
+    promptPartsTouched,
+    toolsText,
+  ]);
+
+  const availableModels = provider ? modelsByProvider[provider] || [] : [];
+  const toolAuthority: ToolAuthority | null =
+    runtimeBinding === 'main_chat'
+      ? 'engraphis'
+      : runtimeBinding === 'local_coder'
+        ? 'cbm'
+        : runtimeBinding === 'hermes_steward'
+          ? 'graphiti'
+          : null;
+  const scopedTools = toolAuthority
+    ? toolCatalog.filter(
+        (tool) =>
+          tool.capability?.cardAssignable !== false &&
+          tool.capability?.graphAuthority === toolAuthority,
+      )
+    : [];
+  const savedToolNames = parseListText(toolsText);
+  const toggleTool = (name: string, checked: boolean) => {
+    const next = checked
+      ? [...savedToolNames, name]
+      : savedToolNames.filter((savedName) => savedName !== name);
+    setToolsText([...new Set(next)].join('\n'));
+    markDraftDirty();
   };
 
   const sectionBody = (() => {
     if (activeTab === 'Prompt') {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {onChangeCardName || onChangeCardSubtext ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {onChangeCardName ? (
+                <div>
+                  <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                    Name
+                  </label>
+                  <input
+                    type="text"
+                    value={cardNameDraft}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setCardNameDraft(nextValue);
+                      onChangeCardName(nextValue);
+                    }}
+                    placeholder="Enter agent name"
+                    style={{
+                      width: '100%',
+                      padding: 8,
+                      background: '#2B2B2B',
+                      color: '#FFF',
+                      border: '1px solid #3A3A3A',
+                      borderRadius: 8,
+                    }}
+                  />
+                </div>
+              ) : null}
+              {onChangeCardSubtext ? (
+                <div>
+                  <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                    Description
+                  </label>
+                  <input
+                    type="text"
+                    value={cardSubtextDraft}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setCardSubtextDraft(nextValue);
+                      onChangeCardSubtext(nextValue);
+                    }}
+                    placeholder="Enter agent description"
+                    style={{
+                      width: '100%',
+                      padding: 8,
+                      background: '#2B2B2B',
+                      color: '#FFF',
+                      border: '1px solid #3A3A3A',
+                      borderRadius: 8,
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <div>
             <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
               Role
@@ -496,9 +433,9 @@ export function AgentManager({
             <textarea
               value={promptParts.role}
               onChange={(event) => {
-                setPromptParts((current) => ({ ...current, role: event.target.value }));
-                setPromptPartsTouched(true);
-                setSaveMessage(null);
+                      setPromptParts((current) => ({ ...current, role: event.target.value }));
+                      setPromptPartsTouched(true);
+                markDraftDirty();
               }}
               rows={5}
               style={{
@@ -524,7 +461,7 @@ export function AgentManager({
               onChange={(event) => {
                 setPromptParts((current) => ({ ...current, goal: event.target.value }));
                 setPromptPartsTouched(true);
-                setSaveMessage(null);
+                markDraftDirty();
               }}
               rows={5}
               style={{
@@ -550,7 +487,7 @@ export function AgentManager({
               onChange={(event) => {
                 setPromptParts((current) => ({ ...current, constraints: event.target.value }));
                 setPromptPartsTouched(true);
-                setSaveMessage(null);
+                markDraftDirty();
               }}
               rows={5}
               style={{
@@ -576,7 +513,7 @@ export function AgentManager({
               onChange={(event) => {
                 setPromptParts((current) => ({ ...current, ioSchema: event.target.value }));
                 setPromptPartsTouched(true);
-                setSaveMessage(null);
+                markDraftDirty();
               }}
               rows={5}
               style={{
@@ -602,7 +539,7 @@ export function AgentManager({
               onChange={(event) => {
                 setPromptParts((current) => ({ ...current, memoryPolicy: event.target.value }));
                 setPromptPartsTouched(true);
-                setSaveMessage(null);
+                markDraftDirty();
               }}
               rows={5}
               style={{
@@ -663,127 +600,6 @@ export function AgentManager({
               </div>
               </div>
           )}
-          <div style={{ borderTop: '1px solid #3A3A3A', paddingTop: 12 }}>
-            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-              Current task / PromptSpec
-            </div>
-            <pre style={{ whiteSpace: 'pre-wrap', color: '#B9C7CC', fontSize: 11 }}>
-              {runContextLoading
-                ? 'Loading canonical AgentGraph assignment…'
-                : runContextError
-                  ? runContextError
-                  : runContext?.assignment?.instruction || 'No assignment has been delivered to this card.'}
-            </pre>
-            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Selected context references</div>
-            <pre style={{ whiteSpace: 'pre-wrap', color: '#91A9B8', fontSize: 10, maxHeight: 240, overflow: 'auto' }}>
-              {runContext?.assignment?.contextReferences.length
-                ? runContext.assignment.contextReferences
-                    .map((reference) => `${reference.referenceType}:${reference.referenceId}${reference.required ? ' [required]' : ''}`)
-                    .join('\n')
-                : 'No context references selected for this assignment.'}
-            </pre>
-          </div>
-        </div>
-      );
-    }
-
-    if (activeTab === 'Knowledge') {
-      if (runtimeBinding === 'openai_coder') {
-        return (
-          <div style={{ color: '#91A9B8', fontSize: 11 }}>
-            External/General Codex baseline: no automatic Knowledge Assignment, CBM, or Engraphis tools.
-          </div>
-        );
-      }
-      const assignment = runContext?.assignment;
-      return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {runContextLoading ? <div style={{ color: '#91A9B8' }}>Loading canonical AgentGraph context…</div> : null}
-          {runContextError ? <div role="alert" style={{ color: '#FFB0A6' }}>{runContextError}</div> : null}
-          {!runContextLoading && !runContextError && !assignment ? (
-            <div style={{ color: '#91A9B8' }}>This card has no delivered assignment yet.</div>
-          ) : null}
-          <section>
-            <div style={{ color: '#E0DED5', fontWeight: 600 }}>Assigned context</div>
-            <div style={{ color: '#91A9B8', fontSize: 11, marginTop: 4 }}>
-              AGEntgraph retains the exact assignment and stable native references until the card receives a newer assignment. A visual projection must hydrate the native records the agent actually reads; reference IDs are not rendered as fake graph data.
-            </div>
-            <pre style={{ whiteSpace: 'pre-wrap', color: '#91A9B8', fontSize: 10, maxHeight: 240, overflow: 'auto', marginTop: 8 }}>
-              {assignment?.contextReferences.length
-                ? assignment.contextReferences
-                    .map((reference) => `${reference.referenceType}:${reference.referenceId}${reference.required ? ' [required]' : ''}`)
-                    .join('\n')
-                : 'The latest assignment has no native context references.'}
-            </pre>
-          </section>
-
-          <section>
-            <div style={{ color: '#E0DED5', fontWeight: 600 }}>Context delivery</div>
-            <div style={{ marginTop: 7, padding: 8, border: '1px solid #344247', borderRadius: 6, color: '#B9C7CC', fontSize: 11 }}>
-              {assignment
-                ? `Assignment ${assignment.assignmentId} · ${assignment.state}`
-                : 'No AgentGraph assignment.'}
-            </div>
-          </section>
-
-          <section>
-            <div style={{ color: '#E0DED5', fontWeight: 600 }}>Callable graph and memory operations</div>
-            <div style={{ color: '#91A9B8', fontSize: 11, marginTop: 4 }}>
-              These are callable grants. They are separate from the context shown above.
-            </div>
-            <input
-              type="search"
-              value={knowledgeToolSearch}
-              onChange={(event) => setKnowledgeToolSearch(event.target.value)}
-              placeholder="Search graph operations"
-              style={{ width: '100%', marginTop: 8, padding: 8, background: '#252A2C', color: '#FFF', border: '1px solid #3A3A3A', borderRadius: 6 }}
-            />
-            {selectedKnowledgeTools.map((name) => {
-              const tool = capabilityByName.get(name);
-              return (
-                <div key={name} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, marginTop: 7, padding: 8, border: '1px solid #3A4A4F', borderRadius: 6 }}>
-                  <div>
-                    <div style={{ color: '#D5E4E8', fontSize: 11 }}>{name}</div>
-                    <div style={{ color: '#80969F', fontSize: 10 }}>{tool?.description || 'Saved graph operation'}</div>
-                  </div>
-                  <button type="button" onClick={() => removeSavedTool(name)} style={{ background: 'transparent', color: '#FFB0A6', border: '1px solid #614A49', borderRadius: 5, cursor: 'pointer' }}>Remove</button>
-                </div>
-              );
-            })}
-            {knowledgeToolChoices.map((tool) => (
-              <div key={tool.name} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, marginTop: 7, padding: 8, border: '1px solid #303B3F', borderRadius: 6 }}>
-                <div>
-                  <div style={{ color: '#B9C7CC', fontSize: 11 }}>{tool.name}</div>
-                  <div style={{ color: '#71868E', fontSize: 10 }}>{tool.description || tool.capability.recommendedUse}</div>
-                </div>
-                <button type="button" onClick={() => addSavedTool(tool.name)} style={{ background: '#2C4A4E', color: '#C8F3F0', border: '1px solid #4F7F84', borderRadius: 5, cursor: 'pointer' }}>Add</button>
-              </div>
-            ))}
-            {capabilityCatalogLoading ? <div style={{ color: '#91A9B8', fontSize: 11, marginTop: 8 }}>Loading canonical MCP catalog…</div> : null}
-            {capabilityCatalogError ? <div role="alert" style={{ color: '#FFB0A6', fontSize: 11, marginTop: 8 }}>{capabilityCatalogError}</div> : null}
-          </section>
-
-          {assignment ? (
-            <details>
-              <summary style={{ color: '#B9D9DC', cursor: 'pointer', fontSize: 11 }}>Assignment, provenance, and result details</summary>
-              <pre style={{ whiteSpace: 'pre-wrap', color: '#D5E4E8', fontSize: 11 }}>{assignment.instruction}</pre>
-              {(assignment.contextReferences || []).map((reference) => (
-                <div key={`${reference.referenceType}:${reference.referenceId}`} style={{ color: '#91A9B8', fontSize: 11 }}>
-                  {reference.referenceType}:{reference.referenceId}{reference.required ? ' · required' : ''}
-                </div>
-              ))}
-              <div style={{ color: '#91A9B8', fontSize: 11, marginTop: 8 }}>
-                {assignment.runTrace.provider || 'provider unavailable'} · {assignment.runTrace.providerModelId || assignment.runTrace.modelKey || 'model unavailable'}
-              </div>
-              {assignment.result ? (
-                <pre style={{ whiteSpace: 'pre-wrap', color: assignment.result.status === 'failed' ? '#FFB0A6' : '#D5E4E8', fontSize: 11 }}>
-                  {assignment.result.output || assignment.result.errorDetail || assignment.result.summary || assignment.result.status}
-                </pre>
-              ) : (
-                <div style={{ color: '#91A9B8', fontSize: 11 }}>Pending; no durable result yet.</div>
-              )}
-            </details>
-          ) : null}
         </div>
       );
     }
@@ -791,22 +607,6 @@ export function AgentManager({
     if (activeTab === 'Runtime') {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {runtimeBinding === 'openai_coder' ? (
-            <div style={{ padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#202729' }}>
-              <div style={{ color: '#D5E4E8', fontSize: 12, fontWeight: 600 }}>External/General · Codex app-server console</div>
-              <div style={{ color: '#91A9B8', fontSize: 10, marginTop: 4 }}>Managed account/model inspection does not start a model turn. Main normally supplies the assignment; Steer is a human override for the active turn. Start, Stop, and Steer are bound to this card only.</div>
-              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                <button type="button" disabled={codexRuntimeBusy} onClick={() => void callCodexCard('inspect')}>Inspect account/models</button>
-                <button type="button" disabled={codexRuntimeBusy || !promptTestInput?.trim()} onClick={() => void callCodexCard('start')}>Start</button>
-                <button type="button" disabled={codexRuntimeBusy} onClick={() => void callCodexCard('stop')}>Stop</button>
-              </div>
-              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                <input value={codexSteerInput} onChange={(event) => setCodexSteerInput(event.target.value)} placeholder="Steer active Codex turn" style={{ flex: 1, padding: 7, background: '#171C1E', color: '#FFF', border: '1px solid #3A3A3A', borderRadius: 6 }} />
-                <button type="button" disabled={codexRuntimeBusy || !codexSteerInput.trim()} onClick={() => void callCodexCard('steer')}>Steer</button>
-              </div>
-              {codexRuntimeState ? <pre style={{ maxHeight: 240, overflow: 'auto', whiteSpace: 'pre-wrap', color: '#B9C7CC', fontSize: 10 }}>{JSON.stringify(codexRuntimeState, null, 2)}</pre> : null}
-            </div>
-          ) : null}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
@@ -815,8 +615,15 @@ export function AgentManager({
               <select
                 value={provider}
                 onChange={(event) => {
-                  setProvider(event.target.value as 'openai' | 'openrouter' | '');
-                  setSaveMessage(null);
+                  const nextProvider = event.target.value as 'openai' | 'openrouter' | '';
+                  setProvider(nextProvider);
+                  const nextModels = nextProvider ? modelsByProvider[nextProvider] || [] : [];
+                  setModelKey((current) =>
+                    nextModels.some((model) => model.key === current)
+                      ? current
+                      : nextModels[0]?.key || '',
+                  );
+                  markDraftDirty();
                 }}
                 style={{
                   width: '100%',
@@ -837,42 +644,11 @@ export function AgentManager({
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
                 Model
               </label>
-              <div
-                aria-label="OpenRouter GPT model presets"
-                style={{ display: 'flex', gap: 6, marginBottom: 6 }}
-              >
-                {GPT_CARD_MODEL_PRESETS.map((preset) => (
-                  <button
-                    key={preset.modelKey}
-                    type="button"
-                    onClick={() => {
-                      setProvider('openrouter');
-                      setModelKey(preset.modelKey);
-                      setSaveMessage(null);
-                    }}
-                    style={{
-                      flex: 1,
-                      padding: '5px 7px',
-                      background:
-                        provider === 'openrouter' && modelKey === preset.modelKey
-                          ? '#435B64'
-                          : '#2B2B2B',
-                      color: '#FFF',
-                      border: '1px solid #3A3A3A',
-                      borderRadius: 7,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-              <input
-                type="text"
+              <select
                 value={modelKey}
                 onChange={(event) => {
                   setModelKey(event.target.value);
-                  setSaveMessage(null);
+                  markDraftDirty();
                 }}
                 style={{
                   width: '100%',
@@ -882,149 +658,68 @@ export function AgentManager({
                   border: '1px solid #3A3A3A',
                   borderRadius: 8,
                 }}
-              />
-              <div style={{ color: '#91A9B8', fontSize: 10, marginTop: 4 }}>
-                Presets use the saved OpenRouter card runtime. You can still enter another registered model key.
-              </div>
+              >
+                <option value="">Select model</option>
+                {availableModels.map((model) => (
+                  <option key={model.key} value={model.key}>
+                    {model.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            <div>
-              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Temperature
-              </label>
-              <input
-                type="number"
-                value={temperature}
-                onChange={(event) => {
-                  const next = event.target.value;
-                  setTemperature(next === '' ? '' : Number(next));
-                  setSaveMessage(null);
-                }}
-                step="0.1"
-                style={{
-                  width: '100%',
-                  padding: 8,
-                  background: '#2B2B2B',
-                  color: '#FFF',
-                  border: '1px solid #3A3A3A',
-                  borderRadius: 8,
-                }}
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Max Tokens
-              </label>
-              <input
-                type="number"
-                value={maxTokens}
-                onChange={(event) => {
-                  const next = event.target.value;
-                  setMaxTokens(next === '' ? '' : Number(next));
-                  setSaveMessage(null);
-                }}
-                style={{
-                  width: '100%',
-                  padding: 8,
-                  background: '#2B2B2B',
-                  color: '#FFF',
-                  border: '1px solid #3A3A3A',
-                  borderRadius: 8,
-                }}
-              />
-            </div>
           </div>
         </div>
       );
     }
 
     if (activeTab === 'Tools') {
-      if (runtimeBinding === 'openai_coder') {
-        return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ color: '#D5E4E8', fontSize: 12, fontWeight: 600 }}>Codex-native tools only</div>
-            <div style={{ color: '#91A9B8', fontSize: 11 }}>
-              This baseline receives the native tool set reported by its Codex app-server runtime. Its LiquidAIty assigned-tool array must remain empty; CBM, Engraphis, and hidden system tools are not injected.
-            </div>
-          </div>
-        );
-      }
-      const effectiveQuery = ordinaryToolSearch.trim().toLowerCase();
-      const effectiveRows = (effectiveToolSnapshot?.tools || []).filter((tool) =>
-        !effectiveQuery || `${tool.displayName} ${tool.canonicalName} ${tool.description} ${tool.group}`.toLowerCase().includes(effectiveQuery),
-      );
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button type="button" onClick={() => setCoderAuthority('direct_main_audit')} aria-pressed={coderAuthority === 'direct_main_audit'}>Audit</button>
-            <button type="button" onClick={() => setCoderAuthority('mag_one_execution')} aria-pressed={coderAuthority === 'mag_one_execution'}>Implementation</button>
+          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
+            {toolAuthority ? `Tools for ${toolAuthority}` : 'Tools for this card'}
           </div>
-          {effectiveToolSnapshot ? (
-            <div style={{ color: '#91A9B8', fontSize: 11 }}>
-              Saved {effectiveToolSnapshot.counts.saved} · enabled {effectiveToolSnapshot.counts.enabled} · callable {effectiveToolSnapshot.counts.callable} · unavailable {effectiveToolSnapshot.counts.unavailable} · permission {effectiveToolSnapshot.permissionMode} · shell {effectiveToolSnapshot.allowsShell ? 'yes' : 'no'} · writes {effectiveToolSnapshot.allowsWrite ? 'yes' : 'no'} · network {effectiveToolSnapshot.allowsNetwork ? 'yes' : 'no'} · paid {effectiveToolSnapshot.hasPaidTools ? 'possible' : 'no'}
+          {toolAuthority ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {scopedTools.map((tool) => (
+                <label
+                  key={tool.name}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '18px 1fr',
+                    gap: 8,
+                    alignItems: 'start',
+                    padding: '7px 8px',
+                    border: '1px solid #3A4A4F',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={savedToolNames.includes(tool.name)}
+                    onChange={(event) => toggleTool(tool.name, event.target.checked)}
+                    aria-label={`Include ${tool.title || tool.name}`}
+                  />
+                  <span>
+                    <span style={{ display: 'block', color: '#D5E4E8', fontSize: 11 }}>
+                      {tool.title || tool.name}
+                    </span>
+                    <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
+                      {tool.name}
+                      {tool.description ? ` · ${tool.description}` : ''}
+                    </span>
+                  </span>
+                </label>
+              ))}
+              {!scopedTools.length ? (
+                <div style={{ color: '#91A9B8', fontSize: 11 }}>No tools are available for this card yet.</div>
+              ) : null}
             </div>
-          ) : null}
-          <label style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-            Ordinary callable tools
-          </label>
-          <div style={{ color: '#91A9B8', fontSize: 11 }}>
-            The saved array remains the runtime grant authority. Graph and memory operations are managed in Knowledge.
-          </div>
-          <input
-            type="search"
-            value={ordinaryToolSearch}
-            onChange={(event) => setOrdinaryToolSearch(event.target.value)}
-            placeholder="Search effective and available tools"
-            style={{ width: '100%', padding: 8, background: '#252A2C', color: '#FFF', border: '1px solid #3A3A3A', borderRadius: 6 }}
-          />
-          {effectiveRows.map((tool) => (
-            <div key={`effective:${tool.source}:${tool.canonicalName}`} style={{ padding: 8, border: `1px solid ${tool.enabled ? '#3A4A4F' : '#5A4642'}`, borderRadius: 6 }}>
-              <div style={{ color: tool.enabled ? '#D5E4E8' : '#B6958F', fontSize: 11 }}>
-                {tool.displayName} <span style={{ color: '#71868E' }}>({tool.canonicalName})</span>
-              </div>
-              <div style={{ color: '#80969F', fontSize: 10 }}>{tool.group} · {tool.source} · {tool.risk} · {tool.callable ? 'callable' : 'not callable'}</div>
-              <div style={{ color: '#91A9B8', fontSize: 10 }}>{tool.description}</div>
-              <div style={{ color: tool.enabled ? '#76A89F' : '#C08B82', fontSize: 10 }}>{tool.reason}</div>
-            </div>
-          ))}
-          {selectedOrdinaryTools.map((name) => {
-            const tool = capabilityByName.get(name);
-            const globalIndex = savedTools.indexOf(name);
-            return (
-              <div key={name} style={{ display: 'grid', gridTemplateColumns: '24px 1fr auto', gap: 8, alignItems: 'center', padding: 8, border: `1px solid ${tool ? '#3A4A4F' : '#6A4C45'}`, borderRadius: 6 }}>
-                <span style={{ color: '#71868E', fontSize: 10 }}>{globalIndex + 1}</span>
-                <div>
-                  <div style={{ color: '#D5E4E8', fontSize: 11 }}>{name}</div>
-                  <div style={{ color: tool ? '#80969F' : '#FFB0A6', fontSize: 10 }}>
-                    {tool?.description || 'Saved grant is not in the current public MCP catalog.'}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: 4 }}>
-                  <button type="button" aria-label={`Move ${name} earlier`} onClick={() => moveSavedTool(name, -1)} disabled={globalIndex <= 0}>↑</button>
-                  <button type="button" aria-label={`Move ${name} later`} onClick={() => moveSavedTool(name, 1)} disabled={globalIndex >= savedTools.length - 1}>↓</button>
-                  <button type="button" onClick={() => removeSavedTool(name)} style={{ color: '#A44A43' }}>Remove</button>
-                </div>
-              </div>
-            );
-          })}
-          {ordinaryToolChoices.map((tool) => (
-            <div key={tool.name} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, padding: 8, border: '1px solid #303B3F', borderRadius: 6 }}>
-              <div>
-                <div style={{ color: '#B9C7CC', fontSize: 11 }}>{tool.name}</div>
-                <div style={{ color: '#71868E', fontSize: 10 }}>{tool.description || tool.capability.recommendedUse}</div>
-              </div>
-              <button type="button" onClick={() => addSavedTool(tool.name)} style={{ background: '#2C4A4E', color: '#C8F3F0', border: '1px solid #4F7F84', borderRadius: 5, cursor: 'pointer' }}>Add</button>
-            </div>
-          ))}
-          {capabilityCatalogLoading ? <div style={{ color: '#91A9B8', fontSize: 11 }}>Loading canonical MCP catalog…</div> : null}
-          {capabilityCatalogError ? <div role="alert" style={{ color: '#FFB0A6', fontSize: 11 }}>{capabilityCatalogError}</div> : null}
-          {runContext?.assignment?.result?.toolEvidence?.length ? (
-            <pre style={{ whiteSpace: 'pre-wrap', color: '#B9C7CC', fontSize: 10 }}>
-              {JSON.stringify(runContext.assignment.result.toolEvidence, null, 2)}
-            </pre>
           ) : (
-            <div style={{ color: '#91A9B8', fontSize: 11 }}>No tool evidence recorded for the current assignment.</div>
+            <div style={{ color: '#91A9B8', fontSize: 11 }}>
+              This card has no scoped graph tool set.
+            </div>
           )}
         </div>
       );
@@ -1057,25 +752,6 @@ export function AgentManager({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {sectionBody}
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <button
-          onClick={save}
-          style={{
-            padding: '10px 12px',
-            background: '#4FA2AD',
-            color: '#FFF',
-            border: 'none',
-            borderRadius: 8,
-            cursor: 'pointer',
-            fontSize: 13,
-            fontWeight: 600,
-          }}
-        >
-          Save Card
-        </button>
-        {saveMessage && <div style={{ color: '#4FA2AD', fontSize: 12 }}>{saveMessage}</div>}
-      </div>
     </div>
   );
 }

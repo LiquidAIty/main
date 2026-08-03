@@ -8,17 +8,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildActiveAgentManagerLocalConfig,
 } from './AgentManager';
-import { GPT_CARD_MODEL_PRESETS } from '../features/agentbuilder/deck/deckPrimitives';
 
 describe('AgentManager active builder config', () => {
-  it('offers the three OpenRouter GPT comparison presets without choosing one automatically', () => {
-    expect(GPT_CARD_MODEL_PRESETS).toEqual([
-      { label: 'Luna', modelKey: 'openai/gpt-5.6-luna' },
-      { label: 'Terra', modelKey: 'openai/gpt-5.6-terra' },
-      { label: 'Sol', modelKey: 'openai/gpt-5.6-sol' },
-    ]);
-  });
-
   it('builds the exact active local configuration payload', () => {
     const payload = buildActiveAgentManagerLocalConfig({
       runtimeBinding: 'main_chat',
@@ -41,15 +32,23 @@ describe('AgentManager active builder config', () => {
     });
   });
 
-  it('keeps the restored inspector free of identity, mode, and advanced panel inventions', () => {
+  it('restores the existing card identity fields without adding another persistence path', () => {
     const filePath = path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx');
     const source = readFileSync(filePath, 'utf8');
 
-    expect(source).not.toContain('Card identity');
+    expect(source).toContain('cardName');
+    expect(source).toContain('cardSubtext');
+    expect(source).toContain('onChangeCardName');
+    expect(source).toContain('onChangeCardSubtext');
+    expect(source).toContain('Description');
     expect(source).not.toContain('Card mode');
     expect(source).not.toContain('Runtime Type');
     expect(source).not.toContain('Execution Mode');
     expect(source).not.toContain('Advanced');
     expect(source).not.toContain('GlassInspectorSection');
+    expect(source).not.toContain('roleBadge');
+    expect(source).not.toContain('Save Card');
+    expect(source).not.toContain('>Temperature<');
+    expect(source).not.toContain('>Max Tokens<');
   });
 });

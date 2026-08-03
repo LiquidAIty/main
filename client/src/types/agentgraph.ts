@@ -6,7 +6,6 @@ export type PromptTemplate = {
 export type RuntimeBinding =
   | 'assist'
   | 'local_coder'
-  | 'openai_coder'
   | 'main_chat'
   | 'research_agent'
   | 'plan_agent'
@@ -17,8 +16,7 @@ export type RuntimeBinding =
 export type AgentCardRuntimeType =
   | 'assistant_agent'
   | 'magentic_one'
-  | 'local_coder'
-  | 'codex_app_server';
+  | 'local_coder';
 
 // flow = ORANGE direct parent→subagent; magentic_option = BLUE side worker
 // slot; magentic_control = BLUE dedicated top control input (submit the

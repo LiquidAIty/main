@@ -77,7 +77,7 @@ class CardRuntimeConfig(BaseModel):
 class CardRuntimeParticipant(BaseModel):
     cardId: str
     title: str
-    runtimeType: Literal["assistant_agent", "codex_app_server"]
+    runtimeType: Literal["assistant_agent"]
     runtimeBinding: str | None = None
     tools: list[str] = Field(default_factory=list)
     prompt: str = ""

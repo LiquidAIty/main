@@ -10,9 +10,6 @@ from types import SimpleNamespace
 
 import pytest
 from autogen_core.tools import FunctionTool
-from autogen_agentchat.messages import TextMessage
-from autogen_core import CancellationToken
-
 from app.python_models import magentic_agentchat as mac
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
 from app.python_models.orchestration_contracts import (
@@ -256,58 +253,6 @@ def test_each_participant_receives_its_own_saved_card_model_client():
     )
     assert research._model_client is first
     assert plain._model_client is second
-
-
-def test_codex_app_server_participant_uses_the_saved_external_card_boundary(monkeypatch):
-    card = CardRuntimeConfig(
-        cardId="orch", title="Mag One", runtimeType="magentic_one",
-        runtimeOptions={"deckId": "deck_builder"},
-        participants=[CardRuntimeParticipant(
-            cardId="card_openai_coder", title="OpenAI Coder",
-            runtimeType="codex_app_server", runtimeBinding="openai_coder",
-            tools=[], provider="openai", providerModelId="gpt-5.6-sol",
-        )],
-    )
-    context = ContextPack(
-        session=ProjectSession(
-            sessionId="s", projectId="p", turnId="t", route="r",
-            modelProvider="openrouter", modelKey=MODEL, providerModelId=MODEL,
-            startedAt="now",
-        ),
-        userText="question",
-        cardRuntime=card,
-    )
-    calls = []
-
-    def post(path, payload, timeout):
-        calls.append((path, payload, timeout))
-        if path.endswith("/start"):
-            return {"ok": True, "started": {"turnId": "turn_1"}}
-        return {
-            "ok": True,
-            "receipt": {"status": "completed", "result": {"finalText": "exact evidence"}},
-        }
-
-    monkeypatch.setattr(mac, "_post_codex_backend", post)
-    participants = mac._build_participants(context, [None])
-    assert len(participants) == 1
-    response = asyncio.run(participants[0].on_messages(
-        [TextMessage(content="bounded task", source="MagenticOneOrchestrator")],
-        CancellationToken(),
-    ))
-    assert response.chat_message.content == "exact evidence"
-    assert calls == [
-        (
-            "/api/coder/codex-app-server/cards/card_openai_coder/start",
-            {"projectId": "p", "assignment": "bounded task"},
-            15,
-        ),
-        (
-            "/api/coder/codex-app-server/cards/card_openai_coder/await",
-            {"projectId": "p", "turnId": "turn_1"},
-            125,
-        ),
-    ]
 
 
 def test_participant_model_client_count_mismatch_fails_loudly():

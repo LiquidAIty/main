@@ -3,7 +3,6 @@ import type { RuntimeBinding } from '../types';
 const RUNTIME_BINDINGS = [
   'assist',
   'local_coder',
-  'openai_coder',
   'main_chat',
   'research_agent',
   'plan_agent',
