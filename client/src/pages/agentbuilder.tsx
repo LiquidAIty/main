@@ -35,6 +35,7 @@ import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuild
 import AgentBuilderProjectDrawer from '../features/agentbuilder/project/AgentBuilderProjectDrawer';
 import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
+import useAgentBuilderThinkGraphProjection from '../features/agentbuilder/state/useAgentBuilderThinkGraphProjection';
 import TradingUI from './tradingui';
 import { resolveDeckWorkspaceRoot } from '../features/agentbuilder/state/deckWorkspaceRoot';
 import {
@@ -354,6 +355,11 @@ export default function AgentBuilder(): React.ReactElement {
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
     useState<KnowledgeSurfaceKind>('knowgraph');
   const conversationId = 'main';
+  const thinkGraphProjection = useAgentBuilderThinkGraphProjection({
+    activeProject,
+    knowledgeGraphKind,
+    workspaceView,
+  });
 
   // CodeGraph repository identity is resolved from the authoritative CBM index.
   // The canonical ready project wins over stale same-root validation indexes.
@@ -1128,11 +1134,14 @@ export default function AgentBuilder(): React.ReactElement {
           <KnowledgeGraphFramework
             projectId={activeProject || null}
             codeGraphProjectName={codeGraphProjectName || null}
-            codeGraphProjectError={codeGraphProjectError}
-            kind={knowledgeGraphKind}
-            minHeight={minHeight}
-            surfaceRole={surfaceRole}
-            onKindChange={setKnowledgeGraphKind}
+              codeGraphProjectError={codeGraphProjectError}
+              kind={knowledgeGraphKind}
+              minHeight={minHeight}
+              surfaceRole={surfaceRole}
+              thinkGraphProjection={thinkGraphProjection.projection}
+              thinkGraphStatus={thinkGraphProjection.status}
+              thinkGraphError={thinkGraphProjection.error}
+              onKindChange={setKnowledgeGraphKind}
           />
         </KnowledgeSurfaceErrorBoundary>
       </div>

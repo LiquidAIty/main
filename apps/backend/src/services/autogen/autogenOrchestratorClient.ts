@@ -196,6 +196,16 @@ export async function requestPythonRailsJson(
   }
 }
 
+/** Read one native Engraphis project projection without reshaping it in TypeScript. */
+export async function fetchThinkGraphProjection(
+  projectId: string,
+  limit?: number,
+): Promise<unknown> {
+  const query = new URLSearchParams({ projectId });
+  if (Number.isFinite(limit)) query.set('limit', String(limit));
+  return requestPythonRailsJson(`/thinkgraph/projection?${query.toString()}`, { method: 'GET' });
+}
+
 export type BegunAgentAssignment = {
   ok: true;
   assignmentId: string;

@@ -75,6 +75,30 @@ async def autogen_orchestrate(req: ContextPack):
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
+@app.get("/thinkgraph/projection")
+def thinkgraph_projection(
+    projectId: str,
+    limit: int | None = None,
+    includeHistorical: bool = False,
+    memoryType: str | None = None,
+):
+    """Read the native Engraphis projection for the selected project."""
+    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+
+    project_id = str(projectId or "").strip()
+    if not project_id:
+        raise HTTPException(status_code=400, detail="projectId required")
+    try:
+        return get_thinkgraph().projection(
+            project_id,
+            limit=limit or 500,
+            include_historical=includeHistorical,
+            memory_type=memoryType,
+        )
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
 @app.get("/agentgraph/assignments/{assignment_id:path}")
 def agentgraph_read_assignment(
     assignment_id: str,

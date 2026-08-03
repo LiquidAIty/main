@@ -11,10 +11,15 @@ const NativeKnowGraphSurface = lazy(async () => {
   const mod = await import('./NativeAuthorityGraphSurface');
   return { default: mod.NativeKnowGraphSurface };
 });
+const NativeThinkGraphSurface = lazy(async () => {
+  const mod = await import('./NativeAuthorityGraphSurface');
+  return { default: mod.NativeGraphProjectionSurface };
+});
 
 type KnowledgeSurfaceKind = KnowledgeGraphKind;
 
 const GRAPH_AUTHORITIES: readonly KnowledgeSurfaceKind[] = [
+  'thinkgraph',
   'knowgraph',
   'codegraph',
 ];
@@ -26,6 +31,9 @@ type Props = {
   kind: KnowledgeSurfaceKind;
   minHeight?: number;
   surfaceRole?: 'large' | 'companion';
+  thinkGraphProjection: import('./NativeAuthorityGraphSurface').GraphProjectionV1 | null;
+  thinkGraphStatus: 'idle' | 'loading' | 'ready' | 'error';
+  thinkGraphError: string | null;
   onKindChange: (kind: KnowledgeSurfaceKind) => void;
 };
 
@@ -36,6 +44,9 @@ export default function KnowledgeGraphFramework({
   kind,
   minHeight = 280,
   surfaceRole = minHeight > 320 ? 'large' : 'companion',
+  thinkGraphProjection,
+  thinkGraphStatus,
+  thinkGraphError,
   onKindChange,
 }: Props) {
   return (
@@ -105,6 +116,13 @@ export default function KnowledgeGraphFramework({
           ) : (
             <NativeCodeGraphSurface project={codeGraphProjectName} />
           )
+        ) : kind === 'thinkgraph' ? (
+          <NativeThinkGraphSurface
+            projection={thinkGraphProjection}
+            status={thinkGraphStatus}
+            error={thinkGraphError}
+            authority="thinkgraph"
+          />
         ) : kind === 'knowgraph' ? (
           <NativeKnowGraphSurface projectId={projectId ?? ''} />
         ) : null}
