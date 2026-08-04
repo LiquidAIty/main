@@ -7,13 +7,55 @@ import type {
 } from '../types/agentgraph';
 
 type ModelOption = { key: string; label: string; providerModelId: string };
-type ToolAuthority = 'engraphis' | 'cbm' | 'graphiti';
+export type ToolAuthority = 'engraphis' | 'cbm' | 'graphiti';
 type ToolDescriptor = {
   name: string;
   title?: string;
   description?: string;
   capability?: { graphAuthority?: string | null; cardAssignable?: boolean };
 };
+
+export function buildDisplayedToolRows(
+  toolCatalog: ToolDescriptor[],
+  savedToolNames: string[],
+  toolAuthority: ToolAuthority | null,
+): ToolDescriptor[] {
+  const eligibleRows: ToolDescriptor[] = [];
+  const eligibleNames = new Set<string>();
+  if (toolAuthority) {
+    for (const tool of toolCatalog) {
+      if (
+        tool.capability?.cardAssignable === false ||
+        tool.capability?.graphAuthority !== toolAuthority ||
+        eligibleNames.has(tool.name)
+      ) {
+        continue;
+      }
+      eligibleRows.push(tool);
+      eligibleNames.add(tool.name);
+    }
+  }
+  const catalogByName = new Map(toolCatalog.map((tool) => [tool.name, tool]));
+  const displayedNames = new Set(eligibleRows.map((tool) => tool.name));
+  const rows = [...eligibleRows];
+
+  for (const savedToolName of savedToolNames) {
+    if (displayedNames.has(savedToolName)) continue;
+    rows.push(catalogByName.get(savedToolName) || { name: savedToolName });
+    displayedNames.add(savedToolName);
+  }
+
+  return rows;
+}
+
+export function toggleSavedToolAssignment(
+  savedToolNames: string[],
+  name: string,
+  checked: boolean,
+): string[] {
+  if (checked) return savedToolNames.includes(name) ? savedToolNames : [...savedToolNames, name];
+  return savedToolNames.filter((savedName) => savedName !== name);
+}
 type AgentType =
   | 'agent_builder'
   | 'llm_chat'
@@ -352,19 +394,10 @@ export function AgentManager({
         : runtimeBinding === 'hermes_steward'
           ? 'graphiti'
           : null;
-  const scopedTools = toolAuthority
-    ? toolCatalog.filter(
-        (tool) =>
-          tool.capability?.cardAssignable !== false &&
-          tool.capability?.graphAuthority === toolAuthority,
-      )
-    : [];
   const savedToolNames = parseListText(toolsText);
+  const displayedToolRows = buildDisplayedToolRows(toolCatalog, savedToolNames, toolAuthority);
   const toggleTool = (name: string, checked: boolean) => {
-    const next = checked
-      ? [...savedToolNames, name]
-      : savedToolNames.filter((savedName) => savedName !== name);
-    setToolsText([...new Set(next)].join('\n'));
+    setToolsText(toggleSavedToolAssignment(savedToolNames, name, checked).join('\n'));
     markDraftDirty();
   };
 
@@ -677,11 +710,11 @@ export function AgentManager({
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-            {toolAuthority ? `Tools for ${toolAuthority}` : 'Tools for this card'}
+            Tools for this card
           </div>
-          {toolAuthority ? (
+          {displayedToolRows.length ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {scopedTools.map((tool) => (
+              {displayedToolRows.map((tool) => (
                 <label
                   key={tool.name}
                   style={{
@@ -712,13 +745,12 @@ export function AgentManager({
                   </span>
                 </label>
               ))}
-              {!scopedTools.length ? (
-                <div style={{ color: '#91A9B8', fontSize: 11 }}>No tools are available for this card yet.</div>
-              ) : null}
             </div>
           ) : (
             <div style={{ color: '#91A9B8', fontSize: 11 }}>
-              This card has no scoped graph tool set.
+              {toolAuthority
+                ? 'No tools are available for this card yet.'
+                : 'This card has no scoped graph tool set.'}
             </div>
           )}
         </div>

@@ -7,6 +7,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildActiveAgentManagerLocalConfig,
+  buildDisplayedToolRows,
+  toggleSavedToolAssignment,
 } from './AgentManager';
 
 describe('AgentManager active builder config', () => {
@@ -50,5 +52,39 @@ describe('AgentManager active builder config', () => {
     expect(source).not.toContain('Save Card');
     expect(source).not.toContain('>Temperature<');
     expect(source).not.toContain('>Max Tokens<');
+  });
+
+  it('keeps saved tools visible when they are outside the card authority', () => {
+    const rows = buildDisplayedToolRows(
+      [
+        { name: 'engraphis.recall', title: 'Recall', capability: { graphAuthority: 'engraphis' } },
+        { name: 'graphiti.search_nodes', title: 'Search nodes', capability: { graphAuthority: 'graphiti' } },
+        { name: 'cbm.search_graph', title: 'Search graph', capability: { graphAuthority: 'cbm' } },
+      ],
+      ['graphiti.search_nodes', 'mystery.tool', 'cbm.search_graph'],
+      'engraphis',
+    );
+
+    expect(rows.map((row) => row.name)).toEqual([
+      'engraphis.recall',
+      'graphiti.search_nodes',
+      'mystery.tool',
+      'cbm.search_graph',
+    ]);
+    expect(rows[1]).toMatchObject({ title: 'Search nodes' });
+    expect(rows[2]).toEqual({ name: 'mystery.tool' });
+  });
+
+  it('changes only the exact saved assignment and preserves order', () => {
+    expect(toggleSavedToolAssignment(['first', 'hidden', 'last'], 'hidden', false)).toEqual([
+      'first',
+      'last',
+    ]);
+    expect(toggleSavedToolAssignment(['first', 'last'], 'first', true)).toEqual(['first', 'last']);
+    expect(toggleSavedToolAssignment(['first', 'last'], 'new.tool', true)).toEqual([
+      'first',
+      'last',
+      'new.tool',
+    ]);
   });
 });
