@@ -731,11 +731,6 @@ async def _ensure_main_connection_context() -> dict[str, Any] | None:
         return dict(context)
 
 
-def _authenticated_scopes() -> frozenset[str]:
-    access_token = get_access_token()
-    return frozenset(access_token.scopes or ()) if access_token else frozenset()
-
-
 class LiquidAItyServer(Server):
     def create_initialization_options(
         self,
@@ -1970,10 +1965,8 @@ def _enforce_tool_caller(
     return None
 
 
-def _catalog_for_scopes(tools: list[Tool], authenticated_scopes: frozenset[str]) -> list[Tool]:
-    """Return the full public registry when the single connector grant is present."""
-    if AUTH0_REQUIRED_SCOPE not in authenticated_scopes:
-        return []
+def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
+    """Attach OAuth metadata without projecting or filtering the canonical registry."""
     result: list[Tool] = []
     for tool in tools:
         payload = tool.model_dump(by_alias=True, exclude_none=True)
@@ -2031,22 +2024,6 @@ def _catalog_for_scopes(tools: list[Tool], authenticated_scopes: frozenset[str])
         payload["_meta"] = meta
         result.append(Tool.model_validate(payload))
     return result
-
-
-def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
-    """Derive the authenticated view from the server-owned access token."""
-    return _catalog_for_scopes(tools, _authenticated_scopes())
-
-
-def _authenticated_tool_denial(name: str) -> str | None:
-    access_token = get_access_token()
-    if access_token is None:
-        return None
-    if name not in _TOOL_EXECUTION_CONTRACTS:
-        return f"unknown_tool: {name}"
-    if AUTH0_REQUIRED_SCOPE not in _authenticated_scopes():
-        return f"tool_scope_not_authorized: {name}"
-    return None
 
 
 # Structural allow-list per tool: unexpected keys are rejected honestly, never
@@ -2112,16 +2089,6 @@ async def _dispatch_tool(
     *,
     _bootstrap: bool = False,
 ) -> Any:
-    scope_denial = (
-        None
-        if _bootstrap and name == "main.context"
-        else _authenticated_tool_denial(name)
-    )
-    if scope_denial:
-        return CallToolResult(
-            content=[TextContent(type="text", text=json.dumps({"ok": False, "error": scope_denial}))],
-            isError=True,
-        )
     if name == "main.context" and _bootstrap:
         context = _authenticated_main_context()
     elif name == "main.context":

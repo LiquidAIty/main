@@ -138,7 +138,6 @@ def test_main_context_bootstraps_once_and_is_reused_for_one_connection(monkeypat
     monkeypatch.setattr(mcp_host, "_current_connection_session", lambda: session)
     monkeypatch.setattr(mcp_host, "get_access_token", lambda: object())
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: dict(context))
-    monkeypatch.setattr(mcp_host, "_authenticated_tool_denial", lambda _name: None)
 
     async def check():
         first = await mcp_host._ensure_main_connection_context()
@@ -254,7 +253,6 @@ def test_authenticated_connection_reaches_read_only_handler_without_context_inje
     session = Session()
     monkeypatch.setattr(mcp_host, "_current_connection_session", lambda: session)
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: dict(context))
-    monkeypatch.setattr(mcp_host, "_authenticated_tool_denial", lambda _name: None)
     monkeypatch.setattr(
         mcp_host,
         "get_access_token",
@@ -1373,13 +1371,6 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
     assert {tool.name for tool in authenticated} == {tool.name for tool in canonical}
     main_context = asyncio.run(mcp_host.call_tool("main.context", {}))
     assert json.loads(main_context[0].text)["ok"] is True
-
-    active_scopes[:] = ["openid"]
-    assert asyncio.run(mcp_host.list_tools()) == []
-    denied = asyncio.run(mcp_host.call_tool("engraphis.recall", {"query": "x"}))
-    assert denied.isError is True
-    assert "tool_scope_not_authorized: engraphis.recall" in denied.content[0].text
-
 
 def test_identical_native_cbm_index_requests_share_one_in_flight_call(monkeypatch):
     import threading
