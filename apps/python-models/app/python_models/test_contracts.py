@@ -8,8 +8,8 @@ from app.python_models.orchestration_contracts import (
 def _session() -> ProjectSession:
     return ProjectSession(
         sessionId="s", projectId="p", turnId="t", route="r",
-        modelProvider="openrouter", modelKey="gpt-5.1-chat",
-        providerModelId="openai/gpt-5.1-chat", startedAt="now",
+        modelProvider="openrouter", modelKey="gpt-5.6-luna",
+        providerModelId="openai/gpt-5.6-luna", startedAt="now",
     )
 
 

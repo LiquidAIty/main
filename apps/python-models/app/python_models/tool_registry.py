@@ -320,106 +320,89 @@ def assignment_worldsignals_stream_events(
 
 
 # ---------------------------------------------------------------------------
-# Local Coder tool — run a real coding task through the LocalCoder engine.
+# Coder tool — Mag One → Coder through the ONE canonical doorway.
 # ---------------------------------------------------------------------------
 
 
-async def run_local_coder(
-    objective: str,
-    plan_excerpt: str = "",
-    context_summary: str = "",
-    guardrails: list[str] | None = None,
-    allowed_files: list[str] | None = None,
-    forbidden_work: list[str] | None = None,
-    proof_required: list[str] | None = None,
-    stop_conditions: list[str] | None = None,
-    code_anchors: list[str] | None = None,
-    cbm_queries: list[str] | None = None,
-    report_format: str = "Return a CoderReport JSON: status, filesChanged, proofResults, blockers, nextRecommendedTask.",
-    write_mode: str = "read-only",
-    project_id: str = "default",
-) -> str:
-    """Run a real coding task through the LocalCoder engine; return its CoderReport.
+def build_coder_subagent_tool(card_id: str) -> FunctionTool:
+    """Create a Mag One→Coder tool bound to the saved Coder card identity.
 
-    The model supplies ONLY the logical coding task. The coder's filesystem root is
-    injected server-side by the backend (trusted, never model-chosen) and the run id
-    is server-minted. Returns the authoritative CoderReport JSON verbatim — no
-    fabricated success and no fallback: a blocked/failed run is reported honestly.
+    Decision 1a/2yes (2026-08-05): there is ONE Coder runtime. Mag One invokes
+    the saved Coder card through the canonical backend doorway
+    ``/api/coder/mcp-bridge/run_coder_subagent`` (authority=mag_one_execution),
+    which resolves the saved card provider/model/tools, opens the single
+    OpenClaude console session, and records one CoderReport + AgentGraph
+    lineage. No headless alternate engine exists anymore.
     """
-    packet = {
-        "projectId": str(project_id or "default").strip() or "default",
-        "objective": str(objective or "").strip(),
-        "planExcerpt": str(plan_excerpt or "").strip() or str(objective or "").strip(),
-        "contextSummary": str(context_summary or "").strip() or "Provided by the orchestrator run.",
-        "codeAnchors": [str(x) for x in (code_anchors or []) if str(x).strip()],
-        "cbmQueries": [str(x) for x in (cbm_queries or []) if str(x).strip()],
-        "guardrails": [str(x) for x in (guardrails or []) if str(x).strip()],
-        "allowedFiles": [str(x) for x in (allowed_files or []) if str(x).strip()],
-        "forbiddenWork": [str(x) for x in (forbidden_work or []) if str(x).strip()],
-        "proofRequired": [str(x) for x in (proof_required or []) if str(x).strip()],
-        "reportFormat": str(report_format or "").strip() or "CoderReport JSON",
-        "stopConditions": [str(x) for x in (stop_conditions or []) if str(x).strip()],
-        "writeMode": "edit" if str(write_mode or "").strip().lower() == "edit" else "read-only",
-    }
-    return await asyncio.to_thread(
-        _post_backend_json_sync,
-        "/api/coder/localcoder/run",
-        {"coderPacket": packet},
-    )
+    card_id = str(card_id or "").strip()
 
-
-def build_local_coder_tool(model_provider: str, provider_model_id: str) -> FunctionTool:
-    """Create a run_local_coder tool bound to the trusted participant model.
-
-    Provider/model come from the backend-authored card runtime, not from model
-    arguments, so a tool call can carry the saved card selection without exposing
-    those runtime controls to the assistant.
-    """
-    provider = str(model_provider or "").strip()
-    model_id = str(provider_model_id or "").strip()
-
-    async def _adapter_with_model(
-        objective: str,
-        plan_excerpt: str = "",
-        context_summary: str = "",
-        guardrails: list[str] | None = None,
-        allowed_files: list[str] | None = None,
-        forbidden_work: list[str] | None = None,
-        proof_required: list[str] | None = None,
-        stop_conditions: list[str] | None = None,
-        code_anchors: list[str] | None = None,
-        cbm_queries: list[str] | None = None,
-        report_format: str = "Return a CoderReport JSON: status, filesChanged, proofResults, blockers, nextRecommendedTask.",
-        write_mode: str = "read-only",
-        project_id: str = "default",
-    ) -> str:
-        packet = {
-            "projectId": str(project_id or "default").strip() or "default",
-            "objective": str(objective or "").strip(),
-            "planExcerpt": str(plan_excerpt or "").strip() or str(objective or "").strip(),
-            "contextSummary": str(context_summary or "").strip() or "Provided by the orchestrator run.",
-            "codeAnchors": [str(x) for x in (code_anchors or []) if str(x).strip()],
-            "cbmQueries": [str(x) for x in (cbm_queries or []) if str(x).strip()],
-            "guardrails": [str(x) for x in (guardrails or []) if str(x).strip()],
-            "allowedFiles": [str(x) for x in (allowed_files or []) if str(x).strip()],
-            "forbiddenWork": [str(x) for x in (forbidden_work or []) if str(x).strip()],
-            "proofRequired": [str(x) for x in (proof_required or []) if str(x).strip()],
-            "reportFormat": str(report_format or "").strip() or "CoderReport JSON",
-            "stopConditions": [str(x) for x in (stop_conditions or []) if str(x).strip()],
-            "writeMode": "edit" if str(write_mode or "").strip().lower() == "edit" else "read-only",
-            "modelProvider": provider,
-            "providerModelId": model_id,
+    async def _run_coder(**kwargs: Any) -> str:
+        # Server-owned identity is injected by the backend mcp-bridge route;
+        # the model supplies only the logical task. The active assignment
+        # supplies project/card identity when present.
+        payload: dict[str, Any] = {
+            "approvedPrompt": str(kwargs.get("objective") or "").strip(),
+            "authority": "mag_one_execution",
+            "cardId": card_id,
         }
+        authority = ACTIVE_AGENT_ASSIGNMENT_CONTEXT.get()
+        if authority is not None:
+            project_id = str(authority.get("projectId") or "").strip()
+            receiver_card = str(authority.get("receiverCardId") or "").strip()
+            if project_id:
+                payload["projectId"] = project_id
+            # The saved Coder card is the receiver; only fall back to the bound
+            # card id if assignment context does not name a receiver.
+            if receiver_card:
+                payload["cardId"] = receiver_card
         return await asyncio.to_thread(
             _post_backend_json_sync,
-            "/api/coder/localcoder/run",
-            {"coderPacket": packet},
+            "/api/coder/mcp-bridge/run_coder_subagent",
+            payload,
         )
 
     return FunctionTool(
-        _adapter_with_model,
-        description=DEFAULT_TOOL_REGISTRY.spec("run_local_coder").description,
-        name="run_local_coder",
+        _run_coder,
+        description=DEFAULT_TOOL_REGISTRY.spec("run_coder_subagent").description,
+        name="run_coder_subagent",
+    )
+
+
+async def run_coder_subagent(
+    objective: str,
+    guardrails: list[str] | None = None,
+    proof_required: list[str] | None = None,
+    stop_conditions: list[str] | None = None,
+    project_id: str = "",
+) -> str:
+    """Run a real coding task through the canonical Coder doorway; return its CoderReport.
+
+    The model supplies ONLY the logical coding task. The backend mcp-bridge
+    owns project/deck/card identity and the saved Coder card's provider/model/
+    tools; it opens the one OpenClaude console session and returns the
+    authoritative CoderReport JSON verbatim — no fabricated success and no
+    fallback: a blocked/failed run is reported honestly.
+    """
+    payload: dict[str, Any] = {
+        "approvedPrompt": str(objective or "").strip(),
+        "authority": "mag_one_execution",
+        **(dict(projectId=str(project_id)) if str(project_id or "").strip() else {}),
+        **(dict(guardrails=[str(x) for x in guardrails]) if guardrails else {}),
+        **(dict(proofRequired=[str(x) for x in proof_required]) if proof_required else {}),
+        **(dict(stopConditions=[str(x) for x in stop_conditions]) if stop_conditions else {}),
+    }
+    authority = ACTIVE_AGENT_ASSIGNMENT_CONTEXT.get()
+    if authority is not None:
+        project_id_ = str(authority.get("projectId") or "").strip()
+        if project_id_:
+            payload["projectId"] = project_id_
+        receiver_card = str(authority.get("receiverCardId") or "").strip()
+        if receiver_card:
+            payload["cardId"] = receiver_card
+    return await asyncio.to_thread(
+        _post_backend_json_sync,
+        "/api/coder/mcp-bridge/run_coder_subagent",
+        payload,
     )
 
 

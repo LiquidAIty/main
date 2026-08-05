@@ -215,7 +215,7 @@ describe('Canonical Cards Runtime', () => {
       kind: 'agent',
       runtimeType: 'assistant_agent',
       runtimeBinding: 'main_chat',
-      runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.1-chat-latest' },
+      runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.3-codex' },
     };
     const think = {
       id: 'card_saved_worker',
@@ -484,9 +484,9 @@ describe('Canonical Cards Runtime', () => {
   // These tests must fail before T003 is applied (current code hardcodes 'openrouter'/'default').
 
   it('participants carry the card-selected provider and model exactly once', () => {
-    const selectedModelKey = 'gpt-5.1-chat-latest';         // real MODEL_REGISTRY key — fixture only, not a default
+    const selectedModelKey = 'gpt-5.3-codex';         // real MODEL_REGISTRY key — fixture only, not a default
     const selectedProvider = 'openai';                        // MODEL_REGISTRY[selectedModelKey].provider
-    const selectedProviderModelId = 'gpt-5.1-chat-latest';  // MODEL_REGISTRY[selectedModelKey].id
+    const selectedProviderModelId = 'gpt-5.3-codex';  // MODEL_REGISTRY[selectedModelKey].id
 
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const cardA = {
@@ -508,9 +508,9 @@ describe('Canonical Cards Runtime', () => {
   });
 
   it('participants[] carry the same card-selected provider and providerModelId', () => {
-    const selectedModelKey = 'gpt-5.1-chat-latest';
+    const selectedModelKey = 'gpt-5.3-codex';
     const selectedProvider = 'openai';
-    const selectedProviderModelId = 'gpt-5.1-chat-latest';
+    const selectedProviderModelId = 'gpt-5.3-codex';
 
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const cardA = {

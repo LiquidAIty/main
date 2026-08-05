@@ -403,12 +403,12 @@ describe('LocalCoderAdapter', () => {
     const root = createRuntimeFixture();
     const adapter = new LocalCoderAdapter({
       workspaceRoot: root,
-      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.1-chat-latest' },
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.3-codex' },
       runProcess: async () => ({
         started: true,
         exitCode: null,
         stdout: '',
-        stderr: 'Warning: gpt-5.1-chat-latest is missing from context-window table',
+        stderr: 'Warning: gpt-5.3-codex is missing from context-window table',
         error: 'process_timeout_after_30000ms',
         timeoutKilled: true,
       }),
@@ -418,7 +418,7 @@ describe('LocalCoderAdapter', () => {
 
     expect(runtimeDiagnostics.runtimeStage).toBe('process_timeout');
     expect(runtimeDiagnostics.warningLines).toEqual([
-      'Warning: gpt-5.1-chat-latest is missing from context-window table',
+      'Warning: gpt-5.3-codex is missing from context-window table',
     ]);
     expect(JSON.stringify(runtimeDiagnostics)).not.toContain('caused');
   });
@@ -745,7 +745,7 @@ describe('LocalCoderService structural edit-scope gate', () => {
       argvShape: ['--print', '<prompt:100 chars>'],
       workingDirectory: process.cwd(),
       provider: 'openai',
-      model: 'gpt-5.1-chat-latest',
+      model: 'gpt-5.3-codex',
       permissionMode: 'plan' as const,
       timeoutMs: 30_000,
       promptDelivery: 'argv' as const,

@@ -19,7 +19,7 @@ from app.python_models.orchestration_contracts import (
     ProjectSession,
 )
 
-MODEL = "openai/gpt-5.1-chat"
+MODEL = "openai/gpt-5.6-luna"
 
 
 class _FakeToolClient:
@@ -32,7 +32,7 @@ def _session(orchestrator: str = "assistant_agent") -> ProjectSession:
     return ProjectSession(
         sessionId="s", projectId="p", turnId="corr-1", route="single_card",
         orchestrator=orchestrator, modelProvider="openrouter",
-        modelKey="gpt-5.1-chat", providerModelId=MODEL, startedAt="now",
+        modelKey="gpt-5.6-luna", providerModelId=MODEL, startedAt="now",
     )
 
 

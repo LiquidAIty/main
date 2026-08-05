@@ -133,8 +133,8 @@ const chatSessionMocks = vi.hoisted(() => {
     resolved: {
       cardId: 'card_main_chat',
       provider: 'openai',
-      modelKey: 'gpt-5.1-chat-latest',
-      providerModelId: 'gpt-5.1-chat-latest',
+      modelKey: 'gpt-5.3-codex',
+      providerModelId: 'gpt-5.3-codex',
     },
   }));
   return mocks;
@@ -472,7 +472,7 @@ describe('coder routes', () => {
     }
   }
 
-  it('returns 424 with an exact blocker from the LocalCoder status route when nothing runnable', async () => {
+  it('fails closed on the headless LocalCoder status route when nothing runnable', async () => {
     await withBrokenRuntime(async () => {
       const { server, baseUrl } = await createApiServer();
       try {
@@ -490,43 +490,38 @@ describe('coder routes', () => {
     });
   });
 
-  it('returns an exact blocked CoderReport from the LocalCoder run route without launching a coder', async () => {
-    await withBrokenRuntime(async () => {
-      const { server, baseUrl } = await createApiServer();
-      try {
-        const response = await fetch(`${baseUrl}/localcoder/run`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: 'packet-route',
-            projectId: 'project-1',
-            repoPath: process.cwd(),
-            objective: 'Run LocalCoder.',
-            planExcerpt: 'First loop.',
-            contextSummary: 'Route proof.',
-            codeAnchors: ['apps/backend/src/coder'],
-            cbmQueries: ['search_graph LocalCoder'],
-            guardrails: ['No fake success.'],
-            allowedFiles: ['apps/backend/src/coder/**'],
-            forbiddenWork: ['No specs/.'],
-            proofRequired: ['Compile.'],
-            reportFormat: 'CoderReport JSON',
-            stopConditions: ['Stop after one job.'],
-          }),
-        });
-        const payload = await response.json();
-        expect(response.status).toBe(424);
-        expect(payload.ok).toBe(false);
-        expect(payload.report.status).toBe('blocked');
-        expect(payload.report.coderPacketId).toBe('packet-route');
-        expect(payload.report.blockers.join(' ')).toContain(
-          'localcoder_explicit_command_script_not_found',
-        );
-        expect(payload.cbmScopeGate.editAllowed).toBe(true);
-      } finally {
-        await closeServer(server);
-      }
-    });
+  it('permanently fails closed on the deprecated headless run route — it can never launch a coder', async () => {
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/localcoder/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: 'packet-route',
+          projectId: 'project-1',
+          repoPath: process.cwd(),
+          objective: 'Run LocalCoder.',
+          planExcerpt: 'First loop.',
+          contextSummary: 'Route proof.',
+          codeAnchors: ['apps/backend/src/coder'],
+          cbmQueries: ['search_graph LocalCoder'],
+          guardrails: ['No fake success.'],
+          allowedFiles: ['apps/backend/src/coder/**'],
+          forbiddenWork: ['No specs/.'],
+          proofRequired: ['Compile.'],
+          reportFormat: 'CoderReport JSON',
+          stopConditions: ['Stop after one job.'],
+        }),
+      });
+      const payload = await response.json();
+      // One Coder runtime: the former headless route must never launch work —
+      // it fails with an explicit permanent deprecation (decision 1a).
+      expect(response.status).toBe(410);
+      expect(payload.ok).toBe(false);
+      expect(payload.error).toBe('localcoder_run_deprecated');
+    } finally {
+      await closeServer(server);
+    }
   });
 
   it('blocks the LocalCoder route when the structural edit-scope is invalid', async () => {
@@ -549,11 +544,11 @@ describe('coder routes', () => {
       });
       const payload = await response.json();
 
-      expect(response.status).toBe(424);
+      // The route is deprecated (one Coder runtime): it fails closed before
+      // any edit-scope gate could ever matter.
+      expect(response.status).toBe(410);
       expect(payload.ok).toBe(false);
-      expect(payload.report.status).toBe('blocked');
-      expect(payload.report.blockers.join(' ')).toContain('edit_scope_root_not_found');
-      expect(payload.cbmScopeGate.editAllowed).toBe(false);
+      expect(payload.error).toBe('localcoder_run_deprecated');
     } finally {
       await closeServer(server);
     }
@@ -593,7 +588,7 @@ describe('coder routes', () => {
           runId: expect.stringMatching(/^req_/),
           invokingCardId: 'card_main_chat',
           provider: 'openai',
-          providerModelId: 'gpt-5.1-chat-latest',
+          providerModelId: 'gpt-5.3-codex',
         }));
         expect(chatSessionMocks.completeConversationRun).toHaveBeenCalledWith(expect.objectContaining({
           runId: expect.stringMatching(/^req_/),
@@ -624,8 +619,8 @@ describe('coder routes', () => {
           resolved: {
             cardId: 'card_main_chat',
             provider: 'openai',
-            modelKey: 'gpt-5.1-chat-latest',
-            providerModelId: 'gpt-5.1-chat-latest',
+            modelKey: 'gpt-5.3-codex',
+            providerModelId: 'gpt-5.3-codex',
           },
         };
       });

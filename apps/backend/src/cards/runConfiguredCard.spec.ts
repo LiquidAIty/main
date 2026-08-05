@@ -38,12 +38,7 @@ const LOCAL_CODER_CARD = {
   runtimeType: 'local_coder',
   runtimeBinding: 'local_coder',
   prompt: 'You are the Local Coder controller.',
-  runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.1-chat-latest', tools: ['run_local_coder'] },
-};
-
-const STALE_LOCAL_CODER_CARD = {
-  ...LOCAL_CODER_CARD,
-  runtimeOptions: { provider: 'openai', modelKey: 'gpt-5-mini', tools: ['run_local_coder'] },
+  runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.3-codex', tools: ['run_local_coder'] },
 };
 
 function deckWith(nodes: any[], edges: any[] = []) {
@@ -257,9 +252,8 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(JSON.stringify(payload)).not.toContain('stored Markdown');
   });
 
-  it('runs the saved Local Coder card through the same single-card doorway with its configured model and tool', async () => {
+  it('rejects the Local Coder card from the AutoGen single-card doorway — it is not assistant_agent' , async () => {
     mockGetDeck.mockResolvedValue(deckWith([LOCAL_CODER_CARD]));
-    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: '{"status":"succeeded"}' });
 
     const result = await runConfiguredCard({
       ...ARGS,
@@ -267,37 +261,33 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
       input: 'write the bounded plan file',
     });
 
-    expect(result.status).toBe('completed');
+    // The Coder is its own runtime and must never be translated into an
+    // assistant_agent. The AutoGen single-card doorway refuses it; the only
+    // Coder doorway is the canonical run_coder_subagent / console manager.
+    expect(result.status).toBe('not_runnable');
     expect(result.runtimeType).toBe('local_coder');
-    expect(result.tools).toEqual(['run_local_coder']);
-    const payload = mockRunCard.mock.calls[0][0];
-    expect(payload.session.modelProvider).toBe('openai');
-    expect(payload.session.modelKey).toBe('gpt-5.1-chat-latest');
-    expect(payload.session.providerModelId).toBe('gpt-5.1-chat-latest');
-    expect(payload.cardRuntime.runtimeType).toBe('assistant_agent');
-    expect(payload.cardRuntime.participants[0].runtimeBinding).toBe('local_coder');
-    expect(payload.cardRuntime.participants[0].tools).toEqual(['run_local_coder']);
-    expect(payload.cardRuntime.participants[0].prompt).toBe('You are the Local Coder controller.');
+    expect(result.error).toContain('single_card_runtime_not_supported');
+    expect(mockRunCard).not.toHaveBeenCalled();
   });
 
-  it('preserves the card-selected Local Coder model before dispatch — no forced upgrade, no blacklist', async () => {
-    mockGetDeck.mockResolvedValue(deckWith([STALE_LOCAL_CODER_CARD]));
-    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: '{"status":"succeeded"}' });
+  it('preserves an unavailable model as a configuration failure — never a forced substitute', async () => {
+    // A removed/discontinued key is an unknown key at resolution: the card fails
+    // honestly and no replacement model is ever substituted.
+    const unavailableAgentCard = {
+      ...AGENT_CARD,
+      runtimeOptions: { modelKey: 'gpt-5.1-chat-latest' },
+    };
+    mockGetDeck.mockResolvedValue(deckWith([unavailableAgentCard]));
 
     const result = await runConfiguredCard({
       ...ARGS,
-      cardId: 'card_local_coder',
-      input: 'write the bounded plan file',
+      cardId: 'card_saved_worker',
+      input: 'run',
     });
 
-    expect(result.status).toBe('completed');
-    const payload = mockRunCard.mock.calls[0][0];
-    // The card is the authority: whatever model it saved is what dispatches,
-    // never a controller-forced replacement.
-    expect(payload.session.modelKey).toBe('gpt-5-mini');
-    expect(payload.session.providerModelId).toBe('gpt-5-mini');
-    expect(payload.cardRuntime.participants[0].providerModelId).toBe('gpt-5-mini');
-    expect(payload.cardRuntime).not.toHaveProperty('privateParticipants');
+    expect(result.status).toBe('failed');
+    expect(mockRunCard).not.toHaveBeenCalled();
+    expect(String(result.error || '')).toContain('Unknown model key');
   });
 
   it('threads the canonical assignment identity back', async () => {

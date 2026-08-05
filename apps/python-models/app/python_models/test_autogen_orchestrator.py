@@ -9,13 +9,13 @@ import pytest
 from app.python_models.autogen_orchestrator import orchestrate_context_pack
 from app.python_models.orchestration_contracts import ContextPack, ProjectSession
 
-MODEL = "openai/gpt-5.1-chat"
+MODEL = "openai/gpt-5.6-luna"
 
 
 def _session() -> ProjectSession:
     return ProjectSession(
         sessionId="s", projectId="p", turnId="t", route="r",
-        modelProvider="openrouter", modelKey="gpt-5.1-chat", providerModelId=MODEL,
+        modelProvider="openrouter", modelKey="gpt-5.6-luna", providerModelId=MODEL,
         startedAt="now",
     )
 

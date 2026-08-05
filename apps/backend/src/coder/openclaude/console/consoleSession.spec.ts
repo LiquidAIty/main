@@ -343,7 +343,7 @@ describe('resolveConsoleProviderEnv', () => {
       OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',
       OPENROUTER_DEFAULT_MODEL: 'kimi-k2-thinking',
       OPENAI_API_KEY: 'sk-openai-abc123def456',
-      OPENAI_MODEL: 'gpt-5.1-chat-latest',
+      OPENAI_MODEL: 'gpt-5.3-codex',
     }, 'openai');
     expect(r?.label).toBe('openai');
     expect(r?.envOverrides.OPENAI_BASE_URL).toBeUndefined();
@@ -379,7 +379,7 @@ describe('OpenClaudeConsoleSessionManager OpenRouter routing', () => {
       env: {
         LIVE_OPENROUTER: '1',
         OPENAI_API_KEY: 'sk-openai-secretkey',
-        OPENAI_MODEL: 'gpt-5.1-chat-latest',
+        OPENAI_MODEL: 'gpt-5.3-codex',
         OPENROUTER_API_KEY: 'sk-or-secretrouterkey',
         OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',
         OPENROUTER_DEFAULT_MODEL: 'kimi-k2-thinking',
@@ -389,19 +389,19 @@ describe('OpenClaudeConsoleSessionManager OpenRouter routing', () => {
     });
     const result = manager.start({
       provider: 'openai',
-      model: 'gpt-5.1-chat-latest',
+      model: 'gpt-5.3-codex',
       targetRoot: tmpdir(),
       mode: 'interactive',
     });
     if (!result.ok) throw new Error('expected ok');
     expect(result.session.info.provider).toBe('openai');
-    expect(result.session.info.model).toBe('gpt-5.1-chat-latest');
+    expect(result.session.info.model).toBe('gpt-5.3-codex');
     const [, args, options] = spawnProcess.mock.calls[0];
     expect(args).toContain('--model');
-    expect(args[args.indexOf('--model') + 1]).toBe('gpt-5.1-chat-latest');
+    expect(args[args.indexOf('--model') + 1]).toBe('gpt-5.3-codex');
     expect(options.env.OPENAI_BASE_URL).toBeUndefined();
     expect(options.env.OPENAI_API_KEY).toBe('sk-openai-secretkey');
-    expect(options.env.OPENAI_MODEL).toBe('gpt-5.1-chat-latest');
+    expect(options.env.OPENAI_MODEL).toBe('gpt-5.3-codex');
   });
 
   it('points the child at OpenRouter when explicitly requested and reports the resolved provider/model', () => {
@@ -419,20 +419,20 @@ describe('OpenClaudeConsoleSessionManager OpenRouter routing', () => {
     });
     const result = manager.start({
       provider: 'openrouter',
-      model: 'openai/gpt-5.1-chat',
+      model: 'openai/gpt-5.6-luna',
       targetRoot: tmpdir(),
       mode: 'interactive',
     });
     if (!result.ok) throw new Error('expected ok');
     expect(result.session.info.provider).toBe('openrouter');
-    expect(result.session.info.model).toBe('openai/gpt-5.1-chat');
+    expect(result.session.info.model).toBe('openai/gpt-5.6-luna');
     const [, args, options] = spawnProcess.mock.calls[0];
     expect(args).toContain('--model');
-    expect(args[args.indexOf('--model') + 1]).toBe('openai/gpt-5.1-chat');
+    expect(args[args.indexOf('--model') + 1]).toBe('openai/gpt-5.6-luna');
     expect(args[args.indexOf('--provider') + 1]).toBe('openai');
     expect(options.env.OPENAI_BASE_URL).toBe('https://openrouter.ai/api/v1');
     expect(options.env.OPENAI_API_KEY).toBe('sk-or-secretrouterkey');
-    expect(options.env.OPENAI_MODEL).toBe('openai/gpt-5.1-chat');
+    expect(options.env.OPENAI_MODEL).toBe('openai/gpt-5.6-luna');
   });
 
   it('submitLine writes the text immediately and Enter as a separate keystroke', () => {

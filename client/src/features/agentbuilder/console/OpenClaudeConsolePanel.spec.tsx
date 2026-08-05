@@ -109,7 +109,7 @@ describe('OpenClaudeConsolePanel', () => {
         open
         targetRoot="C:/Projects/main"
         provider="openai"
-        model="gpt-5.1-chat-latest"
+        model="gpt-5.3-codex"
         client={client}
       />,
     );
@@ -122,7 +122,7 @@ describe('OpenClaudeConsolePanel', () => {
         targetRoot: 'C:/Projects/main',
         mode: 'interactive',
         provider: 'openai',
-        model: 'gpt-5.1-chat-latest',
+        model: 'gpt-5.3-codex',
       }),
     );
   });

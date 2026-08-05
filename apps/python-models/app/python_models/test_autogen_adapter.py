@@ -20,7 +20,7 @@ from app.python_models.orchestration_contracts import (
     ProjectSession,
 )
 
-MODEL = "openai/gpt-5.1-chat"
+MODEL = "openai/gpt-5.6-luna"
 
 
 @pytest.mark.parametrize("max_tokens", [0, -1])
@@ -56,7 +56,7 @@ def _tools_context(tool_ids: list[str]) -> ContextPack:
     return ContextPack(
         session=ProjectSession(
             sessionId="s", projectId="p", turnId="t", route="r",
-            modelProvider="openrouter", modelKey="gpt-5.1-chat", providerModelId=MODEL,
+            modelProvider="openrouter", modelKey="gpt-5.6-luna", providerModelId=MODEL,
             startedAt="now",
         ),
         userText="hi",
@@ -77,7 +77,7 @@ def _context_pack(user_text: str) -> ContextPack:
     return ContextPack(
         session=ProjectSession(
             sessionId="s", projectId="p", turnId="t", route="r",
-            modelProvider="openrouter", modelKey="gpt-5.1-chat", providerModelId=MODEL,
+            modelProvider="openrouter", modelKey="gpt-5.6-luna", providerModelId=MODEL,
             startedAt="now",
         ),
         userText=user_text,
