@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type {
   AgentCardRuntimeOptions,
@@ -84,9 +84,12 @@ interface AgentManagerProps {
   }) => void;
   promptTestInput?: string;
   onChangePromptTestInput?: (value: string) => void;
-  onRunPromptTest?: () => void;
-  promptTestBusy?: boolean;
-  promptTestDisabled?: boolean;
+  onRunCard?: () => void;
+  runBusy?: boolean;
+  runDisabled?: boolean;
+  runResult?: StandaloneCardTestResult | null;
+  saveDeckStatusMessage?: string | null;
+  openDeckRevision?: string | null;
   cardName?: string;
   cardSubtext?: string;
   onChangeCardName?: (value: string) => void;
@@ -107,6 +110,19 @@ export type AgentManagerLocalConfig = {
   prompt_template?: string | null;
   tools?: unknown[];
 };
+
+export type StandaloneCardTestResult = {
+  status: string;
+  output: string;
+  error: string | null;
+  toolCallCount?: number | null;
+  tools: string[];
+  provider?: string | null;
+  model?: string | null;
+  runtimeType?: string | null;
+};
+
+type SaveCardStatus = 'idle' | 'saving' | 'saved' | 'failed';
 
 function parsePromptTemplate(template: string): {
   role: string;
@@ -232,9 +248,12 @@ export function AgentManager({
   activeTab,
   promptTestInput,
   onChangePromptTestInput,
-  onRunPromptTest,
-  promptTestBusy = false,
-  promptTestDisabled = false,
+  onRunCard,
+  runBusy = false,
+  runDisabled = false,
+  runResult = null,
+  saveDeckStatusMessage = null,
+  openDeckRevision = null,
   cardName = '',
   cardSubtext = '',
   onChangeCardName,
@@ -243,6 +262,11 @@ export function AgentManager({
   onSaveLocalConfig,
 }: AgentManagerProps) {
   const isLocalConfigMode = Boolean(localConfig && onSaveLocalConfig);
+  const [saveCardStatus, setSaveCardStatus] = useState<SaveCardStatus>('idle');
+  const [saveCardErrorMessage, setSaveCardErrorMessage] = useState<string | null>(null);
+  const saveCardResetTimerRef = useRef<number | null>(null);
+  const saveCardStatusRef = useRef<SaveCardStatus>('idle');
+  saveCardStatusRef.current = saveCardStatus;
   const [runtimeBinding, setRuntimeBinding] = useState<RuntimeBinding | ''>('');
   const [cardNameDraft, setCardNameDraft] = useState(cardName);
   const [cardSubtextDraft, setCardSubtextDraft] = useState(cardSubtext);
@@ -322,6 +346,13 @@ export function AgentManager({
   useEffect(() => {
     if (!isLocalConfigMode || !localConfig) return;
     draftDirtyRef.current = false;
+    saveRevisionAtStartRef.current = null;
+    if (saveCardResetTimerRef.current != null) {
+      window.clearTimeout(saveCardResetTimerRef.current);
+      saveCardResetTimerRef.current = null;
+    }
+    setSaveCardStatus('idle');
+    setSaveCardErrorMessage(null);
     setRuntimeBinding(localConfig.runtime_binding || '');
     setProvider(
       localConfig.provider === 'openai' || localConfig.provider === 'openrouter'
@@ -346,6 +377,114 @@ export function AgentManager({
   const markDraftDirty = () => {
     draftDirtyRef.current = true;
   };
+
+  const runSaveConfig = useCallback(async () => {
+    if (!isLocalConfigMode || !localConfig || !onSaveLocalConfig) return;
+    if (saveCardStatus === 'saving') return;
+    const editedConfig = buildActiveAgentManagerLocalConfig({
+      runtimeBinding,
+      provider,
+      modelKey,
+      temperature,
+      maxTokens,
+      promptTemplate: promptPartsTouched ? serializePromptFields(promptParts) : promptText,
+      toolsText,
+    });
+    const payload = {
+      ...localConfig,
+      ...editedConfig,
+      provider:
+        provider ||
+        (localConfig.provider === 'local_openai_compatible'
+          ? 'local_openai_compatible'
+          : editedConfig.provider),
+    };
+    if (saveCardResetTimerRef.current != null) {
+      window.clearTimeout(saveCardResetTimerRef.current);
+      saveCardResetTimerRef.current = null;
+    }
+    setSaveCardStatus('saving');
+    setSaveCardErrorMessage(null);
+    try {
+      await Promise.resolve(onSaveLocalConfig(payload));
+      // Persistence readback is confirmed downstream by the deck save (CAS +
+      // expectedRevision). Watch openDeckRevision / saveDeckStatusMessage; if a
+      // failure/conflict surfaces, flip to failed; a revision advance means the
+      // server confirmed the write. A short fallback covers the no-op save where
+      // the fingerprint is unchanged and no new revision is minted.
+    } catch (error) {
+      setSaveCardStatus('failed');
+      setSaveCardErrorMessage(
+        error instanceof Error && error.message ? error.message : 'Save failed.',
+      );
+    }
+  }, [
+    isLocalConfigMode,
+    localConfig,
+    onSaveLocalConfig,
+    saveCardStatus,
+    runtimeBinding,
+    provider,
+    modelKey,
+    temperature,
+    maxTokens,
+    promptPartsTouched,
+    promptParts,
+    promptText,
+    toolsText,
+  ]);
+
+  const saveRevisionAtStartRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (saveCardStatus !== 'saving') return;
+    if (saveRevisionAtStartRef.current === null) {
+      saveRevisionAtStartRef.current = openDeckRevision ?? null;
+    }
+    const failedSurface =
+      saveDeckStatusMessage &&
+      /(could not save|deck_conflict|failed)/i.test(saveDeckStatusMessage)
+        ? saveDeckStatusMessage
+        : null;
+    if (failedSurface) {
+      setSaveCardStatus('failed');
+      setSaveCardErrorMessage(failedSurface);
+      return;
+    }
+    if (openDeckRevision && openDeckRevision !== saveRevisionAtStartRef.current) {
+      setSaveCardStatus('saved');
+      if (saveCardResetTimerRef.current != null) {
+        window.clearTimeout(saveCardResetTimerRef.current);
+      }
+      saveCardResetTimerRef.current = window.setTimeout(() => {
+        setSaveCardStatus('idle');
+        saveCardResetTimerRef.current = null;
+      }, 1500);
+    }
+  }, [saveCardStatus, openDeckRevision, saveDeckStatusMessage]);
+
+  // No-op / same-fingerprint saves won't mint a new revision; if no failure
+  // surfaced and the canonical config save resolved, settle on saved.
+  useEffect(() => {
+    if (saveCardStatus !== 'saving') return;
+    const timer = window.setTimeout(() => {
+      if (saveCardStatusRef.current !== 'saving') return;
+      if (
+        saveDeckStatusMessage &&
+        /(could not save|deck_conflict|failed)/i.test(saveDeckStatusMessage)
+      ) {
+        setSaveCardStatus('failed');
+        setSaveCardErrorMessage(saveDeckStatusMessage);
+        return;
+      }
+      setSaveCardStatus('saved');
+      saveCardResetTimerRef.current = window.setTimeout(() => {
+        setSaveCardStatus('idle');
+        saveCardResetTimerRef.current = null;
+      }, 1500);
+    }, 1200);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saveCardStatus, saveDeckStatusMessage]);
 
   useEffect(() => {
     if (!isLocalConfigMode || !localConfig || !onSaveLocalConfig || !draftDirtyRef.current) {
@@ -589,50 +728,6 @@ export function AgentManager({
             />
           </div>
 
-          {onChangePromptTestInput && onRunPromptTest && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-              <label style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-                Test Input
-              </label>
-              <textarea
-                value={promptTestInput || ''}
-                onChange={(event) => onChangePromptTestInput(event.target.value)}
-                rows={6}
-                style={{
-                  width: '100%',
-                  padding: 10,
-                  background: '#2B2B2B',
-                  color: '#FFF',
-                  border: '1px solid #3A3A3A',
-                  borderRadius: 8,
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                  resize: 'vertical',
-                }}
-              />
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <button
-                  onClick={onRunPromptTest}
-                  disabled={promptTestDisabled || promptTestBusy || !String(promptTestInput || '').trim()}
-                  style={{
-                    padding: '10px 12px',
-                    background: promptTestBusy ? '#3A3A3A' : '#4FA2AD',
-                    color: '#FFF',
-                    border: 'none',
-                    borderRadius: 8,
-                    cursor:
-                      promptTestDisabled || promptTestBusy || !String(promptTestInput || '').trim()
-                        ? 'not-allowed'
-                        : 'pointer',
-                    fontSize: 13,
-                    fontWeight: 600,
-                  }}
-                >
-                  {promptTestBusy ? 'Running...' : 'Run Test'}
-                </button>
-              </div>
-              </div>
-          )}
         </div>
       );
     }
@@ -784,6 +879,146 @@ export function AgentManager({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {sectionBody}
+
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10,
+          padding: '10px 12px',
+          borderRadius: 8,
+          border: '1px solid #3A4A4F',
+          background: '#222625',
+        }}
+      >
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => void runSaveConfig()}
+            disabled={saveCardStatus === 'saving' || !onSaveLocalConfig}
+            aria-busy={saveCardStatus === 'saving'}
+            data-testid="agent-manager-save"
+            style={{
+              padding: '8px 14px',
+              background:
+                saveCardStatus === 'saving'
+                  ? '#3A3A3A'
+                  : saveCardStatus === 'saved'
+                    ? '#1D3A2F'
+                    : saveCardStatus === 'failed'
+                      ? '#4A2525'
+                      : '#4FA2AD',
+              color: '#FFF',
+              border: '1px solid #3A4A4F',
+              borderRadius: 8,
+              cursor: saveCardStatus === 'saving' ? 'progress' : 'pointer',
+              fontSize: 13,
+              fontWeight: 600,
+            }}
+          >
+            {saveCardStatus === 'saving' ? 'Saving…' : saveCardStatus === 'saved' ? 'Saved' : 'Save'}
+          </button>
+          {saveCardStatus === 'failed' && saveCardErrorMessage ? (
+            <span role="alert" data-testid="agent-manager-save-error" style={{ color: '#FFA2A2', fontSize: 11.5 }}>
+              {saveCardErrorMessage}
+            </span>
+          ) : null}
+          {saveDeckStatusMessage ? (
+            <span style={{ color: '#80969F', fontSize: 11 }}>{saveDeckStatusMessage}</span>
+          ) : null}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <label style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Run input</label>
+          <textarea
+            aria-label="Run input"
+            value={promptTestInput || ''}
+            onChange={(event) => onChangePromptTestInput?.(event.target.value)}
+            rows={5}
+            style={{
+              width: '100%',
+              padding: 10,
+              background: '#2B2B2B',
+              color: '#FFF',
+              border: '1px solid #3A3A3A',
+              borderRadius: 8,
+              fontFamily: 'monospace',
+              fontSize: 12,
+              resize: 'vertical',
+            }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              onClick={onRunCard}
+              disabled={runDisabled || runBusy || !String(promptTestInput || '').trim()}
+              aria-busy={runBusy}
+              data-testid="agent-manager-run"
+              style={{
+                padding: '8px 14px',
+                background: runBusy ? '#3A3A3A' : '#4FA2AD',
+                color: '#FFF',
+                border: '1px solid #3A4A4F',
+                borderRadius: 8,
+                cursor:
+                  runDisabled || runBusy || !String(promptTestInput || '').trim()
+                    ? 'not-allowed'
+                    : 'pointer',
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              {runBusy ? 'Running…' : 'Run'}
+            </button>
+          </div>
+        </div>
+
+        {runResult ? (
+          <div
+            data-testid="agent-manager-run-result"
+            style={{ display: 'grid', gap: 6, fontSize: 11.5 }}
+          >
+            <div style={{ color: '#D5E4E8' }}>
+              Status: {runResult.status || 'completed'}
+              {runResult.provider || runResult.model || runResult.runtimeType
+                ? ` · ${[runResult.provider, runResult.model, runResult.runtimeType]
+                    .filter(Boolean)
+                    .join(' · ')}`
+                : ''}
+            </div>
+            {runResult.tools.length > 0 ? (
+              <div style={{ color: '#80969F' }}>
+                Tools granted: {runResult.tools.join(', ')}
+              </div>
+            ) : null}
+            {runResult.toolCallCount !== undefined && runResult.toolCallCount !== null ? (
+              <div style={{ color: '#80969F' }}>Tool calls: {runResult.toolCallCount}</div>
+            ) : null}
+            {runResult.output ? (
+              <pre
+                style={{
+                  margin: 0,
+                  padding: 8,
+                  background: '#1B1B1B',
+                  color: '#D9E4E8',
+                  borderRadius: 6,
+                  whiteSpace: 'pre-wrap',
+                  overflowWrap: 'anywhere',
+                  maxHeight: 240,
+                  overflowY: 'auto',
+                }}
+              >
+                {runResult.output}
+              </pre>
+            ) : null}
+            {runResult.error ? (
+              <div role="alert" style={{ color: '#FFA2A2' }}>
+                {runResult.error}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

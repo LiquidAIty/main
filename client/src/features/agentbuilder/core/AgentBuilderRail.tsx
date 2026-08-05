@@ -23,6 +23,7 @@ type AgentBuilderRailProps = {
   moonOrb: ReactNode;
   onShowWorldsignalWorkspace: () => void;
   onShowCanvasWorkspace: () => void;
+  onQuickAddAssistNode: () => void;
   onShowKnowledgeWorkspace: () => void;
   onShowTradingWorkspace: () => void;
   onOpenNavigationDrawer: () => void;
@@ -73,6 +74,7 @@ export default function AgentBuilderRail({
   moonOrb,
   onShowWorldsignalWorkspace,
   onShowCanvasWorkspace,
+  onQuickAddAssistNode,
   onShowKnowledgeWorkspace,
   onShowTradingWorkspace,
   onOpenNavigationDrawer,
@@ -118,9 +120,16 @@ export default function AgentBuilderRail({
         title="Agents"
         aria-label="Agents"
         data-testid="rail-plus-button"
-        // Camera rail: focus the agent/bus zone on the single unified canvas. Never
-        // swaps node sets and never quick-adds (quick-add cleared the task overlay).
-        onClick={onShowCanvasWorkspace}
+        // Hex-plus restores the canonical quick-add: on the Agent Canvas it
+        // creates one new editable Assistant Agent card right away. Off-canvas
+        // it first switches to the canvas workspace.
+        onClick={() => {
+          if (workspaceView === 'canvas') {
+            onQuickAddAssistNode();
+          } else {
+            onShowCanvasWorkspace();
+          }
+        }}
         className="p-2 rounded"
         style={{ color: workspaceView === 'canvas' ? colors.primary : colors.text }}
       >

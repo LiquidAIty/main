@@ -34,7 +34,22 @@ describe('AgentManager active builder config', () => {
     });
   });
 
-  it('restores the existing card identity fields without adding another persistence path', () => {
+  it('restores the canonical Save and Run actions without the regressed Run Test', () => {
+    const filePath = path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx');
+    const source = readFileSync(filePath, 'utf8');
+
+    // Restored first-class card editor contract: Save and Run are separate,
+    // exact-label, production actions.
+    expect(source).toContain("data-testid=\"agent-manager-save\"");
+    expect(source).toContain("data-testid=\"agent-manager-run\"");
+    expect(source).toContain("'Save'");
+    expect(source).toContain("'Run'");
+    // The regressed half-state is gone: no Run Test, no Save Card substitute.
+    expect(source).not.toContain('Run Test');
+    expect(source).not.toContain('Save Card');
+  });
+
+  it('keeps the card identity fields without adding another persistence path', () => {
     const filePath = path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx');
     const source = readFileSync(filePath, 'utf8');
 
@@ -49,7 +64,6 @@ describe('AgentManager active builder config', () => {
     expect(source).not.toContain('Advanced');
     expect(source).not.toContain('GlassInspectorSection');
     expect(source).not.toContain('roleBadge');
-    expect(source).not.toContain('Save Card');
     expect(source).not.toContain('>Temperature<');
     expect(source).not.toContain('>Max Tokens<');
   });

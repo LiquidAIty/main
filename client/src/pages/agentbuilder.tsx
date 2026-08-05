@@ -60,6 +60,7 @@ import {
 } from '../features/agentbuilder/deck/newProjectDeck';
 import {
   buildProjectlessDeckDocument,
+  buildQuickAddAssistCard,
   formatBuilderStatusMessage,
   readDeckDocument,
   resolveLocalCoderControllerConsoleConfig,
@@ -91,6 +92,7 @@ const AgentManager = lazy(async () => {
   const mod = await import('../components/AgentManager');
   return { default: mod.AgentManager };
 });
+import type { StandaloneCardTestResult } from '../components/AgentManager';
 import { resolveCbmProjectName } from '../components/codegraph/resolveCodeGraphProjectIdentity';
 
 // AgentPage (MVP): left icon rail + main chat + right tabs (Plan, Links, Knowledge, Dashboard)
@@ -207,12 +209,6 @@ export function getStandaloneCardUnavailableReason(
   }
   if (card.runtimeBinding === 'main_chat') {
     return 'Main uses the persistent Harness conversation and is not tested as an isolated card.';
-  }
-  if (card.runtimeBinding === 'hermes_steward') {
-    return 'Hermes uses its native foreground-agent and Code Console boundaries, not the saved-card test route.';
-  }
-  if (card.runtimeBinding === 'local_coder') {
-    return 'Coder uses the visible OpenClaude Code console and is not tested through the AutoGen single-card route.';
   }
   if (card.runtimeBinding === 'trading_agent') {
     return 'Trading Agent is a workspace gateway; its saved configuration forbids a backend model run.';
@@ -570,6 +566,7 @@ export default function AgentBuilder(): React.ReactElement {
   });
   const [standaloneTestPrompt, setStandaloneTestPrompt] = useState('');
   const [standaloneTestBusy, setStandaloneTestBusy] = useState(false);
+  const [standaloneTestResult, setStandaloneTestResult] = useState<StandaloneCardTestResult | null>(null);
   const standaloneTestRequestRef = useRef<string | null>(null);
   const standaloneTestUnavailableReason = useMemo(
     () => getStandaloneCardUnavailableReason(selectedCard),
@@ -582,6 +579,7 @@ export default function AgentBuilder(): React.ReactElement {
     standaloneTestRequestRef.current = null;
     setStandaloneTestPrompt('');
     setStandaloneTestBusy(false);
+    setStandaloneTestResult(null);
   }, [selectedCardId]);
 
   const runStandaloneCardTest = useCallback(async () => {
@@ -598,6 +596,7 @@ export default function AgentBuilder(): React.ReactElement {
     const correlationId = `card-test-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
     standaloneTestRequestRef.current = correlationId;
     setStandaloneTestBusy(true);
+    setStandaloneTestResult(null);
     try {
       const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
         method: 'POST',
@@ -620,6 +619,21 @@ export default function AgentBuilder(): React.ReactElement {
         );
       }
       if (standaloneTestRequestRef.current === correlationId) {
+        setStandaloneTestResult({
+          status: String(result.status || (response.ok ? 'completed' : 'failed')),
+          output: String(result.output || ''),
+          error: result.error ? String(result.error) : null,
+          toolCallCount:
+            typeof result.toolCallCount === 'number' ? result.toolCallCount : null,
+          tools: Array.isArray(result.tools)
+            ? result.tools.map((tool: unknown) => String(tool))
+            : [],
+          provider: selectedCard.runtimeOptions?.provider || null,
+          model: selectedCard.runtimeOptions?.modelKey || null,
+          runtimeType: result.runtimeType
+            ? String(result.runtimeType)
+            : selectedCard.runtimeType || null,
+        });
         setDeckStatusMessage(
           result.error
             ? String(result.error)
@@ -628,6 +642,17 @@ export default function AgentBuilder(): React.ReactElement {
       }
     } catch (error) {
       if (standaloneTestRequestRef.current === correlationId) {
+        setStandaloneTestResult({
+          status: 'failed',
+          output: '',
+          error:
+            error instanceof Error ? error.message : 'Standalone card test failed.',
+          toolCallCount: null,
+          tools: [],
+          provider: selectedCard.runtimeOptions?.provider || null,
+          model: selectedCard.runtimeOptions?.modelKey || null,
+          runtimeType: selectedCard.runtimeType || null,
+        });
         setDeckStatusMessage(
           error instanceof Error ? error.message : 'Standalone card test failed.',
         );
@@ -702,6 +727,40 @@ export default function AgentBuilder(): React.ReactElement {
     if (workspaceView !== 'canvas') return;
     recordUiOnlyAction('drawer-toggle');
   }, [openDrawer, recordUiOnlyAction, workspaceView]);
+
+  const handleQuickAddAssistNode = useCallback(() => {
+    if (!deck) return;
+    const { nextDeck, nextNode } = buildQuickAddAssistCard(deck);
+    recordDeckWriteReason('deck-quick-add');
+    setDeck(nextDeck);
+    setSelectedEdgeId(null);
+    setInspectorDrawerOpen(false);
+    // Select and open the new card's editor immediately.
+    setSelectedCardId(nextNode.id);
+    setBuilderCanvasFocusRequest((current) => ({
+      kind: 'card',
+      cardId: nextNode.id,
+      nonce: (current?.nonce || 0) + 1,
+    }));
+    setInspectorDrawerOpen(true);
+    if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) {
+      setTab('Prompt');
+    }
+    setDeckStatusMessage(
+      `Added ${nextNode.title} to the canvas. Open its editor to configure it.`,
+    );
+  }, [
+    BUILDER_NODE_TABS,
+    deck,
+    recordDeckWriteReason,
+    setBuilderCanvasFocusRequest,
+    setDeck,
+    setDeckStatusMessage,
+    setInspectorDrawerOpen,
+    setSelectedCardId,
+    setSelectedEdgeId,
+    tab,
+  ]);
 
   const handleSelectCard = useCallback(
     (cardId: string | null) => {
@@ -861,15 +920,14 @@ export default function AgentBuilder(): React.ReactElement {
                     localConfig={selectedCardConfig}
                     promptTestInput={standaloneTestPrompt}
                     onChangePromptTestInput={setStandaloneTestPrompt}
-                    onRunPromptTest={() => {
+                    onRunCard={() => {
                       void runStandaloneCardTest();
                     }}
-                    promptTestBusy={standaloneTestBusy}
-                    promptTestDisabled={
-                      !showStandaloneTestControls ||
-                      Boolean(standaloneTestUnavailableReason) ||
-                      standaloneTestBusy
-                    }
+                    runBusy={standaloneTestBusy}
+                    runDisabled={!showStandaloneTestControls}
+                    runResult={standaloneTestResult}
+                    saveDeckStatusMessage={deckStatusMessage}
+                    openDeckRevision={deckRevision}
                     onSaveLocalConfig={handleSaveSelectedCardConfig}
                     onGraphRefresh={() => {
                       // no-op
@@ -1140,6 +1198,7 @@ export default function AgentBuilder(): React.ReactElement {
       moonOrb={<BuilderRailMoonOrb phase01={moonPhase01} />}
       onShowWorldsignalWorkspace={showWorldsignalWorkspace}
       onShowCanvasWorkspace={showCanvasWorkspace}
+      onQuickAddAssistNode={handleQuickAddAssistNode}
       onShowKnowledgeWorkspace={showKnowledgeWorkspace}
       onShowTradingWorkspace={showTradingWorkspace}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}

@@ -19,6 +19,7 @@ const baseProps = {
   moonOrb: null,
   onShowWorldsignalWorkspace: () => undefined,
   onShowCanvasWorkspace: () => undefined,
+  onQuickAddAssistNode: () => undefined,
   onShowKnowledgeWorkspace: () => undefined,
   onShowTradingWorkspace: () => undefined,
   onOpenNavigationDrawer: () => undefined,
@@ -42,6 +43,53 @@ function render(node: React.ReactElement) {
   });
   return container;
 }
+
+describe('AgentBuilderRail hex-plus quick-add', () => {
+  it('shows the hex-plus Agents control', () => {
+    const host = render(<AgentBuilderRail {...baseProps} visibleRailItems={baseVisibility} />);
+    const button = host.querySelector('[data-testid="rail-plus-button"]') as HTMLButtonElement;
+    expect(button).not.toBeNull();
+    expect(button.getAttribute('aria-label')).toBe('Agents');
+  });
+
+  it('creates a new Agent Card when clicked on the canvas (one invocation)', () => {
+    const onQuickAdd = vi.fn();
+    const host = render(
+      <AgentBuilderRail
+        {...baseProps}
+        workspaceView="canvas"
+        visibleRailItems={baseVisibility}
+        onQuickAddAssistNode={onQuickAdd}
+      />,
+    );
+    const button = host.querySelector('[data-testid="rail-plus-button"]') as HTMLButtonElement;
+    act(() => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(onQuickAdd).toHaveBeenCalledTimes(2);
+  });
+
+  it('switches to the canvas first when clicked from another workspace', () => {
+    const onQuickAdd = vi.fn();
+    const onShowCanvas = vi.fn();
+    const host = render(
+      <AgentBuilderRail
+        {...baseProps}
+        workspaceView="knowledge"
+        visibleRailItems={baseVisibility}
+        onQuickAddAssistNode={onQuickAdd}
+        onShowCanvasWorkspace={onShowCanvas}
+      />,
+    );
+    const button = host.querySelector('[data-testid="rail-plus-button"]') as HTMLButtonElement;
+    act(() => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(onQuickAdd).not.toHaveBeenCalled();
+    expect(onShowCanvas).toHaveBeenCalledOnce();
+  });
+});
 
 describe('AgentBuilderRail Hermes terminal icon', () => {
   it('shows the graph launcher with the stable rail treatment', () => {
