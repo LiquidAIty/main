@@ -24,6 +24,39 @@ describe('saved GPT comparison models', () => {
   });
 });
 
+// Canonical DeepSeek model — same saved-card validation path as any other
+// OpenRouter entry; no override logic, no OpenAI fallback.
+describe('canonical DeepSeek V4 Flash 0731 card contract', () => {
+  it('resolves through the saved OpenRouter card contract', () => {
+    expect(
+      resolveCardModelStrict({
+        id: 'card_deepseek',
+        runtimeType: 'assistant_agent',
+        runtimeOptions: {
+          provider: 'openrouter',
+          modelKey: 'deepseek/deepseek-v4-flash-0731',
+        },
+      }),
+    ).toEqual({
+      provider: 'openrouter',
+      providerModelId: 'deepseek/deepseek-v4-flash-0731',
+    });
+  });
+
+  it('rejects an OpenRouter selection that mismatches the saved provider', () => {
+    expect(() =>
+      resolveCardModelStrict({
+        id: 'card_deepseek',
+        runtimeType: 'assistant_agent',
+        runtimeOptions: {
+          provider: 'openai',
+          modelKey: 'deepseek/deepseek-v4-flash-0731',
+        },
+      }),
+    ).toThrow(/card_model_config_mismatch/);
+  });
+});
+
 // C-1 regressed twice because an unrecognised edgeType silently normalised to
 // 'flow' — the one type that grants invocation authority. These lock that shut.
 describe('Edge authority: only an explicit type grants anything', () => {
