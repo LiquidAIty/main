@@ -68,6 +68,7 @@ function TabRow({
   onSelect: (id: string) => void;
   testPrefix: string;
 }) {
+  // Same tab treatment as the Agent Card editor / WorldSignals inspector.
   return (
     <div
       className="flex min-w-0 flex-wrap"
@@ -139,10 +140,10 @@ export default function HermesKanbanInspector({
 
   const title =
     mode === 'task' && taskShow
-      ? `Hermes · ${taskShow.task.title || taskShow.task.id}`
+      ? taskShow.task.title || taskShow.task.id
       : mode === 'worker'
-        ? 'Hermes · Worker'
-        : 'Hermes · Board';
+        ? 'Worker'
+        : 'Details';
 
   // When a new task is selected, reset service-mode tabs to their first tab.
   useEffect(() => {
@@ -167,6 +168,8 @@ export default function HermesKanbanInspector({
       minWidth={300}
       maxWidth={560}
       storageKey="liquidaity.drawer.inspector.hermeskanban.v1.width"
+      collapsedLabel={null}
+      openAriaLabel="Open inspector"
       top={16}
       right={8}
       bottom={8}

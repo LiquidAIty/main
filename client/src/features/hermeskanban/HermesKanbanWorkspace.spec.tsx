@@ -178,15 +178,23 @@ describe('HermesKanbanWorkspace — boards and lanes', () => {
     act(() => root.unmount());
   });
 
-  it('renders the Hermes heading, board selector, gateway status and Add Task', async () => {
+  it('renders a minimal header: board selector, search, gateway health, add task, inspector toggle — without branding', async () => {
     renderWorkspace();
     await flush();
     const host = container as HTMLDivElement;
-    expect(host.querySelector('[data-testid="hermes-kanban-header"]')?.textContent).toContain('Hermes');
+    const header = host.querySelector('[data-testid="hermes-kanban-header"]');
+    expect(header).not.toBeNull();
+    expect(header?.textContent).not.toContain('Hermes');
     expect(host.querySelector('[data-testid="hermes-kanban-board-select"]')).not.toBeNull();
     const gw = host.querySelector('[data-testid="hermes-kanban-gateway-status"]');
-    expect(gw?.textContent).toContain('Gateway');
-    expect(host.querySelector('[data-testid="hermes-kanban-add-task"]')).not.toBeNull();
+    expect(gw).not.toBeNull();
+    expect(gw?.getAttribute('aria-label')).toContain('Gateway');
+    const add = host.querySelector('[data-testid="hermes-kanban-add-task"]') as HTMLButtonElement;
+    expect(add).not.toBeNull();
+    expect(add.getAttribute('aria-label')).toBe('Add task');
+    const toggle = host.querySelector('[data-testid="hermes-kanban-inspector-toggle"]') as HTMLButtonElement;
+    expect(toggle).not.toBeNull();
+    expect(toggle.getAttribute('aria-label')).toContain('inspector');
   });
 });
 

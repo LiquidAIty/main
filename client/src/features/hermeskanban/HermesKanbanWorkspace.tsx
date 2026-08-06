@@ -421,33 +421,29 @@ export default function HermesKanbanWorkspace({
         background: GRAPH_THEME.background.agentSurface,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px 6px' }}>
-        <div
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            color: GRAPH_THEME.surface.mutedText,
-          }}
-        >
-          Hermes Kanban · live native board
-        </div>
+      <div style={{ position: 'absolute', top: 8, right: 10, zIndex: 20 }}>
         <button
           type="button"
           data-testid="hermes-kanban-close"
+          aria-label="Close board workspace"
+          title="Close board workspace"
           onClick={onClose}
           style={{
-            marginLeft: 'auto',
-            padding: '4px 9px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 26,
+            height: 26,
             borderRadius: 6,
             border: '1px solid rgba(167,176,186,0.28)',
-            background: 'transparent',
+            background: 'rgba(11,14,18,0.5)',
             color: GRAPH_THEME.surface.mutedText,
-            fontSize: 10,
-            fontWeight: 700,
+            fontSize: 14,
+            lineHeight: 1,
             cursor: 'pointer',
           }}
         >
-          ✕ Close
+          <span aria-hidden="true">✕</span>
         </button>
       </div>
 
@@ -465,12 +461,10 @@ export default function HermesKanbanWorkspace({
         currentBoard={currentBoard}
         onBoardChange={handleBoardChange}
         tasks={tasks}
-        stats={stats}
         search={search}
         onSearchChange={setSearch}
         gatewayRunning={gatewayRunning}
         gatewayChecked={gatewayChecked}
-        profiles={profiles}
         filters={filters}
         onFiltersChange={onFiltersChange}
         onAddTask={() => {
@@ -484,6 +478,7 @@ export default function HermesKanbanWorkspace({
         onToggleInspector={handleToggleInspector}
         loading={loading}
         error={boardError}
+        onRetry={handleRefresh}
       />
 
       {actionMessage ? (

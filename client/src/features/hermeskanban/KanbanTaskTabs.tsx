@@ -4,7 +4,6 @@ import {
   GRAPH_THEME,
   graphDrawerButtonStyle,
   graphDrawerInputStyle,
-  graphDrawerSectionStyle,
 } from '../../components/graph/graphVisualTokens';
 import type { KanbanShow, KanbanTask } from './types';
 import { KANBAN_STATUS_LABELS } from './types';
@@ -32,15 +31,13 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section style={graphDrawerSectionStyle({ padding: '10px 11px', margin: '0 0 10px' })}>
+    <section style={{ margin: '0 0 14px' }}>
       <div
         style={{
-          fontSize: 10,
-          fontWeight: 800,
-          letterSpacing: '0.05em',
-          textTransform: 'uppercase',
-          color: '#7DE0DA',
-          marginBottom: 8,
+          fontSize: 11,
+          fontWeight: 600,
+          color: GRAPH_THEME.surface.text,
+          marginBottom: 6,
         }}
       >
         {title}
@@ -55,10 +52,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div style={{ margin: '0 0 8px' }}>
       <div
         style={{
-          fontSize: 9,
-          fontWeight: 800,
-          letterSpacing: '0.06em',
-          textTransform: 'uppercase',
+          fontSize: 11,
           color: GRAPH_THEME.surface.mutedText,
           marginBottom: 3,
         }}
@@ -399,7 +393,7 @@ export function DependenciesTab({
         </Field>
         <div style={{ fontSize: 9, color: GRAPH_THEME.surface.mutedText, lineHeight: 1.4 }}>
           Adds a parent→child dependency. Scheduled/blocked queues are managed
-          by the native Hermes board.
+          by the native board.
         </div>
       </Section>
     </div>
@@ -614,9 +608,6 @@ export function ResultTab({ taskShow }: { taskShow: KanbanShow }) {
             skills: {task.skills.join(', ')}
           </div>
         ) : null}
-        <div style={{ fontSize: 9, color: GRAPH_THEME.surface.mutedText, marginTop: 8, lineHeight: 1.4 }}>
-          Attachments render here when the native endpoint returns them.
-        </div>
       </Section>
     </div>
   );

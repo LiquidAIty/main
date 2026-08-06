@@ -4,7 +4,6 @@ import {
   GRAPH_THEME,
   graphDrawerButtonStyle,
   graphDrawerInputStyle,
-  graphDrawerSectionStyle,
 } from '../../components/graph/graphVisualTokens';
 import type {
   BoardFilters,
@@ -24,20 +23,25 @@ export type BoardTabActions = {
 
 function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ margin: '0 0 8px' }}>
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: 10,
+        padding: '6px 0',
+        borderBottom: '1px solid rgba(167,176,186,0.1)',
+      }}
+    >
       <div
         style={{
-          fontSize: 9,
-          fontWeight: 800,
-          letterSpacing: '0.06em',
-          textTransform: 'uppercase',
+          flex: '0 0 92px',
+          fontSize: 11,
           color: GRAPH_THEME.surface.mutedText,
-          marginBottom: 3,
         }}
       >
         {label}
       </div>
-      {children}
+      <div style={{ flex: '1 1 auto', minWidth: 0 }}>{children}</div>
     </div>
   );
 }
@@ -50,21 +54,54 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section style={graphDrawerSectionStyle({ padding: '10px 11px', margin: '0 0 10px' })}>
+    <section style={{ margin: '0 0 14px' }}>
       <div
         style={{
-          fontSize: 10,
-          fontWeight: 800,
-          letterSpacing: '0.05em',
-          textTransform: 'uppercase',
-          color: '#7DE0DA',
-          marginBottom: 8,
+          fontSize: 11,
+          fontWeight: 600,
+          color: GRAPH_THEME.surface.text,
+          marginBottom: 6,
         }}
       >
         {title}
       </div>
       {children}
     </section>
+  );
+}
+
+function CheckRow({
+  label,
+  checked,
+  onChange,
+  testId,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  testId: string;
+}) {
+  return (
+    <label
+      data-testid={testId}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 7,
+        padding: '3px 0',
+        fontSize: 11,
+        color: GRAPH_THEME.surface.text,
+        cursor: 'pointer',
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ margin: 0 }}
+      />
+      {label}
+    </label>
   );
 }
 
@@ -88,115 +125,75 @@ function BoardTab({
     else next.add(status);
     onFiltersChange({ visibleStatuses: next });
   };
+  const statusLine = current
+    ? (Object.entries(current.counts || {}) as [string, number][])
+        .map(([status, count]) => `${KANBAN_STATUS_LABELS[status] || status} ${count}`)
+        .join(' · ')
+    : '';
   return (
     <div>
-      <Section title="Current Board">
-        <FieldRow label="Board">
-          <div style={{ fontSize: 12, color: GRAPH_THEME.surface.text }}>
-            {current?.name || currentBoard}
-            <span style={{ color: GRAPH_THEME.surface.mutedText }}> ({currentBoard})</span>
-          </div>
-        </FieldRow>
-        <FieldRow label="Total tasks">
-          <div style={{ fontSize: 12, color: GRAPH_THEME.surface.text }}>
-            {current ? current.total : '—'}
-          </div>
-        </FieldRow>
-        <FieldRow label="Per-status counts">
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {(Object.entries(current?.counts || {}) as [string, number][]).map(([status, count]) => (
-              <span
-                key={status}
-                style={{
-                  fontSize: 9,
-                  padding: '1px 6px',
-                  borderRadius: 999,
-                  background: 'rgba(167,176,186,0.1)',
-                  border: '1px solid rgba(167,176,186,0.22)',
-                  color: GRAPH_THEME.surface.mutedText,
-                }}
-              >
-                {KANBAN_STATUS_LABELS[status] || status}={count}
-              </span>
-            ))}
-          </div>
-        </FieldRow>
-      </Section>
+      <FieldRow label="Board">
+        <span style={{ fontSize: 12, color: GRAPH_THEME.surface.text }}>
+          {current?.name || currentBoard}
+          {current && current.slug !== currentBoard ? ` (${currentBoard})` : ''}
+        </span>
+      </FieldRow>
+      <FieldRow label="Tasks">
+        <span data-testid="hermes-kanban-board-total" style={{ fontSize: 12, color: GRAPH_THEME.surface.text }}>
+          {current ? current.total : '—'}
+        </span>
+      </FieldRow>
+      <FieldRow label="Status">
+        <span data-testid="hermes-kanban-board-status-line" style={{ fontSize: 11, color: GRAPH_THEME.surface.mutedText }}>
+          {statusLine || '—'}
+        </span>
+      </FieldRow>
 
-      <Section title="Board Filters">
-        <FieldRow label="Status lanes">
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {KANBAN_STATUSES.map((status) => {
-              const on = filters.visibleStatuses.has(status);
-              return (
-                <button
-                  key={status}
-                  type="button"
-                  data-testid={`hermes-kanban-status-filter-${status}`}
-                  aria-pressed={on}
-                  onClick={() => toggleStatus(status)}
-                  style={{
-                    padding: '3px 7px',
-                    borderRadius: 999,
-                    border: `1px solid ${on ? 'rgba(55,173,170,0.45)' : 'rgba(167,176,186,0.24)'}`,
-                    background: on ? 'rgba(55,173,170,0.14)' : 'rgba(11,14,18,0.6)',
-                    color: on ? '#7DE0DA' : GRAPH_THEME.surface.mutedText,
-                    fontSize: 9,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
-                >
-                  {KANBAN_STATUS_LABELS[status] || status}
-                </button>
-              );
-            })}
-          </div>
-        </FieldRow>
-        <FieldRow label="Show archived">
-          <button
-            type="button"
-            data-testid="hermes-kanban-archived-toggle"
-            aria-pressed={filters.includeArchived}
-            onClick={() => onFiltersChange({ includeArchived: !filters.includeArchived })}
-            style={graphDrawerButtonStyle({
-              background: filters.includeArchived ? 'rgba(55,173,170,0.18)' : 'transparent',
-              color: filters.includeArchived ? '#7DE0DA' : GRAPH_THEME.surface.mutedText,
-            })}
-          >
-            {filters.includeArchived ? 'Including archived' : 'Hidden (archived off)'}
-          </button>
-        </FieldRow>
-        <FieldRow label="Assignee filter">
+      <div style={{ height: 10 }} />
+
+      <Section title="Filters">
+        <CheckRow
+          label="Show archived"
+          checked={filters.includeArchived}
+          onChange={(checked) => onFiltersChange({ includeArchived: checked })}
+          testId="hermes-kanban-archived-toggle"
+        />
+        <CheckRow
+          label="Group lanes by profile"
+          checked={filters.lanesByProfile}
+          onChange={(checked) => onFiltersChange({ lanesByProfile: checked })}
+          testId="hermes-kanban-lanes-by-profile"
+        />
+        <FieldRow label="Assignee">
           <input
             data-testid="hermes-kanban-assignee-filter"
-            placeholder="e.g. default"
+            placeholder="Filter by assignee"
             value={filters.assignee}
             onChange={(e) => onFiltersChange({ assignee: e.target.value })}
             style={graphDrawerInputStyle()}
           />
         </FieldRow>
-        <FieldRow label="Tenant filter">
+        <FieldRow label="Tenant">
           <input
             data-testid="hermes-kanban-tenant-filter"
-            placeholder="tenant namespace"
+            placeholder="Filter by tenant"
             value={filters.tenant}
             onChange={(e) => onFiltersChange({ tenant: e.target.value })}
             style={graphDrawerInputStyle()}
           />
         </FieldRow>
-        <FieldRow label="Lanes by profile">
-          <button
-            type="button"
-            data-testid="hermes-kanban-lanes-by-profile"
-            aria-pressed={filters.lanesByProfile}
-            onClick={() => onFiltersChange({ lanesByProfile: !filters.lanesByProfile })}
-            style={graphDrawerButtonStyle({
-              background: filters.lanesByProfile ? 'rgba(55,173,170,0.18)' : 'transparent',
-              color: filters.lanesByProfile ? '#7DE0DA' : GRAPH_THEME.surface.mutedText,
-            })}
-          >
-            {filters.lanesByProfile ? 'Per-profile lanes on' : 'Per-status lanes'}
-          </button>
+        <FieldRow label="Status lanes">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0 14px' }}>
+            {KANBAN_STATUSES.map((status) => (
+              <CheckRow
+                key={status}
+                label={KANBAN_STATUS_LABELS[status] || status}
+                checked={filters.visibleStatuses.has(status)}
+                onChange={() => toggleStatus(status)}
+                testId={`hermes-kanban-status-filter-${status}`}
+              />
+            ))}
+          </div>
         </FieldRow>
       </Section>
 
@@ -206,7 +203,7 @@ function BoardTab({
             type="button"
             data-testid="hermes-kanban-refresh"
             onClick={actions.onRefresh}
-            style={graphDrawerButtonStyle({ color: '#7DE0DA' })}
+            style={graphDrawerButtonStyle()}
           >
             Refresh
           </button>
@@ -216,14 +213,13 @@ function BoardTab({
             disabled={actions.busy('nudge')}
             onClick={actions.onNudge}
             title="Run one native dispatcher pass (reclaims stale, promotes ready, spawns workers)"
-            style={graphDrawerButtonStyle({ color: '#F2A64A', borderColor: 'rgba(242,166,74,0.42)' })}
+            style={graphDrawerButtonStyle()}
           >
             {actions.busy('nudge') ? 'Dispatching…' : 'Nudge dispatcher'}
           </button>
         </div>
-        <div style={{ fontSize: 9, color: GRAPH_THEME.surface.mutedText, marginTop: 6, lineHeight: 1.4 }}>
-          Nudge runs a real dispatcher pass against the live board and may spawn
-          workers. It is never run automatically.
+        <div style={{ fontSize: 10, color: GRAPH_THEME.surface.mutedText, marginTop: 6, lineHeight: 1.4 }}>
+          Nudge runs a real dispatcher pass and may spawn workers; it is never run automatically.
         </div>
       </Section>
     </div>
@@ -272,8 +268,8 @@ function OrchestrationTab({ config }: { config: HermesConfig | null }) {
         ))}
       </Section>
       <div style={{ fontSize: 9, color: GRAPH_THEME.surface.mutedText, lineHeight: 1.4 }}>
-        Values are the native Hermes config (<code>hermes config get kanban / delegation</code>).
-        Configuration editing is not part of this board surface.
+        Values are read from the native configuration. Editing is not part of
+        this surface.
       </div>
     </div>
   );
@@ -303,25 +299,25 @@ function ProfilesTab({ profiles }: { profiles: ProfileInfo[] }) {
     <div>
       {profiles.length === 0 ? (
         <div style={{ fontSize: 11, color: GRAPH_THEME.surface.mutedText, padding: 8 }}>
-          No Hermes profiles detected.
+          No profiles detected.
         </div>
       ) : (
         profiles.map((profile) => (
           <section
             key={profile.name}
             data-testid={`hermes-kanban-profile-${profile.name}`}
-            style={graphDrawerSectionStyle({
-              padding: '9px 11px',
-              margin: '0 0 8px',
-              borderColor: profile.active ? 'rgba(55,173,170,0.4)' : undefined,
-            })}
+            style={{
+              margin: '0 0 12px',
+              paddingBottom: 10,
+              borderBottom: '1px solid rgba(167,176,186,0.12)',
+            }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
               <span
                 style={{
-                  fontWeight: 800,
+                  fontWeight: 700,
                   fontSize: 12,
-                  color: profile.active ? '#7DE0DA' : GRAPH_THEME.surface.text,
+                  color: profile.active ? GRAPH_THEME.surface.text : GRAPH_THEME.surface.mutedText,
                 }}
               >
                 {profile.active ? '◆ ' : ''}
@@ -329,16 +325,9 @@ function ProfilesTab({ profiles }: { profiles: ProfileInfo[] }) {
               </span>
               <span
                 style={{
-                  marginLeft: 'auto',
-                  fontSize: 9,
-                  padding: '1px 6px',
-                  borderRadius: 999,
-                  background:
-                    profile.gateway === 'running' ? 'rgba(99,216,160,0.12)' : 'rgba(224,108,108,0.1)',
-                  border: `1px solid ${
-                    profile.gateway === 'running' ? 'rgba(99,216,160,0.35)' : 'rgba(224,108,108,0.32)'
-                  }`,
-                  color: profile.gateway === 'running' ? '#63D8A0' : '#E06C6C',
+                  fontSize: 10,
+                  color:
+                    profile.gateway === 'running' ? '#63D8A0' : '#E06C6C',
                 }}
               >
                 {profile.gateway}
@@ -400,7 +389,7 @@ function SystemTab({
             {actions.busy('restart-gateway') ? 'Restarting…' : 'Restart gateway'}
           </button>
           <div style={{ fontSize: 9, color: GRAPH_THEME.surface.mutedText, marginTop: 5, lineHeight: 1.4 }}>
-            Restarts the local Hermes gateway process. Only triggered by explicit
+            Restarts the local gateway process. Only triggered by explicit
             user action.
           </div>
         </div>

@@ -109,6 +109,46 @@ describe('Shared/Coder terminal infrastructure is untouched', () => {
   });
 });
 
+describe('No visible runtime branding in the workspace', () => {
+  it('board, workspace and inspector sources contain no branded visible titles', () => {
+    for (const rel of [
+      'client/src/features/hermeskanban/HermesKanbanBoard.tsx',
+      'client/src/features/hermeskanban/HermesKanbanWorkspace.tsx',
+      'client/src/features/hermeskanban/HermesKanbanInspector.tsx',
+      'client/src/features/hermeskanban/KanbanBoardTabs.tsx',
+      'client/src/features/hermeskanban/KanbanTaskTabs.tsx',
+    ]) {
+      const source = read(rel);
+      expect(source, rel).not.toContain('Hermes Kanban ·');
+      expect(source, rel).not.toContain('Hermes · Board');
+      expect(source, rel).not.toContain('HERMES ·');
+      expect(source, rel).not.toContain('live native board');
+      expect(source, rel).not.toContain('>Hermes<');
+      expect(source, rel).not.toContain('"Hermes"');
+    }
+  });
+
+  it('uses icon-only header controls with accessible labels (no visible gateway/add/inspector text)', () => {
+    const board = read('client/src/features/hermeskanban/HermesKanbanBoard.tsx');
+    expect(board).toContain('aria-label="Add task"');
+    expect(board).toContain('aria-label={inspectorOpen ? \'Close inspector\' : \'Open inspector\'}');
+    expect(board).toContain('aria-label=');
+    // No visible "Gateway" / "Add Task" / "Inspector" labels remain.
+    expect(board).not.toMatch(/Add Task</);
+    expect(board).not.toMatch(/>Inspector</);
+  });
+
+  it('no decorative count pills, profile chips, or boxed empty placards remain', () => {
+    const board = read('client/src/features/hermeskanban/HermesKanbanBoard.tsx');
+    expect(board).not.toContain("'Empty'");
+    expect(board).not.toContain('>Empty<');
+    expect(board).not.toContain('dashed rgba(167,176,186,0.18)');
+    // profile/assignee chips removed from cards
+    expect(board).not.toContain('P{task.priority}');
+    expect(board).not.toContain('task.tenant ?');
+  });
+});
+
 describe('No second Kanban authority is introduced', () => {
   it('the Hermes Kanban frontend only calls the /api/hermes-kanban bridge', () => {
     const api = read(API);
