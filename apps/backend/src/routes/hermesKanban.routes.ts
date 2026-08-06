@@ -293,16 +293,26 @@ router.get('/stats', async (req, res) => {
 
 router.get('/system', async (_req, res) => {
   try {
-    const [gatewayRes, configRes, statsRes, diagRes, profilesRes] =
-      await Promise.all([
-        runHermes(['gateway', 'status']),
-        runHermes(['config', 'get', 'kanban']),
-        runHermes(['kanban', 'stats', '--json']),
-        runHermes(['kanban', 'diagnostics', '--json']),
-        runHermes(['profile', 'list']),
-      ]);
-    const gatewayOut = gatewayRes.stdout.trim();
-    const running = gatewayRes.exitCode === 0 && /Gateway process running/i.test(gatewayOut);
+    // `hermes gateway status` intermittently returns empty stdout when cold-
+    // spawned from Node on Windows. A bounded retry on an inconclusive probe
+    // is not a data fallback — it re-reads the same native status so honest
+    // liveness is reported instead of a spurious "stopped".
+    let gatewayOut = '';
+    for (let attempt = 0; attempt < 3 && !gatewayOut; attempt++) {
+      const probe = await runHermes(['gateway', 'status']);
+      gatewayOut = probe.stdout.trim();
+    }
+    const [configRes, statsRes, diagRes, profilesRes] = await Promise.all([
+      runHermes(['config', 'get', 'kanban']),
+      runHermes(['kanban', 'stats', '--json']),
+      runHermes(['kanban', 'diagnostics', '--json']),
+      runHermes(['profile', 'list']),
+    ]);
+    // The native status line is the authoritative running signal. The Hermes
+    // CLI may exit non-zero even while it prints "Gateway process running"
+    // (it also checks the Windows login-item, which can fail independently),
+    // so exit code alone is not a reliable proxy for process liveness.
+    const running = /Gateway process running/i.test(gatewayOut);
     const pidMatch = gatewayOut.match(/PID:\s*(\d+)/i);
     const kanbanCfg = parseYamlishConfig(configRes.stdout);
     return ok(res, {

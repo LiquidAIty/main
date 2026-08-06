@@ -30,14 +30,14 @@ describe('Main / Hermes / graph authority topology', () => {
 
   it('shows exactly one Hermes rail destination when the restored card exists', () => {
     const visible = deriveVisibleRailItems({ deck: INITIAL_DECK, workspaceView: 'chat' });
-    expect(visible.showHermesTerminal).toBe(true);
+    expect(visible.showHermesKanban).toBe(true);
 
     const withoutHermes = {
       ...INITIAL_DECK,
       nodes: INITIAL_DECK.nodes.filter((node) => node.id !== 'card_hermes_steward'),
     };
     expect(
-      deriveVisibleRailItems({ deck: withoutHermes, workspaceView: 'chat' }).showHermesTerminal,
+      deriveVisibleRailItems({ deck: withoutHermes, workspaceView: 'chat' }).showHermesKanban,
     ).toBe(false);
   });
 

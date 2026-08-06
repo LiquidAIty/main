@@ -24,7 +24,7 @@ import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurface
 import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
 import OpenClaudeConsolePanel from '../features/agentbuilder/console/OpenClaudeConsolePanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
-import HermesConsole from '../components/hermes/HermesConsole';
+import HermesKanbanWorkspace from '../features/hermeskanban/HermesKanbanWorkspace';
 import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import type { AgentBuilderChatMessage } from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
@@ -232,6 +232,7 @@ export default function AgentBuilder(): React.ReactElement {
     | 'knowledge'
     | 'trading'
     | 'worldsignal'
+    | 'hermes'
   >(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('workspace') === 'knowledge') return 'knowledge';
@@ -292,7 +293,7 @@ export default function AgentBuilder(): React.ReactElement {
   useEffect(() => {
     currentDeckRef.current = deck;
   }, [deck]);
-  const [hermesConsoleOpen, setHermesConsoleOpen] = useState(false);
+  const priorWorkspaceViewRef = useRef<'chat' | 'canvas' | 'knowledge' | 'trading' | 'worldsignal'>('canvas');
   const localCoderConsoleConfig = useMemo(
     () => resolveLocalCoderControllerConsoleConfig(deck),
     [deck],
@@ -771,7 +772,6 @@ export default function AgentBuilder(): React.ReactElement {
         : null;
       // Canvas selection always opens the saved-card editor. Agent app surfaces
       // are opened from their connected rail icons.
-      setHermesConsoleOpen(false);
       setInspectorDrawerOpen(Boolean(selectedNode));
       const isMagenticSelection = Boolean(
         selectedNode &&
@@ -798,13 +798,23 @@ export default function AgentBuilder(): React.ReactElement {
     [deck.nodes, recordUiOnlyAction, tab],
   );
 
-  const openHermesTerminal = useCallback(() => {
+  const openHermesKanban = useCallback(() => {
     const hermesCard = deck.nodes.find(isHermesStewardCard);
     if (!hermesCard) return;
-    setWorkspaceView('canvas');
+    // Keep the chat panel on the left; the Kanban board renders in the canvas
+    // region to its right, exactly like the Agent Canvas. The canvas pane stays
+    // mounted beneath it (hidden), so closing Hermes restores the exact prior
+    // viewport/selection. No terminal process starts.
+    priorWorkspaceViewRef.current =
+      workspaceView === 'hermes' ? 'canvas' : workspaceView;
     setInspectorDrawerOpen(false);
-    setHermesConsoleOpen(true);
-  }, [deck.nodes, setInspectorDrawerOpen]);
+    setWorldSignalInspectorSection(null);
+    setWorkspaceView('hermes');
+  }, [deck.nodes, workspaceView]);
+
+  const closeHermesKanban = useCallback(() => {
+    setWorkspaceView(priorWorkspaceViewRef.current);
+  }, []);
 
   const handleSelectEdge = useCallback(
     (edgeId: string | null) => {
@@ -1096,7 +1106,8 @@ export default function AgentBuilder(): React.ReactElement {
     compact = false,
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
-    return (
+    const isHermesWorkspace = workspaceView === 'hermes';
+    const canvasPane = (
       <AgentCanvasPane
         surfaceRole={surfaceRole}
         shellStyle={getSurfaceShellStyle(compact)}
@@ -1119,7 +1130,37 @@ export default function AgentBuilder(): React.ReactElement {
         focusZone={canvasFocusZone}
       />
     );
+    return (
+      <div
+        data-testid="workspace-canvas-surface"
+        style={{ position: 'relative', height: '100%', minHeight: 0, overflow: 'hidden' }}
+      >
+        {/* Always keep the AgentCanvasPane mounted (hidden while Hermes is
+            open) so closing Hermes restores the exact prior viewport/selection. */}
+        <div
+          aria-hidden={isHermesWorkspace ? true : undefined}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            visibility: isHermesWorkspace ? 'hidden' : 'visible',
+            pointerEvents: isHermesWorkspace ? 'none' : 'auto',
+          }}
+        >
+          {canvasPane}
+        </div>
+        {isHermesWorkspace ? (
+          <div
+            data-testid="hermes-kanban-region"
+            style={{ position: 'absolute', inset: 0 }}
+          >
+            <HermesKanbanWorkspace onClose={closeHermesKanban} />
+          </div>
+        ) : null}
+      </div>
+    );
   };
+
+  const canvasSurface = renderCanvasSurface(false, 'large');
 
   const renderKnowledgeGraphSurface = ({
     minHeight = 280,
@@ -1202,8 +1243,8 @@ export default function AgentBuilder(): React.ReactElement {
       onShowKnowledgeWorkspace={showKnowledgeWorkspace}
       onShowTradingWorkspace={showTradingWorkspace}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
-      hermesTerminalActive={hermesConsoleOpen}
-      onOpenHermesTerminal={openHermesTerminal}
+      hermesKanbanActive={workspaceView === 'hermes'}
+      onOpenHermesKanban={openHermesKanban}
     />
   );
 
@@ -1353,19 +1394,9 @@ export default function AgentBuilder(): React.ReactElement {
           onSplitterMouseLeave={onSplitterMouseLeave}
           onSplitterMouseDown={handleSplitterMouseDown}
           canvasMinWidth={canvasMinWidth}
-          canvas={renderCanvasSurface(false, 'large')}
+          canvas={canvasSurface}
           companion={workspaceCompanionSurfaceHost}
-          drawer={
-            <>
-              {workspaceDrawer}
-              <HermesConsole
-                open={hermesConsoleOpen}
-                targetRoot={terminalRoot}
-                projectId={typeof activeProject === 'string' ? activeProject : undefined}
-                onClose={() => setHermesConsoleOpen(false)}
-              />
-            </>
-          }
+          drawer={<>{workspaceDrawer}</>}
         />
 
       <AgentBuilderProjectDrawer

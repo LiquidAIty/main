@@ -44,7 +44,7 @@ type ProgressiveRailVisibility = {
   showKnowledge: boolean;
   showWorldsignal: boolean;
   showTrading: boolean;
-  showHermesTerminal: boolean;
+  showHermesKanban: boolean;
 };
 
 function buildBusConnectedCardIds(
@@ -136,9 +136,9 @@ export function deriveVisibleRailItems({
     showTrading:
       workspaceView === 'trading' ||
       isBusConnectedCard(deck.nodes, deck.edges, isTradingAgentCard),
-    // The restored saved card owns this navigation item. Runtime state is
-    // discovered by the Hermes session API and never controls rail visibility.
-    showHermesTerminal: deck.nodes.some(isHermesStewardCard),
+    // The restored saved card owns this navigation item. It opens the in-app
+    // Hermes Kanban workspace (the Hermes app surface) — never a terminal.
+    showHermesKanban: deck.nodes.some(isHermesStewardCard),
   };
 }
 

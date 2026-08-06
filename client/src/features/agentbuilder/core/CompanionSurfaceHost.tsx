@@ -17,7 +17,7 @@ export default function CompanionSurfaceHost({
   tradingSurface,
   worldsignalSurface,
 }: CompanionSurfaceHostProps) {
-  if (workspaceView === 'canvas' || workspaceView === 'chat') {
+  if (workspaceView === 'canvas' || workspaceView === 'chat' || workspaceView === 'hermes') {
     return null;
   }
 
