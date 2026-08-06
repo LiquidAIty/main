@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
-import { ZodError } from 'zod';
 import type { OpenClaudeRunRequest } from '../coder/openclaude/contracts';
 import { openClaudeRuntimeService } from '../coder/openclaude/runtime/service';
 import { localCoderService } from '../coder/localcoder/service';

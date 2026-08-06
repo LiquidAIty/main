@@ -9,6 +9,7 @@ import projectsRoutes from './projects.routes';
 import decksRoutes from './decks.routes';
 import worldsignalRoutes from './worldsignal.routes';
 import config from './config.routes';
+import hermesKanbanRoutes from './hermesKanban.routes';
 
 const router = Router();
 
@@ -24,5 +25,6 @@ router.use('/thinkgraph', authMiddleware, thinkgraphRoutes);
 router.use('/worldsignal', authMiddleware, worldsignalRoutes);
 router.use('/projects', authMiddleware, projectsRoutes);
 router.use('/projects', authMiddleware, decksRoutes);
+router.use('/hermes-kanban', authMiddleware, hermesKanbanRoutes);
 
 export default router;
