@@ -90,8 +90,10 @@ replace its runtime.
 The Local Coder card is also working and must remain. `run_local_coder(objective, …)` (Python tool) →
 backend `/api/coder/localcoder/run` — **the server injects the trusted filesystem root + run id; never
 the model** — → `LocalCoderAdapter` → the configured OpenClaude/Coder CLI → validated `CoderReport`.
-Coder-card Run, Main→Coder through `card.run_assistant_agent`, and Mag One participation all enter
-the same saved-card/AutoGen builder and receive the same model-bound `run_local_coder` tool. The
+Coder-card Run and Main→Coder through the external `run_coder_subagent` delegation doorway both enter
+the same saved-card runtime and reach the same model-bound `run_local_coder` tool. Coder remains
+Mag One-eligible for later testing through that same participant contract, but Mag One→Coder is not
+a current MVP requirement or launch gate. The
 card's simple provider selector chooses either OpenRouter (including DeepSeek through its
 OpenAI-compatible endpoint) or OpenAI Account (currently GPT-5.6 Luna by default, through
 OpenClaude's Codex transport and existing OAuth/auth-file authority).

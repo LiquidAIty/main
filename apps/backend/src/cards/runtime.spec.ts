@@ -132,7 +132,11 @@ describe('Canonical Cards Runtime', () => {
     const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
     const coder = {
       id: 'coder', kind: 'agent', runtimeType: 'local_coder', runtimeBinding: 'local_coder',
-      title: 'Local Coder', runtimeOptions: { modelKey: 'z-ai/glm-5.2', provider: 'openrouter' },
+      title: 'Local Coder', runtimeOptions: {
+        modelKey: 'deepseek/deepseek-v4-flash-0731',
+        provider: 'openrouter',
+        tools: ['run_local_coder', 'cbm.list_projects'],
+      },
     };
     const codegraph = {
       id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent',
@@ -154,10 +158,14 @@ describe('Canonical Cards Runtime', () => {
     expect(untypedPayload.codingWorkflowPacket).toBeUndefined();
     // The capability manifest carries no intent/workflow classifier at all.
     expect((untypedPayload.routingManifest as any)?.intent).toBeUndefined();
-    // Native team: every bus-connected agent participates, including the Local Coder
-    // (no project-specific participant filtering). Execution is the Run route only.
+    // Native team: every bus-connected saved card participates. Coder keeps its
+    // saved identity/model while its outer wrapper carries only run_local_coder.
     expect(payload.cardRuntime.participants.map((p) => p.cardId)).toContain('coder');
     expect(payload.cardRuntime.participants.map((p) => p.cardId)).toContain('codegraph');
+    const coderParticipant = payload.cardRuntime.participants.find((p) => p.cardId === 'coder');
+    expect(coderParticipant?.runtimeType).toBe('assistant_agent');
+    expect(coderParticipant?.runtimeBinding).toBe('local_coder');
+    expect(coderParticipant?.tools).toEqual(['run_local_coder']);
   });
 
   it('magentic_option direction-agnostic', () => {
@@ -380,9 +388,8 @@ describe('Canonical Cards Runtime', () => {
   });
 
   it('includes the Local Coder as a native bus participant like any other agent', () => {
-    // Bus connectivity is the only activation. The Local Coder participates like
-    // any other bus-connected agent — no role classification, no priority, no
-    // coder special-casing, no dispatch packet.
+    // Bus connectivity is the only activation. The saved Coder remains a normal
+    // eligible card; only its established controller-tool boundary is distinct.
     const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
     const plan = { id: 'plan', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'plan_agent', title: 'Plan Agent', runtimeOptions: { modelKey: 'gpt-5.6-luna' } };
     const codegraph = { id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent', title: 'CodeGraph Agent', runtimeOptions: { modelKey: 'gpt-5.6-luna' } };
@@ -392,7 +399,11 @@ describe('Canonical Cards Runtime', () => {
       runtimeType: 'local_coder',
       runtimeBinding: 'local_coder',
       title: 'Local Coder',
-      runtimeOptions: { modelKey: 'z-ai/glm-5.2', provider: 'openrouter' },
+      runtimeOptions: {
+        modelKey: 'deepseek/deepseek-v4-flash-0731',
+        provider: 'openrouter',
+        tools: ['run_local_coder', 'cbm.list_projects'],
+      },
     };
     const think = { id: 'worker', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'saved_worker', title: 'Saved Worker', runtimeOptions: { modelKey: 'gpt-5.6-luna' } };
     const allCards = [mag, plan, codegraph, coder, think];
@@ -412,10 +423,13 @@ describe('Canonical Cards Runtime', () => {
       '2026',
     );
 
-    // Bus connectivity is the only activation: the Local Coder is a participant
-    // and a python worker like any other bus-connected agent — no filtering, no
-    // role classification, no dispatch packet.
+    // Bus connectivity activates the saved Coder. Its Python participant is the
+    // outer AssistantAgent controller, not a second Coder engine.
     expect(payload.cardRuntime.participants.map((agent) => agent.cardId)).toContain('coder');
+    const coderParticipant = payload.cardRuntime.participants.find((agent) => agent.cardId === 'coder');
+    expect(coderParticipant?.runtimeType).toBe('assistant_agent');
+    expect(coderParticipant?.runtimeBinding).toBe('local_coder');
+    expect(coderParticipant?.tools).toEqual(['run_local_coder']);
     expect(payload.cardRuntime.participants.map((agent) => agent.cardId)).toEqual(
       expect.arrayContaining(['plan', 'codegraph', 'worker']),
     );

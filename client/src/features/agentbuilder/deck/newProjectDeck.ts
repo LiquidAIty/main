@@ -514,6 +514,13 @@ export const INITIAL_DECK: DeckDocument = {
     { id: 'edge_hermes_search', source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' },
     { id: 'edge_hermes_worldsignals', source: 'card_hermes_steward', target: 'card_worldsignals_agent', edgeType: 'flow' },
     {
+      id: 'edge_coder_magentic_bus',
+      source: 'card_local_coder',
+      target: 'card_magentic',
+      targetHandle: 'bus-in-1',
+      edgeType: 'magentic_option',
+    },
+    {
       id: 'edge_main_chat_magentic_control',
       source: 'card_main_chat',
       target: 'card_magentic',

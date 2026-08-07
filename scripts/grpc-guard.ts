@@ -12,12 +12,32 @@
  */
 
 import { spawn } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   GRPC_PORT,
   buildProductChatGrpcEnvironment,
   decideGrpcAction,
   inspectPort,
 } from './devStack';
+
+const CORE_HEALTH = [
+  ['backend', 'http://127.0.0.1:4000/api/health'],
+  ['Graphiti ingestion API', 'http://127.0.0.1:8001/health'],
+  ['Python rails', 'http://127.0.0.1:8003/health'],
+] as const;
+
+async function waitForHealth(label: string, url: string): Promise<void> {
+  for (let attempt = 1; attempt <= 90; attempt += 1) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(2_000) });
+      if (response.ok) return;
+    } catch {
+      // A dependency that is still compiling or binding is expected here.
+    }
+    await delay(1_000);
+  }
+  throw new Error(`${label} did not become healthy at ${url}`);
+}
 
 async function main(): Promise<void> {
   const checkOnly = process.argv.includes('--check');
@@ -44,6 +64,9 @@ async function main(): Promise<void> {
     console.log(`[dev] OpenClaude gRPC: would start on port ${GRPC_PORT} (no listener present)`);
     return;
   }
+  console.log('[dev] OpenClaude gRPC: waiting for backend, Graphiti ingestion, and Python rails...');
+  await Promise.all(CORE_HEALTH.map(([label, url]) => waitForHealth(label, url)));
+  console.log('[dev] OpenClaude gRPC: core services healthy; initializing official Python MCP...');
   console.log(`[dev] OpenClaude gRPC: starting on port ${GRPC_PORT}...`);
   // shell:false — bun resolves on PATH directly; args are static literals.
   // Dropping shell:true clears DEP0190 without changing cwd/stdio/ownership.

@@ -32,7 +32,7 @@ function sleep(ms: number): Promise<void> {
 
 function createPool(): Pool {
   const pool = new Pool({
-    host: process.env.POSTGRES_HOST || 'localhost',
+    host: process.env.POSTGRES_HOST || '127.0.0.1',
     port: Number(process.env.POSTGRES_PORT || 5433),
     database: process.env.POSTGRES_DB || 'liquidaity',
     user: process.env.POSTGRES_USER || 'liquidaity-user',

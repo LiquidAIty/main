@@ -322,9 +322,11 @@ The items below are the major deletion events. Every one "worked" before it was 
 - **2026-08-06 — Local Coder historical restoration and duplicate doorway purge.**
   - Restored the previously working `run_local_coder` → trusted backend route → LocalCoder/OpenClaude
     CoderReport path and made saved-card Run, Main/external GPT, and Mag One reuse it.
-  - Deleted the alternate direct-terminal `run_coder_subagent` route, MCP registration/dispatch,
-    console-task runtime, audit-only schemas/policies, tombstone, stale tests, classification doc,
-    and the unreferenced stale tool-registry audit that still advertised the retired doorway.
+  - Deleted the alternate direct-terminal engine formerly reached by `run_coder_subagent`, including
+    its route, console-task runtime, audit-only schemas/policies, tombstone, stale tests,
+    classification doc, and unreferenced stale tool-registry audit. The current external MCP tool of
+    that name is retained only as Main's typed delegation doorway to the saved Coder card and the
+    canonical configured-card runtime; it is not the retired engine.
   - Kept the persistent interactive OpenClaude console as a separate surface; removed no saved-card,
     AutoGen, Mag One, repository-root, or CoderReport authority.
   - Repaired Hermes Kanban `assign` against installed CLI syntax and made rail activation depend on

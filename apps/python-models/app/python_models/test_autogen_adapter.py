@@ -9,6 +9,8 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from autogen_agentchat.messages import TextMessage
+from autogen_core import CancellationToken
 from autogen_core.tools import FunctionTool
 from app.python_models import magentic_agentchat as mac
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
@@ -244,16 +246,48 @@ def test_selected_tool_attaches_real_functiontool_to_that_participant():
     assert [tool.name for tool in plain._tools] == []
 
 
-def test_local_coder_participant_keeps_its_bound_run_local_coder_tool():
+def test_local_coder_participant_is_an_autogen_runtime_adapter_bound_to_openclaude(
+    monkeypatch,
+):
+    captured: dict = {}
+
+    def fake_post(path: str, payload: dict) -> str:
+        captured["path"] = path
+        captured["payload"] = payload
+        return '{"report":{"status":"succeeded"}}'
+
+    monkeypatch.setitem(
+        mac.build_local_coder_tool.__globals__,
+        "_post_backend_json_sync",
+        fake_post,
+    )
     context = _tools_context(["run_local_coder"])
     participant = context.cardRuntime.participants[0]
-    participant.runtimeType = "local_coder"
     participant.runtimeBinding = "local_coder"
     participant.provider = "openrouter"
     participant.providerModelId = "deepseek/deepseek-v4-flash-0731"
-    coder = mac._build_participants(context, _FakeToolClient())[0]
+    coder = mac._build_participants(context, None)[0]
+    assert participant.runtimeType == "assistant_agent"
     assert coder.description == "local_coder"
-    assert [tool.name for tool in coder._tools] == ["run_local_coder"]
+    response = asyncio.run(
+        coder.on_messages(
+            [TextMessage(content="Inspect the repository.", source="user")],
+            CancellationToken(),
+        )
+    )
+    assert captured["path"] == "/api/coder/localcoder/run"
+    assert captured["payload"]["coderPacket"]["modelProvider"] == "openrouter"
+    assert captured["payload"]["coderPacket"]["providerModelId"] == (
+        "deepseek/deepseek-v4-flash-0731"
+    )
+    assert response.chat_message.content == '{"report":{"status":"succeeded"}}'
+
+
+def test_local_coder_runtime_rejects_any_outer_tool_contract_other_than_run_local_coder():
+    context = _tools_context(["run_local_coder", "calculator"])
+    context.cardRuntime.participants[0].runtimeBinding = "local_coder"
+    with pytest.raises(RuntimeError, match="local_coder_runtime_tool_contract_invalid"):
+        mac._build_participants(context, None)
 
 
 def test_each_participant_receives_its_own_saved_card_model_client():

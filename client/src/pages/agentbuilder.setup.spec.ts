@@ -81,6 +81,7 @@ describe('agentbuilder authoring flow', () => {
       { source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' },
       { source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' },
       { source: 'card_hermes_steward', target: 'card_worldsignals_agent', edgeType: 'flow' },
+      { source: 'card_local_coder', target: 'card_magentic', edgeType: 'magentic_option' },
       {
         source: 'card_main_chat',
         target: 'card_magentic',
@@ -100,7 +101,7 @@ describe('agentbuilder authoring flow', () => {
     const systemCoder = INITIAL_DECK.nodes.find((node) => node.id === 'card_local_coder');
     expect(systemCoder?.runtimeType).toBe('local_coder');
     expect(systemCoder?.runtimeOptions?.tools).toContain('cbm.search_graph');
-    expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_local_coder' && edge.edgeType === 'magentic_option')).toBe(false);
+    expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_local_coder' && edge.edgeType === 'magentic_option')).toBe(true);
   });
 
   it('loads a real saved deck and preserves its visible chain', () => {

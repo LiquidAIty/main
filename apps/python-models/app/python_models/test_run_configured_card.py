@@ -257,6 +257,48 @@ class TestSharedBuilderReuse:
         with pytest.raises(RuntimeError):
             mac._build_participants(ctx, _FakeToolClient())
 
+    def test_local_coder_single_run_skips_python_model_and_calls_openclaude_authority(
+        self, monkeypatch
+    ):
+        participant = CardRuntimeParticipant(
+            cardId="card_local_coder",
+            title="Coder",
+            runtimeType="assistant_agent",
+            runtimeBinding="local_coder",
+            role="coder",
+            tools=["run_local_coder"],
+            provider="openai",
+            providerModelId="gpt-5.6-luna",
+        )
+        context = _context(participants=[participant])
+        backend_calls: list[tuple[str, dict]] = []
+        monkeypatch.setattr(
+            mac,
+            "_build_model_client",
+            lambda _config: (_ for _ in ()).throw(
+                AssertionError("local_coder must not start a Python model client")
+            ),
+        )
+
+        def fake_post(path: str, payload: dict) -> str:
+            backend_calls.append((path, payload))
+            return '{"report":{"status":"succeeded"}}'
+
+        monkeypatch.setitem(
+            mac.build_local_coder_tool.__globals__,
+            "_post_backend_json_sync",
+            fake_post,
+        )
+
+        response = asyncio.run(mac.run_configured_card(context))
+
+        assert response.ok is True
+        assert backend_calls[0][0] == "/api/coder/localcoder/run"
+        packet = backend_calls[0][1]["coderPacket"]
+        assert packet["modelProvider"] == "openai"
+        assert packet["providerModelId"] == "gpt-5.6-luna"
+        assert response.finalResponseText == '{"report":{"status":"succeeded"}}'
+
 
 class TestAssignmentToolAuthority:
     def test_assignment_authority_is_scoped_to_the_model_pass_and_reset(

@@ -12,8 +12,8 @@
 import { spawn } from 'node:child_process';
 
 export const GRPC_PORT = 50051;
-export const KNOWGRAPH_PORT = 8001;
-export const AUTOGEN_PORT = 8003;
+export const GRAPHITI_PORT = 8001;
+export const PYTHON_RAILS_PORT = 8003;
 
 export function buildProductChatGrpcEnvironment(
   parentEnv: NodeJS.ProcessEnv,
@@ -68,7 +68,8 @@ export function decideGrpcAction(listener: PortListener | null): GrpcAction {
  * python path, NOT the repo root — so the cmdline enumeration used for
  * backend/frontend cannot ground it. Instead we identify it by the ONE thing
  * that is unambiguous on our reserved port: a python `uvicorn <appModule>`
- * bound to that port. KnowGraph's `app:app` and autogen's `app.main:app` never
+ * bound to that port. Graphiti ingestion's `app:app` and Python rails'
+ * `app.main:app` never
  * match each other. A random uvicorn on some OTHER port is never inspected —
  * each predicate only ever runs against whatever holds its own reserved port,
  * exactly as the gRPC guard only inspects 50051.
@@ -94,7 +95,6 @@ export type UvicornAction =
   | { action: 'start' }
   | { action: 'reuse'; pid: number }
   | { action: 'conflict'; pid: number; commandLine: string };
-export type KnowgraphAction = UvicornAction;
 
 /**
  * Reuse/start/conflict discipline for a reserved uvicorn port, same as gRPC:
@@ -112,23 +112,23 @@ export function decideUvicornAction(
   return { action: 'conflict', pid: listener.pid, commandLine: listener.commandLine };
 }
 
-export function isLiquidAItyKnowgraphListener(listener: PortListener | null): boolean {
-  return isLiquidAItyUvicornListener(listener, 'app:app', KNOWGRAPH_PORT);
+export function isLiquidAItyGraphitiListener(listener: PortListener | null): boolean {
+  return isLiquidAItyUvicornListener(listener, 'app:app', GRAPHITI_PORT);
 }
 
-export function decideKnowgraphAction(listener: PortListener | null): KnowgraphAction {
-  return decideUvicornAction(listener, 'app:app', KNOWGRAPH_PORT);
+export function decideGraphitiAction(listener: PortListener | null): UvicornAction {
+  return decideUvicornAction(listener, 'app:app', GRAPHITI_PORT);
 }
 
-export function isLiquidAItyAutogenListener(listener: PortListener | null): boolean {
-  return isLiquidAItyUvicornListener(listener, 'app.main:app', AUTOGEN_PORT);
+export function isLiquidAItyPythonRailsListener(listener: PortListener | null): boolean {
+  return isLiquidAItyUvicornListener(listener, 'app.main:app', PYTHON_RAILS_PORT);
 }
 
-export function decideAutogenAction(listener: PortListener | null): UvicornAction {
-  return decideUvicornAction(listener, 'app.main:app', AUTOGEN_PORT);
+export function decidePythonRailsAction(listener: PortListener | null): UvicornAction {
+  return decideUvicornAction(listener, 'app.main:app', PYTHON_RAILS_PORT);
 }
 
-export type OwnedRole = 'grpc' | 'autogen' | 'backend' | 'frontend' | 'mcp' | 'tunnel' | 'supervisor';
+export type OwnedRole = 'grpc' | 'rails' | 'backend' | 'frontend' | 'mcp' | 'tunnel' | 'supervisor';
 
 /**
  * May `dev:fresh` stop this process? ONLY when its command line carries a grounded
@@ -164,7 +164,7 @@ export function isLiquidAItyOwnedDevProcess(
 
   // Everything else must be grounded in the repo root path to be ownable.
   if (!root || !cmd.includes(root)) return { owned: false };
-  if (/uvicorn\b[\s\S]*app\.main:app[\s\S]*8003/.test(cmd)) return { owned: true, role: 'autogen' };
+  if (/uvicorn\b[\s\S]*app\.main:app[\s\S]*8003/.test(cmd)) return { owned: true, role: 'rails' };
   if (/\bnx\b[\s\S]*serve backend/.test(cmd) || /apps\/backend\b[\s\S]*run-executor/.test(cmd)) {
     return { owned: true, role: 'backend' };
   }
@@ -177,7 +177,7 @@ export function isLiquidAItyOwnedDevProcess(
   ) {
     return { owned: true, role: 'mcp' };
   }
-  if (/concurrently[\s\S]*dev:grpc/.test(cmd) || /run dev:all\b/.test(cmd)) {
+  if (/concurrently[\s\S]*dev:grpc/.test(cmd) || /run dev:services\b/.test(cmd)) {
     return { owned: true, role: 'supervisor' };
   }
   return { owned: false };
@@ -187,26 +187,74 @@ export function isLiquidAItyOwnedDevProcess(
 // OS-touching helpers (not unit-tested; exercised by the entry scripts + proof).
 // --------------------------------------------------------------------------- //
 
-function runCapture(command: string, args: string[]): Promise<string> {
+type CaptureResult = { completed: boolean; output: string };
+
+function runCaptureBounded(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<CaptureResult> {
   return new Promise((resolve) => {
     let out = '';
+    let settled = false;
     const child = spawn(command, args, { windowsHide: true });
     child.stdout?.on('data', (d) => (out += String(d)));
-    child.on('error', () => resolve(''));
-    child.on('close', () => resolve(out));
+    const finish = (completed: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ completed, output: out });
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(false);
+    }, timeoutMs);
+    child.on('error', () => finish(false));
+    child.on('close', (code) => finish(code === 0));
   });
+}
+
+async function runCapture(command: string, args: string[]): Promise<string> {
+  return (await runCaptureBounded(command, args, 30_000)).output;
+}
+
+/** Parse only a Windows netstat local LISTENING row for `port`.
+ * Remote-port matches and connection rows are deliberately ignored. */
+export function parseWindowsNetstatListenerPid(output: string, port: number): number | null {
+  for (const line of output.split(/\r?\n/)) {
+    const columns = line.trim().split(/\s+/);
+    if (columns.length < 5 || columns[0].toUpperCase() !== 'TCP') continue;
+    const localAddress = columns[1];
+    const state = columns[3].toUpperCase();
+    const pid = Number(columns[4]);
+    const separator = localAddress.lastIndexOf(':');
+    const localPort = separator >= 0 ? Number(localAddress.slice(separator + 1)) : NaN;
+    if (state === 'LISTENING' && localPort === port && Number.isInteger(pid) && pid > 0) {
+      return pid;
+    }
+  }
+  return null;
 }
 
 /** The single listener on `port`, or null. Non-destructive inspection only. */
 export async function inspectPort(port: number): Promise<PortListener | null> {
   if (process.platform === 'win32') {
+    const listeners = await runCaptureBounded('netstat.exe', ['-ano', '-p', 'tcp'], 5_000);
+    if (!listeners.completed) {
+      throw new Error(`dev_port_inspection_failed: netstat timed out for port ${port}`);
+    }
+    const pid = parseWindowsNetstatListenerPid(listeners.output, port);
+    if (pid === null) return null;
     const ps = [
       '-NoProfile', '-Command',
-      `$c = Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1;` +
-      `if ($c) { $p = Get-CimInstance Win32_Process -Filter ("ProcessId=" + $c.OwningProcess) -ErrorAction SilentlyContinue;` +
-      ` if ($p) { [pscustomobject]@{ pid=$p.ProcessId; name=$p.Name; commandLine=$p.CommandLine } | ConvertTo-Json -Compress } }`,
+      `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" -ErrorAction SilentlyContinue;` +
+      `if ($p) { [pscustomobject]@{ pid=$p.ProcessId; name=$p.Name; commandLine=$p.CommandLine } | ConvertTo-Json -Compress }`,
     ];
-    const raw = (await runCapture('powershell.exe', ps)).trim();
+    const processLookup = await runCaptureBounded('powershell.exe', ps, 15_000);
+    if (!processLookup.completed) {
+      throw new Error(`dev_port_inspection_failed: process lookup timed out for pid ${pid} port ${port}`);
+    }
+    const raw = processLookup.output.trim();
     if (!raw) return null;
     try {
       const j = JSON.parse(raw);

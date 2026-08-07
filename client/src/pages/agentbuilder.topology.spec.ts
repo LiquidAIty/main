@@ -78,6 +78,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(INITIAL_DECK.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' }),
       expect.objectContaining({ source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' }),
+      expect.objectContaining({ source: 'card_local_coder', target: 'card_magentic', edgeType: 'magentic_option' }),
       expect.objectContaining({ source: 'card_research_agent', target: 'card_magentic', edgeType: 'magentic_option' }),
       expect.objectContaining({ source: 'card_worldsignals_agent', target: 'card_magentic', edgeType: 'magentic_option' }),
     ]));
@@ -91,6 +92,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(mainTools).toEqual(expect.arrayContaining([
       'engraphis.recall',
       'canvas.inspect',
+      'run_coder_subagent',
     ]));
     expect(mainTools).not.toEqual(expect.arrayContaining(['knowgraph.ingest', 'web_search']));
     expect(hermesTools).toEqual(expect.arrayContaining([

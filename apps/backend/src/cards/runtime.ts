@@ -12,6 +12,10 @@ import { getDeckDocument } from '../decks/store';
 import { resolveModel } from '../llm/models.config';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
 import { logHarnessTrace, redactTrace } from '../services/harnessTrace';
+import {
+  isLocalCoderControllerCard,
+  normalizeLocalCoderControllerCard,
+} from './localCoderController';
 
 function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
   const provider = String(value ?? '').trim().toLowerCase();
@@ -218,7 +222,7 @@ export async function resolveMagenticWorkerReadiness(
 
     try {
       resolveCardModelStrict(card);
-      const selectedTools = resolveCardTools(card);
+      const selectedTools = resolveAutoGenParticipantTools(card);
       for (const toolId of selectedTools) {
         const descriptor = manifestById.get(toolId);
         if (!descriptor) throw new Error(`card_tool_unknown: ${toolId}`);
@@ -332,16 +336,33 @@ export function resolveCardTools(card: any): string[] {
 }
 
 /**
+ * The saved Coder card describes capabilities available inside OpenClaude.
+ * Its outer AutoGen AssistantAgent is only the controller and therefore gets
+ * the one execution doorway that starts the canonical Local Coder engine.
+ */
+export function resolveAutoGenParticipantTools(card: any): string[] {
+  const selectedTools = resolveCardTools(card);
+  if (!isLocalCoderControllerCard(card)) return selectedTools;
+  if (!selectedTools.includes('run_local_coder')) {
+    throw new Error(`local_coder_controller_tool_missing: cardId=${card.id}`);
+  }
+  return ['run_local_coder'];
+}
+
+/**
  * THE one card→participant serialization, shared by the Mag One team payload and the
- * single-card runtime. Same prompt/model/tool resolution, same no-fallback throws
- * (resolveCardModelStrict / resolveCardTools). Extracted so there is exactly one
- * source of truth for how a canvas card becomes a Python AutoGen participant.
+ * single-card runtime. Saved prompt/model resolution is unchanged; the historical
+ * Local Coder controller boundary exposes only run_local_coder to AutoGen. This is
+ * the one source of truth for how a canvas card becomes a Python participant.
  */
 export function serializeCardParticipant(head: any): Record<string, unknown> {
+  head = normalizeLocalCoderControllerCard(head);
   const model = resolveCardModelStrict(head);
   const runtimeBinding = resolveCardBinding(head);
-  const runtimeType = resolveCardRuntimeType(head);
-  const selectedTools = resolveCardTools(head);
+  const runtimeType = isLocalCoderControllerCard(head)
+    ? 'assistant_agent'
+    : resolveCardRuntimeType(head);
+  const selectedTools = resolveAutoGenParticipantTools(head);
   return {
     cardId: String(head.id || ''),
     title: String(head.title || 'Agent'),
@@ -423,7 +444,8 @@ export function buildPythonAutoGenCardRuntimePayload(
 // ── Single-card runtime (run one configured canvas card, outside a Mag One team run) ──────
 // Server-trusted: the ONLY inputs are ids + bounded text. Card identity, prompt, model,
 // runtime, and tools are resolved from the same canonical deck source and the same strict
-// resolvers the Mag One path uses (resolveCardModelStrict / resolveCardTools /
+// resolvers the Mag One path uses (resolveCardModelStrict /
+// resolveAutoGenParticipantTools /
 // serializeCardParticipant). No fallback model, no substitute card, no plain completion.
 
 const SINGLE_CARD_RUN_ARG_KEYS = ['projectId', 'deckId', 'cardId', 'correlationId', 'input', 'conversationId', 'instructionId', 'senderCardId', 'parentRunId'] as const;
@@ -537,7 +559,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     });
   }
 
-  const effectiveCard = card;
+  const effectiveCard = normalizeLocalCoderControllerCard(card);
   let participant: Record<string, unknown>;
   let model: { provider: string; providerModelId: string };
   try {

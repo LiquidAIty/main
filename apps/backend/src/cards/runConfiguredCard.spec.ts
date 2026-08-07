@@ -38,7 +38,27 @@ const LOCAL_CODER_CARD = {
   runtimeType: 'local_coder',
   runtimeBinding: 'local_coder',
   prompt: 'You are the Local Coder controller.',
-  runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.6-luna', tools: ['run_local_coder'] },
+  runtimeOptions: {
+    provider: 'openai',
+    modelKey: 'gpt-5.6-luna',
+    tools: [
+      'run_local_coder',
+      'cbm.index_repository',
+      'cbm.search_graph',
+      'cbm.query_graph',
+      'cbm.trace_path',
+      'cbm.get_code_snippet',
+      'cbm.get_graph_schema',
+      'cbm.get_architecture',
+      'cbm.search_code',
+      'cbm.list_projects',
+      'cbm.delete_project',
+      'cbm.index_status',
+      'cbm.detect_changes',
+      'cbm.manage_adr',
+      'cbm.ingest_traces',
+    ],
+  },
 };
 
 function deckWith(nodes: any[], edges: any[] = []) {
@@ -265,11 +285,13 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(result.status).toBe('completed');
     expect(result.runtimeType).toBe('local_coder');
     expect(result.tools).toEqual(['run_local_coder']);
+    expect(LOCAL_CODER_CARD.runtimeOptions.tools.filter((tool) => tool.startsWith('cbm.'))).toHaveLength(14);
     const payload = mockRunCard.mock.calls[0][0];
     expect(payload.session.modelProvider).toBe('openai');
     expect(payload.session.modelKey).toBe('gpt-5.6-luna');
     expect(payload.session.providerModelId).toBe('gpt-5.6-luna');
     expect(payload.cardRuntime.runtimeType).toBe('assistant_agent');
+    expect(payload.cardRuntime.participants[0].runtimeType).toBe('assistant_agent');
     expect(payload.cardRuntime.participants[0].runtimeBinding).toBe('local_coder');
     expect(payload.cardRuntime.participants[0].tools).toEqual(['run_local_coder']);
     expect(payload.cardRuntime.participants[0].prompt).toBe('You are the Local Coder controller.');

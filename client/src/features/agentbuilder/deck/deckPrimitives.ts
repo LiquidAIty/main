@@ -42,6 +42,7 @@ export const LOCAL_CODER_CONTROLLER_MODEL_KEY = DEFAULT_CARD_MODEL_KEY;
 export const LOCAL_CODER_CONTROLLER_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
 export const LOCAL_CODER_CONTROLLER_TOOLS = [
   'run_local_coder',
+  'cbm.index_repository',
   'cbm.search_graph',
   'cbm.query_graph',
   'cbm.trace_path',
@@ -50,8 +51,11 @@ export const LOCAL_CODER_CONTROLLER_TOOLS = [
   'cbm.get_architecture',
   'cbm.search_code',
   'cbm.list_projects',
+  'cbm.delete_project',
   'cbm.index_status',
   'cbm.detect_changes',
+  'cbm.manage_adr',
+  'cbm.ingest_traces',
 ] as const;
 export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'engraphis.remember',
@@ -88,6 +92,7 @@ export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'canvas.inspect',
   'mag_one.describe_connected_agents',
   'run_mag_one',
+  'run_coder_subagent',
 ] as const;
 export const HERMES_STEWARD_TOOLS = [
   'graphiti.search_nodes',

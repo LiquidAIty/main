@@ -85,16 +85,20 @@ provider/model/tool configuration. Python `run_local_coder` calls
 LocalCoder service invokes the configured OpenClaude CLI; and success requires a validated
 CoderReport.
 
-The three callers converge before execution:
+The two current callers converge before execution; the preserved Mag One participant contract joins
+the same path when that later test is intentionally run:
 
 ```txt
 Coder card Run ─┐
-Main / external GPT → card.run_assistant_agent ─┼→ runConfiguredCard / runCardWithContract
-Mag One → saved local_coder participant ────────┘  → Python participant builder
+Main / external GPT → run_coder_subagent ───────┼→ runConfiguredCard / runCardWithContract
+Mag One (later compatibility test) ─────────────┘  → Python typed runtime participant
                                                      → model-bound run_local_coder
                                                      → /api/coder/localcoder/run
                                                      → LocalCoderService → LocalCoderAdapter
 ```
+
+`run_coder_subagent` verifies the saved Main→Coder flow and delegates to the generic saved-card
+runner. It does not own a process, session, terminal, provider, model, tool set, or repository root.
 
 OpenRouter cards use OpenClaude's OpenAI-compatible dialect with the saved provider model (for
 example DeepSeek) and the OpenRouter endpoint/key. OpenAI Account cards use the same supported

@@ -1,6 +1,7 @@
 /**
  * Uvicorn startup guard — replaces blind `uvicorn ...` starts in the dev stack
- * for BOTH project Python services (KnowGraph on 8001, AutoGen rails on 8003).
+ * for BOTH real project Python services (Graphiti ingestion on 8001, Python
+ * rails on 8003). ThinkGraph/KnowGraph/CodeGraph are UI aliases, not services.
  * It makes startup IDEMPOTENT, exactly like the gRPC guard: reuse a HEALTHY
  * running instance, stop-and-replace an unhealthy one, start one only when the
  * port is free, and fail honestly on an unknown listener (never launch a
@@ -19,25 +20,25 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
-  AUTOGEN_PORT,
-  KNOWGRAPH_PORT,
+  GRAPHITI_PORT,
+  PYTHON_RAILS_PORT,
   decideUvicornAction,
   inspectPort,
   stopProcessTree,
 } from './devStack';
 
 const SERVICES = {
-  knowgraph: {
-    port: KNOWGRAPH_PORT,
+  graphiti: {
+    port: GRAPHITI_PORT,
     appModule: 'app:app',
     cwd: 'services/knowgraph',
-    label: 'KnowGraph',
+    label: 'Graphiti ingestion API',
   },
-  autogen: {
-    port: AUTOGEN_PORT,
+  rails: {
+    port: PYTHON_RAILS_PORT,
     appModule: 'app.main:app',
     cwd: 'apps/python-models',
-    label: 'AutoGen',
+    label: 'Python rails',
   },
 } as const;
 

@@ -25,8 +25,10 @@ There are two useful surfaces over the canonical OpenClaude coding harness:
 - the saved Local Coder card owns bounded non-interactive CoderPacket execution and validated
   CoderReport output.
 
-They share OpenClaude runtime discovery but are not alternate routes for the same request. The retired
-direct-terminal task runner and `run_coder_subagent` route are absent.
+They share OpenClaude runtime discovery but are not alternate execution authorities for the same
+request. The retired direct-terminal task engine is absent. Main's external MCP tool named
+`run_coder_subagent` is valid only because it is a thin saved-card delegation doorway into
+`runConfiguredCard`; it does not own or launch an alternate terminal/session path.
 
 Must remain true:
 

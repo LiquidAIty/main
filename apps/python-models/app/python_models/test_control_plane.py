@@ -245,6 +245,7 @@ class TestRunAssistantAgent:
         assert calls[0][2]["senderCardId"] == "card_hermes_steward"
         assert response["instructionId"] == "instruction:hermes-search"
 
+
     def test_inter_agent_failure_records_backend_error(self, monkeypatch):
         monkeypatch.setattr(
             cp.ag,
@@ -304,4 +305,96 @@ class TestRunAssistantAgent:
                 "originatingRunId": "main-turn-1",
                 "instructionId": "instruction:forged",
                 "input": "Find one source.",
+            }))
+
+
+class TestRunCoderSubagent:
+    @staticmethod
+    def _deck(*, connected=True, runtime_type="local_coder", runtime_binding="local_coder"):
+        return {
+            "nodes": [
+                {"id": "card_main_chat", "runtimeType": "assistant_agent", "runtimeBinding": "main_chat"},
+                {
+                    "id": "card_local_coder",
+                    "runtimeType": runtime_type,
+                    "runtimeBinding": runtime_binding,
+                    "runtimeOptions": {
+                        "provider": "openai",
+                        "modelKey": "gpt-5.6-luna",
+                        "tools": ["run_local_coder", "cbm.search_graph"],
+                    },
+                },
+            ],
+            "edges": ([{
+                "id": "main-coder",
+                "source": "card_main_chat",
+                "target": "card_local_coder",
+                "edgeType": "flow",
+            }] if connected else []),
+        }
+
+    def test_delegates_through_the_generic_saved_card_runner(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(cp, "_load_deck", lambda _project, _deck: (self._deck(), "revision-1"))
+
+        async def run_saved_card(args):
+            calls.append(args)
+            return {"ok": True, "result": {"status": "completed"}}
+
+        monkeypatch.setattr(cp, "card_run_assistant_agent", run_saved_card)
+        response = asyncio.run(cp.run_coder_subagent({
+            "projectId": "p",
+            "deckId": "deck_builder",
+            "cardId": "card_local_coder",
+            "correlationId": "coder-run-1",
+            "conversationId": "conv-1",
+            "originatingAgentId": "card_main_chat",
+            "originatingRunId": "main-run-1",
+            "approvedPrompt": "Implement the bounded task.",
+        }))
+
+        assert response["ok"] is True
+        assert calls == [{
+            "projectId": "p",
+            "deckId": "deck_builder",
+            "cardId": "card_local_coder",
+            "correlationId": "coder-run-1",
+            "conversationId": "conv-1",
+            "originatingAgentId": "card_main_chat",
+            "originatingRunId": "main-run-1",
+            "input": "Implement the bounded task.",
+        }]
+
+    @pytest.mark.parametrize(
+        ("connected", "runtime_type", "runtime_binding", "error"),
+        [
+            (False, "local_coder", "local_coder", "main_coder_flow_required"),
+            (True, "assistant_agent", "assistant_agent", "coder_card_runtime_unsupported"),
+        ],
+    )
+    def test_rejects_a_disconnected_or_non_coder_target(
+        self, monkeypatch, connected, runtime_type, runtime_binding, error
+    ):
+        monkeypatch.setattr(
+            cp,
+            "_load_deck",
+            lambda _project, _deck: (
+                self._deck(
+                    connected=connected,
+                    runtime_type=runtime_type,
+                    runtime_binding=runtime_binding,
+                ),
+                "revision-1",
+            ),
+        )
+        with pytest.raises(cp.ControlPlaneError, match=error):
+            asyncio.run(cp.run_coder_subagent({
+                "projectId": "p",
+                "deckId": "deck_builder",
+                "cardId": "card_local_coder",
+                "correlationId": "coder-run-1",
+                "conversationId": "conv-1",
+                "originatingAgentId": "card_main_chat",
+                "originatingRunId": "main-run-1",
+                "approvedPrompt": "Implement the bounded task.",
             }))

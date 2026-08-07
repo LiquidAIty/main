@@ -6,6 +6,7 @@ The minimum user-directed MCP control surface over ACTUAL saved state:
   * card.update_configuration  — strict allowlist edits of persisted card config
   * canvas.upsert_wire         — supported wire types only (flow / magentic_option)
   * card.run_assistant_agent   — run ONE saved enabled card (no overrides possible)
+  * run_coder_subagent         — Main delegates to its saved connected Coder card
 
 Policy/validation lives HERE (Python). Saved-deck persistence stays with the
 existing backend deck routes on loopback (single deck authority — not replaced).
@@ -372,3 +373,62 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
         raise
 
     return {**response, **({"instructionId": instruction_id} if instruction_id else {})}
+
+
+async def run_coder_subagent(args: dict[str, Any]) -> dict[str, Any]:
+    """Delegate Main's task to the saved connected Coder card.
+
+    This is deliberately only a typed doorway over ``card_run_assistant_agent``.
+    It does not own a process, terminal, provider, model, tool set, or filesystem
+    root. The saved Coder card and the configured-card runner remain authoritative.
+    """
+    _require(
+        args,
+        "projectId",
+        "deckId",
+        "cardId",
+        "correlationId",
+        "conversationId",
+        "originatingAgentId",
+        "originatingRunId",
+        "approvedPrompt",
+    )
+    authority = str(args.get("authority") or "direct_main_audit").strip()
+    if authority != "direct_main_audit":
+        raise ControlPlaneError(f"coder_delegation_authority_unsupported: {authority}")
+
+    project_id = str(args["projectId"]).strip()
+    deck_id = str(args["deckId"]).strip()
+    card_id = str(args["cardId"]).strip()
+    main_card_id = str(args["originatingAgentId"]).strip()
+    deck, _revision = await asyncio.to_thread(_load_deck, project_id, deck_id)
+    saved = resolve_saved_card_reference(
+        project_id,
+        deck_id,
+        card_id,
+        deck=deck,
+    )
+    if saved["runtimeType"] != "local_coder" or saved["runtimeBinding"] != "local_coder":
+        raise ControlPlaneError(f"coder_card_runtime_unsupported: {card_id}")
+    connected = any(
+        str(edge.get("source") or "") == main_card_id
+        and str(edge.get("target") or "") == card_id
+        and str(edge.get("edgeType") or edge.get("type") or "") == "flow"
+        for edge in (deck.get("edges") or [])
+        if isinstance(edge, dict)
+    )
+    if not connected:
+        raise ControlPlaneError(f"main_coder_flow_required: {main_card_id}->{card_id}")
+
+    return await card_run_assistant_agent(
+        {
+            "projectId": project_id,
+            "deckId": deck_id,
+            "cardId": card_id,
+            "correlationId": str(args["correlationId"]).strip(),
+            "conversationId": str(args["conversationId"]).strip(),
+            "originatingAgentId": main_card_id,
+            "originatingRunId": str(args["originatingRunId"]).strip(),
+            "input": str(args["approvedPrompt"]),
+        }
+    )

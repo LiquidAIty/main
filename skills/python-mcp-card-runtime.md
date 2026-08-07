@@ -14,7 +14,8 @@ parallel runtime, second host, second registry, or direct-DB side path.
 ```
 canvas card (deck_builder)            ← identity, prompt, model, enabled, tools (source of truth)
   → runConfiguredCard (backend)      ← server-trusted resolution: ids in, config resolved, overrides rejected
-  → /autogen/run_card (Python)       ← run_configured_card: ONE AssistantAgent, same builder as Mag One participants
+  → /autogen/run_card (Python)       ← run_configured_card: ONE saved participant identity
+                                      (AssistantAgent or typed runtime adapter)
   → card tools (tool_registry)       ← FunctionTools resolved by name; authority via ContextVar, never model args
   → mcp-bridge endpoints (backend)   ← transport to the single store authority
   → transactional store writer       ← structural/provenance/idempotency validation ONLY; one txn or honest failure

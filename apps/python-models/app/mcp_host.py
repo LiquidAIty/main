@@ -357,7 +357,7 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, st
         "graphiti.delete_episode",
     }:
         risk = "destructive"
-    elif name in {"run_mag_one", "card.run_assistant_agent"}:
+    elif name in {"run_coder_subagent", "run_mag_one", "card.run_assistant_agent"}:
         risk = "runtime-launching"
     elif name in {"engraphis.index_repo", "cbm.index_repository"} or name.startswith("graphiti.add_"):
         risk = "background"
@@ -1601,6 +1601,42 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
+            name="run_coder_subagent",
+            description=(
+                "Main Chat only: delegate one approved coding task to the saved connected Coder card. "
+                "This is a saved-card doorway, not a second Coder engine: it uses the same configured-card "
+                "execution path as Coder card Run, then the card's run_local_coder tool reaches the canonical "
+                "LocalCoder/OpenClaude authority. Provider, model, tools, and repository root are never "
+                "accepted from the caller."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "deckId": {"type": "string"},
+                    "conversationId": {"type": "string"},
+                    "parentRunId": {"type": "string"},
+                    "correlationId": {"type": "string"},
+                    "cardId": {"type": "string"},
+                    "approvedPrompt": {"type": "string"},
+                    "authority": {
+                        "type": "string",
+                        "enum": ["direct_main_audit"],
+                        "default": "direct_main_audit",
+                    },
+                },
+                "required": [
+                    "projectId",
+                    "deckId",
+                    "conversationId",
+                    "parentRunId",
+                    "cardId",
+                    "approvedPrompt",
+                ],
+                "additionalProperties": False,
+            },
+        ),
+        Tool(
             name="mag_one.describe_connected_agents",
             description=(
                 "Read the currently connected, bus-eligible (magentic_option) Mag One Agent Cards and "
@@ -1852,6 +1888,7 @@ _SERVER_OWNED_ARGUMENTS = {
     "_callerRuntimeBinding",
 }
 _MAIN_ONLY_TOOLS = {
+    "run_coder_subagent",
     "run_mag_one",
 }
 _HERMES_ONLY_TOOLS = {
@@ -2008,6 +2045,18 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "projectWide",
     },
     "coder.status": set(),
+    "run_coder_subagent": {
+        "projectId",
+        "deckId",
+        "conversationId",
+        "parentRunId",
+        "correlationId",
+        "originatingAgentId",
+        "originatingRunId",
+        "cardId",
+        "approvedPrompt",
+        "authority",
+    },
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "instructionId", "conversationId"},
     "write_mag_one_instructions": {
@@ -2047,6 +2096,7 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
     "card.update_configuration": "card_update_configuration",
     "canvas.upsert_wire": "canvas_upsert_wire",
     "card.run_assistant_agent": "card_run_assistant_agent",
+    "run_coder_subagent": "run_coder_subagent",
 }
 
 
@@ -2152,6 +2202,9 @@ async def _dispatch_tool(
             if name == "card.run_assistant_agent":
                 args["originatingAgentId"] = str(context["mainCardId"])
                 args["originatingRunId"] = str(context["parentRunId"])
+            if name == "run_coder_subagent":
+                args["originatingAgentId"] = str(context["mainCardId"])
+                args["originatingRunId"] = str(context["parentRunId"])
             if name in _MAIN_ONLY_TOOLS or name in _HERMES_ONLY_TOOLS:
                 args["_callerCardId"] = str(context["mainCardId"])
                 args["_callerRuntimeBinding"] = "external_gpt"
@@ -2170,6 +2223,13 @@ async def _dispatch_tool(
                 text=json.dumps({"ok": False, "error": caller_error}),
             )
         ]
+    if name == "run_coder_subagent":
+        args["correlationId"] = str(args.get("correlationId") or f"coder-subagent:{uuid4()}")
+        args["originatingAgentId"] = caller_card_id
+        args["originatingRunId"] = str(
+            args.get("originatingRunId") or args.pop("parentRunId", "")
+        )
+        args.pop("parentRunId", None)
     extra = [k for k in args.keys() if k not in allowed]
     if extra:
         return [
