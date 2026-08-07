@@ -36,6 +36,7 @@ import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantStore';
 import {
   fetchAgentCardContext,
+  requestPythonRailsJson,
 } from '../services/autogen/autogenOrchestratorClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 
@@ -43,7 +44,29 @@ const router = Router();
 
 router.get('/tool-library', async (req, res) => {
   try {
-    const tools = await listPythonAgentMcpCatalog();
+    const [harnessTools, autoGenResponse] = await Promise.all([
+      listPythonAgentMcpCatalog(),
+      requestPythonRailsJson('/tools/manifest', { method: 'GET' }),
+    ]);
+    const autoGenManifest = Array.isArray((autoGenResponse as any)?.tools)
+      ? (autoGenResponse as any).tools
+      : null;
+    if (!autoGenManifest) throw new Error('autogen_tool_manifest_invalid');
+    const autoGenTools = autoGenManifest.map((entry: any) => {
+      const name = String(entry?.id || '').trim();
+      if (!name || !entry?.capability || typeof entry.capability !== 'object') {
+        throw new Error(`autogen_tool_capability_metadata_invalid: ${name || 'unnamed'}`);
+      }
+      return {
+        name,
+        title: String(entry.displayName || name),
+        description: String(entry.description || ''),
+        capability: entry.capability,
+      };
+    });
+    const tools = [...harnessTools, ...autoGenTools].sort((left, right) =>
+      left.name.localeCompare(right.name),
+    );
     return res.json({ ok: true, tools });
   } catch (error) {
     return res.status(503).json({

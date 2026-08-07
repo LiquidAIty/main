@@ -89,6 +89,8 @@ export type PythonMcpCapabilityMetadata = {
   graphAuthority: 'engraphis' | 'graphiti' | 'cbm' | 'agentgraph' | null;
   authorityClass: string;
   runtimeCompatibility: string[];
+  assignableRuntimeBindings: string[];
+  assignableRuntimeTypes: string[];
   cardAssignable: boolean;
   latency: 'fast' | 'medium' | 'slow';
   providerPossible: boolean;

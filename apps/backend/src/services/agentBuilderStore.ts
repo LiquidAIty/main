@@ -33,7 +33,10 @@ export async function createProject(
   ownerUserId?: string | null,
 ): Promise<AgentCard> {
   const ownerId = typeof ownerUserId === 'string' ? ownerUserId.trim() : '';
-  if (!UUID_REGEX.test(ownerId)) throw new Error('project_owner_required');
+  // Prisma User ids are CUID strings; only project ids use UUIDs. The route
+  // resolves this value from the authenticated session before it reaches the
+  // store, so requiring UUID syntax here rejects every normal signed-in user.
+  if (!ownerId) throw new Error('project_owner_required');
   const projectId = randomUUID();
   const projectCode = code?.trim() || null;
 

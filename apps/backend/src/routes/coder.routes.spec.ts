@@ -117,6 +117,7 @@ const mcpClientMocks = vi.hoisted(() => ({
 
 const orchestratorMocks = vi.hoisted(() => ({
   fetchAgentCardContext: vi.fn(async () => ({ ok: true })),
+  requestPythonRailsJson: vi.fn(async (): Promise<any> => ({ tools: [] })),
 }));
 
 const dbMocks = vi.hoisted(() => ({
@@ -187,6 +188,54 @@ describe('coder routes', () => {
   // route tests never spawn a real coder process, regardless of whether the
   // vendored runtime is built or API keys are exported on the test machine.
   const BROKEN_COMMAND = 'node C:/liquidaity/nonexistent/openclaude.mjs';
+
+  it('projects both Python-owned tool catalogs without TypeScript assignment policy', async () => {
+    mcpClientMocks.listPythonAgentMcpCatalog.mockResolvedValueOnce([
+      {
+        name: 'run_coder_subagent',
+        capability: {
+          runtimeCompatibility: ['harness_mcp'],
+          assignableRuntimeBindings: ['main_chat'],
+          assignableRuntimeTypes: [],
+          cardAssignable: true,
+        },
+      },
+    ] as any);
+    orchestratorMocks.requestPythonRailsJson.mockResolvedValueOnce({
+      tools: [
+        {
+          id: 'run_local_coder',
+          displayName: 'Local Coder',
+          description: 'Run the saved Coder.',
+          capability: {
+            runtimeCompatibility: ['autogen'],
+            assignableRuntimeBindings: ['local_coder'],
+            assignableRuntimeTypes: ['local_coder'],
+            cardAssignable: true,
+          },
+        },
+      ],
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/tool-library`);
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(payload.tools).toEqual([
+        expect.objectContaining({
+          name: 'run_coder_subagent',
+          capability: expect.objectContaining({ assignableRuntimeBindings: ['main_chat'] }),
+        }),
+        expect.objectContaining({
+          name: 'run_local_coder',
+          title: 'Local Coder',
+          capability: expect.objectContaining({ assignableRuntimeTypes: ['local_coder'] }),
+        }),
+      ]);
+    } finally {
+      await closeServer(server);
+    }
+  });
 
   it('returns an empty history only for a successful empty read', async () => {
     chatSessionMocks.getConversationMessages.mockResolvedValueOnce([]);

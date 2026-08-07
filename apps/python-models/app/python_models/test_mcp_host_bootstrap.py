@@ -52,6 +52,24 @@ def test_execution_receipt_observes_the_actual_provider_client_boundary():
     assert receipt["providerSubstitution"] is False
 
 
+def test_card_assignment_compatibility_matches_mcp_caller_enforcement():
+    import mcp_host
+
+    safe = {"risk": "safe read", "compute": "database_read"}
+    assert mcp_host._tool_capability_metadata(
+        "run_coder_subagent", safe
+    )["assignableRuntimeBindings"] == ["main_chat"]
+    assert mcp_host._tool_capability_metadata(
+        "write_mag_one_instructions", safe
+    )["assignableRuntimeBindings"] == ["hermes_steward"]
+    assert mcp_host._tool_capability_metadata(
+        "engraphis.recall", safe
+    )["assignableRuntimeBindings"] == ["main_chat", "hermes_steward"]
+    assert mcp_host._tool_capability_metadata(
+        "main.context", safe
+    )["assignableRuntimeBindings"] == []
+
+
 def test_graphiti_uses_knowgraph_openrouter_embedding_configuration(monkeypatch):
     import mcp_host
 

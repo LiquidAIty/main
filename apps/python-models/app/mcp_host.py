@@ -432,6 +432,15 @@ def _tool_capability_metadata(
         authority_class = "application"
 
     card_assignable = name != "main.context"
+    assignable_runtime_bindings = (
+        []
+        if not card_assignable
+        else ["main_chat"]
+        if name in _MAIN_ONLY_TOOLS
+        else ["hermes_steward"]
+        if name in _HERMES_ONLY_TOOLS
+        else ["main_chat", "hermes_steward"]
+    )
     surface = "knowledge" if graph_authority else "tools"
     if not card_assignable:
         surface = "system"
@@ -451,6 +460,10 @@ def _tool_capability_metadata(
         "graphAuthority": graph_authority,
         "authorityClass": authority_class,
         "runtimeCompatibility": ["harness_mcp"],
+        # This is the execution host's caller contract projected for the card
+        # editor. The frontend must not infer assignment from graph authority.
+        "assignableRuntimeBindings": assignable_runtime_bindings,
+        "assignableRuntimeTypes": [],
         "cardAssignable": card_assignable,
         "latency": latency,
         "providerPossible": provider_possible,

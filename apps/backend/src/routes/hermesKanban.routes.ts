@@ -293,21 +293,17 @@ router.get('/stats', async (req, res) => {
 
 router.get('/system', async (_req, res) => {
   try {
-    // `hermes gateway status` intermittently returns empty stdout when cold-
-    // spawned from Node on Windows. A bounded retry on an inconclusive probe
-    // is not a data fallback — it re-reads the same native status so honest
-    // liveness is reported instead of a spurious "stopped".
-    let gatewayOut = '';
-    for (let attempt = 0; attempt < 3 && !gatewayOut; attempt++) {
-      const probe = await runHermes(['gateway', 'status']);
-      gatewayOut = probe.stdout.trim();
-    }
-    const [configRes, statsRes, diagRes, profilesRes] = await Promise.all([
+    // Each value is an independent native read. Start the cold CLI processes
+    // together so gateway startup time does not delay every other probe, and
+    // do not retry or cache an inconclusive result.
+    const [gatewayRes, configRes, statsRes, diagRes, profilesRes] = await Promise.all([
+      runHermes(['gateway', 'status']),
       runHermes(['config', 'get', 'kanban']),
       runHermes(['kanban', 'stats', '--json']),
       runHermes(['kanban', 'diagnostics', '--json']),
       runHermes(['profile', 'list']),
     ]);
+    const gatewayOut = gatewayRes.stdout.trim();
     // The native status line is the authoritative running signal. The Hermes
     // CLI may exit non-zero even while it prints "Gateway process running"
     // (it also checks the Windows login-item, which can fail independently),

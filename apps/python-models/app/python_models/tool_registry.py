@@ -195,7 +195,12 @@ def _post_backend_json_sync(path: str, payload: dict[str, Any]) -> str:
         method="POST",
     )
     try:
-        with urlopen(request, timeout=60) as response:  # noqa: S310 — loopback backend only
+        # LocalCoder/OpenClaude owns job completion. A second socket deadline
+        # here used to abort the AutoGen caller at 60 seconds while the same
+        # canonical Coder process was still completing, leaving a false failed
+        # card run. The loopback connection closes naturally if its backend or
+        # child process terminates; do not invent a competing execution timer.
+        with urlopen(request) as response:  # noqa: S310 — loopback backend only
             return response.read().decode("utf-8")
     except HTTPError as err:
         body = ""
@@ -799,6 +804,8 @@ _TOOL_DISPLAY_METADATA: dict[str, dict[str, Any]] = {
     "run_local_coder": {
         "displayName": "Local Coder",
         "agentCompatibility": ["magentic_one", "assistant_agent"],
+        "assignableRuntimeBindings": ["local_coder"],
+        "assignableRuntimeTypes": ["local_coder"],
     },
     "find_recent_sec_filing_signals": {
         "displayName": "SEC Filing Signals",
@@ -857,11 +864,22 @@ def tool_manifest(registry: ToolRegistry | None = None) -> list[dict[str, Any]]:
         if spec is None or not spec.enabled:
             continue
         meta = _TOOL_DISPLAY_METADATA.get(name, {})
+        agent_compatibility = list(meta.get("agentCompatibility", ["magentic_one"]))
         manifest.append({
             "id": spec.name,
             "displayName": meta.get("displayName", spec.name),
             "description": spec.description,
-            "agentCompatibility": list(meta.get("agentCompatibility", ["magentic_one"])),
+            "agentCompatibility": agent_compatibility,
+            "capability": {
+                "runtimeCompatibility": ["autogen"],
+                "assignableRuntimeBindings": list(
+                    meta.get("assignableRuntimeBindings", [])
+                ),
+                "assignableRuntimeTypes": list(
+                    meta.get("assignableRuntimeTypes", agent_compatibility)
+                ),
+                "cardAssignable": True,
+            },
             "inputSchemaSummary": _summarize_input_schema(spec.inputSchema),
         })
     return manifest

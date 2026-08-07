@@ -7,42 +7,70 @@ import type {
 } from '../types/agentgraph';
 
 type ModelOption = { key: string; label: string; providerModelId: string };
-export type ToolAuthority = 'engraphis' | 'cbm' | 'graphiti';
-type ToolDescriptor = {
+export type ToolDescriptor = {
   name: string;
   title?: string;
   description?: string;
-  capability?: { graphAuthority?: string | null; cardAssignable?: boolean };
+  capability?: {
+    runtimeCompatibility?: string[];
+    assignableRuntimeBindings?: string[];
+    assignableRuntimeTypes?: string[];
+    cardAssignable?: boolean;
+  };
 };
+export type DisplayedToolRow = ToolDescriptor & {
+  availability: 'available' | 'stale' | 'incompatible' | 'not_assignable';
+};
+
+function isToolAssignable(
+  tool: ToolDescriptor,
+  runtimeBinding: RuntimeBinding | '' | null,
+  runtimeType: AgentCardRuntimeType | null,
+): boolean {
+  if (tool.capability?.cardAssignable !== true) return false;
+  const bindings = tool.capability.assignableRuntimeBindings || [];
+  const runtimeTypes = tool.capability.assignableRuntimeTypes || [];
+  return (
+    (Boolean(runtimeBinding) && bindings.includes(String(runtimeBinding))) ||
+    (Boolean(runtimeType) && runtimeTypes.includes(String(runtimeType)))
+  );
+}
 
 export function buildDisplayedToolRows(
   toolCatalog: ToolDescriptor[],
   savedToolNames: string[],
-  toolAuthority: ToolAuthority | null,
-): ToolDescriptor[] {
-  const eligibleRows: ToolDescriptor[] = [];
-  const eligibleNames = new Set<string>();
-  if (toolAuthority) {
-    for (const tool of toolCatalog) {
-      if (
-        tool.capability?.cardAssignable === false ||
-        tool.capability?.graphAuthority !== toolAuthority ||
-        eligibleNames.has(tool.name)
-      ) {
-        continue;
-      }
-      eligibleRows.push(tool);
-      eligibleNames.add(tool.name);
-    }
+  runtimeBinding: RuntimeBinding | '' | null,
+  runtimeType: AgentCardRuntimeType | null,
+): DisplayedToolRow[] {
+  const catalogByName = new Map<string, ToolDescriptor[]>();
+  for (const tool of toolCatalog) {
+    const descriptors = catalogByName.get(tool.name) || [];
+    descriptors.push(tool);
+    catalogByName.set(tool.name, descriptors);
   }
-  const catalogByName = new Map(toolCatalog.map((tool) => [tool.name, tool]));
-  const displayedNames = new Set(eligibleRows.map((tool) => tool.name));
-  const rows = [...eligibleRows];
+  const savedNames = Array.from(new Set(savedToolNames));
+  const savedNameSet = new Set(savedNames);
+  const rows: DisplayedToolRow[] = savedNames.map((name) => {
+    const registered = catalogByName.get(name) || [];
+    if (!registered.length) return { name, availability: 'stale' };
+    const assignable = registered.find((tool) =>
+      isToolAssignable(tool, runtimeBinding, runtimeType),
+    );
+    if (assignable) return { ...assignable, availability: 'available' };
+    const display = registered[0];
+    if (registered.every((tool) => tool.capability?.cardAssignable !== true)) {
+      return { ...display, availability: 'not_assignable' };
+    }
+    return { ...display, availability: 'incompatible' };
+  });
 
-  for (const savedToolName of savedToolNames) {
-    if (displayedNames.has(savedToolName)) continue;
-    rows.push(catalogByName.get(savedToolName) || { name: savedToolName });
-    displayedNames.add(savedToolName);
+  for (const tool of toolCatalog) {
+    if (
+      !isToolAssignable(tool, runtimeBinding, runtimeType) ||
+      savedNameSet.has(tool.name)
+    ) continue;
+    rows.push({ ...tool, availability: 'available' });
+    savedNameSet.add(tool.name);
   }
 
   return rows;
@@ -525,16 +553,13 @@ export function AgentManager({
   ]);
 
   const availableModels = provider ? modelsByProvider[provider] || [] : [];
-  const toolAuthority: ToolAuthority | null =
-    runtimeBinding === 'main_chat'
-      ? 'engraphis'
-      : runtimeBinding === 'local_coder'
-        ? 'cbm'
-        : runtimeBinding === 'hermes_steward'
-          ? 'graphiti'
-          : null;
   const savedToolNames = parseListText(toolsText);
-  const displayedToolRows = buildDisplayedToolRows(toolCatalog, savedToolNames, toolAuthority);
+  const displayedToolRows = buildDisplayedToolRows(
+    toolCatalog,
+    savedToolNames,
+    runtimeBinding,
+    localConfig?.runtime_type || null,
+  );
   const toggleTool = (name: string, checked: boolean) => {
     setToolsText(toggleSavedToolAssignment(savedToolNames, name, checked).join('\n'));
     markDraftDirty();
@@ -826,7 +851,11 @@ export function AgentManager({
                   <input
                     type="checkbox"
                     checked={savedToolNames.includes(tool.name)}
-                    onChange={(event) => toggleTool(tool.name, event.target.checked)}
+                    onChange={(event) => {
+                      if (!event.target.checked || tool.availability === 'available') {
+                        toggleTool(tool.name, event.target.checked);
+                      }
+                    }}
                     aria-label={`Include ${tool.title || tool.name}`}
                   />
                   <span>
@@ -836,6 +865,9 @@ export function AgentManager({
                     <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
                       {tool.name}
                       {tool.description ? ` · ${tool.description}` : ''}
+                      {tool.availability === 'stale' ? ' · Missing from current catalogs' : ''}
+                      {tool.availability === 'incompatible' ? ' · Incompatible with this card runtime' : ''}
+                      {tool.availability === 'not_assignable' ? ' · Not card-assignable' : ''}
                     </span>
                   </span>
                 </label>
@@ -843,7 +875,7 @@ export function AgentManager({
             </div>
           ) : (
             <div style={{ color: '#91A9B8', fontSize: 11 }}>
-              {toolAuthority
+              {runtimeBinding || localConfig?.runtime_type
                 ? 'No tools are available for this card yet.'
                 : 'This card has no scoped graph tool set.'}
             </div>

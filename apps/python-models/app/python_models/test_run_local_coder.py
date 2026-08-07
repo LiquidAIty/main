@@ -3,9 +3,28 @@ filesystem root + run id are injected server-side (never by the tool/model)."""
 
 import asyncio
 import json
+from unittest.mock import patch
 from autogen_core import CancellationToken
 
 from app.python_models import tool_registry as t
+
+
+def test_loopback_transport_does_not_override_localcoder_job_lifetime():
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return b'{"ok":true}'
+
+    with patch.object(t, "urlopen", return_value=Response()) as open_request:
+        assert t._post_backend_json_sync("/api/coder/localcoder/run", {}) == '{"ok":true}'
+
+    _request, = open_request.call_args.args
+    assert open_request.call_args.kwargs == {}
 
 
 def _run_with_fake_backend(**kwargs):

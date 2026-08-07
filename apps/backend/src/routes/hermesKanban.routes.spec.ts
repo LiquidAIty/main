@@ -207,7 +207,7 @@ describe('hermesKanban read routes', () => {
   });
 
   it('GET /stats and GET /system parse gateway status text', async () => {
-    execMocks.execFile.mockImplementation((bin, args, _opts, cb) => {
+    execMocks.execFile.mockImplementation((_bin, args, _opts, cb) => {
       const joined = args.join(' ');
       if (joined.includes('gateway status')) {
         cb(null, '✓ Gateway process running (PID: 44948)\n', '');
@@ -230,10 +230,13 @@ describe('hermesKanban read routes', () => {
     expect(body.data.gateway).toEqual({ running: true, pid: 44948, raw: expect.stringContaining('Gateway process running') });
     expect(body.data.dispatcher.running).toBe(true);
     expect(body.data.dispatcher.intervalSeconds).toBe(60);
+    expect(
+      execMocks.execFile.mock.calls.filter((call) => call[1].join(' ') === 'gateway status'),
+    ).toHaveLength(1);
   });
 
   it('GET /config returns kanban + delegation blocks', async () => {
-    execMocks.execFile.mockImplementation((bin, args, _opts, cb) => {
+    execMocks.execFile.mockImplementation((_bin, args, _opts, cb) => {
       const joined = args.join(' ');
       if (joined.includes('config get kanban')) {
         cb(null, 'auto_decompose: true\nfailure_limit: 2\n', '');

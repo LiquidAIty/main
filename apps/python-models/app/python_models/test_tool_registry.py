@@ -62,6 +62,22 @@ def test_manifest_is_registry_backed_no_duplicate_entries():
     assert "retrieve_knowgraph_context" not in ids
 
 
+def test_manifest_publishes_card_runtime_compatibility_from_python_authority():
+    manifest = {entry["id"]: entry for entry in tool_manifest()}
+    coder = manifest["run_local_coder"]
+    assert coder["capability"] == {
+        "runtimeCompatibility": ["autogen"],
+        "assignableRuntimeBindings": ["local_coder"],
+        "assignableRuntimeTypes": ["local_coder"],
+        "cardAssignable": True,
+    }
+    calculator = manifest["calculator"]
+    assert calculator["capability"]["assignableRuntimeTypes"] == [
+        "magentic_one",
+        "assistant_agent",
+    ]
+
+
 def test_manifest_exposes_no_secrets_endpoints_or_db_config():
     blob = json.dumps(tool_manifest()).lower()
     for forbidden in ["password", "bolt://", "neo4j_uri", "12434", "services/knowgraph", "api_key", "secret"]:
