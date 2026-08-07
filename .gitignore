@@ -44,6 +44,11 @@ out/
 out-tsc/
 tmp/
 
+# Repo-owned native Codebase Memory runtime. The pinned setup script restores
+# the platform binary; the graph cache is rebuilt through native MCP tools.
+/.tools/codebase-memory-mcp/bin/
+/.codebase-memory/index/
+
 # Logs
 *.log
 logs/

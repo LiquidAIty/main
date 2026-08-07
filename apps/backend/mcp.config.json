@@ -8,7 +8,11 @@
     },
     "codebase-memory": {
       "transport": "stdio",
-      "command": "C:\\cbm\\codebase-memory-mcp.exe",
+      "command": "C:\\Projects\\main\\.tools\\codebase-memory-mcp\\bin\\codebase-memory-mcp.exe",
+      "env": {
+        "CBM_ALLOWED_ROOT": "C:\\Projects\\main",
+        "CBM_CACHE_DIR": "C:\\Projects\\main\\.codebase-memory\\index"
+      },
       "restart": { "enabled": true, "maxAttempts": 3, "delayMs": 1000 }
     },
     "github": {
