@@ -97,6 +97,17 @@ test('gpt-5.4 family uses provider-specific context and output caps', () => {
   })
 })
 
+test('gpt-5.6 family uses the current OpenAI context and output limits', () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  for (const model of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+    expect(getContextWindowForModel(model)).toBe(1_050_000)
+    expect(getModelMaxOutputTokens(model)).toEqual({
+      default: 128_000,
+      upperLimit: 128_000,
+    })
+  }
+})
+
 test('gpt-5.4 family keeps large max output overrides within provider limits', () => {
   process.env.CLAUDE_CODE_USE_OPENAI = '1'
   process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = '200000'

@@ -8,7 +8,7 @@ import {
   type CoderReport,
 } from '../../contracts/coderContracts';
 import {
-  buildOpenClaudeSubagentArgs,
+  buildOpenClaudeJobArgs,
   parseOpenClaudeCoderReport,
 } from '../execution/coderRuntimeContract';
 
@@ -118,6 +118,7 @@ export type LocalCoderRuntimeDiagnostics = {
   workingDirectory: string;
   provider: string;
   model: string;
+  sessionId: string | null;
   permissionMode: LocalCoderPermissionMode;
   timeoutMs: number;
   promptDelivery: 'argv';
@@ -493,11 +494,23 @@ function parseLocalCoderOutput(
   return parseOpenClaudeCoderReport(stdout, { requirePacketId: packetId });
 }
 
+function extractOpenClaudeSessionId(stdout: string): string | null {
+  try {
+    const envelope = JSON.parse(stdout) as Record<string, unknown>;
+    for (const key of ['session_id', 'sessionId', 'session']) {
+      const value = envelope[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+  } catch {
+    // Invalid JSON is handled by the CoderReport parser and remains a failure.
+  }
+  return null;
+}
+
 function createRuntimeDiagnostics(
   packet: CoderPacket,
   workingDirectory: string,
   prompt: string,
-  env: NodeJS.ProcessEnv,
   mcpMode: 'production' | 'disabled',
 ): LocalCoderRuntimeDiagnostics {
   const model = String(packet.providerModelId || '');
@@ -505,8 +518,9 @@ function createRuntimeDiagnostics(
     commandPath: '',
     argvShape: [],
     workingDirectory,
-    provider: 'openai',
+    provider: String(packet.modelProvider || 'openai'),
     model,
+    sessionId: null,
     permissionMode: deriveLocalCoderPermissionMode(packet),
     timeoutMs: 0,
     promptDelivery: 'argv',
@@ -738,12 +752,8 @@ export class LocalCoderAdapter {
     const missing: string[] = [];
     if (!packet) return missing;
     const provider = String(packet?.modelProvider || 'openai').trim().toLowerCase();
-    const apiKey =
-      provider === 'openrouter'
-        ? String(this.env.OPENROUTER_API_KEY || '').trim()
-        : String(this.env.OPENAI_API_KEY || '').trim();
-    if (!apiKey) {
-      missing.push('localcoder_env_missing: OPENAI_API_KEY');
+    if (provider === 'openrouter' && !String(this.env.OPENROUTER_API_KEY || '').trim()) {
+      missing.push('localcoder_env_missing: OPENROUTER_API_KEY');
     }
     if (!String(packet.providerModelId || '').trim()) {
       missing.push('localcoder_model_missing: providerModelId');
@@ -867,9 +877,7 @@ export class LocalCoderAdapter {
   }
 
   private jobArgs(packet: CoderPacket, mcpFlags: string[], prompt: string): string[] {
-    // One argv shape for both OpenClaude surfaces (headless job + streamed Console
-    // subagent) — see buildOpenClaudeSubagentArgs.
-    return buildOpenClaudeSubagentArgs({
+    return buildOpenClaudeJobArgs({
       prompt,
       model: String(packet.providerModelId),
       permissionMode: deriveLocalCoderPermissionMode(packet),
@@ -950,7 +958,6 @@ export class LocalCoderAdapter {
       packet,
       resolvedRepo,
       prompt,
-      this.env,
       this.diagnosticMcpMode,
     );
     if (!existsSync(resolvedRepo)) {
@@ -1001,22 +1008,27 @@ export class LocalCoderAdapter {
       ...report,
       assumptions: [...report.assumptions, mcp.note],
     });
+    const childEnv: NodeJS.ProcessEnv = {
+      ...this.env,
+      OPENAI_MODEL: String(packet.providerModelId),
+    };
+    if (packet.modelProvider === 'openrouter') {
+      childEnv.OPENAI_API_KEY = String(this.env.OPENROUTER_API_KEY || '');
+      childEnv.OPENAI_BASE_URL = String(
+        this.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+      );
+      childEnv.CLAUDE_CODE_USE_OPENAI = '1';
+    } else {
+      delete childEnv.OPENAI_API_KEY;
+      childEnv.OPENAI_BASE_URL = 'https://chatgpt.com/backend-api/codex';
+      childEnv.CLAUDE_CODE_USE_OPENAI = '1';
+    }
     const result = await this.runProcess(
       runtime.command,
       args,
       {
         cwd: resolvedRepo,
-        env: {
-          ...this.env,
-          ...(packet.modelProvider === 'openrouter'
-            ? {
-                OPENAI_API_KEY: String(this.env.OPENROUTER_API_KEY || ''),
-                OPENAI_BASE_URL: String(this.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1'),
-              }
-            : {}),
-          OPENAI_MODEL: String(packet.providerModelId),
-          CLAUDE_CODE_USE_OPENAI: '1',
-        },
+        env: childEnv,
         shell: runtime.shell,
       },
     );
@@ -1028,6 +1040,7 @@ export class LocalCoderAdapter {
       }
     }
     applyProcessDiagnostics(runtimeDiagnostics, result);
+    runtimeDiagnostics.sessionId = extractOpenClaudeSessionId(result.stdout);
     const rawOutput = [result.stdout, result.stderr].filter(Boolean).join('\n');
     if (!result.started) {
       runtimeDiagnostics.runtimeStage = 'process_not_started';

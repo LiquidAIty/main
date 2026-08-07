@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { OpenClaudeRuntimeService } from './service';
-import { resolveOpenClaudeProviderTarget } from '../provider/openai53';
+import { resolveOpenClaudeProviderTarget } from '../provider/providerTarget';
 
 // The `terminal mode never reports used` case was deleted with the dead `run()`
 // surface it existed to pin: it only asserted that a permanent-failure stub kept
@@ -29,13 +29,13 @@ describe('OpenClaude terminal launch metadata', () => {
   it('resolves a real launch command for the live terminal route', () => {
     const service = new OpenClaudeRuntimeService(adapter as never);
     const launch = service.getTerminalLaunch({
-      modelKey: 'gpt-5.3-codex',
+      modelKey: 'gpt-5.6-luna',
       provider: 'openai',
-      providerModelId: 'gpt-5.3-codex',
+      providerModelId: 'gpt-5.6-luna',
     });
     expect(launch.ok).toBe(true);
     expect(launch.launchCommand).toBe('powershell launch.ps1');
-    expect(launch.providerModelId).toBe('gpt-5.3-codex');
+    expect(launch.providerModelId).toBe('gpt-5.6-luna');
     expect(launch.terminalAvailable).toBe(true);
   });
 
@@ -50,9 +50,9 @@ describe('OpenClaude terminal launch metadata', () => {
   it('refuses a provider that disagrees with the registry', () => {
     const service = new OpenClaudeRuntimeService(adapter as never);
     const launch = service.getTerminalLaunch({
-      modelKey: 'gpt-5.3-codex',
+      modelKey: 'gpt-5.6-luna',
       provider: 'openrouter',
-      providerModelId: 'gpt-5.3-codex',
+      providerModelId: 'gpt-5.6-luna',
     });
     expect(launch.ok).toBe(false);
     expect(launch.error).toContain('openclaude_provider_model_mismatch');

@@ -7,7 +7,7 @@ const nodes = [
     id: 'card_main_chat',
     kind: 'agent',
     runtimeType: 'assistant_agent',
-    runtimeOptions: { binding: 'main_chat' },
+    runtimeBinding: 'main_chat',
   },
   {
     id: 'card_mag_one',
@@ -64,7 +64,7 @@ describe('AgentGraph-native Mag One flow', () => {
       title: 'Trading Agent',
       runtimeType: 'assistant_agent',
       parentGraphId: 'workbench_trading',
-      runtimeOptions: { modelKey: 'openai/gpt-5.6-luna', provider: 'openrouter' },
+      runtimeOptions: { modelKey: 'deepseek/deepseek-v4-flash-0731', provider: 'openrouter' },
     };
     const stagedNodes = [...nodes, trading];
     const stagedEdges = [
@@ -128,6 +128,39 @@ describe('AgentGraph-native Mag One flow', () => {
     expect(JSON.stringify(context)).not.toContain('prompt.md');
     expect(JSON.stringify(context)).not.toContain('workspaceRoot');
     expect(result.assignmentId).toBe('assignment:run-1');
+  });
+
+  it('keeps a saved Local Coder card in the Mag One roster with its canonical runtime binding', async () => {
+    const localCoder = {
+      id: 'card_local_coder',
+      kind: 'agent',
+      title: 'Local Coder',
+      runtimeType: 'local_coder',
+      runtimeBinding: 'local_coder',
+      runtimeOptions: {
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        tools: ['run_local_coder'],
+      },
+    };
+    const coderNodes = [...nodes, localCoder];
+    const coderEdges = [
+      ...edges,
+      { id: 'coder', source: 'card_mag_one', target: localCoder.id, edgeType: 'magentic_option' },
+    ];
+    const runCard = vi.fn(async () => ({ status: 'success', output: 'done' }));
+
+    const result = await runMagOne(
+      { projectId: 'project-1', deckId: 'deck-1', instructionId: 'instruction:coder' },
+      {
+        loadDeck: vi.fn(async () => ({ deck: { nodes: coderNodes, edges: coderEdges } })) as any,
+        runCard: runCard as any,
+      },
+    );
+
+    expect(result.connectedParticipants).toContain(localCoder.id);
+    const context = runCard.mock.calls[0][2];
+    expect(context.allCards).toContainEqual(localCoder);
   });
 
   it('fails before runtime when the stable instruction identity is absent', async () => {

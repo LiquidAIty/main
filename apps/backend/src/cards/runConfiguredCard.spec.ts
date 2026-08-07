@@ -28,7 +28,7 @@ const AGENT_CARD = {
   runtimeType: 'assistant_agent',
   runtimeBinding: 'thinkgraph_agent',
   prompt: 'You are the ThinkGraph agent.',
-  runtimeOptions: { modelKey: 'gpt-5-nano', tools: [] },
+  runtimeOptions: { modelKey: 'gpt-5.6-luna', tools: [] },
 };
 
 const LOCAL_CODER_CARD = {
@@ -38,7 +38,7 @@ const LOCAL_CODER_CARD = {
   runtimeType: 'local_coder',
   runtimeBinding: 'local_coder',
   prompt: 'You are the Local Coder controller.',
-  runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.3-codex', tools: ['run_local_coder'] },
+  runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.6-luna', tools: ['run_local_coder'] },
 };
 
 function deckWith(nodes: any[], edges: any[] = []) {
@@ -116,7 +116,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
   });
 
   it('transports an unknown configured tool to Python and returns its canonical rejection', async () => {
-    mockGetDeck.mockResolvedValue(deckWith([{ ...AGENT_CARD, runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['not_a_real_tool'] } }]));
+    mockGetDeck.mockResolvedValue(deckWith([{ ...AGENT_CARD, runtimeOptions: { modelKey: 'gpt-5.6-luna', tools: ['not_a_real_tool'] } }]));
     mockRunCard.mockRejectedValue(new Error('card_tool_unknown: not_a_real_tool'));
     const result = await runConfiguredCard(ARGS);
     expect(result.status).toBe('failed');
@@ -156,7 +156,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.cardRuntime.participants[0].prompt).toBe('You are the ThinkGraph agent.');
     expect(payload.cardRuntime).not.toHaveProperty('privateParticipants');
     // The configured card's model — resolved server-side, never caller-supplied.
-    expect(payload.session.modelKey).toBe('gpt-5-nano');
+    expect(payload.session.modelKey).toBe('gpt-5.6-luna');
     // No Task Ledger / task-state fields ride this path.
     const raw = JSON.stringify(payload);
     expect(raw).not.toContain('taskIds');
@@ -213,12 +213,12 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     const first = {
       ...AGENT_CARD,
       id: 'card_first',
-      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['calculator'] },
+      runtimeOptions: { modelKey: 'gpt-5.6-luna', tools: ['calculator'] },
     };
     const target = {
       ...AGENT_CARD,
       id: 'card_target',
-      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['current_datetime'] },
+      runtimeOptions: { modelKey: 'gpt-5.6-luna', tools: ['current_datetime'] },
     };
     mockGetDeck.mockResolvedValue(deckWith([first, target]));
     mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'target result' });
@@ -252,8 +252,9 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(JSON.stringify(payload)).not.toContain('stored Markdown');
   });
 
-  it('rejects the Local Coder card from the AutoGen single-card doorway — it is not assistant_agent' , async () => {
+  it('runs the saved Local Coder card through the normal single-card doorway and its real tool', async () => {
     mockGetDeck.mockResolvedValue(deckWith([LOCAL_CODER_CARD]));
+    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: '{"status":"succeeded"}' });
 
     const result = await runConfiguredCard({
       ...ARGS,
@@ -261,13 +262,17 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
       input: 'write the bounded plan file',
     });
 
-    // The Coder is its own runtime and must never be translated into an
-    // assistant_agent. The AutoGen single-card doorway refuses it; the only
-    // Coder doorway is the canonical run_coder_subagent / console manager.
-    expect(result.status).toBe('not_runnable');
+    expect(result.status).toBe('completed');
     expect(result.runtimeType).toBe('local_coder');
-    expect(result.error).toContain('single_card_runtime_not_supported');
-    expect(mockRunCard).not.toHaveBeenCalled();
+    expect(result.tools).toEqual(['run_local_coder']);
+    const payload = mockRunCard.mock.calls[0][0];
+    expect(payload.session.modelProvider).toBe('openai');
+    expect(payload.session.modelKey).toBe('gpt-5.6-luna');
+    expect(payload.session.providerModelId).toBe('gpt-5.6-luna');
+    expect(payload.cardRuntime.runtimeType).toBe('assistant_agent');
+    expect(payload.cardRuntime.participants[0].runtimeBinding).toBe('local_coder');
+    expect(payload.cardRuntime.participants[0].tools).toEqual(['run_local_coder']);
+    expect(payload.cardRuntime.participants[0].prompt).toBe('You are the Local Coder controller.');
   });
 
   it('preserves an unavailable model as a configuration failure — never a forced substitute', async () => {
@@ -275,7 +280,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     // honestly and no replacement model is ever substituted.
     const unavailableAgentCard = {
       ...AGENT_CARD,
-      runtimeOptions: { modelKey: 'gpt-5.1-chat-latest' },
+      runtimeOptions: { modelKey: 'retired-openai-model' },
     };
     mockGetDeck.mockResolvedValue(deckWith([unavailableAgentCard]));
 

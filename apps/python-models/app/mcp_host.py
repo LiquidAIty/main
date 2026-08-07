@@ -357,7 +357,7 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, st
         "graphiti.delete_episode",
     }:
         risk = "destructive"
-    elif name in {"run_coder_subagent", "run_mag_one", "card.run_assistant_agent"}:
+    elif name in {"run_mag_one", "card.run_assistant_agent"}:
         risk = "runtime-launching"
     elif name in {"engraphis.index_repo", "cbm.index_repository"} or name.startswith("graphiti.add_"):
         risk = "background"
@@ -1601,29 +1601,6 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
-            name="run_coder_subagent",
-            description=(
-                "Main Chat only: send one approved coding assignment from the saved connected Coder card "
-                "directly to the existing visible OpenClaude Code terminal. The server owns project, deck, "
-                "conversation, parent-run, and Main-card identity. Callers provide approvedPrompt, the saved "
-                "Coder cardId and optional authority. Returns the linked child "
-                "run, the coder session/thread id, structured command evidence, and the CoderReport verbatim."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "parentRunId": {"type": "string"},
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                    "conversationId": {"type": "string"},
-                    "cardId": {"type": "string"},
-                    "approvedPrompt": {"type": "string"},
-                    "authority": {"type": "string", "enum": ["direct_main_audit", "mag_one_execution"]},
-                },
-                "required": ["parentRunId", "projectId", "deckId", "conversationId", "cardId", "approvedPrompt"],
-            },
-        ),
-        Tool(
             name="mag_one.describe_connected_agents",
             description=(
                 "Read the currently connected, bus-eligible (magentic_option) Mag One Agent Cards and "
@@ -1719,7 +1696,6 @@ async def list_tools() -> list[Tool]:
                                 "items": {"type": "string", "minLength": 1},
                             },
                         },
-                        "minProperties": 1,
                         "additionalProperties": False,
                     },
                 },
@@ -1779,7 +1755,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="card.run_assistant_agent",
             description=(
-                "Run ONE saved, enabled assistant_agent card with its saved prompt/model/tools. "
+                "Run ONE saved, enabled AutoGen-callable agent card (assistant_agent or local_coder) "
+                "with its saved identity, prompt, model, and tools. "
                 "No prompt/model/tool/card overrides "
                 "exist on this path — extra arguments are rejected structurally. deckId defaults to "
                 "the canonical Agent Canvas deck. On the Harness saved-card doorway path, the "
@@ -1875,7 +1852,6 @@ _SERVER_OWNED_ARGUMENTS = {
     "_callerRuntimeBinding",
 }
 _MAIN_ONLY_TOOLS = {
-    "run_coder_subagent",
     "run_mag_one",
 }
 _HERMES_ONLY_TOOLS = {
@@ -1988,13 +1964,6 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
                 schema["required"] = [
                     field for field in required if field not in _SERVER_OWNED_ARGUMENTS
                 ]
-            if tool.name == "run_coder_subagent":
-                if isinstance(properties, dict):
-                    properties.pop("parentRunId", None)
-                if isinstance(schema.get("required"), list):
-                    schema["required"] = [
-                        field for field in schema["required"] if field != "parentRunId"
-                    ]
             if tool.name == "card.run_assistant_agent":
                 if isinstance(properties, dict):
                     properties.pop("instructionId", None)
@@ -2039,7 +2008,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "projectWide",
     },
     "coder.status": set(),
-    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "approvedPrompt", "authority"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "instructionId", "conversationId"},
     "write_mag_one_instructions": {
@@ -2067,7 +2035,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
 
 _BRIDGE_PATHS: dict[str, str] = {
     "coder.status": "coder_status",
-    "run_coder_subagent": "run_coder_subagent",
     "mag_one.describe_connected_agents": "describe_connected_agents",
     "run_mag_one": "run_mag_one",
 }
@@ -2173,8 +2140,6 @@ async def _dispatch_tool(
     if context is not None:
         try:
             supplied_identity = sorted(_SERVER_OWNED_ARGUMENTS & args.keys())
-            if name == "run_coder_subagent" and "parentRunId" in args:
-                supplied_identity.append("parentRunId")
             if supplied_identity:
                 raise ValueError(f"caller_identity_rejected: {','.join(supplied_identity)}")
             for field in ("projectId", "deckId", "conversationId"):
@@ -2187,8 +2152,6 @@ async def _dispatch_tool(
             if name == "card.run_assistant_agent":
                 args["originatingAgentId"] = str(context["mainCardId"])
                 args["originatingRunId"] = str(context["parentRunId"])
-            if name == "run_coder_subagent":
-                args["parentRunId"] = f"req_external_main_{uuid4()}"
             if name in _MAIN_ONLY_TOOLS or name in _HERMES_ONLY_TOOLS:
                 args["_callerCardId"] = str(context["mainCardId"])
                 args["_callerRuntimeBinding"] = "external_gpt"

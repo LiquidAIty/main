@@ -1,43 +1,53 @@
 ---
 id: feature.harness-to-local-coder
-title: Main to System Coder
+title: Main to Local Coder
 kind: feature
-status: partial
+status: working
 
 roots:
   files:
+    - apps/backend/src/cards/runtime.ts
     - apps/backend/src/routes/coder.routes.ts
-    - apps/backend/src/coder/execution/coderConsoleRuntime.ts
-    - apps/backend/src/coder/execution/coderRuntimeContract.ts
+    - apps/backend/src/coder/localcoder/service.ts
+    - apps/backend/src/coder/localcoder/adapter.ts
+    - apps/python-models/app/python_models/magentic_agentchat.py
     - apps/python-models/app/python_models/tool_registry.py
   symbols:
-    - runOpenClaudeCodeTask
-    - resolveEffectiveCoderToolSnapshot
+    - runConfiguredCard
+    - runCardWithContract
+    - _build_participants
+    - build_local_coder_tool
     - run_local_coder
   routes:
-    - POST /api/coder/run-coder-subagent
+    - POST /api/coder/mcp-bridge/run_configured_card
+    - POST /api/coder/localcoder/run
 ---
 
-# Main to System Coder
+# Main to Local Coder
 
-Main may assign approved coding work to the saved System Coder card. The backend resolves the
-card-selected model and tools, starts the existing visible OpenClaude task session, and returns only
-native process evidence plus a validated CoderReport. The process runs until native completion or
-explicit cancellation; LiquidAIty does not impose an execution deadline.
+The saved Local Coder card is a normal single-card AutoGen participant and a Mag One-eligible worker.
+Coder-card Run, Main/external GPT through `card.run_assistant_agent`, and Mag One all use the same
+saved-card participant builder. For a `local_coder` participant, Python replaces the registered
+controller tool with one `run_local_coder` FunctionTool bound to that card's saved provider/model.
+
+`run_local_coder` transports only the bounded logical CoderPacket. The backend mints the run identity
+and injects the trusted repository root, then `LocalCoderService` calls `LocalCoderAdapter`. Success
+requires the OpenClaude process to return a schema-valid, packet-matched CoderReport.
 
 Must remain true:
 
-- the saved card is model/tool authority;
-- the repository root and run identity are server-owned;
-- no second Coder or model fallback is used;
-- explicit Stop cancels the same visible process;
-- missing or malformed structured output is an honest failed run;
-- CodeGraph access is the native CBM MCP selected for the System Coder.
+- the saved card identity, prompt, provider/model, tools, and AutoGen compatibility remain intact;
+- the model cannot choose the repository root, run identity, provider, or model;
+- OpenRouter/DeepSeek and OpenAI Account/Codex OAuth configure the same adapter;
+- `run_coder_subagent` remains absent until a future Coder-launched dynamic-subagent design exists;
+- no terminal transcript is converted into a fabricated CoderReport.
 
 Focused proof:
 
 ```powershell
-npx vitest run apps/backend/src/coder/execution/coderConsoleRuntime.spec.ts apps/backend/src/coder/execution/coderRuntimeContract.spec.ts apps/backend/src/routes/coder.routes.spec.ts
+python -m pytest apps/python-models/app/python_models/test_run_local_coder.py apps/python-models/app/python_models/test_run_configured_card.py
+vitest run src/cards/runConfiguredCard.spec.ts src/coder/localcoder/adapter.spec.ts
 ```
 
-Unproven: a paid end-to-end model run and the final below-chat presentation.
+Unproven only when live credentials are unavailable: a paid provider call. Structural provider,
+session, model, and CoderReport evidence must still be reported honestly.

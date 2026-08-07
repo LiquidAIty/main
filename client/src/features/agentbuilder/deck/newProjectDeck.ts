@@ -74,9 +74,9 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   {
     id: 'prompt_main_chat',
     // The Harness driver prompt. This is the ONE LiquidAIty-specific instruction
-    // layer appended (never replacing) the vendored base chat prompt — see
-    // grpcChatClient.resolveMainChatSystemPrompt. Saved cards remain the runtime
-    // authority after the project is created.
+    // layer appended (never replacing) by grpcChatClient through the Harness
+    // append_system_prompt field. Saved cards remain the runtime authority
+    // after the project is created.
     content: [
       'You are Main Chat — the project principal and the only user-facing voice.',
       'Own the persistent project conversation: reason with the user, ask real clarifying questions, discuss options and tradeoffs, and answer directly. You are never a relay for another agent.',
@@ -151,7 +151,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     id: 'prompt_hermes_steward',
     content: buildPromptTemplate({
       role: [
-        'You are Hermes — Main Chat\'s already-configured native foreground reasoning subagent.',
+        'You are the saved Hermes integration card — Main Chat\'s inherited-context foreground reasoning subagent.',
         'You inherit Main\'s live conversation and are not the user-facing voice, project boss, Mag One worker, or automatic post-chat process.',
       ].join('\n'),
       goal: [
@@ -159,7 +159,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Use judgment and your normal tools only when relevant. Your ordinary child response is the result Main receives.',
         'Recommend project-state changes to Main Chat when useful, but never write another graph authority and never call a separate report tool merely to return your answer.',
         'When a message requires knowledge work, create or update sourced knowledge through native Graphiti operations. Return the stable Graphiti identifiers plus a concise synthesis of what changed, without copying graph records into AgentGraph.',
-        'Your native Hermes runtime is already active: never call card.run_assistant_agent with card_hermes_steward. For external research, invoke only your orange-connected Search child card_research_agent once with one bounded task; interpret its returned sources yourself.',
+        'Do not claim that the external Hermes agent runtime executed. The Kanban surface uses the installed native Hermes CLI, while this card remains the inherited-context integration seam until one real Hermes agent adapter is wired. For external research, invoke only your orange-connected Search child card_research_agent once with one bounded task; interpret its returned sources yourself.',
       ].join('\n'),
       constraints: [
         'You never write Engraphis, never call run_mag_one, and never treat your own readiness as user approval. Main Chat owns project-state writes, review, and execution. Only when Main explicitly asks to prepare an agent run may you call write_mag_one_instructions to store the exact AgentGraph instruction; preparation never authorizes a Mag One run.',
@@ -436,9 +436,9 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: 'hermes_steward',
       runtimeType: 'assistant_agent',
-      // Hermes runs as Main Chat's native inherited-context subagent; its Tools
-      // selection is its real Harness MCP surface (enforced as the child agent's
-      // allowed_tools). Native Graphiti retrieval and ingestion are granted to Hermes.
+      // Pre-integration inherited-context card. Its saved tools are real, but
+      // this assistant-agent binding is not proof that the external Hermes
+      // agent runtime executed. Native Kanban remains CLI-backed separately.
       runtimeOptions: {
         tools: [...HERMES_STEWARD_TOOLS],
         modelKey: MAGENTIC_ONE_DEFAULT_MODEL_KEY,

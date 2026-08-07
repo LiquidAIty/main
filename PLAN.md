@@ -90,6 +90,11 @@ replace its runtime.
 The Local Coder card is also working and must remain. `run_local_coder(objective, …)` (Python tool) →
 backend `/api/coder/localcoder/run` — **the server injects the trusted filesystem root + run id; never
 the model** — → `LocalCoderAdapter` → the configured OpenClaude/Coder CLI → validated `CoderReport`.
+Coder-card Run, Main→Coder through `card.run_assistant_agent`, and Mag One participation all enter
+the same saved-card/AutoGen builder and receive the same model-bound `run_local_coder` tool. The
+card's simple provider selector chooses either OpenRouter (including DeepSeek through its
+OpenAI-compatible endpoint) or OpenAI Account (currently GPT-5.6 Luna by default, through
+OpenClaude's Codex transport and existing OAuth/auth-file authority).
 This bounded card/tool path and the persistent terminal are different useful modes. Neither should be
 deleted or replaced with a newly invented run-packet abstraction.
 
@@ -106,7 +111,9 @@ One authority per graph. No cross-writes, no UI→DB graph write.
 
 ### 7. Card runtime
 
-`runConfiguredCard` = the saved assistant-card doorway used by the Python MCP/Harness path.
+`runConfiguredCard` = the saved AutoGen-callable card doorway (`assistant_agent` or `local_coder`)
+used by the Python MCP/Harness path, including the authenticated external GPT catalog's
+`card.run_assistant_agent` tool.
 Agent Canvas edits and saves cards; it does not own an execution button or a second deck-run
 runtime. `runCardWithContract` = team run (Orchestrator). The deck store owns saved cards + wires;
 provider+model resolve per card; fail closed on missing model config. When an `agentContextId`

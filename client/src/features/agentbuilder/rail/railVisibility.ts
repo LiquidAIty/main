@@ -6,12 +6,12 @@ import type {
   AgentCardInstance,
   DeckDocument,
   DeckEdge,
+  RuntimeBinding,
 } from '../../../types/agentgraph';
 import {
   normalizeDeckEdgeType,
   normalizeRuntimeBinding,
   normalizeRuntimeType,
-  safeText,
 } from '../deck/deckPrimitives';
 
 // Card identity comes from the SAVED runtime binding — never an id/template/
@@ -19,7 +19,7 @@ import {
 // one, keeps working; the old matchers silently didn't.
 function hasRuntimeBinding(
   card: AgentCardInstance | null | undefined,
-  binding: 'trading_agent' | 'worldsignals_agent',
+  binding: RuntimeBinding,
 ): boolean {
   return Boolean(card && normalizeRuntimeBinding(card.runtimeBinding) === binding);
 }
@@ -31,7 +31,7 @@ function isTradingAgentCard(card: AgentCardInstance | null | undefined): boolean
 export function isHermesStewardCard(
   card: AgentCardInstance | null | undefined,
 ): boolean {
-  return card?.id === 'card_hermes_steward';
+  return hasRuntimeBinding(card, 'hermes_steward');
 }
 
 export function isWorldSignalsAgentCard(
@@ -86,26 +86,20 @@ function buildBusConnectedCardIds(
   return connected;
 }
 
-export function isHermesConnectedToMainChat(
+export function hasDirectedRuntimeBindingConnection(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
+  sourceBinding: RuntimeBinding,
+  targetBinding: RuntimeBinding,
 ): boolean {
-  const mainChatIds = new Set(
-    nodes
-      .filter((node) => safeText(node.runtimeBinding).trim().toLowerCase() === 'main_chat')
-      .map((node) => node.id),
-  );
-  const hermesIds = new Set(
-    nodes
-      .filter((node) => safeText(node.runtimeBinding).trim().toLowerCase() === 'hermes_steward')
-      .map((node) => node.id),
-  );
-  if (mainChatIds.size === 0 || hermesIds.size === 0) return false;
+  const sourceIds = new Set(nodes.filter((node) => hasRuntimeBinding(node, sourceBinding)).map((node) => node.id));
+  const targetIds = new Set(nodes.filter((node) => hasRuntimeBinding(node, targetBinding)).map((node) => node.id));
+  if (sourceIds.size === 0 || targetIds.size === 0) return false;
   return edges.some(
     (edge) =>
       normalizeDeckEdgeType(edge.edgeType) === 'flow' &&
-      mainChatIds.has(edge.source) &&
-      hermesIds.has(edge.target),
+      sourceIds.has(edge.source) &&
+      targetIds.has(edge.target),
   );
 }
 
@@ -136,9 +130,14 @@ export function deriveVisibleRailItems({
     showTrading:
       workspaceView === 'trading' ||
       isBusConnectedCard(deck.nodes, deck.edges, isTradingAgentCard),
-    // The restored saved card owns this navigation item. It opens the in-app
-    // Hermes Kanban workspace (the Hermes app surface) — never a terminal.
-    showHermesKanban: deck.nodes.some(isHermesStewardCard),
+    showHermesKanban:
+      workspaceView === 'hermes' ||
+      hasDirectedRuntimeBindingConnection(
+        deck.nodes,
+        deck.edges,
+        'main_chat',
+        'hermes_steward',
+      ),
   };
 }
 

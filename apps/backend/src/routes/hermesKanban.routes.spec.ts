@@ -318,6 +318,56 @@ describe('hermesKanban mutation routes (explicit user action only)', () => {
     expect(args).toEqual(['kanban', 'dispatch', '--json']);
   });
 
+  it.each([
+    {
+      path: '/create',
+      body: { board: 'ops', title: 'Fix wiring', body: 'Bounded work', assignee: 'default', priority: 2, parent: 't_parent' },
+      expected: ['kanban', '--board', 'ops', 'create', 'Fix wiring', '--body', 'Bounded work', '--assignee', 'default', '--priority', '2', '--parent', 't_parent', '--json'],
+    },
+    {
+      path: '/tasks/t_abc/unblock',
+      body: { reason: 'input received' },
+      expected: ['kanban', 'unblock', '--reason', 'input received', 't_abc'],
+    },
+    { path: '/tasks/t_abc/archive', body: {}, expected: ['kanban', 'archive', 't_abc'] },
+    { path: '/tasks/t_abc/promote', body: {}, expected: ['kanban', 'promote', 't_abc'] },
+    {
+      path: '/tasks/t_abc/complete',
+      body: { result: 'done' },
+      expected: ['kanban', 'complete', 't_abc', '--result', 'done'],
+    },
+    {
+      path: '/tasks/t_abc/edit',
+      body: { result: 'backfilled', summary: 'handoff', metadata: '{"tests":1}' },
+      expected: ['kanban', 'edit', 't_abc', '--result', 'backfilled', '--summary', 'handoff', '--metadata', '{"tests":1}'],
+    },
+    {
+      path: '/tasks/t_abc/assign',
+      body: { assignee: 'research' },
+      expected: ['kanban', 'assign', 't_abc', 'research'],
+    },
+    {
+      path: '/tasks/t_abc/link',
+      body: { parent: 't_parent' },
+      expected: ['kanban', 'link', 't_parent', 't_abc'],
+    },
+    {
+      path: '/tasks/t_abc/unlink',
+      body: { parent: 't_parent' },
+      expected: ['kanban', 'unlink', 't_parent', 't_abc'],
+    },
+    { path: '/gateway/restart', body: {}, expected: ['gateway', 'restart'] },
+  ])('POST $path matches the installed native CLI contract', async ({ path, body, expected }) => {
+    execMocks.execFile.mockImplementation(echo(path === '/create' ? { id: 't_new' } : 'ok'));
+    const response = await fetch(`${baseUrl}/hermes-kanban${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(response.status).toBe(200);
+    expect(execMocks.execFile.mock.calls[0][1]).toEqual(expected);
+  });
+
   it('POST validation rejects missing comment text', async () => {
     execMocks.execFile.mockClear();
     const response = await fetch(`${baseUrl}/hermes-kanban/tasks/t_abc/comment`, {

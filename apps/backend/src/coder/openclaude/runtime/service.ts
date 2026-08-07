@@ -3,7 +3,7 @@ import type {
   OpenClaudeRunRequest,
   OpenClaudeTerminalLaunchResult,
 } from '../contracts';
-import { resolveOpenClaudeProviderTarget } from '../provider/openai53';
+import { resolveOpenClaudeProviderTarget } from '../provider/providerTarget';
 
 /**
  * Terminal LAUNCH METADATA only — this class does not execute the coder.
@@ -12,9 +12,11 @@ import { resolveOpenClaudeProviderTarget } from '../provider/openai53';
  * wrappers. Both wrappers hardcoded `ok:false` (`coder_packet_required_use_
  * localcoder_run` / `terminal_launch_not_executed_use_localcoder_run`), and
  * `run()` had zero live callers — only its own spec. It was the residue of the
- * collapse to the real Console PTY runtime, and a permanently-failing `run()`
+ * split between the real interactive Console PTY and bounded LocalCoder jobs,
+ * and a permanently-failing `run()`
  * with `DEFAULT_MODE='headless'` reads like a headless execution path exists.
- * It does not: `coder/execution/coderConsoleRuntime.ts` is the one runtime, and
+ * It does not. This service owns launch metadata for the interactive terminal;
+ * `LocalCoderService` owns bounded saved-card execution through OpenClaude.
  */
 export class OpenClaudeRuntimeService {
   constructor(private readonly adapter = new OpenClaudeAdapter()) {}

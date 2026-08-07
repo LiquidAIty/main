@@ -319,6 +319,21 @@ The items below are the major deletion events. Every one "worked" before it was 
   catalog have one lifecycle; a public namespace is added once, never copied from an upstream
   prefix; process-local audit state is not a substitute for durable graph evidence.**
 
+- **2026-08-06 — Local Coder historical restoration and duplicate doorway purge.**
+  - Restored the previously working `run_local_coder` → trusted backend route → LocalCoder/OpenClaude
+    CoderReport path and made saved-card Run, Main/external GPT, and Mag One reuse it.
+  - Deleted the alternate direct-terminal `run_coder_subagent` route, MCP registration/dispatch,
+    console-task runtime, audit-only schemas/policies, tombstone, stale tests, classification doc,
+    and the unreferenced stale tool-registry audit that still advertised the retired doorway.
+  - Kept the persistent interactive OpenClaude console as a separate surface; removed no saved-card,
+    AutoGen, Mag One, repository-root, or CoderReport authority.
+  - Repaired Hermes Kanban `assign` against installed CLI syntax and made rail activation depend on
+    generic directed graph connectivity plus typed runtime bindings. The external Hermes agent
+    runtime remains explicitly unproven.
+  Lesson: **a caller is not an execution authority. Converge canvas, Main, external GPT, and Mag One
+  on the saved-card runtime; when an experiment adds a second route/service/schema stack, delete that
+  whole abandoned stack instead of renaming it canonical.**
+
 ## Patterns that keep coming back — do NOT write these
 
 Every one of these was written, shipped, "worked," and got ripped out. If your diff resembles any of

@@ -4,8 +4,11 @@ import path from 'node:path';
 import { INITIAL_DECK } from '../features/agentbuilder/deck/newProjectDeck';
 import {
   deriveVisibleRailItems,
-  isHermesConnectedToMainChat,
+  hasDirectedRuntimeBindingConnection,
 } from '../features/agentbuilder/rail/railVisibility';
+
+const mainToHermesConnected = (nodes: typeof INITIAL_DECK.nodes, edges: typeof INITIAL_DECK.edges) =>
+  hasDirectedRuntimeBindingConnection(nodes, edges, 'main_chat', 'hermes_steward');
 
 describe('Main / Hermes / graph authority topology', () => {
   it('defines no graph-agent card, template, prompt, or runtime binding', () => {
@@ -21,14 +24,14 @@ describe('Main / Hermes / graph authority topology', () => {
   });
 
   it('keeps the graph workspace owner-visible regardless of Hermes topology', () => {
-    expect(isHermesConnectedToMainChat(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(true);
+    expect(mainToHermesConnected(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(true);
     expect(deriveVisibleRailItems({ deck: INITIAL_DECK, workspaceView: 'chat' }).showKnowledge).toBe(true);
     const disconnected = { ...INITIAL_DECK, edges: INITIAL_DECK.edges.filter((edge) => edge.target !== 'card_hermes_steward') };
-    expect(isHermesConnectedToMainChat(disconnected.nodes, disconnected.edges)).toBe(false);
+    expect(mainToHermesConnected(disconnected.nodes, disconnected.edges)).toBe(false);
     expect(deriveVisibleRailItems({ deck: disconnected, workspaceView: 'chat' }).showKnowledge).toBe(true);
   });
 
-  it('shows exactly one Hermes rail destination when the restored card exists', () => {
+  it('shows the Hermes rail destination only for a typed, connected runtime card', () => {
     const visible = deriveVisibleRailItems({ deck: INITIAL_DECK, workspaceView: 'chat' });
     expect(visible.showHermesKanban).toBe(true);
 
@@ -39,6 +42,18 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(
       deriveVisibleRailItems({ deck: withoutHermes, workspaceView: 'chat' }).showHermesKanban,
     ).toBe(false);
+    const disconnected = {
+      ...INITIAL_DECK,
+      edges: INITIAL_DECK.edges.filter((edge) => edge.id !== 'edge_main_chat_hermes'),
+    };
+    expect(deriveVisibleRailItems({ deck: disconnected, workspaceView: 'chat' }).showHermesKanban).toBe(false);
+    const renamed = {
+      ...INITIAL_DECK,
+      nodes: INITIAL_DECK.nodes.map((node) =>
+        node.id === 'card_hermes_steward' ? { ...node, title: 'Operations' } : node
+      ),
+    };
+    expect(deriveVisibleRailItems({ deck: renamed, workspaceView: 'chat' }).showHermesKanban).toBe(true);
   });
 
   it('requires the directed Main to Hermes flow edge', () => {
@@ -49,11 +64,11 @@ describe('Main / Hermes / graph authority topology', () => {
       target,
       edgeType,
     });
-    expect(isHermesConnectedToMainChat(INITIAL_DECK.nodes, [
+    expect(mainToHermesConnected(INITIAL_DECK.nodes, [
       ...withoutHermesFlow,
       replacement('flow', 'card_hermes_steward', 'card_main_chat'),
     ] as any)).toBe(false);
-    expect(isHermesConnectedToMainChat(INITIAL_DECK.nodes, [
+    expect(mainToHermesConnected(INITIAL_DECK.nodes, [
       ...withoutHermesFlow,
       replacement('invalid'),
     ] as any)).toBe(false);
@@ -85,8 +100,13 @@ describe('Main / Hermes / graph authority topology', () => {
       'write_mag_one_instructions',
       'card.run_assistant_agent',
     ]));
-    expect(hermesTools).not.toEqual(expect.arrayContaining(['web_search', 'run_mag_one', 'run_coder_subagent']));
+    expect(hermesTools).not.toEqual(
+      expect.arrayContaining(['web_search', 'run_mag_one', 'run_coder_subagent']),
+    );
     expect(searchTools).toEqual(['web_search']);
+    const hermesPrompt = byId.get('card_hermes_steward')?.prompt ?? '';
+    expect(hermesPrompt).toContain('Do not claim that the external Hermes agent runtime executed');
+    expect(hermesPrompt).not.toContain('native Hermes runtime is already active');
   });
 
   it('assigns Main and Hermes only tools exposed by the real Harness MCP catalog', async () => {

@@ -20,7 +20,7 @@ from app.python_models.orchestration_contracts import (
     ProjectSession,
 )
 
-MODEL = "openai/gpt-5.6-luna"
+MODEL = "deepseek/deepseek-v4-flash-0731"
 
 
 @pytest.mark.parametrize("max_tokens", [0, -1])
@@ -56,7 +56,7 @@ def _tools_context(tool_ids: list[str]) -> ContextPack:
     return ContextPack(
         session=ProjectSession(
             sessionId="s", projectId="p", turnId="t", route="r",
-            modelProvider="openrouter", modelKey="gpt-5.6-luna", providerModelId=MODEL,
+            modelProvider="openrouter", modelKey="deepseek/deepseek-v4-flash-0731", providerModelId=MODEL,
             startedAt="now",
         ),
         userText="hi",
@@ -77,7 +77,7 @@ def _context_pack(user_text: str) -> ContextPack:
     return ContextPack(
         session=ProjectSession(
             sessionId="s", projectId="p", turnId="t", route="r",
-            modelProvider="openrouter", modelKey="gpt-5.6-luna", providerModelId=MODEL,
+            modelProvider="openrouter", modelKey="deepseek/deepseek-v4-flash-0731", providerModelId=MODEL,
             startedAt="now",
         ),
         userText=user_text,
@@ -111,8 +111,8 @@ def test_mag_one_reads_agentgraph_text_and_native_references_before_model(
         "temperature": 0.4,
         "maxTokens": 2400,
     }
-    context.cardRuntime.participants[0].providerModelId = "openai/gpt-5.6-luna"
-    context.cardRuntime.participants[1].providerModelId = "openai/gpt-5.6-sol"
+    context.cardRuntime.participants[0].providerModelId = "deepseek/deepseek-v4-flash-0731"
+    context.cardRuntime.participants[1].providerModelId = "z-ai/glm-5.2"
     context.agentAssignment = AgentAssignmentRequest(
         instructionId="instruction:one",
         senderCardId="card_main_chat",
@@ -196,8 +196,8 @@ def test_mag_one_reads_agentgraph_text_and_native_references_before_model(
     assert events == ["read", "claimed", "model", "model", "model"]
     assert model_configs == [
         ("openrouter", MODEL, 0.4, 2400),
-        ("openrouter", "openai/gpt-5.6-luna", None, None),
-        ("openrouter", "openai/gpt-5.6-sol", None, None),
+        ("openrouter", "deepseek/deepseek-v4-flash-0731", None, None),
+        ("openrouter", "z-ai/glm-5.2", None, None),
     ]
     assert tasks == [
         "[AGENTGRAPH_ASSIGNMENT]\n\n"
@@ -242,6 +242,18 @@ def test_selected_tool_attaches_real_functiontool_to_that_participant():
     assert "calculator" in research_tool_names
     assert all(isinstance(tool, FunctionTool) for tool in research._tools)
     assert [tool.name for tool in plain._tools] == []
+
+
+def test_local_coder_participant_keeps_its_bound_run_local_coder_tool():
+    context = _tools_context(["run_local_coder"])
+    participant = context.cardRuntime.participants[0]
+    participant.runtimeType = "local_coder"
+    participant.runtimeBinding = "local_coder"
+    participant.provider = "openrouter"
+    participant.providerModelId = "deepseek/deepseek-v4-flash-0731"
+    coder = mac._build_participants(context, _FakeToolClient())[0]
+    assert coder.description == "local_coder"
+    assert [tool.name for tool in coder._tools] == ["run_local_coder"]
 
 
 def test_each_participant_receives_its_own_saved_card_model_client():

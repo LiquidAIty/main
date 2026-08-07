@@ -466,12 +466,12 @@ import asyncio, json, mcp_host
 async def check():
     tools = await mcp_host.list_tools()
     by_name = {tool.name: tool for tool in tools}
-    coder = by_name['run_coder_subagent']
-    assert 'approvedPrompt' in coder.inputSchema['properties']
-    assert 'adapter' not in coder.inputSchema['properties']
+    assert 'run_coder_subagent' not in by_name
+    assert set(by_name['card.run_assistant_agent'].inputSchema['required']) == {'cardId', 'input'}
     assert 'instructionId' in by_name['card.run_assistant_agent'].inputSchema['properties']
     assert set(by_name['write_mag_one_instructions'].inputSchema['properties']) == {'instructions'}
     assert by_name['run_mag_one'].inputSchema['required'] == ['instructionId', 'projectId', 'deckId']
+    assert 'minProperties' not in str(by_name['card.update_configuration'].inputSchema)
     assert 'main.context' in by_name
     assert 'agentgraph.inspect' in by_name
     assert 'coder.status' in by_name
@@ -584,7 +584,7 @@ async def check():
     assert combined_identity[0] == len(combined_names)
     assert len(combined_identity[1]) == 64
     assert {
-        'main.context', 'canvas.inspect', 'coder.status', 'run_coder_subagent',
+        'main.context', 'canvas.inspect', 'coder.status', 'card.run_assistant_agent',
         'agentgraph.inspect',
     }.issubset(set(combined_names))
     assert {
@@ -824,7 +824,7 @@ def test_native_cbm_timeout_retires_the_session_without_retrying(monkeypatch):
     assert mcp_host._NATIVE_CBM_CLIENT is None
 
 
-def test_main_dispatches_coder_and_only_an_approved_mag_one_instruction():
+def test_retired_direct_coder_tool_is_absent_and_mag_one_dispatches_an_approved_instruction():
     code = """
 import asyncio, json, mcp_host
 async def check():
@@ -834,16 +834,12 @@ async def check():
         return [mcp_host.TextContent(type='text', text=json.dumps({'ok': True}))]
     mcp_host._bridge = bridge
     identity = {'_callerCardId': 'card_main_chat', '_callerRuntimeBinding': 'main_chat'}
-    coder = {
-        'parentRunId': 'main-run', 'projectId': 'project-1', 'deckId': 'deck_builder',
-        'conversationId': 'conversation-1', 'cardId': 'coder-card',
-        'approvedPrompt': 'Main approved these exact instructions.'
-    }
     mag = {'projectId': 'project-1', 'deckId': 'deck_builder', 'instructionId': 'instruction:one'}
-    await mcp_host.call_tool('run_coder_subagent', {**coder, **identity})
+    retired = await mcp_host.call_tool('run_coder_subagent', {**identity})
+    assert retired.isError is True
+    assert 'unknown_tool: run_coder_subagent' in retired.content[0].text
     await mcp_host.call_tool('run_mag_one', {**mag, **identity})
     assert calls == [
-        {'path': 'run_coder_subagent', 'payload': coder},
         {'path': 'run_mag_one', 'payload': mag},
     ]
     print('UNGATED_CANONICAL_DISPATCH_OK')
@@ -1191,21 +1187,12 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "compute": "database_read",
     }
     assert {"graphiti.get_status", "graphiti.search_nodes"}.issubset(by_name)
-    assert "run_coder_subagent" in by_name
+    assert "run_coder_subagent" not in by_name
     assert "run_mag_one" in by_name
-    coder_tool = by_name["run_coder_subagent"]
-    assert set(coder_tool.inputSchema["properties"]) == {
-        "approvedPrompt",
-        "cardId",
-        "authority",
-    }
-    assert "projectId" not in coder_tool.inputSchema["properties"]
-    assert "parentRunId" not in coder_tool.inputSchema["properties"]
-    assert "agentContextId" not in by_name["run_coder_subagent"].inputSchema["properties"]
-    assert "agentContext" not in by_name["run_coder_subagent"].inputSchema["properties"]
-    assert "adapter" not in by_name["run_coder_subagent"].inputSchema["properties"]
-    assert "server owns project, deck, conversation, parent-run, and Main-card identity" in coder_tool.description
-    assert "Pass the exact active" not in coder_tool.description
+    card_tool = by_name["card.run_assistant_agent"]
+    assert set(card_tool.inputSchema["properties"]) == {"cardId", "input"}
+    assert set(card_tool.inputSchema["required"]) == {"cardId", "input"}
+    assert "assistant_agent or local_coder" in card_tool.description
     assert "instructionId" not in by_name["card.run_assistant_agent"].inputSchema["properties"]
     assert {scheme["scopes"][0] for scheme in by_name["engraphis.recall"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
@@ -1213,13 +1200,13 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert by_name["cbm.search_graph"].description == "Native search description."
     assert by_name["cbm.search_graph"].inputSchema == native_cbm_tools[0].inputSchema
     assert by_name["coder.status"].annotations.readOnlyHint is True
-    assert by_name["run_coder_subagent"].annotations is None
+    assert by_name["card.run_assistant_agent"].annotations is None
 
     active_scopes[:] = ["liquidaity.main"]
     main_names = {tool.name for tool in asyncio.run(mcp_host.list_tools())}
     assert {
         "main.context", "agentgraph.inspect", "canvas.inspect",
-        "run_coder_subagent", "run_mag_one", "cbm.search_graph",
+        "card.run_assistant_agent", "run_mag_one", "cbm.search_graph",
         "graphiti.search_nodes",
     }.issubset(main_names)
     assert {
@@ -1316,25 +1303,25 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert payload["originatingAgentId"] == "card_main_chat"
     assert payload["originatingRunId"] == "external-main:grant-1"
 
-    denied = asyncio.run(mcp_host.call_tool("run_coder_subagent", {
+    denied = asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
         "projectId": "spoofed",
         "cardId": "coder-card",
-        "approvedPrompt": "Approved exact task.",
+        "input": "Approved exact task.",
     }))
     assert denied.isError is True
     assert "caller_identity_rejected: projectId" in denied.content[0].text
 
-    asyncio.run(mcp_host.call_tool("run_coder_subagent", {
+    asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
         "cardId": "coder-card",
-        "approvedPrompt": "Approved exact task.",
+        "input": "Approved exact task.",
     }))
     path, payload = calls[-1]
-    assert path == "run_coder_subagent"
+    assert path == "card_run_assistant_agent"
     assert payload["projectId"] == "project-1"
     assert payload["deckId"] == "deck_builder"
     assert payload["conversationId"] == "external-mcp:grant-1"
-    assert payload["parentRunId"].startswith("req_external_main_")
-    assert "agentContextId" not in payload
+    assert payload["originatingAgentId"] == "card_main_chat"
+    assert payload["originatingRunId"] == "external-main:grant-1"
 
 def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(monkeypatch):
     import asyncio
@@ -1363,11 +1350,11 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
 
     monkeypatch.setattr(mcp_host, "get_access_token", access_token)
     canonical = asyncio.run(mcp_host.list_tools())
-    assert len(canonical) == 70
+    assert len(canonical) == 69
 
     active_scopes[:] = ["liquidaity.main"]
     authenticated = asyncio.run(mcp_host.list_tools())
-    assert len(authenticated) == 70
+    assert len(authenticated) == 69
     assert {tool.name for tool in authenticated} == {tool.name for tool in canonical}
     main_context = asyncio.run(mcp_host.call_tool("main.context", {}))
     assert json.loads(main_context[0].text)["ok"] is True

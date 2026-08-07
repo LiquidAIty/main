@@ -28,12 +28,13 @@ function packet(repoPath: string): CoderPacket {
     reportFormat: 'CoderReport JSON',
     stopConditions: ['Stop after one job.'],
     modelProvider: 'openai',
-    providerModelId: 'gpt-5.3-codex',
+    providerModelId: 'gpt-5.6-luna',
   };
 }
 
 function structuredStdout(): string {
   return JSON.stringify({
+    session_id: 'occ-test-session',
     structured_output: {
       coderPacketId: 'packet-1',
       status: 'succeeded',
@@ -130,7 +131,7 @@ describe('LocalCoderAdapter', () => {
     const root = createBareWorkspace();
     const adapter = new LocalCoderAdapter({
       workspaceRoot: root,
-      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.3-codex' },
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.6-luna' },
     });
     const report = await adapter.run(packet(root));
     expect(report.status).toBe('blocked');
@@ -143,6 +144,7 @@ describe('LocalCoderAdapter', () => {
     const root = createBareWorkspace();
     const script = createLauncherScript();
     let usedArgs: string[] = [];
+    let usedEnv: NodeJS.ProcessEnv = {};
     const adapter = new LocalCoderAdapter({
       workspaceRoot: root,
       env: {
@@ -150,12 +152,13 @@ describe('LocalCoderAdapter', () => {
         LOCALCODER_COMMAND: `node ${script}`,
         OPENCLAUDE_COMMAND: 'node /should/not/win.mjs',
         OPENAI_API_KEY: 'key',
-        OPENAI_MODEL: 'gpt-5.3-codex',
+        OPENAI_MODEL: 'gpt-5.6-luna',
       },
-      runProcess: async (command, args) => {
+      runProcess: async (command, args, options) => {
         expect(command).toBe(process.execPath);
         expect(args[0]).toBe(script);
         usedArgs = args;
+        usedEnv = options.env;
         return { started: true, exitCode: 0, stdout: structuredStdout(), stderr: '' };
       },
     });
@@ -163,6 +166,11 @@ describe('LocalCoderAdapter', () => {
     expect(report.status).toBe('succeeded');
     expect(usedArgs).toContain('--print');
     expect(usedArgs).toContain('--json-schema');
+    expect(usedArgs[usedArgs.indexOf('--provider') + 1]).toBe('openai');
+    expect(usedEnv.OPENAI_API_KEY).toBeUndefined();
+    expect(usedEnv.OPENAI_BASE_URL).toBe('https://chatgpt.com/backend-api/codex');
+    expect(usedEnv.CLAUDE_CODE_USE_OPENAI).toBe('1');
+    expect(report.rawOutput).toContain('occ-test-session');
   });
 
   it('accepts an explicit OPENCLAUDE_COMMAND when LOCALCODER_* is unset', async () => {
@@ -174,7 +182,7 @@ describe('LocalCoderAdapter', () => {
         PATH: '',
         OPENCLAUDE_COMMAND: `node ${script}`,
         OPENAI_API_KEY: 'key',
-        OPENAI_MODEL: 'gpt-5.3-codex',
+        OPENAI_MODEL: 'gpt-5.6-luna',
       },
       runProcess: async (command, args) => {
         expect(command).toBe(process.execPath);
@@ -186,6 +194,37 @@ describe('LocalCoderAdapter', () => {
     expect(report.status).toBe('succeeded');
   });
 
+  it('maps an OpenRouter DeepSeek card to the OpenAI-compatible provider environment', async () => {
+    const root = createBareWorkspace();
+    const script = createLauncherScript();
+    let usedArgs: string[] = [];
+    let usedEnv: NodeJS.ProcessEnv = {};
+    const adapter = new LocalCoderAdapter({
+      workspaceRoot: root,
+      env: {
+        PATH: '',
+        LOCALCODER_COMMAND: `node ${script}`,
+        OPENROUTER_API_KEY: 'openrouter-key',
+      },
+      runProcess: async (_command, args, options) => {
+        usedArgs = args;
+        usedEnv = options.env;
+        return { started: true, exitCode: 0, stdout: structuredStdout(), stderr: '' };
+      },
+    });
+    const report = await adapter.run({
+      ...packet(root),
+      modelProvider: 'openrouter',
+      providerModelId: 'deepseek/deepseek-v4-flash-0731',
+    });
+    expect(report.status).toBe('succeeded');
+    expect(usedArgs[usedArgs.indexOf('--provider') + 1]).toBe('openai');
+    expect(usedArgs[usedArgs.indexOf('--model') + 1]).toBe('deepseek/deepseek-v4-flash-0731');
+    expect(usedEnv.OPENAI_API_KEY).toBe('openrouter-key');
+    expect(usedEnv.OPENAI_BASE_URL).toBe('https://openrouter.ai/api/v1');
+    expect(usedEnv.CLAUDE_CODE_USE_OPENAI).toBe('1');
+  });
+
   it('does not block a valid explicit command just because vendored deps are missing', async () => {
     const root = createBareWorkspace();
     const script = createLauncherScript();
@@ -195,7 +234,7 @@ describe('LocalCoderAdapter', () => {
         PATH: '',
         LOCALCODER_COMMAND: `node ${script}`,
         OPENAI_API_KEY: 'key',
-        OPENAI_MODEL: 'gpt-5.3-codex',
+        OPENAI_MODEL: 'gpt-5.6-luna',
       },
       runProcess: versionOk,
     });
@@ -212,7 +251,7 @@ describe('LocalCoderAdapter', () => {
         PATH: '',
         LOCALCODER_COMMAND: 'node C:/does/not/exist/openclaude.mjs',
         OPENAI_API_KEY: 'key',
-        OPENAI_MODEL: 'gpt-5.3-codex',
+        OPENAI_MODEL: 'gpt-5.6-luna',
       },
     });
     const report = await adapter.run(packet(root));
@@ -230,7 +269,7 @@ describe('LocalCoderAdapter', () => {
         PATH: pathDir,
         PATHEXT: '.CMD',
         OPENAI_API_KEY: 'key',
-        OPENAI_MODEL: 'gpt-5.3-codex',
+        OPENAI_MODEL: 'gpt-5.6-luna',
       },
       runProcess: async (command, args) => {
         sawCommand = command;
@@ -253,7 +292,7 @@ describe('LocalCoderAdapter', () => {
         PATH: pathDir,
         PATHEXT: '.CMD',
         OPENAI_API_KEY: 'key',
-        OPENAI_MODEL: 'gpt-5.3-codex',
+        OPENAI_MODEL: 'gpt-5.6-luna',
       },
       runProcess: async (_command, args) => {
         probeArgs = args;
@@ -277,7 +316,7 @@ describe('LocalCoderAdapter', () => {
         PATH: '',
         LOCALCODER_COMMAND: `node ${script}`,
         OPENAI_API_KEY: 'key',
-        OPENAI_MODEL: 'gpt-5.3-codex',
+        OPENAI_MODEL: 'gpt-5.6-luna',
       },
       runProcess: async () => ({ started: true, exitCode: 1, stdout: '', stderr: 'bad flag' }),
     });
@@ -294,7 +333,7 @@ describe('LocalCoderAdapter', () => {
       env: {
         PATH: '',
         OPENAI_API_KEY: 'key',
-        OPENAI_MODEL: 'gpt-5.3-codex',
+        OPENAI_MODEL: 'gpt-5.6-luna',
       },
       runProcess: async (command, args) => {
         invoked = true;
@@ -315,7 +354,7 @@ describe('LocalCoderAdapter', () => {
     const root = createRuntimeFixture();
     const adapter = new LocalCoderAdapter({
       workspaceRoot: root,
-      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.3-codex' },
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.6-luna' },
       runProcess: async () => ({
         started: false,
         exitCode: null,
@@ -333,7 +372,7 @@ describe('LocalCoderAdapter', () => {
     const root = createRuntimeFixture();
     const adapter = new LocalCoderAdapter({
       workspaceRoot: root,
-      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.3-codex' },
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.6-luna' },
       runProcess: async () => ({
         started: true,
         exitCode: 2,
@@ -350,7 +389,7 @@ describe('LocalCoderAdapter', () => {
     const root = createRuntimeFixture();
     const adapter = new LocalCoderAdapter({
       workspaceRoot: root,
-      env: { PATH: '', OPENAI_API_KEY: 'secret-key', OPENAI_MODEL: 'gpt-5.3-codex' },
+      env: { PATH: '', OPENAI_API_KEY: 'secret-key', OPENAI_MODEL: 'gpt-5.6-luna' },
       runProcess: async () => ({
         started: true,
         exitCode: 0,
@@ -368,7 +407,8 @@ describe('LocalCoderAdapter', () => {
     expect(runtimeDiagnostics.promptDelivery).toBe('argv');
     expect(runtimeDiagnostics.stdinClosed).toBe(true);
     expect(runtimeDiagnostics.provider).toBe('openai');
-    expect(runtimeDiagnostics.model).toBe('gpt-5.3-codex');
+    expect(runtimeDiagnostics.model).toBe('gpt-5.6-luna');
+    expect(runtimeDiagnostics.sessionId).toBe('occ-test-session');
     expect(runtimeDiagnostics.mcpConfigPassed).toBe(true);
     expect(runtimeDiagnostics.firstStdoutAt).toBe('2026-06-13T12:00:00.000Z');
     expect(runtimeDiagnostics.argvShape.join(' ')).toContain('<prompt:');
@@ -384,7 +424,7 @@ describe('LocalCoderAdapter', () => {
     const runProcess = vi.fn();
     const adapter = new LocalCoderAdapter({
       workspaceRoot: root,
-      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.3-codex' },
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.6-luna' },
       runProcess,
     });
 
@@ -403,12 +443,12 @@ describe('LocalCoderAdapter', () => {
     const root = createRuntimeFixture();
     const adapter = new LocalCoderAdapter({
       workspaceRoot: root,
-      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.3-codex' },
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.6-luna' },
       runProcess: async () => ({
         started: true,
         exitCode: null,
         stdout: '',
-        stderr: 'Warning: gpt-5.3-codex is missing from context-window table',
+        stderr: 'Warning: gpt-5.6-luna is missing from context-window table',
         error: 'process_timeout_after_30000ms',
         timeoutKilled: true,
       }),
@@ -418,7 +458,7 @@ describe('LocalCoderAdapter', () => {
 
     expect(runtimeDiagnostics.runtimeStage).toBe('process_timeout');
     expect(runtimeDiagnostics.warningLines).toEqual([
-      'Warning: gpt-5.3-codex is missing from context-window table',
+      'Warning: gpt-5.6-luna is missing from context-window table',
     ]);
     expect(JSON.stringify(runtimeDiagnostics)).not.toContain('caused');
   });
@@ -427,7 +467,7 @@ describe('LocalCoderAdapter', () => {
     const root = createRuntimeFixture();
     const adapter = new LocalCoderAdapter({
       workspaceRoot: root,
-      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.3-codex' },
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.6-luna' },
       runProcess: async () => ({
         started: true,
         exitCode: 0,
@@ -445,16 +485,20 @@ describe('LocalCoderAdapter', () => {
     expect(runtimeDiagnostics.validCoderReportReturned).toBe(false);
   });
 
-  it('blocks when required env API keys are missing even with a runnable command', async () => {
+  it('blocks OpenRouter when its required API key is missing even with a runnable command', async () => {
     const root = createBareWorkspace();
     const script = createLauncherScript();
     const adapter = new LocalCoderAdapter({
       workspaceRoot: root,
       env: { PATH: '', LOCALCODER_COMMAND: `node ${script}` },
     });
-    const report = await adapter.run(packet(root));
+    const report = await adapter.run({
+      ...packet(root),
+      modelProvider: 'openrouter',
+      providerModelId: 'deepseek/deepseek-v4-flash-0731',
+    });
     expect(report.status).toBe('blocked');
-    expect(report.blockers.join(' ')).toContain('localcoder_env_missing: OPENAI_API_KEY');
+    expect(report.blockers.join(' ')).toContain('localcoder_env_missing: OPENROUTER_API_KEY');
   });
 });
 
@@ -493,7 +537,7 @@ describe('LocalCoderAdapter permission mode wiring', () => {
     let captured: string[] = [];
     const adapter = new LocalCoderAdapter({
       workspaceRoot: root,
-      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.3-codex' },
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.6-luna' },
       runProcess: async (_command, args) => {
         captured = args;
         return { started: true, exitCode: 0, stdout: structuredStdout(), stderr: '' };
@@ -523,7 +567,7 @@ describe('LocalCoderAdapter MCP config handling', () => {
     const capture: Capture = { args: [], mcpConfigContent: null };
     const adapter = new LocalCoderAdapter({
       workspaceRoot: root,
-      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.3-codex', ...env },
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.6-luna', ...env },
       runProcess: async (_command, args) => {
         capture.args = args;
         const idx = args.indexOf('--mcp-config');
@@ -562,7 +606,7 @@ describe('LocalCoderAdapter MCP config handling', () => {
     let mcpContent = '';
     const adapter = new LocalCoderAdapter({
       workspaceRoot: root,
-      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.3-codex' },
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.6-luna' },
       runProcess: async (_command, args) => {
         const idx = args.indexOf('--mcp-config');
         if (idx >= 0) mcpContent = readFileSync(args[idx + 1], 'utf8');
@@ -649,7 +693,7 @@ describe('LocalCoderAdapter MCP config handling', () => {
     let capturedArgs: string[] = [];
     const adapter = new LocalCoderAdapter({
       workspaceRoot: root,
-      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.3-codex' },
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.6-luna' },
       diagnosticMcpMode: 'disabled',
       runProcess: async (_command, args) => {
         capturedArgs = args;
@@ -745,7 +789,7 @@ describe('LocalCoderService structural edit-scope gate', () => {
       argvShape: ['--print', '<prompt:100 chars>'],
       workingDirectory: process.cwd(),
       provider: 'openai',
-      model: 'gpt-5.3-codex',
+      model: 'gpt-5.6-luna',
       permissionMode: 'plan' as const,
       timeoutMs: 30_000,
       promptDelivery: 'argv' as const,

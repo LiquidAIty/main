@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
+import { ZodError } from 'zod';
 import type { OpenClaudeRunRequest } from '../coder/openclaude/contracts';
 import { openClaudeRuntimeService } from '../coder/openclaude/runtime/service';
 import { localCoderService } from '../coder/localcoder/service';
@@ -8,7 +9,7 @@ import {
   openClaudeConsoleSessionManager,
   type ConsoleMode,
 } from '../coder/openclaude/console/consoleSession';
-import { runConfiguredCard, resolveCardModelStrict, resolveCardTools } from '../cards/runtime';
+import { runConfiguredCard } from '../cards/runtime';
 import { resolveProductChatWorkingDirectory } from '../coder/workspaceRoot';
 import {
   describeConnectedAgents,
@@ -16,7 +17,6 @@ import {
 } from '../coder/openclaude/mcp/liquidAItyAgentFlow';
 import {
   deriveSessionId,
-  resolveMainChatRuntimeConfig,
   startGrpcTurn,
   type GrpcSessionEvent,
   type GrpcTurnHandle,
@@ -35,44 +35,16 @@ import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/ha
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantStore';
 import {
-  runOpenClaudeCodeTask,
-  type ConsoleCoderResult,
-  type ConsoleCoderStarted,
-} from '../coder/execution/coderConsoleRuntime';
-import {
-  beginAgentAssignmentOnPython,
   fetchAgentCardContext,
-  finishAgentAssignmentOnPython,
 } from '../services/autogen/autogenOrchestratorClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
-import {
-  resolveEffectiveCoderToolSnapshot,
-  type CoderAuthorityMode,
-} from '../coder/execution/coderRuntimeContract';
 
 const router = Router();
-const DEFAULT_CODER_CONNECTOR_COMPLETION_WINDOW_MS = 20_000;
 
 router.get('/tool-library', async (req, res) => {
   try {
     const tools = await listPythonAgentMcpCatalog();
-    const projectId = String(req.query.projectId || '').trim();
-    const cardId = String(req.query.cardId || '').trim();
-    if (!projectId || !cardId) return res.json({ ok: true, tools });
-    const deckId = String(req.query.deckId || BUILDER_DECK_ID);
-    const authority: CoderAuthorityMode = req.query.authority === 'mag_one_execution'
-      ? 'mag_one_execution'
-      : 'direct_main_audit';
-    const { deck } = await getDeckDocument(projectId, deckId);
-    const card = (deck?.nodes || []).find((node: any) => String(node?.id || '') === cardId);
-    if (!card) return res.status(404).json({ ok: false, error: `coder_card_not_found: ${cardId}` });
-    const snapshot = resolveEffectiveCoderToolSnapshot({
-      authority,
-      savedTools: resolveCardTools(card),
-      catalog: tools,
-      runId: 'preview',
-    });
-    return res.json({ ok: true, tools, snapshot });
+    return res.json({ ok: true, tools });
   } catch (error) {
     return res.status(503).json({
       ok: false,
@@ -81,14 +53,6 @@ router.get('/tool-library', async (req, res) => {
     });
   }
 });
-
-export function resolveCoderConnectorCompletionWindowMs(): number {
-  const configured = Number(process.env.LIQUIDAITY_CODER_CONNECTOR_COMPLETION_WINDOW_MS);
-  if (!Number.isFinite(configured) || configured <= 0) {
-    return DEFAULT_CODER_CONNECTOR_COMPLETION_WINDOW_MS;
-  }
-  return Math.min(45_000, Math.max(1, Math.trunc(configured)));
-}
 
 // ── LiquidAIty MCP bridge (SDK-free) ───────────────────────────────────────
 // Internal JSON endpoints that run the proven MCP handlers server-side, where
@@ -187,38 +151,6 @@ router.post('/mcp-bridge/run_mag_one', async (req, res) => {
   }
 });
 
-router.post('/mcp-bridge/coder_effective_tools', async (req, res) => {
-  try {
-    const projectId = String(req.body?.projectId || '').trim();
-    const deckId = String(req.body?.deckId || BUILDER_DECK_ID);
-    const cardId = String(req.body?.cardId || '').trim();
-    const { deck } = await getDeckDocument(projectId, deckId);
-    const card = (deck?.nodes || []).find((node: any) => String(node?.id || '') === cardId) as any;
-    if (!card) return res.status(404).json({ ok: false, error: `coder_card_not_found:${cardId}` });
-    if (card.runtimeType !== 'local_coder' || card.runtimeBinding !== 'local_coder') {
-      return res.status(409).json({ ok: false, error: `coder_card_runtime_unsupported:${cardId}` });
-    }
-    const authority: CoderAuthorityMode = req.body?.authority === 'mag_one_execution'
-      ? 'mag_one_execution'
-      : 'direct_main_audit';
-    const snapshot = resolveEffectiveCoderToolSnapshot({
-      authority,
-      savedTools: resolveCardTools(card),
-      catalog: await listPythonAgentMcpCatalog(),
-      runId: 'inspection',
-    });
-    return res.json({
-      ok: snapshot.unresolved.length === 0,
-      cardId,
-      agentClass: 'system',
-      runtime: 'openclaude',
-      snapshot,
-    });
-  } catch (error) {
-    return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
 async function resolveCodingCard(projectId: string, deckId: string, cardId: string): Promise<any> {
   const { deck } = await getDeckDocument(projectId, deckId);
   const card = (deck?.nodes || []).find((node: any) => String(node?.id || '') === cardId);
@@ -227,42 +159,6 @@ async function resolveCodingCard(projectId: string, deckId: string, cardId: stri
   if (!system) throw new Error(`coder_card_runtime_unsupported:${cardId}`);
   return card;
 }
-
-router.post('/mcp-bridge/coder_inspect', async (req, res) => {
-  try {
-    const projectId = String(req.body?.projectId || '').trim();
-    const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
-    const cardId = String(req.body?.cardId || '').trim();
-    const card = await resolveCodingCard(projectId, deckId, cardId);
-    const model = resolveCardModelStrict(card);
-    const snapshot = resolveEffectiveCoderToolSnapshot({
-      authority: req.body?.authority === 'mag_one_execution' ? 'mag_one_execution' : 'direct_main_audit',
-      savedTools: resolveCardTools(card),
-      catalog: await listPythonAgentMcpCatalog(),
-      runId: 'inspection',
-    });
-    const runtime = await localCoderService.inspect(resolveProductChatWorkingDirectory());
-    const session = openClaudeConsoleSessionManager.findRunningForCard(cardId);
-    return res.json({
-      ok: runtime.ready && snapshot.unresolved.length === 0,
-      cardId,
-      agentClass: 'system',
-      route: 'main_system_coder_openclaude',
-      provider: model.provider,
-      model: model.providerModelId,
-      account: null,
-      modelAvailable: runtime.ready,
-      readiness: runtime.ready ? 'READY' : 'UNAVAILABLE',
-      effectiveTools: snapshot,
-      automaticGraphTools: ['CodeGraph/CBM'],
-      status: session?.info ?? { state: 'idle', ownerCardId: cardId },
-      receipt: null,
-      error: runtime.ready ? null : `openclaude_runtime_unavailable:${runtime.missing.join(',')}`,
-    });
-  } catch (error) {
-    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});
 
 router.post('/mcp-bridge/coder_stop', async (req, res) => {
   try {
@@ -296,174 +192,6 @@ router.post('/mcp-bridge/coder_steer', async (req, res) => {
     return res.status(delivered ? 200 : 409).json({ ok: delivered, cardId, session: session.info });
   } catch (error) {
     return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
-  try {
-    const body = req.body || {};
-    const projectId = String(body.projectId || '');
-    const deckId = String(body.deckId || BUILDER_DECK_ID);
-    const cardId = String(body.cardId || '');
-    const conversationId = String(body.conversationId || '');
-    // Resolve the saved Coder card's provider/model EXACTLY as the runtime does
-    // (no hardcoded model, no new-project-template edit). Missing/mismatched config throws.
-    const { deck } = await getDeckDocument(projectId, deckId);
-    const nodes: unknown[] = Array.isArray((deck as { nodes?: unknown[] } | null)?.nodes)
-      ? ((deck as { nodes: unknown[] }).nodes)
-      : [];
-    const card = nodes.find((node) => String((node as { id?: unknown })?.id || '') === cardId);
-    if (!card) return res.status(404).json({ ok: false, error: `coder_card_not_found: ${cardId}` });
-    const model = resolveCardModelStrict(card);
-    const authority: CoderAuthorityMode = body.authority === 'mag_one_execution'
-      ? 'mag_one_execution'
-      : 'direct_main_audit';
-    if (authority === 'direct_main_audit') {
-      const main = await resolveMainChatRuntimeConfig(
-        deriveSessionId(projectId, conversationId),
-        'chat',
-        String(body.parentRunId || ''),
-      );
-      const connected = main?.doorwayDefinitions.some(
-        (definition) => String(definition.card_id || '') === cardId,
-      );
-      if (!connected) {
-        return res.status(403).json({
-          ok: false,
-          error: `direct_main_coder_edge_required: ${cardId}`,
-        });
-      }
-    }
-    const approvedPrompt = String(body.approvedPrompt || '');
-    const senderCardId = await resolveMainChatCardId(projectId, deckId);
-    if (!senderCardId) {
-      return res.status(409).json({ ok: false, error: 'main_chat_card_not_found' });
-    }
-    const assignmentCorrelationId = `coder:${randomUUID()}`;
-    const runtimeOptions =
-      card && typeof card === 'object'
-        ? ((card as { runtimeOptions?: Record<string, unknown> }).runtimeOptions || {})
-        : {};
-    const childRunId = `coder_${randomUUID()}`;
-    const toolSnapshot = resolveEffectiveCoderToolSnapshot({
-      authority,
-      savedTools: resolveCardTools(card),
-      catalog: await listPythonAgentMcpCatalog(),
-      runId: childRunId,
-    });
-    if (toolSnapshot.unresolved.length > 0) {
-      return res.status(424).json({
-        ok: false,
-        error: `coder_saved_tools_unresolved:${toolSnapshot.unresolved.join(',')}`,
-        toolSnapshot,
-      });
-    }
-    const outerAssignment = await beginAgentAssignmentOnPython({
-      projectId,
-      deckId,
-      conversationId,
-      correlationId: assignmentCorrelationId,
-      senderCardId,
-      receiverCardId: cardId,
-      instruction: String(body.approvedPrompt || ''),
-      parentRunId: String(body.parentRunId || '') || undefined,
-      references: [],
-      runtime: 'openclaude',
-      provider: model.provider,
-      modelKey: String(runtimeOptions.modelKey),
-      providerModelId: model.providerModelId,
-    });
-    let announceStarted!: (started: ConsoleCoderStarted) => void;
-    const startedPromise = new Promise<ConsoleCoderStarted>((resolve) => {
-      announceStarted = resolve;
-    });
-    const finalizationPromise = (async (): Promise<ConsoleCoderResult> => {
-      try {
-      const result = await runOpenClaudeCodeTask({
-        runId: childRunId,
-        parentRunId: String(body.parentRunId || ''),
-        correlationId: assignmentCorrelationId,
-        projectId,
-        deckId,
-        conversationId,
-        cardId,
-        approvedPrompt,
-        authority,
-        model: model.providerModelId,
-        provider: model.provider,
-        toolSnapshot,
-      }, {
-        onSessionStarted: announceStarted,
-      });
-      await finishAgentAssignmentOnPython(outerAssignment.assignmentId, {
-        projectId,
-        claimToken: outerAssignment.claimToken,
-        status:
-          result.terminalState === 'cancelled'
-            ? 'cancelled'
-            : result.ok
-              ? 'completed'
-              : 'failed',
-        output: JSON.stringify(result.report ?? result.auditResult ?? {
-            terminalState: result.terminalState,
-            resultValidationStatus: result.resultValidationStatus,
-        }),
-        summary: result.ok ? 'OpenClaude Coder completed' : 'OpenClaude Coder failed',
-        errorCode: result.error || undefined,
-        errorDetail: result.error || undefined,
-        toolEvidence: result.commandEvidence
-          ? [{
-              callId: result.sessionId || result.childRunId,
-              toolName: 'openclaude',
-              event: result.commandEvidence.transportMode,
-              status: result.terminalState,
-            }]
-          : [],
-      });
-      return result;
-      } catch (error) {
-        await finishAgentAssignmentOnPython(outerAssignment.assignmentId, {
-          projectId,
-          claimToken: outerAssignment.claimToken,
-          status: 'failed',
-          errorCode: 'openclaude_runtime_failed',
-          errorDetail: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      }
-    })();
-
-    let completionTimer: NodeJS.Timeout | null = null;
-    const runningSignal = startedPromise.then(
-      (started) =>
-        new Promise<{ kind: 'running'; started: ConsoleCoderStarted }>((resolve) => {
-          completionTimer = setTimeout(
-            () => resolve({ kind: 'running', started }),
-            resolveCoderConnectorCompletionWindowMs(),
-          );
-        }),
-    );
-    const completionSignal = finalizationPromise.then(
-      (result) => ({ kind: 'completed' as const, result }),
-      (error: unknown) => ({ kind: 'failed' as const, error }),
-    );
-    const first = await Promise.race([completionSignal, runningSignal]);
-    if (completionTimer) clearTimeout(completionTimer);
-    if (first.kind === 'failed') throw first.error;
-    if (first.kind === 'running') {
-      return res.status(202).json({
-        ok: true,
-        status: 'running',
-        assignmentId: outerAssignment.assignmentId,
-        instructionId: outerAssignment.instructionId,
-        ...first.started,
-      });
-    }
-    const result = first.result;
-    const failureStatus = result.terminalState === 'cancelled' ? 499 : 502;
-    return res.status(result.ok ? 200 : failureStatus).json(result);
-  } catch (error) {
-    return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'run_coder_subagent_failed' });
   }
 });
 
@@ -888,17 +616,45 @@ router.get('/localcoder/status', async (req, res) => {
   });
 });
 
-router.post('/localcoder/run', async (_req, res) => {
-  // Decision 1a (2026-08-05): the headless LocalCoder run route is the former
-  // alternate task engine. There is ONE Coder runtime — the canonical
-  // OpenClaude console doorway (/mcp-bridge/run_coder_subagent via
-  // runOpenClaudeCodeTask → OpenClaudeConsoleSessionManager). This route fails
-  // closed and can never silently launch work.
-  return res.status(410).json({
-    ok: false,
-    error: 'localcoder_run_deprecated',
-    detail: 'Use /mcp-bridge/run_coder_subagent — the canonical Coder doorway builds the one session through the OpenClaude console manager.',
-  });
+router.post('/localcoder/run', async (req, res) => {
+  try {
+    // The coder's filesystem root is server-owned and trusted. The caller
+    // supplies the bounded logical task plus the saved card's provider/model;
+    // it cannot choose the filesystem root or mint the run identity.
+    const incoming = (req.body?.coderPacket ?? req.body ?? {}) as Record<string, unknown>;
+    const coderPacket = {
+      ...incoming,
+      id:
+        typeof incoming.id === 'string' && incoming.id.trim()
+          ? incoming.id
+          : `coder_${randomUUID()}`,
+      repoPath: process.env.LIQUIDAITY_GRPC_CWD || 'C:/Projects/main',
+    };
+    const result = await localCoderService.run(coderPacket);
+    const reportOk = result.report.status === 'succeeded' || result.report.status === 'partial';
+    const statusCode =
+      result.report.status === 'blocked'
+        ? 424
+        : result.report.status === 'failed'
+          ? 502
+          : 200;
+    return res.status(statusCode).json({
+      ok: reportOk,
+      ...result,
+    });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_coder_packet',
+        issues: error.issues,
+      });
+    }
+    return res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'localcoder_run_failed',
+    });
+  }
 });
 
 export default router;

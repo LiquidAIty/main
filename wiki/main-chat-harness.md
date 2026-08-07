@@ -30,7 +30,7 @@ roots:
     - runMagOne
     - resolvedMagenticOptions
     - isLocalCoderCard
-    - isHermesConnectedToMainChat
+    - hasDirectedRuntimeBindingConnection
   routes:
     - POST /openclaude/session/chat
     - POST /mcp-bridge/describe_connected_agents
@@ -61,6 +61,11 @@ The chat model receives the saved Main Chat prompt plus specialist doorway defin
 card is selected only through its authorized Main→Hermes edge; its prompt/model/tools become a
 generic inherited-context Agent definition. Actual Hermes process execution, its own terminal/UI,
 and runtime evidence remain to be wired.
+
+The Hermes Kanban rail item is UI activation only. It requires a generic directed `flow` connection
+from a card bound as `main_chat` to a card bound as `hermes_steward`; no card ID, title, or Hermes-only
+connection pseudo-type activates it. The board's reads and explicit mutations are backed by the
+installed native Hermes CLI, but that does not prove native Hermes agent execution.
 
 **Mag One**: the AgentGraph instruction/assignment and worker-card execution mechanics exist. The
 intended flow is that actual Hermes persists an exact instruction when Main requests a Run Plan,

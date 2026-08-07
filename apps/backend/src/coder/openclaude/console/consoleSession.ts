@@ -175,7 +175,11 @@ export function resolveConsoleProviderEnv(
   }
   return {
     label: 'openai',
-    envOverrides: { CLAUDE_CODE_USE_OPENAI: '1' },
+    envOverrides: {
+      CLAUDE_CODE_USE_OPENAI: '1',
+      OPENAI_BASE_URL: 'https://chatgpt.com/backend-api/codex',
+      OPENAI_API_KEY: undefined,
+    },
   };
 }
 

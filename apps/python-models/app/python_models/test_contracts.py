@@ -8,8 +8,8 @@ from app.python_models.orchestration_contracts import (
 def _session() -> ProjectSession:
     return ProjectSession(
         sessionId="s", projectId="p", turnId="t", route="r",
-        modelProvider="openrouter", modelKey="gpt-5.6-luna",
-        providerModelId="openai/gpt-5.6-luna", startedAt="now",
+        modelProvider="openrouter", modelKey="deepseek/deepseek-v4-flash-0731",
+        providerModelId="deepseek/deepseek-v4-flash-0731", startedAt="now",
     )
 
 

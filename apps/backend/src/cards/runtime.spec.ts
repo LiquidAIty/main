@@ -8,22 +8,6 @@ import {
   resolveCardModelStrict,
 } from './runtime';
 
-describe('saved GPT comparison models', () => {
-  it.each([
-    'openai/gpt-5.6-luna',
-    'openai/gpt-5.6-terra',
-    'openai/gpt-5.6-sol',
-  ])('resolves %s through the saved OpenRouter card contract', (modelKey) => {
-    expect(
-      resolveCardModelStrict({
-        id: 'card_test',
-        runtimeType: 'assistant_agent',
-        runtimeOptions: { provider: 'openrouter', modelKey },
-      }),
-    ).toEqual({ provider: 'openrouter', providerModelId: modelKey });
-  });
-});
-
 // Canonical DeepSeek model — same saved-card validation path as any other
 // OpenRouter entry; no override logic, no OpenAI fallback.
 describe('canonical DeepSeek V4 Flash 0731 card contract', () => {
@@ -152,7 +136,7 @@ describe('Canonical Cards Runtime', () => {
     };
     const codegraph = {
       id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent',
-      title: 'CodeGraph Agent', runtimeOptions: { modelKey: 'gpt-5-nano' },
+      title: 'CodeGraph Agent', runtimeOptions: { modelKey: 'gpt-5.6-luna' },
     };
     const allCards = [mag, coder, codegraph];
     const allEdges = [coder, codegraph].map((agent) => ({
@@ -215,14 +199,14 @@ describe('Canonical Cards Runtime', () => {
       kind: 'agent',
       runtimeType: 'assistant_agent',
       runtimeBinding: 'main_chat',
-      runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.3-codex' },
+      runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.6-luna' },
     };
     const think = {
       id: 'card_saved_worker',
       kind: 'agent',
       runtimeType: 'assistant_agent',
       runtimeBinding: 'saved_worker',
-      runtimeOptions: { modelKey: 'gpt-5-nano' },
+      runtimeOptions: { modelKey: 'gpt-5.6-luna' },
     };
     const edges = [
       { id: 'edge_main_chat_harness_bus', source: mainChat.id, target: cardM.id, edgeType: 'magentic_option' },
@@ -260,7 +244,7 @@ describe('Canonical Cards Runtime', () => {
       'test',
       { previousOutput: 'Some Apollo 11 text' },
       {},
-      [{ id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } }],
+      [{ id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5.6-luna' } }],
       '2026'
     );
     // No deterministic keyword classifier: 'test'/'go'/'hello' no longer strip the
@@ -275,7 +259,7 @@ describe('Canonical Cards Runtime', () => {
       'test input',
       {},
       {},
-      [{ id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } }],
+      [{ id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5.6-luna' } }],
       '2026'
     )).toThrow('card_maxTokens_invalid');
   });
@@ -284,7 +268,7 @@ describe('Canonical Cards Runtime', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const research = {
       id: 'research', kind: 'agent', runtimeType: 'assistant_agent', title: 'Research Agent',
-      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['calculator'] },
+      runtimeOptions: { modelKey: 'gpt-5.6-luna', tools: ['calculator'] },
     };
     const allCards = [cardM, research];
     const allEdges = [{ id: 'e', source: research.id, target: cardM.id, edgeType: 'magentic_option' }];
@@ -353,7 +337,7 @@ describe('Canonical Cards Runtime', () => {
 
   it('Python payload compatibility matches expected shape', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one', prompt: 'test system prompt' };
-    const cardA = { id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
+    const cardA = { id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5.6-luna' } };
     const context = { deckId: 'deck1', allCards: [cardM, cardA], allEdges: [] };
 
     const payload = buildPythonAutoGenCardRuntimePayload(cardM, 'hello', context, {}, [cardA], '2026');
@@ -378,7 +362,7 @@ describe('Canonical Cards Runtime', () => {
       // task-ledger exposure / PlanFlow output contract was removed.
       runtimeOptions: { taskLedgerOutputContract: 'produce an OWL-shaped graphPayload.' },
     };
-    const cardA = { id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
+    const cardA = { id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5.6-luna' } };
     const payload = buildPythonAutoGenCardRuntimePayload(
       cardM, 'Continue RDW research', { allCards: [cardM, cardA], allEdges: [] }, {}, [cardA], '2026',
     );
@@ -400,8 +384,8 @@ describe('Canonical Cards Runtime', () => {
     // any other bus-connected agent — no role classification, no priority, no
     // coder special-casing, no dispatch packet.
     const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
-    const plan = { id: 'plan', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'plan_agent', title: 'Plan Agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
-    const codegraph = { id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent', title: 'CodeGraph Agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
+    const plan = { id: 'plan', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'plan_agent', title: 'Plan Agent', runtimeOptions: { modelKey: 'gpt-5.6-luna' } };
+    const codegraph = { id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent', title: 'CodeGraph Agent', runtimeOptions: { modelKey: 'gpt-5.6-luna' } };
     const coder = {
       id: 'coder',
       kind: 'agent',
@@ -410,7 +394,7 @@ describe('Canonical Cards Runtime', () => {
       title: 'Local Coder',
       runtimeOptions: { modelKey: 'z-ai/glm-5.2', provider: 'openrouter' },
     };
-    const think = { id: 'worker', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'saved_worker', title: 'Saved Worker', runtimeOptions: { modelKey: 'gpt-5-nano' } };
+    const think = { id: 'worker', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'saved_worker', title: 'Saved Worker', runtimeOptions: { modelKey: 'gpt-5.6-luna' } };
     const allCards = [mag, plan, codegraph, coder, think];
     const allEdges = [plan, codegraph, coder, think].map((agent) => ({
       id: `edge-${agent.id}`,
@@ -439,7 +423,7 @@ describe('Canonical Cards Runtime', () => {
 
   it('disconnected cards do not appear in model-visible workspace context or payload participants', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
-    const cardConnected = { id: 'conn1', kind: 'agent', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
+    const cardConnected = { id: 'conn1', kind: 'agent', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5.6-luna' } };
     const cardDisconnected = { id: 'disc1', kind: 'agent', runtimeType: 'assistant_agent' };
 
     // cardConnected is connected, cardDisconnected is not.
@@ -484,9 +468,9 @@ describe('Canonical Cards Runtime', () => {
   // These tests must fail before T003 is applied (current code hardcodes 'openrouter'/'default').
 
   it('participants carry the card-selected provider and model exactly once', () => {
-    const selectedModelKey = 'gpt-5.3-codex';         // real MODEL_REGISTRY key — fixture only, not a default
+    const selectedModelKey = 'gpt-5.6-luna';         // real MODEL_REGISTRY key — fixture only, not a default
     const selectedProvider = 'openai';                        // MODEL_REGISTRY[selectedModelKey].provider
-    const selectedProviderModelId = 'gpt-5.3-codex';  // MODEL_REGISTRY[selectedModelKey].id
+    const selectedProviderModelId = 'gpt-5.6-luna';  // MODEL_REGISTRY[selectedModelKey].id
 
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const cardA = {
@@ -508,9 +492,9 @@ describe('Canonical Cards Runtime', () => {
   });
 
   it('participants[] carry the same card-selected provider and providerModelId', () => {
-    const selectedModelKey = 'gpt-5.3-codex';
+    const selectedModelKey = 'gpt-5.6-luna';
     const selectedProvider = 'openai';
-    const selectedProviderModelId = 'gpt-5.3-codex';
+    const selectedProviderModelId = 'gpt-5.6-luna';
 
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const cardA = {
@@ -542,7 +526,7 @@ describe('Canonical Cards Runtime', () => {
     const cardA = {
       id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent',
       runtimeOptions: {
-        modelKey: 'gpt-5-nano',   // registry provider = 'openai'
+        modelKey: 'gpt-5.6-luna',   // registry provider = 'openai'
         provider: 'openrouter',    // conflicts → mismatch
       },
     };
@@ -558,19 +542,19 @@ describe('Canonical Cards Runtime', () => {
       id: 'fan1', kind: 'agent', runtimeType: 'assistant_agent', title: 'Fan',
       prompt: 'Fan instructions.',
       runtimeOptions: {
-        modelKey: 'gpt-5-nano',
+        modelKey: 'gpt-5.6-luna',
         tools: ['current_datetime'],
       },
     };
     const cardSom = {
       id: 'som1', kind: 'agent', runtimeType: 'assistant_agent', title: 'Som',
       prompt: 'Som instructions.',
-      runtimeOptions: { modelKey: 'gpt-5-nano' },
+      runtimeOptions: { modelKey: 'gpt-5.6-luna' },
     };
     const child = {
       id: 'child1', kind: 'agent', runtimeType: 'assistant_agent', parentGraphId: 'som1',
       prompt: 'Child instructions.',
-      runtimeOptions: { modelKey: 'gpt-5-mini', tools: ['calculator'] },
+      runtimeOptions: { modelKey: 'gpt-5.6-luna', tools: ['calculator'] },
     };
 
     const context = {
@@ -589,7 +573,7 @@ describe('Canonical Cards Runtime', () => {
     const fanParticipant = payload.cardRuntime.participants.find((p) => p.cardId === 'fan1');
     expect(fanParticipant?.tools).toEqual(['current_datetime']);
     expect(fanParticipant?.provider).toBe('openai');
-    expect(fanParticipant?.providerModelId).toBe('gpt-5-nano');
+    expect(fanParticipant?.providerModelId).toBe('gpt-5.6-luna');
     expect(fanParticipant?.prompt).toBe('Fan instructions.');
 
   });
@@ -598,7 +582,7 @@ describe('Canonical Cards Runtime', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const cardA = {
       id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent',
-      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['made_up_tool'] },
+      runtimeOptions: { modelKey: 'gpt-5.6-luna', tools: ['made_up_tool'] },
     };
 
     const payload = buildPythonAutoGenCardRuntimePayload(cardM, 'test', {}, {}, [cardA], '2026');
@@ -610,7 +594,7 @@ describe('Canonical Cards Runtime', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const cardA = {
       id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent',
-      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['  '] },
+      runtimeOptions: { modelKey: 'gpt-5.6-luna', tools: ['  '] },
     };
 
     expect(() =>
@@ -622,7 +606,7 @@ describe('Canonical Cards Runtime', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const cardA = {
       id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent',
-      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['current_datetime', 'calculator'] },
+      runtimeOptions: { modelKey: 'gpt-5.6-luna', tools: ['current_datetime', 'calculator'] },
     };
 
     const payload = buildPythonAutoGenCardRuntimePayload(cardM, 'test', {}, {}, [cardA], '2026');
@@ -631,7 +615,7 @@ describe('Canonical Cards Runtime', () => {
   });
 
   it('providerModelId is never default or empty string in any participant payload', () => {
-    const selectedModelKey = 'gpt-5-nano';  // fixture — not a default
+    const selectedModelKey = 'gpt-5.6-luna';  // fixture — not a default
 
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const cardA = {

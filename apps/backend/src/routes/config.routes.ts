@@ -9,7 +9,7 @@ const router = Router();
  */
 router.get('/models', (_req, res) => {
   try {
-    const openaiDefault = process.env.OPENAI_DEFAULT_MODEL || 'gpt-5-nano';
+    const openaiDefault = process.env.OPENAI_DEFAULT_MODEL || 'gpt-5.6-luna';
     const dedupe = (items: Array<{ key: string; label: string; id: string }>) => {
       const byKey = new Map<string, { key: string; label: string; id: string }>();
       for (const item of items) {

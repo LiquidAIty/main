@@ -21,7 +21,7 @@ function runningSession(): ConsoleSessionInfo {
     runtimeSource: 'vendored_built',
     transportMode: 'pty',
     provider: 'openai',
-    model: 'gpt-5.3-codex',
+    model: 'gpt-5.6-luna',
     interactiveSupported: true,
     pid: 4321,
     startedAt: '2026-06-13T00:00:00.000Z',
@@ -109,7 +109,7 @@ describe('OpenClaudeConsolePanel', () => {
         open
         targetRoot="C:/Projects/main"
         provider="openai"
-        model="gpt-5.3-codex"
+        model="gpt-5.6-luna"
         client={client}
       />,
     );
@@ -122,7 +122,7 @@ describe('OpenClaudeConsolePanel', () => {
         targetRoot: 'C:/Projects/main',
         mode: 'interactive',
         provider: 'openai',
-        model: 'gpt-5.3-codex',
+        model: 'gpt-5.6-luna',
       }),
     );
   });

@@ -62,36 +62,6 @@ const deckMocks = vi.hoisted(() => ({
   })),
 }));
 
-const consoleRuntimeMocks = vi.hoisted(() => ({
-  runOpenClaudeCodeTask: vi.fn(async (
-    request: { approvedPrompt: string },
-    _deps?: { onSessionStarted?: (started: Record<string, unknown>) => void },
-  ) => ({
-    ok: true,
-    parentRunId: 'parent-1',
-    childRunId: 'child-1',
-    correlationId: 'trace-1',
-    promptHash: 'hash-1',
-    sessionId: 'session-1',
-    terminalState: 'completed',
-    processExitCode: null,
-    stopReason: null,
-    structuredEventCount: 0,
-    commandEvidence: null,
-    exactCommand: null,
-    stdout: '',
-    stderr: '',
-    commandExitStatus: null,
-    resultValidationStatus: 'valid',
-    report: { status: 'completed', promptSeen: request.approvedPrompt },
-    resultKind: 'coder_report',
-    transcriptArtifact: 'coder-workspace/runs/child-1/transcript.txt',
-    artifactRefs: ['coder-workspace/runs/child-1/transcript.txt'],
-    verification: null,
-    error: null,
-  })),
-}));
-
 const cbmScopeMocks = vi.hoisted(() => ({
   runLocalCoderCbmScopeGate: vi.fn(async () => ({
     sourceRoot: 'C:/Projects/main',
@@ -133,8 +103,8 @@ const chatSessionMocks = vi.hoisted(() => {
     resolved: {
       cardId: 'card_main_chat',
       provider: 'openai',
-      modelKey: 'gpt-5.3-codex',
-      providerModelId: 'gpt-5.3-codex',
+      modelKey: 'gpt-5.6-luna',
+      providerModelId: 'gpt-5.6-luna',
     },
   }));
   return mocks;
@@ -146,15 +116,7 @@ const mcpClientMocks = vi.hoisted(() => ({
 }));
 
 const orchestratorMocks = vi.hoisted(() => ({
-  beginAgentAssignmentOnPython: vi.fn(async (payload: { correlationId: string }) => ({
-    ok: true as const,
-    assignmentId: 'assignment:coder-test',
-    instructionId: 'instruction:coder-test',
-    correlationId: payload.correlationId,
-    claimToken: 'claim:coder-test',
-    state: 'running' as const,
-  })),
-  finishAgentAssignmentOnPython: vi.fn(async () => ({ ok: true })),
+  fetchAgentCardContext: vi.fn(async () => ({ ok: true })),
 }));
 
 const dbMocks = vi.hoisted(() => ({
@@ -174,10 +136,6 @@ vi.mock('../cards/runtime', () => ({
 vi.mock('../decks/store', () => ({
   BUILDER_DECK_ID: 'deck_builder',
   getDeckDocument: deckMocks.getDeckDocument,
-}));
-
-vi.mock('../coder/execution/coderConsoleRuntime', () => ({
-  runOpenClaudeCodeTask: consoleRuntimeMocks.runOpenClaudeCodeTask,
 }));
 
 vi.mock('../conversations/store', () => ({
@@ -367,100 +325,6 @@ describe('coder routes', () => {
     }
   });
 
-  it('fails a direct Main audit without its saved Main to Coder edge before model execution', async () => {
-    chatSessionMocks.resolveMainChatRuntimeConfig.mockResolvedValueOnce({
-      doorwayDefinitions: [],
-    });
-    consoleRuntimeMocks.runOpenClaudeCodeTask.mockClear();
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          parentRunId: 'parent-1',
-          projectId: 'project-1',
-          deckId: 'deck_builder',
-          conversationId: 'main',
-          cardId: 'card_local_coder',
-          authority: 'direct_main_audit',
-          approvedPrompt: 'Inspect selected code.',
-        }),
-      });
-      expect(response.status).toBe(403);
-      await expect(response.json()).resolves.toEqual({
-        ok: false,
-        error: 'direct_main_coder_edge_required: card_local_coder',
-      });
-      expect(consoleRuntimeMocks.runOpenClaudeCodeTask).not.toHaveBeenCalled();
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  it('returns the durable AgentGraph and OpenClaude identities before a long Coder run completes', async () => {
-    const previousWindow = process.env.LIQUIDAITY_CODER_CONNECTOR_COMPLETION_WINDOW_MS;
-    process.env.LIQUIDAITY_CODER_CONNECTOR_COMPLETION_WINDOW_MS = '5';
-    orchestratorMocks.finishAgentAssignmentOnPython.mockClear();
-    consoleRuntimeMocks.runOpenClaudeCodeTask.mockImplementationOnce(
-      async (
-        _request: unknown,
-        deps?: { onSessionStarted?: (started: Record<string, unknown>) => void },
-      ) => {
-        deps?.onSessionStarted?.({
-          childRunId: 'coder-long-1',
-          parentRunId: 'parent-1',
-          correlationId: 'coder:long-1',
-          promptHash: 'prompt-hash-1',
-          sessionId: 'occ-long-1',
-          sessionState: 'running',
-          commandEvidence: {
-            commandPath: 'C:/openclaude/openclaude.exe',
-            runtimeSource: 'installed',
-            transportMode: 'pipe',
-            provider: 'openrouter',
-            model: 'z-ai/glm-5.2',
-          },
-        });
-        return await new Promise<never>(() => undefined);
-      },
-    );
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_coder_subagent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          parentRunId: 'parent-1',
-          projectId: 'project-1',
-          deckId: 'deck_builder',
-          conversationId: 'main',
-          cardId: 'card_local_coder',
-          authority: 'mag_one_execution',
-          approvedPrompt: 'Perform the bounded approved task.',
-        }),
-      });
-      expect(response.status).toBe(202);
-      await expect(response.json()).resolves.toMatchObject({
-        ok: true,
-        status: 'running',
-        assignmentId: 'assignment:coder-test',
-        instructionId: 'instruction:coder-test',
-        childRunId: 'coder-long-1',
-        sessionId: 'occ-long-1',
-        sessionState: 'running',
-      });
-      expect(orchestratorMocks.finishAgentAssignmentOnPython).not.toHaveBeenCalled();
-    } finally {
-      if (previousWindow === undefined) {
-        delete process.env.LIQUIDAITY_CODER_CONNECTOR_COMPLETION_WINDOW_MS;
-      } else {
-        process.env.LIQUIDAITY_CODER_CONNECTOR_COMPLETION_WINDOW_MS = previousWindow;
-      }
-      await closeServer(server);
-    }
-  });
-
   async function withBrokenRuntime<T>(fn: () => Promise<T>): Promise<T> {
     const previous = process.env.LOCALCODER_COMMAND;
     process.env.LOCALCODER_COMMAND = BROKEN_COMMAND;
@@ -490,38 +354,43 @@ describe('coder routes', () => {
     });
   });
 
-  it('permanently fails closed on the deprecated headless run route — it can never launch a coder', async () => {
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/localcoder/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: 'packet-route',
-          projectId: 'project-1',
-          repoPath: process.cwd(),
-          objective: 'Run LocalCoder.',
-          planExcerpt: 'First loop.',
-          contextSummary: 'Route proof.',
-          codeAnchors: ['apps/backend/src/coder'],
-          cbmQueries: ['search_graph LocalCoder'],
-          guardrails: ['No fake success.'],
-          allowedFiles: ['apps/backend/src/coder/**'],
-          forbiddenWork: ['No specs/.'],
-          proofRequired: ['Compile.'],
-          reportFormat: 'CoderReport JSON',
-          stopConditions: ['Stop after one job.'],
-        }),
-      });
-      const payload = await response.json();
-      // One Coder runtime: the former headless route must never launch work —
-      // it fails with an explicit permanent deprecation (decision 1a).
-      expect(response.status).toBe(410);
-      expect(payload.ok).toBe(false);
-      expect(payload.error).toBe('localcoder_run_deprecated');
-    } finally {
-      await closeServer(server);
-    }
+  it('returns an exact blocked CoderReport from the LocalCoder run route without launching a coder', async () => {
+    await withBrokenRuntime(async () => {
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/localcoder/run`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: 'packet-route',
+            projectId: 'project-1',
+            repoPath: process.cwd(),
+            objective: 'Run LocalCoder.',
+            planExcerpt: 'First loop.',
+            contextSummary: 'Route proof.',
+            codeAnchors: ['apps/backend/src/coder'],
+            cbmQueries: ['search_graph LocalCoder'],
+            guardrails: ['No fake success.'],
+            allowedFiles: ['apps/backend/src/coder/**'],
+            forbiddenWork: ['No specs/.'],
+            proofRequired: ['Compile.'],
+            reportFormat: 'CoderReport JSON',
+            stopConditions: ['Stop after one job.'],
+          }),
+        });
+        const payload = await response.json();
+        expect(response.status).toBe(424);
+        expect(payload.ok).toBe(false);
+        expect(payload.report.status).toBe('blocked');
+        expect(payload.report.coderPacketId).toBe('packet-route');
+        expect(payload.report.blockers.join(' ')).toContain(
+          'localcoder_explicit_command_script_not_found',
+        );
+        expect(payload.cbmScopeGate.editAllowed).toBe(true);
+      } finally {
+        await closeServer(server);
+      }
+    });
   });
 
   it('blocks the LocalCoder route when the structural edit-scope is invalid', async () => {
@@ -544,11 +413,11 @@ describe('coder routes', () => {
       });
       const payload = await response.json();
 
-      // The route is deprecated (one Coder runtime): it fails closed before
-      // any edit-scope gate could ever matter.
-      expect(response.status).toBe(410);
+      expect(response.status).toBe(424);
       expect(payload.ok).toBe(false);
-      expect(payload.error).toBe('localcoder_run_deprecated');
+      expect(payload.report.status).toBe('blocked');
+      expect(payload.report.blockers.join(' ')).toContain('edit_scope_root_not_found');
+      expect(payload.cbmScopeGate.editAllowed).toBe(false);
     } finally {
       await closeServer(server);
     }
@@ -588,7 +457,7 @@ describe('coder routes', () => {
           runId: expect.stringMatching(/^req_/),
           invokingCardId: 'card_main_chat',
           provider: 'openai',
-          providerModelId: 'gpt-5.3-codex',
+          providerModelId: 'gpt-5.6-luna',
         }));
         expect(chatSessionMocks.completeConversationRun).toHaveBeenCalledWith(expect.objectContaining({
           runId: expect.stringMatching(/^req_/),
@@ -619,8 +488,8 @@ describe('coder routes', () => {
           resolved: {
             cardId: 'card_main_chat',
             provider: 'openai',
-            modelKey: 'gpt-5.3-codex',
-            providerModelId: 'gpt-5.3-codex',
+            modelKey: 'gpt-5.6-luna',
+            providerModelId: 'gpt-5.6-luna',
           },
         };
       });

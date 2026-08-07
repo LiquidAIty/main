@@ -32,14 +32,14 @@ export function cleanOptionalText(value: unknown): string | null {
 
 // Cards use the ordinary provider/model selector. This is only the valid seed
 // for a new card; it is not a role-to-model preset or a hidden runtime choice.
-export const DEFAULT_CARD_MODEL_KEY = 'or-openai-gpt-5-mini';
-export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openrouter';
+export const DEFAULT_CARD_MODEL_KEY = 'gpt-5.6-luna';
+export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
 export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = DEFAULT_CARD_MODEL_KEY;
-export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openrouter';
+export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
 // Seed default ONLY for a fresh Coder card. Once a card has a saved
 // provider/model, that saved value remains authoritative.
 export const LOCAL_CODER_CONTROLLER_MODEL_KEY = DEFAULT_CARD_MODEL_KEY;
-export const LOCAL_CODER_CONTROLLER_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openrouter';
+export const LOCAL_CODER_CONTROLLER_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
 export const LOCAL_CODER_CONTROLLER_TOOLS = [
   'run_local_coder',
   'cbm.search_graph',
@@ -88,7 +88,6 @@ export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'canvas.inspect',
   'mag_one.describe_connected_agents',
   'run_mag_one',
-  'run_coder_subagent',
 ] as const;
 export const HERMES_STEWARD_TOOLS = [
   'graphiti.search_nodes',

@@ -16,19 +16,12 @@ export type ModelEntry = {
  * unknown key at resolution time and fails honestly.
  */
 export const MODEL_REGISTRY: Record<string, ModelEntry> = {
-  // --- OpenAI GPT-5 family (account-login / OAuth runtime) ---
-  "gpt-5-nano": { label: "GPT-5 Nano", provider: "openai", id: "gpt-5-nano", context: 16384 },
-  "gpt-5-mini": { label: "GPT-5 Mini", provider: "openai", id: "gpt-5-mini", context: 32768 },
-  "gpt-5":      { label: "GPT-5 Full", provider: "openai", id: "gpt-5",      context: 32768 },
-  "gpt-5.3": { label: "GPT-5.3", provider: "openai", id: "gpt-5.3", context: 32768 },
-  "gpt-5.3-codex": { label: "GPT-5.3 Codex", provider: "openai", id: "gpt-5.3-codex", context: 32768 },
+  // --- OpenAI GPT-5.6 family (account-login / OAuth runtime) ---
+  "gpt-5.6-sol": { label: "GPT-5.6 Sol", provider: "openai", id: "gpt-5.6-sol", context: 1_050_000 },
+  "gpt-5.6-terra": { label: "GPT-5.6 Terra", provider: "openai", id: "gpt-5.6-terra", context: 1_050_000 },
+  "gpt-5.6-luna": { label: "GPT-5.6 Luna", provider: "openai", id: "gpt-5.6-luna", context: 1_050_000 },
 
   // --- OpenRouter (curated defaults, all confirmed in the live catalog) ---
-  "or-openai-gpt-5-mini": { label: "OpenRouter OpenAI GPT-5 Mini", provider: "openrouter", id: "openai/gpt-5-mini", context: 32768 },
-  "or-openai-gpt-5.1": { label: "OpenRouter OpenAI GPT-5.1", provider: "openrouter", id: "openai/gpt-5.1", context: 32768 },
-  "openai/gpt-5.6-luna": { label: "OpenRouter OpenAI GPT-5.6 Luna", provider: "openrouter", id: "openai/gpt-5.6-luna", context: 1048576 },
-  "openai/gpt-5.6-terra": { label: "OpenRouter OpenAI GPT-5.6 Terra", provider: "openrouter", id: "openai/gpt-5.6-terra", context: 1048576 },
-  "openai/gpt-5.6-sol": { label: "OpenRouter OpenAI GPT-5.6 Sol", provider: "openrouter", id: "openai/gpt-5.6-sol", context: 1048576 },
   "or-google-gemini-2.5-pro": { label: "OpenRouter Gemini 2.5 Pro", provider: "openrouter", id: "google/gemini-2.5-pro", context: 1000000 },
   "or-deepseek-chat": { label: "OpenRouter DeepSeek Chat", provider: "openrouter", id: "deepseek/deepseek-chat", context: 65536 },
   "deepseek/deepseek-v4-flash-0731": { label: "OpenRouter DeepSeek V4 Flash 0731", provider: "openrouter", id: "deepseek/deepseek-v4-flash-0731" },

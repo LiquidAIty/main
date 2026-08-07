@@ -598,7 +598,6 @@ router.post('/tasks/:id/assign', async (req, res) => {
       'kanban',
       'assign',
       id,
-      '--assignee',
       assignee,
     ]);
     if (exitCode !== 0) {

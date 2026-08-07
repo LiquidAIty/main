@@ -3,6 +3,7 @@ filesystem root + run id are injected server-side (never by the tool/model)."""
 
 import asyncio
 import json
+from autogen_core import CancellationToken
 
 from app.python_models import tool_registry as t
 
@@ -62,3 +63,27 @@ def test_registered_and_manifested():
     assert "run_local_coder" in t.DEFAULT_TOOL_REGISTRY._specs
     ids = [m["id"] for m in t.tool_manifest()]
     assert "run_local_coder" in ids
+
+
+def test_saved_card_tool_binds_openrouter_deepseek_without_model_arguments():
+    captured: dict = {}
+    original = t._post_backend_json_sync
+
+    def fake_post(path: str, payload: dict) -> str:
+        captured["path"] = path
+        captured["payload"] = payload
+        return json.dumps({"ok": False, "report": {"coderPacketId": "srv", "status": "blocked"}})
+
+    t._post_backend_json_sync = fake_post
+    try:
+        tool = t.build_local_coder_tool("openrouter", "deepseek/deepseek-v4-flash-0731")
+        asyncio.run(tool.run_json({"objective": "inspect"}, CancellationToken()))
+    finally:
+        t._post_backend_json_sync = original
+
+    packet = captured["payload"]["coderPacket"]
+    assert captured["path"] == "/api/coder/localcoder/run"
+    assert packet["modelProvider"] == "openrouter"
+    assert packet["providerModelId"] == "deepseek/deepseek-v4-flash-0731"
+    assert "model_provider" not in tool.schema["parameters"]["properties"]
+    assert "provider_model_id" not in tool.schema["parameters"]["properties"]

@@ -763,7 +763,7 @@ export function AgentManager({
                 }}
               >
                 <option value="">Unset</option>
-                <option value="openai">OpenAI</option>
+                <option value="openai">OpenAI Account</option>
                 <option value="openrouter">OpenRouter</option>
               </select>
             </div>

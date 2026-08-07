@@ -281,15 +281,6 @@ function isPythonAutoGenCallableRuntimeType(runtimeType: string): boolean {
   return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
 }
 
-/** local_coder cards are bus-eligible participants (a normal bus card Mag One
- * instructs) but are NOT executable through the AutoGen single-card path —
- * that path translated them into an assistant_agent, which was the Coder Run
- * defect. Their only execution doorway is the canonical run_coder_subagent /
- * OpenClaude console manager. */
-function isAutoGenSingleCardExecutableRuntimeType(runtimeType: string): boolean {
-  return runtimeType === 'assistant_agent';
-}
-
 function genericAssistantCardIneligibility(card: any): string | null {
   const binding = resolveCardBinding(card);
   if (binding === 'main_chat') {
@@ -538,7 +529,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       error: `${ineligibility}: cardId=${cardId}`,
     });
   }
-  if (String(card.kind || 'agent') !== 'agent' || !isAutoGenSingleCardExecutableRuntimeType(runtimeType)) {
+  if (String(card.kind || 'agent') !== 'agent' || !isPythonAutoGenCallableRuntimeType(runtimeType)) {
     return done({
       status: 'not_runnable',
       runtimeType,

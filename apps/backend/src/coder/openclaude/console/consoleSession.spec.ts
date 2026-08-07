@@ -52,7 +52,7 @@ const readyRuntime = {
 
 const controllerRequest = {
   provider: 'openai',
-  model: 'gpt-5.3-codex',
+  model: 'gpt-5.6-luna',
 } as const;
 
 function managerWith(
@@ -66,7 +66,7 @@ function managerWith(
   const spawnProcess = vi.fn<ConsoleSpawn>(() => child as unknown as ConsoleChild);
   const manager = new OpenClaudeConsoleSessionManager({
     workspaceRoot: tmpdir(),
-    env: overrides.env || { OPENAI_API_KEY: 'sk-secretkey1234567890', OPENAI_MODEL: 'gpt-5.3-codex' },
+    env: overrides.env || { OPENAI_API_KEY: 'sk-secretkey1234567890', OPENAI_MODEL: 'gpt-5.6-luna' },
     spawnProcess,
     resolveRuntime: () => overrides.runtime || readyRuntime,
     maxBufferChars: overrides.maxBufferChars,
@@ -108,7 +108,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
   it('does not inject product-chat memory switches into the separate Coder process', () => {
     const child = new FakeChild();
     const { manager, spawnProcess } = managerWith(child, {
-      env: { OPENAI_API_KEY: 'sk-secretkey1234567890', OPENAI_MODEL: 'gpt-5.3-codex' },
+      env: { OPENAI_API_KEY: 'sk-secretkey1234567890', OPENAI_MODEL: 'gpt-5.6-luna' },
     });
     manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     const [, , options] = spawnProcess.mock.calls[0];
@@ -295,7 +295,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
     const ptySpawn = vi.fn<ConsoleSpawn>(() => ptyChild as unknown as ConsoleChild);
     const manager = new OpenClaudeConsoleSessionManager({
       workspaceRoot: tmpdir(),
-      env: { OPENAI_MODEL: 'gpt-5.3-codex' },
+      env: { OPENAI_MODEL: 'gpt-5.6-luna' },
       ptySpawn,
       resolveRuntime: () => readyRuntime,
       now: () => '2026-06-13T00:00:00.000Z',
@@ -314,7 +314,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
     const child = new FakeChild();
     const manager = new OpenClaudeConsoleSessionManager({
       workspaceRoot: tmpdir(),
-      env: { OPENAI_MODEL: 'gpt-5.3-codex' },
+      env: { OPENAI_MODEL: 'gpt-5.6-luna' },
       spawnProcess: () => child as unknown as ConsoleChild,
       ptySpawn: null,
       resolveRuntime: () => readyRuntime,
@@ -343,10 +343,11 @@ describe('resolveConsoleProviderEnv', () => {
       OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',
       OPENROUTER_DEFAULT_MODEL: 'kimi-k2-thinking',
       OPENAI_API_KEY: 'sk-openai-abc123def456',
-      OPENAI_MODEL: 'gpt-5.3-codex',
+      OPENAI_MODEL: 'gpt-5.6-luna',
     }, 'openai');
     expect(r?.label).toBe('openai');
-    expect(r?.envOverrides.OPENAI_BASE_URL).toBeUndefined();
+    expect(r?.envOverrides.OPENAI_BASE_URL).toBe('https://chatgpt.com/backend-api/codex');
+    expect(r?.envOverrides.OPENAI_API_KEY).toBeUndefined();
     expect(r?.envOverrides.CLAUDE_CODE_USE_OPENAI).toBe('1');
   });
 
@@ -371,7 +372,7 @@ describe('resolveConsoleProviderEnv', () => {
 });
 
 describe('OpenClaudeConsoleSessionManager OpenRouter routing', () => {
-  it('uses the controller card OpenAI GPT-5.1 model even when the process has stale OpenRouter Kimi env', () => {
+  it('uses the controller card OpenAI Luna model even when the process has stale OpenRouter Kimi env', () => {
     const child = new FakeChild();
     const spawnProcess = vi.fn<ConsoleSpawn>(() => child as unknown as ConsoleChild);
     const manager = new OpenClaudeConsoleSessionManager({
@@ -379,7 +380,7 @@ describe('OpenClaudeConsoleSessionManager OpenRouter routing', () => {
       env: {
         LIVE_OPENROUTER: '1',
         OPENAI_API_KEY: 'sk-openai-secretkey',
-        OPENAI_MODEL: 'gpt-5.3-codex',
+        OPENAI_MODEL: 'gpt-5.6-luna',
         OPENROUTER_API_KEY: 'sk-or-secretrouterkey',
         OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',
         OPENROUTER_DEFAULT_MODEL: 'kimi-k2-thinking',
@@ -389,19 +390,19 @@ describe('OpenClaudeConsoleSessionManager OpenRouter routing', () => {
     });
     const result = manager.start({
       provider: 'openai',
-      model: 'gpt-5.3-codex',
+      model: 'gpt-5.6-luna',
       targetRoot: tmpdir(),
       mode: 'interactive',
     });
     if (!result.ok) throw new Error('expected ok');
     expect(result.session.info.provider).toBe('openai');
-    expect(result.session.info.model).toBe('gpt-5.3-codex');
+    expect(result.session.info.model).toBe('gpt-5.6-luna');
     const [, args, options] = spawnProcess.mock.calls[0];
     expect(args).toContain('--model');
-    expect(args[args.indexOf('--model') + 1]).toBe('gpt-5.3-codex');
-    expect(options.env.OPENAI_BASE_URL).toBeUndefined();
-    expect(options.env.OPENAI_API_KEY).toBe('sk-openai-secretkey');
-    expect(options.env.OPENAI_MODEL).toBe('gpt-5.3-codex');
+    expect(args[args.indexOf('--model') + 1]).toBe('gpt-5.6-luna');
+    expect(options.env.OPENAI_BASE_URL).toBe('https://chatgpt.com/backend-api/codex');
+    expect(options.env.OPENAI_API_KEY).toBeUndefined();
+    expect(options.env.OPENAI_MODEL).toBe('gpt-5.6-luna');
   });
 
   it('points the child at OpenRouter when explicitly requested and reports the resolved provider/model', () => {
@@ -419,20 +420,20 @@ describe('OpenClaudeConsoleSessionManager OpenRouter routing', () => {
     });
     const result = manager.start({
       provider: 'openrouter',
-      model: 'openai/gpt-5.6-luna',
+      model: 'deepseek/deepseek-v4-flash-0731',
       targetRoot: tmpdir(),
       mode: 'interactive',
     });
     if (!result.ok) throw new Error('expected ok');
     expect(result.session.info.provider).toBe('openrouter');
-    expect(result.session.info.model).toBe('openai/gpt-5.6-luna');
+    expect(result.session.info.model).toBe('deepseek/deepseek-v4-flash-0731');
     const [, args, options] = spawnProcess.mock.calls[0];
     expect(args).toContain('--model');
-    expect(args[args.indexOf('--model') + 1]).toBe('openai/gpt-5.6-luna');
+    expect(args[args.indexOf('--model') + 1]).toBe('deepseek/deepseek-v4-flash-0731');
     expect(args[args.indexOf('--provider') + 1]).toBe('openai');
     expect(options.env.OPENAI_BASE_URL).toBe('https://openrouter.ai/api/v1');
     expect(options.env.OPENAI_API_KEY).toBe('sk-or-secretrouterkey');
-    expect(options.env.OPENAI_MODEL).toBe('openai/gpt-5.6-luna');
+    expect(options.env.OPENAI_MODEL).toBe('deepseek/deepseek-v4-flash-0731');
   });
 
   it('submitLine writes the text immediately and Enter as a separate keystroke', () => {

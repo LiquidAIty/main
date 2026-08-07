@@ -33,7 +33,6 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'graphiti.get_status',
       'mag_one.describe_connected_agents',
       'main.context',
-      'run_coder_subagent',
       'run_mag_one',
       'web_search',
       'write_mag_one_instructions',
@@ -52,6 +51,7 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
     expect(names).not.toContain('coder.account');
     expect(names).not.toContain('coder.stop');
     expect(names).not.toContain('coder.steer');
+    expect(names).not.toContain('run_coder_subagent');
     expect(names).toContain('engraphis.check_update');
     expect(names).toContain('engraphis.context_savings');
     expect(names).toContain('engraphis.answer');

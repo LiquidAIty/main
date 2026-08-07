@@ -9,13 +9,13 @@ import pytest
 from app.python_models.autogen_orchestrator import orchestrate_context_pack
 from app.python_models.orchestration_contracts import ContextPack, ProjectSession
 
-MODEL = "openai/gpt-5.6-luna"
+MODEL = "deepseek/deepseek-v4-flash-0731"
 
 
 def _session() -> ProjectSession:
     return ProjectSession(
         sessionId="s", projectId="p", turnId="t", route="r",
-        modelProvider="openrouter", modelKey="gpt-5.6-luna", providerModelId=MODEL,
+        modelProvider="openrouter", modelKey="deepseek/deepseek-v4-flash-0731", providerModelId=MODEL,
         startedAt="now",
     )
 

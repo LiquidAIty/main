@@ -85,6 +85,23 @@ provider/model/tool configuration. Python `run_local_coder` calls
 LocalCoder service invokes the configured OpenClaude CLI; and success requires a validated
 CoderReport.
 
+The three callers converge before execution:
+
+```txt
+Coder card Run ─┐
+Main / external GPT → card.run_assistant_agent ─┼→ runConfiguredCard / runCardWithContract
+Mag One → saved local_coder participant ────────┘  → Python participant builder
+                                                     → model-bound run_local_coder
+                                                     → /api/coder/localcoder/run
+                                                     → LocalCoderService → LocalCoderAdapter
+```
+
+OpenRouter cards use OpenClaude's OpenAI-compatible dialect with the saved provider model (for
+example DeepSeek) and the OpenRouter endpoint/key. OpenAI Account cards use the same supported
+`openai` CLI dialect with the Codex backend URL and OpenClaude's existing Codex OAuth/auth-file
+authority; the current saved-card default is GPT-5.6 Luna. They are configurations of this one path,
+not separate app servers.
+
 Primary landmarks:
 
 - `apps/backend/src/coder/localcoder/adapter.ts`
