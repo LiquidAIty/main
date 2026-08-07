@@ -126,4 +126,3 @@ export function createConsoleClient(base: string): OpenClaudeConsoleClient {
 }
 
 export const openClaudeConsoleClient = createConsoleClient('/api/coder/openclaude/console');
-export const hermesConsoleClient = createConsoleClient('/api/coder/hermes/console');

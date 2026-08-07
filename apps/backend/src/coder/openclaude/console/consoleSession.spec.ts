@@ -3,11 +3,9 @@ import { PassThrough } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  HermesConsoleSessionManager,
   OpenClaudeConsoleSessionManager,
   redactConsoleSecrets,
   resolveConsoleProviderEnv,
-  resolveHermesConsoleRuntime,
   type ConsoleChild,
   type ConsoleSpawn,
 } from './consoleSession';
@@ -456,82 +454,6 @@ describe('OpenClaudeConsoleSessionManager OpenRouter routing', () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-});
-
-describe('HermesConsoleSessionManager', () => {
-  const hermesRuntime = {
-    ready: true as const,
-    command: 'C:/Hermes/hermes.exe',
-    baseArgs: ['chat', '--cli'],
-    describe: 'C:/Hermes/hermes.exe chat --cli',
-    source: 'installed' as const,
-    shell: false,
-    missing: [] as string[],
-  };
-
-  it('starts actual Hermes in a separate PTY session namespace', () => {
-    const child = new FakePtyChild();
-    const ptySpawn = vi.fn<ConsoleSpawn>(() => child);
-    const manager = new HermesConsoleSessionManager({
-      workspaceRoot: tmpdir(),
-      env: {},
-      ptySpawn,
-      resolveRuntime: () => hermesRuntime,
-      idFactory: () => 'hms_test',
-      now: () => '2026-07-20T00:00:00.000Z',
-    });
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('expected ok');
-    expect(result.session.info).toMatchObject({
-      id: 'hms_test',
-      state: 'running',
-      transportMode: 'pty',
-      runtimeSource: 'hermes_installed',
-      provider: null,
-      model: null,
-    });
-    expect(ptySpawn).toHaveBeenCalledWith(
-      hermesRuntime.command,
-      ['chat', '--cli'],
-      expect.objectContaining({
-        cwd: tmpdir(),
-        interactive: true,
-        env: expect.objectContaining({ HERMES_SESSION_SOURCE: 'liquidaity-terminal' }),
-      }),
-    );
-    const openClaudeManager = new OpenClaudeConsoleSessionManager({
-      workspaceRoot: tmpdir(),
-      spawnProcess: () => new FakeChild(),
-      resolveRuntime: () => readyRuntime,
-      idFactory: () => 'occ_isolated',
-    });
-    const openClaude = openClaudeManager.start({
-      ...controllerRequest,
-      targetRoot: tmpdir(),
-      mode: 'interactive',
-    });
-    if (!openClaude.ok) throw new Error('expected OpenClaude session');
-    expect(manager.get(openClaude.session.info.id)).toBeUndefined();
-    expect(openClaudeManager.get(result.session.info.id)).toBeUndefined();
-  });
-
-  it('fails closed when Hermes or a PTY is unavailable', () => {
-    const missingRuntime = resolveHermesConsoleRuntime({ PATH: '', LOCALAPPDATA: '' });
-    expect(missingRuntime).toMatchObject({ ready: false, missing: ['hermes_cli_entrypoint_missing'] });
-
-    const manager = new HermesConsoleSessionManager({
-      workspaceRoot: tmpdir(),
-      env: {},
-      ptySpawn: null,
-      resolveRuntime: () => hermesRuntime,
-    });
-    expect(manager.start({ targetRoot: tmpdir(), mode: 'interactive' })).toEqual({
-      ok: false,
-      error: 'hermes_pty_unavailable',
-      missing: ['node_pty'],
-    });
   });
 });
 

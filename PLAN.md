@@ -52,8 +52,8 @@ terminal/process boundary if that proves to be the correct installed-runtime int
 
 The under-chat terminal slot belongs to OpenClaude Code/Coder. Hermes gets its own terminal or UI
 when the actual Hermes runtime is integrated. Current source has the OpenClaude Code Console as a
-right-side overlay and the Hermes development child-stream as the under-chat pull-up; that placement
-is a known bounded UI mismatch, not the intended product boundary.
+right-side overlay. No Hermes terminal UI or process adapter is currently wired; the native Kanban
+bridge is a separate surface and is not proof of Hermes agent execution.
 
 ### 2. The one MCP server — the control surface
 

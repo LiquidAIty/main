@@ -22,6 +22,9 @@ const WORKSPACE = 'client/src/features/hermeskanban/HermesKanbanWorkspace.tsx';
 const API = 'client/src/features/hermeskanban/api.ts';
 const INSPECTOR = 'client/src/features/hermeskanban/HermesKanbanInspector.tsx';
 const AGENT_MANAGER = 'client/src/components/AgentManager.tsx';
+const CODER_ROUTES = 'apps/backend/src/routes/coder.routes.ts';
+const CONSOLE_SESSION = 'apps/backend/src/coder/openclaude/console/consoleSession.ts';
+const CONSOLE_CLIENT = 'client/src/features/agentbuilder/console/openClaudeConsoleClient.ts';
 
 describe('Hermes rail/card click opens the Kanban workspace', () => {
   it('renders HermesKanbanWorkspace in the page and wires the rail click to open it', () => {
@@ -67,6 +70,13 @@ describe('HermesConsole is fully removed (no in-app Hermes terminal)', () => {
       expect(source, rel).not.toContain('rail-hermes-terminal-button');
       expect(source, rel).not.toContain('hermesTerminalActive');
     }
+  });
+
+  it('contains no hidden Hermes terminal route, session manager, or client', () => {
+    expect(read(CODER_ROUTES)).not.toContain('/hermes/console');
+    expect(read(CONSOLE_SESSION)).not.toContain('HermesConsoleSessionManager');
+    expect(read(CONSOLE_SESSION)).not.toContain('resolveHermesConsoleRuntime');
+    expect(read(CONSOLE_CLIENT)).not.toContain('hermesConsoleClient');
   });
 
   it('contains no forbidden terminal affordance strings anywhere in the app/page', () => {

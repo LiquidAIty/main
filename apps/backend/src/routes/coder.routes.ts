@@ -5,7 +5,6 @@ import type { OpenClaudeRunRequest } from '../coder/openclaude/contracts';
 import { openClaudeRuntimeService } from '../coder/openclaude/runtime/service';
 import { localCoderService } from '../coder/localcoder/service';
 import {
-  hermesConsoleSessionManager,
   openClaudeConsoleSessionManager,
   type ConsoleMode,
 } from '../coder/openclaude/console/consoleSession';
@@ -520,14 +519,11 @@ router.get('/openclaude/terminal/launch', (req, res) => {
   return res.status(statusCode).json({ ok: launch.ok, launch });
 });
 
-// ── Native terminal transports ─────────────────────────────────────────────
-// The route plumbing is shared, but each runtime owns a separate manager and
-// session namespace: `occ_*` for OpenClaude and `hms_*` for actual Hermes.
-type ConsoleRouteManager =
-  | typeof openClaudeConsoleSessionManager
-  | typeof hermesConsoleSessionManager;
-
-function mountConsoleSessionRoutes(prefix: string, manager: ConsoleRouteManager): void {
+// ── Native OpenClaude terminal transport ──────────────────────────────────
+function mountConsoleSessionRoutes(
+  prefix: string,
+  manager: typeof openClaudeConsoleSessionManager,
+): void {
   router.post(`${prefix}/sessions`, (req, res) => {
     const started = manager.start({
       targetRoot: typeof req.body?.targetRoot === 'string' ? req.body.targetRoot : undefined,
@@ -617,7 +613,6 @@ function mountConsoleSessionRoutes(prefix: string, manager: ConsoleRouteManager)
 }
 
 mountConsoleSessionRoutes('/openclaude/console', openClaudeConsoleSessionManager);
-mountConsoleSessionRoutes('/hermes/console', hermesConsoleSessionManager);
 
 
 /** Resolve the saved Main Chat card from the live deck by binding, never title. */

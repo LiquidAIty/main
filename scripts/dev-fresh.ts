@@ -92,7 +92,7 @@ async function waitForPostgresAge(): Promise<void> {
 async function waitForNeo4jQuery(): Promise<void> {
   const query = [
     'exec', 'neo4j', 'sh', '-lc',
-    'auth="${NEO4J_AUTH}"; exec /var/lib/neo4j/bin/cypher-shell -a bolt://127.0.0.1:7687 -u "${auth%%/*}" -p "${auth#*/}" "RETURN 1 AS ok" --format plain',
+    'auth="${NEO4J_AUTH}"; exec /var/lib/neo4j/bin/cypher-shell --non-interactive -a bolt://127.0.0.1:7687 -u "${auth%%/*}" -p "${auth#*/}" "RETURN 1 AS ok" --format plain',
   ];
   let lastOutput = '';
   // Docker's published Bolt port may accept TCP before Neo4j has finished

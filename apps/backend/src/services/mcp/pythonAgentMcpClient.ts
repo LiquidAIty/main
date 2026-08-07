@@ -154,7 +154,7 @@ export async function listPythonAgentMcpCatalog(): Promise<PythonMcpToolDescript
   const result = await client.listTools();
   return (result.tools || [])
     .map((tool) => {
-      const capability = (tool._meta as Record<string, unknown> | undefined)?.liquidaityCapability;
+      const capability = (tool._meta as Record<string, unknown> | undefined)?.runtimeCapability;
       if (!capability || typeof capability !== 'object' || Array.isArray(capability)) {
         throw new Error(`python_agent_mcp_capability_metadata_missing: ${tool.name}`);
       }

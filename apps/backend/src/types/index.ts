@@ -30,6 +30,7 @@ export type AgentCardRuntimeOptions = {
   // 'local_openai_compatible' = a local SLM served over an OpenAI-compatible endpoint.
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | null;
   modelKey?: string | null;
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
   temperature?: number | null;
   maxTokens?: number | null;
   maxTurns?: number | null;

@@ -111,7 +111,7 @@ _TRACE_LOCK = threading.Lock()
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
 _ACTIVE_EXECUTION_RECEIPT: ContextVar[dict[str, Any] | None] = ContextVar(
-    "liquidaity_execution_receipt", default=None
+    "mcp_execution_receipt", default=None
 )
 _GRAPHITI_PROVIDER_HEALTH_LOCK = threading.Lock()
 _GRAPHITI_PROVIDER_HEALTH: dict[str, Any] = {
@@ -317,7 +317,7 @@ def _typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any
     }
 
 
-def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, str]:
+def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, Any]:
     """Classify the canonical catalog without duplicating its membership."""
     annotation_payload = (
         annotations.model_dump(exclude_none=True)
@@ -329,8 +329,10 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, st
         "graphiti.get_episodes",
         "graphiti.get_episode_entities",
         "graphiti.get_entity_edge",
+        "graphiti.search_memory_facts",
+        "graphiti.search_nodes",
     }
-    engraphis_context_reads = {
+    engraphis_context_operations = {
         "engraphis.answer",
         "engraphis.proactive_context",
         "engraphis.recall",
@@ -340,8 +342,8 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, st
     read_only = (
         bool(annotation_payload.get("readOnlyHint"))
         or name in _READ_ONLY_TOOLS
+        or name == "web_search"
         or name in graphiti_database_reads
-        or name in engraphis_context_reads
     )
     open_world = bool(annotation_payload.get("openWorldHint"))
     if name.startswith("cbm."):
@@ -380,13 +382,7 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, st
             "mixed"
             if open_world
             else "local_embedding"
-            if name in {
-                "engraphis.answer",
-                "engraphis.proactive_context",
-                "engraphis.recall",
-                "engraphis.recall_context",
-                "engraphis.recall_grounded",
-            }
+            if name in engraphis_context_operations
             else "database_read" if read_only else "database_write"
         )
     elif name.startswith("cbm."):
@@ -399,7 +395,13 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, st
         compute = "database_read"
     else:
         compute = "database_write"
-    return {"risk": risk, "compute": compute}
+    return {
+        "risk": risk,
+        "compute": compute,
+        "readOnly": read_only,
+        "destructive": risk == "destructive",
+        "openWorld": open_world or risk in {"paid/provider-backed", "background"},
+    }
 
 
 def _tool_capability_metadata(
@@ -872,6 +874,13 @@ def _native_engraphis_mcp():
     if _NATIVE_ENGRAPHIS_MCP is None:
         raise RuntimeError("native_engraphis_not_initialized")
     return _NATIVE_ENGRAPHIS_MCP
+
+
+def _warm_native_engraphis_service() -> None:
+    """Load Engraphis' local model before the external MCP accepts requests."""
+    from engraphis.mcp_server import service
+
+    service()
 
 
 async def _native_engraphis_tools() -> list[Tool]:
@@ -1722,7 +1731,8 @@ async def list_tools() -> list[Tool]:
             name="card.update_configuration",
             description=(
                 "User-directed strict-allowlist update of one persisted card: prompt, title, "
-                "modelKey, provider, temperature, maxTokens, tools. Everything else (runtime code, "
+                "modelKey, provider, reasoningEffort, temperature, maxTokens, tools. "
+                "Everything else (runtime code, "
                 "shell config, hidden tools, authority grants, worker selection) is rejected."
             ),
             inputSchema={
@@ -1738,6 +1748,10 @@ async def list_tools() -> list[Tool]:
                             "title": {"type": "string"},
                             "modelKey": {"type": "string"},
                             "provider": {"type": "string"},
+                            "reasoningEffort": {
+                                "type": "string",
+                                "enum": ["low", "medium", "high", "xhigh"],
+                            },
                             "temperature": {"type": "number"},
                             "maxTokens": {"type": "integer", "minimum": 1},
                             "tools": {
@@ -1859,7 +1873,7 @@ async def list_tools() -> list[Tool]:
     tools = [_bind_tool_execution_contract(tool) for tool in tools]
     _TOOL_EXECUTION_CONTRACTS.clear()
     _TOOL_EXECUTION_CONTRACTS.update({
-        tool.name: dict((tool.meta or {}).get("liquidaityExecution") or {})
+        tool.name: dict((tool.meta or {}).get("runtimeExecution") or {})
         for tool in tools
     })
     context = await _ensure_main_connection_context()
@@ -1922,7 +1936,7 @@ def _tool_access_metadata(name: str, execution: dict[str, str]) -> dict[str, Any
             )
             if name.startswith(prefix)
         ),
-        "liquidaity",
+        "project_runtime",
     )
     code_index_family = {
         "engraphis.index_repo",
@@ -1958,9 +1972,15 @@ def _bind_tool_execution_contract(tool: Tool) -> Tool:
     execution = _tool_execution_contract(
         tool.name, tool.annotations
     )
-    meta["liquidaityExecution"] = execution
-    meta["liquidaityCapability"] = _tool_capability_metadata(tool.name, execution)
-    meta["liquidaityAccess"] = _tool_access_metadata(tool.name, execution)
+    annotations = dict(payload.get("annotations") or {})
+    annotations["readOnlyHint"] = execution["readOnly"]
+    annotations["destructiveHint"] = execution["destructive"]
+    annotations.setdefault("idempotentHint", execution["readOnly"])
+    annotations.setdefault("openWorldHint", execution["openWorld"])
+    payload["annotations"] = annotations
+    meta["runtimeExecution"] = execution
+    meta["runtimeCapability"] = _tool_capability_metadata(tool.name, execution)
+    meta["runtimeAccess"] = _tool_access_metadata(tool.name, execution)
     payload["_meta"] = meta
     return Tool.model_validate(payload)
 
@@ -2035,10 +2055,6 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
                 ]
             payload["inputSchema"] = schema
         payload["securitySchemes"] = security_schemes
-        if not is_native and tool.name in _READ_ONLY_TOOLS:
-            annotations = dict(payload.get("annotations") or {})
-            annotations["readOnlyHint"] = True
-            payload["annotations"] = annotations
         meta["securitySchemes"] = security_schemes
         payload["_meta"] = meta
         result.append(Tool.model_validate(payload))
@@ -2596,6 +2612,7 @@ async def main() -> None:
         await _run_stdio()
         return
     if MCP_TRANSPORT == "streamable-http":
+        await asyncio.to_thread(_warm_native_engraphis_service)
         await _native_cbm_tools()
         await _run_streamable_http()
         return

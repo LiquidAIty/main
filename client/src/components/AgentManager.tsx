@@ -133,6 +133,7 @@ export type AgentManagerLocalConfig = {
   parent_graph_id?: string | null;
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | '' | null;
   model_key?: string | null;
+  reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
   temperature?: number | null;
   max_tokens?: number | null;
   prompt_template?: string | null;
@@ -255,6 +256,7 @@ export function buildActiveAgentManagerLocalConfig(input: {
   runtimeBinding: RuntimeBinding | '';
   provider: 'openai' | 'openrouter' | '';
   modelKey: string;
+  reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | '';
   temperature: number | '';
   maxTokens: number | '';
   promptTemplate: string;
@@ -264,6 +266,7 @@ export function buildActiveAgentManagerLocalConfig(input: {
     runtime_binding: input.runtimeBinding || null,
     provider: input.provider,
     model_key: input.modelKey || null,
+    reasoning_effort: input.reasoningEffort || null,
     temperature: typeof input.temperature === 'number' ? input.temperature : null,
     max_tokens: typeof input.maxTokens === 'number' ? input.maxTokens : null,
     prompt_template: input.promptTemplate,
@@ -300,6 +303,9 @@ export function AgentManager({
   const [cardSubtextDraft, setCardSubtextDraft] = useState(cardSubtext);
   const [provider, setProvider] = useState<'openai' | 'openrouter' | ''>('');
   const [modelKey, setModelKey] = useState('');
+  const [reasoningEffort, setReasoningEffort] = useState<
+    'low' | 'medium' | 'high' | 'xhigh' | ''
+  >('');
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelOption[]>>({});
   const [toolCatalog, setToolCatalog] = useState<ToolDescriptor[]>([]);
   const [temperature, setTemperature] = useState<number | ''>('');
@@ -388,6 +394,7 @@ export function AgentManager({
         : '',
     );
     setModelKey(localConfig.model_key || '');
+    setReasoningEffort(localConfig.reasoning_effort || '');
     setTemperature(typeof localConfig.temperature === 'number' ? localConfig.temperature : '');
     setMaxTokens(typeof localConfig.max_tokens === 'number' ? localConfig.max_tokens : '');
     setPromptText(localConfig.prompt_template || '');
@@ -413,6 +420,7 @@ export function AgentManager({
       runtimeBinding,
       provider,
       modelKey,
+      reasoningEffort,
       temperature,
       maxTokens,
       promptTemplate: promptPartsTouched ? serializePromptFields(promptParts) : promptText,
@@ -454,6 +462,7 @@ export function AgentManager({
     runtimeBinding,
     provider,
     modelKey,
+    reasoningEffort,
     temperature,
     maxTokens,
     promptPartsTouched,
@@ -523,6 +532,7 @@ export function AgentManager({
       runtimeBinding,
       provider,
       modelKey,
+      reasoningEffort,
       temperature,
       maxTokens,
       promptTemplate: promptPartsTouched ? serializePromptFields(promptParts) : promptText,
@@ -544,6 +554,7 @@ export function AgentManager({
     runtimeBinding,
     provider,
     modelKey,
+    reasoningEffort,
     temperature,
     maxTokens,
     promptText,
@@ -818,6 +829,35 @@ export function AgentManager({
                     {model.label}
                   </option>
                 ))}
+              </select>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                Reasoning
+              </label>
+              <select
+                value={reasoningEffort}
+                onChange={(event) => {
+                  setReasoningEffort(
+                    event.target.value as 'low' | 'medium' | 'high' | 'xhigh' | '',
+                  );
+                  markDraftDirty();
+                }}
+                style={{
+                  width: '100%',
+                  padding: 8,
+                  background: '#2B2B2B',
+                  color: '#FFF',
+                  border: '1px solid #3A3A3A',
+                  borderRadius: 8,
+                }}
+              >
+                <option value="">Model default</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">Extra high</option>
               </select>
             </div>
 

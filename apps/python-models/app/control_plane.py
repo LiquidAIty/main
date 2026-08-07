@@ -32,7 +32,15 @@ SUPPORTED_WIRE_TYPES = ("flow", "magentic_option")
 # Exact allowlist of card fields Harness may edit. Anything else — runtime code,
 # shell config, hidden tools, authority grants, worker selection — is rejected.
 _UPDATABLE_TOP_FIELDS = {"prompt", "title"}
-_UPDATABLE_RUNTIME_OPTION_FIELDS = {"modelKey", "provider", "temperature", "maxTokens", "tools"}
+_UPDATABLE_RUNTIME_OPTION_FIELDS = {
+    "modelKey",
+    "provider",
+    "reasoningEffort",
+    "temperature",
+    "maxTokens",
+    "tools",
+}
+_REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
 
 
 class ControlPlaneError(Exception):
@@ -199,6 +207,12 @@ async def card_update_configuration(args: dict[str, Any]) -> dict[str, Any]:
         or any(not isinstance(t, str) or not t.strip() for t in updates["tools"])
     ):
         raise ControlPlaneError("card_update_tools_must_be_string_list")
+    if (
+        "reasoningEffort" in updates
+        and updates["reasoningEffort"] is not None
+        and updates["reasoningEffort"] not in _REASONING_EFFORTS
+    ):
+        raise ControlPlaneError("card_update_reasoning_effort_invalid")
 
     project_id = str(args["projectId"]).strip()
     deck_id = str(args["deckId"]).strip()

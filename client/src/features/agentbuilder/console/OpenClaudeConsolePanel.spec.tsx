@@ -194,23 +194,6 @@ describe('OpenClaudeConsolePanel', () => {
     expect(transcript?.textContent).toContain('OpenClaude');
   });
 
-  it('redacts CLI branding in the transcript when redactBranding is on, and marks it', async () => {
-    const host = await render(
-      <OpenClaudeConsolePanel
-        open
-        targetRoot="C:/Projects/main"
-        client={fakeClient()}
-        redactBranding
-        initialSession={runningSession()}
-        initialTranscript={[{ seq: 1, stream: 'stdout', data: 'Welcome to OpenClaude', at: 'x' }]}
-      />,
-    );
-    const transcript = host.querySelector('[data-testid="openclaude-console-transcript"]');
-    expect(transcript?.textContent).not.toContain('OpenClaude');
-    expect(transcript?.textContent).toContain('Coder Engine');
-    expect(host.querySelector('[data-testid="openclaude-console-redacted-note"]')).not.toBeNull();
-  });
-
   it('surfaces a blocked start without faking a session', async () => {
     const client = fakeClient({
       startSession: vi.fn(async () => ({

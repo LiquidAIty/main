@@ -80,6 +80,7 @@ export default function useAgentBuilderCardEditor({
           ? resolvedProvider
           : '',
       model_key: runtimeOptions.modelKey ?? effectiveAgent?.model ?? null,
+      reasoning_effort: runtimeOptions.reasoningEffort ?? null,
       temperature:
         runtimeOptions.temperature ?? effectiveAgent?.temperature ?? null,
       max_tokens: runtimeOptions.maxTokens ?? effectiveAgent?.maxTokens ?? null,
@@ -115,6 +116,13 @@ export default function useAgentBuilderCardEditor({
             ? nextConfig.provider
             : null;
         const nextModel = String(nextConfig.model_key || '').trim() || null;
+        const nextReasoningEffort =
+          nextConfig.reasoning_effort === 'low' ||
+          nextConfig.reasoning_effort === 'medium' ||
+          nextConfig.reasoning_effort === 'high' ||
+          nextConfig.reasoning_effort === 'xhigh'
+            ? nextConfig.reasoning_effort
+            : null;
         const nextTemperature =
           typeof nextConfig.temperature === 'number'
             ? nextConfig.temperature
@@ -133,6 +141,7 @@ export default function useAgentBuilderCardEditor({
           ...(nextConfig.runtime_options || {}),
           provider: nextProvider,
           modelKey: nextModel,
+          reasoningEffort: nextReasoningEffort,
           temperature: nextTemperature,
           maxTokens: nextMaxTokens,
           tools: nextTools,

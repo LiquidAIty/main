@@ -7,7 +7,6 @@ import {
   type OpenClaudeConsoleClient,
 } from './openClaudeConsoleClient';
 import XtermView from './XtermView';
-import { redactCoderBranding } from './coderConsoleNames';
 
 /**
  * OpenClaude Console Bridge panel — the in-app terminal view of the real
@@ -43,12 +42,6 @@ type OpenClaudeConsolePanelProps = {
   completeLabel?: string;
   /** Test seam: EventSource constructor (undefined in jsdom = no live stream). */
   eventSourceImpl?: typeof EventSource;
-  /**
-   * Optional display-only redaction of underlying-CLI branding for public/
-   * non-developer terminals. Off by default so developers keep the exact raw
-   * transcript. Never mutates stored/proof transcripts — display only.
-   */
-  redactBranding?: boolean;
 };
 
 function statusOf(session: ConsoleSessionInfo | null): ConsolePanelStatus {
@@ -86,14 +79,9 @@ function OpenClaudeConsolePanelInner({
   idleLabel = 'Idle',
   completeLabel = 'Complete',
   eventSourceImpl,
-  redactBranding = false,
 }: OpenClaudeConsolePanelProps) {
   const [session, setSession] = useState<ConsoleSessionInfo | null>(initialSession);
   const [chunks, setChunks] = useState<ConsoleOutputChunk[]>(initialTranscript);
-  // Display-only view of the transcript; the raw `chunks` stay untouched.
-  const displayChunks = redactBranding
-    ? chunks.map((chunk) => ({ ...chunk, data: redactCoderBranding(chunk.data) }))
-    : chunks;
   const [input, setInput] = useState('');
   const [startError, setStartError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -272,7 +260,7 @@ function OpenClaudeConsolePanelInner({
 
       {session && (status === 'running' || status === 'starting' || status === 'complete') ? (
         <XtermView
-          chunks={displayChunks}
+          chunks={chunks}
           interactive={Boolean(session.interactiveSupported)}
           onInput={sendRaw}
           onResize={resizeSession}
@@ -291,12 +279,7 @@ function OpenClaudeConsolePanelInner({
           borderTop: session ? '1px solid #11181f' : undefined,
         }}
       >
-        {redactBranding ? (
-          <span data-testid={`${testIdPrefix}-redacted-note`} style={{ color: '#6b7785' }}>
-            {'[display names cleaned — raw transcript available in developer mode]\n'}
-          </span>
-        ) : null}
-        {displayChunks.map((chunk) => (
+        {chunks.map((chunk) => (
           <span key={chunk.seq} style={{ color: chunk.stream === 'stderr' ? '#e06c75' : chunk.stream === 'system' ? '#6b7785' : '#d7e0ea' }}>
             {chunk.data}
           </span>

@@ -83,13 +83,21 @@ class TestCardUpdateConfiguration:
     def test_allowlisted_update_persists_with_revision(self, fake_backend):
         result = asyncio.run(cp.card_update_configuration({
             "projectId": "p", "deckId": "d", "cardId": "signals-card",
-            "updates": {"prompt": "new prompt", "temperature": 0.2},
+            "updates": {"prompt": "new prompt", "reasoningEffort": "medium", "temperature": 0.2},
         }))
         assert result["ok"] is True
         assert fake_backend["expectedRevision"] == "rev1"
         card = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
         assert card["prompt"] == "new prompt"
+        assert card["runtimeOptions"]["reasoningEffort"] == "medium"
         assert card["runtimeOptions"]["temperature"] == 0.2
+
+    def test_reasoning_effort_must_be_supported_or_null(self, fake_backend):
+        with pytest.raises(cp.ControlPlaneError, match="card_update_reasoning_effort_invalid"):
+            asyncio.run(cp.card_update_configuration({
+                "projectId": "p", "deckId": "d", "cardId": "signals-card",
+                "updates": {"reasoningEffort": "extreme"},
+            }))
 
     def test_tools_update_must_be_string_list(self, fake_backend):
         with pytest.raises(cp.ControlPlaneError, match="card_update_tools_must_be_string_list"):

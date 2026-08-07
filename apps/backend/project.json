@@ -27,8 +27,9 @@
       }
     },
     "serve": {
+      "continuous": true,
       "executor": "@nx/js:node",
-      "dependsOn": ["build"],
+      "defaultConfiguration": "development",
       "options": {
         "buildTarget": "backend:build",
         "port": 4000,
@@ -42,6 +43,13 @@
         "production": {
           "buildTarget": "backend:build:production"
         }
+      }
+    },
+    "docker-build": {
+      "dependsOn": ["build"],
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "docker build -f apps/backend/Dockerfile . -t nx-backend"
       }
     }
   },
