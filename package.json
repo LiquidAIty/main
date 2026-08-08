@@ -4,7 +4,7 @@
   "license": "MIT",
   "scripts": {
     "dev": "npm run dev:all",
-    "dev:fresh": "npm run dev:all",
+    "dev:fresh": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-dev.ps1 && npm run dev:all",
     "dev:all": "npm run dev:infra && npm run dev:services",
     "dev:infra": "docker start sim-pg neo4j",
     "dev:frontend": "npm --workspace client run dev",
