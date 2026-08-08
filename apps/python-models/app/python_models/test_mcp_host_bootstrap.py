@@ -460,7 +460,7 @@ def test_catalog_contract_metadata_is_generated_from_each_tool():
     assert engraphis_recall.annotations.readOnlyHint is False
     assert engraphis_recall.annotations.idempotentHint is False
     assert engraphis_recall.meta["runtimeExecution"]["risk"] == "deterministic write"
-    assert mcp_host._tool_execution_contract("graphiti.clear_graph") == {
+    assert mcp_host._tool_execution_contract("clear_graph") == {
         "risk": "destructive",
         "compute": "mixed",
         "readOnly": False,
@@ -699,7 +699,7 @@ def test_native_engraphis_uses_the_cached_local_embedding_model(monkeypatch):
     assert os.environ["HF_HUB_OFFLINE"] == "1"
 
 
-def test_streamable_http_warms_engraphis_before_accepting_requests(monkeypatch):
+def test_streamable_http_discovers_catalogs_before_accepting_requests(monkeypatch):
     import asyncio
     import mcp_host
 
@@ -718,14 +718,10 @@ def test_streamable_http_warms_engraphis_before_accepting_requests(monkeypatch):
     async def run_http():
         events.append("http")
 
-    def warm_engraphis():
-        events.append("engraphis_service")
-
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
     monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized_engraphis)
     monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialized_graphiti)
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", initialized_cbm)
-    monkeypatch.setattr(mcp_host, "_warm_native_engraphis_service", warm_engraphis)
     monkeypatch.setattr(mcp_host, "_run_streamable_http", run_http)
 
     asyncio.run(mcp_host.main())
@@ -733,7 +729,6 @@ def test_streamable_http_warms_engraphis_before_accepting_requests(monkeypatch):
     assert events == [
         "engraphis_registry",
         "graphiti_registry",
-        "engraphis_service",
         "cbm_registry",
         "http",
     ]
@@ -782,7 +777,7 @@ def test_native_engraphis_hung_call_does_not_block_later_native_dispatch(monkeyp
             await asyncio.sleep(0.005)
         assert entered.is_set()
         later = await asyncio.wait_for(
-            mcp_host.call_tool("engraphis.stats", {"request": 2}),
+            mcp_host.call_tool("engraphis_stats", {"request": 2}),
             timeout=1,
         )
         release.set()

@@ -110,8 +110,8 @@ the real `app.python_models` once so pytest's per-module prepend can't reshadow 
 
 ## Known Failure Modes
 
-- Backend (:4000) down → live KnowGraph read fails; start ONLY `npm run dev:backend` (leave the
-  running sidecar on :8003 alone), or fixture the real-shaped records.
+- Backend (:4000) down → live KnowGraph read fails; restart the canonical full stack with
+  `npm run dev:fresh`, or fixture the real-shaped records.
 - sec-api returns gzip JSON; a bare `.decode('utf-8')` raises UnicodeDecodeError — decompress when
   Content-Encoding is gzip / magic 0x1f8b.
 - sec-api stores CIK without leading zeros; query by ticker (or zero-stripped CIK) or you get 0 hits.

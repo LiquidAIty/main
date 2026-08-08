@@ -19,21 +19,24 @@ runtime responses, durable job artifacts, and direct inspection of the real auth
 
 ## Runtime topology
 
-`npm run dev` performs a guarded fresh restart. `npm run dev:all` starts or reuses the five normal
-development processes:
+`npm run dev`, `npm run dev:fresh`, and `npm run dev:all` converge on one visible foreground
+launcher. It stops only the prior verified application stack, preserves and verifies the existing
+databases, starts every application process, and shuts the stack down together:
 
 | Process | Port | Owner | Start command |
 | --- | ---: | --- | --- |
-| Vite frontend | 5173 | `client/` | `npm run dev:frontend` |
-| Express backend | 4000 | `apps/backend/` | `npm run dev:backend` |
-| KnowGraph API | 8001 | `services/knowgraph/` | `npm run dev:knowgraph` |
-| AutoGen/Mag One rails | 8003 | `apps/python-models/` | `npm run dev:autogen` |
-| OpenClaude-derived gRPC Harness | 50051 | `localcoder/` | `npm run dev:grpc` |
+| Vite frontend | 5173 | `client/` | `npm run dev:fresh` |
+| Express backend | 4000 | `apps/backend/` | `npm run dev:fresh` |
+| Graphiti ingestion API | 8001 | `services/knowgraph/` | `npm run dev:fresh` |
+| Python rails | 8003 | `apps/python-models/` | `npm run dev:fresh` |
+| OpenClaude-derived gRPC Harness | 50051 | `localcoder/` | `npm run dev:fresh` |
+| Authenticated GPT plugin MCP | 8765 | `apps/python-models/` | `npm run dev:fresh` |
+| Public MCP tunnel | public URL | local ngrok | `npm run dev:fresh` |
 
 PostgreSQL normally listens on 5433 and owns projects, saved decks, and conversations.
 Neo4j normally listens on 7474/7687 and owns KnowGraph. ThinkGraph is SQLite/Engraphis. CodeGraph is
 the CBM index. Startup guards reuse only verified healthy LiquidAIty processes and refuse unknown port
-owners.
+owners. Isolated service startup is not a supported application proof path.
 
 ## Current working workflow
 

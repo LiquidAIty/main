@@ -32,14 +32,14 @@ describe('buildOpenClaudeJobArgs', () => {
       jsonSchema: { type: 'object' },
       mcpFlags: ['--mcp-config', '/tmp/mcp.json', '--strict-mcp-config'],
       reasoningEffort: 'xhigh',
-      allowedTools: ['mcp__liquidaity__cbm_search_graph'],
+      allowedTools: ['mcp__liquidaity__search_graph'],
     });
     expect(args.slice(0, 6)).toEqual([
       '--print', 'do it', '--output-format', 'json', '--json-schema', JSON.stringify({ type: 'object' }),
     ]);
     expect(args).toEqual(expect.arrayContaining([
       '--mcp-config', '/tmp/mcp.json', '--strict-mcp-config',
-      '--allowed-tools', 'mcp__liquidaity__cbm_search_graph',
+      '--allowed-tools', 'mcp__liquidaity__search_graph',
       '--effort', 'max',
     ]));
     expect(args[args.indexOf('--permission-mode') + 1]).toBe('acceptEdits');

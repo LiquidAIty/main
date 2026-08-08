@@ -325,19 +325,19 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, An
         else dict(annotations or {})
     )
     graphiti_database_reads = {
-        "graphiti.get_status",
-        "graphiti.get_episodes",
-        "graphiti.get_episode_entities",
-        "graphiti.get_entity_edge",
-        "graphiti.search_memory_facts",
-        "graphiti.search_nodes",
+        "get_status",
+        "get_episodes",
+        "get_episode_entities",
+        "get_entity_edge",
+        "search_memory_facts",
+        "search_nodes",
     }
     engraphis_context_operations = {
-        "engraphis.answer",
-        "engraphis.proactive_context",
-        "engraphis.recall",
-        "engraphis.recall_context",
-        "engraphis.recall_grounded",
+        "engraphis_answer",
+        "engraphis_proactive_context",
+        "engraphis_recall",
+        "engraphis_recall_context",
+        "engraphis_recall_grounded",
     }
     read_only = (
         bool(annotation_payload.get("readOnlyHint"))
@@ -346,27 +346,27 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, An
         or name in graphiti_database_reads
     )
     open_world = bool(annotation_payload.get("openWorldHint"))
-    if name.startswith("cbm."):
-        read_only = name.removeprefix("cbm.") not in {
+    if _native_system(name) == "cbm":
+        read_only = name not in {
             "index_repository", "delete_project", "manage_adr", "ingest_traces"
         }
     destructive = bool(annotation_payload.get("destructiveHint"))
     if destructive or name in {
-        "cbm.delete_project",
-        "engraphis.forget",
-        "graphiti.clear_graph",
-        "graphiti.delete_entity_edge",
-        "graphiti.delete_episode",
+        "delete_project",
+        "engraphis_forget",
+        "clear_graph",
+        "delete_entity_edge",
+        "delete_episode",
     }:
         risk = "destructive"
     elif name in {"run_coder_subagent", "run_mag_one", "card.run_assistant_agent"}:
         risk = "runtime-launching"
-    elif name in {"engraphis.index_repo", "cbm.index_repository"} or name.startswith("graphiti.add_"):
+    elif name in {"engraphis_index_repo", "index_repository", "add_memory", "add_triplet"}:
         risk = "background"
     elif open_world:
         risk = "paid/provider-backed"
     elif (
-        name.startswith("graphiti.")
+        _native_system(name) == "graphiti"
         and name not in graphiti_database_reads
     ) or name == "web_search":
         risk = "paid/provider-backed"
@@ -375,9 +375,9 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, An
     else:
         risk = "deterministic write"
 
-    if name.startswith("graphiti."):
+    if _native_system(name) == "graphiti":
         compute = "database_read" if name in graphiti_database_reads else "mixed"
-    elif name.startswith("engraphis."):
+    elif _native_system(name) == "engraphis":
         compute = (
             "mixed"
             if open_world
@@ -385,7 +385,7 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, An
             if name in engraphis_context_operations
             else "database_read" if read_only else "database_write"
         )
-    elif name.startswith("cbm."):
+    elif _native_system(name) == "cbm":
         compute = "database_read" if read_only else "database_write"
     elif name in {"main.context", "coder.status"}:
         compute = "deterministic"
@@ -414,13 +414,13 @@ def _tool_capability_metadata(
     registry. Context records and visual projections are deliberately not represented as
     tools here; this metadata describes only callable operations.
     """
-    if name.startswith("engraphis."):
+    if _native_system(name) == "engraphis":
         graph_authority = "engraphis"
         authority_class = "project_reasoning"
-    elif name.startswith("graphiti."):
+    elif _native_system(name) == "graphiti":
         graph_authority = "graphiti"
         authority_class = "knowledge_provenance"
-    elif name.startswith("cbm."):
+    elif _native_system(name) == "cbm":
         graph_authority = "cbm"
         authority_class = "repository_structure"
     elif name.startswith("agentgraph."):
@@ -756,7 +756,7 @@ async def _ensure_main_connection_context() -> dict[str, Any] | None:
         return dict(context)
 
 
-class LiquidAItyServer(Server):
+class AgentRuntimeServer(Server):
     def create_initialization_options(
         self,
         notification_options: NotificationOptions | None = None,
@@ -768,7 +768,7 @@ class LiquidAItyServer(Server):
         )
 
 
-server = LiquidAItyServer("liquidaity")
+server = AgentRuntimeServer("agent-runtime")
 
 _NATIVE_ENGRAPHIS_MCP: Any | None = None
 _NATIVE_ENGRAPHIS_TOOLS: tuple[Tool, ...] | None = None
@@ -784,47 +784,14 @@ _NATIVE_GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_GRAPHITI_NAMES: frozenset[str] = frozenset()
 _TOOL_EXECUTION_CONTRACTS: dict[str, dict[str, str]] = {}
 
-_NATIVE_PREFIXES = {
-    "cbm": "cbm.",
-    "engraphis": "engraphis.",
-    "graphiti": "graphiti.",
-}
-
-def _namespace_native_tools(provider: str, tools: list[Tool]) -> list[Tool]:
-    """Add only a generated routing prefix; preserve every upstream field."""
-    prefix = _NATIVE_PREFIXES[provider]
-    result: list[Tool] = []
-    for tool in tools:
-        payload = tool.model_dump(by_alias=True, exclude_none=True)
-        native_name = tool.name
-        if provider == "engraphis":
-            native_name = native_name.removeprefix("engraphis_")
-        payload["name"] = prefix + native_name
-        if provider == "graphiti" and native_name == "get_episodes":
-            schema = copy.deepcopy(payload.get("inputSchema") or {})
-            properties = schema.setdefault("properties", {})
-            properties.update({
-                "include_body": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Explicitly include episode bodies; ordinary reads return previews.",
-                },
-                "body_preview_chars": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 2000,
-                    "default": 400,
-                },
-                "max_response_chars": {
-                    "type": "integer",
-                    "minimum": 2000,
-                    "maximum": 100000,
-                    "default": 20000,
-                },
-            })
-            payload["inputSchema"] = schema
-        result.append(Tool.model_validate(payload))
-    return result
+def _native_system(name: str) -> str | None:
+    if name in _NATIVE_CBM_NAMES:
+        return "cbm"
+    if name in _NATIVE_ENGRAPHIS_NAMES:
+        return "engraphis"
+    if name in _NATIVE_GRAPHITI_NAMES:
+        return "graphiti"
+    return None
 
 
 @server.list_resources()
@@ -884,13 +851,6 @@ def _native_engraphis_mcp():
     if _NATIVE_ENGRAPHIS_MCP is None:
         raise RuntimeError("native_engraphis_not_initialized")
     return _NATIVE_ENGRAPHIS_MCP
-
-
-def _warm_native_engraphis_service() -> None:
-    """Load Engraphis' local model before the external MCP accepts requests."""
-    from engraphis.mcp_server import service
-
-    service()
 
 
 async def _native_engraphis_tools() -> list[Tool]:
@@ -1869,13 +1829,9 @@ async def list_tools() -> list[Tool]:
     ]
     for tool in tools:
         tool.inputSchema.setdefault("additionalProperties", False)
-    native_catalogs = {
-        "engraphis": await _native_engraphis_tools(),
-        "cbm": await _native_cbm_tools(),
-        "graphiti": await _native_graphiti_tools(),
-    }
-    for provider, native_tools in native_catalogs.items():
-        tools.extend(_namespace_native_tools(provider, native_tools))
+    tools.extend(await _native_engraphis_tools())
+    tools.extend(await _native_cbm_tools())
+    tools.extend(await _native_graphiti_tools())
     names = [tool.name for tool in tools]
     if len(names) != len(set(names)):
         duplicates = sorted({name for name in names if names.count(name) > 1})
@@ -1935,25 +1891,13 @@ _HERMES_ONLY_TOOLS = {
 def _tool_access_metadata(name: str, execution: dict[str, str]) -> dict[str, Any]:
     """Attach the one public OAuth grant to the canonical Tool registration."""
     risk = execution["risk"]
-    owner = next(
-        (
-            owner
-            for prefix, owner in (
-                ("engraphis.", "engraphis"),
-                ("graphiti.", "graphiti"),
-                ("cbm.", "cbm"),
-                ("agentgraph.", "agentgraph"),
-            )
-            if name.startswith(prefix)
-        ),
-        "project_runtime",
-    )
+    owner = _native_system(name) or ("agentgraph" if name.startswith("agentgraph.") else "project_runtime")
     code_index_family = {
-        "engraphis.index_repo",
-        "engraphis.search_code",
-        "engraphis.code_path",
-        "engraphis.code_impact",
-        "engraphis.export_code_graph",
+        "engraphis_index_repo",
+        "engraphis_search_code",
+        "engraphis_code_path",
+        "engraphis_code_impact",
+        "engraphis_export_code_graph",
     }
     job_class = (
         "admin_job"
@@ -2028,10 +1972,7 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
         payload = tool.model_dump(by_alias=True, exclude_none=True)
         meta = dict(payload.get("_meta") or {})
         security_schemes = [{"type": "oauth2", "scopes": list(OAUTH_SCOPES)}]
-        native_system = next(
-            (system for system, prefix in _NATIVE_PREFIXES.items() if tool.name.startswith(prefix)),
-            None,
-        )
+        native_system = _native_system(tool.name)
         is_native = native_system is not None
         if not is_native:
             schema = copy.deepcopy(tool.inputSchema)
@@ -2151,9 +2092,9 @@ async def _dispatch_tool(
         context = await _ensure_main_connection_context()
     else:
         context = await _ensure_main_connection_context()
-    if name.startswith(_NATIVE_PREFIXES["engraphis"]):
+    if name in _NATIVE_ENGRAPHIS_NAMES:
         await _initialize_native_engraphis()
-        native_name = "engraphis_" + name.removeprefix(_NATIVE_PREFIXES["engraphis"])
+        native_name = name
         if native_name in _NATIVE_ENGRAPHIS_NAMES:
             result = await asyncio.to_thread(
                 asyncio.run,
@@ -2163,19 +2104,19 @@ async def _dispatch_tool(
                 ),
             )
             return _normalize_native_tool_result(result, dependency="engraphis")
-    if name.startswith(_NATIVE_PREFIXES["cbm"]):
+    if name in _NATIVE_CBM_NAMES:
         await _native_cbm_tools()
-        native_name = name.removeprefix(_NATIVE_PREFIXES["cbm"])
+        native_name = name
         if native_name in _NATIVE_CBM_NAMES:
             return await asyncio.to_thread(
                 _call_native_cbm,
                 native_name,
                 dict(arguments or {}),
             )
-    if name.startswith(_NATIVE_PREFIXES["graphiti"]):
+    if name in _NATIVE_GRAPHITI_NAMES:
         await _initialize_native_graphiti()
         native_tools = await _native_graphiti_tools()
-        native_name = name.removeprefix(_NATIVE_PREFIXES["graphiti"])
+        native_name = name
         if native_name in _NATIVE_GRAPHITI_NAMES:
             native_args = dict(arguments or {})
             include_body = bool(native_args.pop("include_body", False))
@@ -2364,11 +2305,9 @@ def _tool_result_category(result: Any) -> str:
 
 def _execution_receipt(name: str) -> dict[str, Any]:
     contract = _TOOL_EXECUTION_CONTRACTS.get(name) or _tool_execution_contract(name)
-    known = name in _ALLOWED_KEYS or any(
-        name.startswith(prefix) for prefix in _NATIVE_PREFIXES.values()
-    )
+    known = name in _ALLOWED_KEYS or _native_system(name) is not None
     return {
-        "schema": "liquidaity.execution-receipt.v1",
+        "schema": "agent-runtime.execution-receipt.v1",
         "tool": name,
         "correlationId": f"mcp:{uuid4()}",
         "operationPhase": "dispatch",
@@ -2622,7 +2561,6 @@ async def main() -> None:
         await _run_stdio()
         return
     if MCP_TRANSPORT == "streamable-http":
-        await asyncio.to_thread(_warm_native_engraphis_service)
         await _native_cbm_tools()
         await _run_streamable_http()
         return

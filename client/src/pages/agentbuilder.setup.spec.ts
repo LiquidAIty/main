@@ -279,7 +279,7 @@ describe('agentbuilder authoring flow', () => {
       ...hermes.runtimeOptions,
       provider: 'openrouter',
       modelKey: 'saved-hermes-model',
-      tools: ['graphiti.clear_graph'],
+      tools: ['clear_graph'],
     };
     const savedEdges = JSON.parse(JSON.stringify(stale.edges));
 
@@ -291,7 +291,7 @@ describe('agentbuilder authoring flow', () => {
     expect(hydrated.version).toBe(77);
     expect(hydratedMain?.runtimeOptions?.tools).toEqual(['engraphis.export_code_graph']);
     expect(hydratedCoder?.runtimeOptions?.tools).toEqual(['cbm.delete_project']);
-    expect(hydratedHermes?.runtimeOptions?.tools).toEqual(['graphiti.clear_graph']);
+    expect(hydratedHermes?.runtimeOptions?.tools).toEqual(['clear_graph']);
     expect(hydratedMain).toMatchObject({
       prompt: 'Saved Main prompt',
       position: { x: 111, y: 222 },
