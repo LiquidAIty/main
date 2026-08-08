@@ -489,7 +489,7 @@ export function deriveLocalCoderPermissionMode(packet: CoderPacket): LocalCoderP
   return 'plan';
 }
 
-function buildCoderPrompt(packet: CoderPacket): string {
+export function buildCoderPrompt(packet: CoderPacket): string {
   return [
     'Execute this LiquidAIty CoderPacket as the complete spec and task.',
     'Use repository tools and return only the requested structured CoderReport.',

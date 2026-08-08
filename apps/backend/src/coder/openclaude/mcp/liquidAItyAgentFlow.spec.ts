@@ -135,7 +135,7 @@ describe('AgentGraph-native Mag One flow', () => {
       id: 'card_local_coder',
       kind: 'agent',
       title: 'Local Coder',
-      runtimeType: 'local_coder',
+      runtimeType: 'assistant_agent',
       runtimeBinding: 'local_coder',
       runtimeOptions: {
         provider: 'openai',

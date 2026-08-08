@@ -33,7 +33,6 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'graphiti.get_status',
       'mag_one.describe_connected_agents',
       'main.context',
-      'run_coder_subagent',
       'run_mag_one',
       'web_search',
       'write_mag_one_instructions',

@@ -414,7 +414,7 @@ export const INITIAL_DECK: DeckDocument = {
           (template) => template.id === 'prompt_assist',
         )?.content || '',
       runtimeBinding: 'local_coder',
-      runtimeType: 'local_coder',
+      runtimeType: 'assistant_agent',
       runtimeOptions: {
         provider: LOCAL_CODER_CONTROLLER_PROVIDER,
         modelKey: LOCAL_CODER_CONTROLLER_MODEL_KEY,

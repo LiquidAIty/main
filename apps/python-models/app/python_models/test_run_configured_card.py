@@ -7,9 +7,14 @@ through the SAME shared builder the Mag One path uses (same tool registry with
 loud unknown-tool failure — never silently dropped).
 """
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
+from autogen_core import FunctionCall
+from autogen_core.models import CreateResult, ModelFamily, RequestUsage
+from autogen_core.tools import FunctionTool
+from autogen_ext.models.replay import ReplayChatCompletionClient
 
 from app.python_models import magentic_agentchat as mac
 from app.python_models.orchestration_contracts import (
@@ -20,6 +25,13 @@ from app.python_models.orchestration_contracts import (
 )
 
 MODEL = "deepseek/deepseek-v4-flash-0731"
+REPLAY_MODEL_INFO = {
+    "vision": False,
+    "function_calling": True,
+    "json_output": True,
+    "family": ModelFamily.UNKNOWN,
+    "structured_output": False,
+}
 
 
 class _FakeToolClient:
@@ -257,7 +269,7 @@ class TestSharedBuilderReuse:
         with pytest.raises(RuntimeError):
             mac._build_participants(ctx, _FakeToolClient())
 
-    def test_local_coder_single_run_skips_python_model_and_calls_openclaude_authority(
+    def test_local_coder_single_run_uses_normal_assistant_agent_and_saved_tool_binding(
         self, monkeypatch
     ):
         participant = CardRuntimeParticipant(
@@ -269,35 +281,120 @@ class TestSharedBuilderReuse:
             tools=["run_local_coder"],
             provider="openai",
             providerModelId="gpt-5.6-luna",
+            reasoningEffort="high",
+            innerMcpTools=["search_graph", "get_code_snippet"],
         )
         context = _context(participants=[participant])
-        backend_calls: list[tuple[str, dict]] = []
-        monkeypatch.setattr(
-            mac,
-            "_build_model_client",
-            lambda _config: (_ for _ in ()).throw(
-                AssertionError("local_coder must not start a Python model client")
-            ),
+        coder_report = {
+            "status": "succeeded",
+            "filesChanged": [],
+            "proofResults": ["stand-in completed"],
+            "blockers": [],
+            "nextRecommendedTask": None,
+        }
+        completion = CreateResult(
+            finish_reason="function_calls",
+            content=[
+                FunctionCall(
+                    id="coder-call-1",
+                    name="run_local_coder",
+                    arguments=json.dumps({"objective": "Inspect the repository without edits."}),
+                )
+            ],
+            usage=RequestUsage(prompt_tokens=0, completion_tokens=0),
+            cached=False,
         )
+        replay = ReplayChatCompletionClient([completion], model_info=REPLAY_MODEL_INFO)
+        model_configs = []
+        bound_configs = []
+        tool_calls = []
+        finished = []
 
-        def fake_post(path: str, payload: dict) -> str:
-            backend_calls.append((path, payload))
-            return '{"report":{"status":"succeeded"}}'
+        async def stand_in_coder(objective: str) -> str:
+            tool_calls.append(
+                {
+                    "objective": objective,
+                    "assignment": mac.ACTIVE_AGENT_ASSIGNMENT_CONTEXT.get(),
+                }
+            )
+            return json.dumps({"report": coder_report})
 
-        monkeypatch.setitem(
-            mac.build_local_coder_tool.__globals__,
-            "_post_backend_json_sync",
-            fake_post,
+        def stand_in_binding(provider, model, reasoning, mcp_tools):
+            bound_configs.append(
+                {
+                    "provider": provider,
+                    "model": model,
+                    "reasoning": reasoning,
+                    "mcpTools": mcp_tools,
+                }
+            )
+            return FunctionTool(
+                stand_in_coder,
+                name="run_local_coder",
+                description="Established in-process Local Coder stand-in.",
+            )
+
+        def build_client(config):
+            model_configs.append(config)
+            return replay
+
+        monkeypatch.setattr(mac, "_build_model_client", build_client)
+        monkeypatch.setattr(mac, "build_local_coder_tool", stand_in_binding)
+        monkeypatch.setattr(
+            mac.ag,
+            "finish_assignment",
+            lambda **kwargs: (
+                finished.append(kwargs)
+                or {
+                    "resultId": f"agentresult:{kwargs['assignment_id']}",
+                    "artifacts": [],
+                }
+            ),
         )
 
         response = asyncio.run(mac.run_configured_card(context))
 
         assert response.ok is True
-        assert backend_calls[0][0] == "/api/coder/localcoder/run"
-        packet = backend_calls[0][1]["coderPacket"]
-        assert packet["modelProvider"] == "openai"
-        assert packet["providerModelId"] == "gpt-5.6-luna"
-        assert response.finalResponseText == '{"report":{"status":"succeeded"}}'
+        assert len(model_configs) == 1
+        assert model_configs[0].provider == "openai"
+        assert model_configs[0].provider_model_id == "gpt-5.6-luna"
+        assert bound_configs == [
+            {
+                "provider": "openai",
+                "model": "gpt-5.6-luna",
+                "reasoning": "high",
+                "mcpTools": ["search_graph", "get_code_snippet"],
+            }
+        ]
+        assert tool_calls == [
+            {
+                "objective": "Inspect the repository without edits.",
+                "assignment": {
+                    "projectId": "p",
+                    "assignmentId": "assignment:corr-1",
+                    "receiverCardId": "card_local_coder",
+                },
+            }
+        ]
+        assert '"status": "succeeded"' in response.finalResponseText
+        assert response.assignmentId == "assignment:corr-1"
+        assert response.resultId == "agentresult:assignment:corr-1"
+        assert len(finished) == 1
+        assert finished[0]["status"] == "completed"
+        assert '"status": "succeeded"' in finished[0]["output"]
+        assert finished[0]["tool_evidence"] == [
+            {
+                "event": "ToolCallRequestEvent",
+                "callId": "coder-call-1",
+                "toolName": "run_local_coder",
+            },
+            {
+                "event": "ToolCallExecutionEvent",
+                "callId": "coder-call-1",
+                "toolName": "run_local_coder",
+                "status": "completed",
+            }
+        ]
 
 
 class TestAssignmentToolAuthority:

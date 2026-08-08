@@ -57,23 +57,17 @@ def test_card_assignment_compatibility_matches_mcp_caller_enforcement():
 
     safe = {"risk": "safe read", "compute": "database_read"}
     assert mcp_host._tool_capability_metadata(
-        "run_coder_subagent", safe
-    )["assignableRuntimeBindings"] == ["main_chat"]
-    assert mcp_host._tool_capability_metadata(
         "write_mag_one_instructions", safe
     )["assignableRuntimeBindings"] == ["hermes_steward"]
-    graph_capable_bindings = [
-        "assist", "local_coder", "main_chat", "research_agent", "plan_agent", "hermes_steward",
-    ]
     assert mcp_host._tool_capability_metadata(
         "engraphis.recall", safe
-    )["assignableRuntimeBindings"] == graph_capable_bindings
+    )["assignableRuntimeBindings"] == ["main_chat"]
     assert mcp_host._tool_capability_metadata(
         "graphiti.search_nodes", safe
-    )["assignableRuntimeBindings"] == graph_capable_bindings
+    )["assignableRuntimeBindings"] == ["hermes_steward"]
     assert mcp_host._tool_capability_metadata(
         "cbm.search_graph", safe
-    )["assignableRuntimeBindings"] == graph_capable_bindings
+    )["assignableRuntimeBindings"] == ["local_coder"]
     assert mcp_host._tool_capability_metadata(
         "web_search", safe
     )["assignableRuntimeBindings"] == ["main_chat", "hermes_steward"]
@@ -440,9 +434,9 @@ def test_catalog_contract_metadata_is_generated_from_each_tool():
         "openWorld": False,
     }
     assert mcp_host._tool_execution_contract("engraphis.recall_context") == {
-        "risk": "deterministic write",
+        "risk": "safe read",
         "compute": "local_embedding",
-        "readOnly": False,
+        "readOnly": True,
         "destructive": False,
         "openWorld": False,
     }
@@ -457,10 +451,10 @@ def test_catalog_contract_metadata_is_generated_from_each_tool():
             "openWorldHint": False,
         },
     ))
-    assert engraphis_recall.annotations.readOnlyHint is False
+    assert engraphis_recall.annotations.readOnlyHint is True
     assert engraphis_recall.annotations.idempotentHint is False
-    assert engraphis_recall.meta["runtimeExecution"]["risk"] == "deterministic write"
-    assert mcp_host._tool_execution_contract("clear_graph") == {
+    assert engraphis_recall.meta["runtimeExecution"]["risk"] == "safe read"
+    assert mcp_host._tool_execution_contract("graphiti.clear_graph") == {
         "risk": "destructive",
         "compute": "mixed",
         "readOnly": False,
@@ -547,10 +541,6 @@ import asyncio, json, mcp_host
 async def check():
     tools = await mcp_host.list_tools()
     by_name = {tool.name: tool for tool in tools}
-    assert set(by_name['run_coder_subagent'].inputSchema['required']) == {
-        'projectId', 'deckId', 'conversationId', 'parentRunId', 'cardId', 'approvedPrompt'
-    }
-    assert 'same configured-card execution path' in by_name['run_coder_subagent'].description
     assert set(by_name['card.run_assistant_agent'].inputSchema['required']) == {'cardId', 'input'}
     assert 'instructionId' in by_name['card.run_assistant_agent'].inputSchema['properties']
     assert set(by_name['write_mag_one_instructions'].inputSchema['properties']) == {'instructions'}
@@ -948,47 +938,6 @@ def test_native_cbm_timeout_retires_the_session_without_retrying(monkeypatch):
     assert mcp_host._NATIVE_CBM_CLIENT is None
 
 
-def test_coder_subagent_is_a_saved_card_doorway_and_mag_one_keeps_its_own_entrypoint():
-    code = """
-import asyncio, json, mcp_host
-from app import control_plane
-async def check():
-    calls = []
-    async def bridge(path, payload):
-        calls.append({'path': path, 'payload': payload})
-        return [mcp_host.TextContent(type='text', text=json.dumps({'ok': True}))]
-    mcp_host._bridge = bridge
-    async def run_coder(payload):
-        calls.append({'path': 'run_coder_subagent', 'payload': payload})
-        return {'ok': True, 'result': {'status': 'completed'}}
-    control_plane.run_coder_subagent = run_coder
-    identity = {'_callerCardId': 'card_main_chat', '_callerRuntimeBinding': 'main_chat'}
-    mag = {'projectId': 'project-1', 'deckId': 'deck_builder', 'instructionId': 'instruction:one'}
-    await mcp_host.call_tool('run_coder_subagent', {
-        **identity,
-        'projectId': 'project-1',
-        'deckId': 'deck_builder',
-        'conversationId': 'conversation-1',
-        'parentRunId': 'main-run-1',
-        'cardId': 'card_local_coder',
-        'approvedPrompt': 'Implement the bounded task.',
-    })
-    await mcp_host.call_tool('run_mag_one', {**mag, **identity})
-    coder = calls[0]
-    assert coder['path'] == 'run_coder_subagent'
-    assert coder['payload']['originatingAgentId'] == 'card_main_chat'
-    assert coder['payload']['originatingRunId'] == 'main-run-1'
-    assert coder['payload']['cardId'] == 'card_local_coder'
-    assert coder['payload']['approvedPrompt'] == 'Implement the bounded task.'
-    assert calls[1] == {'path': 'run_mag_one', 'payload': mag}
-    print('UNGATED_CANONICAL_DISPATCH_OK')
-asyncio.run(check())
-"""
-    result = _run_in_script_launch_context(code)
-    assert result.returncode == 0, result.stderr
-    assert "UNGATED_CANONICAL_DISPATCH_OK" in result.stdout
-
-
 def test_streamable_http_initializes_and_lists_the_canonical_catalog():
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
@@ -1284,6 +1233,9 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "main.context" in by_name
     assert "agentgraph.inspect" in by_name
     assert "coder.status" in by_name
+    assert "card.run_assistant_agent" in by_name
+    assert "run_coder_subagent" not in by_name
+    assert not any(name.startswith("liquidaity.") for name in by_name)
     assert {
         "coder.inspect",
         "coder.effective_tools",
@@ -1329,16 +1281,11 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "openWorld": False,
     }
     assert {"graphiti.get_status", "graphiti.search_nodes"}.issubset(by_name)
-    coder_tool = by_name["run_coder_subagent"]
-    assert set(coder_tool.inputSchema["properties"]) == {
-        "cardId", "approvedPrompt", "authority"
-    }
-    assert set(coder_tool.inputSchema["required"]) == {"cardId", "approvedPrompt"}
     assert "run_mag_one" in by_name
     card_tool = by_name["card.run_assistant_agent"]
     assert set(card_tool.inputSchema["properties"]) == {"cardId", "input"}
     assert set(card_tool.inputSchema["required"]) == {"cardId", "input"}
-    assert "assistant_agent or local_coder" in card_tool.description
+    assert "AutoGen AssistantAgent card" in card_tool.description
     assert "instructionId" not in by_name["card.run_assistant_agent"].inputSchema["properties"]
     assert {scheme["scopes"][0] for scheme in by_name["engraphis.recall"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
@@ -1357,7 +1304,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     main_names = {tool.name for tool in asyncio.run(mcp_host.list_tools())}
     assert {
         "main.context", "agentgraph.inspect", "canvas.inspect",
-        "card.run_assistant_agent", "run_coder_subagent", "run_mag_one", "cbm.search_graph",
+        "card.run_assistant_agent", "run_mag_one", "cbm.search_graph",
         "graphiti.search_nodes",
     }.issubset(main_names)
     assert {
@@ -1410,11 +1357,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         return {"ok": True}
     monkeypatch.setattr(control_plane, "card_run_assistant_agent", run_saved_card)
 
-    async def run_saved_coder(payload):
-        calls.append(("run_coder_subagent", payload))
-        return {"ok": True}
-    monkeypatch.setattr(control_plane, "run_coder_subagent", run_saved_coder)
-
     asyncio.run(mcp_host.call_tool("engraphis.recall", {"query": "Main", "limit": 3}))
     assert calls[-1] == ("engraphis_recall", {"query": "Main", "limit": 3})
 
@@ -1449,19 +1391,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
 
     asyncio.run(mcp_host.call_tool("coder.status", {}))
     assert calls[-1] == ("coder_status", {})
-
-    asyncio.run(mcp_host.call_tool("run_coder_subagent", {
-        "cardId": "card_local_coder",
-        "approvedPrompt": "Implement the bounded task.",
-    }))
-    path, payload = calls[-1]
-    assert path == "run_coder_subagent"
-    assert payload["projectId"] == "project-1"
-    assert payload["deckId"] == "deck_builder"
-    assert payload["conversationId"] == "external-mcp:grant-1"
-    assert payload["originatingAgentId"] == "card_main_chat"
-    assert payload["originatingRunId"] == "external-main:grant-1"
-    assert payload["cardId"] == "card_local_coder"
 
     asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
         "cardId": "card_agent",
@@ -1519,12 +1448,16 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
 
     monkeypatch.setattr(mcp_host, "get_access_token", access_token)
     canonical = asyncio.run(mcp_host.list_tools())
-    assert len(canonical) == 70
+    canonical_names = {tool.name for tool in canonical}
+    assert len(canonical) == 69
+    assert "run_coder_subagent" not in canonical_names
+    assert "card.run_assistant_agent" in canonical_names
+    assert not any(name.startswith("liquidaity.") for name in canonical_names)
 
     active_scopes[:] = ["liquidaity.main"]
     authenticated = asyncio.run(mcp_host.list_tools())
-    assert len(authenticated) == 70
-    assert {tool.name for tool in authenticated} == {tool.name for tool in canonical}
+    assert len(authenticated) == 69
+    assert {tool.name for tool in authenticated} == canonical_names
     main_context = asyncio.run(mcp_host.call_tool("main.context", {}))
     assert json.loads(main_context[0].text)["ok"] is True
 

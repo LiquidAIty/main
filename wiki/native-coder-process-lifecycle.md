@@ -26,9 +26,9 @@ There are two useful surfaces over the canonical OpenClaude coding harness:
   CoderReport output.
 
 They share OpenClaude runtime discovery but are not alternate execution authorities for the same
-request. The retired direct-terminal task engine is absent. Main's external MCP tool named
-`run_coder_subagent` is valid only because it is a thin saved-card delegation doorway into
-`runConfiguredCard`; it does not own or launch an alternate terminal/session path.
+request. The retired direct-terminal task engine is absent. Main reaches the saved Local Coder card
+through the generic connected-card subagent doorway in the OpenClaude Harness; there is no separate
+Coder-specific Main execution tool.
 
 Must remain true:
 

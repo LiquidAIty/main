@@ -3,6 +3,7 @@
 // @graph relates_to: AgentBuilderWorkspace
 // @graph depends_on: Postgres
 import { randomUUID } from 'crypto';
+import { normalizeLocalCoderControllerCard } from '../cards/localCoderController';
 import { pool } from '../db/pool';
 import type {
   DeckDocument,
@@ -55,17 +56,18 @@ function parseDeckDocument(value: unknown, expectedId: string): DeckDocument {
   if (!Array.isArray(raw.nodes)) throw new Error('deck_nodes_invalid');
   if (!Array.isArray(raw.edges)) throw new Error('deck_edges_invalid');
   if (!Array.isArray(raw.promptTemplates)) throw new Error('deck_prompt_templates_invalid');
-  for (const node of raw.nodes) {
+  const nodes = raw.nodes.map((node) => {
     const card = parseJsonObject(node, 'deck_card_invalid');
     if (typeof card.id !== 'string' || !card.id) throw new Error('deck_card_id_invalid');
-  }
+    return normalizeLocalCoderControllerCard(card);
+  });
   for (const edge of raw.edges) {
     const wire = parseJsonObject(edge, 'deck_edge_invalid');
     if (typeof wire.id !== 'string' || !wire.id) throw new Error('deck_edge_id_invalid');
     if (typeof wire.source !== 'string' || !wire.source) throw new Error('deck_edge_source_invalid');
     if (typeof wire.target !== 'string' || !wire.target) throw new Error('deck_edge_target_invalid');
   }
-  return cloneJson(raw) as DeckDocument;
+  return cloneJson({ ...raw, nodes }) as DeckDocument;
 }
 
 function normalizeRevisionMeta(value: unknown): V3RevisionMeta | null {

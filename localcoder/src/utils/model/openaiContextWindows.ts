@@ -71,9 +71,6 @@ const OPENAI_CONTEXT_WINDOWS: Record<string, number> = {
   // limits for the same model name, so we cannot safely hardcode values here.
 
   // OpenAI
-  'gpt-5.6-sol':             1_050_000,
-  'gpt-5.6-terra':           1_050_000,
-  'gpt-5.6-luna':            1_050_000,
   'gpt-5.4':               1_050_000,
   'gpt-5.4-mini':            400_000,
   'gpt-5.4-nano':            400_000,
@@ -288,9 +285,6 @@ const OPENAI_MAX_OUTPUT_TOKENS: Record<string, number> = {
   // NOTE: bare Claude model names omitted — see context windows comment above.
 
   // OpenAI
-  'gpt-5.6-sol':             128_000,
-  'gpt-5.6-terra':           128_000,
-  'gpt-5.6-luna':            128_000,
   'gpt-5.4':                 128_000,
   'gpt-5.4-mini':            128_000,
   'gpt-5.4-nano':            128_000,

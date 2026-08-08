@@ -6,7 +6,7 @@ status: working
 
 roots:
   files:
-    - apps/python-models/app/control_plane.py
+    - apps/backend/src/coder/openclaude/session/grpcChatClient.ts
     - apps/backend/src/cards/runtime.ts
     - apps/backend/src/routes/coder.routes.ts
     - apps/backend/src/coder/localcoder/service.ts
@@ -14,8 +14,8 @@ roots:
     - apps/python-models/app/python_models/magentic_agentchat.py
     - apps/python-models/app/python_models/tool_registry.py
   symbols:
-    - run_coder_subagent
-    - card_run_assistant_agent
+    - buildHarnessAgentDefinition
+    - selectDoorwayCards
     - runConfiguredCard
     - runCardWithContract
     - _build_participants
@@ -31,11 +31,12 @@ roots:
 The saved Local Coder card is an independently runnable card and remains compatible with native
 AutoGen/Mag One for later testing. Mag One-to-Coder is not a current product requirement or MVP gate.
 
-Coder-card Run and Main/external GPT through `run_coder_subagent` both resolve the same saved card and
-enter `runConfiguredCard`. `run_coder_subagent` is only Main's typed delegation doorway: it verifies
-the saved Main-to-Coder `flow` wire and then calls `card_run_assistant_agent`; it owns no process,
-terminal, provider, model, tool set, or repository root. For the `local_coder` runtime binding,
-Python uses an AutoGen-compatible Local Coder runtime participant that invokes exactly one
+Coder-card Run enters `runConfiguredCard`. Main discovers the same saved Local Coder card through its
+visible `flow` wire and presents it to the OpenClaude Harness through the generic saved-card subagent
+doorway used for connected cards. That doorway runs the bound card through the normal configured-card
+executor; it does not expose a separate Coder-specific Main tool or own another process, terminal,
+provider, model, tool set, or repository root. For the `local_coder` runtime binding, Python uses an
+AutoGen-compatible Local Coder runtime participant that invokes exactly one
 `run_local_coder` FunctionTool bound to the saved card's provider/model. This avoids an extra Python
 model call while preserving the participant contract needed by future Mag One runs.
 
@@ -46,7 +47,7 @@ requires the OpenClaude process to return a schema-valid, packet-matched CoderRe
 Must remain true:
 
 - the saved card identity, prompt, provider/model, tools, and AutoGen compatibility remain intact;
-- Main's `run_coder_subagent` remains a saved-card delegation doorway, never a second Coder engine;
+- Main reaches Coder only through the generic connected saved-card subagent doorway;
 - the model cannot choose the repository root, run identity, provider, or model;
 - OpenRouter/DeepSeek and OpenAI Account/Codex OAuth configure the same adapter;
 - future temporary workers created by Coder are a separate nested subagent level;

@@ -53,7 +53,7 @@ const deckMocks = vi.hoisted(() => ({
         {
           id: 'card_local_coder',
           kind: 'agent',
-          runtimeType: 'local_coder',
+          runtimeType: 'assistant_agent',
           runtimeBinding: 'local_coder',
         },
       ],
@@ -190,17 +190,7 @@ describe('coder routes', () => {
   const BROKEN_COMMAND = 'node C:/liquidaity/nonexistent/openclaude.mjs';
 
   it('projects both Python-owned tool catalogs without TypeScript assignment policy', async () => {
-    mcpClientMocks.listPythonAgentMcpCatalog.mockResolvedValueOnce([
-      {
-        name: 'run_coder_subagent',
-        capability: {
-          runtimeCompatibility: ['harness_mcp'],
-          assignableRuntimeBindings: ['main_chat'],
-          assignableRuntimeTypes: [],
-          cardAssignable: true,
-        },
-      },
-    ] as any);
+    mcpClientMocks.listPythonAgentMcpCatalog.mockResolvedValueOnce([]);
     orchestratorMocks.requestPythonRailsJson.mockResolvedValueOnce({
       tools: [
         {
@@ -210,7 +200,7 @@ describe('coder routes', () => {
           capability: {
             runtimeCompatibility: ['autogen'],
             assignableRuntimeBindings: ['local_coder'],
-            assignableRuntimeTypes: ['local_coder'],
+            assignableRuntimeTypes: [],
             cardAssignable: true,
           },
         },
@@ -223,13 +213,9 @@ describe('coder routes', () => {
       const payload = await response.json();
       expect(payload.tools).toEqual([
         expect.objectContaining({
-          name: 'run_coder_subagent',
-          capability: expect.objectContaining({ assignableRuntimeBindings: ['main_chat'] }),
-        }),
-        expect.objectContaining({
           name: 'run_local_coder',
           title: 'Local Coder',
-          capability: expect.objectContaining({ assignableRuntimeTypes: ['local_coder'] }),
+          capability: expect.objectContaining({ assignableRuntimeBindings: ['local_coder'] }),
         }),
       ]);
     } finally {

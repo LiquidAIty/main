@@ -1,9 +1,9 @@
 // @vitest-environment node
 //
-// Wiring + no-terminal source assertions for the in-app Hermes Kanban.
+// Wiring assertions for the native Hermes surfaces.
 // These read committed/test-time source and assert the surface contract:
-//  - rail/card click opens HermesKanbanWorkspace, never a terminal;
-//  - HermesConsole (and every "Hermes Terminal" affordance) is gone;
+//  - rail/card click opens HermesKanbanWorkspace;
+//  - the workspace may explicitly open the separate installed-Hermes terminal;
 //  - Coder terminal infrastructure is untouched;
 //  - the Agent Card inspector (AgentManager) is unchanged;
 //  - the Hermes Kanban uses only the /api/hermes-kanban bridge (no second
@@ -25,6 +25,7 @@ const AGENT_MANAGER = 'client/src/components/AgentManager.tsx';
 const CODER_ROUTES = 'apps/backend/src/routes/coder.routes.ts';
 const CONSOLE_SESSION = 'apps/backend/src/coder/openclaude/console/consoleSession.ts';
 const CONSOLE_CLIENT = 'client/src/features/agentbuilder/console/openClaudeConsoleClient.ts';
+const HERMES_CONSOLE = 'client/src/components/hermes/HermesConsole.tsx';
 
 describe('Hermes rail/card click opens the Kanban workspace', () => {
   it('renders HermesKanbanWorkspace in the page and wires the rail click to open it', () => {
@@ -40,61 +41,31 @@ describe('Hermes rail/card click opens the Kanban workspace', () => {
   });
 });
 
-describe('HermesConsole is fully removed (no in-app Hermes terminal)', () => {
-  it('deletes the HermesConsole component files', () => {
-    const tsx = path.join(root, 'client/src/components/hermes/HermesConsole.tsx');
-    const spec = path.join(root, 'client/src/components/hermes/HermesConsole.spec.tsx');
-    let tsxMissing = false;
-    let specMissing = false;
-    try {
-      readFileSync(tsx, 'utf8');
-    } catch {
-      tsxMissing = true;
-    }
-    try {
-      readFileSync(spec, 'utf8');
-    } catch {
-      specMissing = true;
-    }
-    expect(tsxMissing).toBe(true);
-    expect(specMissing).toBe(true);
+describe('Installed Hermes terminal remains separate from Kanban and Coder', () => {
+  it('wires an explicit workspace action to the Hermes terminal component', () => {
+    const page = read(AGENTBUILDER);
+    const workspace = read(WORKSPACE);
+    const terminal = read(HERMES_CONSOLE);
+    expect(page).toContain("import HermesConsole");
+    expect(page).toContain('openHermesTerminal');
+    expect(page).toContain('<HermesConsole');
+    expect(workspace).toContain('onOpenTerminal');
+    expect(workspace).toContain('data-testid="hermes-terminal-open"');
+    expect(terminal).toContain('title="Hermes Terminal"');
+    expect(terminal).toContain('hermesConsoleClient');
   });
 
-  it('contains no Hermes terminal import, state, handler, or test id', () => {
-    for (const rel of [AGENTBUILDER, RAIL, WORKSPACE, INSPECTOR]) {
-      const source = read(rel);
-      expect(source, rel).not.toContain('HermesConsole');
-      expect(source, rel).not.toContain('hermesConsoleOpen');
-      expect(source, rel).not.toContain('openHermesTerminal');
-      expect(source, rel).not.toContain('onOpenHermesTerminal');
-      expect(source, rel).not.toContain('rail-hermes-terminal-button');
-      expect(source, rel).not.toContain('hermesTerminalActive');
-    }
+  it('publishes a separate installed-Hermes route, manager, and client', () => {
+    expect(read(CODER_ROUTES)).toContain("'/hermes/console'");
+    expect(read(CONSOLE_SESSION)).toContain('HermesConsoleSessionManager');
+    expect(read(CONSOLE_SESSION)).toContain('resolveHermesConsoleRuntime');
+    expect(read(CONSOLE_CLIENT)).toContain('hermesConsoleClient');
   });
 
-  it('contains no hidden Hermes terminal route, session manager, or client', () => {
-    expect(read(CODER_ROUTES)).not.toContain('/hermes/console');
-    expect(read(CONSOLE_SESSION)).not.toContain('HermesConsoleSessionManager');
-    expect(read(CONSOLE_SESSION)).not.toContain('resolveHermesConsoleRuntime');
-    expect(read(CONSOLE_CLIENT)).not.toContain('hermesConsoleClient');
-  });
-
-  it('contains no forbidden terminal affordance strings anywhere in the app/page', () => {
-    for (const rel of [AGENTBUILDER, WORKSPACE, INSPECTOR, API]) {
-      const source = read(rel);
-      expect(source, rel).not.toContain('Hermes Terminal');
-      expect(source, rel).not.toContain('Start session');
-      expect(source, rel).not.toContain('Stop session');
-      expect(source, rel).not.toContain('manual override terminal');
-      expect(source, rel).not.toContain('interactive Hermes chat');
-    }
-  });
-
-  it('the rail button is labelled Hermes Kanban and there is no terminal launcher', () => {
+  it('keeps the rail destination Kanban-first instead of adding a second rail icon', () => {
     const rail = read(RAIL);
     expect(rail).toContain('aria-label="Hermes Kanban"');
-    expect(rail).not.toContain('Hermes Terminal');
-    expect(rail).not.toContain('PTY');
+    expect(rail).not.toContain('rail-hermes-terminal-button');
   });
 });
 

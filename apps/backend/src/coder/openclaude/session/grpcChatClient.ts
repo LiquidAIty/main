@@ -265,7 +265,7 @@ export function selectDoorwayCards(nodes: any[], edges: any[], mode: HarnessMode
       if (String(node?.parentGraphId || '').trim()) return false;
       if (node?.enabled === false || node?.runtimeOptions?.enabled === false) return false;
       const runtimeType = String(node?.runtimeType ?? '').trim();
-      if (runtimeType !== 'assistant_agent' && runtimeType !== 'local_coder') return false;
+      if (runtimeType !== 'assistant_agent') return false;
       const binding = resolveRuntimeBinding(node?.runtimeBinding);
       return binding !== 'main_chat';
     });

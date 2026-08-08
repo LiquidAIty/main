@@ -68,7 +68,7 @@ def test_manifest_publishes_card_runtime_compatibility_from_python_authority():
     assert coder["capability"] == {
         "runtimeCompatibility": ["autogen"],
         "assignableRuntimeBindings": ["local_coder"],
-        "assignableRuntimeTypes": ["local_coder"],
+        "assignableRuntimeTypes": [],
         "cardAssignable": True,
     }
     calculator = manifest["calculator"]

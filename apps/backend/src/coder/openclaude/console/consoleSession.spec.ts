@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  HermesConsoleSessionManager,
   OpenClaudeConsoleSessionManager,
   redactConsoleSecrets,
   resolveConsoleProviderEnv,
@@ -454,6 +455,89 @@ describe('OpenClaudeConsoleSessionManager OpenRouter routing', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('HermesConsoleSessionManager', () => {
+  const hermesRuntime = {
+    ready: true as const,
+    command: 'C:/Hermes/hermes.exe',
+    baseArgs: ['chat', '--cli'],
+    describe: 'C:/Hermes/hermes.exe chat --cli',
+    source: 'installed' as const,
+    shell: false,
+    missing: [] as string[],
+  };
+
+  it('starts the installed Hermes CLI in its own PTY session namespace', () => {
+    const child = new FakePtyChild();
+    const ptySpawn = vi.fn<ConsoleSpawn>(
+      () => child as unknown as ConsoleChild,
+    );
+    const manager = new HermesConsoleSessionManager({
+      workspaceRoot: tmpdir(),
+      env: {},
+      ptySpawn,
+      resolveRuntime: () => hermesRuntime,
+      idFactory: () => 'hms_test',
+    });
+
+    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    if (!result.ok) throw new Error('expected Hermes session to start');
+
+    expect(result.session.info).toMatchObject({
+      id: 'hms_test',
+      ownerCardId: 'card_hermes_steward',
+      state: 'running',
+      runtimeSource: 'hermes_installed',
+      transportMode: 'pty',
+    });
+    expect(ptySpawn).toHaveBeenCalledWith(
+      hermesRuntime.command,
+      ['chat', '--cli'],
+      expect.objectContaining({
+        cwd: tmpdir(),
+        shell: false,
+        interactive: true,
+        env: expect.objectContaining({
+          HERMES_SESSION_SOURCE: 'saved-card-terminal',
+        }),
+      }),
+    );
+  });
+
+  it('fails closed instead of substituting another runtime or pipe transport', () => {
+    const unavailable = new HermesConsoleSessionManager({
+      workspaceRoot: tmpdir(),
+      env: {},
+      ptySpawn: null,
+      resolveRuntime: () => ({
+        ready: false,
+        command: '',
+        baseArgs: [],
+        describe: '',
+        source: 'installed',
+        shell: false,
+        missing: ['hermes_cli_entrypoint_missing'],
+      }),
+    });
+    expect(unavailable.start({ mode: 'interactive' })).toEqual({
+      ok: false,
+      error: 'hermes_runtime_unavailable',
+      missing: ['hermes_cli_entrypoint_missing'],
+    });
+
+    const noPty = new HermesConsoleSessionManager({
+      workspaceRoot: tmpdir(),
+      env: {},
+      ptySpawn: null,
+      resolveRuntime: () => hermesRuntime,
+    });
+    expect(noPty.start({ mode: 'interactive' })).toEqual({
+      ok: false,
+      error: 'hermes_pty_unavailable',
+      missing: ['node_pty'],
+    });
   });
 });
 

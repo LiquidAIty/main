@@ -25,7 +25,6 @@ function derivePrintableProvider(card: AgentCardInstance): string {
 
 function cardRoleTag(card: AgentCardInstance): string {
   if (card.runtimeType === 'magentic_one') return 'orchestrator';
-  if (card.runtimeType === 'local_coder') return 'local_coder';
   const binding = String(card.runtimeBinding || '').trim();
   return binding || 'agent';
 }

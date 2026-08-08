@@ -74,8 +74,8 @@ describe('AgentManager active builder config', () => {
     const rows = buildDisplayedToolRows(
       [
         { name: 'engraphis.recall', title: 'Recall', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat'] } },
-        { name: 'graphiti.search_nodes', title: 'Search nodes', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat', 'hermes_steward', 'local_coder'] } },
-        { name: 'cbm.search_graph', title: 'Search graph', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat', 'hermes_steward', 'local_coder'] } },
+        { name: 'graphiti.search_nodes', title: 'Search nodes', capability: { cardAssignable: true, assignableRuntimeBindings: ['hermes_steward'] } },
+        { name: 'cbm.search_graph', title: 'Search graph', capability: { cardAssignable: true, assignableRuntimeBindings: ['local_coder'] } },
         { name: 'canvas.inspect', title: 'Inspect canvas', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat'] } },
         { name: 'main.context', capability: { cardAssignable: false, assignableRuntimeBindings: [] } },
       ],
@@ -88,31 +88,28 @@ describe('AgentManager active builder config', () => {
       'graphiti.search_nodes',
       'mystery.tool',
       'engraphis.recall',
-      'cbm.search_graph',
       'canvas.inspect',
     ]);
-    expect(rows[0]).toMatchObject({ title: 'Search nodes', availability: 'available' });
+    expect(rows[0]).toMatchObject({ title: 'Search nodes', availability: 'incompatible' });
     expect(rows[1]).toEqual({ name: 'mystery.tool', availability: 'stale' });
-    expect(rows.find((row) => row.name === 'cbm.search_graph')).toMatchObject({
-      availability: 'available',
-    });
+    expect(rows.find((row) => row.name === 'cbm.search_graph')).toBeUndefined();
     expect(rows.find((row) => row.name === 'main.context')).toBeUndefined();
   });
 
   it('uses runtime-owned compatibility metadata instead of graph-authority policy', () => {
     const catalog = [
-      { name: 'cbm.search_graph', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat', 'hermes_steward', 'local_coder'] } },
+      { name: 'cbm.search_graph', capability: { cardAssignable: true, assignableRuntimeBindings: ['local_coder'] } },
       { name: 'write_mag_one_instructions', capability: { cardAssignable: true, assignableRuntimeBindings: ['hermes_steward'] } },
-      { name: 'run_local_coder', capability: { cardAssignable: true, assignableRuntimeTypes: ['local_coder'] } },
+      { name: 'run_local_coder', capability: { cardAssignable: true, assignableRuntimeBindings: ['local_coder'] } },
       { name: 'main.context', capability: { cardAssignable: false } },
     ];
 
     expect(
-      buildDisplayedToolRows(catalog, [], 'local_coder', 'local_coder').map((row) => row.name),
+      buildDisplayedToolRows(catalog, [], 'local_coder', 'assistant_agent').map((row) => row.name),
     ).toEqual(['cbm.search_graph', 'run_local_coder']);
     expect(
       buildDisplayedToolRows(catalog, [], 'hermes_steward', 'assistant_agent').map((row) => row.name),
-    ).toEqual(['cbm.search_graph', 'write_mag_one_instructions']);
+    ).toEqual(['write_mag_one_instructions']);
     expect(toggleSavedToolAssignment([], 'cbm.search_graph', false)).toEqual([]);
   });
 

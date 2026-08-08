@@ -131,7 +131,7 @@ describe('Canonical Cards Runtime', () => {
   it('chat submit builds no codingWorkflowPacket and does not classify intent as coding', () => {
     const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
     const coder = {
-      id: 'coder', kind: 'agent', runtimeType: 'local_coder', runtimeBinding: 'local_coder',
+      id: 'coder', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'local_coder',
       title: 'Local Coder', runtimeOptions: {
         modelKey: 'deepseek/deepseek-v4-flash-0731',
         provider: 'openrouter',
@@ -397,7 +397,7 @@ describe('Canonical Cards Runtime', () => {
     const coder = {
       id: 'coder',
       kind: 'agent',
-      runtimeType: 'local_coder',
+      runtimeType: 'assistant_agent',
       runtimeBinding: 'local_coder',
       title: 'Local Coder',
       runtimeOptions: {

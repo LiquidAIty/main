@@ -820,7 +820,7 @@ _TOOL_DISPLAY_METADATA: dict[str, dict[str, Any]] = {
         "displayName": "Local Coder",
         "agentCompatibility": ["magentic_one", "assistant_agent"],
         "assignableRuntimeBindings": ["local_coder"],
-        "assignableRuntimeTypes": ["local_coder"],
+        "assignableRuntimeTypes": [],
     },
     "find_recent_sec_filing_signals": {
         "displayName": "SEC Filing Signals",

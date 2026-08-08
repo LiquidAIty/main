@@ -9,7 +9,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-from autogen_agentchat.messages import TextMessage
+from autogen_agentchat.agents import AssistantAgent
 from autogen_core import CancellationToken
 from autogen_core.tools import FunctionTool
 from app.python_models import magentic_agentchat as mac
@@ -246,7 +246,7 @@ def test_selected_tool_attaches_real_functiontool_to_that_participant():
     assert [tool.name for tool in plain._tools] == []
 
 
-def test_local_coder_participant_is_an_autogen_runtime_adapter_bound_to_openclaude(
+def test_local_coder_participant_is_a_normal_assistant_agent_bound_to_openclaude(
     monkeypatch,
 ):
     captured: dict = {}
@@ -268,12 +268,16 @@ def test_local_coder_participant_is_an_autogen_runtime_adapter_bound_to_openclau
     participant.providerModelId = "deepseek/deepseek-v4-flash-0731"
     participant.reasoningEffort = "medium"
     participant.innerMcpTools = ["cbm.search_graph"]
-    coder = mac._build_participants(context, None)[0]
+    model_client = _FakeToolClient()
+    coder = mac._build_participants(context, model_client)[0]
     assert participant.runtimeType == "assistant_agent"
+    assert isinstance(coder, AssistantAgent)
+    assert coder._model_client is model_client
     assert coder.description == "local_coder"
-    response = asyncio.run(
-        coder.on_messages(
-            [TextMessage(content="Inspect the repository.", source="user")],
+    assert [tool.name for tool in coder._tools] == ["run_local_coder"]
+    output = asyncio.run(
+        coder._tools[0].run_json(
+            {"objective": "Inspect the repository."},
             CancellationToken(),
         )
     )
@@ -284,14 +288,15 @@ def test_local_coder_participant_is_an_autogen_runtime_adapter_bound_to_openclau
     )
     assert captured["payload"]["coderPacket"]["reasoningEffort"] == "medium"
     assert captured["payload"]["coderPacket"]["mcpTools"] == ["cbm.search_graph"]
-    assert response.chat_message.content == '{"report":{"status":"succeeded"}}'
+    assert output == '{"report":{"status":"succeeded"}}'
 
 
-def test_local_coder_runtime_rejects_any_outer_tool_contract_other_than_run_local_coder():
+def test_local_coder_has_no_special_participant_tool_contract():
     context = _tools_context(["run_local_coder", "calculator"])
     context.cardRuntime.participants[0].runtimeBinding = "local_coder"
-    with pytest.raises(RuntimeError, match="local_coder_runtime_tool_contract_invalid"):
-        mac._build_participants(context, None)
+    coder = mac._build_participants(context, _FakeToolClient())[0]
+    assert isinstance(coder, AssistantAgent)
+    assert [tool.name for tool in coder._tools] == ["run_local_coder", "calculator"]
 
 
 def test_each_participant_receives_its_own_saved_card_model_client():

@@ -119,7 +119,8 @@ export function resolvedMagenticControllers(
 }
 
 function resolveCardRuntimeType(card: any): string {
-  return card.kind === 'agent' ? String(card.runtimeType || '').trim() : '';
+  if (card.kind !== 'agent') return '';
+  return String(normalizeLocalCoderControllerCard(card).runtimeType || '').trim();
 }
 
 function resolveCardBinding(card: any): string | null {
@@ -128,7 +129,7 @@ function resolveCardBinding(card: any): string | null {
 }
 
 function isAssistLikeRuntimeType(runtimeType: string): boolean {
-  return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
+  return runtimeType === 'assistant_agent';
 }
 
 // Removed: resolveMagOneAgentRole (title/template substring classifier),
@@ -282,7 +283,7 @@ export function resolveDirectSubagents(
 }
 
 function isPythonAutoGenCallableRuntimeType(runtimeType: string): boolean {
-  return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
+  return runtimeType === 'assistant_agent';
 }
 
 function genericAssistantCardIneligibility(card: any): string | null {
@@ -359,9 +360,7 @@ export function serializeCardParticipant(head: any): Record<string, unknown> {
   head = normalizeLocalCoderControllerCard(head);
   const model = resolveCardModelStrict(head);
   const runtimeBinding = resolveCardBinding(head);
-  const runtimeType = isLocalCoderControllerCard(head)
-    ? 'assistant_agent'
-    : resolveCardRuntimeType(head);
+  const runtimeType = resolveCardRuntimeType(head);
   const selectedTools = resolveAutoGenParticipantTools(head);
   const innerMcpTools = isLocalCoderControllerCard(head)
     ? resolveCardTools(head).filter((tool) => tool !== 'run_local_coder')

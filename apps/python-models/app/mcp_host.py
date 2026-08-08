@@ -325,48 +325,49 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, An
         else dict(annotations or {})
     )
     graphiti_database_reads = {
-        "get_status",
-        "get_episodes",
-        "get_episode_entities",
-        "get_entity_edge",
-        "search_memory_facts",
-        "search_nodes",
+        "graphiti.get_status",
+        "graphiti.get_episodes",
+        "graphiti.get_episode_entities",
+        "graphiti.get_entity_edge",
+        "graphiti.search_memory_facts",
+        "graphiti.search_nodes",
     }
     engraphis_context_operations = {
-        "engraphis_answer",
-        "engraphis_proactive_context",
-        "engraphis_recall",
-        "engraphis_recall_context",
-        "engraphis_recall_grounded",
+        "engraphis.answer",
+        "engraphis.proactive_context",
+        "engraphis.recall",
+        "engraphis.recall_context",
+        "engraphis.recall_grounded",
     }
     read_only = (
         bool(annotation_payload.get("readOnlyHint"))
         or name in _READ_ONLY_TOOLS
         or name == "web_search"
         or name in graphiti_database_reads
+        or name in engraphis_context_operations
     )
     open_world = bool(annotation_payload.get("openWorldHint"))
-    if _native_system(name) == "cbm":
-        read_only = name not in {
+    if name.startswith("cbm."):
+        read_only = name.removeprefix("cbm.") not in {
             "index_repository", "delete_project", "manage_adr", "ingest_traces"
         }
     destructive = bool(annotation_payload.get("destructiveHint"))
     if destructive or name in {
-        "delete_project",
-        "engraphis_forget",
-        "clear_graph",
-        "delete_entity_edge",
-        "delete_episode",
+        "cbm.delete_project",
+        "engraphis.forget",
+        "graphiti.clear_graph",
+        "graphiti.delete_entity_edge",
+        "graphiti.delete_episode",
     }:
         risk = "destructive"
-    elif name in {"run_coder_subagent", "run_mag_one", "card.run_assistant_agent"}:
+    elif name in {"run_mag_one", "card.run_assistant_agent"}:
         risk = "runtime-launching"
-    elif name in {"engraphis_index_repo", "index_repository", "add_memory", "add_triplet"}:
+    elif name in {"engraphis.index_repo", "cbm.index_repository"} or name.startswith("graphiti.add_"):
         risk = "background"
     elif open_world:
         risk = "paid/provider-backed"
     elif (
-        _native_system(name) == "graphiti"
+        name.startswith("graphiti.")
         and name not in graphiti_database_reads
     ) or name == "web_search":
         risk = "paid/provider-backed"
@@ -375,9 +376,9 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, An
     else:
         risk = "deterministic write"
 
-    if _native_system(name) == "graphiti":
+    if name.startswith("graphiti."):
         compute = "database_read" if name in graphiti_database_reads else "mixed"
-    elif _native_system(name) == "engraphis":
+    elif name.startswith("engraphis."):
         compute = (
             "mixed"
             if open_world
@@ -385,7 +386,7 @@ def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, An
             if name in engraphis_context_operations
             else "database_read" if read_only else "database_write"
         )
-    elif _native_system(name) == "cbm":
+    elif name.startswith("cbm."):
         compute = "database_read" if read_only else "database_write"
     elif name in {"main.context", "coder.status"}:
         compute = "deterministic"
@@ -414,13 +415,13 @@ def _tool_capability_metadata(
     registry. Context records and visual projections are deliberately not represented as
     tools here; this metadata describes only callable operations.
     """
-    if _native_system(name) == "engraphis":
+    if name.startswith("engraphis."):
         graph_authority = "engraphis"
         authority_class = "project_reasoning"
-    elif _native_system(name) == "graphiti":
+    elif name.startswith("graphiti."):
         graph_authority = "graphiti"
         authority_class = "knowledge_provenance"
-    elif _native_system(name) == "cbm":
+    elif name.startswith("cbm."):
         graph_authority = "cbm"
         authority_class = "repository_structure"
     elif name.startswith("agentgraph."):
@@ -434,14 +435,11 @@ def _tool_capability_metadata(
         authority_class = "application"
 
     card_assignable = name != "main.context"
-    graph_tool_runtime_bindings = [
-        "assist",
-        "local_coder",
-        "main_chat",
-        "research_agent",
-        "plan_agent",
-        "hermes_steward",
-    ]
+    graph_tool_runtime_bindings = {
+        "cbm": ["local_coder"],
+        "engraphis": ["main_chat"],
+        "graphiti": ["hermes_steward"],
+    }.get(str(graph_authority), [])
     assignable_runtime_bindings = (
         []
         if not card_assignable
@@ -784,14 +782,48 @@ _NATIVE_GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_GRAPHITI_NAMES: frozenset[str] = frozenset()
 _TOOL_EXECUTION_CONTRACTS: dict[str, dict[str, str]] = {}
 
-def _native_system(name: str) -> str | None:
-    if name in _NATIVE_CBM_NAMES:
-        return "cbm"
-    if name in _NATIVE_ENGRAPHIS_NAMES:
-        return "engraphis"
-    if name in _NATIVE_GRAPHITI_NAMES:
-        return "graphiti"
-    return None
+_NATIVE_PREFIXES = {
+    "cbm": "cbm.",
+    "engraphis": "engraphis.",
+    "graphiti": "graphiti.",
+}
+
+
+def _namespace_native_tools(provider: str, tools: list[Tool]) -> list[Tool]:
+    """Add the established public routing prefix while preserving native tools."""
+    prefix = _NATIVE_PREFIXES[provider]
+    result: list[Tool] = []
+    for tool in tools:
+        payload = tool.model_dump(by_alias=True, exclude_none=True)
+        native_name = tool.name
+        if provider == "engraphis":
+            native_name = native_name.removeprefix("engraphis_")
+        payload["name"] = prefix + native_name
+        if provider == "graphiti" and native_name == "get_episodes":
+            schema = copy.deepcopy(payload.get("inputSchema") or {})
+            properties = schema.setdefault("properties", {})
+            properties.update({
+                "include_body": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Explicitly include episode bodies; ordinary reads return previews.",
+                },
+                "body_preview_chars": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2000,
+                    "default": 400,
+                },
+                "max_response_chars": {
+                    "type": "integer",
+                    "minimum": 2000,
+                    "maximum": 100000,
+                    "default": 20000,
+                },
+            })
+            payload["inputSchema"] = schema
+        result.append(Tool.model_validate(payload))
+    return result
 
 
 @server.list_resources()
@@ -1593,42 +1625,6 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
-            name="run_coder_subagent",
-            description=(
-                "Main Chat only: delegate one approved coding task to the saved connected Coder card. "
-                "This is a saved-card doorway, not a second Coder engine: it uses the same configured-card "
-                "execution path as Coder card Run, then the card's run_local_coder tool reaches the canonical "
-                "LocalCoder/OpenClaude authority. Provider, model, tools, and repository root are never "
-                "accepted from the caller."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                    "conversationId": {"type": "string"},
-                    "parentRunId": {"type": "string"},
-                    "correlationId": {"type": "string"},
-                    "cardId": {"type": "string"},
-                    "approvedPrompt": {"type": "string"},
-                    "authority": {
-                        "type": "string",
-                        "enum": ["direct_main_audit"],
-                        "default": "direct_main_audit",
-                    },
-                },
-                "required": [
-                    "projectId",
-                    "deckId",
-                    "conversationId",
-                    "parentRunId",
-                    "cardId",
-                    "approvedPrompt",
-                ],
-                "additionalProperties": False,
-            },
-        ),
-        Tool(
             name="mag_one.describe_connected_agents",
             description=(
                 "Read the currently connected, bus-eligible (magentic_option) Mag One Agent Cards and "
@@ -1788,7 +1784,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="card.run_assistant_agent",
             description=(
-                "Run ONE saved, enabled AutoGen-callable agent card (assistant_agent or local_coder) "
+                "Run ONE saved, enabled AutoGen AssistantAgent card "
                 "with its saved identity, prompt, model, and tools. "
                 "No prompt/model/tool/card overrides "
                 "exist on this path — extra arguments are rejected structurally. deckId defaults to "
@@ -1829,9 +1825,13 @@ async def list_tools() -> list[Tool]:
     ]
     for tool in tools:
         tool.inputSchema.setdefault("additionalProperties", False)
-    tools.extend(await _native_engraphis_tools())
-    tools.extend(await _native_cbm_tools())
-    tools.extend(await _native_graphiti_tools())
+    native_catalogs = {
+        "engraphis": await _native_engraphis_tools(),
+        "cbm": await _native_cbm_tools(),
+        "graphiti": await _native_graphiti_tools(),
+    }
+    for provider, native_tools in native_catalogs.items():
+        tools.extend(_namespace_native_tools(provider, native_tools))
     names = [tool.name for tool in tools]
     if len(names) != len(set(names)):
         duplicates = sorted({name for name in names if names.count(name) > 1})
@@ -1881,7 +1881,6 @@ _SERVER_OWNED_ARGUMENTS = {
     "_callerRuntimeBinding",
 }
 _MAIN_ONLY_TOOLS = {
-    "run_coder_subagent",
     "run_mag_one",
 }
 _HERMES_ONLY_TOOLS = {
@@ -1891,13 +1890,25 @@ _HERMES_ONLY_TOOLS = {
 def _tool_access_metadata(name: str, execution: dict[str, str]) -> dict[str, Any]:
     """Attach the one public OAuth grant to the canonical Tool registration."""
     risk = execution["risk"]
-    owner = _native_system(name) or ("agentgraph" if name.startswith("agentgraph.") else "project_runtime")
+    owner = next(
+        (
+            owner
+            for prefix, owner in (
+                ("engraphis.", "engraphis"),
+                ("graphiti.", "graphiti"),
+                ("cbm.", "cbm"),
+                ("agentgraph.", "agentgraph"),
+            )
+            if name.startswith(prefix)
+        ),
+        "project_runtime",
+    )
     code_index_family = {
-        "engraphis_index_repo",
-        "engraphis_search_code",
-        "engraphis_code_path",
-        "engraphis_code_impact",
-        "engraphis_export_code_graph",
+        "engraphis.index_repo",
+        "engraphis.search_code",
+        "engraphis.code_path",
+        "engraphis.code_impact",
+        "engraphis.export_code_graph",
     }
     job_class = (
         "admin_job"
@@ -1972,7 +1983,10 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
         payload = tool.model_dump(by_alias=True, exclude_none=True)
         meta = dict(payload.get("_meta") or {})
         security_schemes = [{"type": "oauth2", "scopes": list(OAUTH_SCOPES)}]
-        native_system = _native_system(tool.name)
+        native_system = next(
+            (system for system, prefix in _NATIVE_PREFIXES.items() if tool.name.startswith(prefix)),
+            None,
+        )
         is_native = native_system is not None
         if not is_native:
             schema = copy.deepcopy(tool.inputSchema)
@@ -2025,18 +2039,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "projectWide",
     },
     "coder.status": set(),
-    "run_coder_subagent": {
-        "projectId",
-        "deckId",
-        "conversationId",
-        "parentRunId",
-        "correlationId",
-        "originatingAgentId",
-        "originatingRunId",
-        "cardId",
-        "approvedPrompt",
-        "authority",
-    },
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "instructionId", "conversationId"},
     "write_mag_one_instructions": {
@@ -2076,7 +2078,6 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
     "card.update_configuration": "card_update_configuration",
     "canvas.upsert_wire": "canvas_upsert_wire",
     "card.run_assistant_agent": "card_run_assistant_agent",
-    "run_coder_subagent": "run_coder_subagent",
 }
 
 
@@ -2092,9 +2093,9 @@ async def _dispatch_tool(
         context = await _ensure_main_connection_context()
     else:
         context = await _ensure_main_connection_context()
-    if name in _NATIVE_ENGRAPHIS_NAMES:
+    if name.startswith(_NATIVE_PREFIXES["engraphis"]):
         await _initialize_native_engraphis()
-        native_name = name
+        native_name = "engraphis_" + name.removeprefix(_NATIVE_PREFIXES["engraphis"])
         if native_name in _NATIVE_ENGRAPHIS_NAMES:
             result = await asyncio.to_thread(
                 asyncio.run,
@@ -2104,19 +2105,19 @@ async def _dispatch_tool(
                 ),
             )
             return _normalize_native_tool_result(result, dependency="engraphis")
-    if name in _NATIVE_CBM_NAMES:
+    if name.startswith(_NATIVE_PREFIXES["cbm"]):
         await _native_cbm_tools()
-        native_name = name
+        native_name = name.removeprefix(_NATIVE_PREFIXES["cbm"])
         if native_name in _NATIVE_CBM_NAMES:
             return await asyncio.to_thread(
                 _call_native_cbm,
                 native_name,
                 dict(arguments or {}),
             )
-    if name in _NATIVE_GRAPHITI_NAMES:
+    if name.startswith(_NATIVE_PREFIXES["graphiti"]):
         await _initialize_native_graphiti()
         native_tools = await _native_graphiti_tools()
-        native_name = name
+        native_name = name.removeprefix(_NATIVE_PREFIXES["graphiti"])
         if native_name in _NATIVE_GRAPHITI_NAMES:
             native_args = dict(arguments or {})
             include_body = bool(native_args.pop("include_body", False))
@@ -2182,9 +2183,6 @@ async def _dispatch_tool(
             if name == "card.run_assistant_agent":
                 args["originatingAgentId"] = str(context["mainCardId"])
                 args["originatingRunId"] = str(context["parentRunId"])
-            if name == "run_coder_subagent":
-                args["originatingAgentId"] = str(context["mainCardId"])
-                args["originatingRunId"] = str(context["parentRunId"])
             if name in _MAIN_ONLY_TOOLS or name in _HERMES_ONLY_TOOLS:
                 args["_callerCardId"] = str(context["mainCardId"])
                 args["_callerRuntimeBinding"] = "external_gpt"
@@ -2203,13 +2201,6 @@ async def _dispatch_tool(
                 text=json.dumps({"ok": False, "error": caller_error}),
             )
         ]
-    if name == "run_coder_subagent":
-        args["correlationId"] = str(args.get("correlationId") or f"coder-subagent:{uuid4()}")
-        args["originatingAgentId"] = caller_card_id
-        args["originatingRunId"] = str(
-            args.get("originatingRunId") or args.pop("parentRunId", "")
-        )
-        args.pop("parentRunId", None)
     extra = [k for k in args.keys() if k not in allowed]
     if extra:
         return [
@@ -2305,7 +2296,9 @@ def _tool_result_category(result: Any) -> str:
 
 def _execution_receipt(name: str) -> dict[str, Any]:
     contract = _TOOL_EXECUTION_CONTRACTS.get(name) or _tool_execution_contract(name)
-    known = name in _ALLOWED_KEYS or _native_system(name) is not None
+    known = name in _ALLOWED_KEYS or any(
+        name.startswith(prefix) for prefix in _NATIVE_PREFIXES.values()
+    )
     return {
         "schema": "agent-runtime.execution-receipt.v1",
         "tool": name,

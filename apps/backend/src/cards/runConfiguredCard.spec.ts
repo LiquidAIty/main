@@ -35,7 +35,7 @@ const LOCAL_CODER_CARD = {
   id: 'card_local_coder',
   kind: 'agent',
   title: 'Local Coder',
-  runtimeType: 'local_coder',
+  runtimeType: 'assistant_agent',
   runtimeBinding: 'local_coder',
   prompt: 'You are the Local Coder controller.',
   runtimeOptions: {
@@ -283,7 +283,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     });
 
     expect(result.status).toBe('completed');
-    expect(result.runtimeType).toBe('local_coder');
+    expect(result.runtimeType).toBe('assistant_agent');
     expect(result.tools).toEqual(['run_local_coder']);
     expect(LOCAL_CODER_CARD.runtimeOptions.tools.filter((tool) => tool.startsWith('cbm.'))).toHaveLength(14);
     const payload = mockRunCard.mock.calls[0][0];

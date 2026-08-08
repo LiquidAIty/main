@@ -90,7 +90,7 @@ replace its runtime.
 The Local Coder card is also working and must remain. `run_local_coder(objective, …)` (Python tool) →
 backend `/api/coder/localcoder/run` — **the server injects the trusted filesystem root + run id; never
 the model** — → `LocalCoderAdapter` → the configured OpenClaude/Coder CLI → validated `CoderReport`.
-Coder-card Run and Main→Coder through the external `run_coder_subagent` delegation doorway both enter
+Coder-card Run and Main→Coder through the generic connected saved-card subagent doorway both enter
 the same saved-card runtime and reach the same model-bound `run_local_coder` tool. Coder remains
 Mag One-eligible for later testing through that same participant contract, but Mag One→Coder is not
 a current MVP requirement or launch gate. The

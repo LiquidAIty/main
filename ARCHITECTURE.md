@@ -93,15 +93,15 @@ the same path when that later test is intentionally run:
 
 ```txt
 Coder card Run ─┐
-Main / external GPT → run_coder_subagent ───────┼→ runConfiguredCard / runCardWithContract
+Main → generic connected-card subagent doorway ─┼→ runConfiguredCard / runCardWithContract
 Mag One (later compatibility test) ─────────────┘  → Python typed runtime participant
                                                      → model-bound run_local_coder
                                                      → /api/coder/localcoder/run
                                                      → LocalCoderService → LocalCoderAdapter
 ```
 
-`run_coder_subagent` verifies the saved Main→Coder flow and delegates to the generic saved-card
-runner. It does not own a process, session, terminal, provider, model, tool set, or repository root.
+The generic Harness doorway resolves the saved Main→Coder flow and delegates to the saved-card
+runner. There is no separate Coder-specific Main tool or execution engine.
 
 OpenRouter cards use OpenClaude's OpenAI-compatible dialect with the saved provider model (for
 example DeepSeek) and the OpenRouter endpoint/key. OpenAI Account cards use the same supported

@@ -22,7 +22,6 @@ function isLocalCoderControllerCard(card: AgentCardInstance | null | undefined):
   return (
     safeText(card.id).trim().toLowerCase() === 'card_local_coder' ||
     safeText(card.runtimeBinding).trim().toLowerCase() === 'local_coder' ||
-    safeText(card.runtimeType).trim().toLowerCase() === 'local_coder' ||
     safeText(card.templateId).trim().toLowerCase() === 'template_local_coder'
   );
 }
@@ -143,7 +142,13 @@ export function readDeckDocument(
     if (typeof edge.source !== 'string' || !edge.source) throw new Error('deck_edge_source_invalid');
     if (typeof edge.target !== 'string' || !edge.target) throw new Error('deck_edge_target_invalid');
   }
-  return cloneDeckDocument(value) as DeckDocument;
+  const deck = cloneDeckDocument(value) as DeckDocument;
+  deck.nodes = deck.nodes.map((node) =>
+    isLocalCoderControllerCard(node)
+      ? { ...node, runtimeBinding: 'local_coder', runtimeType: 'assistant_agent' }
+      : node,
+  );
+  return deck;
 }
 
 export function resolveProjectDeckPayload(

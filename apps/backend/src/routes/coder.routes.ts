@@ -5,11 +5,12 @@ import type { OpenClaudeRunRequest } from '../coder/openclaude/contracts';
 import { openClaudeRuntimeService } from '../coder/openclaude/runtime/service';
 import { localCoderService } from '../coder/localcoder/service';
 import {
+  hermesConsoleSessionManager,
   openClaudeConsoleSessionManager,
   type ConsoleMode,
 } from '../coder/openclaude/console/consoleSession';
 import { runConfiguredCard } from '../cards/runtime';
-import { resolveProductChatWorkingDirectory } from '../coder/workspaceRoot';
+import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../coder/workspaceRoot';
 import {
   describeConnectedAgents,
   runMagOne,
@@ -177,7 +178,7 @@ async function resolveCodingCard(projectId: string, deckId: string, cardId: stri
   const { deck } = await getDeckDocument(projectId, deckId);
   const card = (deck?.nodes || []).find((node: any) => String(node?.id || '') === cardId);
   if (!card) throw new Error(`coder_card_not_found:${cardId}`);
-  const system = card.runtimeType === 'local_coder' && card.runtimeBinding === 'local_coder';
+  const system = card.runtimeType === 'assistant_agent' && card.runtimeBinding === 'local_coder';
   if (!system) throw new Error(`coder_card_runtime_unsupported:${cardId}`);
   return card;
 }
@@ -519,10 +520,16 @@ router.get('/openclaude/terminal/launch', (req, res) => {
   return res.status(statusCode).json({ ok: launch.ok, launch });
 });
 
-// ── Native OpenClaude terminal transport ──────────────────────────────────
+// ── Native terminal transports ─────────────────────────────────────────────
+// Route plumbing is shared, while Coder and installed Hermes keep separate
+// process managers and session namespaces.
+type ConsoleRouteManager =
+  | typeof openClaudeConsoleSessionManager
+  | typeof hermesConsoleSessionManager;
+
 function mountConsoleSessionRoutes(
   prefix: string,
-  manager: typeof openClaudeConsoleSessionManager,
+  manager: ConsoleRouteManager,
 ): void {
   router.post(`${prefix}/sessions`, (req, res) => {
     const started = manager.start({
@@ -613,6 +620,7 @@ function mountConsoleSessionRoutes(
 }
 
 mountConsoleSessionRoutes('/openclaude/console', openClaudeConsoleSessionManager);
+mountConsoleSessionRoutes('/hermes/console', hermesConsoleSessionManager);
 
 
 /** Resolve the saved Main Chat card from the live deck by binding, never title. */
@@ -637,7 +645,7 @@ router.get('/localcoder/status', async (req, res) => {
 router.post('/localcoder/run', async (req, res) => {
   try {
     // The coder's filesystem root is server-owned and trusted. The caller
-    // supplies the bounded logical task plus the saved card's provider/model;
+    // supplies only the bounded logical task;
     // it cannot choose the filesystem root or mint the run identity.
     const incoming = (req.body?.coderPacket ?? req.body ?? {}) as Record<string, unknown>;
     const coderPacket = {
@@ -646,7 +654,7 @@ router.post('/localcoder/run', async (req, res) => {
         typeof incoming.id === 'string' && incoming.id.trim()
           ? incoming.id
           : `coder_${randomUUID()}`,
-      repoPath: process.env.LIQUIDAITY_GRPC_CWD || 'C:/Projects/main',
+      repoPath: resolveRepoRoot(),
     };
     const result = await localCoderService.run(coderPacket);
     const reportOk = result.report.status === 'succeeded' || result.report.status === 'partial';

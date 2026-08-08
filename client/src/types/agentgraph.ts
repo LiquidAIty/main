@@ -15,8 +15,7 @@ export type RuntimeBinding =
 
 export type AgentCardRuntimeType =
   | 'assistant_agent'
-  | 'magentic_one'
-  | 'local_coder';
+  | 'magentic_one';
 
 // flow = ORANGE direct parent→subagent; magentic_option = BLUE side worker
 // slot; magentic_control = BLUE dedicated top control input (submit the

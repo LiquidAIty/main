@@ -31,7 +31,7 @@ const search = {
   prompt: 'Search prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'deepseek/deepseek-v4-flash-0731', tools: ['web_search'] },
 };
 const coder = {
-  id: 'card_local_coder', kind: 'agent', runtimeBinding: 'local_coder', runtimeType: 'local_coder',
+  id: 'card_local_coder', kind: 'agent', runtimeBinding: 'local_coder', runtimeType: 'assistant_agent',
   prompt: 'Coder prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['run_local_coder'] },
 };
 const flow = (source: string, target: string) => ({ id: `${source}:${target}`, source, target, edgeType: 'flow' });
@@ -98,9 +98,9 @@ describe('native Main / Hermes / Search doorways', () => {
     }) as any;
     expect(definition.system_prompt).toBe('Hermes prompt');
     expect(definition.context_mode_inherit_parent).toBe(true);
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__search_nodes');
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__add_memory');
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__add_triplet');
+    expect(definition.allowed_tools).toContain('mcp__liquidaity__graphiti_search_nodes');
+    expect(definition.allowed_tools).toContain('mcp__liquidaity__graphiti_add_memory');
+    expect(definition.allowed_tools).toContain('mcp__liquidaity__graphiti_add_triplet');
     expect(definition.allowed_tools).toContain('mcp__liquidaity__write_mag_one_instructions');
     expect(definition.allowed_card_run_ids).toEqual([search.id]);
   });
@@ -146,7 +146,7 @@ describe('native Main / Hermes / Search doorways', () => {
     ));
     const config = await resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat');
     expect(config?.parentAllowedMcpTools).toEqual([
-      'mcp__liquidaity__index_status',
+      'mcp__liquidaity__cbm_index_status',
     ]);
   });
 

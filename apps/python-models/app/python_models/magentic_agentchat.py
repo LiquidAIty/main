@@ -16,14 +16,10 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import Sequence
 from typing import Any
 
-from autogen_agentchat.agents import AssistantAgent, BaseChatAgent
-from autogen_agentchat.base import Response
-from autogen_agentchat.messages import BaseChatMessage, TextMessage
+from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.teams import MagenticOneGroupChat
-from autogen_core import CancellationToken
 
 from app.python_models import agentgraph as ag
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
@@ -83,71 +79,16 @@ def _safe_agent_name(raw: str, index: int, used: set[str]) -> str:
     return name
 
 
-class _LocalCoderRuntimeAgent(BaseChatAgent):
-    """AutoGen participant that delegates to the one LocalCoder/OpenClaude runtime.
-
-    ``local_coder`` is a typed runtime binding, not a second Python-hosted model.
-    Keeping the adapter as a real ``BaseChatAgent`` preserves standalone and
-    Magentic-One compatibility while ensuring the saved Coder provider/model are
-    consumed only by the canonical OpenClaude execution authority.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        description: str,
-        *,
-        model_provider: str,
-        provider_model_id: str,
-        reasoning_effort: str | None,
-        inner_mcp_tools: list[str],
-    ) -> None:
-        super().__init__(name, description)
-        self._tool = build_local_coder_tool(
-            model_provider,
-            provider_model_id,
-            reasoning_effort,
-            inner_mcp_tools,
-        )
-
-    @property
-    def produced_message_types(self) -> Sequence[type[BaseChatMessage]]:
-        return (TextMessage,)
-
-    async def on_messages(
-        self,
-        messages: Sequence[BaseChatMessage],
-        cancellation_token: CancellationToken,
-    ) -> Response:
-        objective = "\n\n".join(
-            text
-            for message in messages
-            if (text := _as_text(getattr(message, "content", "")))
-        )
-        if not objective:
-            raise RuntimeError("local_coder_assignment_required")
-        output = await self._tool.run_json(
-            {"objective": objective},
-            cancellation_token,
-        )
-        return Response(
-            chat_message=TextMessage(content=_as_text(output), source=self.name)
-        )
-
-    async def on_reset(self, cancellation_token: CancellationToken) -> None:
-        return None
-
-
 def _build_participants(
     context: ContextPack,
     model_client: Any,
     *,
     extra_tools: list[Any] | None = None,
-) -> list[BaseChatAgent]:
+) -> list[AssistantAgent]:
     card = context.cardRuntime
     if card is None:
         return []
-    participants: list[BaseChatAgent] = []
+    participants: list[AssistantAgent] = []
     used_names: set[str] = set()
     configured_participants = card.participants or []
     if isinstance(model_client, (list, tuple)) and len(model_client) != len(
@@ -173,32 +114,6 @@ def _build_participants(
             for tool in (getattr(participant, "tools", []) or [])
             if _as_text(tool)
         ]
-        if description == "local_coder":
-            if selected_tools != ["run_local_coder"]:
-                raise RuntimeError(
-                    "local_coder_runtime_tool_contract_invalid: "
-                    f"expected=run_local_coder actual={','.join(selected_tools) or 'none'}"
-                )
-            participants.append(
-                _LocalCoderRuntimeAgent(
-                    name,
-                    description,
-                    model_provider=_as_text(getattr(participant, "provider", "")),
-                    provider_model_id=_as_text(
-                        getattr(participant, "providerModelId", "")
-                    ),
-                    reasoning_effort=_as_text(
-                        getattr(participant, "reasoningEffort", "")
-                    ) or None,
-                    inner_mcp_tools=[
-                        _as_text(tool)
-                        for tool in (getattr(participant, "innerMcpTools", []) or [])
-                        if _as_text(tool)
-                    ],
-                )
-            )
-            continue
-
         kwargs: dict[str, Any] = {
             "name": name,
             "description": description,
@@ -215,6 +130,22 @@ def _build_participants(
         # behavior). Unknown/disabled IDs fail loudly through resolve_selected
         # rather than being silently dropped.
         tools = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools) if selected_tools else []
+        if "run_local_coder" in selected_tools:
+            tools = [
+                build_local_coder_tool(
+                    _as_text(getattr(participant, "provider", "")),
+                    _as_text(getattr(participant, "providerModelId", "")),
+                    _as_text(getattr(participant, "reasoningEffort", "")) or None,
+                    [
+                        _as_text(tool)
+                        for tool in (getattr(participant, "innerMcpTools", []) or [])
+                        if _as_text(tool)
+                    ],
+                )
+                if getattr(tool, "name", "") == "run_local_coder"
+                else tool
+                for tool in tools
+            ]
         if extra_tools:
             tools = [*tools, *extra_tools]
         if tools:
@@ -455,16 +386,15 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     started = time.monotonic()
 
     try:
-        if _as_text(getattr(single, "runtimeBinding", "")) != "local_coder":
-            client = _build_model_client(
-                AutoGenAgentConfig(
-                    provider=single.provider,
-                    provider_model_id=single.providerModelId,
-                    temperature=single.temperature,
-                    max_tokens=single.maxTokens,
-                    reasoning_effort=single.reasoningEffort,
-                )
+        client = _build_model_client(
+            AutoGenAgentConfig(
+                provider=single.provider,
+                provider_model_id=single.providerModelId,
+                temperature=single.temperature,
+                max_tokens=single.maxTokens,
+                reasoning_effort=single.reasoningEffort,
             )
+        )
         participants = _build_participants(context, client)
         # The guard guarantees exactly one real configured participant, so the
         # default-"Assist" branch of _build_participants is unreachable here.
@@ -683,10 +613,7 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             )
         )
         participant_clients = [
-            None
-            if _as_text(getattr(participant, "runtimeBinding", ""))
-            == "local_coder"
-            else _build_model_client(
+            _build_model_client(
                 AutoGenAgentConfig(
                     provider=participant.provider,
                     provider_model_id=participant.providerModelId,

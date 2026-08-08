@@ -124,7 +124,7 @@ const versionOk = async () => ({
 describe('LocalCoderAdapter', () => {
   it('maps saved dotted MCP capability names to the injected OpenClaude host without a registry', () => {
     expect(toOpenClaudeMcpToolName('cbm.search_graph')).toBe(
-      'mcp__liquidaity__search_graph',
+      'mcp__liquidaity__cbm_search_graph',
     );
     expect(toOpenClaudeMcpToolName('mcp__custom__tool')).toBe('mcp__custom__tool');
   });
@@ -176,7 +176,7 @@ describe('LocalCoderAdapter', () => {
     expect(usedArgs).toContain('--print');
     expect(usedArgs).toContain('--json-schema');
     expect(usedArgs).toEqual(expect.arrayContaining([
-      '--allowed-tools', 'mcp__liquidaity__search_graph',
+      '--allowed-tools', 'mcp__liquidaity__cbm_search_graph',
       '--effort', 'medium',
     ]));
     expect(usedArgs[usedArgs.indexOf('--provider') + 1]).toBe('openai');

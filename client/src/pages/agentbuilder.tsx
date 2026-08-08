@@ -24,6 +24,7 @@ import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurface
 import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
 import OpenClaudeConsolePanel from '../features/agentbuilder/console/OpenClaudeConsolePanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
+import HermesConsole from '../components/hermes/HermesConsole';
 import HermesKanbanWorkspace from '../features/hermeskanban/HermesKanbanWorkspace';
 import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import type { AgentBuilderChatMessage } from '../features/agentbuilder/console/useAgentBuilderMainChat';
@@ -294,6 +295,7 @@ export default function AgentBuilder(): React.ReactElement {
     currentDeckRef.current = deck;
   }, [deck]);
   const priorWorkspaceViewRef = useRef<'chat' | 'canvas' | 'knowledge' | 'trading' | 'worldsignal'>('canvas');
+  const [hermesConsoleOpen, setHermesConsoleOpen] = useState(false);
   const localCoderConsoleConfig = useMemo(
     () => resolveLocalCoderControllerConsoleConfig(deck),
     [deck],
@@ -804,7 +806,8 @@ export default function AgentBuilder(): React.ReactElement {
     // Keep the chat panel on the left; the Kanban board renders in the canvas
     // region to its right, exactly like the Agent Canvas. The canvas pane stays
     // mounted beneath it (hidden), so closing Hermes restores the exact prior
-    // viewport/selection. No terminal process starts.
+    // viewport/selection. The installed Hermes terminal starts only from its
+    // explicit button inside the Hermes workspace.
     priorWorkspaceViewRef.current =
       workspaceView === 'hermes' ? 'canvas' : workspaceView;
     setInspectorDrawerOpen(false);
@@ -813,8 +816,19 @@ export default function AgentBuilder(): React.ReactElement {
   }, [deck.nodes, workspaceView]);
 
   const closeHermesKanban = useCallback(() => {
+    setHermesConsoleOpen(false);
     setWorkspaceView(priorWorkspaceViewRef.current);
   }, []);
+
+  const openHermesTerminal = useCallback(() => {
+    const hermesCard = deck.nodes.find(isHermesStewardCard);
+    if (!hermesCard) return;
+    setHermesConsoleOpen(true);
+  }, [deck.nodes]);
+
+  useEffect(() => {
+    setHermesConsoleOpen(false);
+  }, [activeProject]);
 
   const handleSelectEdge = useCallback(
     (edgeId: string | null) => {
@@ -1153,7 +1167,18 @@ export default function AgentBuilder(): React.ReactElement {
             data-testid="hermes-kanban-region"
             style={{ position: 'absolute', inset: 0 }}
           >
-            <HermesKanbanWorkspace onClose={closeHermesKanban} />
+            <HermesKanbanWorkspace
+              onClose={closeHermesKanban}
+              onOpenTerminal={openHermesTerminal}
+            />
+            <HermesConsole
+              open={hermesConsoleOpen}
+              targetRoot={terminalRoot}
+              projectId={
+                typeof activeProject === 'string' ? activeProject : undefined
+              }
+              onClose={() => setHermesConsoleOpen(false)}
+            />
           </div>
         ) : null}
       </div>

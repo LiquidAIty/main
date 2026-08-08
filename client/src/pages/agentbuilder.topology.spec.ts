@@ -92,7 +92,6 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(mainTools).toEqual(expect.arrayContaining([
       'engraphis.recall',
       'canvas.inspect',
-      'run_coder_subagent',
     ]));
     expect(mainTools).not.toEqual(expect.arrayContaining(['knowgraph.ingest', 'web_search']));
     expect(hermesTools).toEqual(expect.arrayContaining([
@@ -103,7 +102,7 @@ describe('Main / Hermes / graph authority topology', () => {
       'card.run_assistant_agent',
     ]));
     expect(hermesTools).not.toEqual(
-      expect.arrayContaining(['web_search', 'run_mag_one', 'run_coder_subagent']),
+      expect.arrayContaining(['web_search', 'run_mag_one']),
     );
     expect(searchTools).toEqual(['web_search']);
     const hermesPrompt = byId.get('card_hermes_steward')?.prompt ?? '';
