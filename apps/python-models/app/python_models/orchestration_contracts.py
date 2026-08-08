@@ -83,6 +83,10 @@ class CardRuntimeParticipant(BaseModel):
     prompt: str = ""
     provider: RequiredRuntimeString
     providerModelId: RequiredRuntimeString
+    reasoningEffort: Literal["low", "medium", "high", "xhigh"] | None = None
+    # Local Coder only: exact MCP capabilities selected on the saved card.
+    # ``tools`` remains the outer AutoGen controller grant.
+    innerMcpTools: list[str] = Field(default_factory=list)
     temperature: float | None = None
     maxTokens: int | None = None
 

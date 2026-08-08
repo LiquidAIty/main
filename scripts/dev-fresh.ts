@@ -89,6 +89,27 @@ async function waitForPostgresAge(): Promise<void> {
   throw new Error('existing PostgreSQL/AGE container did not become query-ready');
 }
 
+async function waitForBackendPostgresAge(): Promise<void> {
+  // Container-internal pg_isready plus a host TCP accept do not prove the
+  // Windows-published port can complete the same PostgreSQL protocol path the
+  // backend uses. Import the backend's one Prisma authority so this check uses
+  // its exact env loader, DATABASE_URL, generated client, and target database.
+  const { prisma } = await import('../apps/backend/src/services/database');
+  try {
+    const rows = await prisma.$queryRaw<Array<{ extname: string }>>`
+      SELECT extname FROM pg_extension WHERE extname = 'age'
+    `;
+    if (!rows.some((row) => row.extname === 'age')) {
+      throw new Error('AGE extension is not installed in the backend target database');
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`backend DATABASE_URL did not reach PostgreSQL/AGE: ${detail}`);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
 async function waitForNeo4jQuery(): Promise<void> {
   const query = [
     'exec', 'neo4j', 'sh', '-lc',
@@ -130,6 +151,7 @@ async function ensureGraphDatabases(): Promise<void> {
   }
   await waitForPostgresAge();
   await waitForTcp(5433, 'PostgreSQL/AGE');
+  await waitForBackendPostgresAge();
 
   const neo4jExists = await runCommand('docker', ['inspect', 'neo4j']);
   if (neo4jExists.code === 0) {
@@ -154,7 +176,7 @@ async function ensureGraphDatabases(): Promise<void> {
   }
   await waitForTcp(7687, 'Neo4j Bolt');
   await waitForNeo4jQuery();
-  console.log('[fresh] PostgreSQL/AGE and Neo4j are query-ready (healthy containers preserved)');
+  console.log('[fresh] PostgreSQL/AGE and Neo4j are query-ready through canonical application paths (healthy containers preserved)');
 }
 
 async function main(): Promise<void> {

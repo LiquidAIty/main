@@ -373,7 +373,12 @@ async def run_local_coder(
     )
 
 
-def build_local_coder_tool(model_provider: str, provider_model_id: str) -> FunctionTool:
+def build_local_coder_tool(
+    model_provider: str,
+    provider_model_id: str,
+    reasoning_effort: str | None = None,
+    inner_mcp_tools: list[str] | None = None,
+) -> FunctionTool:
     """Create a run_local_coder tool bound to the trusted saved-card model.
 
     Provider/model come from the backend-authored card runtime, not from model
@@ -382,6 +387,10 @@ def build_local_coder_tool(model_provider: str, provider_model_id: str) -> Funct
     """
     provider = str(model_provider or "").strip()
     model_id = str(provider_model_id or "").strip()
+    saved_reasoning_effort = str(reasoning_effort or "").strip() or None
+    saved_mcp_tools = [
+        str(tool).strip() for tool in (inner_mcp_tools or []) if str(tool).strip()
+    ]
 
     async def _adapter_with_model(
         objective: str,
@@ -414,6 +423,12 @@ def build_local_coder_tool(model_provider: str, provider_model_id: str) -> Funct
             "writeMode": "edit" if str(write_mode or "").strip().lower() == "edit" else "read-only",
             "modelProvider": provider,
             "providerModelId": model_id,
+            **(
+                {"reasoningEffort": saved_reasoning_effort}
+                if saved_reasoning_effort
+                else {}
+            ),
+            **({"mcpTools": saved_mcp_tools} if saved_mcp_tools else {}),
         }
         return await asyncio.to_thread(
             _post_backend_json_sync,

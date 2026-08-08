@@ -118,6 +118,9 @@ export type LocalCoderRuntimeDiagnostics = {
   workingDirectory: string;
   provider: string;
   model: string;
+  reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | null;
+  authTransportClass: 'openai_account_oauth' | 'openrouter_api_key';
+  grantedMcpTools: string[];
   sessionId: string | null;
   permissionMode: LocalCoderPermissionMode;
   timeoutMs: number;
@@ -150,6 +153,19 @@ const EXPLICIT_ENV_NAMES = [
 const WINDOWS_EXEC_EXTENSIONS = ['.exe', '.cmd', '.bat', '.com'];
 const MAX_LOCALCODER_ARGV_PROMPT_CHARS = 16_000;
 const MAX_DIAGNOSTIC_LINE_CHARS = 500;
+
+/** Translate the app MCP catalog's dotted public name into the exact tool name
+ * OpenClaude receives from the injected ``liquidaity`` MCP server. This is a
+ * transport spelling rule, not a second capability registry. */
+export function toOpenClaudeMcpToolName(name: string): string {
+  const canonical = String(name || '').trim();
+  if (!canonical) throw new Error('localcoder_mcp_tool_name_empty');
+  if (canonical.startsWith('mcp__')) return canonical;
+  if (!canonical.includes('.')) {
+    throw new Error(`localcoder_mcp_tool_name_invalid: ${canonical}`);
+  }
+  return `mcp__liquidaity__${canonical.replace(/\./g, '_')}`;
+}
 
 export function resolveLocalCoderWorkspaceRoot(startPath: string): string {
   let candidate = path.resolve(startPath);
@@ -520,6 +536,10 @@ function createRuntimeDiagnostics(
     workingDirectory,
     provider: String(packet.modelProvider || 'openai'),
     model,
+    reasoningEffort: packet.reasoningEffort ?? null,
+    authTransportClass:
+      packet.modelProvider === 'openrouter' ? 'openrouter_api_key' : 'openai_account_oauth',
+    grantedMcpTools: (packet.mcpTools ?? []).map(toOpenClaudeMcpToolName),
     sessionId: null,
     permissionMode: deriveLocalCoderPermissionMode(packet),
     timeoutMs: 0,
@@ -883,6 +903,8 @@ export class LocalCoderAdapter {
       permissionMode: deriveLocalCoderPermissionMode(packet),
       jsonSchema: coderReportJsonSchema,
       mcpFlags,
+      reasoningEffort: packet.reasoningEffort,
+      allowedTools: (packet.mcpTools ?? []).map(toOpenClaudeMcpToolName),
     });
   }
 

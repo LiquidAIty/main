@@ -17,7 +17,12 @@ export function buildOpenClaudeJobArgs(opts: {
   permissionMode: ConsolePermissionMode;
   jsonSchema: unknown;
   mcpFlags?: string[];
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
+  allowedTools?: string[];
 }): string[] {
+  // OpenClaude's CLI spells OpenAI xhigh as the cross-provider "max" level;
+  // its OpenAI transport converts max back to the API's xhigh value.
+  const cliEffort = opts.reasoningEffort === 'xhigh' ? 'max' : opts.reasoningEffort;
   return [
     '--print',
     opts.prompt,
@@ -26,12 +31,14 @@ export function buildOpenClaudeJobArgs(opts: {
     '--json-schema',
     JSON.stringify(opts.jsonSchema),
     ...(opts.mcpFlags ?? []),
+    ...(opts.allowedTools?.length ? ['--allowed-tools', ...opts.allowedTools] : []),
     '--permission-mode',
     opts.permissionMode,
     '--model',
     opts.model,
     '--provider',
     'openai',
+    ...(cliEffort ? ['--effort', cliEffort] : []),
     '--no-session-persistence',
   ];
 }

@@ -99,9 +99,16 @@ class _LocalCoderRuntimeAgent(BaseChatAgent):
         *,
         model_provider: str,
         provider_model_id: str,
+        reasoning_effort: str | None,
+        inner_mcp_tools: list[str],
     ) -> None:
         super().__init__(name, description)
-        self._tool = build_local_coder_tool(model_provider, provider_model_id)
+        self._tool = build_local_coder_tool(
+            model_provider,
+            provider_model_id,
+            reasoning_effort,
+            inner_mcp_tools,
+        )
 
     @property
     def produced_message_types(self) -> Sequence[type[BaseChatMessage]]:
@@ -180,6 +187,14 @@ def _build_participants(
                     provider_model_id=_as_text(
                         getattr(participant, "providerModelId", "")
                     ),
+                    reasoning_effort=_as_text(
+                        getattr(participant, "reasoningEffort", "")
+                    ) or None,
+                    inner_mcp_tools=[
+                        _as_text(tool)
+                        for tool in (getattr(participant, "innerMcpTools", []) or [])
+                        if _as_text(tool)
+                    ],
                 )
             )
             continue
@@ -447,6 +462,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                     provider_model_id=single.providerModelId,
                     temperature=single.temperature,
                     max_tokens=single.maxTokens,
+                    reasoning_effort=single.reasoningEffort,
                 )
             )
         participants = _build_participants(context, client)
@@ -663,6 +679,7 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
                 provider_model_id=context.session.providerModelId,
                 temperature=runtime_options.get("temperature"),
                 max_tokens=runtime_options.get("maxTokens"),
+                reasoning_effort=runtime_options.get("reasoningEffort"),
             )
         )
         participant_clients = [
@@ -675,6 +692,7 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
                     provider_model_id=participant.providerModelId,
                     temperature=participant.temperature,
                     max_tokens=participant.maxTokens,
+                    reasoning_effort=participant.reasoningEffort,
                 )
             )
             for participant in context.cardRuntime.participants

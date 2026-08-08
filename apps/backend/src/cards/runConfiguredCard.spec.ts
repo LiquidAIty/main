@@ -294,6 +294,9 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.cardRuntime.participants[0].runtimeType).toBe('assistant_agent');
     expect(payload.cardRuntime.participants[0].runtimeBinding).toBe('local_coder');
     expect(payload.cardRuntime.participants[0].tools).toEqual(['run_local_coder']);
+    expect(payload.cardRuntime.participants[0].innerMcpTools).toEqual(
+      LOCAL_CODER_CARD.runtimeOptions.tools.filter((tool) => tool.startsWith('cbm.')),
+    );
     expect(payload.cardRuntime.participants[0].prompt).toBe('You are the Local Coder controller.');
   });
 

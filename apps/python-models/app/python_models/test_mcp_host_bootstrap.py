@@ -62,8 +62,20 @@ def test_card_assignment_compatibility_matches_mcp_caller_enforcement():
     assert mcp_host._tool_capability_metadata(
         "write_mag_one_instructions", safe
     )["assignableRuntimeBindings"] == ["hermes_steward"]
+    graph_capable_bindings = [
+        "assist", "local_coder", "main_chat", "research_agent", "plan_agent", "hermes_steward",
+    ]
     assert mcp_host._tool_capability_metadata(
         "engraphis.recall", safe
+    )["assignableRuntimeBindings"] == graph_capable_bindings
+    assert mcp_host._tool_capability_metadata(
+        "graphiti.search_nodes", safe
+    )["assignableRuntimeBindings"] == graph_capable_bindings
+    assert mcp_host._tool_capability_metadata(
+        "cbm.search_graph", safe
+    )["assignableRuntimeBindings"] == graph_capable_bindings
+    assert mcp_host._tool_capability_metadata(
+        "web_search", safe
     )["assignableRuntimeBindings"] == ["main_chat", "hermes_steward"]
     assert mcp_host._tool_capability_metadata(
         "main.context", safe

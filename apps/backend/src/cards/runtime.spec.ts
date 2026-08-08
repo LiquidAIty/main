@@ -166,6 +166,7 @@ describe('Canonical Cards Runtime', () => {
     expect(coderParticipant?.runtimeType).toBe('assistant_agent');
     expect(coderParticipant?.runtimeBinding).toBe('local_coder');
     expect(coderParticipant?.tools).toEqual(['run_local_coder']);
+    expect(coderParticipant?.innerMcpTools).toEqual(['cbm.list_projects']);
   });
 
   it('magentic_option direction-agnostic', () => {

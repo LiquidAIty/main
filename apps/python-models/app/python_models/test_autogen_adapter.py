@@ -266,6 +266,8 @@ def test_local_coder_participant_is_an_autogen_runtime_adapter_bound_to_openclau
     participant.runtimeBinding = "local_coder"
     participant.provider = "openrouter"
     participant.providerModelId = "deepseek/deepseek-v4-flash-0731"
+    participant.reasoningEffort = "medium"
+    participant.innerMcpTools = ["cbm.search_graph"]
     coder = mac._build_participants(context, None)[0]
     assert participant.runtimeType == "assistant_agent"
     assert coder.description == "local_coder"
@@ -280,6 +282,8 @@ def test_local_coder_participant_is_an_autogen_runtime_adapter_bound_to_openclau
     assert captured["payload"]["coderPacket"]["providerModelId"] == (
         "deepseek/deepseek-v4-flash-0731"
     )
+    assert captured["payload"]["coderPacket"]["reasoningEffort"] == "medium"
+    assert captured["payload"]["coderPacket"]["mcpTools"] == ["cbm.search_graph"]
     assert response.chat_message.content == '{"report":{"status":"succeeded"}}'
 
 

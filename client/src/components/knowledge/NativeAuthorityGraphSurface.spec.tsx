@@ -57,6 +57,9 @@ describe('native authority graph surfaces', () => {
         codeGraphProjectName={null}
         codeGraphProjectError="CBM project identity is ambiguous: C-Projects-main-a, C-Projects-main-b"
         kind="codegraph"
+        thinkGraphProjection={null}
+        thinkGraphStatus="idle"
+        thinkGraphError={null}
         onKindChange={vi.fn()}
       />,
     );

@@ -148,7 +148,12 @@ describe('AgentGraph-native Mag One flow', () => {
       ...edges,
       { id: 'coder', source: 'card_mag_one', target: localCoder.id, edgeType: 'magentic_option' },
     ];
-    const runCard = vi.fn(async () => ({ status: 'success', output: 'done' }));
+    const runCard = vi.fn(
+      async (_card: any, _taskText: string, _context: any) => ({
+        status: 'success',
+        output: 'done',
+      }),
+    );
 
     const result = await runMagOne(
       { projectId: 'project-1', deckId: 'deck-1', instructionId: 'instruction:coder' },
@@ -159,7 +164,8 @@ describe('AgentGraph-native Mag One flow', () => {
     );
 
     expect(result.connectedParticipants).toContain(localCoder.id);
-    const context = runCard.mock.calls[0][2];
+    expect(runCard).toHaveBeenCalledOnce();
+    const [, , context] = runCard.mock.calls[0]!;
     expect(context.allCards).toContainEqual(localCoder);
   });
 

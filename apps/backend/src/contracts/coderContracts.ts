@@ -27,6 +27,10 @@ const coderPacketSchema = z.object({
   // The model-facing run_local_coder tool does not expose these controls.
   modelProvider: z.enum(['openai', 'openrouter']).optional(),
   providerModelId: nonEmptyText.optional(),
+  // Trusted saved-card controls. These are bound by the configured-card
+  // adapter and are not arguments exposed to the model-facing tool.
+  reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
+  mcpTools: textList.optional(),
 }).strict();
 
 const coderReportStatusSchema = z.enum([

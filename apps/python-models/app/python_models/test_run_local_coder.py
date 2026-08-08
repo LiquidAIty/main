@@ -95,7 +95,12 @@ def test_saved_card_tool_binds_openrouter_deepseek_without_model_arguments():
 
     t._post_backend_json_sync = fake_post
     try:
-        tool = t.build_local_coder_tool("openrouter", "deepseek/deepseek-v4-flash-0731")
+        tool = t.build_local_coder_tool(
+            "openrouter",
+            "deepseek/deepseek-v4-flash-0731",
+            "medium",
+            ["cbm.search_graph"],
+        )
         asyncio.run(tool.run_json({"objective": "inspect"}, CancellationToken()))
     finally:
         t._post_backend_json_sync = original
@@ -104,5 +109,7 @@ def test_saved_card_tool_binds_openrouter_deepseek_without_model_arguments():
     assert captured["path"] == "/api/coder/localcoder/run"
     assert packet["modelProvider"] == "openrouter"
     assert packet["providerModelId"] == "deepseek/deepseek-v4-flash-0731"
+    assert packet["reasoningEffort"] == "medium"
+    assert packet["mcpTools"] == ["cbm.search_graph"]
     assert "model_provider" not in tool.schema["parameters"]["properties"]
     assert "provider_model_id" not in tool.schema["parameters"]["properties"]

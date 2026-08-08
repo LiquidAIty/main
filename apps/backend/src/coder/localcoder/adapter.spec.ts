@@ -8,6 +8,7 @@ import {
   LocalCoderAdapter,
   deriveLocalCoderPermissionMode,
   resolveLocalCoderWorkspaceRoot,
+  toOpenClaudeMcpToolName,
 } from './adapter';
 import { LocalCoderService } from './service';
 
@@ -29,6 +30,8 @@ function packet(repoPath: string): CoderPacket {
     stopConditions: ['Stop after one job.'],
     modelProvider: 'openai',
     providerModelId: 'gpt-5.6-luna',
+    reasoningEffort: 'medium',
+    mcpTools: ['cbm.search_graph'],
   };
 }
 
@@ -119,6 +122,12 @@ const versionOk = async () => ({
 });
 
 describe('LocalCoderAdapter', () => {
+  it('maps saved dotted MCP capability names to the injected OpenClaude host without a registry', () => {
+    expect(toOpenClaudeMcpToolName('cbm.search_graph')).toBe(
+      'mcp__liquidaity__cbm_search_graph',
+    );
+    expect(toOpenClaudeMcpToolName('mcp__custom__tool')).toBe('mcp__custom__tool');
+  });
   it('walks up to the monorepo root that holds PLAN.md and apps/backend', () => {
     const root = path.join(tmpdir(), `liquidaity-root-${Date.now()}-${Math.random()}`);
     const startPath = path.join(root, 'apps', 'backend', 'src', 'coder');
@@ -166,6 +175,10 @@ describe('LocalCoderAdapter', () => {
     expect(report.status).toBe('succeeded');
     expect(usedArgs).toContain('--print');
     expect(usedArgs).toContain('--json-schema');
+    expect(usedArgs).toEqual(expect.arrayContaining([
+      '--allowed-tools', 'mcp__liquidaity__cbm_search_graph',
+      '--effort', 'medium',
+    ]));
     expect(usedArgs[usedArgs.indexOf('--provider') + 1]).toBe('openai');
     expect(usedEnv.OPENAI_API_KEY).toBeUndefined();
     expect(usedEnv.OPENAI_BASE_URL).toBe('https://chatgpt.com/backend-api/codex');
@@ -790,6 +803,10 @@ describe('LocalCoderService structural edit-scope gate', () => {
       workingDirectory: process.cwd(),
       provider: 'openai',
       model: 'gpt-5.6-luna',
+      reasoningEffort: 'medium' as const,
+      authTransportClass: 'openai_account_oauth' as const,
+      grantedMcpTools: ['mcp__liquidaity__cbm_search_graph'],
+      sessionId: null,
       permissionMode: 'plan' as const,
       timeoutMs: 30_000,
       promptDelivery: 'argv' as const,

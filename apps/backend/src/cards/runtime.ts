@@ -363,6 +363,9 @@ export function serializeCardParticipant(head: any): Record<string, unknown> {
     ? 'assistant_agent'
     : resolveCardRuntimeType(head);
   const selectedTools = resolveAutoGenParticipantTools(head);
+  const innerMcpTools = isLocalCoderControllerCard(head)
+    ? resolveCardTools(head).filter((tool) => tool !== 'run_local_coder')
+    : [];
   return {
     cardId: String(head.id || ''),
     title: String(head.title || 'Agent'),
@@ -372,9 +375,19 @@ export function serializeCardParticipant(head: any): Record<string, unknown> {
     tools: selectedTools,
     provider: model.provider,
     providerModelId: model.providerModelId,
+    reasoningEffort: cleanReasoningEffort(head.runtimeOptions?.reasoningEffort),
+    ...(innerMcpTools.length > 0 ? { innerMcpTools } : {}),
     temperature: readOptionalNumber(head.runtimeOptions?.temperature, 'temperature'),
     maxTokens: readOptionalNumber(head.runtimeOptions?.maxTokens, 'max_tokens', { positive: true }),
   };
+}
+
+function cleanReasoningEffort(value: unknown): 'low' | 'medium' | 'high' | 'xhigh' | null {
+  if (value == null || value === '') return null;
+  if (value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh') {
+    return value;
+  }
+  throw new Error(`card_reasoning_effort_invalid: ${String(value)}`);
 }
 
 export function buildPythonAutoGenCardRuntimePayload(
@@ -403,6 +416,8 @@ export function buildPythonAutoGenCardRuntimePayload(
   const safeRuntimeOptions: Record<string, unknown> = {
     deckId: String(context.deckId || ''),
   };
+  const reasoningEffort = cleanReasoningEffort(card.runtimeOptions?.reasoningEffort);
+  if (reasoningEffort) safeRuntimeOptions.reasoningEffort = reasoningEffort;
   for (const key of ['temperature', 'maxTokens', 'maxTurns'] as const) {
     const value = readOptionalNumber(card.runtimeOptions?.[key], key, {
       positive: key !== 'temperature',

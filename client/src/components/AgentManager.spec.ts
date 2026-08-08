@@ -74,8 +74,8 @@ describe('AgentManager active builder config', () => {
     const rows = buildDisplayedToolRows(
       [
         { name: 'engraphis.recall', title: 'Recall', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat'] } },
-        { name: 'graphiti.search_nodes', title: 'Search nodes', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat', 'hermes_steward'] } },
-        { name: 'cbm.search_graph', title: 'Search graph', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat'] } },
+        { name: 'graphiti.search_nodes', title: 'Search nodes', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat', 'hermes_steward', 'local_coder'] } },
+        { name: 'cbm.search_graph', title: 'Search graph', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat', 'hermes_steward', 'local_coder'] } },
         { name: 'canvas.inspect', title: 'Inspect canvas', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat'] } },
         { name: 'main.context', capability: { cardAssignable: false, assignableRuntimeBindings: [] } },
       ],
@@ -101,7 +101,7 @@ describe('AgentManager active builder config', () => {
 
   it('uses runtime-owned compatibility metadata instead of graph-authority policy', () => {
     const catalog = [
-      { name: 'cbm.search_graph', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat'] } },
+      { name: 'cbm.search_graph', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat', 'hermes_steward', 'local_coder'] } },
       { name: 'write_mag_one_instructions', capability: { cardAssignable: true, assignableRuntimeBindings: ['hermes_steward'] } },
       { name: 'run_local_coder', capability: { cardAssignable: true, assignableRuntimeTypes: ['local_coder'] } },
       { name: 'main.context', capability: { cardAssignable: false } },
@@ -109,10 +109,10 @@ describe('AgentManager active builder config', () => {
 
     expect(
       buildDisplayedToolRows(catalog, [], 'local_coder', 'local_coder').map((row) => row.name),
-    ).toEqual(['run_local_coder']);
+    ).toEqual(['cbm.search_graph', 'run_local_coder']);
     expect(
       buildDisplayedToolRows(catalog, [], 'hermes_steward', 'assistant_agent').map((row) => row.name),
-    ).toEqual(['write_mag_one_instructions']);
+    ).toEqual(['cbm.search_graph', 'write_mag_one_instructions']);
     expect(toggleSavedToolAssignment([], 'cbm.search_graph', false)).toEqual([]);
   });
 

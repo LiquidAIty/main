@@ -30,6 +30,7 @@ class AutoGenAgentConfig(BaseModel):
     system_prompt: str = ""
     temperature: float | None = None
     max_tokens: int | None = None
+    reasoning_effort: str | None = None
 
 
 # Model name fragments whose real APIs support OpenAI-style function calling
@@ -105,6 +106,11 @@ def _build_model_client(config: AutoGenAgentConfig) -> OpenAIChatCompletionClien
     max_tokens = config.max_tokens
     if max_tokens is not None and max_tokens <= 0:
         raise RuntimeError(f"card_max_tokens_invalid: {max_tokens}")
+    reasoning_effort = str(config.reasoning_effort or "").strip().lower() or None
+    if reasoning_effort not in {None, "low", "medium", "high"}:
+        raise RuntimeError(
+            f"autogen_reasoning_effort_unsupported: {reasoning_effort}"
+        )
 
     if provider == "openrouter":
         api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
@@ -120,6 +126,8 @@ def _build_model_client(config: AutoGenAgentConfig) -> OpenAIChatCompletionClien
         }
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
+        if reasoning_effort is not None:
+            kwargs["reasoning_effort"] = reasoning_effort
         return OpenAIChatCompletionClient(**kwargs)
 
     if provider == "openai":
@@ -141,6 +149,8 @@ def _build_model_client(config: AutoGenAgentConfig) -> OpenAIChatCompletionClien
         base_url = os.getenv("OPENAI_BASE_URL", "").strip()
         if base_url:
             kwargs["base_url"] = base_url
+        if reasoning_effort is not None:
+            kwargs["reasoning_effort"] = reasoning_effort
         return OpenAIChatCompletionClient(**kwargs)
 
     raise RuntimeError(f"Unsupported AutoGen provider: {provider or 'unknown'}")

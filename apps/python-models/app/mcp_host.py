@@ -434,9 +434,19 @@ def _tool_capability_metadata(
         authority_class = "application"
 
     card_assignable = name != "main.context"
+    graph_tool_runtime_bindings = [
+        "assist",
+        "local_coder",
+        "main_chat",
+        "research_agent",
+        "plan_agent",
+        "hermes_steward",
+    ]
     assignable_runtime_bindings = (
         []
         if not card_assignable
+        else graph_tool_runtime_bindings
+        if graph_authority in {"cbm", "engraphis", "graphiti"}
         else ["main_chat"]
         if name in _MAIN_ONLY_TOOLS
         else ["hermes_steward"]

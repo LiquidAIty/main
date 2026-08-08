@@ -202,7 +202,7 @@ describe('hermesKanban read routes', () => {
     const body = await response.json();
     expect(body.ok).toBe(true);
     expect(body.data.parents).toEqual(['t_parent']);
-    const [bin, args] = execMocks.execFile.mock.calls[0];
+    const [, args] = execMocks.execFile.mock.calls[0];
     expect(args).toEqual(['kanban', 'show', 't_abc', '--json']);
   });
 
@@ -308,7 +308,7 @@ describe('hermesKanban mutation routes (explicit user action only)', () => {
       body: JSON.stringify({ reason: 'waiting on op' }),
     });
     expect((await response.json()).ok).toBe(true);
-    const [bin, args] = execMocks.execFile.mock.calls[0];
+    const [, args] = execMocks.execFile.mock.calls[0];
     expect(args).toEqual(['kanban', 'block', 't_abc', '--kind', 'needs_input', 'waiting on op']);
   });
 
@@ -317,7 +317,7 @@ describe('hermesKanban mutation routes (explicit user action only)', () => {
     const response = await fetch(`${baseUrl}/hermes-kanban/dispatch`, { method: 'POST' });
     const body = await response.json();
     expect(body.ok).toBe(true);
-    const [bin, args] = execMocks.execFile.mock.calls[0];
+    const [, args] = execMocks.execFile.mock.calls[0];
     expect(args).toEqual(['kanban', 'dispatch', '--json']);
   });
 
