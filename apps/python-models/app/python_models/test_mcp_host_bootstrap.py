@@ -322,6 +322,7 @@ def test_lifecycle_errors_remain_typed_and_distinct(monkeypatch):
             "session": "Session terminated",
             "auth": "authentication expired",
             "arguments": "invalid arguments",
+            "resource": "no workspace named 'missing' yet",
             "service": "service unavailable",
             "internal": "unexpected handler failure",
         }.items():
@@ -333,6 +334,8 @@ def test_lifecycle_errors_remain_typed_and_distinct(monkeypatch):
     assert results["session"]["failureCode"] == "session_terminated"
     assert results["auth"]["failureCode"] == "authentication_expired"
     assert results["arguments"]["failureCode"] == "invalid_arguments"
+    assert results["resource"]["failureCode"] == "resource_not_found"
+    assert results["resource"]["errorCategory"] == "NOT_FOUND"
     assert results["service"]["failureCode"] == "service_unavailable"
     assert results["internal"]["failureCode"] == "internal_failure"
     assert results["session"]["failureCode"] != "invalid_arguments"
@@ -689,6 +692,72 @@ def test_native_engraphis_uses_the_cached_local_embedding_model(monkeypatch):
     assert os.environ["HF_HUB_OFFLINE"] == "1"
 
 
+def test_native_engraphis_warmup_builds_the_service_off_the_host_loop(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    host_thread = threading.get_ident()
+    service_threads = []
+
+    def service():
+        service_threads.append(threading.get_ident())
+
+    monkeypatch.setattr(mcp_host, "_load_native_engraphis_service", lambda: service)
+
+    asyncio.run(mcp_host._warm_native_engraphis())
+
+    assert len(service_threads) == 1
+    assert service_threads[0] != host_thread
+
+
+def test_native_engraphis_warmup_isolated_from_calls_until_ready(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    native_result = mcp_host.TextContent(
+        type="text",
+        text=json.dumps({"ok": True, "source": "native"}),
+    )
+
+    class NativeMcp:
+        async def call_tool(self, name, arguments):
+            return [native_result]
+
+    async def initialized():
+        return None
+
+    async def check():
+        release = asyncio.Event()
+        warmup = asyncio.create_task(release.wait())
+        monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_WARMUP_TASK", warmup)
+        monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
+        monkeypatch.setattr(
+            mcp_host,
+            "_NATIVE_ENGRAPHIS_NAMES",
+            frozenset({"engraphis_stats"}),
+        )
+        monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
+
+        initializing = await mcp_host.call_tool("engraphis.stats", {})
+        payload = json.loads(initializing.content[0].text)
+        assert initializing.isError is True
+        assert payload == {
+            "ok": False,
+            "error": "dependency_initializing",
+            "failureCode": "dependency_initializing",
+            "errorCategory": "DEPENDENCY_UNAVAILABLE",
+            "retryable": True,
+            "dependency": "engraphis",
+        }
+
+        release.set()
+        await warmup
+        ready = await mcp_host.call_tool("engraphis.stats", {})
+        assert ready.content[0] is native_result
+
+    asyncio.run(check())
+
+
 def test_streamable_http_discovers_catalogs_before_accepting_requests(monkeypatch):
     import asyncio
     import mcp_host
@@ -697,6 +766,9 @@ def test_streamable_http_discovers_catalogs_before_accepting_requests(monkeypatc
 
     async def initialized_engraphis():
         events.append("engraphis_registry")
+
+    def started_engraphis_warmup():
+        events.append("engraphis_warmup_started")
 
     async def initialized_graphiti():
         events.append("graphiti_registry")
@@ -710,6 +782,7 @@ def test_streamable_http_discovers_catalogs_before_accepting_requests(monkeypatc
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
     monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized_engraphis)
+    monkeypatch.setattr(mcp_host, "_start_native_engraphis_warmup", started_engraphis_warmup)
     monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialized_graphiti)
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", initialized_cbm)
     monkeypatch.setattr(mcp_host, "_run_streamable_http", run_http)
@@ -718,6 +791,7 @@ def test_streamable_http_discovers_catalogs_before_accepting_requests(monkeypatc
 
     assert events == [
         "engraphis_registry",
+        "engraphis_warmup_started",
         "graphiti_registry",
         "cbm_registry",
         "http",
@@ -767,7 +841,7 @@ def test_native_engraphis_hung_call_does_not_block_later_native_dispatch(monkeyp
             await asyncio.sleep(0.005)
         assert entered.is_set()
         later = await asyncio.wait_for(
-            mcp_host.call_tool("engraphis_stats", {"request": 2}),
+            mcp_host.call_tool("engraphis.stats", {"request": 2}),
             timeout=1,
         )
         release.set()
@@ -784,53 +858,44 @@ def test_native_engraphis_hung_call_does_not_block_later_native_dispatch(monkeyp
     assert calls[0][2] != calls[1][2]
 
 
-def test_native_engraphis_failure_is_typed_and_the_next_call_succeeds():
-    code = """
-import asyncio, json, mcp_host
+def test_native_engraphis_failure_is_typed_and_the_next_call_succeeds(monkeypatch):
+    import asyncio
+    import mcp_host
 
-class NativeFailure(RuntimeError):
-    pass
+    class NativeFailure(RuntimeError):
+        pass
 
-class NativeMcp:
-    async def call_tool(self, name, arguments):
-        if name == 'engraphis_native_failure':
-            raise NativeFailure('canonical native failure')
-        return [mcp_host.TextContent(type='text', text=json.dumps({
-            'name': name,
-            'arguments': arguments,
-        }))]
+    class NativeMcp:
+        async def call_tool(self, name, arguments):
+            if name == "engraphis_native_failure":
+                raise NativeFailure("canonical native failure")
+            return [mcp_host.TextContent(type="text", text=json.dumps({
+                "name": name,
+                "arguments": arguments,
+            }))]
 
-native = NativeMcp()
-mcp_host._NATIVE_ENGRAPHIS_MCP = native
-mcp_host._NATIVE_ENGRAPHIS_TOOLS = ()
-mcp_host._NATIVE_ENGRAPHIS_NAMES = frozenset({
-    'engraphis_normal_call', 'engraphis_native_failure',
-})
-
-async def check():
-    typed = await mcp_host.call_tool('engraphis.native_failure', {'value': 1})
-    assert typed.isError is True
-    typed_payload = json.loads(typed.content[0].text)
-    assert typed_payload["error"] == "internal_failure"
-    assert typed_payload["failureCode"] == "internal_failure"
-    normal = await mcp_host.call_tool('engraphis.normal_call', {'value': 2})
-    assert json.loads(normal.content[0].text) == {
-        'name': 'engraphis_normal_call',
-        'arguments': {'value': 2},
-    }
-
-asyncio.run(check())
-print('NATIVE_DIRECT_DISPATCH_OK')
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        cwd=_APP_DIR,
-        capture_output=True,
-        text=True,
-        timeout=10,
+    native = NativeMcp()
+    monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_MCP", native)
+    monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_TOOLS", ())
+    monkeypatch.setattr(
+        mcp_host,
+        "_NATIVE_ENGRAPHIS_NAMES",
+        frozenset({"engraphis_normal_call", "engraphis_native_failure"}),
     )
-    assert result.returncode == 0, result.stderr
-    assert "NATIVE_DIRECT_DISPATCH_OK" in result.stdout
+
+    async def check():
+        typed = await mcp_host.call_tool("engraphis.native_failure", {"value": 1})
+        assert typed.isError is True
+        typed_payload = json.loads(typed.content[0].text)
+        assert typed_payload["error"] == "internal_failure"
+        assert typed_payload["failureCode"] == "internal_failure"
+        normal = await mcp_host.call_tool("engraphis.normal_call", {"value": 2})
+        assert json.loads(normal.content[0].text) == {
+            "name": "engraphis_normal_call",
+            "arguments": {"value": 2},
+        }
+
+    asyncio.run(check())
 
 
 def test_native_cbm_replaces_a_stale_process_without_retrying_a_tool(monkeypatch):

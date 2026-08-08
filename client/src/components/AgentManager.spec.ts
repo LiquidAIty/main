@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildActiveAgentManagerLocalConfig,
+  buildInputDictionarySelectedRows,
   buildDisplayedToolRows,
   toggleSavedToolAssignment,
 } from './AgentManager';
@@ -165,6 +166,81 @@ describe('AgentManager active builder config', () => {
       'first',
       'last',
       'new.tool',
+    ]);
+  });
+
+  it('projects selected dictionary entries separately from a bounded 10k-entry page', () => {
+    const allReferences = Array.from({ length: 10_000 }, (_, index) => ({
+      canonicalId: `catalog.tool.${index}`,
+      namespace: 'catalog',
+      displayName: `Tool ${index}`,
+      capability: {
+        cardAssignable: true,
+        assignableRuntimeBindings: ['main_chat'],
+      },
+    }));
+    const page = allReferences.slice(4_000, 4_100);
+    const selected = buildInputDictionarySelectedRows(
+      [allReferences[9_999]],
+      ['removed.tool'],
+      'main_chat',
+      'assistant_agent',
+    );
+
+    expect(page).toHaveLength(100);
+    expect(selected).toEqual([
+      expect.objectContaining({ name: 'catalog.tool.9999', availability: 'available' }),
+      { name: 'removed.tool', availability: 'stale' },
+    ]);
+    expect(page.some((reference) => reference.canonicalId === 'catalog.tool.9999')).toBe(false);
+  });
+
+  it('keeps an incompatible selected dictionary tool removable', () => {
+    expect(
+      buildInputDictionarySelectedRows(
+        [{
+          canonicalId: 'write_mag_one_instructions',
+          capability: {
+            cardAssignable: true,
+            assignableRuntimeBindings: ['hermes_steward'],
+          },
+        }],
+        [],
+        'main_chat',
+        'assistant_agent',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'write_mag_one_instructions',
+        availability: 'incompatible',
+      }),
+    ]);
+  });
+
+  it('recognizes a private native agent capability as a valid Coder selection', () => {
+    expect(
+      buildInputDictionarySelectedRows(
+        [{
+          canonicalId: 'run_local_coder',
+          kind: 'agent',
+          sourceId: 'local_coder',
+          displayName: 'Local Coder',
+          capability: {
+            cardAssignable: true,
+            assignableRuntimeBindings: ['local_coder'],
+          },
+        }],
+        [],
+        'local_coder',
+        'assistant_agent',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'run_local_coder',
+        kind: 'agent',
+        sourceId: 'local_coder',
+        availability: 'available',
+      }),
     ]);
   });
 });

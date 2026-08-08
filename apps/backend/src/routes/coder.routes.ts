@@ -39,40 +39,60 @@ import {
   requestPythonRailsJson,
 } from '../services/autogen/autogenOrchestratorClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
+import {
+  buildToolInputDataDictionary,
+  searchToolInputReferences,
+  type ToolInputDictionarySource,
+} from '../cards/toolInputDataDictionary';
 
 const router = Router();
 
-router.get('/tool-library', async (req, res) => {
+router.get('/input-data-dictionary/tools', async (req, res) => {
   try {
-    const [harnessTools, autoGenResponse] = await Promise.all([
-      listPythonAgentMcpCatalog(),
-      requestPythonRailsJson('/tools/manifest', { method: 'GET' }),
+    const canonicalMcpTools = await listPythonAgentMcpCatalog();
+    const privateRuntimeManifest = await requestPythonRailsJson('/tools/manifest', {
+      method: 'GET',
+    }) as { tools?: unknown };
+    if (!Array.isArray(privateRuntimeManifest?.tools)) {
+      throw new Error('python_runtime_tool_manifest_invalid');
+    }
+    const dictionary = buildToolInputDataDictionary([
+      ...canonicalMcpTools.map((tool) => ({
+        ...tool,
+        sourceId: 'liquidaity_mcp',
+        kind: 'tool',
+        publication: { externalMcp: true },
+        execution: { authority: 'liquidaity_mcp', nativeName: tool.name },
+      })),
+      ...privateRuntimeManifest.tools as ToolInputDictionarySource[],
     ]);
-    const autoGenManifest = Array.isArray((autoGenResponse as any)?.tools)
-      ? (autoGenResponse as any).tools
-      : null;
-    if (!autoGenManifest) throw new Error('autogen_tool_manifest_invalid');
-    const autoGenTools = autoGenManifest.map((entry: any) => {
-      const name = String(entry?.id || '').trim();
-      if (!name || !entry?.capability || typeof entry.capability !== 'object') {
-        throw new Error(`autogen_tool_capability_metadata_invalid: ${name || 'unnamed'}`);
-      }
-      return {
-        name,
-        title: String(entry.displayName || name),
-        description: String(entry.description || ''),
-        capability: entry.capability,
-      };
+    const selectedIds = Array.isArray(req.query.selectedIds)
+      ? req.query.selectedIds.map(String)
+      : typeof req.query.selectedIds === 'string'
+        ? req.query.selectedIds.split(',').map((value) => value.trim()).filter(Boolean)
+        : [];
+    return res.json({
+      ok: true,
+      ...searchToolInputReferences(dictionary, {
+        query: typeof req.query.query === 'string' ? req.query.query : undefined,
+        namespace: typeof req.query.namespace === 'string' ? req.query.namespace : undefined,
+        selectedIds,
+        offset: typeof req.query.offset === 'string' ? Number(req.query.offset) : undefined,
+        limit: typeof req.query.limit === 'string' ? Number(req.query.limit) : undefined,
+      }),
     });
-    const tools = [...harnessTools, ...autoGenTools].sort((left, right) =>
-      left.name.localeCompare(right.name),
-    );
-    return res.json({ ok: true, tools });
   } catch (error) {
     return res.status(503).json({
       ok: false,
       error: error instanceof Error ? error.message : 'python_agent_mcp_catalog_unavailable',
-      tools: [],
+      references: [],
+      selectedKnownReferences: [],
+      unresolvedSelectedIds: [],
+      namespaces: [],
+      total: 0,
+      offset: 0,
+      limit: 0,
+      hasMore: false,
     });
   }
 });

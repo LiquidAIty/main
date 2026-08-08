@@ -268,6 +268,16 @@ def _typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any
         for term in ("invalid argument", "invalid arguments", "invalid_argument", "invalid params")
     ):
         code, retryable = "invalid_arguments", False
+    elif any(
+        term in lowered
+        for term in (
+            "no workspace named",
+            "workspace not found",
+            "no repo named",
+            "repository not found",
+        )
+    ):
+        code, retryable = "resource_not_found", False
     elif any(term in lowered for term in ("insufficient", "credit", "quota exceeded")):
         code, retryable = "insufficient_credits", False
     elif any(term in lowered for term in ("unauthorized", "authentication", "invalid api key", "401")):
@@ -302,6 +312,8 @@ def _typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any
         category = "TIMEOUT"
     elif code == "invalid_arguments":
         category = "INVALID_ARGUMENT"
+    elif code == "resource_not_found":
+        category = "NOT_FOUND"
     elif code in {"internal_handler_failure", "internal_failure"}:
         category = "INTERNAL"
     else:
@@ -771,6 +783,7 @@ server = AgentRuntimeServer("agent-runtime")
 _NATIVE_ENGRAPHIS_MCP: Any | None = None
 _NATIVE_ENGRAPHIS_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_ENGRAPHIS_NAMES: frozenset[str] = frozenset()
+_NATIVE_ENGRAPHIS_WARMUP_TASK: asyncio.Task[None] | None = None
 _NATIVE_CBM_CLIENT: "_NativeStdioMcpClient | None" = None
 _NATIVE_CBM_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_CBM_NAMES: frozenset[str] = frozenset()
@@ -876,6 +889,74 @@ async def _initialize_native_engraphis() -> None:
     _NATIVE_ENGRAPHIS_MCP = native_mcp
     _NATIVE_ENGRAPHIS_TOOLS = tools
     _NATIVE_ENGRAPHIS_NAMES = frozenset(names)
+
+
+def _load_native_engraphis_service():
+    """Return Engraphis' existing lazy service constructor."""
+    from engraphis.mcp_server import service
+
+    return service
+
+
+async def _warm_native_engraphis() -> None:
+    """Build the configured Engraphis service before accepting MCP requests.
+
+    Engraphis deliberately constructs its MemoryService lazily.  That construction
+    loads the configured local SentenceTransformer, which can take longer than the
+    public MCP call deadline even when the model is already cached and Hugging Face
+    networking is disabled.  Paying that one-time cost during host startup keeps the
+    first ordinary database-read tool from timing out while initialization continues
+    invisibly in a worker thread.
+    """
+    service = _load_native_engraphis_service()
+    await asyncio.to_thread(service)
+
+
+def _start_native_engraphis_warmup() -> None:
+    """Start exactly one warmup without delaying the public MCP listener."""
+    global _NATIVE_ENGRAPHIS_WARMUP_TASK
+    if _NATIVE_ENGRAPHIS_WARMUP_TASK is None:
+        _NATIVE_ENGRAPHIS_WARMUP_TASK = asyncio.create_task(
+            _warm_native_engraphis(),
+            name="liquidaity-engraphis-warmup",
+        )
+
+
+def _native_engraphis_readiness_failure() -> CallToolResult | None:
+    """Return a typed, immediate failure until the one startup warmup is ready."""
+    task = _NATIVE_ENGRAPHIS_WARMUP_TASK
+    if task is None:
+        return None
+    if not task.done():
+        failure = {
+            "ok": False,
+            "error": "dependency_initializing",
+            "failureCode": "dependency_initializing",
+            "errorCategory": "DEPENDENCY_UNAVAILABLE",
+            "retryable": True,
+            "dependency": "engraphis",
+        }
+    else:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            failure = {
+                "ok": False,
+                "error": "dependency_unavailable",
+                "failureCode": "dependency_unavailable",
+                "errorCategory": "DEPENDENCY_UNAVAILABLE",
+                "retryable": True,
+                "dependency": "engraphis",
+            }
+        except Exception as error:
+            failure = _typed_failure(error, dependency="engraphis")
+            failure["errorCategory"] = "DEPENDENCY_UNAVAILABLE"
+        else:
+            return None
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(failure))],
+        isError=True,
+    )
 
 
 def _native_engraphis_mcp():
@@ -2094,6 +2175,9 @@ async def _dispatch_tool(
     else:
         context = await _ensure_main_connection_context()
     if name.startswith(_NATIVE_PREFIXES["engraphis"]):
+        readiness_failure = _native_engraphis_readiness_failure()
+        if readiness_failure is not None:
+            return readiness_failure
         await _initialize_native_engraphis()
         native_name = "engraphis_" + name.removeprefix(_NATIVE_PREFIXES["engraphis"])
         if native_name in _NATIVE_ENGRAPHIS_NAMES:
@@ -2549,6 +2633,7 @@ async def _run_streamable_http() -> None:
 
 async def main() -> None:
     await _initialize_native_engraphis()
+    _start_native_engraphis_warmup()
     await _initialize_native_graphiti()
     if MCP_TRANSPORT == "stdio":
         await _run_stdio()

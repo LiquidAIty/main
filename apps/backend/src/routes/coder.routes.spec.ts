@@ -189,35 +189,63 @@ describe('coder routes', () => {
   // vendored runtime is built or API keys are exported on the test machine.
   const BROKEN_COMMAND = 'node C:/liquidaity/nonexistent/openclaude.mjs';
 
-  it('projects both Python-owned tool catalogs without TypeScript assignment policy', async () => {
-    mcpClientMocks.listPythonAgentMcpCatalog.mockResolvedValueOnce([]);
+  it('federates public MCP and private runtime references without leaking schemas to the UI', async () => {
+    mcpClientMocks.listPythonAgentMcpCatalog.mockResolvedValueOnce([{
+      name: 'cbm.search_graph',
+      title: 'Search graph',
+      description: 'Search CodeGraph.',
+      inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
+      capability: {
+        runtimeCompatibility: ['harness'],
+        assignableRuntimeBindings: ['local_coder'],
+        assignableRuntimeTypes: [],
+        cardAssignable: true,
+      } as any,
+    }]);
     orchestratorMocks.requestPythonRailsJson.mockResolvedValueOnce({
-      tools: [
-        {
-          id: 'run_local_coder',
-          displayName: 'Local Coder',
-          description: 'Run the saved Coder.',
-          capability: {
-            runtimeCompatibility: ['autogen'],
-            assignableRuntimeBindings: ['local_coder'],
-            assignableRuntimeTypes: [],
-            cardAssignable: true,
-          },
+      tools: [{
+        id: 'run_local_coder',
+        kind: 'agent',
+        sourceId: 'local_coder',
+        namespace: 'coder',
+        displayName: 'Local Coder',
+        description: 'Run the saved Coder runtime.',
+        publication: { externalMcp: false },
+        execution: { authority: 'local_coder', nativeName: 'run_local_coder' },
+        inputSchema: { type: 'object', properties: { objective: { type: 'string' } } },
+        capability: {
+          runtimeCompatibility: ['autogen'],
+          assignableRuntimeBindings: ['local_coder'],
+          assignableRuntimeTypes: [],
+          cardAssignable: true,
         },
-      ],
+      }],
     });
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/tool-library`);
+      const response = await fetch(`${baseUrl}/input-data-dictionary/tools?selectedIds=run_local_coder,missing.tool`);
       expect(response.status).toBe(200);
       const payload = await response.json();
-      expect(payload.tools).toEqual([
+      expect(payload.references).toHaveLength(2);
+      expect(payload.references).toEqual(expect.arrayContaining([
         expect.objectContaining({
-          name: 'run_local_coder',
-          title: 'Local Coder',
-          capability: expect.objectContaining({ assignableRuntimeBindings: ['local_coder'] }),
+          canonicalId: 'cbm.search_graph',
+          kind: 'tool',
+          sourceId: 'liquidaity_mcp',
+          publication: { externalMcp: true },
         }),
-      ]);
+        expect.objectContaining({
+          canonicalId: 'run_local_coder',
+          kind: 'agent',
+          displayName: 'Local Coder',
+          sourceId: 'local_coder',
+          publication: { externalMcp: false },
+          execution: { authority: 'local_coder', nativeName: 'run_local_coder' },
+        }),
+      ]));
+      expect(payload.references[0]).not.toHaveProperty('inputSchema');
+      expect(payload.selectedKnownReferences.map((entry: any) => entry.canonicalId)).toEqual(['run_local_coder']);
+      expect(payload.unresolvedSelectedIds).toEqual(['missing.tool']);
     } finally {
       await closeServer(server);
     }

@@ -71,10 +71,27 @@ def test_manifest_publishes_card_runtime_compatibility_from_python_authority():
         "assignableRuntimeTypes": [],
         "cardAssignable": True,
     }
+    assert coder["kind"] == "agent"
+    assert coder["sourceId"] == "local_coder"
+    assert coder["publication"] == {"externalMcp": False}
+    assert coder["execution"] == {
+        "authority": "local_coder",
+        "nativeName": "run_local_coder",
+    }
+    assert coder["inputSchema"]["type"] == "object"
     calculator = manifest["calculator"]
     assert calculator["capability"]["assignableRuntimeTypes"] == [
         "magentic_one",
         "assistant_agent",
+    ]
+    assert manifest["web_search"]["capability"]["assignableRuntimeBindings"] == [
+        "research_agent"
+    ]
+    assert manifest["worldsignals.command"]["capability"]["assignableRuntimeBindings"] == [
+        "worldsignals_agent"
+    ]
+    assert manifest["get_market_snapshot"]["capability"]["assignableRuntimeBindings"] == [
+        "trading_agent"
     ]
 
 

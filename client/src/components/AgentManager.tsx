@@ -9,6 +9,8 @@ import type {
 type ModelOption = { key: string; label: string; providerModelId: string };
 export type ToolDescriptor = {
   name: string;
+  kind?: 'tool' | 'agent';
+  sourceId?: string;
   title?: string;
   description?: string;
   capability?: {
@@ -21,6 +23,60 @@ export type ToolDescriptor = {
 export type DisplayedToolRow = ToolDescriptor & {
   availability: 'available' | 'stale' | 'incompatible' | 'not_assignable';
 };
+
+export type InputDictionaryToolReference = {
+  canonicalId: string;
+  kind?: 'tool' | 'agent';
+  sourceId?: string;
+  namespace?: string;
+  displayName?: string;
+  shortDescription?: string;
+  capability?: ToolDescriptor['capability'];
+};
+
+export type InputDictionaryToolPage = {
+  references: InputDictionaryToolReference[];
+  selectedKnownReferences: InputDictionaryToolReference[];
+  unresolvedSelectedIds: string[];
+  namespaces: string[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+};
+
+export function buildInputDictionarySelectedRows(
+  selectedReferences: InputDictionaryToolReference[],
+  unresolvedSelectedIds: string[],
+  runtimeBinding: RuntimeBinding | '' | null,
+  runtimeType: AgentCardRuntimeType | null,
+): DisplayedToolRow[] {
+  const known = selectedReferences.map((reference) => {
+    const descriptor: ToolDescriptor = {
+      name: reference.canonicalId,
+      kind: reference.kind,
+      sourceId: reference.sourceId,
+      title: reference.displayName || reference.canonicalId,
+      description: reference.shortDescription,
+      capability: reference.capability,
+    };
+    return {
+      ...descriptor,
+      availability: isToolAssignable(descriptor, runtimeBinding, runtimeType)
+        ? 'available' as const
+        : descriptor.capability?.cardAssignable === false
+          ? 'not_assignable' as const
+          : 'incompatible' as const,
+    };
+  });
+  const knownNames = new Set(known.map((reference) => reference.name));
+  return [
+    ...known,
+    ...unresolvedSelectedIds
+      .filter((canonicalId) => !knownNames.has(canonicalId))
+      .map((canonicalId) => ({ name: canonicalId, availability: 'stale' as const })),
+  ];
+}
 
 function isToolAssignable(
   tool: ToolDescriptor,
@@ -307,7 +363,21 @@ export function AgentManager({
     'low' | 'medium' | 'high' | 'xhigh' | ''
   >('');
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelOption[]>>({});
-  const [toolCatalog, setToolCatalog] = useState<ToolDescriptor[]>([]);
+  const [toolDictionaryPage, setToolDictionaryPage] = useState<InputDictionaryToolPage>({
+    references: [],
+    selectedKnownReferences: [],
+    unresolvedSelectedIds: [],
+    namespaces: [],
+    total: 0,
+    offset: 0,
+    limit: 100,
+    hasMore: false,
+  });
+  const [toolDictionaryQuery, setToolDictionaryQuery] = useState('');
+  const [toolDictionaryNamespace, setToolDictionaryNamespace] = useState('');
+  const [toolDictionaryOffset, setToolDictionaryOffset] = useState(0);
+  const [showSelectedToolsOnly, setShowSelectedToolsOnly] = useState(false);
+  const [toolDictionaryBusy, setToolDictionaryBusy] = useState(false);
   const [temperature, setTemperature] = useState<number | ''>('');
   const [maxTokens, setMaxTokens] = useState<number | ''>('');
   const [promptText, setPromptText] = useState('');
@@ -353,24 +423,6 @@ export function AgentManager({
       })
       .catch(() => {
         if (active) setModelsByProvider({});
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    void fetch('/api/coder/tool-library')
-      .then(async (response) => {
-        const payload = await response.json();
-        if (!response.ok || !payload?.ok || !Array.isArray(payload.tools)) {
-          throw new Error('Tool catalog unavailable');
-        }
-        if (active) setToolCatalog(payload.tools as ToolDescriptor[]);
-      })
-      .catch(() => {
-        if (active) setToolCatalog([]);
       });
     return () => {
       active = false;
@@ -565,16 +617,85 @@ export function AgentManager({
 
   const availableModels = provider ? modelsByProvider[provider] || [] : [];
   const savedToolNames = parseListText(toolsText);
-  const displayedToolRows = buildDisplayedToolRows(
-    toolCatalog,
-    savedToolNames,
+  const selectedToolRows = buildInputDictionarySelectedRows(
+    toolDictionaryPage.selectedKnownReferences,
+    toolDictionaryPage.unresolvedSelectedIds,
     runtimeBinding,
     localConfig?.runtime_type || null,
+  );
+  const availableToolRows = toolDictionaryPage.references.filter((reference) =>
+    !savedToolNames.includes(reference.canonicalId) &&
+    isToolAssignable(
+      { name: reference.canonicalId, capability: reference.capability },
+      runtimeBinding,
+      localConfig?.runtime_type || null,
+    ),
   );
   const toggleTool = (name: string, checked: boolean) => {
     setToolsText(toggleSavedToolAssignment(savedToolNames, name, checked).join('\n'));
     markDraftDirty();
   };
+
+  useEffect(() => {
+    if (!isLocalConfigMode || !localConfig) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setToolDictionaryBusy(true);
+        try {
+          const params = new URLSearchParams({
+            query: toolDictionaryQuery,
+            offset: String(toolDictionaryOffset),
+            limit: '100',
+          });
+          if (toolDictionaryNamespace) params.set('namespace', toolDictionaryNamespace);
+          if (savedToolNames.length) params.set('selectedIds', savedToolNames.join(','));
+          const response = await fetch(`/api/coder/input-data-dictionary/tools?${params}`, {
+            signal: controller.signal,
+          });
+          const payload = await response.json();
+          if (!response.ok || !payload?.ok || !Array.isArray(payload.references)) {
+            throw new Error('Input data dictionary unavailable');
+          }
+          setToolDictionaryPage({
+            references: payload.references,
+            selectedKnownReferences: Array.isArray(payload.selectedKnownReferences) ? payload.selectedKnownReferences : [],
+            unresolvedSelectedIds: Array.isArray(payload.unresolvedSelectedIds) ? payload.unresolvedSelectedIds : [],
+            namespaces: Array.isArray(payload.namespaces) ? payload.namespaces : [],
+            total: Number.isFinite(payload.total) ? payload.total : 0,
+            offset: Number.isFinite(payload.offset) ? payload.offset : toolDictionaryOffset,
+            limit: Number.isFinite(payload.limit) ? payload.limit : 100,
+            hasMore: payload.hasMore === true,
+          });
+        } catch (error) {
+          if (!controller.signal.aborted) {
+            setToolDictionaryPage((current) => ({
+              ...current,
+              references: [],
+              selectedKnownReferences: [],
+              unresolvedSelectedIds: savedToolNames,
+              total: 0,
+              offset: 0,
+              hasMore: false,
+            }));
+          }
+        } finally {
+          if (!controller.signal.aborted) setToolDictionaryBusy(false);
+        }
+      })();
+    }, 150);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    isLocalConfigMode,
+    localConfig,
+    savedToolNames.join('\u0000'),
+    toolDictionaryNamespace,
+    toolDictionaryOffset,
+    toolDictionaryQuery,
+  ]);
 
   const sectionBody = (() => {
     if (activeTab === 'Prompt') {
@@ -870,11 +991,62 @@ export function AgentManager({
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-            Tools for this card
+            Input Data Dictionary · tools
           </div>
-          {displayedToolRows.length ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
+            <input
+              value={toolDictionaryQuery}
+              onChange={(event) => {
+                setToolDictionaryQuery(event.target.value);
+                setToolDictionaryOffset(0);
+              }}
+              placeholder="Search ID, name, namespace, or description"
+              aria-label="Search tools"
+            />
+            <select
+              value={toolDictionaryNamespace}
+              onChange={(event) => {
+                setToolDictionaryNamespace(event.target.value);
+                setToolDictionaryOffset(0);
+              }}
+              aria-label="Filter tools by namespace"
+            >
+              <option value="">All namespaces</option>
+              {toolDictionaryPage.namespaces.map((namespace) => (
+                <option key={namespace} value={namespace}>{namespace}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ color: '#91A9B8', fontSize: 11 }}>
+              <input
+                type="checkbox"
+                checked={showSelectedToolsOnly}
+                onChange={(event) => setShowSelectedToolsOnly(event.target.checked)}
+              />{' '}
+              Selected only
+            </label>
+            <button
+              type="button"
+              disabled={!savedToolNames.length}
+              onClick={() => {
+                setToolsText('');
+                markDraftDirty();
+              }}
+            >
+              Clear selected
+            </button>
+            <span style={{ color: '#80969F', fontSize: 11 }}>
+              {toolDictionaryPage.total.toLocaleString()} tools
+              {toolDictionaryBusy ? ' · Loading…' : ''}
+            </span>
+          </div>
+          {selectedToolRows.length ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {displayedToolRows.map((tool) => (
+              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
+                Selected · {selectedToolRows.length}
+              </div>
+              {selectedToolRows.map((tool) => (
                 <label
                   key={tool.name}
                   style={{
@@ -904,6 +1076,8 @@ export function AgentManager({
                     </span>
                     <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
                       {tool.name}
+                      {tool.kind ? ` · ${tool.kind}` : ''}
+                      {tool.sourceId ? ` · ${tool.sourceId}` : ''}
                       {tool.description ? ` · ${tool.description}` : ''}
                       {tool.availability === 'stale' ? ' · Missing from current catalogs' : ''}
                       {tool.availability === 'incompatible' ? ' · Incompatible with this card runtime' : ''}
@@ -913,13 +1087,75 @@ export function AgentManager({
                 </label>
               ))}
             </div>
-          ) : (
-            <div style={{ color: '#91A9B8', fontSize: 11 }}>
-              {runtimeBinding || localConfig?.runtime_type
-                ? 'No tools are available for this card yet.'
-                : 'This card has no scoped graph tool set.'}
+          ) : null}
+          {!showSelectedToolsOnly && availableToolRows.length ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Available</div>
+              {availableToolRows.map((tool) => (
+                <label
+                  key={tool.canonicalId}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '18px 1fr',
+                    gap: 8,
+                    alignItems: 'start',
+                    padding: '7px 8px',
+                    border: '1px solid #3A4A4F',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={false}
+                    onChange={(event) => toggleTool(tool.canonicalId, event.target.checked)}
+                    aria-label={`Include ${tool.displayName || tool.canonicalId}`}
+                  />
+                  <span>
+                    <span style={{ display: 'block', color: '#D5E4E8', fontSize: 11 }}>
+                      {tool.displayName || tool.canonicalId}
+                    </span>
+                    <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
+                      {tool.canonicalId}
+                      {tool.namespace ? ` · ${tool.namespace}` : ''}
+                      {tool.kind ? ` · ${tool.kind}` : ''}
+                      {tool.sourceId ? ` · ${tool.sourceId}` : ''}
+                      {tool.shortDescription ? ` · ${tool.shortDescription}` : ''}
+                    </span>
+                  </span>
+                </label>
+              ))}
             </div>
-          )}
+          ) : !selectedToolRows.length ? (
+            <div style={{ color: '#91A9B8', fontSize: 11 }}>
+              {showSelectedToolsOnly
+                ? 'No tools are selected for this card.'
+                : 'No tools match this dictionary query.'}
+            </div>
+          ) : null}
+          {!showSelectedToolsOnly ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+              <button
+                type="button"
+                disabled={toolDictionaryOffset <= 0}
+                onClick={() => setToolDictionaryOffset(Math.max(0, toolDictionaryOffset - 100))}
+              >
+                Previous
+              </button>
+              <span style={{ color: '#80969F', fontSize: 11 }}>
+                {toolDictionaryPage.total
+                  ? `${toolDictionaryPage.offset + 1}-${Math.min(toolDictionaryPage.offset + toolDictionaryPage.limit, toolDictionaryPage.total)}`
+                  : '0'}
+              </span>
+              <button
+                type="button"
+                disabled={!toolDictionaryPage.hasMore}
+                onClick={() => setToolDictionaryOffset(toolDictionaryPage.offset + toolDictionaryPage.limit)}
+              >
+                Next
+              </button>
+            </div>
+          ) : null}
         </div>
       );
     }

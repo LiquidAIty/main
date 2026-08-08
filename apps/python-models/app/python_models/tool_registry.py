@@ -818,25 +818,57 @@ DEFAULT_TOOL_REGISTRY = build_default_tool_registry()
 _TOOL_DISPLAY_METADATA: dict[str, dict[str, Any]] = {
     "run_local_coder": {
         "displayName": "Local Coder",
+        "kind": "agent",
+        "sourceId": "local_coder",
+        "namespace": "coder",
+        "executionAuthority": "local_coder",
         "agentCompatibility": ["magentic_one", "assistant_agent"],
         "assignableRuntimeBindings": ["local_coder"],
         "assignableRuntimeTypes": [],
     },
     "find_recent_sec_filing_signals": {
         "displayName": "SEC Filing Signals",
+        "sourceId": "worldsignals",
+        "namespace": "trading",
+        "executionAuthority": "worldsignals",
         "agentCompatibility": ["magentic_one", "assistant_agent"],
+        "assignableRuntimeBindings": ["trading_agent"],
+        "assignableRuntimeTypes": [],
     },
     "get_market_snapshot": {
         "displayName": "Alpaca Market Snapshot",
+        "sourceId": "trading_data",
+        "namespace": "trading",
+        "executionAuthority": "python_autogen",
         "agentCompatibility": ["magentic_one", "assistant_agent"],
+        "assignableRuntimeBindings": ["trading_agent"],
+        "assignableRuntimeTypes": [],
     },
     "get_historical_bars": {
         "displayName": "Alpaca Historical Bars",
+        "sourceId": "trading_data",
+        "namespace": "trading",
+        "executionAuthority": "python_autogen",
         "agentCompatibility": ["magentic_one", "assistant_agent"],
+        "assignableRuntimeBindings": ["trading_agent"],
+        "assignableRuntimeTypes": [],
     },
     "get_paper_account_readiness": {
         "displayName": "Alpaca Paper Account Readiness",
+        "sourceId": "trading_data",
+        "namespace": "trading",
+        "executionAuthority": "python_autogen",
         "agentCompatibility": ["magentic_one", "assistant_agent"],
+        "assignableRuntimeBindings": ["trading_agent"],
+        "assignableRuntimeTypes": [],
+    },
+    "web_search": {
+        "sourceId": "autogen",
+        "namespace": "web",
+        "executionAuthority": "python_autogen",
+        "agentCompatibility": ["magentic_one", "assistant_agent"],
+        "assignableRuntimeBindings": ["research_agent"],
+        "assignableRuntimeTypes": [],
     },
     "calculator": {
         "displayName": "Calculator",
@@ -869,8 +901,8 @@ def _summarize_input_schema(input_schema: dict[str, Any]) -> str:
 def tool_manifest(registry: ToolRegistry | None = None) -> list[dict[str, Any]]:
     """Read-only capability manifest built from the live registry.
 
-    Shape matches the frontend ``ToolCapabilityManifest``:
-    ``{id, displayName, description, agentCompatibility, inputSchemaSummary}``.
+    This is the private Python/AutoGen publication into LiquidAIty's federated
+    reference registry. It is not the externally published ChatGPT MCP catalog.
     """
     registry = registry or DEFAULT_TOOL_REGISTRY
     manifest: list[dict[str, Any]] = []
@@ -880,21 +912,34 @@ def tool_manifest(registry: ToolRegistry | None = None) -> list[dict[str, Any]]:
             continue
         meta = _TOOL_DISPLAY_METADATA.get(name, {})
         agent_compatibility = list(meta.get("agentCompatibility", ["magentic_one"]))
+        source_id = str(meta.get("sourceId", "worldsignals" if name.startswith("worldsignals.") else "autogen"))
+        assignable_runtime_bindings = list(meta.get("assignableRuntimeBindings", []))
+        assignable_runtime_types = list(
+            meta.get("assignableRuntimeTypes", agent_compatibility)
+        )
+        if name.startswith("worldsignals."):
+            assignable_runtime_bindings = ["worldsignals_agent"]
+            assignable_runtime_types = []
         manifest.append({
             "id": spec.name,
+            "kind": meta.get("kind", "tool"),
+            "sourceId": source_id,
+            "namespace": meta.get("namespace", "worldsignals" if name.startswith("worldsignals.") else "autogen"),
             "displayName": meta.get("displayName", spec.name),
             "description": spec.description,
             "agentCompatibility": agent_compatibility,
+            "publication": {"externalMcp": False},
+            "execution": {
+                "authority": meta.get("executionAuthority", source_id),
+                "nativeName": spec.name,
+            },
             "capability": {
                 "runtimeCompatibility": ["autogen"],
-                "assignableRuntimeBindings": list(
-                    meta.get("assignableRuntimeBindings", [])
-                ),
-                "assignableRuntimeTypes": list(
-                    meta.get("assignableRuntimeTypes", agent_compatibility)
-                ),
+                "assignableRuntimeBindings": assignable_runtime_bindings,
+                "assignableRuntimeTypes": assignable_runtime_types,
                 "cardAssignable": True,
             },
+            "inputSchema": spec.inputSchema,
             "inputSchemaSummary": _summarize_input_schema(spec.inputSchema),
         })
     return manifest

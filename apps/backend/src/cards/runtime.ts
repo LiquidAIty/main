@@ -327,11 +327,19 @@ export function resolveCardTools(card: any): string[] {
     throw new Error(`card_tools_config_invalid: cardId=${card.id}`);
   }
   const raw = Array.isArray(fromOptions) ? fromOptions : Array.isArray(card.tools) ? card.tools : [];
-  return raw.map((tool: any) => {
-    const name = String(tool ?? '').trim();
+  const selected = new Set<string>();
+  return raw.map((tool: unknown, index: number) => {
+    if (typeof tool !== 'string') {
+      throw new Error(`card_tool_name_invalid: cardId=${card.id} index=${index}`);
+    }
+    const name = tool.trim();
     if (!name) {
       throw new Error(`card_tool_name_empty: cardId=${card.id}`);
     }
+    if (selected.has(name)) {
+      throw new Error(`card_tool_name_duplicate: cardId=${card.id} tool=${name}`);
+    }
+    selected.add(name);
     return name;
   });
 }

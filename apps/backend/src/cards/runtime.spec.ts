@@ -6,6 +6,7 @@ import {
   buildPythonAutoGenCardRuntimePayload,
   runCardWithContract,
   resolveCardModelStrict,
+  resolveCardTools,
 } from './runtime';
 
 // Canonical DeepSeek model — same saved-card validation path as any other
@@ -38,6 +39,38 @@ describe('canonical DeepSeek V4 Flash 0731 card contract', () => {
         },
       }),
     ).toThrow(/card_model_config_mismatch/);
+  });
+});
+
+describe('saved card tool selection contract', () => {
+  it('preserves legacy string ids and their saved order unchanged', () => {
+    expect(resolveCardTools({
+      id: 'legacy-card',
+      tools: ['cbm.search_graph', 'engraphis.recall_proactive', 'graphiti.search_nodes'],
+    })).toEqual(['cbm.search_graph', 'engraphis.recall_proactive', 'graphiti.search_nodes']);
+  });
+
+  it('prefers runtimeOptions.tools over legacy card.tools without merging either list', () => {
+    expect(resolveCardTools({
+      id: 'saved-card',
+      tools: ['legacy.removed'],
+      runtimeOptions: { tools: ['cbm.search_graph', 'graphiti.search_nodes'] },
+    })).toEqual(['cbm.search_graph', 'graphiti.search_nodes']);
+  });
+
+  it.each([
+    ['non-string', [42], 'card_tool_name_invalid'],
+    ['blank', ['  '], 'card_tool_name_empty'],
+    ['duplicate', ['cbm.search_graph', ' cbm.search_graph '], 'card_tool_name_duplicate'],
+  ])('rejects %s selected tool ids', (_label, tools, error) => {
+    expect(() => resolveCardTools({ id: 'saved-card', runtimeOptions: { tools } })).toThrow(error);
+  });
+
+  it('keeps established whitespace trimming while preserving selected order', () => {
+    expect(resolveCardTools({
+      id: 'legacy-card',
+      tools: [' cbm.search_graph ', 'graphiti.search_nodes'],
+    })).toEqual(['cbm.search_graph', 'graphiti.search_nodes']);
   });
 });
 
