@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { orchestrateWithAutoGen } from './autogenOrchestratorClient';
+import {
+  orchestrateWithAutoGen,
+  projectLiveThinkGraph,
+} from './autogenOrchestratorClient';
 
 describe('autogenOrchestratorClient', () => {
   const envSnapshot = { ...process.env };
@@ -127,5 +130,41 @@ describe('autogenOrchestratorClient', () => {
         userText: 'run this',
       }),
     ).rejects.toThrow('PYTHON_AUTOGEN_RAILS_UNAVAILABLE');
+  });
+
+  it('uses the pure ThinkGraph live projection endpoint without fallback', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({
+        schemaVersion: 'thinkgraph.live.projection.v1',
+        projectId: 'p1',
+        nodes: [],
+        edges: [],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock as any);
+    const payload = {
+      projectId: 'p1',
+      conversationId: 'main',
+      runId: 'turn-1',
+      observedAt: '2026-08-09T12:00:00.000Z',
+      state: 'active' as const,
+      streams: [{
+        source: 'user' as const,
+        sourceId: 'message-1',
+        text: 'Fix the build.',
+      }],
+    };
+
+    await projectLiveThinkGraph(payload);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://python-rails:8001/thinkgraph/live-projection',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    );
   });
 });

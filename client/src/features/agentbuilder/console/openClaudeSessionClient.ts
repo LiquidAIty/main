@@ -6,7 +6,7 @@
  * `streamSession` forwards the RAW native event stream (verbatim) to `onEvent`
  * and resolves with `done.full_text`. No transformation, no curation.
  */
-type NativeSessionEvent = {
+export type NativeSessionEvent = {
   kind: 'session' | 'text' | 'reasoning' | 'tool_start' | 'tool_result' | 'permission' | 'done' | 'error' | 'end' | string;
   [key: string]: unknown;
 };

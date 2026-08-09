@@ -207,14 +207,23 @@ type NativeNode = {
   degree: number;
   val: number;
   properties: Record<string, unknown>;
+  source?: 'user' | 'assistant' | 'reasoning' | 'tool';
+  transient: boolean;
+  presentationLayer?: string;
   x?: number;
   y?: number;
+  vx?: number;
+  vy?: number;
+  fx?: number;
+  fy?: number;
 };
 
 type NativeLink = {
+  id: string;
   source: string | NativeNode;
   target: string | NativeNode;
   label: string;
+  transient: boolean;
 };
 
 const TYPE_COLORS: Record<string, string> = {
@@ -227,6 +236,12 @@ const TYPE_COLORS: Record<string, string> = {
   Risk: '#8798A0',
 };
 const DEFAULT_TYPE_COLOR = '#A7B0BA';
+const LIVE_SOURCE_COLORS: Record<string, string> = {
+  user: '#F3B35B',
+  reasoning: '#A98BF3',
+  assistant: '#63D8D2',
+  tool: '#EE8C66',
+};
 
 function endpointId(value: string | NativeNode): string {
   return typeof value === 'string' ? value : value.id;
@@ -254,6 +269,13 @@ export function NativeGraphProjectionSurface({
   const hoveredRef = useRef<string | null>(null);
   const selectedRef = useRef<string | null>(null);
   const adjacencyRef = useRef(new Map<string, Set<string>>());
+  const nodeObjectsRef = useRef(new Map<string, NativeNode>());
+  const linkObjectsRef = useRef(new Map<string, NativeLink>());
+  const appliedTopologyRef = useRef('');
+  const appliedNodeIdsRef = useRef(new Set<string>());
+  const appliedForceSettingsRef = useRef('');
+  const initialFitRef = useRef(false);
+  const initialFitTimerRef = useRef<number | null>(null);
   const [hideIsolated, setHideIsolated] = useState(true);
   const [showLinkLabels, setShowLinkLabels] = useState(false);
   const [search, setSearch] = useState('');
@@ -279,7 +301,7 @@ export function NativeGraphProjectionSurface({
       degree.set(edge.source, (degree.get(edge.source) || 0) + 1);
       degree.set(edge.target, (degree.get(edge.target) || 0) + 1);
     }
-    const visibleNodes: NativeNode[] = nodes
+    const nodeDescriptions: NativeNode[] = nodes
       .map((node) => ({
         id: node.id,
         canonicalId: String(node.canonicalId || node.id),
@@ -296,13 +318,62 @@ export function NativeGraphProjectionSurface({
         degree: degree.get(node.id) || 0,
         val: 1 + (degree.get(node.id) || 0),
         properties: node.properties || {},
+        source: ['user', 'assistant', 'reasoning', 'tool'].includes(String(node.properties?.source))
+          ? node.properties?.source as NativeNode['source']
+          : undefined,
+        transient: node.properties?.transient === true,
+        presentationLayer: typeof node.properties?.presentationLayer === 'string'
+          ? node.properties.presentationLayer
+          : undefined,
       }))
-      .filter((node) => !hideIsolated || node.degree > 0);
-    const ids = new Set(visibleNodes.map((node) => node.id));
-    const links: NativeLink[] = edges
+      .filter((node) => !hideIsolated || node.degree > 0 || node.transient);
+    const ids = new Set(nodeDescriptions.map((node) => node.id));
+    const linkDescriptions: NativeLink[] = edges
       .filter((edge) => ids.has(edge.source) && ids.has(edge.target))
-      .map((edge) => ({ source: edge.source, target: edge.target, label: edge.predicate }));
-    return { nodes: visibleNodes, links };
+      .map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        label: edge.predicate,
+        transient: edge.properties?.persisted === false,
+      }));
+
+    const nextNodes = new Map<string, NativeNode>();
+    const visibleNodes = nodeDescriptions.map((description) => {
+      const existing = nodeObjectsRef.current.get(description.id);
+      if (!existing) {
+        nextNodes.set(description.id, description);
+        return description;
+      }
+      Object.assign(existing, description);
+      nextNodes.set(existing.id, existing);
+      return existing;
+    });
+    nodeObjectsRef.current = nextNodes;
+
+    const nextLinks = new Map<string, NativeLink>();
+    const links = linkDescriptions.map((description) => {
+      const existing = linkObjectsRef.current.get(description.id);
+      if (!existing) {
+        nextLinks.set(description.id, description);
+        return description;
+      }
+      if (endpointId(existing.source) !== description.source) existing.source = description.source;
+      if (endpointId(existing.target) !== description.target) existing.target = description.target;
+      existing.label = description.label;
+      existing.transient = description.transient;
+      nextLinks.set(existing.id, existing);
+      return existing;
+    });
+    linkObjectsRef.current = nextLinks;
+    return {
+      nodes: visibleNodes,
+      links,
+      topology: `${visibleNodes.map((node) => node.id).sort().join('|')}::${links
+        .map((link) => `${link.id}:${endpointId(link.source)}>${endpointId(link.target)}`)
+        .sort()
+        .join('|')}`,
+    };
   }, [authority, hideIsolated, projection]);
 
   const adjacency = useMemo(() => {
@@ -320,29 +391,46 @@ export function NativeGraphProjectionSurface({
   adjacencyRef.current = adjacency;
 
   useEffect(() => {
-    if (!hostRef.current) return;
-    if (!graphRef.current) {
-      graphRef.current = new ForceGraph(hostRef.current)
-        .backgroundColor('rgba(0,0,0,0)')
-        .cooldownTime(4000)
-        .warmupTicks(40)
-        .nodeRelSize(1)
-        .autoPauseRedraw(true)
-        .onNodeClick((node) => {
-          setSelected(node as NativeNode);
-          setInspectorOpen(true);
-        })
-        .onNodeHover((node) => {
-          hoveredRef.current = node ? String(node.id) : null;
-          if (hostRef.current) hostRef.current.style.cursor = node ? 'pointer' : 'grab';
-        });
-    }
+    if (!hostRef.current || graphRef.current) return;
+    const graph = new ForceGraph(hostRef.current)
+      .backgroundColor('rgba(0,0,0,0)')
+      .cooldownTime(900)
+      .warmupTicks(20)
+      .nodeRelSize(1)
+      .autoPauseRedraw(true)
+      .onNodeClick((node) => {
+        setSelected(node as NativeNode);
+        setInspectorOpen(true);
+      })
+      .onNodeHover((node) => {
+        hoveredRef.current = node ? String(node.id) : null;
+        if (hostRef.current) hostRef.current.style.cursor = node ? 'pointer' : 'grab';
+      });
+    graphRef.current = graph;
+    const resize = new ResizeObserver(([entry]) => {
+      graph.width(entry.contentRect.width).height(entry.contentRect.height);
+    });
+    resize.observe(hostRef.current);
+    return () => {
+      resize.disconnect();
+      if (initialFitTimerRef.current != null) {
+        window.clearTimeout(initialFitTimerRef.current);
+        initialFitTimerRef.current = null;
+      }
+      graph._destructor?.();
+      graphRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
     const graph = graphRef.current;
+    if (!graph) return;
     const labelRank = new Map(
       [...nativeData.nodes]
         .sort((a, b) => b.degree - a.degree)
         .map((node, index) => [node.id, index]),
     );
+    const hasTransient = nativeData.nodes.some((node) => node.transient);
     graph
       .nodeCanvasObject((node: NativeNode, context: CanvasRenderingContext2D) => {
         const focused = hoveredRef.current || selectedRef.current;
@@ -350,10 +438,15 @@ export function NativeGraphProjectionSurface({
         const connectedFocus = Boolean(focused && neighbors && neighbors.size > 1);
         const isNeighbor = !connectedFocus || node.id === focused || neighbors?.has(node.id);
         const radius = Math.max(1.2, settings.size * Math.sqrt(node.val) * 0.45);
-        context.globalAlpha = isNeighbor ? 1 : 0.12;
+        const attentionAlpha = node.transient
+          ? node.currentState === 'settled' ? 0.48 : 1
+          : hasTransient ? 0.2 : 1;
+        context.globalAlpha = attentionAlpha * (isNeighbor ? 1 : 0.12);
         context.beginPath();
         context.arc(node.x || 0, node.y || 0, radius, 0, Math.PI * 2);
-        context.fillStyle = TYPE_COLORS[node.etype] || DEFAULT_TYPE_COLOR;
+        context.fillStyle = node.transient && node.source
+          ? LIVE_SOURCE_COLORS[node.source]
+          : TYPE_COLORS[node.etype] || DEFAULT_TYPE_COLOR;
         context.fill();
         if (connectedFocus && node.id === focused) {
           context.lineWidth = 1.6;
@@ -372,8 +465,11 @@ export function NativeGraphProjectionSurface({
       .linkColor((link: NativeLink) => {
         const focused = hoveredRef.current || selectedRef.current;
         const connected = focused && (endpointId(link.source) === focused || endpointId(link.target) === focused);
-        const alpha = focused ? (connected ? 0.92 : 0.05) : Math.min(0.72, 0.16 + 0.18 * settings.linkWidth);
-        return `rgba(112,154,160,${alpha})`;
+        const defaultAlpha = link.transient ? 0.68 : hasTransient ? 0.1 : Math.min(0.72, 0.16 + 0.18 * settings.linkWidth);
+        const alpha = focused ? (connected ? 0.92 : 0.05) : defaultAlpha;
+        return link.transient
+          ? `rgba(145,211,209,${alpha})`
+          : `rgba(112,154,160,${alpha})`;
       })
       .linkWidth((link: NativeLink) => {
         const focused = hoveredRef.current || selectedRef.current;
@@ -400,7 +496,10 @@ export function NativeGraphProjectionSurface({
         for (const node of graph.graphData().nodes as NativeNode[]) {
           const hovered = hoveredRef.current;
           const emphasized = node.id === hovered || node.id === selectedRef.current;
-          if (node.x == null || (!emphasized && (labelRank.get(node.id) ?? Number.MAX_SAFE_INTEGER) >= cap)) continue;
+          if (
+            node.x == null
+            || (!emphasized && !node.transient && (labelRank.get(node.id) ?? Number.MAX_SAFE_INTEGER) >= cap)
+          ) continue;
           const neighbors = hovered ? adjacencyRef.current.get(hovered) : null;
           const connectedFocus = Boolean(hovered && neighbors && neighbors.size > 1);
           const isNeighbor = !connectedFocus || node.id === hovered || neighbors?.has(node.id);
@@ -412,8 +511,14 @@ export function NativeGraphProjectionSurface({
           context.lineWidth = 3 / scale;
           context.strokeStyle = '#0a0a0f';
           context.strokeText(node.label, node.x, y);
-          context.fillStyle = '#d8d8e2';
+          context.globalAlpha = node.transient
+            ? node.currentState === 'settled' ? 0.58 : 1
+            : hasTransient ? 0.28 : 1;
+          context.fillStyle = node.transient && node.source
+            ? LIVE_SOURCE_COLORS[node.source]
+            : '#d8d8e2';
           context.fillText(node.label, node.x, y);
+          context.globalAlpha = 1;
         }
       });
     graph.d3Force('charge').strength(-settings.repel);
@@ -421,19 +526,40 @@ export function NativeGraphProjectionSurface({
     graph.d3Force('x', forceX(0).strength(settings.gravity / 100));
     graph.d3Force('y', forceY(0).strength(settings.gravity / 100));
     graph.d3Force('collide', forceCollide((node: NativeNode) => Math.max(2, settings.size * Math.sqrt(node.val) * 0.45) + 1.5));
-    graph.graphData(nativeData);
-    graph.d3ReheatSimulation();
-
-    const resize = new ResizeObserver(([entry]) => {
-      graph.width(entry.contentRect.width).height(entry.contentRect.height);
-    });
-    resize.observe(hostRef.current);
-    const fit = window.setTimeout(() => graph.zoomToFit(600, 60), 900);
-    return () => {
-      resize.disconnect();
-      window.clearTimeout(fit);
-    };
+    const nextNodeIds = new Set(nativeData.nodes.map((node) => node.id));
+    const topologyChanged = appliedTopologyRef.current !== nativeData.topology;
+    const topologyAdded = nativeData.nodes.some((node) => !appliedNodeIdsRef.current.has(node.id));
+    const forceSettings = [settings.size, settings.repel, settings.linkDistance, settings.gravity].join(':');
+    const forceSettingsChanged = Boolean(
+      appliedForceSettingsRef.current
+      && appliedForceSettingsRef.current !== forceSettings,
+    );
+    if (topologyChanged) {
+      graph.graphData({ nodes: nativeData.nodes, links: nativeData.links });
+      appliedTopologyRef.current = nativeData.topology;
+      appliedNodeIdsRef.current = nextNodeIds;
+    } else {
+      graph.refresh?.();
+    }
+    appliedForceSettingsRef.current = forceSettings;
+    if (topologyAdded || forceSettingsChanged) {
+      graph.cooldownTime(900);
+      graph.d3ReheatSimulation();
+    }
+    if (!initialFitRef.current && nativeData.nodes.length > 0) {
+      initialFitRef.current = true;
+      initialFitTimerRef.current = window.setTimeout(() => {
+        graph.zoomToFit(320, 60);
+        initialFitTimerRef.current = null;
+      }, 180);
+    }
   }, [adjacency, nativeData, settings, showLinkLabels]);
+
+  useEffect(() => {
+    if (!selected || nativeData.nodes.some((node) => node.id === selected.id)) return;
+    setSelected(null);
+    setInspectorOpen(false);
+  }, [nativeData.nodes, selected]);
 
   const focusNode = (match: NativeNode) => {
     setSelected(match);

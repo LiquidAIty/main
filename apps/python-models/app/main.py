@@ -11,6 +11,7 @@ from app.python_models.autogen_orchestrator import orchestrate_context_pack
 from app.python_models.magentic_agentchat import run_configured_card
 from app.python_models.orchestration_contracts import ContextPack
 from app.python_models.tool_registry import tool_manifest
+from app.python_models.thinkgraph_live_projection import project_live_thinkgraph
 
 app = FastAPI()
 
@@ -97,6 +98,15 @@ def thinkgraph_projection(
         )
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.post("/thinkgraph/live-projection")
+def thinkgraph_live_projection(payload: dict[str, Any]):
+    """Return transient lexical observations; never read or write Engraphis."""
+    try:
+        return project_live_thinkgraph(payload)
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
 
 
 @app.get("/agentgraph/assignments/{assignment_id:path}")

@@ -394,6 +394,9 @@ export default function AgentBuilder(): React.ReactElement {
     conversationId,
     initialMessages: EMPTY_PROJECT_MESSAGES,
     workspaceView,
+    onUserTurnStarted: thinkGraphProjection.startLiveTurn,
+    onNativeTurnEvent: thinkGraphProjection.observeLiveTurnEvent,
+    onTurnFinished: thinkGraphProjection.finishLiveTurn,
   });
   const [stateLoaded, setStateLoaded] = useState(false);
 

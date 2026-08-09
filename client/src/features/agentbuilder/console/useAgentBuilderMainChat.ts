@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { waitForBackendReady } from '../../../components/builder/backendReadiness';
 import {
   loadSessionHistory,
+  type NativeSessionEvent,
   SessionStreamError,
   streamSession,
 } from './openClaudeSessionClient';
@@ -17,13 +18,55 @@ type UseAgentBuilderMainChatArgs = {
   conversationId: string;
   initialMessages: AgentBuilderChatMessage[];
   workspaceView: string;
+  onUserTurnStarted?: (turn: MainChatTurnStarted) => void;
+  onNativeTurnEvent?: (turn: MainChatTurnEvent) => void;
+  onTurnFinished?: (turn: MainChatTurnFinished) => void;
 };
+
+export type MainChatTurnStarted = {
+  projectId: string;
+  conversationId: string;
+  runId: string;
+  text: string;
+  observedAt: string;
+};
+
+export type MainChatTurnEvent = {
+  projectId: string;
+  conversationId: string;
+  runId: string;
+  event: NativeSessionEvent;
+  observedAt: string;
+};
+
+export type MainChatTurnFinished = {
+  projectId: string;
+  conversationId: string;
+  runId: string;
+  status: 'completed' | 'failed';
+  observedAt: string;
+};
+
+function createRunId(): string {
+  return globalThis.crypto?.randomUUID?.() || `main-turn-${Date.now()}`;
+}
+
+function notifyObserver<T>(observer: ((value: T) => void) | undefined, value: T): void {
+  try {
+    observer?.(value);
+  } catch (error) {
+    console.warn('[THINKGRAPH_LIVE_OBSERVER]', error);
+  }
+}
 
 export default function useAgentBuilderMainChat({
   canvasProjectId,
   conversationId,
   initialMessages,
   workspaceView,
+  onUserTurnStarted,
+  onNativeTurnEvent,
+  onTurnFinished,
 }: UseAgentBuilderMainChatArgs) {
   const [nativeSessionBusy, setNativeSessionBusy] = useState(false);
   const [messages, setMessages] =
@@ -88,6 +131,14 @@ export default function useAgentBuilderMainChat({
         ...current,
         { role: 'user', text: trimmed },
       ]);
+      const runId = createRunId();
+      notifyObserver(onUserTurnStarted, {
+        projectId: canvasProjectId,
+        conversationId,
+        runId,
+        text: trimmed,
+        observedAt: new Date().toISOString(),
+      });
       setNativeSessionBusy(true);
 
       let assistantStarted = false;
@@ -118,6 +169,13 @@ export default function useAgentBuilderMainChat({
           message: trimmed,
           mode: workspaceView === 'canvas' ? 'canvas' : 'chat',
           onEvent: (event) => {
+            notifyObserver(onNativeTurnEvent, {
+              projectId: canvasProjectId,
+              conversationId,
+              runId,
+              event,
+              observedAt: new Date().toISOString(),
+            });
             if (event.kind === 'text') {
               appendAssistantText(
                 String((event as { text?: unknown }).text || ''),
@@ -134,8 +192,22 @@ export default function useAgentBuilderMainChat({
           appendAssistantText(emptyMessage);
           throw new Error('main_empty_response');
         }
+        notifyObserver(onTurnFinished, {
+          projectId: canvasProjectId,
+          conversationId,
+          runId,
+          status: 'completed',
+          observedAt: new Date().toISOString(),
+        });
         return completedText || assistantText.trim();
       } catch (error: unknown) {
+        notifyObserver(onTurnFinished, {
+          projectId: canvasProjectId,
+          conversationId,
+          runId,
+          status: 'failed',
+          observedAt: new Date().toISOString(),
+        });
         if (error instanceof SessionStreamError) {
           const correlation = error.correlationId
             ? ` Correlation: ${error.correlationId}.`
@@ -156,6 +228,9 @@ export default function useAgentBuilderMainChat({
       canvasProjectId,
       conversationId,
       nativeSessionBusy,
+      onNativeTurnEvent,
+      onTurnFinished,
+      onUserTurnStarted,
       workspaceView,
     ],
   );
