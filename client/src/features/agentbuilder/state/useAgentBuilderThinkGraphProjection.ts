@@ -10,7 +10,7 @@ export type ThinkGraphProjectionState = {
 
 // ── thinkgraph.projection.v1 (Python-owned) for the ThinkGraph graph tab ────
 // The browser only requests the projection through the narrow backend transport
-// and passes the RAW response into the Cytoscape surface. No mapping, no
+// and passes the RAW response into the native ForceGraph surface. No mapping, no
 // classification, no fallback data — an error or empty projection is honest.
 export default function useAgentBuilderThinkGraphProjection({
   activeProject,
@@ -26,27 +26,13 @@ export default function useAgentBuilderThinkGraphProjection({
     projection: null,
     error: null,
   });
-  // Refetch signal: bumped when a chat turn completes (knowledge:refresh), once
-  // immediately and again at fixed delays after — the ThinkGraph run persists
-  // server-side AFTER the reply (fire-and-forget, its own model call), so a
-  // single fixed delay is a guess that can land before the write finishes.
-  // Three bounded checkpoints per turn (immediate, +8s, +20s); never an
-  // open-ended polling loop.
+  // Explicit projection refresh only. Ordinary Main completion does not imply
+  // a durable ThinkGraph write and therefore emits no refresh event.
   const [thinkGraphRefreshNonce, setThinkGraphRefreshNonce] = useState(0);
   useEffect(() => {
-    let timers: number[] = [];
-    const onKnowledgeRefresh = () => {
-      setThinkGraphRefreshNonce((n) => n + 1);
-      timers.forEach((t) => window.clearTimeout(t));
-      timers = [8_000, 20_000].map((delayMs) =>
-        window.setTimeout(() => setThinkGraphRefreshNonce((n) => n + 1), delayMs),
-      );
-    };
-    window.addEventListener('knowledge:refresh', onKnowledgeRefresh);
-    return () => {
-      window.removeEventListener('knowledge:refresh', onKnowledgeRefresh);
-      timers.forEach((t) => window.clearTimeout(t));
-    };
+    const refresh = () => setThinkGraphRefreshNonce((n) => n + 1);
+    window.addEventListener('thinkgraph:refresh', refresh);
+    return () => window.removeEventListener('thinkgraph:refresh', refresh);
   }, []);
   // Last applied projection payload — an unchanged refetch is a no-op so the
   // rendered graph never re-lays-out ("dances") on identical data.

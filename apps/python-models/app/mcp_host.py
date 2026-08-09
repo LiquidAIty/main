@@ -45,10 +45,13 @@ import time
 from collections import deque
 from concurrent.futures import Future
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 from uuid import uuid4
-from weakref import WeakKeyDictionary
 
 # Bootstrap the package root onto sys.path. The gRPC harness launches this host as a
 # SCRIPT (`python .../apps/python-models/app/mcp_host.py`), so sys.path[0] is the
@@ -61,10 +64,26 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
 if _PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, _PACKAGE_ROOT)
 
-from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+
+def _startup_source_identity() -> tuple[str, str]:
+    """Capture the exact loaded checkout and source bytes once per host process."""
+    try:
+        revision = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        revision = ""
+    try:
+        with open(__file__, "rb") as source_file:
+            source_sha256 = hashlib.sha256(source_file.read()).hexdigest()
+    except OSError:
+        source_sha256 = ""
+    return revision, source_sha256
 
 from dotenv import load_dotenv
 from mcp.server import Server
@@ -107,7 +126,10 @@ OAUTH_ENFORCED = os.environ.get("LIQUIDAITY_MCP_OAUTH_ENFORCED", "false").strip(
 }
 _STARTUP_ID = uuid4().hex
 _STARTUP_PROCESS_ID = os.getpid()
+_STARTUP_SOURCE_REVISION, _STARTUP_SOURCE_SHA256 = _startup_source_identity()
 _TRACE_LOCK = threading.Lock()
+_CATALOG_DIAGNOSTIC_LOCK = threading.Lock()
+_LATEST_CATALOG_DIAGNOSTIC: dict[str, Any] | None = None
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
 _ACTIVE_EXECUTION_RECEIPT: ContextVar[dict[str, Any] | None] = ContextVar(
@@ -118,20 +140,6 @@ _GRAPHITI_PROVIDER_HEALTH: dict[str, Any] = {
     "last_success": None,
     "last_failure": None,
 }
-_VERIFIED_CONTEXTS_LOCK = threading.Lock()
-_VERIFIED_CONTEXTS: dict[str, tuple[float, dict[str, Any]]] = {}
-
-
-@dataclass
-class _MainConnectionContextState:
-    attempted: bool = False
-    context: dict[str, Any] | None = None
-    failure: str | None = None
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-
-
-_MAIN_CONNECTION_CONTEXTS: WeakKeyDictionary[Any, _MainConnectionContextState] = WeakKeyDictionary()
-_MAIN_CONNECTION_CONTEXTS_LOCK = threading.Lock()
 _MAIN_CONTEXT_FIELDS = frozenset(
     {"projectId", "deckId", "conversationId", "parentRunId", "mainCardId"}
 )
@@ -155,6 +163,8 @@ def _trace(event: str, **fields: Any) -> None:
         "response_status",
         "result_category",
         "session_hash",
+        "source_revision",
+        "source_sha256",
         "subject_hash",
         "tool_name",
         "user_agent",
@@ -190,6 +200,20 @@ def _oauth_trace_fields() -> dict[str, str]:
     return {
         "subject_hash": _safe_hash(subject),
         "client_hash": _safe_hash(getattr(access_token, "client_id", "")),
+    }
+
+
+def _catalog_diagnostics() -> dict[str, Any]:
+    """Return identity only; catalog membership remains owned by ``list_tools``."""
+    with _CATALOG_DIAGNOSTIC_LOCK:
+        identity = dict(_LATEST_CATALOG_DIAGNOSTIC or {})
+    return {
+        "catalogReady": bool(identity),
+        **identity,
+        "processId": _STARTUP_PROCESS_ID,
+        "startupId": _STARTUP_ID,
+        "sourceRevision": _STARTUP_SOURCE_REVISION,
+        "sourceSha256": _STARTUP_SOURCE_SHA256,
     }
 
 
@@ -679,91 +703,9 @@ def _authenticated_main_context() -> dict[str, Any] | None:
         return None
     claims = getattr(access_token, "claims", None)
     context = claims.get("liquidaity") if isinstance(claims, dict) else None
-    if isinstance(context, dict):
-        return context
-    token = str(getattr(access_token, "token", "") or "")
-    with _VERIFIED_CONTEXTS_LOCK:
-        cached = _VERIFIED_CONTEXTS.get(token)
-        if cached is not None:
-            if cached[0] > time.time():
-                return dict(cached[1])
-            _VERIFIED_CONTEXTS.pop(token, None)
-    return context if isinstance(context, dict) else None
-
-
-def _remember_verified_context(token: str, expires_at: int, context: dict[str, Any]) -> None:
-    with _VERIFIED_CONTEXTS_LOCK:
-        _VERIFIED_CONTEXTS[token] = (float(expires_at), dict(context))
-
-
-def _current_connection_session() -> Any | None:
-    try:
-        return server.request_context.session
-    except LookupError:
+    if not isinstance(context, dict) or not _MAIN_CONTEXT_FIELDS.issubset(context):
         return None
-
-
-def _main_connection_context_state() -> _MainConnectionContextState | None:
-    session = _current_connection_session()
-    if session is None:
-        return None
-    with _MAIN_CONNECTION_CONTEXTS_LOCK:
-        state = _MAIN_CONNECTION_CONTEXTS.get(session)
-        if state is None:
-            state = _MainConnectionContextState()
-            _MAIN_CONNECTION_CONTEXTS[session] = state
-        return state
-
-
-def _context_from_main_result(result: Any) -> dict[str, Any] | None:
-    blocks = result.content if isinstance(result, CallToolResult) else result
-    if not isinstance(blocks, list):
-        return None
-    for block in blocks:
-        try:
-            payload = json.loads(str(getattr(block, "text", "") or ""))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            continue
-        context = payload.get("context") if isinstance(payload, dict) else None
-        if not isinstance(context, dict) or not _MAIN_CONTEXT_FIELDS.issubset(context):
-            continue
-        return {field: str(context[field]) for field in _MAIN_CONTEXT_FIELDS}
-    return None
-
-
-async def _ensure_main_connection_context() -> dict[str, Any] | None:
-    state = _main_connection_context_state()
-    if state is None:
-        return _authenticated_main_context()
-    access_token = get_access_token()
-    if access_token is None:
-        return None
-    expires_at = getattr(access_token, "expires_at", None)
-    if expires_at is not None and float(expires_at) <= time.time():
-        raise RuntimeError("authentication_expired")
-    async with state.lock:
-        if state.attempted:
-            if state.context is not None:
-                return dict(state.context)
-            raise RuntimeError(state.failure or "main_context_unavailable")
-        state.attempted = True
-        try:
-            result = await asyncio.wait_for(
-                _dispatch_tool("main.context", {}, _bootstrap=True),
-                timeout=_MCP_CALL_TIMEOUT_SECONDS,
-            )
-        except asyncio.TimeoutError as error:
-            state.failure = "main_context_timeout"
-            raise RuntimeError(state.failure) from error
-        except Exception as error:
-            state.failure = str(_typed_failure(error).get("failureCode") or "main_context_unavailable")
-            raise
-        context = _context_from_main_result(result)
-        if context is None:
-            state.failure = "main_context_unavailable"
-            raise RuntimeError(state.failure)
-        state.context = context
-        return dict(context)
+    return {field: str(context[field]) for field in _MAIN_CONTEXT_FIELDS}
 
 
 class AgentRuntimeServer(Server):
@@ -1588,28 +1530,9 @@ class Auth0TokenVerifier:
 
         self.config = config
         self.jwk_client = jwk_client or PyJWKClient(f"{config.issuer_url}.well-known/jwks.json")
-        self._context_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
-        self._context_cache_lock = threading.Lock()
 
-    def _principal_context(
-        self,
-        subject: str,
-        *,
-        token_expires_at: int,
-    ) -> dict[str, Any] | None:
-        key = (self.config.issuer_url, subject)
-        now = time.time()
-        with self._context_cache_lock:
-            cached = self._context_cache.get(key)
-            if cached is not None and cached[0] > now:
-                return dict(cached[1])
-        context = _resolve_external_main_context_sync(*key)
-        if context is None:
-            return None
-        expires_at = min(float(token_expires_at), now + 300.0)
-        with self._context_cache_lock:
-            self._context_cache[key] = (expires_at, dict(context))
-        return context
+    def _principal_context(self, subject: str) -> dict[str, Any] | None:
+        return _resolve_external_main_context_sync(self.config.issuer_url, subject)
 
     def _verify_sync(self, token: str) -> AccessToken | None:
         import jwt
@@ -1637,10 +1560,7 @@ class Auth0TokenVerifier:
             subject = str(claims.get("sub") or "").strip()
             if not subject:
                 return None
-            context = self._principal_context(
-                subject,
-                token_expires_at=int(claims["exp"]),
-            )
+            context = self._principal_context(subject)
             if context is None:
                 return None
             access_token = AccessToken(
@@ -1650,7 +1570,6 @@ class Auth0TokenVerifier:
                 expires_at=int(claims["exp"]),
                 resource=self.config.resource_url,
             )
-            _remember_verified_context(token, int(claims["exp"]), context)
             object.__setattr__(access_token, "subject", subject)
             object.__setattr__(access_token, "claims", {**claims, "liquidaity": context})
             return access_token
@@ -1668,13 +1587,16 @@ async def _bridge(path: str, payload: dict[str, Any]) -> list[TextContent]:
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
+    global _LATEST_CATALOG_DIAGNOSTIC
+
     tools = [
         Tool(
             name="main.context",
             description=(
                 "Read the compact server-owned Main entry context for this authenticated "
-                "LiquidAIty connection: project, deck, conversation, parent run, and saved "
-                "Main-card identities. Accepts no caller-supplied identity or context payload."
+                "LiquidAIty request: project, deck, conversation, parent run, and saved "
+                "Main-card identities, plus the exact served catalog/process/source identity. "
+                "Accepts no caller-supplied identity or context payload."
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
@@ -1701,9 +1623,14 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Read the canonical OpenClaude Coder session/process state. Reports running only "
                 "when the backend's live session owner has a starting or running process; historical "
-                "AgentGraph assignments are not process evidence."
+                "AgentGraph assignments are not process evidence. When assignmentId is supplied, "
+                "reload that exact durable AgentGraph assignment instead of consulting live process state."
             ),
-            inputSchema={"type": "object", "properties": {}, "required": []},
+            inputSchema={
+                "type": "object",
+                "properties": {"assignmentId": {"type": "string"}},
+                "required": [],
+            },
         ),
         Tool(
             name="mag_one.describe_connected_agents",
@@ -1923,17 +1850,25 @@ async def list_tools() -> list[Tool]:
         tool.name: dict((tool.meta or {}).get("runtimeExecution") or {})
         for tool in tools
     })
-    context = await _ensure_main_connection_context()
+    context = _authenticated_main_context()
     if context is None:
         published = tools
     else:
         published = _bind_authenticated_catalog(tools)
     catalog_count, catalog_hash = _catalog_identity(published)
+    with _CATALOG_DIAGNOSTIC_LOCK:
+        _LATEST_CATALOG_DIAGNOSTIC = {
+            "publicToolCount": catalog_count,
+            "publicToolUniqueCount": len({tool.name for tool in published}),
+            "catalogHash": catalog_hash,
+        }
     _trace(
         "catalog",
         mcp_method="tools/list",
         catalog_count=catalog_count,
         catalog_hash=catalog_hash,
+        source_revision=_STARTUP_SOURCE_REVISION,
+        source_sha256=_STARTUP_SOURCE_SHA256,
         response_status=200,
         completed=True,
         **_oauth_trace_fields(),
@@ -2119,7 +2054,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "limit",
         "projectWide",
     },
-    "coder.status": set(),
+    "coder.status": {"assignmentId"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "instructionId", "conversationId"},
     "write_mag_one_instructions": {
@@ -2165,15 +2100,8 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
 async def _dispatch_tool(
     name: str,
     arguments: dict[str, Any],
-    *,
-    _bootstrap: bool = False,
 ) -> Any:
-    if name == "main.context" and _bootstrap:
-        context = _authenticated_main_context()
-    elif name == "main.context":
-        context = await _ensure_main_connection_context()
-    else:
-        context = await _ensure_main_connection_context()
+    context = _authenticated_main_context()
     if name.startswith(_NATIVE_PREFIXES["engraphis"]):
         readiness_failure = _native_engraphis_readiness_failure()
         if readiness_failure is not None:
@@ -2329,6 +2257,7 @@ async def _dispatch_tool(
                             "parentRunId": str(context["parentRunId"]),
                             "mainCardId": str(context["mainCardId"]),
                         },
+                        "diagnostics": _catalog_diagnostics(),
                     }
                 ),
             )
@@ -2341,6 +2270,19 @@ async def _dispatch_tool(
             max_results=int(args.get("max_results") or 5),
         )
         return [TextContent(type="text", text=result)]
+    if name == "coder.status" and str(args.get("assignmentId") or "").strip():
+        from app import control_plane
+
+        try:
+            result = await control_plane.agentgraph_inspect({
+                "projectId": str(context["projectId"]) if context is not None else "",
+                "deckId": str(context["deckId"]) if context is not None else "",
+                "conversationId": str(context["conversationId"]) if context is not None else "",
+                "assignmentId": str(args["assignmentId"]).strip(),
+            })
+            return [TextContent(type="text", text=json.dumps(result))]
+        except control_plane.ControlPlaneError as err:
+            return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
     handler_name = _CONTROL_HANDLER_NAMES.get(name)
     if handler_name is not None:
         from app import control_plane
@@ -2578,7 +2520,7 @@ async def _run_streamable_http() -> None:
     session_manager = StreamableHTTPSessionManager(
         app=server,
         json_response=True,
-        stateless=False,
+        stateless=True,
         security_settings=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
 
@@ -2632,12 +2574,19 @@ async def _run_streamable_http() -> None:
 
 
 async def main() -> None:
+    if MCP_TRANSPORT == "stdio":
+        # The Harness connection deadline protects the MCP protocol handshake,
+        # not native provider startup.  Graphiti/Neo4j initialization can take
+        # longer than that deadline when the external HTTP host is starting at
+        # the same time.  Begin serving stdio immediately; the existing
+        # list_tools path discovers the complete native catalogs before it
+        # returns them to the Harness.
+        _start_native_engraphis_warmup()
+        await _run_stdio()
+        return
     await _initialize_native_engraphis()
     _start_native_engraphis_warmup()
     await _initialize_native_graphiti()
-    if MCP_TRANSPORT == "stdio":
-        await _run_stdio()
-        return
     if MCP_TRANSPORT == "streamable-http":
         await _native_cbm_tools()
         await _run_streamable_http()

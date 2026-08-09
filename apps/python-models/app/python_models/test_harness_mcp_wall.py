@@ -28,6 +28,7 @@ class TestHarnessGrpcServerWall:
         assert "LIQUIDAITY_MCP_NODE" not in source
         assert "PythonMcpConfig" in source
         assert "connectOfficialPythonMcp" in source
+        assert "run_coder_subagent" not in source
         # No direct database / graph clients on the Harness side.
         for forbidden in ("from 'pg'", 'from "pg"', "neo4j", "psycopg", "ag_catalog"):
             assert forbidden not in source, f"harness gained direct dependency: {forbidden}"

@@ -25,6 +25,8 @@ REMOVED_WRAPPERS = {
     "coder.steer",
     "coder.stop",
 }
+EXPECTED_PUBLIC_TOOL_COUNT = 69
+RETIRED_PUBLIC_TOOLS = {"run_coder_subagent"}
 DIRECT_CUSTOM_TOOLS = {
     "main.context",
     "web_search",
@@ -116,10 +118,7 @@ async def _catalog() -> dict[str, Any]:
         internal = await mcp_host.list_tools()
         count, digest = mcp_host._catalog_identity(internal)
         names = [tool.name for tool in internal]
-        authenticated = mcp_host._catalog_for_scopes(
-            internal,
-            frozenset({"liquidaity.main"}),
-        )
+        authenticated = mcp_host._bind_authenticated_catalog(internal)
         authenticated_count, authenticated_hash = mcp_host._catalog_identity(authenticated)
         matrix: list[dict[str, Any]] = []
         for tool in internal:
@@ -137,8 +136,8 @@ async def _catalog() -> dict[str, Any]:
                     or tool.name in mcp_host._CONTROL_HANDLER_NAMES
                     or tool.name in DIRECT_CUSTOM_TOOLS
                 )
-            execution = dict((tool.meta or {}).get("liquidaityExecution") or {})
-            access = dict((tool.meta or {}).get("liquidaityAccess") or {})
+            execution = dict((tool.meta or {}).get("runtimeExecution") or {})
+            access = dict((tool.meta or {}).get("runtimeAccess") or {})
             matrix.append(
                 {
                     "name": tool.name,
@@ -150,9 +149,12 @@ async def _catalog() -> dict[str, Any]:
             )
         return {
             "count": count,
+            "expectedCount": EXPECTED_PUBLIC_TOOL_COUNT,
             "hash": digest,
             "unique": len(names) == len(set(names)),
             "coderStatusPresent": "coder.status" in names,
+            "canonicalCardDoorwayPresent": "card.run_assistant_agent" in names,
+            "retiredToolsPresent": sorted(RETIRED_PUBLIC_TOOLS.intersection(names)),
             "removedWrappersPresent": sorted(REMOVED_WRAPPERS.intersection(names)),
             "allOAuthDeclared": all(item["oauth"] for item in matrix),
             "undispatchable": [item["name"] for item in matrix if not item["dispatchable"]],
@@ -250,7 +252,13 @@ async def main() -> int:
 
     catalog = await _catalog()
     checks["catalog"] = catalog
-    if not catalog["unique"] or not catalog["coderStatusPresent"]:
+    if (
+        catalog["count"] != catalog["expectedCount"]
+        or not catalog["unique"]
+        or not catalog["coderStatusPresent"]
+        or not catalog["canonicalCardDoorwayPresent"]
+        or catalog["retiredToolsPresent"]
+    ):
         failures.append("catalog_identity_invalid")
     if catalog["removedWrappersPresent"] or catalog["undispatchable"] or not catalog["allOAuthDeclared"]:
         failures.append("catalog_dispatch_or_security_invalid")

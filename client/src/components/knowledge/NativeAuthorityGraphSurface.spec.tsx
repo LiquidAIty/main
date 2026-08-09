@@ -48,6 +48,13 @@ describe('native authority graph surfaces', () => {
     ));
     await waitFor(() => expect(screen.getByTestId('native-knowgraph-surface')).toBeTruthy());
     expect(screen.getByRole('button', { name: 'Open KnowGraph Inspector' })).toBeTruthy();
+
+    window.dispatchEvent(new Event('knowledge:refresh'));
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    window.dispatchEvent(new Event('knowgraph:refresh'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 
   it('shows the exact CodeGraph project-resolution failure instead of mounting an arbitrary index', () => {

@@ -27,7 +27,6 @@ const IDENTITY_BOUND_TOOL_NAMES = new Set([
   'mcp__liquidaity__canvas_inspect',
   'mcp__liquidaity__card_update_configuration',
   'mcp__liquidaity__canvas_upsert_wire',
-  'mcp__liquidaity__run_coder_subagent',
   'mcp__liquidaity__run_mag_one',
   'mcp__liquidaity__write_mag_one_instructions',
 ])
@@ -71,7 +70,6 @@ export function bindServerOwnedToolCaller(params: {
     'canvas_inspect',
     'card_update_configuration',
     'canvas_upsert_wire',
-    'run_coder_subagent',
     'run_mag_one',
     'write_mag_one_instructions',
   ].includes(normalizedName)) {
@@ -83,7 +81,6 @@ export function bindServerOwnedToolCaller(params: {
     'canvas_inspect',
     'card_update_configuration',
     'canvas_upsert_wire',
-    'run_coder_subagent',
     'run_mag_one',
     'write_mag_one_instructions',
   ].includes(normalizedName)) {
@@ -91,16 +88,10 @@ export function bindServerOwnedToolCaller(params: {
   }
   if ([
     'agentgraph_inspect',
-    'run_coder_subagent',
     'run_mag_one',
     'write_mag_one_instructions',
   ].includes(normalizedName)) {
     identity.conversationId = params.conversationId
-  }
-  if ([
-    'run_coder_subagent',
-  ].includes(normalizedName)) {
-    identity.parentRunId = params.parentRunId
   }
   return {
     updatedInput: {
@@ -327,6 +318,27 @@ export function serializeProgressEvent(message: any): {
     tool_use_id: String(message?.toolUseID || ''),
     parent_tool_use_id: String(message?.parentToolUseID || ''),
     data_json: JSON.stringify(message?.data ?? null),
+  }
+}
+
+/** Transport one provider-exposed QueryEngine thinking delta without
+ * interpreting, persisting, or mixing it into the assistant response. */
+export function serializeProviderReasoningDelta(message: any): {
+  text: string
+  source: 'provider_exposed'
+} | null {
+  if (
+    message?.type !== 'stream_event'
+    || message?.event?.type !== 'content_block_delta'
+    || message?.event?.delta?.type !== 'thinking_delta'
+    || typeof message.event.delta.thinking !== 'string'
+    || message.event.delta.thinking.length === 0
+  ) {
+    return null
+  }
+  return {
+    text: message.event.delta.thinking,
+    source: 'provider_exposed',
   }
 }
 
@@ -655,7 +667,10 @@ export class GrpcServer {
 
           for await (const msg of generator) {
             if (msg.type === 'stream_event') {
-              if (msg.event.type === 'content_block_delta' && msg.event.delta.type === 'text_delta') {
+              const reasoning = serializeProviderReasoningDelta(msg)
+              if (reasoning) {
+                call.write({ reasoning })
+              } else if (msg.event.type === 'content_block_delta' && msg.event.delta.type === 'text_delta') {
                 call.write({
                   text_chunk: {
                     text: msg.event.delta.text

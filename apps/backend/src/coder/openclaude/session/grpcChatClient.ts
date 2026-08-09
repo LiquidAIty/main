@@ -22,6 +22,7 @@ import { logHarnessTrace } from '../../../services/harnessTrace';
 
 export type GrpcSessionEvent =
   | { kind: 'text'; text: string }
+  | { kind: 'reasoning'; text: string; source: 'provider_exposed' }
   | {
       kind: 'tool_start';
       toolName: string;
@@ -73,6 +74,25 @@ export function decodeGrpcProgressEvent(progress: any): Extract<GrpcSessionEvent
     toolUseId: String(progress?.tool_use_id || ''),
     parentToolUseId: String(progress?.parent_tool_use_id || ''),
     data,
+  };
+}
+
+/** Accept only the native LocalCoder provider-exposed reasoning contract.
+ * It remains a separate event and is never appended to assistant text. */
+export function decodeGrpcReasoningEvent(
+  reasoning: any,
+): Extract<GrpcSessionEvent, { kind: 'reasoning' }> | null {
+  if (
+    reasoning?.source !== 'provider_exposed'
+    || typeof reasoning?.text !== 'string'
+    || reasoning.text.length === 0
+  ) {
+    return null;
+  }
+  return {
+    kind: 'reasoning',
+    text: reasoning.text,
+    source: 'provider_exposed',
   };
 }
 
@@ -432,6 +452,9 @@ export async function startGrpcTurn(
       if (msg.text_chunk) {
         accumulated += msg.text_chunk.text || '';
         safeOnEvent({ kind: 'text', text: msg.text_chunk.text || '' });
+      } else if (msg.reasoning) {
+        const reasoning = decodeGrpcReasoningEvent(msg.reasoning);
+        if (reasoning) safeOnEvent(reasoning);
       } else if (msg.tool_start) {
         const agentType = String(msg.tool_start.agent_type || '');
         safeOnEvent({

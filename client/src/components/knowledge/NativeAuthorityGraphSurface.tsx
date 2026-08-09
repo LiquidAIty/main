@@ -169,8 +169,8 @@ export function NativeKnowGraphSurface({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     const refresh = () => void load();
-    window.addEventListener('knowledge:refresh', refresh);
-    return () => window.removeEventListener('knowledge:refresh', refresh);
+    window.addEventListener('knowgraph:refresh', refresh);
+    return () => window.removeEventListener('knowgraph:refresh', refresh);
   }, [load]);
 
   return (
@@ -501,7 +501,7 @@ export function NativeGraphProjectionSurface({
         <section>
           <h3>Controls</h3>
           <div className="engraphis-native-actions">
-            <button onClick={() => window.dispatchEvent(new Event('knowledge:refresh'))}>Refresh</button>
+            <button onClick={() => window.dispatchEvent(new Event(`${authority}:refresh`))}>Refresh</button>
             <button onClick={() => graphRef.current?.d3ReheatSimulation()}>Reheat</button>
           </div>
           <label><input type="checkbox" checked={hideIsolated} onChange={(event) => setHideIsolated(event.target.checked)} /> Hide unconnected entities</label>

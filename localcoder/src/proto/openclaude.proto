@@ -107,12 +107,22 @@ message ServerMessage {
     FinalResponse done = 5;            // Generation successfully completed
     ErrorResponse error = 6;           // A critical error occurred
     ProgressEvent progress = 7;        // Native tool/subagent progress
+    ReasoningDelta reasoning = 8;      // Provider-exposed reasoning signal
   }
 }
 
 // Stream text chunk
 message TextChunk {
   string text = 1;
+}
+
+// Reasoning text that the configured provider deliberately exposed through
+// the native QueryEngine `thinking_delta` stream. This is transport only: it
+// is not reconstructed from answer text and is not part of the assistant
+// transcript or FinalResponse.full_text.
+message ReasoningDelta {
+  string text = 1;
+  string source = 2; // "provider_exposed"
 }
 
 // Agent decided to use a tool (bash, read_file, etc.)

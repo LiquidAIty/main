@@ -13,6 +13,7 @@ vi.mock('../../../services/mcp/pythonAgentMcpClient', () => ({
 import {
   buildHarnessAgentDefinition,
   decodeGrpcProgressEvent,
+  decodeGrpcReasoningEvent,
   deriveSessionId,
   resolveMainChatRuntimeConfig,
   selectDoorwayCards,
@@ -84,6 +85,19 @@ describe('native Main / Hermes / Search doorways', () => {
       kind: 'progress', toolUseId: 'child-delta-1', parentToolUseId: 'hermes-agent-call',
       data: { type: 'agent_text_delta', agentId: 'agent-42', agentType: 'card_hermes_steward', text: 'live prose' },
     });
+  });
+
+  it('accepts only the native provider-exposed reasoning event contract', () => {
+    expect(decodeGrpcReasoningEvent({
+      text: 'Provider reasoning signal',
+      source: 'provider_exposed',
+    })).toEqual({
+      kind: 'reasoning',
+      text: 'Provider reasoning signal',
+      source: 'provider_exposed',
+    });
+    expect(decodeGrpcReasoningEvent({ text: '', source: 'provider_exposed' })).toBeNull();
+    expect(decodeGrpcReasoningEvent({ text: 'untrusted', source: 'inferred' })).toBeNull();
   });
 
   it('registers Hermes as a native inherited-context agent with exact MCP grants', () => {

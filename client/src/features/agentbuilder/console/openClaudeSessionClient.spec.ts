@@ -97,6 +97,28 @@ describe('streamSession', () => {
       onEvent: vi.fn(),
     })).resolves.toEqual({ finalText: '' });
   });
+
+  it('forwards provider reasoning separately from the visible final answer', async () => {
+    const onEvent = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
+      'event: reasoning\ndata: {"text":"early signal","source":"provider_exposed"}\n\n',
+      'event: text\ndata: {"text":"visible answer"}\n\n',
+      'event: done\ndata: {"fullText":"visible answer"}\n\n',
+      'event: end\ndata: {}\n\n',
+    ])));
+
+    await expect(streamSession({
+      projectId: 'project-1',
+      conversationId: 'main',
+      message: 'hello',
+      onEvent,
+    })).resolves.toEqual({ finalText: 'visible answer' });
+    expect(onEvent).toHaveBeenCalledWith({
+      kind: 'reasoning',
+      text: 'early signal',
+      source: 'provider_exposed',
+    });
+  });
 });
 
 describe('loadSessionHistory', () => {

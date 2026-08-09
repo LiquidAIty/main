@@ -161,7 +161,7 @@ export default function UploadAttachment({
       setToastType("ok");
       const sectionCount = Number(payload?.section_count || 0);
       setToast(sectionCount > 1 ? `Knowledge imported (${sectionCount} sections)` : "Knowledge imported");
-      window.dispatchEvent(new CustomEvent("knowledge:refresh", {
+      window.dispatchEvent(new CustomEvent("knowgraph:refresh", {
         detail: {
           projectId: knowledgeProjectId,
           documentId,

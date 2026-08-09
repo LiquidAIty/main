@@ -135,123 +135,69 @@ def test_call_tool_appends_canonical_receipt_and_typed_provider_failure(monkeypa
     assert later_receipt["state"] == "completed"
 
 
-def test_main_context_bootstraps_once_and_is_reused_for_one_connection(monkeypatch):
-    import asyncio
-    import mcp_host
-
-    class Session:
-        pass
-
-    session = Session()
-    context = {
-        "projectId": "project-1",
-        "deckId": "deck-1",
-        "conversationId": "conversation-1",
-        "parentRunId": "parent-1",
-        "mainCardId": "main-1",
-    }
-    calls: list[str] = []
-    original_dispatch = mcp_host._dispatch_tool
-
-    async def dispatch(name, arguments, *, _bootstrap=False):
-        if name == "main.context" and _bootstrap:
-            calls.append(name)
-        return await original_dispatch(name, arguments, _bootstrap=_bootstrap)
-
-    monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
-    monkeypatch.setattr(mcp_host, "_current_connection_session", lambda: session)
-    monkeypatch.setattr(mcp_host, "get_access_token", lambda: object())
-    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: dict(context))
-
-    async def check():
-        first = await mcp_host._ensure_main_connection_context()
-        second = await mcp_host._ensure_main_connection_context()
-        visible = await mcp_host.call_tool("main.context", {})
-        return first, second, visible
-
-    first, second, visible = asyncio.run(check())
-    assert calls == ["main.context"]
-    assert first == context
-    assert second == context
-    assert json.loads(visible[0].text)["context"] == context
-
-
-def test_main_context_state_isolated_between_connections(monkeypatch):
-    import asyncio
-    import mcp_host
-
-    class Session:
-        pass
-
-    sessions = [Session(), Session()]
-    contexts = [
-        {
-            "projectId": "project-1",
-            "deckId": "deck-1",
-            "conversationId": "conversation-1",
-            "parentRunId": "parent-1",
-            "mainCardId": "main-1",
-        },
-        {
-            "projectId": "project-2",
-            "deckId": "deck-2",
-            "conversationId": "conversation-2",
-            "parentRunId": "parent-2",
-            "mainCardId": "main-2",
-        },
-    ]
-    current = {"session": sessions[0], "context": contexts[0]}
-    monkeypatch.setattr(mcp_host, "_current_connection_session", lambda: current["session"])
-    monkeypatch.setattr(mcp_host, "get_access_token", lambda: object())
-    monkeypatch.setattr(
-        mcp_host,
-        "_authenticated_main_context",
-        lambda: dict(current["context"]),
-    )
-
-    async def check():
-        first = await mcp_host._ensure_main_connection_context()
-        current.update(session=sessions[1], context=contexts[1])
-        second = await mcp_host._ensure_main_connection_context()
-        current.update(session=sessions[0], context=contexts[1])
-        first_again = await mcp_host._ensure_main_connection_context()
-        return first, second, first_again
-
-    first, second, first_again = asyncio.run(check())
-    assert first == contexts[0]
-    assert second == contexts[1]
-    assert first_again == contexts[0]
-
-
-def test_expired_authenticated_session_fails_before_bootstrap(monkeypatch):
-    import asyncio
+def test_main_context_reads_only_the_current_request_claims(monkeypatch):
     import mcp_host
     from mcp.server.auth.provider import AccessToken
 
-    class Session:
-        pass
+    contexts = [{
+        "projectId": f"project-{index}",
+        "deckId": "deck_builder",
+        "conversationId": f"external-mcp:grant-{index}",
+        "parentRunId": f"external-main:grant-{index}",
+        "mainCardId": "card_main_chat",
+    } for index in (1, 2)]
+    current = {"token": AccessToken(
+        token="first",
+        client_id="chatgpt-client",
+        scopes=["liquidaity.main"],
+        expires_at=int(time.time()) + 60,
+        claims={"liquidaity": contexts[0]},
+    )}
+    monkeypatch.setattr(mcp_host, "get_access_token", lambda: current["token"])
 
-    calls = []
-    monkeypatch.setattr(mcp_host, "_current_connection_session", lambda: Session())
-    monkeypatch.setattr(
-        mcp_host,
-        "get_access_token",
-        lambda: AccessToken(
-            token="expired",
-            client_id="chatgpt-client",
-            scopes=["liquidaity.main"],
-            expires_at=int(time.time()) - 1,
-        ),
+    assert mcp_host._authenticated_main_context() == contexts[0]
+    current["token"] = AccessToken(
+        token="second",
+        client_id="chatgpt-client",
+        scopes=["liquidaity.main"],
+        expires_at=int(time.time()) + 60,
+        claims={"liquidaity": contexts[1]},
     )
+    assert mcp_host._authenticated_main_context() == contexts[1]
+    current["token"] = None
+    assert mcp_host._authenticated_main_context() is None
+    assert not hasattr(mcp_host, "_VERIFIED_CONTEXTS")
+    assert not hasattr(mcp_host, "_MAIN_CONNECTION_CONTEXTS")
 
-    async def dispatch(*_args, **_kwargs):
-        calls.append(True)
 
-    monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
+def test_main_context_rejects_expired_or_incomplete_request_claims(monkeypatch):
+    import mcp_host
+    from mcp.server.auth.provider import AccessToken
 
-    with pytest.raises(RuntimeError, match="authentication_expired"):
-        asyncio.run(mcp_host._ensure_main_connection_context())
-    assert calls == []
+    current = {"token": AccessToken(
+        token="expired",
+        client_id="chatgpt-client",
+        scopes=["liquidaity.main"],
+        expires_at=int(time.time()) - 1,
+        claims={"liquidaity": {
+            "projectId": "stale-project",
+            "deckId": "deck_builder",
+            "conversationId": "external-mcp:stale",
+            "parentRunId": "external-main:stale",
+            "mainCardId": "card_main_chat",
+        }},
+    )}
+    monkeypatch.setattr(mcp_host, "get_access_token", lambda: current["token"])
+    assert mcp_host._authenticated_main_context() is None
+
+    current["token"] = AccessToken(
+        token="incomplete",
+        client_id="chatgpt-client",
+        scopes=["liquidaity.main"],
+        expires_at=int(time.time()) + 60,
+        claims={"liquidaity": {"projectId": "project-1"}},
+    )
+    assert mcp_host._authenticated_main_context() is None
 
 
 def test_authenticated_connection_reaches_read_only_handler_without_context_injection(
@@ -262,9 +208,6 @@ def test_authenticated_connection_reaches_read_only_handler_without_context_inje
     from app import control_plane
     from mcp.server.auth.provider import AccessToken
 
-    class Session:
-        pass
-
     context = {
         "projectId": "project-1",
         "deckId": "deck-1",
@@ -274,8 +217,6 @@ def test_authenticated_connection_reaches_read_only_handler_without_context_inje
     }
     calls = []
     bridge_calls = []
-    session = Session()
-    monkeypatch.setattr(mcp_host, "_current_connection_session", lambda: session)
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: dict(context))
     monkeypatch.setattr(
         mcp_host,
@@ -305,6 +246,66 @@ def test_authenticated_connection_reaches_read_only_handler_without_context_inje
     assert calls == [{"projectId": "project-1", "deckId": "deck-1"}]
     assert bridge_calls == []
     assert "context" not in result[0].text
+
+
+def test_coder_status_reloads_one_exact_durable_assignment(monkeypatch):
+    import asyncio
+    import mcp_host
+    from app import control_plane
+
+    context = {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "external-mcp:grant-1",
+        "parentRunId": "external-main:grant-1",
+        "mainCardId": "card_main_chat",
+    }
+    calls = []
+    current = {"context": context}
+    monkeypatch.setattr(
+        mcp_host,
+        "_authenticated_main_context",
+        lambda: dict(current["context"]) if current["context"] is not None else None,
+    )
+
+    async def inspect(arguments):
+        if not all(arguments.get(field) for field in ("projectId", "deckId", "conversationId")):
+            raise control_plane.ControlPlaneError("projectId, deckId, conversationId required")
+        calls.append(arguments)
+        return {
+            "ok": True,
+            "assignmentId": "assignment:coder-1",
+            "status": "completed",
+            "receiverCardId": "card_local_coder",
+        }
+
+    async def unexpected_bridge(*_args, **_kwargs):
+        raise AssertionError("durable assignment status must not use live process state")
+
+    monkeypatch.setattr(control_plane, "agentgraph_inspect", inspect)
+    monkeypatch.setattr(mcp_host, "_bridge", unexpected_bridge)
+
+    result = asyncio.run(
+        mcp_host.call_tool("coder.status", {"assignmentId": "assignment:coder-1"})
+    )
+    assert json.loads(result[0].text) == {
+        "ok": True,
+        "assignmentId": "assignment:coder-1",
+        "status": "completed",
+        "receiverCardId": "card_local_coder",
+    }
+    assert calls == [{
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "external-mcp:grant-1",
+        "assignmentId": "assignment:coder-1",
+    }]
+    current["context"] = None
+    missing_scope = asyncio.run(
+        mcp_host.call_tool("coder.status", {"assignmentId": "assignment:coder-1"})
+    )
+    assert missing_scope.isError is True
+    assert "projectId, deckId, conversationId required" in missing_scope.content[0].text
 
 
 def test_lifecycle_errors_remain_typed_and_distinct(monkeypatch):
@@ -798,6 +799,35 @@ def test_streamable_http_discovers_catalogs_before_accepting_requests(monkeypatc
     ]
 
 
+def test_stdio_accepts_protocol_before_catalog_provider_initialization(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    events = []
+
+    async def initialized_engraphis():
+        events.append("engraphis_registry")
+
+    def started_engraphis_warmup():
+        events.append("engraphis_warmup_started")
+
+    async def initialized_graphiti():
+        events.append("graphiti_registry")
+
+    async def run_stdio():
+        events.append("stdio")
+
+    monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "stdio")
+    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized_engraphis)
+    monkeypatch.setattr(mcp_host, "_start_native_engraphis_warmup", started_engraphis_warmup)
+    monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialized_graphiti)
+    monkeypatch.setattr(mcp_host, "_run_stdio", run_stdio)
+
+    asyncio.run(mcp_host.main())
+
+    assert events == ["engraphis_warmup_started", "stdio"]
+
+
 def test_native_engraphis_hung_call_does_not_block_later_native_dispatch(monkeypatch):
     import asyncio
     import mcp_host
@@ -1003,53 +1033,106 @@ def test_native_cbm_timeout_retires_the_session_without_retrying(monkeypatch):
     assert mcp_host._NATIVE_CBM_CLIENT is None
 
 
-def test_streamable_http_initializes_and_lists_the_canonical_catalog():
+def test_streamable_http_is_stateless_across_fresh_clients(monkeypatch):
+    import asyncio
+    import httpx
+    import mcp_host
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+    from mcp.server.auth.provider import AccessToken
+
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    code = f"""
-import asyncio, os, subprocess, sys, mcp_host
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
-env = {{
-    **os.environ,
-    'LIQUIDAITY_MCP_TRANSPORT': 'streamable-http',
-    'LIQUIDAITY_HTTP_MCP_PORT': '{port}',
-}}
-server = subprocess.Popen([sys.executable, 'mcp_host.py'], cwd={_APP_DIR!r}, env=env)
-async def check():
-    expected = sorted(tool.name for tool in await mcp_host.list_tools())
-    failure = None
-    for _ in range(50):
-        try:
-            async with streamable_http_client('http://127.0.0.1:{port}/mcp') as streams:
-                async with ClientSession(streams[0], streams[1]) as session:
-                    await session.initialize()
-                    actual = sorted(tool.name for tool in (await session.list_tools()).tools)
-                    assert actual == expected
-                    assert 'main.context' in actual
-                    assert 'agentgraph.inspect' in actual
-                    print('STREAMABLE_HTTP_OK')
-                    return
-        except Exception as exc:
-            failure = exc
-            await asyncio.sleep(0.1)
-    raise failure or RuntimeError('http_mcp_not_ready')
-try:
-    asyncio.run(check())
-finally:
-    server.terminate()
-    server.wait(timeout=10)
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        cwd=_APP_DIR,
-        capture_output=True,
-        text=True,
-        timeout=20,
+    context = {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "external-mcp:grant-1",
+        "parentRunId": "external-main:grant-1",
+        "mainCardId": "card_main_chat",
+    }
+
+    async def empty_catalog():
+        return []
+
+    async def initialized():
+        return None
+
+    monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setattr(mcp_host, "HTTP_MCP_PORT", port)
+    monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", False)
+    monkeypatch.setattr(
+        mcp_host,
+        "get_access_token",
+        lambda: AccessToken(
+            token="request-scoped-test-token",
+            client_id="chatgpt-client",
+            scopes=["liquidaity.main"],
+            expires_at=4102444800,
+            claims={"liquidaity": context},
+        ),
     )
-    assert result.returncode == 0, result.stderr
-    assert "STREAMABLE_HTTP_OK" in result.stdout
+    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
+    monkeypatch.setattr(mcp_host, "_start_native_engraphis_warmup", lambda: None)
+    monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialized)
+    monkeypatch.setattr(mcp_host, "_native_engraphis_tools", empty_catalog)
+    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", empty_catalog)
+    monkeypatch.setattr(mcp_host, "_native_cbm_tools", empty_catalog)
+
+    async def check():
+        server_task = asyncio.create_task(mcp_host.main())
+        try:
+            failure = None
+            for _ in range(50):
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                        pass
+                    break
+                except Exception as error:
+                    failure = error
+                    await asyncio.sleep(0.1)
+            else:
+                raise failure or RuntimeError("http_mcp_not_ready")
+
+            async def fresh_client():
+                response_session_ids = []
+
+                async def observe(response):
+                    response_session_ids.append(response.headers.get("mcp-session-id"))
+
+                async with httpx.AsyncClient(
+                    event_hooks={"response": [observe]}
+                ) as http_client:
+                    async with streamable_http_client(
+                        f"http://127.0.0.1:{port}/mcp",
+                        http_client=http_client,
+                    ) as streams:
+                        async with ClientSession(streams[0], streams[1]) as session:
+                            await session.initialize()
+                            actual = sorted(
+                                tool.name for tool in (await session.list_tools()).tools
+                            )
+                            result = await session.call_tool("main.context", {})
+                            visible_context = json.loads(result.content[0].text)["context"]
+                assert response_session_ids
+                assert all(value is None for value in response_session_ids)
+                return actual, visible_context
+
+            first_catalog, first_context = await fresh_client()
+            second_catalog, second_context = await fresh_client()
+            assert first_catalog == second_catalog
+            assert "main.context" in first_catalog
+            assert "agentgraph.inspect" in first_catalog
+            assert "coder.status" in first_catalog
+            assert first_context == second_context == context
+        finally:
+            server_task.cancel()
+            try:
+                await server_task
+            except asyncio.CancelledError:
+                pass
+
+    asyncio.run(check())
 
 
 def test_stdio_initializes_and_lists_the_canonical_catalog():
@@ -1524,7 +1607,19 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
     assert len(authenticated) == 69
     assert {tool.name for tool in authenticated} == canonical_names
     main_context = asyncio.run(mcp_host.call_tool("main.context", {}))
-    assert json.loads(main_context[0].text)["ok"] is True
+    main_payload = json.loads(main_context[0].text)
+    assert main_payload["ok"] is True
+    expected_count, expected_hash = mcp_host._catalog_identity(authenticated)
+    assert main_payload["diagnostics"] == {
+        "catalogReady": True,
+        "publicToolCount": expected_count,
+        "publicToolUniqueCount": len({tool.name for tool in authenticated}),
+        "catalogHash": expected_hash,
+        "processId": mcp_host._STARTUP_PROCESS_ID,
+        "startupId": mcp_host._STARTUP_ID,
+        "sourceRevision": mcp_host._STARTUP_SOURCE_REVISION,
+        "sourceSha256": mcp_host._STARTUP_SOURCE_SHA256,
+    }
 
 def test_identical_native_cbm_index_requests_share_one_in_flight_call(monkeypatch):
     import threading
@@ -1603,7 +1698,7 @@ def test_graphiti_episode_projection_is_bounded_and_full_body_is_explicit():
     assert len(explicit.content[0].text) <= 3000
 
 
-def test_oauth_principal_context_is_reused_within_one_verified_session(monkeypatch):
+def test_oauth_principal_context_is_reloaded_for_each_verified_request(monkeypatch):
     import mcp_host
 
     calls: list[tuple[str, str]] = []
@@ -1633,11 +1728,14 @@ def test_oauth_principal_context_is_reused_within_one_verified_session(monkeypat
         ),
     )
 
-    first = verifier._principal_context("auth0|jeremiah", token_expires_at=int(time.time()) + 600)
-    second = verifier._principal_context("auth0|jeremiah", token_expires_at=int(time.time()) + 600)
+    first = verifier._principal_context("auth0|jeremiah")
+    second = verifier._principal_context("auth0|jeremiah")
 
     assert first == second
-    assert calls == [("https://tenant.example/", "auth0|jeremiah")]
+    assert calls == [
+        ("https://tenant.example/", "auth0|jeremiah"),
+        ("https://tenant.example/", "auth0|jeremiah"),
+    ]
 
 
 def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(monkeypatch):
@@ -1691,7 +1789,22 @@ env = {{
     'LIQUIDAITY_AUTH0_CLIENT_ID': 'chatgpt-client',
     'LIQUIDAITY_MCP_OAUTH_ENFORCED': 'true',
 }}
-server = subprocess.Popen([sys.executable, 'mcp_host.py'], cwd={_APP_DIR!r}, env=env)
+server_code = r'''\
+import asyncio
+import mcp_host
+async def empty_catalog():
+    return []
+async def initialized():
+    return None
+mcp_host._initialize_native_engraphis = initialized
+mcp_host._start_native_engraphis_warmup = lambda: None
+mcp_host._initialize_native_graphiti = initialized
+mcp_host._native_engraphis_tools = empty_catalog
+mcp_host._native_graphiti_tools = empty_catalog
+mcp_host._native_cbm_tools = empty_catalog
+asyncio.run(mcp_host.main())
+'''
+server = subprocess.Popen([sys.executable, '-c', server_code], cwd={_APP_DIR!r}, env=env)
 try:
     metadata_url = 'http://127.0.0.1:{port}/.well-known/oauth-protected-resource/mcp'
     failure = None

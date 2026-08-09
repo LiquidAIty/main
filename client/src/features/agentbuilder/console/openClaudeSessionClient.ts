@@ -7,7 +7,7 @@
  * and resolves with `done.full_text`. No transformation, no curation.
  */
 type NativeSessionEvent = {
-  kind: 'session' | 'text' | 'tool_start' | 'tool_result' | 'permission' | 'done' | 'error' | 'end' | string;
+  kind: 'session' | 'text' | 'reasoning' | 'tool_start' | 'tool_result' | 'permission' | 'done' | 'error' | 'end' | string;
   [key: string]: unknown;
 };
 
@@ -113,12 +113,6 @@ export async function streamSession(args: {
       message: 'The chat stream ended before reporting completion.',
       route: `${BASE}/chat`,
     });
-  }
-  // Transport-level turn-complete signal (same event UploadAttachment already
-  // uses): durable knowledge may have changed server-side after this turn —
-  // listeners (e.g. the ThinkGraph projection view) refetch their real reads.
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('knowledge:refresh'));
   }
   return { finalText };
 }

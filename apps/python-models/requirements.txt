@@ -3,6 +3,12 @@ uvicorn[standard]==0.24.0
 pydantic==2.12.5
 pytest==8.4.2
 python-dotenv==1.2.2
+# The current Graphiti MCP package requires the official Python MCP SDK v1
+# (`mcp>=1.27.2,<2`), and Engraphis still imports its v1 FastMCP registry.
+# Keep the tested v1 SDK explicit while this host uses its supported stateless
+# Streamable HTTP mode; migrating all three in-process registries to v2 is a
+# separate compatibility job.
+mcp==1.28.1
 # Active ThinkGraph memory engine. Apache-2.0; local Sentence Transformers only.
 # Native ThinkGraph runtime, maintained and versioned with this repository.
 -e ../../engraphis-main[mcp]

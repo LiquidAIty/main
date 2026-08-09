@@ -12,6 +12,7 @@ import {
   missingRequiredHarnessTools,
   resolveCardRunControlCall,
   serializeProgressEvent,
+  serializeProviderReasoningDelta,
 } from './server.js'
 import { resolveAgentTools } from '../tools/AgentTool/agentToolUtils.js'
 import { agentTextDeltaProgress } from '../tools/AgentTool/AgentTool.js'
@@ -304,6 +305,34 @@ test('serializeProgressEvent preserves native structured subagent progress and l
   })
 })
 
+test('serializeProviderReasoningDelta transports only native provider-exposed thinking deltas', () => {
+  const text = 'Provider-exposed reasoning — café 漢字'
+  assert.deepEqual(serializeProviderReasoningDelta({
+    type: 'stream_event',
+    event: {
+      type: 'content_block_delta',
+      delta: { type: 'thinking_delta', thinking: text },
+    },
+  }), {
+    text,
+    source: 'provider_exposed',
+  })
+  assert.equal(serializeProviderReasoningDelta({
+    type: 'stream_event',
+    event: {
+      type: 'content_block_delta',
+      delta: { type: 'text_delta', text },
+    },
+  }), null)
+  assert.equal(serializeProviderReasoningDelta({
+    type: 'stream_event',
+    event: {
+      type: 'content_block_delta',
+      delta: { type: 'thinking_delta', thinking: '' },
+    },
+  }), null)
+})
+
 test('serializeProgressEvent preserves ordered Hermes text deltas without a proto change', () => {
   const deltas = ['one ', 'two ', 'three'].map((text, index) => serializeProgressEvent({
     type: 'progress',
@@ -370,6 +399,12 @@ test('the actual gRPC serializers preserve UTF-8 request and progress bytes', ()
     progress: { tool_use_id: 'child', parent_tool_use_id: 'parent', data_json: JSON.stringify({ text }) },
   }))
   assert.deepEqual(JSON.parse(response.progress.data_json), { text })
+
+  const reasoningResponse = service.responseDeserialize(service.responseSerialize({
+    reasoning: { text, source: 'provider_exposed' },
+  }))
+  assert.equal(reasoningResponse.event, 'reasoning')
+  assert.deepEqual(reasoningResponse.reasoning, { text, source: 'provider_exposed' })
 })
 
 test('missingRequiredHarnessTools passes only when the real qualified control tools are fetched', () => {
