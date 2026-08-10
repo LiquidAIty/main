@@ -5,12 +5,12 @@ const CORR = 'req_abc12345';
 
 describe('formatHarnessTrace — only real events, concise, with correlation id', () => {
   it('formats a real tool_start with the actual tool name + correlation id', () => {
-    expect(formatHarnessTrace({ kind: 'tool_start', toolName: 'mcp__liquidaity__engraphis_recall' }, CORR))
-      .toBe(`[tool] mcp__liquidaity__engraphis_recall started corr=${CORR}`);
+    expect(formatHarnessTrace({ kind: 'tool_start', toolName: 'engraphis.recall' }, CORR))
+      .toBe(`[tool] engraphis.recall started corr=${CORR}`);
   });
 
   it('maps a card-run tool call to an [agent] doorway line', () => {
-    expect(formatHarnessTrace({ kind: 'tool_start', toolName: 'mcp__liquidaity__card_run_assistant_agent' }, CORR))
+    expect(formatHarnessTrace({ kind: 'tool_start', toolName: 'card.run_assistant_agent' }, CORR))
       .toBe(`[agent] card doorway started corr=${CORR}`);
   });
 

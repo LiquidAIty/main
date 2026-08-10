@@ -149,9 +149,9 @@ def test_main_context_reads_only_the_current_request_claims(monkeypatch):
     current = {"token": AccessToken(
         token="first",
         client_id="chatgpt-client",
-        scopes=["liquidaity.main"],
+        scopes=["main"],
         expires_at=int(time.time()) + 60,
-        claims={"liquidaity": contexts[0]},
+        claims={"main": contexts[0]},
     )}
     monkeypatch.setattr(mcp_host, "get_access_token", lambda: current["token"])
 
@@ -159,9 +159,9 @@ def test_main_context_reads_only_the_current_request_claims(monkeypatch):
     current["token"] = AccessToken(
         token="second",
         client_id="chatgpt-client",
-        scopes=["liquidaity.main"],
+        scopes=["main"],
         expires_at=int(time.time()) + 60,
-        claims={"liquidaity": contexts[1]},
+        claims={"main": contexts[1]},
     )
     assert mcp_host._authenticated_main_context() == contexts[1]
     current["token"] = None
@@ -177,9 +177,9 @@ def test_main_context_rejects_expired_or_incomplete_request_claims(monkeypatch):
     current = {"token": AccessToken(
         token="expired",
         client_id="chatgpt-client",
-        scopes=["liquidaity.main"],
+        scopes=["main"],
         expires_at=int(time.time()) - 1,
-        claims={"liquidaity": {
+        claims={"main": {
             "projectId": "stale-project",
             "deckId": "deck_builder",
             "conversationId": "external-mcp:stale",
@@ -193,9 +193,9 @@ def test_main_context_rejects_expired_or_incomplete_request_claims(monkeypatch):
     current["token"] = AccessToken(
         token="incomplete",
         client_id="chatgpt-client",
-        scopes=["liquidaity.main"],
+        scopes=["main"],
         expires_at=int(time.time()) + 60,
-        claims={"liquidaity": {"projectId": "project-1"}},
+        claims={"main": {"projectId": "project-1"}},
     )
     assert mcp_host._authenticated_main_context() is None
 
@@ -224,9 +224,9 @@ def test_authenticated_connection_reaches_read_only_handler_without_context_inje
         lambda: AccessToken(
             token="verified",
             client_id="chatgpt-client",
-            scopes=["liquidaity.main"],
+            scopes=["main"],
             subject="auth0|test",
-            claims={"liquidaity": context},
+            claims={"main": context},
         ),
     )
     monkeypatch.setattr(
@@ -574,9 +574,9 @@ asyncio.run(check())
     assert len(catalog) == len(set(catalog))
     host = open(os.path.join(_APP_DIR, "mcp_host.py"), encoding="utf-8").read()
     assert "CHATGPT_MAIN" not in host
-    assert "LIQUIDAITY_MAIN_PROJECT_ID" not in host
-    assert "LIQUIDAITY_MAIN_DECK_ID" not in host
-    assert "LIQUIDAITY_MAIN_CONVERSATION_ID" not in host
+    assert "MAIN_PROJECT_ID" not in host
+    assert "MAIN_DECK_ID" not in host
+    assert "MAIN_CONVERSATION_ID" not in host
 
 
 def test_catalog_identity_covers_the_complete_frozen_tool_descriptor():
@@ -990,14 +990,14 @@ def test_native_cbm_replaces_a_stale_process_without_retrying_a_tool(monkeypatch
 def test_http_mcp_enables_native_cbm_ui_without_changing_shared_config(monkeypatch):
     import mcp_host
 
-    monkeypatch.delenv("LIQUIDAITY_CBM_UI_ENABLED", raising=False)
-    monkeypatch.delenv("LIQUIDAITY_CBM_UI_PORT", raising=False)
+    monkeypatch.delenv("CBM_UI_ENABLED", raising=False)
+    monkeypatch.delenv("CBM_UI_PORT", raising=False)
     _command, default_args, _cwd = mcp_host._native_cbm_config()
     assert "--ui=true" not in default_args
     assert not any(arg.startswith("--port=") for arg in default_args)
 
-    monkeypatch.setenv("LIQUIDAITY_CBM_UI_ENABLED", "true")
-    monkeypatch.setenv("LIQUIDAITY_CBM_UI_PORT", "9749")
+    monkeypatch.setenv("CBM_UI_ENABLED", "true")
+    monkeypatch.setenv("CBM_UI_PORT", "9749")
     _command, http_args, _cwd = mcp_host._native_cbm_config()
     assert http_args[-2:] == ["--ui=true", "--port=9749"]
 
@@ -1067,9 +1067,9 @@ def test_streamable_http_is_stateless_across_fresh_clients(monkeypatch):
         lambda: AccessToken(
             token="request-scoped-test-token",
             client_id="chatgpt-client",
-            scopes=["liquidaity.main"],
+            scopes=["main"],
             expires_at=4102444800,
-            claims={"liquidaity": context},
+            claims={"main": context},
         ),
     )
     monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
@@ -1192,7 +1192,7 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
         issuer_url="https://tenant.auth0.com/",
         audience="https://exemption-unstable-wolverine.ngrok-free.dev/mcp",
         client_id="chatgpt-client",
-        required_scope="liquidaity.main",
+        required_scope="main",
     )
     verifier = mcp_host.Auth0TokenVerifier(config, StaticJwkClient())
     monkeypatch.setattr(
@@ -1214,7 +1214,7 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
         "iat": now,
         "exp": now + 300,
         "azp": config.client_id,
-        "scope": "openid liquidaity.main",
+        "scope": "openid main",
     }
 
     def encoded(claims, key=private_key):
@@ -1223,8 +1223,8 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
     verified = verifier._verify_sync(encoded(base))
     assert verified is not None
     assert verified.subject == "auth0|jeremiah"
-    assert verified.claims["liquidaity"]["projectId"] == "project-1"
-    assert verified.claims["liquidaity"]["mainCardId"] == "card_main_chat"
+    assert verified.claims["main"]["projectId"] == "project-1"
+    assert verified.claims["main"]["mainCardId"] == "card_main_chat"
     invalid_claims = [
         {**base, "iss": "https://wrong.auth0.com/"},
         {**base, "aud": "https://wrong.example/mcp"},
@@ -1250,7 +1250,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "parentRunId": "external-main:grant-1",
         "mainCardId": "card_main_chat",
     }
-    active_scopes = ["liquidaity.main"]
+    active_scopes = ["main"]
     monkeypatch.setattr(
         mcp_host,
         "get_access_token",
@@ -1259,7 +1259,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
             client_id="chatgpt-client",
             scopes=list(active_scopes),
             subject="auth0|jeremiah",
-            claims={"liquidaity": context},
+            claims={"main": context},
         ),
     )
     native_cbm_tools = [
@@ -1383,7 +1383,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "coder.status" in by_name
     assert "card.run_assistant_agent" in by_name
     assert "run_coder_subagent" not in by_name
-    assert not any(name.startswith("liquidaity.") for name in by_name)
+    assert not any(name.startswith("mcp__") for name in by_name)
     assert {
         "coder.inspect",
         "coder.effective_tools",
@@ -1435,9 +1435,9 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert set(card_tool.inputSchema["required"]) == {"cardId", "input"}
     assert "AutoGen AssistantAgent card" in card_tool.description
     assert "instructionId" not in by_name["card.run_assistant_agent"].inputSchema["properties"]
-    assert {scheme["scopes"][0] for scheme in by_name["engraphis.recall"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
-    assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
-    assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
+    assert {scheme["scopes"][0] for scheme in by_name["engraphis.recall"].model_dump()["securitySchemes"]} == {"main"}
+    assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump()["securitySchemes"]} == {"main"}
+    assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {"main"}
     assert by_name["cbm.search_graph"].description == "Native search description."
     assert by_name["cbm.search_graph"].inputSchema == native_cbm_tools[0].inputSchema
     assert by_name["coder.status"].annotations.readOnlyHint is True
@@ -1448,7 +1448,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert by_name["card.run_assistant_agent"].annotations.readOnlyHint is False
     assert by_name["card.run_assistant_agent"].annotations.destructiveHint is False
 
-    active_scopes[:] = ["liquidaity.main"]
+    active_scopes[:] = ["main"]
     main_names = {tool.name for tool in asyncio.run(mcp_host.list_tools())}
     assert {
         "main.context", "agentgraph.inspect", "canvas.inspect",
@@ -1459,7 +1459,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "coder.status", "engraphis.answer", "graphiti.get_status",
         "card.update_configuration", "canvas.upsert_wire",
     }.issubset(main_names)
-    active_scopes[:] = ["liquidaity.main"]
+    active_scopes[:] = ["main"]
 
     calls = []
     class NativeMcp:
@@ -1591,7 +1591,7 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
             client_id="chatgpt-client",
             scopes=list(active_scopes),
             subject="auth0|jeremiah",
-            claims={"liquidaity": context},
+            claims={"main": context},
         )
 
     monkeypatch.setattr(mcp_host, "get_access_token", access_token)
@@ -1600,9 +1600,9 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
     assert len(canonical) == 69
     assert "run_coder_subagent" not in canonical_names
     assert "card.run_assistant_agent" in canonical_names
-    assert not any(name.startswith("liquidaity.") for name in canonical_names)
+    assert not any(name.startswith("mcp__") for name in canonical_names)
 
-    active_scopes[:] = ["liquidaity.main"]
+    active_scopes[:] = ["main"]
     authenticated = asyncio.run(mcp_host.list_tools())
     assert len(authenticated) == 69
     assert {tool.name for tool in authenticated} == canonical_names
@@ -1707,7 +1707,7 @@ def test_oauth_principal_context_is_reloaded_for_each_verified_request(monkeypat
         issuer_url="https://tenant.example/",
         audience="https://example.test/mcp",
         client_id="client",
-        required_scope="liquidaity.main",
+        required_scope="main",
     )
     verifier = mcp_host.Auth0TokenVerifier(
         config,
@@ -1781,13 +1781,13 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 env = {{
     **os.environ,
-    'LIQUIDAITY_MCP_TRANSPORT': 'streamable-http',
-    'LIQUIDAITY_HTTP_MCP_PORT': '{port}',
-    'LIQUIDAITY_PUBLIC_MCP_RESOURCE_URL': '{resource}',
-    'LIQUIDAITY_AUTH0_ISSUER_URL': 'https://tenant.auth0.com/',
-    'LIQUIDAITY_AUTH0_AUDIENCE': '{resource}',
-    'LIQUIDAITY_AUTH0_CLIENT_ID': 'chatgpt-client',
-    'LIQUIDAITY_MCP_OAUTH_ENFORCED': 'true',
+    'MCP_TRANSPORT': 'streamable-http',
+    'MCP_HTTP_PORT': '{port}',
+    'MCP_PUBLIC_RESOURCE_URL': '{resource}',
+    'MCP_AUTH0_ISSUER_URL': 'https://tenant.auth0.com/',
+    'MCP_AUTH0_AUDIENCE': '{resource}',
+    'MCP_AUTH0_CLIENT_ID': 'chatgpt-client',
+    'MCP_OAUTH_ENFORCED': 'true',
 }}
 server_code = r'''\
 import asyncio
@@ -1819,7 +1819,7 @@ try:
         raise failure or RuntimeError('oauth_metadata_not_ready')
     assert metadata['resource'] == '{resource}'
     assert metadata['authorization_servers'] == ['https://tenant.auth0.com/']
-    assert metadata['scopes_supported'] == ['liquidaity.main']
+    assert metadata['scopes_supported'] == ['main']
     try:
         urlopen(Request('http://127.0.0.1:{port}/mcp', data=b'{{}}', method='POST'), timeout=2)
         raise AssertionError('anonymous_mcp_was_accepted')

@@ -15,21 +15,30 @@ import { collectContextData } from '../commands/context/context-noninteractive.j
 
 const PROTO_PATH = path.resolve(import.meta.dirname, '../proto/openclaude.proto')
 
-const MAG_ONE_DESCRIBE_TOOL_NAME = 'mcp__liquidaity__mag_one_describe_connected_agents'
+export const MAIN_MCP_SERVER_NAME = 'main'
+
+export function renderMcpToolName(canonicalName: string): string {
+  return `mcp__${MAIN_MCP_SERVER_NAME}__${canonicalName.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+}
+
+const MAG_ONE_DESCRIBE_TOOL_NAME = renderMcpToolName('mag_one.describe_connected_agents')
 
 // The one MCP control tool a card doorway child calls to run its bound saved
 // card through the canonical Python executor (card.run_assistant_agent on the
 // official Python MCP host, qualified per the runtime's own MCP naming).
-const CARD_RUN_CONTROL_TOOL_NAME = 'mcp__liquidaity__card_run_assistant_agent'
-const IDENTITY_BOUND_TOOL_NAMES = new Set([
-  'mcp__liquidaity__agentgraph_inspect',
-  'mcp__liquidaity__mag_one_describe_connected_agents',
-  'mcp__liquidaity__canvas_inspect',
-  'mcp__liquidaity__card_update_configuration',
-  'mcp__liquidaity__canvas_upsert_wire',
-  'mcp__liquidaity__run_mag_one',
-  'mcp__liquidaity__write_mag_one_instructions',
-])
+const CARD_RUN_CONTROL_TOOL_NAME = renderMcpToolName('card.run_assistant_agent')
+const IDENTITY_BOUND_CANONICAL_TOOL_NAMES = [
+  'agentgraph.inspect',
+  'mag_one.describe_connected_agents',
+  'canvas.inspect',
+  'card.update_configuration',
+  'canvas.upsert_wire',
+  'run_mag_one',
+  'write_mag_one_instructions',
+] as const
+const IDENTITY_BOUND_TOOL_NAMES = new Set(
+  IDENTITY_BOUND_CANONICAL_TOOL_NAMES.map(renderMcpToolName),
+)
 
 export function bindServerOwnedToolCaller(params: {
   toolName: string
@@ -62,35 +71,38 @@ export function bindServerOwnedToolCaller(params: {
   delete updatedInput.correlationId
   delete updatedInput._callerCardId
   delete updatedInput._callerRuntimeBinding
-  const normalizedName = params.toolName.replace(/^mcp__liquidaity__/, '')
+  const canonicalName = IDENTITY_BOUND_CANONICAL_TOOL_NAMES.find(
+    name => renderMcpToolName(name) === params.toolName,
+  )
+  if (!canonicalName) return { updatedInput: params.input }
   const identity: Record<string, unknown> = {}
   if ([
-    'agentgraph_inspect',
-    'mag_one_describe_connected_agents',
-    'canvas_inspect',
-    'card_update_configuration',
-    'canvas_upsert_wire',
+    'agentgraph.inspect',
+    'mag_one.describe_connected_agents',
+    'canvas.inspect',
+    'card.update_configuration',
+    'canvas.upsert_wire',
     'run_mag_one',
     'write_mag_one_instructions',
-  ].includes(normalizedName)) {
+  ].includes(canonicalName)) {
     identity.projectId = params.projectId
   }
   if ([
     'agentgraph_inspect',
-    'mag_one_describe_connected_agents',
-    'canvas_inspect',
-    'card_update_configuration',
-    'canvas_upsert_wire',
+    'mag_one.describe_connected_agents',
+    'canvas.inspect',
+    'card.update_configuration',
+    'canvas.upsert_wire',
     'run_mag_one',
     'write_mag_one_instructions',
-  ].includes(normalizedName)) {
+  ].includes(canonicalName)) {
     identity.deckId = params.deckId
   }
   if ([
-    'agentgraph_inspect',
+    'agentgraph.inspect',
     'run_mag_one',
     'write_mag_one_instructions',
-  ].includes(normalizedName)) {
+  ].includes(canonicalName)) {
     identity.conversationId = params.conversationId
   }
   return {

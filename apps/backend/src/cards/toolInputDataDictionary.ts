@@ -114,7 +114,7 @@ function schemaHash(schema: Record<string, unknown>): string {
 
 function namespaceFor(id: string): string {
   const separator = id.indexOf('.');
-  return separator > 0 ? id.slice(0, separator) : 'liquidaity';
+  return separator > 0 ? id.slice(0, separator) : 'main';
 }
 
 function optionalText(metadata: Record<string, unknown>, key: string): string | undefined {
@@ -125,7 +125,7 @@ function optionalText(metadata: Record<string, unknown>, key: string): string | 
 function definitionFrom(source: ToolInputDictionarySource): ToolInputDefinition {
   const canonicalId = asText(source.name) || asText(source.id);
   if (!canonicalId) throw new Error('tool_input_dictionary_id_missing');
-  const sourceId = asText(source.sourceId) || 'liquidaity_mcp';
+  const sourceId = asText(source.sourceId) || 'main_mcp';
   if (!source.inputSchema || typeof source.inputSchema !== 'object' || Array.isArray(source.inputSchema)) {
     throw new Error(`tool_input_dictionary_schema_invalid:${canonicalId}`);
   }

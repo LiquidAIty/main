@@ -13,12 +13,12 @@ Object.assign(globalThis, {
 
 // Official Python MCP host — the ONLY app MCP surface. Resolved from the real
 // repo layout (localcoder/scripts → repo root) and validated before the server
-// is even constructed. No LIQUIDAITY_MCP_* env vars, no localcoder/.env, no
+// is even constructed. No HTTP MCP env vars, no localcoder/.env, no
 // fallback path: a missing file is one exact fatal startup error.
 function resolveOfficialPythonMcp(): PythonMcpConfig {
   const repoRoot = path.resolve(import.meta.dirname, '..', '..')
   const config: PythonMcpConfig = {
-    serverName: 'liquidaity',
+    serverName: 'main',
     command: path.join(repoRoot, 'apps', 'python-models', '.venv', 'Scripts', 'python.exe'),
     hostPath: path.join(repoRoot, 'apps', 'python-models', 'app', 'mcp_host.py'),
   }

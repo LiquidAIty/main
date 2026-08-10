@@ -1,8 +1,8 @@
-// @graph entity: LiquidAItyAgentFlow
+// @graph entity: MainAgentFlow
 // @graph role: mcp-downstream-handlers
 // @graph relates_to: DeckStore, MagOneRouting, CardRuntime(AutoGen transport)
 //
-// Handlers behind the LiquidAIty-owned MCP boundary that sits BELOW the OpenClaude
+// Handlers behind the Main MCP boundary that sits BELOW the OpenClaude
 // QueryEngine session:
 //   - describe_connected_agents : read the connected, bus-eligible (magentic_option)
 //                                 Mag One Agent Cards + their capabilities for Run Plan review
@@ -148,7 +148,7 @@ export async function runMagOne(
   const projectId = asString(input?.projectId).trim();
   const deckId = asString(input?.deckId).trim();
   const conversationId = asString(input?.conversationId).trim();
-  const route = 'liquidaity_mcp(run_mag_one) -> cards/runtime -> autogen rails -> magentic-one';
+  const route = 'main_mcp(run_mag_one) -> cards/runtime -> autogen rails -> magentic-one';
   const runId = `mag_one_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   if (!instructionId || !projectId || !deckId) {

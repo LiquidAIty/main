@@ -31,7 +31,8 @@ export function redactTrace(value: string): string {
 }
 
 function isCardDoorway(toolName: string): boolean {
-  return /card_run_assistant_agent$/.test(toolName);
+  return toolName === 'card.run_assistant_agent'
+    || toolName.endsWith('__card_run_assistant_agent');
 }
 
 /**

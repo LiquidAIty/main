@@ -184,7 +184,7 @@ async def get_paper_account_readiness_tool() -> dict[str, Any]:
 
 
 def _backend_base_url() -> str:
-    return os.environ.get("LIQUIDAITY_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
+    return os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
 
 
 def _post_backend_json_sync(path: str, payload: dict[str, Any]) -> str:
@@ -901,7 +901,7 @@ def _summarize_input_schema(input_schema: dict[str, Any]) -> str:
 def tool_manifest(registry: ToolRegistry | None = None) -> list[dict[str, Any]]:
     """Read-only capability manifest built from the live registry.
 
-    This is the private Python/AutoGen publication into LiquidAIty's federated
+    This is the private Python/AutoGen publication into the federated
     reference registry. It is not the externally published ChatGPT MCP catalog.
     """
     registry = registry or DEFAULT_TOOL_REGISTRY

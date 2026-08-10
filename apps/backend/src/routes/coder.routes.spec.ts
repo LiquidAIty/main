@@ -231,7 +231,7 @@ describe('coder routes', () => {
         expect.objectContaining({
           canonicalId: 'cbm.search_graph',
           kind: 'tool',
-          sourceId: 'liquidaity_mcp',
+          sourceId: 'main_mcp',
           publication: { externalMcp: true },
         }),
         expect.objectContaining({

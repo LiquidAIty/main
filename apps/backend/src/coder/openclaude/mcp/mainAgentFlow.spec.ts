@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { describeConnectedAgents, runMagOne } from './liquidAItyAgentFlow';
+import { describeConnectedAgents, runMagOne } from './mainAgentFlow';
 
 const nodes = [
   {

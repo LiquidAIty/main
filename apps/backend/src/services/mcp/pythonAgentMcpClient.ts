@@ -20,7 +20,7 @@ function firstExisting(candidates: string[], kind: string): string {
 }
 
 export function resolvePythonAgentMcpCommand(): string {
-  const fromEnv = String(process.env.LIQUIDAITY_PY_MCP_PYTHON || '').trim();
+  const fromEnv = String(process.env.MAIN_MCP_PYTHON || '').trim();
   if (fromEnv && existsSync(fromEnv)) return fromEnv;
   return firstExisting(
     [
@@ -32,7 +32,7 @@ export function resolvePythonAgentMcpCommand(): string {
 }
 
 export function resolvePythonAgentMcpHostPath(): string {
-  const fromEnv = String(process.env.LIQUIDAITY_PY_MCP_HOST || '').trim();
+  const fromEnv = String(process.env.MAIN_MCP_HOST || '').trim();
   if (fromEnv && existsSync(fromEnv)) return fromEnv;
   return firstExisting(
     [
@@ -51,7 +51,7 @@ async function connect(): Promise<Client> {
     args: [resolvePythonAgentMcpHostPath()],
     env: { ...process.env } as Record<string, string>,
   });
-  const client = new Client({ name: 'liquidaity-harness', version: '0.1.0' });
+  const client = new Client({ name: 'main-harness', version: '0.1.0' });
   client.onclose = () => {
     // Honest teardown: the NEXT call re-connects lazily; no in-flight retry.
     clientPromise = null;

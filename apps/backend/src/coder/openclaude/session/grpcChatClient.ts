@@ -157,10 +157,14 @@ function parseSessionId(sessionId: string): { projectId: string; conversationId:
   return { projectId, conversationId: parts.slice(2).join(':') };
 }
 
-/** The one MCP control tool a card doorway child may call. Qualified per the
- * runtime's own MCP naming for the 'liquidaity' Python host (dots→underscores).
- * A fixed identity constant, not a mapping. */
-const CARD_RUN_CONTROL_TOOL = 'mcp__liquidaity__card_run_assistant_agent';
+const MAIN_MCP_SERVER_NAME = 'main';
+
+/** Render one canonical dotted ID only at the OpenClaude protocol boundary. */
+function renderMcpToolName(canonicalName: string): string {
+  return `mcp__${MAIN_MCP_SERVER_NAME}__${canonicalName.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+}
+
+const CARD_RUN_CONTROL_TOOL = renderMcpToolName('card.run_assistant_agent');
 
 /** The saved card's Tools selection, filtered to harness MCP tool names — the
  * REAL per-card MCP grant (enforced as the child's allowed_tools / the
@@ -172,16 +176,15 @@ function cardMcpToolGrants(card: any, availableToolNames: readonly string[]): st
   return raw
     .map((tool: unknown) => String(tool || '').trim())
     .filter(Boolean)
-    .map((tool: string) => {
-      const canonical = tool.startsWith('mcp__liquidaity__')
-        ? tool.slice('mcp__liquidaity__'.length)
-        : tool;
-      const bare = canonical.replace(/_/g, '.');
-      const exact = known.has(canonical) ? canonical : known.has(bare) ? bare : null;
+    .map((canonical: string) => {
+      if (canonical.startsWith('mcp__')) {
+        throw new Error(`harness_mcp_tool_must_be_canonical:${canonical}`);
+      }
+      const exact = known.has(canonical) ? canonical : null;
       if (!exact) {
         throw new Error(`harness_mcp_tool_unknown:${canonical}`);
       }
-      return `mcp__liquidaity__${exact.replace(/\./g, '_')}`;
+      return renderMcpToolName(exact);
     });
 }
 
@@ -311,6 +314,8 @@ export type MainChatRuntimeConfig = {
    * BEFORE provider schema serialization. Transport-verbatim strings from the
    * saved card; empty = the card grants no native tools. */
   parentAllowedNativeTools: string[];
+  /** Canonical public IDs used only to de-render protocol tool names before UI transport. */
+  canonicalMcpTools: string[];
 };
 
 /** The saved card's assigned native tools (runtimeOptions.nativeTools).
@@ -374,7 +379,16 @@ export async function resolveMainChatRuntimeConfig(
       .filter((def): def is Record<string, unknown> => Boolean(def)),
     parentAllowedMcpTools: cardMcpToolGrants(card, availableMcpTools),
     parentAllowedNativeTools: cardNativeToolGrants(card),
+    canonicalMcpTools: availableMcpTools,
   };
+}
+
+export function canonicalToolNameFromRuntime(
+  runtimeName: string,
+  canonicalNames: readonly string[],
+): string {
+  if (!runtimeName.startsWith(`mcp__${MAIN_MCP_SERVER_NAME}__`)) return runtimeName;
+  return canonicalNames.find((name) => renderMcpToolName(name) === runtimeName) ?? runtimeName;
 }
 
 function resolveProtoPath(): string {
@@ -430,6 +444,7 @@ export async function startGrpcTurn(
   // fallback is explicit-unknown, never a silent card attribution.
   let callerDoorwayCardIds: string[] = [];
   let callerParentCardId = '';
+  let canonicalMcpTools: string[] = [];
   const resolveCaller = (agentType: string): string =>
     callerParentCardId
       ? resolveInvokingCardId(agentType, callerDoorwayCardIds, callerParentCardId)
@@ -459,7 +474,7 @@ export async function startGrpcTurn(
         const agentType = String(msg.tool_start.agent_type || '');
         safeOnEvent({
           kind: 'tool_start',
-          toolName: msg.tool_start.tool_name,
+          toolName: canonicalToolNameFromRuntime(msg.tool_start.tool_name, canonicalMcpTools),
           argsJson: msg.tool_start.arguments_json,
           toolUseId: msg.tool_start.tool_use_id,
           agentType,
@@ -468,7 +483,7 @@ export async function startGrpcTurn(
       } else if (msg.tool_result) {
         safeOnEvent({
           kind: 'tool_result',
-          toolName: msg.tool_result.tool_name,
+          toolName: canonicalToolNameFromRuntime(msg.tool_result.tool_name, canonicalMcpTools),
           toolUseId: msg.tool_result.tool_use_id,
           output: msg.tool_result.output,
           isError: Boolean(msg.tool_result.is_error),
@@ -527,6 +542,7 @@ export async function startGrpcTurn(
   const doorwayDefinitions = mainChatConfig.doorwayDefinitions;
   callerDoorwayCardIds = doorwayDefinitions.map((def: any) => String(def?.card_id || '')).filter(Boolean);
   callerParentCardId = mainChatConfig.cardId;
+  canonicalMcpTools = mainChatConfig.canonicalMcpTools;
   const appendSystemPrompt = mainChatConfig.prompt;
   const resolvedModel = mainChatConfig.providerModelId;
   if (args.traceId) {

@@ -14,7 +14,7 @@ import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../coder/wo
 import {
   describeConnectedAgents,
   runMagOne,
-} from '../coder/openclaude/mcp/liquidAItyAgentFlow';
+} from '../coder/openclaude/mcp/mainAgentFlow';
 import {
   deriveSessionId,
   startGrpcTurn,
@@ -59,10 +59,10 @@ router.get('/input-data-dictionary/tools', async (req, res) => {
     const dictionary = buildToolInputDataDictionary([
       ...canonicalMcpTools.map((tool) => ({
         ...tool,
-        sourceId: 'liquidaity_mcp',
+        sourceId: 'main_mcp',
         kind: 'tool',
         publication: { externalMcp: true },
-        execution: { authority: 'liquidaity_mcp', nativeName: tool.name },
+        execution: { authority: 'main_mcp', nativeName: tool.name },
       })),
       ...privateRuntimeManifest.tools as ToolInputDictionarySource[],
     ]);
@@ -97,10 +97,10 @@ router.get('/input-data-dictionary/tools', async (req, res) => {
   }
 });
 
-// ── LiquidAIty MCP bridge (SDK-free) ───────────────────────────────────────
+// ── Main MCP bridge (SDK-free) ─────────────────────────────────────────────
 // Internal JSON endpoints that run the proven MCP handlers server-side, where
 // the backend already owns deck state + the Python transport. These import NO
-// MCP SDK (liquidAItyAgentFlow.ts is SDK-free), so they are safe in the Nx serve
+// MCP SDK (mainAgentFlow.ts is SDK-free), so they are safe in the Nx serve
 // graph. The separate MCP host process (which DOES use the SDK) bridges MCP tool
 // / resource calls to these endpoints — single authority, no duplicated state.
 router.post('/mcp-bridge/external_main_context', async (req, res) => {

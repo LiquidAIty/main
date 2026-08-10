@@ -30,7 +30,7 @@ export type EffectiveCoderTool = {
   runtimeName: string | null;
   displayName: string;
   description: string;
-  source: 'openclaude_native' | 'codebase_memory' | 'liquidaity_mcp' | 'runtime_control' | 'saved_unavailable';
+  source: 'openclaude_native' | 'codebase_memory' | 'main_mcp' | 'runtime_control' | 'saved_unavailable';
   group: 'Native' | 'Codebase Memory' | 'Engraphis' | 'Other MCP' | 'Runtime controls' | 'Unavailable';
   risk: 'read' | 'write' | 'shell' | 'network' | 'paid' | 'control';
   saved: boolean;
@@ -104,7 +104,7 @@ export function resolveEffectiveCoderToolSnapshot(opts: {
   }));
   const unresolved: string[] = [];
   const selectedMcpRuntimeNames: string[] = [];
-  let needsLiquidaity = false;
+  let needsMainMcp = false;
   let needsCodeGraph = policy.codeGraphMcp;
 
   for (const canonicalName of saved) {
@@ -131,13 +131,13 @@ export function resolveEffectiveCoderToolSnapshot(opts: {
     const isCbm = canonicalName.startsWith('cbm.');
     const runtimeName = isCbm
       ? runtimeMcpName(CODEBASE_MEMORY_MCP_SERVER, canonicalName.slice(4))
-      : runtimeMcpName('liquidaity', canonicalName);
+      : runtimeMcpName('main', canonicalName);
     const deniedByAuditAuthority = opts.authority === 'direct_main_audit'
       && (descriptor.capability.approvalRequired || descriptor.capability.providerPossible);
     const enabled = !deniedByAuditAuthority;
     if (enabled) {
       if (isCbm) needsCodeGraph = true;
-      else needsLiquidaity = true;
+      else needsMainMcp = true;
       selectedMcpRuntimeNames.push(runtimeName);
     }
     const group: EffectiveCoderTool['group'] = isCbm
@@ -150,7 +150,7 @@ export function resolveEffectiveCoderToolSnapshot(opts: {
       canonicalName, runtimeName,
       displayName: descriptor.title || canonicalName,
       description: descriptor.description || descriptor.capability.recommendedUse,
-      source: isCbm ? 'codebase_memory' : 'liquidaity_mcp', group, risk, saved: true,
+      source: isCbm ? 'codebase_memory' : 'main_mcp', group, risk, saved: true,
       enabled, callable: enabled,
       reason: enabled
         ? `Saved grant; callable in ${opts.authority}.`
@@ -167,7 +167,7 @@ export function resolveEffectiveCoderToolSnapshot(opts: {
   const mcpServers = buildCoderMcpServers({
     runId: opts.runId,
     includeCodeGraph: needsCodeGraph,
-    includeLiquidaity: needsLiquidaity,
+    includeMainMcp: needsMainMcp,
   });
   const allowedTools = [
     ...enabledNative,
@@ -285,24 +285,24 @@ function resolveNativeCodebaseMemoryServer(): McpServerSpec {
 /**
  * Compose the Coder CLI's MCP servers. When `includeCodeGraph` is set
  * (direct_main_audit), the repository's canonical native CBM server is added
- * directly. No LiquidAIty wrapper, second indexer, or alternate graph authority
+ * directly. No wrapper, second indexer, or alternate graph authority
  * sits between Coder and CBM.
  */
 export function buildCoderMcpServers(opts: {
   runId: string;
   includeCodeGraph: boolean;
-  includeLiquidaity?: boolean;
+  includeMainMcp?: boolean;
 }): Record<string, McpServerSpec> {
   const servers: Record<string, McpServerSpec> = {};
   if (opts.includeCodeGraph) {
     const native = resolveNativeCodebaseMemoryServer();
     servers[CODEBASE_MEMORY_MCP_SERVER] = {
       ...native,
-      env: { ...native.env, LIQUIDAITY_CODER_RUN_ID: opts.runId },
+      env: { ...native.env, CODER_RUN_ID: opts.runId },
     };
   }
-  if (opts.includeLiquidaity) {
-    servers.liquidaity = resolvePythonAgentMcpServerSpec();
+  if (opts.includeMainMcp) {
+    servers.main = resolvePythonAgentMcpServerSpec();
   }
   return servers;
 }

@@ -124,9 +124,11 @@ const versionOk = async () => ({
 describe('LocalCoderAdapter', () => {
   it('maps saved dotted MCP capability names to the injected OpenClaude host without a registry', () => {
     expect(toOpenClaudeMcpToolName('cbm.search_graph')).toBe(
-      'mcp__liquidaity__cbm_search_graph',
+      'mcp__main__cbm_search_graph',
     );
-    expect(toOpenClaudeMcpToolName('mcp__custom__tool')).toBe('mcp__custom__tool');
+    expect(() => toOpenClaudeMcpToolName('mcp__custom__tool')).toThrow(
+      'localcoder_mcp_tool_name_must_be_canonical',
+    );
   });
   it('walks up to the monorepo root that holds PLAN.md and apps/backend', () => {
     const root = path.join(tmpdir(), `liquidaity-root-${Date.now()}-${Math.random()}`);
@@ -176,7 +178,7 @@ describe('LocalCoderAdapter', () => {
     expect(usedArgs).toContain('--print');
     expect(usedArgs).toContain('--json-schema');
     expect(usedArgs).toEqual(expect.arrayContaining([
-      '--allowed-tools', 'mcp__liquidaity__cbm_search_graph',
+      '--allowed-tools', 'mcp__main__cbm_search_graph',
       '--effort', 'medium',
     ]));
     expect(usedArgs[usedArgs.indexOf('--provider') + 1]).toBe('openai');
@@ -599,11 +601,11 @@ describe('LocalCoderAdapter MCP config handling', () => {
     expect(report.assumptions.join(' ')).toContain('localcoder_mcp_config_normalized');
   });
 
-  /** Create the resolved liquidaity host layout under a fixture root (dummy files;
+  /** Create the resolved main host layout under a fixture root (dummy files;
    * the adapter only existsSync-checks them) and run, capturing the generated MCP
    * config. Proves the card-Coder connects the SAME one Python MCP host the
    * chat-Coder gets, so write_mag_one_instructions/read_model_results reach both. */
-  async function runWithLiquidaityHost(mcpConfig: string | null): Promise<{
+  async function runWithMainHost(mcpConfig: string | null): Promise<{
     mcpContent: string;
     report: Awaited<ReturnType<LocalCoderAdapter['run']>>;
     pyExe: string;
@@ -630,19 +632,19 @@ describe('LocalCoderAdapter MCP config handling', () => {
     return { mcpContent, report, pyExe, hostPath };
   }
 
-  it('injects the one liquidaity Python MCP host so the card-Coder shares the chat-Coder tool surface', async () => {
-    const { mcpContent, report, pyExe, hostPath } = await runWithLiquidaityHost(VALID_MCP_CONFIG);
+  it('injects the one main Python MCP host so the card-Coder shares the chat-Coder tool surface', async () => {
+    const { mcpContent, report, pyExe, hostPath } = await runWithMainHost(VALID_MCP_CONFIG);
     expect(report.status).toBe('succeeded');
     const parsed = JSON.parse(mcpContent);
-    expect(parsed.mcpServers.liquidaity).toEqual({ type: 'stdio', command: pyExe, args: [hostPath] });
-    expect(report.assumptions.join(' ')).toContain('localcoder_mcp_liquidaity_injected');
+    expect(parsed.mcpServers.main).toEqual({ type: 'stdio', command: pyExe, args: [hostPath] });
+    expect(report.assumptions.join(' ')).toContain('localcoder_main_mcp_injected');
   });
 
-  it('injects the liquidaity host even when mcp.config.json is absent — the card-Coder always gets it', async () => {
-    const { mcpContent, report } = await runWithLiquidaityHost(null);
+  it('injects the main host even when mcp.config.json is absent — the card-Coder always gets it', async () => {
+    const { mcpContent, report } = await runWithMainHost(null);
     expect(report.status).toBe('succeeded');
     const parsed = JSON.parse(mcpContent);
-    expect(Object.keys(parsed.mcpServers)).toEqual(['liquidaity']);
+    expect(Object.keys(parsed.mcpServers)).toEqual(['main']);
   });
 
   it('transforms backend transport:"sse" into OpenClaude type:"sse" when the url resolves', async () => {
@@ -805,7 +807,7 @@ describe('LocalCoderService structural edit-scope gate', () => {
       model: 'gpt-5.6-luna',
       reasoningEffort: 'medium' as const,
       authTransportClass: 'openai_account_oauth' as const,
-      grantedMcpTools: ['mcp__liquidaity__search_graph'],
+      grantedMcpTools: ['mcp__main__search_graph'],
       sessionId: null,
       permissionMode: 'plan' as const,
       timeoutMs: 30_000,

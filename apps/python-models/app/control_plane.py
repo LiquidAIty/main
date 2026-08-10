@@ -24,7 +24,7 @@ from urllib.request import Request, urlopen
 
 from app.python_models import agentgraph as ag
 
-_BACKEND = os.environ.get("LIQUIDAITY_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
+_BACKEND = os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
 
 SUPPORTED_WIRE_TYPES = ("flow", "magentic_option")
 

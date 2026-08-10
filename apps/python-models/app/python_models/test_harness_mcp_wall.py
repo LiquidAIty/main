@@ -23,9 +23,9 @@ class TestHarnessGrpcServerWall:
         source = _read("localcoder/src/grpc/server.ts")
         # The env-var/.env MCP wiring is dead: the official Python MCP config is
         # constructor-injected (PythonMcpConfig) and connected once for the
-        # server's lifetime, never read from LIQUIDAITY_MCP_* env vars.
-        assert "LIQUIDAITY_MCP_HOST" not in source
-        assert "LIQUIDAITY_MCP_NODE" not in source
+        # server's lifetime, never read from legacy host/node override env vars.
+        assert "MCP_HOST_OVERRIDE" not in source
+        assert "MCP_NODE_OVERRIDE" not in source
         assert "PythonMcpConfig" in source
         assert "connectOfficialPythonMcp" in source
         assert "run_coder_subagent" not in source
@@ -46,7 +46,7 @@ class TestHarnessGrpcServerWall:
         assert "python.exe" in launcher
         assert "existsSync" in launcher
         assert "process.exit(1)" in launcher
-        for forbidden in ("LIQUIDAITY_MCP_HOST", "LIQUIDAITY_MCP_NODE", ".mjs", "liquidAItyMcpHost"):
+        for forbidden in ("MCP_HOST_OVERRIDE", "MCP_NODE_OVERRIDE", ".mjs"):
             assert forbidden not in launcher, f"launcher regressed to: {forbidden}"
 
 

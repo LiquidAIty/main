@@ -155,16 +155,18 @@ const MAX_LOCALCODER_ARGV_PROMPT_CHARS = 16_000;
 const MAX_DIAGNOSTIC_LINE_CHARS = 500;
 
 /** Translate the app MCP catalog's dotted public name into the exact tool name
- * OpenClaude receives from the injected ``liquidaity`` MCP server. This is a
+ * OpenClaude receives from the injected ``main`` MCP server. This is a
  * transport spelling rule, not a second capability registry. */
 export function toOpenClaudeMcpToolName(name: string): string {
   const canonical = String(name || '').trim();
   if (!canonical) throw new Error('localcoder_mcp_tool_name_empty');
-  if (canonical.startsWith('mcp__')) return canonical;
+  if (canonical.startsWith('mcp__')) {
+    throw new Error(`localcoder_mcp_tool_name_must_be_canonical: ${canonical}`);
+  }
   if (!canonical.includes('.')) {
     throw new Error(`localcoder_mcp_tool_name_invalid: ${canonical}`);
   }
-  return `mcp__liquidaity__${canonical.replace(/\./g, '_')}`;
+  return `mcp__main__${canonical.replace(/\./g, '_')}`;
 }
 
 export function resolveLocalCoderWorkspaceRoot(startPath: string): string {
@@ -808,7 +810,7 @@ export class LocalCoderAdapter {
    * server-lifetime host — including write_mag_one_instructions /
    * read_model_results. Absent build → honest note, host omitted (no fake).
    */
-  private resolveLiquidaityMcpServer():
+  private resolveMainMcpServer():
     | { server: Record<string, unknown>; note: string }
     | { note: string } {
     const pythonExe = path.join(
@@ -817,11 +819,11 @@ export class LocalCoderAdapter {
     const hostPath = path.join(this.workspaceRoot, 'apps', 'python-models', 'app', 'mcp_host.py');
     if (!existsSync(pythonExe) || !existsSync(hostPath)) {
       const missing = !existsSync(pythonExe) ? pythonExe : hostPath;
-      return { note: `localcoder_mcp_liquidaity_unavailable: ${missing}` };
+      return { note: `localcoder_main_mcp_unavailable: ${missing}` };
     }
     return {
       server: { type: 'stdio', command: pythonExe, args: [hostPath] },
-      note: 'localcoder_mcp_liquidaity_injected',
+      note: 'localcoder_main_mcp_injected',
     };
   }
 
@@ -835,7 +837,7 @@ export class LocalCoderAdapter {
     }
     const configPath = this.mcpConfigPath();
     // Read the declared servers when the file exists/parses; a missing or bad
-    // file is a note, not an early return — the liquidaity host is still injected.
+    // file is a note, not an early return — the main host is still injected.
     let servers: Record<string, unknown> = {};
     let fileNote = '';
     if (!existsSync(configPath)) {
@@ -860,7 +862,7 @@ export class LocalCoderAdapter {
     const keptNames: string[] = [];
     const dropped: string[] = [];
     for (const [name, raw] of Object.entries(servers)) {
-      if (name === 'liquidaity') continue; // injected below from the resolved layout
+      if (name === 'main') continue; // injected below from the resolved layout
       const result = normalizeMcpServer(name, raw, this.env);
       if (result.ok) {
         kept[name] = result.value;
@@ -870,28 +872,28 @@ export class LocalCoderAdapter {
       }
     }
 
-    const liquidaity = this.resolveLiquidaityMcpServer();
-    if ('server' in liquidaity) {
-      kept['liquidaity'] = liquidaity.server;
-      keptNames.push('liquidaity');
+    const mainMcp = this.resolveMainMcpServer();
+    if ('server' in mainMcp) {
+      kept.main = mainMcp.server;
+      keptNames.push('main');
     }
 
     if (keptNames.length === 0) {
       const reason = [
         fileNote,
         dropped.length ? `dropped: ${dropped.join('; ')}` : 'no mcpServers defined',
-        liquidaity.note,
+        mainMcp.note,
       ].filter(Boolean).join('; ');
       return { flags: [], note: `localcoder_mcp_config_omitted: ${reason}`, tempPath: null };
     }
 
-    const tempPath = path.join(tmpdir(), `liquidaity-mcp-${Date.now()}-${process.pid}.json`);
+    const tempPath = path.join(tmpdir(), `main-mcp-${Date.now()}-${process.pid}.json`);
     writeFileSync(tempPath, JSON.stringify({ mcpServers: kept }, null, 2));
     const note = [
       `localcoder_mcp_config_normalized: kept [${keptNames.join(', ')}]`,
       dropped.length ? `dropped: ${dropped.join('; ')}` : '',
       fileNote,
-      liquidaity.note,
+      mainMcp.note,
     ].filter(Boolean).join('; ');
     return { flags: ['--mcp-config', tempPath, '--strict-mcp-config'], note, tempPath };
   }

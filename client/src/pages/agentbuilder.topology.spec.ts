@@ -111,11 +111,11 @@ describe('Main / Hermes / graph authority topology', () => {
   });
 
   it('assigns Main and Hermes only tools exposed by the real Harness MCP catalog', async () => {
-    process.env.LIQUIDAITY_PY_MCP_PYTHON = path.resolve(
+    process.env.MAIN_MCP_PYTHON = path.resolve(
       process.cwd(),
       '../apps/python-models/.venv/Scripts/python.exe',
     );
-    process.env.LIQUIDAITY_PY_MCP_HOST = path.resolve(
+    process.env.MAIN_MCP_HOST = path.resolve(
       process.cwd(),
       '../apps/python-models/app/mcp_host.py',
     );

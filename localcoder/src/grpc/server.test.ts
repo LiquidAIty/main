@@ -28,7 +28,7 @@ import { createUserMessage } from '../utils/messages.js'
 
 test('bindServerOwnedToolCaller replaces model identity with the saved Hermes identity', () => {
   const result = bindServerOwnedToolCaller({
-    toolName: 'mcp__liquidaity__write_mag_one_instructions',
+    toolName: 'mcp__main__write_mag_one_instructions',
     input: {
       instructions: 'Prepare this exact task.',
       projectId: 'spoofed',
@@ -59,7 +59,7 @@ test('bindServerOwnedToolCaller replaces model identity with the saved Hermes id
 
 test('bindServerOwnedToolCaller fails closed without a saved caller binding', () => {
   const result = bindServerOwnedToolCaller({
-    toolName: 'mcp__liquidaity__run_mag_one',
+    toolName: 'mcp__main__run_mag_one',
     input: { instructionId: 'instruction:one' },
     agentType: 'unknown-child',
     parentCardId: 'card_main_chat',
@@ -75,7 +75,7 @@ test('bindServerOwnedToolCaller fails closed without a saved caller binding', ()
   assert.deepEqual(result, { deny: 'tool_caller_identity_unavailable' })
 })
 
-// No Node .mjs host, no mcp__liquidaity__ bare-to-qualified mapping, no aliases.
+// No Node .mjs host, no bare-to-qualified compatibility mapping, no aliases.
 // A card doorway definition grants exactly the one card-run control tool — this
 // function is a straight pass-through of whatever grants it is handed, nothing more.
 test('buildAgentDefinitionsFromRequest passes the doorway tool grant through unchanged', () => {
@@ -84,7 +84,7 @@ test('buildAgentDefinitionsFromRequest passes the doorway tool grant through unc
       {
         agent_type: 'card_saved_worker',
         system_prompt: 'Run the bound saved worker card.',
-        allowed_tools: ['mcp__liquidaity__card_run_assistant_agent'],
+        allowed_tools: ['mcp__main__card_run_assistant_agent'],
         context_mode_inherit_parent: true,
       },
     ],
@@ -92,7 +92,7 @@ test('buildAgentDefinitionsFromRequest passes the doorway tool grant through unc
 
   const [definition] = buildAgentDefinitionsFromRequest(req)
 
-  assert.deepEqual(definition.tools, ['mcp__liquidaity__card_run_assistant_agent'])
+  assert.deepEqual(definition.tools, ['mcp__main__card_run_assistant_agent'])
   assert.equal(definition.contextMode, 'inherit_parent')
 })
 
@@ -115,8 +115,8 @@ test('buildAgentDefinitionsFromRequest never invents or rewrites a tool name', (
 // Fail-closed startup validation requires structural controls only. Graph
 // tools are selected per card and are never global Harness prerequisites.
 const REQUIRED_CONTROL_TOOLS = [
-  'mcp__liquidaity__card_run_assistant_agent',
-  'mcp__liquidaity__mag_one_describe_connected_agents',
+  'mcp__main__card_run_assistant_agent',
+  'mcp__main__mag_one_describe_connected_agents',
 ]
 
 test('QueryEngine captures the final provider payload and blocks transport', async () => {
@@ -409,7 +409,7 @@ test('the actual gRPC serializers preserve UTF-8 request and progress bytes', ()
 
 test('missingRequiredHarnessTools passes only when the real qualified control tools are fetched', () => {
   assert.deepEqual(
-    missingRequiredHarnessTools([...REQUIRED_CONTROL_TOOLS, 'mcp__liquidaity__canvas_inspect']),
+    missingRequiredHarnessTools([...REQUIRED_CONTROL_TOOLS, 'mcp__main__canvas_inspect']),
     [],
   )
 })
@@ -420,10 +420,10 @@ test('missingRequiredHarnessTools never requires card-owned graph tools', () => 
 
 test('missingRequiredHarnessTools reports each absent tool exactly', () => {
   assert.deepEqual(
-    missingRequiredHarnessTools(['mcp__liquidaity__engraphis_recall']),
+    missingRequiredHarnessTools(['mcp__main__engraphis_recall']),
     [
-      'mcp__liquidaity__card_run_assistant_agent',
-      'mcp__liquidaity__mag_one_describe_connected_agents',
+      'mcp__main__card_run_assistant_agent',
+      'mcp__main__mag_one_describe_connected_agents',
     ],
   )
   // Old bare names are NOT the real pool names — no alias, no translation.
@@ -547,20 +547,20 @@ test('the doorway grant resolves into a usable child tool only from the real loa
       {
         agent_type: 'card_saved_worker',
         system_prompt: 'Run the bound saved worker card.',
-        allowed_tools: ['mcp__liquidaity__card_run_assistant_agent'],
+        allowed_tools: ['mcp__main__card_run_assistant_agent'],
       },
     ],
   })
 
   const loadedPool = [
-    fakeMcpTool('mcp__liquidaity__card_run_assistant_agent'),
-    fakeMcpTool('mcp__liquidaity__engraphis_recall'),
-    fakeMcpTool('mcp__liquidaity__canvas_inspect'),
+    fakeMcpTool('mcp__main__card_run_assistant_agent'),
+    fakeMcpTool('mcp__main__engraphis_recall'),
+    fakeMcpTool('mcp__main__canvas_inspect'),
   ]
   const resolved = resolveAgentTools(definition, loadedPool)
   assert.deepEqual(
     resolved.resolvedTools.map(t => t.name),
-    ['mcp__liquidaity__card_run_assistant_agent'],
+    ['mcp__main__card_run_assistant_agent'],
   )
   assert.deepEqual(resolved.invalidTools, [])
 

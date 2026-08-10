@@ -15,7 +15,7 @@ afterAll(async () => {
 });
 
 describe('Python Agent MCP host — real stdio discovery + calls', () => {
-  it('federates the three complete native catalogs with the LiquidAIty control surface', async () => {
+  it('federates the three complete native catalogs with the Main control surface', async () => {
     const names = await listPythonAgentMcpTools();
     expect(new Set(names).size).toBe(names.length);
     expect(names).toEqual(expect.arrayContaining([

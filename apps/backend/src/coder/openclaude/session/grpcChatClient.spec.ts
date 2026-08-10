@@ -12,12 +12,21 @@ vi.mock('../../../services/mcp/pythonAgentMcpClient', () => ({
 
 import {
   buildHarnessAgentDefinition,
+  canonicalToolNameFromRuntime,
   decodeGrpcProgressEvent,
   decodeGrpcReasoningEvent,
   deriveSessionId,
   resolveMainChatRuntimeConfig,
   selectDoorwayCards,
 } from './grpcChatClient';
+
+it('de-renders Main MCP protocol names before frontend transport', () => {
+  const canonical = ['main.context', 'card.run_assistant_agent', 'graphiti.get_status'];
+  expect(canonicalToolNameFromRuntime('mcp__main__main_context', canonical)).toBe('main.context');
+  expect(canonicalToolNameFromRuntime('mcp__main__card_run_assistant_agent', canonical))
+    .toBe('card.run_assistant_agent');
+  expect(canonicalToolNameFromRuntime('Agent', canonical)).toBe('Agent');
+});
 
 const main = {
   id: 'card_main_chat', kind: 'agent', runtimeBinding: 'main_chat', runtimeType: 'assistant_agent',
@@ -112,10 +121,10 @@ describe('native Main / Hermes / Search doorways', () => {
     }) as any;
     expect(definition.system_prompt).toBe('Hermes prompt');
     expect(definition.context_mode_inherit_parent).toBe(true);
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__graphiti_search_nodes');
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__graphiti_add_memory');
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__graphiti_add_triplet');
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__write_mag_one_instructions');
+    expect(definition.allowed_tools).toContain('mcp__main__graphiti_search_nodes');
+    expect(definition.allowed_tools).toContain('mcp__main__graphiti_add_memory');
+    expect(definition.allowed_tools).toContain('mcp__main__graphiti_add_triplet');
+    expect(definition.allowed_tools).toContain('mcp__main__write_mag_one_instructions');
     expect(definition.allowed_card_run_ids).toEqual([search.id]);
   });
 
@@ -124,13 +133,13 @@ describe('native Main / Hermes / Search doorways', () => {
       availableMcpTools: ['web_search'],
     }) as any;
     expect(definition.system_prompt).toBe('Search prompt');
-    expect(definition.allowed_tools).toEqual(['mcp__liquidaity__web_search']);
+    expect(definition.allowed_tools).toEqual(['mcp__main__web_search']);
     expect(definition.when_to_use).toContain('saved "card_research_agent" agent');
   });
 
   it('keeps Coder on the bounded saved-card control doorway', () => {
     const definition = buildHarnessAgentDefinition(coder) as any;
-    expect(definition.allowed_tools).toEqual(['mcp__liquidaity__card_run_assistant_agent']);
+    expect(definition.allowed_tools).toEqual(['mcp__main__card_run_assistant_agent']);
     expect(definition.system_prompt).toContain('card_local_coder');
   });
 
@@ -139,7 +148,7 @@ describe('native Main / Hermes / Search doorways', () => {
     const config = await resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat');
     expect(config?.cardId).toBe(main.id);
     expect(config?.parentAllowedMcpTools).toEqual([
-      'mcp__liquidaity__engraphis_recall',
+      'mcp__main__engraphis_recall',
     ]);
     // The card's assigned native tools travel verbatim — the engine filters
     // the parent's native schemas before serialization.
@@ -160,7 +169,7 @@ describe('native Main / Hermes / Search doorways', () => {
     ));
     const config = await resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat');
     expect(config?.parentAllowedMcpTools).toEqual([
-      'mcp__liquidaity__cbm_index_status',
+      'mcp__main__cbm_index_status',
     ]);
   });
 

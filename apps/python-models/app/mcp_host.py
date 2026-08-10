@@ -1,4 +1,4 @@
-"""LiquidAIty Python MCP host (stdio) — THE one MCP host the Harness launches.
+"""Main Python MCP host (stdio) — THE one MCP host the Harness launches.
 
 Launch shape: localcoder/scripts/start-grpc.ts resolves this venv's python.exe
 and this file's absolute path from the real repo layout, validates both exist,
@@ -99,29 +99,26 @@ _GRAPHITI_PROJECT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def graphiti_project_group_id(project_id: str) -> str:
-    """Map a LiquidAIty project to Graphiti's legal isolated group namespace."""
+    """Map a Main project to Graphiti's existing isolated group namespace."""
     if not isinstance(project_id, str) or not _GRAPHITI_PROJECT_ID.fullmatch(project_id):
         raise ValueError("projectId must contain only letters, numbers, underscores, and hyphens")
     return f"liquidaity-{project_id}"
 
-BACKEND = os.environ.get("LIQUIDAITY_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
-MCP_TRANSPORT = os.environ.get("LIQUIDAITY_MCP_TRANSPORT", "stdio").strip().lower()
+BACKEND = os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
+MCP_TRANSPORT = os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
 HTTP_MCP_HOST = "127.0.0.1"
-HTTP_MCP_PORT = int(os.environ.get("LIQUIDAITY_HTTP_MCP_PORT", "8765"))
+HTTP_MCP_PORT = int(os.environ.get("MCP_HTTP_PORT", "8765"))
 HTTP_MCP_PATH = "/mcp"
 PUBLIC_MCP_RESOURCE_URL = os.environ.get(
-    "LIQUIDAITY_PUBLIC_MCP_RESOURCE_URL",
+    "MCP_PUBLIC_RESOURCE_URL",
     "https://exemption-unstable-wolverine.ngrok-free.dev/mcp",
 ).strip()
-AUTH0_ISSUER_URL = os.environ.get("LIQUIDAITY_AUTH0_ISSUER_URL", "").strip()
-AUTH0_AUDIENCE = os.environ.get("LIQUIDAITY_AUTH0_AUDIENCE", "").strip()
-AUTH0_CLIENT_ID = os.environ.get(
-    "LIQUIDAITY_AUTH0_MAIN_CLIENT_ID",
-    os.environ.get("LIQUIDAITY_AUTH0_CLIENT_ID", ""),
-).strip()
-AUTH0_REQUIRED_SCOPE = os.environ.get("LIQUIDAITY_AUTH0_REQUIRED_SCOPE", "liquidaity.main").strip()
-OAUTH_SCOPES = ("liquidaity.main",)
-OAUTH_ENFORCED = os.environ.get("LIQUIDAITY_MCP_OAUTH_ENFORCED", "false").strip().lower() in {
+AUTH0_ISSUER_URL = os.environ.get("MCP_AUTH0_ISSUER_URL", "").strip()
+AUTH0_AUDIENCE = os.environ.get("MCP_AUTH0_AUDIENCE", "").strip()
+AUTH0_CLIENT_ID = os.environ.get("MCP_AUTH0_CLIENT_ID", "").strip()
+AUTH0_REQUIRED_SCOPE = os.environ.get("MCP_AUTH0_REQUIRED_SCOPE", "main").strip()
+OAUTH_SCOPES = ("main",)
+OAUTH_ENFORCED = os.environ.get("MCP_OAUTH_ENFORCED", "false").strip().lower() in {
     "1", "true", "yes", "on",
 }
 _STARTUP_ID = uuid4().hex
@@ -182,7 +179,7 @@ def _trace(event: str, **fields: Any) -> None:
     }
     with _TRACE_LOCK:
         print(
-            "[liquidaity-mcp-trace] "
+            "[main-mcp-trace] "
             + json.dumps(payload, ensure_ascii=False, sort_keys=True),
             file=sys.stderr,
             flush=True,
@@ -590,7 +587,7 @@ def _instrument_graphiti_provider_client(
     base_url: str,
     credential_configured: bool,
 ) -> None:
-    marker = "_liquidaity_observed_methods"
+    marker = "_main_mcp_observed_methods"
     observed = set(getattr(client, marker, set()))
     for method_name in method_names:
         if method_name in observed:
@@ -674,10 +671,10 @@ def _oauth_config() -> OAuthConfig:
     missing = [
         name
         for name, value in (
-            ("LIQUIDAITY_PUBLIC_MCP_RESOURCE_URL", config.resource_url),
-            ("LIQUIDAITY_AUTH0_ISSUER_URL", config.issuer_url),
-            ("LIQUIDAITY_AUTH0_AUDIENCE", config.audience),
-            ("LIQUIDAITY_AUTH0_CLIENT_ID", config.client_id),
+            ("MCP_PUBLIC_RESOURCE_URL", config.resource_url),
+            ("MCP_AUTH0_ISSUER_URL", config.issuer_url),
+            ("MCP_AUTH0_AUDIENCE", config.audience),
+            ("MCP_AUTH0_CLIENT_ID", config.client_id),
         )
         if not value
     ]
@@ -702,7 +699,7 @@ def _authenticated_main_context() -> dict[str, Any] | None:
     if expires_at is not None and float(expires_at) <= time.time():
         return None
     claims = getattr(access_token, "claims", None)
-    context = claims.get("liquidaity") if isinstance(claims, dict) else None
+    context = claims.get("main") if isinstance(claims, dict) else None
     if not isinstance(context, dict) or not _MAIN_CONTEXT_FIELDS.issubset(context):
         return None
     return {field: str(context[field]) for field in _MAIN_CONTEXT_FIELDS}
@@ -797,7 +794,7 @@ async def list_resources() -> list[Any]:
 def _load_native_engraphis_mcp():
     """Import Engraphis' FastMCP registry with its repository-owned database."""
     repo_root = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
-    # This host is the local LiquidAIty workbench boundary. The configured
+    # This host is the local workbench boundary. The configured
     # SentenceTransformer model is already cached locally; allowing Hugging Face
     # metadata requests here can leave the first external MCP tool call waiting on
     # the network long enough for ChatGPT to disable the otherwise healthy connector.
@@ -860,7 +857,7 @@ def _start_native_engraphis_warmup() -> None:
     if _NATIVE_ENGRAPHIS_WARMUP_TASK is None:
         _NATIVE_ENGRAPHIS_WARMUP_TASK = asyncio.create_task(
             _warm_native_engraphis(),
-            name="liquidaity-engraphis-warmup",
+            name="main-engraphis-warmup",
         )
 
 
@@ -915,7 +912,7 @@ async def _native_engraphis_tools() -> list[Tool]:
 
 
 def _graphiti_config():
-    """Build the official Graphiti config from LiquidAIty's existing authorities."""
+    """Build the official Graphiti config from the existing authorities."""
     from config.schema import GraphitiConfig
 
     openrouter_key = os.environ.get("OPENROUTER_API_KEY") or None
@@ -1210,12 +1207,12 @@ class _NativeStdioMcpClient:
         self._next_id = 0
         threading.Thread(
             target=self._read_stdout,
-            name="liquidaity-native-cbm-stdout",
+            name="main-native-cbm-stdout",
             daemon=True,
         ).start()
         threading.Thread(
             target=self._read_stderr,
-            name="liquidaity-native-cbm-stderr",
+            name="main-native-cbm-stderr",
             daemon=True,
         ).start()
         initialized = self._request(
@@ -1224,7 +1221,7 @@ class _NativeStdioMcpClient:
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
                 "clientInfo": {
-                    "name": "liquidaity-native-cbm",
+                    "name": "main-native-cbm",
                     "version": "1.0.0",
                 },
             },
@@ -1368,10 +1365,10 @@ def _native_cbm_config() -> tuple[str, list[str], str]:
     if not command or not isinstance(args, list):
         raise RuntimeError("native_cbm_stdio_config_invalid")
     resolved_args = [str(arg) for arg in args]
-    if os.getenv("LIQUIDAITY_CBM_UI_ENABLED", "").strip().lower() in {
+    if os.getenv("CBM_UI_ENABLED", "").strip().lower() in {
         "1", "true", "yes", "on"
     }:
-        ui_port = int(os.getenv("LIQUIDAITY_CBM_UI_PORT", "9749"))
+        ui_port = int(os.getenv("CBM_UI_PORT", "9749"))
         if not 1 <= ui_port <= 65535:
             raise RuntimeError("native_cbm_ui_port_invalid")
         resolved_args.extend(["--ui=true", f"--port={ui_port}"])
@@ -1523,7 +1520,7 @@ def _resolve_external_main_context_sync(issuer: str, subject: str) -> dict[str, 
 
 
 class Auth0TokenVerifier:
-    """Verify Auth0 JWTs and bind the principal to one owned LiquidAIty project."""
+    """Verify Auth0 JWTs and bind the principal to one owned Main project."""
 
     def __init__(self, config: OAuthConfig, jwk_client: Any | None = None):
         from jwt import PyJWKClient
@@ -1571,7 +1568,7 @@ class Auth0TokenVerifier:
                 resource=self.config.resource_url,
             )
             object.__setattr__(access_token, "subject", subject)
-            object.__setattr__(access_token, "claims", {**claims, "liquidaity": context})
+            object.__setattr__(access_token, "claims", {**claims, "main": context})
             return access_token
         except Exception:
             return None
@@ -1594,7 +1591,7 @@ async def list_tools() -> list[Tool]:
             name="main.context",
             description=(
                 "Read the compact server-owned Main entry context for this authenticated "
-                "LiquidAIty request: project, deck, conversation, parent run, and saved "
+                "Main request: project, deck, conversation, parent run, and saved "
                 "Main-card identities, plus the exact served catalog/process/source identity. "
                 "Accepts no caller-supplied identity or context payload."
             ),
@@ -2554,7 +2551,7 @@ async def _run_streamable_http() -> None:
                 resource_url=resource_url,
                 authorization_servers=[AnyHttpUrl(config_values.issuer_url)],
                 scopes_supported=[config_values.required_scope],
-                resource_name="LiquidAIty Main",
+                resource_name="Main MCP",
             ),
             Mount("/", app=protected_endpoint),
         ]

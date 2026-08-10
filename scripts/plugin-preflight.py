@@ -143,7 +143,7 @@ async def _catalog() -> dict[str, Any]:
                     "name": tool.name,
                     "risk": execution.get("risk"),
                     "compute": execution.get("compute"),
-                    "oauth": access.get("scopes") == ["liquidaity.main"],
+                    "oauth": access.get("scopes") == ["main"],
                     "dispatchable": dispatchable,
                 }
             )
@@ -263,7 +263,7 @@ async def main() -> int:
     if catalog["removedWrappersPresent"] or catalog["undispatchable"] or not catalog["allOAuthDeclared"]:
         failures.append("catalog_dispatch_or_security_invalid")
 
-    access_token = os.environ.get("LIQUIDAITY_PREFLIGHT_ACCESS_TOKEN", "").strip()
+    access_token = os.environ.get("MCP_PREFLIGHT_ACCESS_TOKEN", "").strip()
     checks["authenticatedMcp"] = "not_run_no_configured_test_token"
     if access_token:
         checks["authenticatedMcp"] = "external_safe_read_still_required"
