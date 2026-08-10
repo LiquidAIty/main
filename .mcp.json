@@ -1,12 +1,3 @@
 {
-  "mcpServers": {
-    "codebase-memory": {
-      "command": "C:\\Projects\\main\\.tools\\codebase-memory-mcp\\bin\\codebase-memory-mcp.exe",
-      "args": [],
-      "env": {
-        "CBM_ALLOWED_ROOT": "C:\\Projects\\main",
-        "CBM_CACHE_DIR": "C:\\Projects\\main\\.codebase-memory\\index"
-      }
-    }
-  }
+  "mcpServers": {}
 }

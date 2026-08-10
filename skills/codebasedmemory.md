@@ -1,7 +1,7 @@
 ---
 name: codebasedmemory
 description: Canonical operating guide for Code-Based Memory (CBM) inside LiquidAIty. Use it for repository analysis, cleanup, architecture, refactoring, deletion-impact, and code changes.
-version: 3.0.0
+version: 4.0.0
 cbm_version: 0.9.0
 project: C-Projects-main
 ---
@@ -58,17 +58,25 @@ CBM is mandatory for repository work. Use it at the correct structural points:
 
 ## The Mandatory CBM Gate
 
-For any edit, deletion, refactor, or architecture claim:
+For code structure, ownership, calls, dependencies, symbols, or architecture, make one narrow
+`search_graph` call first. Then use `trace_path` only when relationships or impact matter and
+`get_code_snippet` only when a bounded snippet helps. Direct-read current source next. Most coding
+tasks should use one to three CBM calls total; more than four before meaningful source reading is a
+warning that the agent is wandering.
 
-1. Identify indexed project (`list_projects`)
-2. Check freshness (`index_status`)
-3. Map structural slice (search_graph → trace_path → get_code_snippet)
-4. Read exact source
-5. Targeted `rg` for text evidence
-6. Make edit
-7. Run tests
-8. CBM impact verification (`detect_changes` + trace affected paths)
-9. `rg` to confirm old names/paths gone
+At task start, inspect the maintenance marker once and establish one cached freshness/identity state
+for the task. Call `list_projects`, `index_status`, or `detect_changes` at most once when that state is
+actually needed. Do not repeat freshness calls unless a commit occurs, `.cbmignore` changes, a large
+structural edit changes topology, the graph produces stale evidence, or the active project changes.
+
+Normal route:
+
+1. `search_graph`
+2. `trace_path` only if relationships matter
+3. `get_code_snippet` only if useful
+4. direct current-source read
+5. focused `rg` only for literals, configs, docs, errors, missing coverage, or exhaustive residue
+6. edit, test, and proportional post-edit proof
 
 Exceptions: pure prose edits, spelling fixes, emergency repair when CBM itself is broken. State why CBM was skipped.
 
@@ -95,20 +103,29 @@ count; do not copy an old example count into a current report.
 
 **index_status** — Current index state.
 Parameter: `{"project":"C-Projects-main"}`
-Use: before making claims about freshness. Returns status + counts.
-Do not poll endlessly.
+Use once when task freshness cannot be established from cached task state or the maintenance marker.
+Returns status + counts. Do not poll or ask repeatedly whether the graph is clean.
 
-**index_repository** — Full reindex.
-Parameter: `{"repo_path":"C:/Projects/main"}`
-Use ONLY when: no index exists, the index format changed, or coverage/freshness evidence proves
-unusable. Do NOT use before every query or as a reflex. Check project and status first; file and
-graph counts vary with the current working tree and exclusion rules.
+**index_repository** — Native synchronization or full reindex.
+Parameter: `{"repo_path":"C:/Projects/main","name":"C-Projects-main","mode":"full"}`
+Use only for one bounded maintenance decision: no index exists, the index format changed, a pending
+checkpoint marker requires evaluation, or coverage/freshness evidence proves maintenance is needed.
+Never reindex per query, per prompt, or as a health check.
 
 **detect_changes** — Maps working-tree changes to affected symbols.
 Parameter: `{"project":"C-Projects-main"}`
-Use: before and after meaningful edits. Reports tracked files with uncommitted modifications. Does NOT report untracked files. Clean result = working tree clean for tracked files. Combine with `git status --short` for untracked files.
+Use once when ordinary synchronization/change impact must be evaluated. Reports tracked files with
+uncommitted modifications and does not report untracked files. Do not call it ritualistically before
+and after every edit; combine it with `git status --short` when untracked state matters.
 
-**delete_project** — Destructive. Never use without explicit owner authorization.
+**delete_project** — Destructive. The owner has granted standing authorization only for
+`C-Projects-main` when live evidence proves that its index is stale/polluted and one clean rebuild is
+necessary. Verify the exact project/root, record status and counts, verify current `.cbmignore`, ensure
+no maintenance operation is running, then perform one delete → one rebuild → one verification. Never
+apply this authorization to another project, ordinary latency/timeouts, missing symbols, connector
+recovery, source files, or direct CBM storage. If the native tool is not exposed, restart the MCP
+connection or start a fresh thread; never substitute CLI, plugin federation, database access, or a
+second process.
 
 ### Structural & Architectural
 
@@ -125,7 +142,7 @@ belong in the live `get_graph_schema` result, not in this skill.
 Parameter: `{"project":"C-Projects-main"}`
 The installed 0.9.0 build can return structure, dependencies, routes, entry points, hotspots,
 boundaries, layers, file tree, and graph-derived clusters. Use only the aspects needed for the
-current task.
+current task. It is an optional cold-start/broad-orientation tool, not a normal first call.
 
 **search_graph** — Locate symbols by name, label, file pattern.
 Parameters: `{"project":"C-Projects-main","query":"<name>","label":"Function"}`
@@ -141,7 +158,9 @@ do not invent or call an unavailable alias.
 
 **query_graph** — Custom Cypher queries.
 Parameters: `{"project":"C-Projects-main","query":"MATCH ..."}`
-Use for structural questions not covered by simpler tools. Cypher support is limited — no subqueries, no OPTIONAL MATCH with complex patterns. Use simple MATCH + RETURN patterns. Run get_graph_schema first to verify labels and edge types.
+Use only for a specific bounded structural question not covered by simpler tools, with an explicit row
+bound. Cypher support is limited — no subqueries and no OPTIONAL MATCH with complex patterns. Run
+`get_graph_schema` first only when custom Cypher actually requires it.
 
 ### Source & Text
 
@@ -150,7 +169,8 @@ Parameters: `{"project":"C-Projects-main","qualified_name":"<exact-qualified-nam
 Use after locating symbol via search_graph. Returns source, signature, return type, complexity, lines, fingerprint. Discover qualified names through search_graph — do not guess them. Known bug: line-offset can return wrong function for ambiguous names; verify against expected line range.
 
 **search_code** — Graph-augmented code search. The installed 0.9.0 build returns graph-ranked
-results with structural degree and directory context. Prefer it for code text inside indexed files.
+results with structural degree and directory context. Use it when structural graph lookup cannot
+resolve the target; it is not part of the default first-call chain.
 Use `rg` for files outside CBM coverage, configs, docs, comments, and exhaustive exact matching.
 
 ### Knowledge & Evidence
@@ -186,9 +206,15 @@ Note: Route nodes have empty `file_path`. Route→handler mapping requires readi
 
 ## Working-Tree Visibility
 
-The canonical `C-Projects-main` index represents committed source and is refreshed by the local
-post-commit hook. A clean worktree plus matching `index_status.git.head_sha` / `base_sha` and Git
-`HEAD` is sufficient freshness proof for committed files.
+The canonical `C-Projects-main` index represents committed source. The local `post-commit` hook does
+not launch, delete, synchronize, or index CBM. It only writes or refreshes one marker containing the
+project, root, Git HEAD, timestamp, and reason. Multiple commits before the next prompt coalesce into
+one pending maintenance action.
+
+On the next `UserPromptSubmit`, the active native MCP owner evaluates maintenance once. If native
+detect/sync can prove the graph matches current source, synchronize and verify one representative
+query. If proof is uncertain or stale residue exists, perform one exact `C-Projects-main` clean
+delete → full rebuild → verification. Clear the marker only after proof; leave it on failure.
 
 Dirty tracked edits and intentional untracked files are expected to be absent or outdated in CBM.
 Do not report that expected divergence as a coverage defect, ask to reindex it, or stage a file to
@@ -205,11 +231,12 @@ Use one doorway per run. Prefer the already-connected native MCP service. Main/G
 transparent `cbm.*` federation because it preserves native schemas and owns one persistent native
 child; do not mix that doorway with a separate direct connection after either is proven healthy.
 
-Default to sequential calls. The federation serializes requests through one persistent JSON-RPC
-session, so launching many callers does not make one CBM process execute many operations at once.
-A small parallel batch of independent reads is acceptable only after the selected doorway is warm.
-Never parallelize initialization, `tools/list`, indexing, deletion, or recovery, and never launch
-many CLI calls as a concurrency strategy.
+Keep dependent discovery chains and all state-changing operations sequential. After project/task
+state is established, at most two independent narrow reads may run in parallel through the same
+already-connected native MCP owner and canonical cache. This exception is for genuinely independent
+bounded reads, not several speculative searches "to see what sticks." Never parallelize
+`query_graph`, `get_architecture`, initialization, status polling, indexing, deletion, or recovery.
+Never launch CBM through CLI or shell as a concurrency or recovery strategy.
 
 Process lifecycle and index lifecycle are separate. A transport error does not authorize an index
 delete or reindex.
@@ -217,17 +244,14 @@ delete or reindex.
 ## Hybrid Workflow Pattern (The Core Loop)
 
 ```
-1. CBM: list_projects → index_status → get_graph_schema
-2. CBM: search_graph for target symbols
-3. CBM: trace_path inbound (who calls this)
-4. CBM: trace_path outbound (what does this call)
-5. CBM: get_code_snippet for exact source
-6. rg:   verify text patterns, search comments, check configs
-7. Source read: verify critical paths
-8. EDIT
-9. Test
-10. CBM: detect_changes → trace affected paths
-11. rg:   confirm old identifiers gone
+1. Marker/freshness state: reuse cached task state; 0-1 maintenance calls if needed
+2. CBM: one narrow search_graph
+3. CBM: 0-1 trace_path when relationships matter
+4. CBM: 0-1 get_code_snippet when useful
+5. Direct-read current source
+6. Focused rg only for its specific text/residue role
+7. Edit and test
+8. Proportional source/CBM/residue verification
 ```
 
 ## Pre-Grep Targeting (the user's pattern)
@@ -241,11 +265,9 @@ After rg finds a text match, use trace_path on the containing function to check 
 ## Failure & Recovery
 
 When CBM returns nothing:
-1. Confirm project name (list_projects)
-2. Check status (index_status)
-3. Check schema (get_graph_schema)
-4. Use rg to find exact symbol/path
-5. Return to CBM with confirmed identifiers
+1. Refine `search_graph` once only when a clearly better query exists.
+2. If still unresolved, use direct source and focused `rg` as an explicit coverage fallback.
+3. Record the CBM limitation; do not start a speculative search/freshness chain.
 
 When graph and source disagree: source truth wins. Determine if index is stale, path excluded, call resolution uncertain, or dynamic dispatch involved. Record the disagreement.
 
@@ -354,19 +376,18 @@ Tested on: runCardWithContract — CBM shows 1 caller (spec test), but function 
 ## Pre/Post-Edit Checklist
 
 Before edit:
-- [ ] list_projects confirms project
-- [ ] index_status confirms ready
+- [ ] maintenance marker and cached task freshness state inspected once when relevant
 - [ ] search_graph locates symbol
-- [ ] trace_path inbound (who depends)
-- [ ] trace_path outbound (what it affects)
-- [ ] get_code_snippet verifies source
-- [ ] rg checks for text references (catches dynamic dispatch)
+- [ ] trace_path used only when relationships/impact matter
+- [ ] get_code_snippet used only when its bounded source helps
+- [ ] current source directly read
+- [ ] focused rg used only for literals/config/docs/errors/coverage/residue
 
 After edit:
 - [ ] Tests pass
-- [ ] detect_changes confirms impact
-- [ ] trace_path re-verified on affected paths
-- [ ] rg confirms old identifiers gone
+- [ ] proportional affected-path/source verification passes
+- [ ] rg confirms old identifiers gone when exhaustive absence matters
+- [ ] large structural changes received one cleanliness decision
 
 ## Guardrails
 
@@ -379,5 +400,5 @@ After edit:
 
 ## Query Records
 
-@query id=codebasedmemory.current-code "prove project and index freshness, search_graph for relevant symbols, trace_path when needed, then direct-read resolved source"
+@query id=codebasedmemory.current-code "reuse one cached freshness state, search_graph once, trace_path and get_code_snippet only when needed, then direct-read current source"
 @query id=codebasedmemory.skill-match "retrieve skills using user intent, active CoderPacket, fresh CBM files and symbols, subsystem boundaries, and required proof"

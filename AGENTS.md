@@ -183,9 +183,8 @@ index swarm. Direct source and focused tests remain authoritative after graph di
 For code and architecture work:
 
 ```text
-list_projects / project identity
-→ index_status / revision and readiness
-→ get_architecture only when broad orientation is useful
+inspect the maintenance marker and reuse the task's cached identity/freshness state
+→ list_projects / index_status at most once only when that state is not already known
 → search_graph for exact symbols, routes, types, files, or concepts
 → trace_path for callers, callees, data flow, and impact
 → get_code_snippet for the exact qualified symbols
@@ -215,7 +214,9 @@ code structure. Do not use CBM ranking as semantic truth.
 - `detect_changes` — map tracked changes to symbols; it is not a replacement for Git status.
 - `index_repository` — refresh once only when explicitly needed. Never reflexively reindex before every
   query, and never run it concurrently.
-- `delete_project`, `ingest_traces`, and `manage_adr` — state-changing; require explicit owner request.
+- `delete_project`, `ingest_traces`, and `manage_adr` are state-changing. The owner has granted the
+  scoped standing maintenance authorization below for `delete_project`; trace ingestion and ADR
+  mutation still require an explicit task.
 
 Do not treat this catalog as a checklist. Most tasks should need only one to three useful CBM calls.
 Prefer the smallest sequence that resolves the source boundary:
@@ -234,12 +235,38 @@ calls are not more proof and can make the native service slow or stuck.
 ### Keep one calm lifecycle
 
 - Choose one native CBM doorway for the run.
-- Use sequential calls always; exactly one CBM call in flight. Never parallelize CBM calls.
+- Keep dependent discovery chains and all state-changing operations sequential. After project/task
+  state is established, at most two independent, narrow read calls may run in parallel through the
+  same already-connected native MCP owner and canonical cache. Never parallelize `query_graph`,
+  `get_architecture`, initialization, status polling, indexing, deletion, or recovery.
 - Check project/readiness once, not in a polling loop.
 - On timeout or closed transport, stop equivalent retries, report the doorway/error once, and retry at
   most once after a specific lifecycle repair.
 - Never start several CLI/indexer processes to make CBM “faster.”
 - Never delete/rebuild an index as generic process recovery.
+
+### Standing CBM maintenance authorization
+
+Codex has unrestricted technical access to the native CBM catalog. Do not "ground" Git or CBM by
+disabling tools, adding an `enabled_tools` allowlist, switching the project to untrusted, or changing
+the global approval policy merely because one run behaved badly. Fix the bounded misuse instead.
+
+The owner authorizes `delete_project(project="C-Projects-main")` without another permission round-trip
+only when live evidence proves that this exact Main index is stale or polluted and deletion is
+necessary for one clean rebuild. Immediately before deletion:
+
+1. use the native doorway only;
+2. verify the exact project name and root are `C-Projects-main` and `C:/Projects/main`;
+3. record the current index status/counts and the concrete pollution or revision mismatch;
+4. verify `.cbmignore` contains the intended current exclusions;
+5. ensure no index/delete/recovery operation is already running.
+
+Then perform exactly one delete, exactly one `index_repository` rebuild, and exactly one readiness/count
+verification. Never delete `C-Projects-Hermes`, `C-Projects-LocalCoder`, another project, repository
+source, or CBM storage files under this authorization. Never use delete/rebuild for an ordinary timeout,
+slow query, missing symbol, or connector failure. If the native delete tool is not exposed, restart the
+Codex MCP connection or begin a fresh thread; do not use a plugin duplicate, shell CLI, direct database
+access, or a second CBM process as a substitute.
 
 ### Freshness proof
 
