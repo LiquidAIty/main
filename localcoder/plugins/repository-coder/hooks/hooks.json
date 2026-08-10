@@ -1,0 +1,29 @@
+{
+  "description": "Inject the bounded Coder and CBM operating contract without launching another MCP owner.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "& \"${CLAUDE_PLUGIN_ROOT}/hooks/inject-context.ps1\"",
+            "shell": "powershell",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "& \"${CLAUDE_PLUGIN_ROOT}/hooks/inject-context.ps1\"",
+            "shell": "powershell",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

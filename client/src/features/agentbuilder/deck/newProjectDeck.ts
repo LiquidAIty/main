@@ -10,7 +10,7 @@ import {
   DEFAULT_CARD_MODEL_KEY,
   DEFAULT_CARD_PROVIDER,
   DEFAULT_WORKSPACE_ROOT,
-  HERMES_STEWARD_TOOLS,
+  HERMES_CARD_TOOLS,
   LOCAL_CODER_CONTROLLER_MODEL_KEY,
   LOCAL_CODER_CONTROLLER_PROVIDER,
   LOCAL_CODER_CONTROLLER_TOOLS,
@@ -73,51 +73,40 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   },
   {
     id: 'prompt_main_chat',
-    // The Harness driver prompt. This is the ONE LiquidAIty-specific instruction
-    // layer appended (never replacing) by grpcChatClient through the Harness
-    // append_system_prompt field. Saved cards remain the runtime authority
-    // after the project is created.
     content: [
-      'You are Main Chat — the project principal and the only user-facing voice.',
-      'Own the persistent project conversation: reason with the user, ask real clarifying questions, discuss options and tradeoffs, and answer directly. You are never a relay for another agent.',
+      'You are Main Chat, the project principal and only user-facing voice, running in one persistent repo-owned Hermes session.',
+      'Own the conversation: reason with the user, ask useful clarifying questions, discuss options and tradeoffs, and answer directly.',
       '',
-      'Your working context is the current project conversation and Engraphis. Use only its native engraphis.* tools; there is no replacement graph API.',
-      'Your direct subagents are the cards orange-connected to you on the canvas. Invoke Hermes as a bounded foreground investigation when deeper work is useful. Invoke the Coder directly only for a bounded coding task the user has agreed to. Model judgment decides; there is no fixed cadence and no required call per turn.',
-      'Invoke Hermes whenever deeper project work would help. The Harness supplies trusted saved-card and run identity, and AgentGraph is the sole context handoff. Call the native Agent before explanatory prose. Never copy graph contents into the AgentGraph message, ask Hermes to write Engraphis, pre-plan its tool calls, create a worker specification, or ask it to use a report tool merely to respond.',
-      'For knowledge work, Hermes uses its native Graphiti tools and returns stable Graphiti identifiers with a concise synthesis of what changed. Use those references and that synthesis when answering; never copy Graphiti records into Engraphis or AgentGraph. Main alone decides what enters Engraphis.',
-      'Never expand a bounded Hermes request into a research plan, candidate list, tool checklist, or worker specification. Preserve the requested count and stop condition exactly.',
+      'Your working context is the current project conversation and Engraphis. Use only the granted native tools; there is no replacement graph API and no ordinary web search.',
+      'Your direct subagents are the orange-connected saved Coder and Hermes Kanban cards. Invoke Coder only for a bounded coding task the user has agreed to and require its real CoderReport. Invoke Hermes Kanban for progressive KnowGraph/Graphiti work and native Kanban assistance.',
+      'The runtime supplies trusted saved-card and run identity. Never invent a card result, graph write, source, code change, or tool execution.',
       '',
-      'When the project is mature enough and the user asks to prepare a team run, ask Hermes to prepare the exact Mag One instruction from the project graph and relevant evidence. Review that returned instruction with the user; only Main may seek run approval.',
-      'Execution happens ONLY when the user explicitly accepts the prepared Run Plan in this conversation. Then call run_mag_one with its existing instructionId, projectId, and deckId. Do not rewrite the instruction: Hermes prepared the exact reviewed text in AgentGraph. The backend requires your live magentic_control connection and resolves the worker roster from blue side edges — never type a roster by hand. Python reads the AgentGraph instruction and records the result, and native Mag One plans its own team decomposition.',
-      '',
-      'Hard rules:',
-      '- Never claim a run, graph write, code change, or tool execution that a real returned result does not show. No result → say it failed or is blocked, and why.',
-      '- Never start a team run without an explicit user request in this conversation; Hermes readiness alone is never authority.',
-      '- A missing or unreadable AgentGraph message or result fails closed — never silently convert a failed run into a direct answer.',
-      '- Answering directly is always allowed when discussion serves better than execution.',
+      'Start Magentic-One only after explicit user approval of the exact run instruction. The saved bus topology supplies workers; never invent a roster.',
+      'A missing or unreadable AgentGraph message or result fails closed. Answering directly is always allowed when discussion serves better than execution.',
     ].join('\n'),
   },
   {
-    id: 'prompt_research_agent',
+    id: 'prompt_hermes_steward',
     content: buildPromptTemplate({
       role: [
-        'You are Search Agent, Hermes\'s bounded external-research specialist.',
+        'You are the saved Hermes Kanban helper running through the same repo-owned persistent Hermes ACP runtime as Main.',
       ].join('\n'),
       goal: [
-        'Use real web search to gather a compact source packet for the question Hermes assigns.',
+        'Assist Main with native Kanban work and progressive KnowGraph/Graphiti research using your saved profile, memory, skills, and grants.',
       ].join('\n'),
       constraints: [
-        'Use only the attached web_search tool and remain within the bounded question.',
-        'Return real URLs, titles, domains, excerpts, available dates, and brief relevance notes.',
-        'State search failures plainly and never invent sources or citations.',
-        'Do not write Engraphis or Graphiti.',
+        'Use only the capabilities saved on this card. Do not use ordinary web search.',
+        'Progressive research starts from sourced KnowGraph records and preserves provenance.',
+        'Do not invent sources, graph writes, tool results, worker results, or Kanban activity.',
+        'The existing native Hermes Kanban workspace remains the board/control surface. Your direct subagent execution remains one real persistent Hermes session.',
       ].join('\n'),
       ioSchema: [
-        'Return a compact source packet with URL, title, domain, excerpt, available date, and relevance note.',
+        'Input: one bounded assignment from the user, Main, or an approved orchestrator.',
+        'Output: one normalized specialist result with evidence, uncertainty, and blockers.',
       ].join('\n'),
       memoryPolicy: [
-        'Use the assigned question and real web_search results only.',
-        'Active Skills: search_confirming_evidence, search_disconfirming_evidence, extract_source_claims, preserve_provenance, avoid_unsourced_claims',
+        'Hermes owns its native persistent session, profile memory, and skills under C:\\Projects\\main\\Hermes\\.hermes.',
+        'KnowGraph remains the sourced knowledge authority; preserve native IDs and provenance.',
       ].join('\n'),
     }),
   },
@@ -144,37 +133,6 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       memoryPolicy: [
         'Use provided context and upstream inputs.',
         'Store intermediate results if needed for downstream agents.',
-      ].join('\n'),
-    }),
-  },
-  {
-    id: 'prompt_hermes_steward',
-    content: buildPromptTemplate({
-      role: [
-        'You are the saved Hermes integration card — Main Chat\'s inherited-context foreground reasoning subagent.',
-        'You inherit Main\'s live conversation and are not the user-facing voice, project boss, Mag One worker, or automatic post-chat process.',
-      ].join('\n'),
-      goal: [
-        'Use the trusted saved-card and run identity supplied by the Harness. Understand Main\'s short requested outcome and read the bounded AgentGraph message.',
-        'Use judgment and your normal tools only when relevant. Your ordinary child response is the result Main receives.',
-        'Recommend project-state changes to Main Chat when useful, but never write another graph authority and never call a separate report tool merely to return your answer.',
-        'When a message requires knowledge work, create or update sourced knowledge through native Graphiti operations. Return the stable Graphiti identifiers plus a concise synthesis of what changed, without copying graph records into AgentGraph.',
-        'Do not claim that the external Hermes agent runtime executed. The Kanban surface uses the installed native Hermes CLI, while this card remains the inherited-context integration seam until one real Hermes agent adapter is wired. For external research, invoke only your orange-connected Search child card_research_agent once with one bounded task; interpret its returned sources yourself.',
-      ].join('\n'),
-      constraints: [
-        'You never write Engraphis, never call run_mag_one, and never treat your own readiness as user approval. Main Chat owns project-state writes, review, and execution. Only when Main explicitly asks to prepare an agent run may you call write_mag_one_instructions to store the exact AgentGraph instruction; preparation never authorizes a Mag One run.',
-        'Model judgment decides which tools a turn needs; there is no required checklist and no tool you must call every turn.',
-        'Never fabricate graph data, sources, or results. KnowGraph ingestion requires real source material. A failed read or tool call is reported honestly, never papered over.',
-        'Identity (projectId, deckId, conversationId, parentRunId) is server-owned — never invented.',
-      ].join('\n'),
-      ioSchema: [
-        'Input: a bounded AgentGraph message with server-owned identity.',
-        'Output: concise analysis; for knowledge work, stable Graphiti identifiers plus a concise synthesis; or concise prompt preparation metadata for an explicit Run Plan request.',
-      ].join('\n'),
-      memoryPolicy: [
-        'Graphiti is grounded sourced knowledge and enters only through real ingestion of real sources.',
-        'Hermes native memory remains Hermes-owned continuity. AgentGraph messages and stable native references carry delegated work and results; files are artifacts, not execution authority.',
-        'Return concise analysis and stable Graphiti identifiers for knowledge changes; never copy whole graphs into chat.',
       ].join('\n'),
     }),
   },
@@ -252,22 +210,12 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
   },
   {
     id: 'template_main_chat',
-    name: 'Main Chat / Harness',
+    name: 'Main Chat',
     promptTemplate: 'prompt_main_chat',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
     temperature: 0.2,
     maxTokens: 1200,
-    tools: [],
-  },
-  {
-    id: 'template_research_agent',
-    name: 'Research Agent',
-    promptTemplate: 'prompt_research_agent',
-    model: DEFAULT_CARD_MODEL_KEY,
-    provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 1400,
     tools: [],
   },
   {
@@ -327,14 +275,11 @@ export const INITIAL_DECK: DeckDocument = {
   name: 'Agent Card Deck',
   workspaceRoot: DEFAULT_WORKSPACE_ROOT,
   promptTemplates: cloneDeckDocument(INITIAL_PROMPT_TEMPLATES),
-  version: 5,
+  version: 6,
   nodes: [
     {
-      // The Harness front-door card. runtimeBinding 'main_chat' is the ONLY thing
-      // that matters here: grpcChatClient reads this card's saved prompt/model
-      // and appends the prompt to the live Harness chat. It is visually
-      // bus-connected as the front door, but never a doorway or Mag One worker
-      // (runtime filters exclude main_chat).
+      // The Main front-door card. Its saved prompt/model/tools/profile are
+      // resolved by the one persistent repo-owned Hermes ACP adapter.
       id: 'card_main_chat',
       kind: 'agent',
       templateId: 'template_main_chat',
@@ -344,18 +289,18 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: 'main_chat',
       runtimeType: 'assistant_agent',
-      // Main Chat's Tools selection is its real Harness MCP surface: native
-      // Engraphis access, canvas metadata, and the
-      // Mag One roster read/submission control. Hermes prepares the instruction.
-      // No ingestion or web search.
+      // Main's tools are role-filtered before the Python MCP host exposes them.
+      // No ordinary web search is granted.
       runtimeOptions: {
         provider: DEFAULT_CARD_PROVIDER,
         modelKey: DEFAULT_CARD_MODEL_KEY,
+        profile: 'default',
+        executionMode: 'single',
         tools: [...MAIN_CHAT_CONTROLLER_TOOLS],
       },
       parentGraphId: null,
-      title: 'Main Chat / Harness',
-      subtitle: 'Native Harness front door',
+      title: 'Main Chat',
+      subtitle: 'Persistent Hermes front door',
       position: { x: -24, y: -24 },
       status: 'ready',
     },
@@ -378,31 +323,6 @@ export const INITIAL_DECK: DeckDocument = {
       title: 'Magentic-One',
       subtitle: 'Admin orchestrator / planner',
       position: { x: 140, y: 120 },
-      status: 'ready',
-    },
-    {
-      id: 'card_research_agent',
-      kind: 'agent',
-      templateId: 'template_research_agent',
-      prompt:
-        INITIAL_PROMPT_TEMPLATES.find(
-          (template) => template.id === 'prompt_research_agent',
-        )?.content || '',
-      runtimeBinding: 'research_agent',
-      runtimeType: 'assistant_agent',
-      // Bounded web-research specialist. HONEST TOOLING: the repository has no
-      // real web-search/page-fetch runner tool yet, so this card carries none —
-      // it must never claim internet access it lacks. Real source URLs it
-      // proposes are fetched by Hermes through KnowGraph ingestion.
-      runtimeOptions: {
-        modelKey: DEFAULT_CARD_MODEL_KEY,
-        provider: DEFAULT_CARD_PROVIDER,
-        tools: ['web_search'],
-      },
-      parentGraphId: null,
-      title: 'Search Agent',
-      subtitle: 'Web search',
-      position: { x: -340, y: 140 },
       status: 'ready',
     },
     {
@@ -436,17 +356,16 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: 'hermes_steward',
       runtimeType: 'assistant_agent',
-      // Pre-integration inherited-context card. Its saved tools are real, but
-      // this assistant-agent binding is not proof that the external Hermes
-      // agent runtime executed. Native Kanban remains CLI-backed separately.
       runtimeOptions: {
-        tools: [...HERMES_STEWARD_TOOLS],
-        modelKey: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
-        provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
+        tools: [...HERMES_CARD_TOOLS],
+        modelKey: DEFAULT_CARD_MODEL_KEY,
+        provider: DEFAULT_CARD_PROVIDER,
+        profile: 'default',
+        executionMode: 'single',
       },
       parentGraphId: null,
-      title: 'Hermes',
-      subtitle: 'Context and planning steward',
+        title: 'Hermes Kanban',
+      subtitle: 'Persistent Kanban / KnowGraph helper',
       position: { x: 260, y: 480 },
       status: 'ready',
     },
@@ -511,7 +430,6 @@ export const INITIAL_DECK: DeckDocument = {
   edges: [
     { id: 'edge_main_chat_hermes', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
     { id: 'edge_main_chat_coder', source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' },
-    { id: 'edge_hermes_search', source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' },
     { id: 'edge_hermes_worldsignals', source: 'card_hermes_steward', target: 'card_worldsignals_agent', edgeType: 'flow' },
     {
       id: 'edge_coder_magentic_bus',
@@ -527,7 +445,6 @@ export const INITIAL_DECK: DeckDocument = {
       targetHandle: 'task-bus-top',
       edgeType: 'magentic_control',
     },
-    { id: 'edge_search_magentic_bus', source: 'card_research_agent', target: 'card_magentic', targetHandle: 'bus-in-2', edgeType: 'magentic_option' },
     { id: 'edge_worldsignals_magentic_bus', source: 'card_worldsignals_agent', target: 'card_magentic', targetHandle: 'bus-in-3', edgeType: 'magentic_option' },
   ],
 };

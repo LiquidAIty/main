@@ -13,13 +13,45 @@ vi.mock('../services/autogen/autogenOrchestratorClient', () => ({
   orchestrateWithAutoGen: vi.fn(),
   runSingleCardWithAutoGen: vi.fn(),
 }));
+vi.mock('../hermes/mainAdapter', () => ({
+  deriveHermesSessionKey: vi.fn((projectId, conversationId, cardId) =>
+    `hermes:${projectId}:${conversationId}:${cardId}`,
+  ),
+  resolveDirectHermesSubagents: vi.fn((parentCardId: string, nodes: any[], edges: any[]) => edges
+    .filter((edge: any) => edge.source === parentCardId && edge.edgeType === 'flow')
+    .map((edge: any) => nodes.find((node: any) => node.id === edge.target))
+    .filter(Boolean)
+    .map((node: any) => ({
+      cardId: node.id,
+      title: node.title,
+      runtimeBinding: node.runtimeBinding,
+    }))),
+  resolveHermesCardRuntimeConfig: vi.fn((card: any, directSubagents: any[] = []) => ({
+    cardId: card.id,
+    title: card.title,
+    prompt: card.prompt,
+    profile: 'default',
+    provider: 'openai',
+    modelKey: 'gpt-5.6-luna',
+    providerModelId: 'gpt-5.6-luna',
+    executionMode: card.runtimeOptions?.executionMode || 'single',
+    tools: card.runtimeOptions?.tools || [],
+    coderCardIds: directSubagents
+      .filter((child: any) => child.runtimeBinding === 'local_coder')
+      .map((child: any) => child.cardId),
+    directSubagents,
+  })),
+  startHermesTurn: vi.fn(),
+}));
 
 import { getDeckDocument } from '../decks/store';
 import { runSingleCardWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
+import { startHermesTurn } from '../hermes/mainAdapter';
 import { runConfiguredCard } from './runtime';
 
 const mockGetDeck = getDeckDocument as unknown as ReturnType<typeof vi.fn>;
 const mockRunCard = runSingleCardWithAutoGen as unknown as ReturnType<typeof vi.fn>;
+const mockStartHermes = startHermesTurn as unknown as ReturnType<typeof vi.fn>;
 
 const AGENT_CARD = {
   id: 'card_saved_worker',
@@ -76,6 +108,7 @@ const ARGS = {
 beforeEach(() => {
   mockGetDeck.mockReset();
   mockRunCard.mockReset();
+  mockStartHermes.mockReset();
 });
 
 describe('runConfiguredCard — server-trusted single-card runtime', () => {
@@ -111,6 +144,63 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     const result = await runConfiguredCard({ ...ARGS, cardId: 'card_main_chat' });
     expect(result.status).toBe('not_runnable');
     expect(result.error).toContain('single_card_main_chat_not_runnable');
+    expect(mockRunCard).not.toHaveBeenCalled();
+  });
+
+  it('runs the saved Hermes card through persistent ACP, never the generic AutoGen runner', async () => {
+    const hermesCard = {
+      ...AGENT_CARD,
+      id: 'card_hermes_steward',
+      title: 'Hermes',
+      runtimeBinding: 'hermes_steward',
+      runtimeOptions: {
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        profile: 'default',
+        executionMode: 'single',
+        tools: ['graphiti.search_nodes'],
+      },
+    };
+    const worldSignalsChild = {
+      ...AGENT_CARD,
+      id: 'card_worldsignals_agent',
+      title: 'WorldSignals',
+      runtimeBinding: 'worldsignals_agent',
+    };
+    mockGetDeck.mockResolvedValue(deckWith(
+      [hermesCard, worldSignalsChild],
+      [{ source: hermesCard.id, target: worldSignalsChild.id, edgeType: 'flow' }],
+    ));
+    mockStartHermes.mockResolvedValue({
+      done: Promise.resolve({ finalText: 'real Hermes result', usage: {} }),
+      cancel: vi.fn(),
+      answer: vi.fn(),
+    });
+
+    const result = await runConfiguredCard({
+      ...ARGS,
+      cardId: hermesCard.id,
+      conversationId: 'conversation-7',
+    });
+
+    expect(result).toMatchObject({
+      status: 'completed',
+      output: 'real Hermes result',
+      tools: ['graphiti.search_nodes'],
+    });
+    expect(mockStartHermes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cardId: hermesCard.id,
+        sessionKey: 'hermes:proj-1:conversation-7:card_hermes_steward',
+        message: ARGS.input,
+        directSubagents: [{
+          cardId: worldSignalsChild.id,
+          title: worldSignalsChild.title,
+          runtimeBinding: worldSignalsChild.runtimeBinding,
+        }],
+      }),
+      expect.any(Function),
+    );
     expect(mockRunCard).not.toHaveBeenCalled();
   });
 

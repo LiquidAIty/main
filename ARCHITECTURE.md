@@ -29,7 +29,6 @@ databases, starts every application process, and shuts the stack down together:
 | Express backend | 4000 | `apps/backend/` | `npm run dev:fresh` |
 | Graphiti ingestion API | 8001 | `services/knowgraph/` | `npm run dev:fresh` |
 | Python rails | 8003 | `apps/python-models/` | `npm run dev:fresh` |
-| OpenClaude-derived gRPC Harness | 50051 | `localcoder/` | `npm run dev:fresh` |
 | Authenticated GPT plugin MCP | 8765 | `apps/python-models/` | `npm run dev:fresh` |
 | Public MCP tunnel | public URL | local ngrok | `npm run dev:fresh` |
 
@@ -42,10 +41,10 @@ owners. Isolated service startup is not a supported application proof path.
 
 ```txt
 Main Chat
-→ backend OpenClaude session route
-→ persistent gRPC Harness session
+→ backend Main session route
+→ persistent repo-owned Hermes ACP session
 → saved Main card provider/model/tools
-→ optional saved sub-agent/tool calls
+→ saved flow children: Coder and Hermes Kanban
 → streamed answer and durable conversation
 
 Approved team work
@@ -79,7 +78,6 @@ Primary landmarks:
 - `client/src/features/agentbuilder/console/XtermView.tsx`
 - `apps/backend/src/coder/openclaude/console/consoleSession.ts`
 - `apps/backend/src/routes/coder.routes.ts`
-- `localcoder/src/grpc/server.ts`
 
 ### Local Coder card
 
@@ -101,8 +99,8 @@ Mag One (later compatibility test) ─────────────┘  �
                                                      → LocalCoderService → LocalCoderAdapter
 ```
 
-The generic Harness doorway resolves the saved Main→Coder flow and delegates to the saved-card
-runner. There is no separate Coder-specific Main tool or execution engine.
+Main's Hermes adapter resolves the saved Main→Coder flow and exposes the existing configured-card
+runner only for that direct saved child. There is no separate Coder-specific execution engine.
 
 OpenRouter cards use OpenClaude's OpenAI-compatible dialect with the saved provider model (for
 example DeepSeek) and the OpenRouter endpoint/key. OpenAI Account cards use the same supported
@@ -159,13 +157,18 @@ Do not add TypeScript planning logic or a fake Mag One fallback.
 
 ## Hermes boundary
 
-There are three things currently called Hermes, and they must not be conflated:
+There are three real Hermes-facing surfaces, and they must not be conflated:
 
 ```txt
-Main → saved Hermes card
-→ native OpenClaude/Harness inherited-context agent
-→ saved prompt, model, MCP grants, and parent context
-→ NOT the installed Nous Hermes process
+Main Chat
+→ saved `main_chat` card
+→ persistent repo-owned `Hermes\\venv\\Scripts\\hermes-acp.exe`
+→ saved prompt, profile, model, grants, and direct saved children
+
+Hermes Kanban card
+→ saved `card_hermes_steward` identity and familiar canvas position
+→ a second persistent Hermes ACP session
+→ KnowGraph/Graphiti grants and the existing native Kanban workspace
 
 Hermes Terminal
 → separate `/api/coder/hermes/console` route family
@@ -178,11 +181,9 @@ Hermes Kanban
 → durable worker processes and board state
 ```
 
-The terminal and Kanban surfaces are both present and their focused route/component/session tests pass.
-The current saved Hermes doorway is still a Harness-native sub-agent, however, so Main does not yet
-invoke the installed Hermes agent. One thin external runtime adapter remains the missing seam. Do not
-rename a generic model call into Hermes, restore the removed not-implemented reviewer, or create a
-second orchestration system.
+Main, the separate Hermes Kanban helper, the Hermes terminal, and the Kanban workspace now use the
+repo-owned installation. Main and the helper preserve distinct saved-card identities and session keys;
+neither is a generic AutoGen call renamed Hermes. OpenClaude remains the Coder runtime.
 
 The product must preserve both real Hermes modes:
 
@@ -218,11 +219,10 @@ fallback snapshot. `pyproject.toml` reports version `0.20.0` while the latest pu
 observed during this audit was `v0.18.2`, so this is an ahead-of-tag main checkout, not a confirmed
 newer stable release.
 
-The in-repo official installer created `Hermes\venv`, but the user stopped the long post-install run
-before its completion marker was written. The in-repo `hermes version` probe then failed to return
-within 40 seconds. Therefore source and state migration are complete, but the repo-local executable is
-**not yet accepted as healthy**. Resume only with a bounded installer/doctor task; do not route
-LiquidAIty to it until `version`, `doctor`, single-agent chat, and a manual-mode Kanban probe pass.
+The repo-owned `Hermes\venv` now supplies both the CLI and ACP executable. Persistent two-turn ACP,
+saved external system-prompt injection, clean shutdown, and cancellation are proven. The adapter pins
+`HERMES_HOME` to `Hermes\.hermes`; console and Kanban routes resolve the same repo-owned installation
+without PATH or AppData fallbacks.
 
 The current install has the useful core enabled:
 
@@ -294,7 +294,7 @@ and one status-probe lifecycle anomaly. No gateway should be enabled as a persis
 until stale state is repaired, automatic dispatch is intentionally selected, and the exact profile
 roster/tool grants are reviewed.
 
-### Thin Hermes integration path
+### Hermes integration path
 
 Hermes offers three realistic external seams:
 
@@ -304,20 +304,12 @@ Hermes offers three realistic external seams:
 - **OpenAI-compatible HTTP/SSE API** — simplest language-neutral prompt/run adapter;
 - **ACP stdio** — strongest editor/coder integration, but broader than the first Main-to-Hermes need.
 
-The recommended sequence is:
-
-1. preserve and prove the existing Hermes PTY terminal independently of Kanban;
-2. repair SQLite and stale gateway state, then choose safe manual Kanban defaults for the first live
-   proof;
-3. create/review separate Hermes profiles for general, research/KnowGraph, and optional Kanban
-   orchestrator roles, with least-privilege toolsets and independent memory;
-4. replace the misleading Harness-native “Hermes” doorway with exactly one thin adapter to the real
-   installed runtime, preserving the saved card as LiquidAIty policy authority;
-5. keep the current CLI Kanban bridge only through the migration, then replace it with the native
-   authenticated API if the API covers the tested contract; delete the abandoned bridge in the same
-   change;
-6. prove Main → real Hermes → shared MCP/Engraphis/KnowGraph and a separate durable Kanban worker before
-   giving Hermes broader orchestration authority.
+The implemented path uses ACP stdio because it supplies persistent sessions, native streamed events,
+permission requests, cancellation, session load/new, and model selection without terminal keystroke
+automation. The backend owns one calm ACP process per saved Hermes profile. A role-filtered Python MCP
+child exposes only the saved tool grants, and direct card delegation is limited to explicit saved
+`flow` children. The existing CLI Kanban bridge remains the board adapter; replacing it with Hermes'
+authenticated Kanban API is a separate measured migration, never a second permanent writer.
 
 Hermes can be the cleaner general/research agent without becoming LiquidAIty's only runtime. OpenClaude
 remains the contained specialist Coder UX; Hermes becomes the Main/general operator and durable fleet. If
@@ -412,11 +404,9 @@ Primary sources:
 ### Final architectural decision
 
 “Main” is a LiquidAIty product role and saved card, not the permanent name of one third-party runtime.
-**Current fact:** the OpenClaude gRPC Harness executes Main because that chat/session/stream/permission
-integration exists today. **Approved launch target:** one thin repo-owned Hermes adapter replaces
-OpenClaude as Main after the current chat contract is captured and the Hermes replacement passes its
-Preservation Set. This is a controlled migration, not a permanent runtime chooser, A/B Main, or hidden
-fallback. OpenClaude remains the contained Coder.
+**Current fact:** the repo-owned Hermes ACP adapter executes Main and the saved Hermes Kanban helper.
+The retired OpenClaude Main gRPC client and product startup path are deleted; there is no A/B Main or
+hidden fallback. OpenClaude remains the contained Coder.
 
 The recommended stable split is:
 
@@ -424,7 +414,6 @@ The recommended stable split is:
 LiquidAIty UI and saved cards = user experience, policy, grants, visualization
 
 OpenClaude = contained specialist coding runtime
-  - current Main transport only until the proven Hermes migration
   - under-chat interactive Coder
   - bounded Local Coder / CoderReport
 
@@ -452,24 +441,22 @@ remain stable.
 The model loop is conceptually similar in all three systems. The differences are where policy lives,
 how much platform surrounds the loop, and what persists between turns.
 
-**OpenClaude / LocalCoder:**
+**OpenClaude / LocalCoder Coder:**
 
 ```txt
-gRPC ChatRequest
-→ QueryEngine composes base prompt + saved-card append + history + tool/agent schemas
+saved Coder assignment or persistent terminal input
+→ OpenClaude composes its coding prompt + native tools + native CBM
 → provider streams reasoning/text/tool-use events
 → permission check when required
-→ native/MCP tool or named child agent executes
+→ native file/shell/test or CBM tool executes
 → tool result is appended to the conversation
 → model is called again
 → repeat until final response, cancellation, or error
-→ gRPC streams typed events and retains the session
+→ bounded CoderReport or persistent terminal transcript
 ```
 
-gRPC is conversation transport, session identity, bidirectional permission input, and typed event
-streaming; it is not the planner. The most relevant built-in child types are Explore, Plan,
-verification, and general/custom agents. LiquidAIty extends the protocol with saved-card child
-definitions and least-privilege native/MCP grants.
+The Coder plugin injects its bounded role and CBM-first procedure. Its strict MCP configuration exposes
+only the native repo Codebase Memory server; it does not attach the general Python MCP catalog.
 
 **Hermes:**
 
@@ -691,8 +678,8 @@ row whenever a nontrivial vendor change is approved; do not create parallel dive
 
 | Vendor | Upstream and baseline | Known local divergence | Proof and synchronization note |
 | --- | --- | --- | --- |
-| Hermes | [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent), source version `0.20.0`; exact upstream commit unverified | No Hermes source change was made by the CBM ownership task. Repo-local state and the future Main adapter are host integration concerns and should stay outside Hermes when its public ACP/configuration boundaries suffice. | Repo-owned one-shot and persistent two-turn ACP passed. Re-evaluate and record exact files/symbols before any future fork edit. |
-| OpenClaude/LocalCoder | [Gitlawb/openclaude](https://github.com/Gitlawb/openclaude), local package `0.5.2`; exact upstream commit unverified | The local gRPC protocol extends upstream with saved-card definitions, grants, parent/run identity, progress/reasoning events, and context/usage accounting; see the OpenClaude synthesis above. | Treat any update as a protocol port, not a dependency bump. Preserve focused gRPC, terminal, card, permission, and CoderReport proofs. |
+| Hermes | [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent), source version `0.20.0`; exact upstream commit unverified | `acp_adapter/session.py` carries an ephemeral host-supplied saved-card system prompt; `acp_adapter/server.py` applies it on new/load and normalizes an interrupted `None` response so cancellation returns the ACP `cancelled` stop reason. | 48 focused ACP tests pass; live two-turn ACP reused one PID/session and recalled prior-turn context; live cancellation returned `hermes_turn_cancelled`. Keep the divergence until upstream exposes equivalent saved-card prompt and cancellation behavior. |
+| OpenClaude/LocalCoder | [Gitlawb/openclaude](https://github.com/Gitlawb/openclaude), local package `0.5.2`; exact upstream commit unverified | Repo-owned `plugins/repository-coder` injects the bounded Coder/CBM policy. LiquidAIty launches the terminal and headless Coder with that plugin and a strict native-CBM-only MCP configuration. The historical vendor gRPC implementation remains dormant vendor capability, not a product Main path. | Plugin validation and hook output pass; focused adapter and terminal tests preserve the Coder contract. Preserve terminal, card, permission, CBM, and CoderReport proofs on updates. |
 
 Exact upstream commits and outer-repository Git state could not be verified during this policy task
 because the host blocked read-only Git commands. Version and URL are therefore recorded without an
@@ -714,7 +701,7 @@ invented commit identity.
   derivation and configuration/name/subtext mutations. `client/src/components/AgentManager.tsx`
   renders the card editor.
 - Main Chat: `client/src/features/agentbuilder/console/useAgentBuilderMainChat.ts` owns transcript
-  loading, streamed Harness turns, and busy/error state.
+  loading, streamed Hermes turns, and busy/error state.
   `client/src/components/builder/BuilderChat.tsx` renders the conversation.
 - OpenClaude console: `client/src/features/agentbuilder/console/OpenClaudeConsolePanel.tsx`,
   `openClaudeConsoleClient.ts`, and `XtermView.tsx` own the persistent terminal UI and client
@@ -728,7 +715,7 @@ invented commit identity.
   `CompanionSurfaceHost.tsx` own their actual visual regions.
 - Backend routes: `apps/backend/src/routes/index.ts` mounts the supported route families.
   `projects.routes.ts` and `decks.routes.ts` own project/deck transport; `coder.routes.ts` owns
-  Harness, Coder, console, card-control, and MCP-bridge transport; `knowgraph.routes.ts` exposes
+  Main Hermes, Coder, console, card-control, and MCP-bridge transport; `knowgraph.routes.ts` exposes
   the KnowGraph service; `worldsignal.routes.ts` owns the retained specialist bridge;
   `auth.routes.ts` and `health.routes.ts` own access and liveness. Engraphis, Graphiti, and CBM
   tools are federated by the official Python MCP rather than mirrored as backend route families.
@@ -781,8 +768,6 @@ cost.
 
 ## Intentionally unavailable or incomplete
 
-- Main-to-installed-Hermes execution. The separate real Hermes terminal and Kanban UI exist, while the
-  saved Main doorway still executes as a Harness-native inherited-context agent.
 - Persisted ADMIN Hermes/graph cards and edges; source template presence is not database recovery.
 - Full Main → actual Hermes → approved Mag One end-to-end proof.
 - Full Main → AgentGraph → Hermes/Coder product activation; the AGE store and Coder consumer exist,

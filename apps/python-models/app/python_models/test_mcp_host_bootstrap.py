@@ -190,6 +190,42 @@ def test_main_context_rejects_expired_or_incomplete_request_claims(monkeypatch):
     monkeypatch.setattr(mcp_host, "get_access_token", lambda: current["token"])
     assert mcp_host._authenticated_main_context() is None
 
+
+def test_stdio_process_owned_context_and_tool_allowlist_are_fail_closed(monkeypatch):
+    import asyncio
+    import mcp_host
+    from mcp.server.auth.provider import AccessToken
+
+    context = {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-1",
+        "parentRunId": "parent-1",
+        "mainCardId": "card_main_chat",
+    }
+    current = {"token": None}
+    monkeypatch.setattr(mcp_host, "get_access_token", lambda: current["token"])
+    monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "stdio")
+    monkeypatch.setenv("MCP_TRUSTED_MAIN_CONTEXT", json.dumps(context))
+    monkeypatch.setenv("MCP_TOOL_ALLOWLIST", "main.context,coder.status")
+
+    async def forbidden_native_init():
+        raise AssertionError("ungranted native catalog initialized")
+
+    monkeypatch.setattr(mcp_host, "_native_engraphis_tools", forbidden_native_init)
+    monkeypatch.setattr(mcp_host, "_native_cbm_tools", forbidden_native_init)
+    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", forbidden_native_init)
+
+    assert mcp_host._authenticated_main_context() == context
+    assert [tool.name for tool in asyncio.run(mcp_host.list_tools())] == [
+        "main.context",
+        "coder.status",
+    ]
+
+    denied = asyncio.run(mcp_host.call_tool("web_search", {"query": "forbidden"}))
+    assert denied.isError is True
+    assert "tool_not_granted" in denied.content[0].text
+
     current["token"] = AccessToken(
         token="incomplete",
         client_id="chatgpt-client",
@@ -198,6 +234,9 @@ def test_main_context_rejects_expired_or_incomplete_request_claims(monkeypatch):
         claims={"main": {"projectId": "project-1"}},
     )
     assert mcp_host._authenticated_main_context() is None
+
+    monkeypatch.delenv("MCP_TRUSTED_MAIN_CONTEXT")
+    assert mcp_host._configured_tool_allowlist() is None
 
 
 def test_authenticated_connection_reaches_read_only_handler_without_context_injection(

@@ -170,6 +170,7 @@ class SessionState:
     runtime_lock: Any = field(default_factory=Lock)
     current_prompt_text: str = ""
     interrupted_prompt_text: str = ""
+    ephemeral_system_prompt: str = ""
 
 
 class SessionManager:
@@ -229,6 +230,27 @@ class SessionManager:
             return state
         # Attempt to restore from database.
         return self._restore(session_id)
+
+    def set_ephemeral_system_prompt(
+        self, session_id: str, prompt: str | None
+    ) -> Optional[SessionState]:
+        """Apply caller-owned instructions without persisting them as Hermes identity.
+
+        ACP clients may reconnect to a durable conversation with updated external
+        configuration. Keeping this prompt ephemeral makes the active client the
+        authority while the native Hermes profile and conversation history retain
+        their normal ownership.
+        """
+        state = self.get_session(session_id)
+        if state is None:
+            return None
+        normalized = str(prompt or "").strip()
+        with state.runtime_lock:
+            if state.is_running:
+                raise RuntimeError("acp_session_configuration_locked_while_running")
+            state.ephemeral_system_prompt = normalized
+            state.agent.ephemeral_system_prompt = normalized or None
+        return state
 
     def remove_session(self, session_id: str) -> bool:
         """Remove a session from memory and database. Returns True if it existed."""

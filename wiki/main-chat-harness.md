@@ -1,196 +1,109 @@
 ---
-id: feature.main-chat-harness-controller
-title: Main Chat / Harness Controller
+id: feature.main-chat-hermes-controller
+title: Main Chat / Hermes Controller
 kind: feature
-status: partial
-proof_level: cbm_anchor_verified_and_source_verified
+status: working
+proof_level: source_tests_and_live_runtime
 
 cbm:
   project_identity: C-Projects-main
   index_root: C:/Projects/main
-  observed_nodes: 151034
-  observed_edges: 801294
-  observed_files: 8326
-  freshness: structural_only_revision_behind_git_head
+  freshness: task_entry_live_counts_recorded_elsewhere
 
 roots:
   files:
+    - apps/backend/src/hermes/mainAdapter.ts
     - apps/backend/src/routes/coder.routes.ts
-    - apps/backend/src/coder/openclaude/session/grpcChatClient.ts
-    - apps/backend/src/coder/openclaude/mcp/liquidAItyAgentFlow.ts
     - apps/backend/src/cards/runtime.ts
-    - client/src/features/agentbuilder/console/HarnessChatPanel.tsx
-    - client/src/features/agentbuilder/rail/railVisibility.ts
+    - client/src/features/agentbuilder/console/mainSessionClient.ts
+    - client/src/features/agentbuilder/console/useAgentBuilderMainChat.ts
+    - client/src/features/agentbuilder/deck/newProjectDeck.ts
   symbols:
-    - selectDoorwayCards
-    - buildHarnessAgentDefinition
-    - resolveMainChatCardFromDeck
-    - resolveMainChatRuntimeConfig
-    - startGrpcTurn
-    - describeConnectedAgents
-    - runMagOne
+    - resolveMainHermesRuntimeConfig
+    - resolveHermesCardRuntimeConfig
+    - deriveHermesSessionKey
+    - startHermesTurn
+    - runConfiguredCard
     - resolvedMagenticOptions
-    - isLocalCoderCard
-    - hasDirectedRuntimeBindingConnection
   routes:
-    - POST /openclaude/session/chat
-    - POST /mcp-bridge/describe_connected_agents
-    - POST /mcp-bridge/run_mag_one
+    - POST /api/coder/main/session/chat
+    - POST /api/coder/main/session/answer
+    - GET /api/coder/main/session/history
+    - GET /api/coder/main/session/conversations
 ---
 
-# Main Chat / Harness Controller
+# Main Chat / Hermes Controller
 
 ## What this is
 
-The front door of LiquidAIty. When a user opens the chat panel in the Agent Canvas builder,
-the Harness Controller resolves the persisted Main Chat card from the deck, establishes a
-persistent gRPC session with the native QueryEngine, surfaces the Local Coder doorway, and
-preserves the saved Main→Hermes sub-agent topology. Main also owns the user-approved Mag One
-submission entry point.
+Main Chat executes through one persistent repo-owned Hermes ACP process. The saved `main_chat` card
+owns its prompt, profile, provider/model, tool grants, and topology. A stable project/conversation/card
+key selects the Hermes session; the backend preserves SSE, durable transcript/run persistence,
+permissions, cancellation, and honest failures.
 
-The current Harness turns the saved Hermes card into a generic inherited-context `Agent`
-definition. That preserves the correct card, prompt, model, edge, and tool-grant boundary, but it
-does not launch or prove the installed Hermes runtime. Treat it as pre-integration plumbing, not
-as native Hermes execution.
+The familiar three-card functional topology remains:
 
-## Approved replacement boundary
+```text
+Main Chat (Hermes)
+├─ flow → Coder (OpenClaude/LocalCoder)
+├─ flow → Hermes Kanban (second Hermes ACP session)
+└─ magentic_control → Mag One top control
+```
 
-This manifest describes the current Main transport. The approved launch target keeps the
-LiquidAIty chat UI, transcript, streaming, permission, cancellation, correlation, and saved-card
-contracts while replacing Main execution with one real repo-owned Hermes adapter. OpenClaude remains
-the contained under-chat Coder and bounded Local Coder/CoderReport runtime.
-
-The migration must not leave OpenClaude as a hidden Main fallback or permanent A/B Main. After the
-Hermes Main path passes the Preservation Set, delete only the superseded OpenClaude Main-specific
-route/client/session assembly and its obsolete tests. Preserve every OpenClaude Coder caller and
-contract. Until that proof exists, every section below remains CURRENT behavior rather than TARGET.
-
-## What the user/agent experiences
-
-**Chat**: user types → SSE stream to `POST /openclaude/session/chat` → gRPC Chat turn.
-The chat model receives the saved Main Chat prompt plus specialist doorway definitions.
-
-**Agents**: Local Coder retains the bound `CARD_RUN_CONTROL_TOOL` doorway. The saved Hermes
-card is selected only through its authorized Main→Hermes edge; its prompt/model/tools become a
-generic inherited-context Agent definition. Actual Hermes process execution, its own terminal/UI,
-and runtime evidence remain to be wired.
-
-The Hermes Kanban rail item is UI activation only. It requires a generic directed `flow` connection
-from a card bound as `main_chat` to a card bound as `hermes_steward`; no card ID, title, or Hermes-only
-connection pseudo-type activates it. The board's reads and explicit mutations are backed by the
-installed native Hermes CLI, but that does not prove native Hermes agent execution.
-
-**Mag One**: the AgentGraph instruction/assignment and worker-card execution mechanics exist. The
-intended flow is that actual Hermes persists an exact instruction when Main requests a Run Plan,
-Main presents it, and `run_mag_one` is allowed only after user acceptance through Main's live
-`magentic_control` edge.
-The complete Main→actual-Hermes→approved-Mag-One path is not yet runtime-proven.
+Main receives Engraphis and explicit canvas/control grants. Coder receives only its coding surface and
+native CBM. Hermes Kanban receives Graphiti/KnowGraph grants and keeps the existing native Kanban
+workspace. Card IDs and positions remain stable; the obsolete Search card is absent from the new-project
+deck.
 
 ## How it works
 
+```text
+browser → POST /api/coder/main/session/chat
+→ resolveMainHermesRuntimeConfig(projectId)
+→ exact saved Main card + direct saved flow children
+→ startHermesTurn through Hermes/venv/Scripts/hermes-acp.exe
+→ role-filtered Python MCP child with saved grants
+→ text/reasoning/tool/permission events over existing SSE
+→ durable completion/failure record
 ```
-Browser → SSE POST /openclaude/session/chat  [coder.routes.ts:185]
-  → deriveSessionId → startGrpcTurn           [grpcChatClient.ts:308]
-    → gRPC AgentService.Chat() stream
-    → forwards text/tool_start/tool_result/progress events verbatim
 
-MainChatRuntimeConfig resolved per turn:       [grpcChatClient.ts:235]
-  → getDeckDocument → resolveMainChatCardFromDeck [grpcChatClient.ts:206]
-    → exactly one card with runtimeBinding='main_chat'
-  → reads modelKey, prompt from card → resolveModel() from models.config
-  → selectDoorwayCards(nodes, mode)            [grpcChatClient.ts:142]
-    → enabled, top-level, kind=agent, runtimeType in [assistant_agent,local_coder],
-      binding !== 'main_chat'
-    → chat: ≤1 Local Coder + ≤1 Hermes
-  → buildHarnessAgentDefinition(card)
-    → Hermes card: saved prompt/model + granted tools + inherit_parent
-      (generic Agent definition today; no Hermes process launch)
-    → other cards: doorway with when_to_use + CARD_RUN_CONTROL_TOOL
-  → returns { cardId, prompt, modelKey, doorwayDefinitions, ... }
-
-Mag One (separate MCP-bridge endpoints):
-  describe_connected_agents                   [liquidAItyAgentFlow.ts:60]
-    → find orchestrator (magentic_one)
-    → resolvedMagenticOptions(orchestrator.id, nodes, edges)
-    → returns only magentic_option-connected cards
-  run_mag_one
-    → require exactly one live Main magentic_control edge
-    → pass the stable instructionId to Python
-    → create/claim the AgentGraph assignment and hydrate the exact instruction
-    → resolve live worker options → runCardWithContract
-    → orchestrateWithAutoGen
-```
+The saved `card_hermes_steward` binding enters the same ACP adapter through `runConfiguredCard`, but
+uses its own saved policy and session key. It is not generic AutoGen and not another Main transcript.
 
 ## Must not break
 
-1. Exactly one `main_chat` card — zero or multiple yields honest degrade (no doorways).
-2. Doorway selection is structural (binding, runtimeType, enabled) — never by display name.
-3. Chat mode: at most one Local Coder + one authorized Hermes-card definition. Main owns its
-   current ThinkGraph reads/writes directly.
-4. `when_to_use` text is keyed on saved binding, not card title.
-5. Mag One only sees cards with `magentic_option` edges from the orchestrator.
-6. Deck is sole authority for card config — no caller overrides.
-7. The Hermes-card definition inherits parent context; an optional short prompt may scope an
-   outcome but is never a mandatory node-anchor packet.
-8. Do not claim Hermes research, report revision, or Run Plan preparation until a real Hermes
-   process produced runtime evidence.
-9. Only Mag One/Coder execution is user-gated. CURRENT `run_mag_one` requires Main's
-   `magentic_control` edge. TARGET may move that one structural authority to the Hermes experiment
-   card only when source, topology, and focused tests change together; never permit both controllers.
-10. UTF-8 survives gRPC and SSE chunk boundaries exactly.
+1. Exactly one saved `main_chat` card resolves; missing/duplicate config fails honestly.
+2. Saved card prompt/profile/provider/model/grants remain authoritative.
+3. Direct subagents come only from explicit enabled top-level `flow` edges.
+4. Main can invoke Coder and Hermes Kanban; it does not gain arbitrary cards.
+5. Main retains the one existing top `magentic_control` edge and is not a Mag One worker.
+6. OpenClaude remains the under-chat terminal and bounded CoderReport executor.
+7. No OpenClaude Main gRPC fallback, second Hermes owner, PATH/AppData fallback, or direct CBM database access.
+8. UTF-8, persistence, permission answers, cancellation, and SSE terminal events remain intact.
 
 ## Start in CBM
 
-```
-search_graph(project="C-Projects-main", query="selectDoorwayCards")
-search_graph(project="C-Projects-main", query="resolveMainChatCardFromDeck")
-search_graph(project="C-Projects-main", query="describeConnectedAgents")
-search_graph(project="C-Projects-main", query="resolvedMagenticOptions")
-
-# trace_path uses simple function names:
-trace_path(project="C-Projects-main", function_name="startGrpcTurn",
-           mode="calls", direction="inbound", depth=1)
-trace_path(project="C-Projects-main", function_name="selectDoorwayCards",
-           mode="calls", direction="inbound", depth=1)
-
-# Freshness:
-index_status(project="C-Projects-main")
+```text
+search_graph(project="C-Projects-main", query="resolveMainHermesRuntimeConfig")
+search_graph(project="C-Projects-main", query="startHermesTurn")
+trace_path(project="C-Projects-main", function_name="startHermesTurn",
+           mode="calls", direction="inbound", depth=2)
+search_graph(project="C-Projects-main", query="runConfiguredCard")
 ```
 
 ## Valid proof
 
-```typescript
-const response = await fetch('/api/coder/openclaude/session/chat', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ projectId: 'proj-1', message: 'hello' }),
-});
-assert(response.status === 200);
-assert(response.headers.get('Content-Type') === 'text/event-stream');
-```
+- focused backend route, Hermes adapter, configured-card, Coder adapter, console, and Kanban tests;
+- focused client Main session/deck/topology tests;
+- backend and client typecheck/build;
+- live two-turn ACP with one PID/session and prior-turn recall;
+- live cancellation returning `hermes_turn_cancelled`;
+- inverse traversal proving the retired `grpcChatClient` and `/openclaude/session` route are absent.
 
-Proves: Harness route accepts chat turns and streams SSE events. Does not prove:
-gRPC QueryEngine is running (requires the live gRPC harness), doorway definitions correctly
-surface (requires runtime observation).
+## Limitations / next round
 
-## Limitations
-
-- **Deck is a runtime boundary, not a CBM graph fact.** The `main_chat` card's binding,
-  model key, and prompt are in the deck document at runtime. CBM indexes the code that
-  reads the deck, not the deck content. Verify at task time via `getDeckDocument`.
-- **Route→handler edges are not in CBM graph.** The chat handler at `coder.routes.ts:185`
-  is a source-level link, not a CBM graph edge.
-- **Mag One exclusion** is a deck-edge property (`magentic_option` edge presence), not
-  a source-code filter. Verify by reading the deck edges at runtime.
-- **Client-side React** (HarnessChatPanel, consoleVisibility) is CBM-verified as
-  function nodes, but UI behavior (drag, SSE consumption) is not graph-traversable.
-
-## Future agent load set
-
-| File | Why |
-|------|-----|
-| `grpcChatClient.ts` | Harness session, Hermes-card pre-integration + doorway selection, runtime config |
-| `coder.routes.ts` (lines 185-255) | Harness chat SSE route |
-| `liquidAItyAgentFlow.ts` | Mag One describe + run |
-| `runtime.ts` (lines 86-112) | resolvedMagenticOptions |
-| `railVisibility.ts` | Terminal rail visibility and canvas connectivity rules |
+- Source deck changes do not rewrite existing persisted decks; verify or intentionally migrate a selected
+  saved project separately.
+- Main→real Mag One end-to-end execution and graph activity visualization remain separate proof work.
+- Profile tuning, visual polish, and replacing the CLI-shaped Kanban bridge with its authenticated API
+  are deferred until the functional path is used and measured.

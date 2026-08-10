@@ -150,6 +150,41 @@ _MAIN_CONTEXT_FIELDS = frozenset(
 )
 
 
+def _configured_tool_allowlist() -> frozenset[str] | None:
+    """Return the exact process-owned publication grant, when configured.
+
+    The allowlist is a per-Hermes-session capability boundary, not a global
+    stdio-host setting. Require the matching trusted Main context so stale or
+    ambient ``MCP_TOOL_ALLOWLIST`` values cannot narrow the canonical host.
+    """
+    if _trusted_stdio_main_context() is None:
+        return None
+    raw = os.environ.get("MCP_TOOL_ALLOWLIST")
+    if raw is None:
+        return None
+    return frozenset(name.strip() for name in raw.split(",") if name.strip())
+
+
+def _tool_is_allowed(name: str) -> bool:
+    allowlist = _configured_tool_allowlist()
+    return allowlist is None or name in allowlist
+
+
+def _trusted_stdio_main_context() -> dict[str, Any] | None:
+    if MCP_TRANSPORT != "stdio":
+        return None
+    raw = os.environ.get("MCP_TRUSTED_MAIN_CONTEXT", "").strip()
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict) or not _MAIN_CONTEXT_FIELDS.issubset(value):
+        return None
+    return {field: str(value[field]) for field in _MAIN_CONTEXT_FIELDS}
+
+
 def _safe_hash(value: Any) -> str:
     text = str(value or "").strip()
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16] if text else ""
@@ -271,7 +306,9 @@ def _sanitize_failure_detail(value: Any) -> str:
 def _typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any]:
     detail = _sanitize_failure_detail(value)
     lowered = detail.lower()
-    if isinstance(value, (asyncio.TimeoutError, TimeoutError)) or any(
+    if "tool_not_granted" in lowered:
+        code, retryable = "tool_not_granted", False
+    elif isinstance(value, (asyncio.TimeoutError, TimeoutError)) or any(
         term in lowered for term in ("timeout", "timed out", "deadline")
     ):
         code, retryable = "timeout", True
@@ -702,7 +739,7 @@ def _oauth_config() -> OAuthConfig:
 def _authenticated_main_context() -> dict[str, Any] | None:
     access_token = get_access_token()
     if access_token is None:
-        return None
+        return _trusted_stdio_main_context()
     expires_at = getattr(access_token, "expires_at", None)
     if expires_at is not None and float(expires_at) <= time.time():
         return None
@@ -1836,13 +1873,20 @@ async def list_tools() -> list[Tool]:
     ]
     for tool in tools:
         tool.inputSchema.setdefault("additionalProperties", False)
-    native_catalogs = {
-        "engraphis": await _native_engraphis_tools(),
-        "cbm": await _native_cbm_tools(),
-        "graphiti": await _native_graphiti_tools(),
-    }
+    allowlist = _configured_tool_allowlist()
+    if allowlist is not None:
+        tools = [tool for tool in tools if tool.name in allowlist]
+    native_catalogs: dict[str, list[Tool]] = {}
+    if allowlist is None or any(name.startswith("engraphis.") for name in allowlist):
+        native_catalogs["engraphis"] = await _native_engraphis_tools()
+    if allowlist is None or any(name.startswith("cbm.") for name in allowlist):
+        native_catalogs["cbm"] = await _native_cbm_tools()
+    if allowlist is None or any(name.startswith("graphiti.") for name in allowlist):
+        native_catalogs["graphiti"] = await _native_graphiti_tools()
     for provider, native_tools in native_catalogs.items():
         tools.extend(_namespace_native_tools(provider, native_tools))
+    if allowlist is not None:
+        tools = [tool for tool in tools if tool.name in allowlist]
     names = [tool.name for tool in tools]
     if len(names) != len(set(names)):
         duplicates = sorted({name for name in names if names.count(name) > 1})
@@ -2387,6 +2431,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     }
     _trace("tool_call_started", **trace_fields)
     try:
+        if not _tool_is_allowed(name):
+            raise PermissionError(f"tool_not_granted: {name}")
         result = await asyncio.wait_for(
             _dispatch_tool(name, arguments),
             timeout=_MCP_CALL_TIMEOUT_SECONDS,

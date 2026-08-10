@@ -1,8 +1,8 @@
 /**
- * Concise backend dev-terminal trace for REAL Harness runtime events.
+ * Concise backend dev-terminal trace for real model-runtime events.
  *
  * The only source is the events the runtime ACTUALLY emits through the existing
- * gRPC chat event callback (grpcChatClient `GrpcSessionEvent`): text / tool_start /
+ * Main Hermes ACP and configured-card callbacks: text / tool_start /
  * tool_result / progress / permission / done / error. This never fabricates a lifecycle line
  * for something that did not happen, never prints raw prompts / full model output /
  * secrets, and never adds a second event bus or route — it only formats an event

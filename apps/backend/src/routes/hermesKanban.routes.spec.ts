@@ -145,9 +145,14 @@ describe('hermesKanban read routes', () => {
     expect(body.ok).toBe(true);
     expect(body.data).toEqual(BOARDS);
     expect(execMocks.execFile).toHaveBeenCalledWith(
-      'hermes',
+      expect.stringMatching(/[\\/]Hermes[\\/]venv[\\/]Scripts[\\/]hermes\.exe$/i),
       ['kanban', 'boards', 'list', '--json'],
-      expect.anything(),
+      expect.objectContaining({
+        shell: false,
+        env: expect.objectContaining({
+          HERMES_HOME: expect.stringMatching(/[\\/]Hermes[\\/]\.hermes$/i),
+        }),
+      }),
       expect.any(Function),
     );
   });
@@ -162,7 +167,7 @@ describe('hermesKanban read routes', () => {
     expect(body.ok).toBe(true);
     expect(body.data).toEqual(TASKS);
     const [bin, args] = execMocks.execFile.mock.calls[0];
-    expect(bin).toBe('hermes');
+    expect(bin).toMatch(/[\\/]Hermes[\\/]venv[\\/]Scripts[\\/]hermes\.exe$/i);
     expect(args).toEqual([
       'kanban',
       '--board',
@@ -182,7 +187,7 @@ describe('hermesKanban read routes', () => {
     const response = await fetch(`${baseUrl}/hermes-kanban/tasks`);
     expect((await response.json()).ok).toBe(true);
     const [bin, args] = execMocks.execFile.mock.calls[0];
-    expect(bin).toBe('hermes');
+    expect(bin).toMatch(/[\\/]Hermes[\\/]venv[\\/]Scripts[\\/]hermes\.exe$/i);
     expect(args).toEqual(['kanban', 'list', '--json']);
   });
 
@@ -296,7 +301,7 @@ describe('hermesKanban mutation routes (explicit user action only)', () => {
     const body = await response.json();
     expect(body.ok).toBe(true);
     const [bin, args] = execMocks.execFile.mock.calls[0];
-    expect(bin).toBe('hermes');
+    expect(bin).toMatch(/[\\/]Hermes[\\/]venv[\\/]Scripts[\\/]hermes\.exe$/i);
     expect(args).toEqual(['kanban', 'comment', 't_abc', 'please look', '--author', 'operator']);
   });
 

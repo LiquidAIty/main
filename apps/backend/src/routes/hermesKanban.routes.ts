@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import { execFile } from 'node:child_process';
+import path from 'node:path';
+import { resolveRepoRoot } from '../coder/workspaceRoot';
 
 /*
  * Hermes Kanban proxy — thin read/persistence adapter (DONT.md rule 5).
  *
- * This router shells out to the installed `hermes` CLI for the LIVE kanban
- * system (kanban.db is owned by the local Hermes install, not by LiquidAIty).
+ * This router shells out to the repo-owned Hermes CLI for the LIVE kanban
+ * system (kanban.db is owned by Hermes, not by LiquidAIty).
  * TS is transport only: every value shown is the native `hermes kanban ...`
  * JSON / plain output verbatim-shaped. No logic, no fallbacks, no fake data.
  *
@@ -14,7 +16,9 @@ import { execFile } from 'node:child_process';
  * explicit user action in the Hermes Kanban app. Nothing here auto-mutates.
  */
 
-const HERMES_BIN = process.env.HERMES_BIN || 'hermes';
+const HERMES_ROOT = path.join(resolveRepoRoot(), 'Hermes');
+const HERMES_HOME = path.join(HERMES_ROOT, '.hermes');
+const HERMES_BIN = path.join(HERMES_ROOT, 'venv', 'Scripts', 'hermes.exe');
 const HERMES_EXEC_TIMEOUT_MS = 20_000;
 
 export type HermesExecResult = {
@@ -37,6 +41,10 @@ export function runHermes(
         maxBuffer: 16 * 1024 * 1024,
         windowsHide: true,
         shell: false,
+        env: {
+          ...process.env,
+          HERMES_HOME,
+        },
       },
       (error, stdout, stderr) => {
         const rawCode = (error as { code?: unknown } | null)?.code;

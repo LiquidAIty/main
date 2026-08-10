@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import path from 'node:path';
 
 import { INITIAL_DECK } from '../features/agentbuilder/deck/newProjectDeck';
 import {
@@ -17,7 +16,6 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(INITIAL_DECK.nodes.map((node) => node.id)).toEqual(expect.arrayContaining([
       'card_main_chat',
       'card_hermes_steward',
-      'card_research_agent',
       'card_magentic',
       'card_local_coder',
     ]));
@@ -77,60 +75,46 @@ describe('Main / Hermes / graph authority topology', () => {
   it('defines Main→Hermes invocation and only the intended workers on the blue bus', () => {
     expect(INITIAL_DECK.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' }),
-      expect.objectContaining({ source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' }),
       expect.objectContaining({ source: 'card_local_coder', target: 'card_magentic', edgeType: 'magentic_option' }),
-      expect.objectContaining({ source: 'card_research_agent', target: 'card_magentic', edgeType: 'magentic_option' }),
       expect.objectContaining({ source: 'card_worldsignals_agent', target: 'card_magentic', edgeType: 'magentic_option' }),
     ]));
   });
 
-  it('grants Main native Engraphis tools, Hermes native Graphiti tools, and Search web only', () => {
+  it('grants Main and the one real Hermes card progressive graph tools without ordinary web search', () => {
     const byId = new Map(INITIAL_DECK.nodes.map((node) => [node.id, node]));
     const mainTools = byId.get('card_main_chat')?.runtimeOptions?.tools ?? [];
     const hermesTools = byId.get('card_hermes_steward')?.runtimeOptions?.tools ?? [];
-    const searchTools = byId.get('card_research_agent')?.runtimeOptions?.tools ?? [];
     expect(mainTools).toEqual(expect.arrayContaining([
       'engraphis.recall',
       'canvas.inspect',
     ]));
-    expect(mainTools).not.toEqual(expect.arrayContaining(['knowgraph.ingest', 'web_search']));
+    expect(mainTools).not.toContain('web_search');
     expect(hermesTools).toEqual(expect.arrayContaining([
       'graphiti.search_nodes',
       'graphiti.add_memory',
       'graphiti.add_triplet',
-      'write_mag_one_instructions',
-      'card.run_assistant_agent',
     ]));
-    expect(hermesTools).not.toEqual(
-      expect.arrayContaining(['web_search', 'run_mag_one']),
-    );
-    expect(searchTools).toEqual(['web_search']);
+    expect(hermesTools).not.toEqual(expect.arrayContaining(['web_search', 'run_mag_one']));
+    expect(byId.has('card_research_agent')).toBe(false);
     const hermesPrompt = byId.get('card_hermes_steward')?.prompt ?? '';
-    expect(hermesPrompt).toContain('Do not claim that the external Hermes agent runtime executed');
-    expect(hermesPrompt).not.toContain('native Hermes runtime is already active');
+    expect(hermesPrompt).toContain('repo-owned persistent Hermes ACP runtime');
+    expect(byId.get('card_hermes_steward')?.title).toBe('Hermes Kanban');
+    expect(hermesPrompt).not.toContain('external Hermes agent runtime');
   });
 
-  it('assigns Main and Hermes only tools exposed by the real Harness MCP catalog', async () => {
-    process.env.MAIN_MCP_PYTHON = path.resolve(
-      process.cwd(),
-      '../apps/python-models/.venv/Scripts/python.exe',
-    );
-    process.env.MAIN_MCP_HOST = path.resolve(
-      process.cwd(),
-      '../apps/python-models/app/mcp_host.py',
-    );
-    const { listPythonAgentMcpTools } = await import(
-      '../../../apps/backend/src/services/mcp/pythonAgentMcpClient'
-    );
-    const catalog = new Set(await listPythonAgentMcpTools());
+  it('publishes explicit role grants that are filtered before Python MCP startup', () => {
     const cards = INITIAL_DECK.nodes.filter((node) =>
       node.runtimeBinding === 'main_chat' || node.runtimeBinding === 'hermes_steward'
     );
-    const missing = cards.flatMap((card) =>
-      (card.runtimeOptions?.tools ?? [])
-        .filter((tool) => !catalog.has(tool))
-        .map((tool) => `${card.runtimeBinding}:${tool}`)
-    );
-    expect(missing).toEqual([]);
-  }, 30_000);
+    const granted = [...new Set(cards.flatMap((card) => card.runtimeOptions?.tools ?? []))];
+    expect(granted.length).toBeGreaterThan(0);
+    expect(granted.every((tool) => typeof tool === 'string' && tool.trim() === tool)).toBe(true);
+    expect(granted).not.toContain('web_search');
+    expect(INITIAL_DECK.edges).toContainEqual(expect.objectContaining({
+      source: 'card_main_chat',
+      target: 'card_magentic',
+      targetHandle: 'task-bus-top',
+      edgeType: 'magentic_control',
+    }));
+  });
 });

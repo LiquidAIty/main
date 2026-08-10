@@ -178,6 +178,24 @@ class TestAuthenticate:
 class TestSessionOps:
 
     @pytest.mark.asyncio
+    async def test_new_and_load_apply_current_external_session_prompt(self, agent):
+        created = await agent.new_session(
+            cwd="/tmp",
+            sessionConfig={"systemPrompt": "First saved-card prompt"},
+        )
+        state = agent.session_manager.get_session(created.session_id)
+        assert state.agent.ephemeral_system_prompt == "First saved-card prompt"
+
+        loaded = await agent.load_session(
+            cwd="/tmp",
+            session_id=created.session_id,
+            sessionConfig={"systemPrompt": "Updated saved-card prompt"},
+        )
+
+        assert isinstance(loaded, LoadSessionResponse)
+        assert state.agent.ephemeral_system_prompt == "Updated saved-card prompt"
+
+    @pytest.mark.asyncio
     async def test_new_session_returns_authenticated_cross_provider_model_state(self):
         manager = SessionManager(
             agent_factory=lambda: SimpleNamespace(
@@ -445,6 +463,28 @@ class TestPrompt:
         )
 
         assert captured.get("child") == resp.session_id
+
+    @pytest.mark.asyncio
+    async def test_prompt_returns_cancelled_when_interrupted_response_is_none(
+        self, agent, mock_manager
+    ):
+        resp = await agent.new_session(cwd=".")
+        state = mock_manager.get_session(resp.session_id)
+
+        def _run(*args, **kwargs):
+            state.cancel_event.set()
+            return {"final_response": None, "messages": [], "interrupted": True}
+
+        state.agent.run_conversation = _run
+        state.agent.model = "test-model"
+        state.agent.provider = "openrouter"
+
+        result = await agent.prompt(
+            prompt=[TextContentBlock(type="text", text="cancel me")],
+            session_id=resp.session_id,
+        )
+
+        assert result.stop_reason == "cancelled"
 
 
 

@@ -7,6 +7,7 @@ import { logModelConfiguration } from "./startup/modelConfig";
 import { getDevTestJsonBodyLimit } from "./services/devTest";
 import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/requestAccess";
 import { closePythonAgentMcpClient } from "./services/mcp/pythonAgentMcpClient";
+import { closeHermesRuntimes } from "./hermes/mainAdapter";
 
 const app = express();
 app.set('etag', false);
@@ -161,6 +162,7 @@ function installShutdownHooks() {
       if (activeServer) {
         await closeServer(activeServer);
       }
+      closeHermesRuntimes();
       await closePythonAgentMcpClient();
     } catch {
       // ignore shutdown close errors
@@ -183,6 +185,7 @@ async function startServer() {
   const existingServer = globalThis.__liquidaityBackendServer__;
   if (existingServer) {
     await closeServer(existingServer).catch(() => undefined);
+    closeHermesRuntimes();
     await closePythonAgentMcpClient().catch(() => undefined);
     if (globalThis.__liquidaityBackendServer__ === existingServer) {
       globalThis.__liquidaityBackendServer__ = undefined;

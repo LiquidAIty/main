@@ -3,7 +3,7 @@
 // @graph relates_to: DeckStore, MagOneRouting, CardRuntime(AutoGen transport)
 //
 // Handlers behind the Main MCP boundary that sits BELOW the OpenClaude
-// QueryEngine session:
+// configured-card session:
 //   - describe_connected_agents : read the connected, bus-eligible (magentic_option)
 //                                 Mag One Agent Cards + their capabilities for Run Plan review
 //   - run_mag_one               : transport a Hermes-prepared, Main-presented,

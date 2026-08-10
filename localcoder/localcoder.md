@@ -73,19 +73,19 @@ The following are not required to prove that slice:
 
 ## 3. Runtime boundaries
 
-### 3.1 Persistent Main Chat over gRPC
+### 3.1 Contained Coder runtime
 
-The critical path is real and should be treated as core infrastructure.
+OpenClaude/LocalCoder is the specialist coding boundary, not Main Chat.
 
-- `src/grpc/server.ts` owns the OpenClaude-side gRPC server.
-- `GrpcServer.connectOfficialPythonMcp` connects to the one official LiquidAIty Python MCP authority and checks required harness tools.
-- `GrpcServer.handleChat` receives turns, retains per-session conversation state, resolves the requested agent/tool policy, constructs a `QueryEngine`, streams tool and text events, and returns completion/error events.
-- The Node backend owns the external session contract and saved-card resolution under `apps/backend/src/coder/openclaude/session/`.
-- The React/TypeScript application remains the control plane and pixels. It should not duplicate model policy or graph logic that belongs in Python rails and external services.
+- the persistent PTY owns the revealable under-chat coding terminal;
+- the bounded adapter executes saved Coder assignments and validates CoderReport output;
+- the repo-owned `repository-coder` plugin injects the coding-only and CBM-first contract;
+- strict MCP configuration exposes only the native Codebase Memory server;
+- the historical gRPC server remains dormant vendor capability and is not launched by the product.
 
-The gRPC connection is therefore not incidental glue. It is what makes the Main Chat surface persistent, streamable, and capable of invoking the actual coding-agent runtime. Replacing it with occasional CLI subprocess calls would lose the defining product behavior.
-
-The current OpenClaude process treats failure to connect to its required official Python MCP as fatal. That is a deliberately strict boundary, but it should eventually be reviewed as a process-lifecycle decision: a required dependency may fail the harness closed without necessarily terminating an unrelated host process.
+Main Chat persistence and streaming belong to the repo-owned Hermes ACP adapter. OpenClaude retains
+its native coding tools, session behavior, and direct terminal usability without becoming a second
+general-agent front door.
 
 ### 3.2 Interactive coder/terminal
 
@@ -477,18 +477,10 @@ The migration decision should be based on the wired product features below, not 
 
 ### 15.1 Main Chat mode
 
-LiquidAIty currently uses OpenClaude/LocalCoder for:
-
-- a persistent multi-turn gRPC conversation rather than one CLI process per message;
-- saved-card ownership of Main's prompt, provider, model, and exact MCP grants;
-- streamed assistant text, provider-exposed reasoning, tool start/result events, progress events, and usage/context estimates;
-- mid-turn permission questions, answer handling, cancellation, and durable conversation history;
-- explicit `chat` versus `canvas` doorway policy: chat exposes the selected always-on sub-agents, while canvas may expose the larger eligible saved-card topology;
-- inherited-context sub-agents whose identity and grants come from saved cards;
-- the split workspace in which chat remains visible while canvas, graphs, Kanban, or another work surface is inspected;
-- the revealable OpenClaude terminal immediately below chat.
-
-The card currently labelled Hermes in this mode is an OpenClaude/Harness-native inherited-context agent. It uses its saved prompt, model, tools, and parent context, but it does not execute the installed Nous Hermes runtime. That naming distinction must be visible in the product until the real adapter exists.
+LiquidAIty Main Chat now uses the repo-owned persistent Hermes ACP adapter. LocalCoder participates only
+when Main invokes the explicitly connected saved Coder card. The split workspace and revealable
+OpenClaude terminal remain unchanged; the saved Hermes Kanban card is a second real Hermes session,
+not an inherited-context OpenClaude agent.
 
 ### 15.2 Coder/code mode
 
@@ -503,7 +495,7 @@ The underlying repository also supplies capabilities that are valuable options e
 
 | Capability | OpenClaude/LocalCoder today | Hermes today | Decision and reason |
 | --- | --- | --- | --- |
-| Main split chat + revealable coder | Already wired into the LiquidAIty React workspace and gRPC session | Could be recreated through gateway/API streaming, but not in this UI | **Keep OpenClaude.** Replacing it would discard working product integration and require rebuilding session/event/permission UI. |
+| Main split chat + revealable coder | Preserved as the terminal and bounded Coder, not Main transport | Real persistent ACP now drives the existing host chat/session/event UI | **Hermes is Main; keep OpenClaude as Coder.** |
 | Interactive coding terminal | Real PTY, xterm, attach, resize, interrupt, stop | Real Hermes CLI can run in its own separate PTY | **Keep both.** OpenClaude is the code terminal; Hermes terminal is the general/research agent console. |
 | Bounded coding job + CoderReport | Existing `run_local_coder` saved-card path | Hermes can code and can be given completion contracts, but does not currently emit this host contract | **Keep LocalCoder initially.** Compare later on the same disposable task before moving the contract. |
 | Rich coding-agent patterns | Extensive native agent/tool/plugin/LSP/MCP framework | Strong general agent, delegation, skills, profiles, computer use | **Keep OpenClaude as the specialist coder.** Hermes does not need to duplicate every coding pattern. |

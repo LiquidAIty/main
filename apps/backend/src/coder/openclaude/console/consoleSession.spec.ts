@@ -500,6 +500,7 @@ describe('HermesConsoleSessionManager', () => {
         shell: false,
         interactive: true,
         env: expect.objectContaining({
+          HERMES_HOME: expect.stringMatching(/[\\/]Hermes[\\/]\.hermes$/i),
           HERMES_SESSION_SOURCE: 'saved-card-terminal',
         }),
       }),

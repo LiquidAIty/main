@@ -92,11 +92,22 @@ const chatSessionMocks = vi.hoisted(() => {
     getConversationMessages: vi.fn(async () => []),
     listConversations: vi.fn(async () => []),
     lastCancel: vi.fn(),
-    startGrpcTurn: vi.fn(),
-    resolveMainChatRuntimeConfig: vi.fn(),
+    startHermesTurn: vi.fn(),
+    resolveMainHermesRuntimeConfig: vi.fn(async () => ({
+      cardId: 'card_main_chat',
+      title: 'Main',
+      prompt: 'Main prompt',
+      profile: 'default',
+      provider: 'openai',
+      modelKey: 'gpt-5.6-luna',
+      providerModelId: 'gpt-5.6-luna',
+      executionMode: 'single',
+      tools: ['card.run_assistant_agent'],
+      coderCardIds: ['card_local_coder'],
+    })),
     usage,
   };
-  mocks.startGrpcTurn.mockImplementation(async (_params: unknown, _onEvent: (event: any) => void) => ({
+  mocks.startHermesTurn.mockImplementation(async (_params: unknown, _onEvent: (event: any) => void) => ({
     done: Promise.resolve({ finalText: 'Real assistant reply.', usage }),
     cancel: mocks.lastCancel,
     answer: vi.fn(),
@@ -112,7 +123,7 @@ const chatSessionMocks = vi.hoisted(() => {
 
 const mcpClientMocks = vi.hoisted(() => ({
   callPythonAgentMcpTool: vi.fn(async () => ({ ok: true })),
-  listPythonAgentMcpCatalog: vi.fn(async () => []),
+  listPythonAgentMcpCatalog: vi.fn(async (): Promise<any[]> => []),
 }));
 
 const orchestratorMocks = vi.hoisted(() => ({
@@ -149,10 +160,10 @@ vi.mock('../conversations/store', () => ({
   listConversations: chatSessionMocks.listConversations,
 }));
 
-vi.mock('../coder/openclaude/session/grpcChatClient', () => ({
-  deriveSessionId: (projectId: string, conversationId: string) => `${projectId}:${conversationId}`,
-  resolveMainChatRuntimeConfig: chatSessionMocks.resolveMainChatRuntimeConfig,
-  startGrpcTurn: chatSessionMocks.startGrpcTurn,
+vi.mock('../hermes/mainAdapter', () => ({
+  deriveHermesSessionKey: (projectId: string, conversationId: string, cardId: string) => `${projectId}:${conversationId}:${cardId}`,
+  resolveMainHermesRuntimeConfig: chatSessionMocks.resolveMainHermesRuntimeConfig,
+  startHermesTurn: chatSessionMocks.startHermesTurn,
 }));
 
 vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
@@ -256,7 +267,7 @@ describe('coder routes', () => {
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(
-        `${baseUrl}/openclaude/session/history?projectId=project-1&conversationId=main`,
+        `${baseUrl}/main/session/history?projectId=project-1&conversationId=main`,
       );
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toEqual({ ok: true, messages: [] });
@@ -272,7 +283,7 @@ describe('coder routes', () => {
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(
-        `${baseUrl}/openclaude/session/history?projectId=project-1&conversationId=main`,
+        `${baseUrl}/main/session/history?projectId=project-1&conversationId=main`,
       );
       expect(response.status).toBe(500);
       await expect(response.json()).resolves.toEqual({
@@ -359,7 +370,7 @@ describe('coder routes', () => {
       },
     });
     const runtimeResolutionCallsBefore =
-      chatSessionMocks.resolveMainChatRuntimeConfig.mock.calls.length;
+      chatSessionMocks.resolveMainHermesRuntimeConfig.mock.calls.length;
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/external_main_context`, {
@@ -381,7 +392,7 @@ describe('coder routes', () => {
         expect.stringContaining('p.owner_user_id = g.user_id'),
         ['https://tenant.auth0.com', 'auth0|jeremiah'],
       );
-      expect(chatSessionMocks.resolveMainChatRuntimeConfig.mock.calls.length)
+      expect(chatSessionMocks.resolveMainHermesRuntimeConfig.mock.calls.length)
         .toBe(runtimeResolutionCallsBefore);
     } finally {
       await closeServer(server);
@@ -486,17 +497,17 @@ describe('coder routes', () => {
     }
   });
 
-  describe('/openclaude/session/chat', () => {
+  describe('/main/session/chat', () => {
     it('persists one durable conversation run without a post-chat graph handoff', async () => {
       chatSessionMocks.beginConversationRun.mockClear();
       chatSessionMocks.markConversationRunRunning.mockClear();
       chatSessionMocks.completeConversationRun.mockClear();
-      chatSessionMocks.startGrpcTurn.mockClear();
+      chatSessionMocks.startHermesTurn.mockClear();
       chatSessionMocks.lastCancel.mockClear();
       mcpClientMocks.callPythonAgentMcpTool.mockClear();
       const { server, baseUrl } = await createApiServer();
       try {
-        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ projectId: 'project-1', conversationId: 'main', message: 'hello' }),
@@ -507,8 +518,12 @@ describe('coder routes', () => {
 
         // The user message + pending run are atomic, then the resolved saved
         // card metadata and final assistant result complete the same run.
-        expect(chatSessionMocks.startGrpcTurn).toHaveBeenCalledTimes(1);
-        expect(chatSessionMocks.startGrpcTurn.mock.calls[0][0]).not.toHaveProperty('investigationContext');
+        expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1);
+        expect(chatSessionMocks.startHermesTurn.mock.calls[0][0]).toMatchObject({
+          sessionKey: 'project-1:main:card_main_chat',
+          message: 'hello',
+          profile: 'default',
+        });
         expect(chatSessionMocks.beginConversationRun).toHaveBeenCalledWith(expect.objectContaining({
           projectId: 'project-1',
           deckId: 'deck_builder',
@@ -539,7 +554,7 @@ describe('coder routes', () => {
       chatSessionMocks.beginConversationRun.mockClear();
       chatSessionMocks.completeConversationRun.mockClear();
       chatSessionMocks.lastCancel.mockClear();
-      chatSessionMocks.startGrpcTurn.mockImplementationOnce(async (_params: unknown, onEvent: (event: any) => void) => {
+      chatSessionMocks.startHermesTurn.mockImplementationOnce(async (_params: unknown, onEvent: (event: any) => void) => {
         const done = Promise.resolve({ finalText: 'Finished before late event.', usage: chatSessionMocks.usage });
         void done.then(() => {
           setTimeout(() => onEvent({ kind: 'error', message: 'late grpc reset' }), 0);
@@ -558,7 +573,7 @@ describe('coder routes', () => {
       });
       const { server, baseUrl } = await createApiServer();
       try {
-        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ projectId: 'project-1', conversationId: 'late', message: 'hello' }),
@@ -576,10 +591,10 @@ describe('coder routes', () => {
     });
 
     it('emits a safe, correlated SSE error when the Harness turn fails', async () => {
-      chatSessionMocks.startGrpcTurn.mockRejectedValueOnce(new Error('provider credential leaked'));
+      chatSessionMocks.startHermesTurn.mockRejectedValueOnce(new Error('provider credential leaked'));
       const { server, baseUrl } = await createApiServer();
       try {
-        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ projectId: 'project-1', conversationId: 'failure', message: 'hello' }),
@@ -590,7 +605,7 @@ describe('coder routes', () => {
         expect(body).toContain('event: error');
         expect(body).toContain('harness_turn_failed');
         expect(body).toContain('"correlationId":"req_');
-        expect(body).toContain('/api/coder/openclaude/session/chat');
+        expect(body).toContain('/api/coder/main/session/chat');
         expect(body).not.toContain('provider credential leaked');
       } finally {
         await closeServer(server);
@@ -599,10 +614,10 @@ describe('coder routes', () => {
 
     it('does not call the model when the user message and pending run cannot be persisted', async () => {
       chatSessionMocks.beginConversationRun.mockRejectedValueOnce(new Error('database unavailable'));
-      chatSessionMocks.startGrpcTurn.mockClear();
+      chatSessionMocks.startHermesTurn.mockClear();
       const { server, baseUrl } = await createApiServer();
       try {
-        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ projectId: 'project-1', conversationId: 'no-db', message: 'hello' }),
@@ -613,7 +628,7 @@ describe('coder routes', () => {
           error: 'conversation_persistence_unavailable',
           correlationId: expect.stringMatching(/^req_/),
         });
-        expect(chatSessionMocks.startGrpcTurn).not.toHaveBeenCalled();
+        expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       } finally {
         await closeServer(server);
       }
@@ -624,7 +639,7 @@ describe('coder routes', () => {
       chatSessionMocks.failConversationRun.mockClear();
       const { server, baseUrl } = await createApiServer();
       try {
-        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ projectId: 'project-1', conversationId: 'result-db-failure', message: 'hello' }),

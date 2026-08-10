@@ -39,8 +39,9 @@ function Import-DotEnv {
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 $backendEnvPath = Join-Path $repoRoot "apps\backend\.env"
-$mcpConfigPath = Join-Path $repoRoot "apps\backend\mcp.config.json"
 $openClaudeBin = Join-Path $repoRoot "localcoder\bin\openclaude"
+$coderPluginPath = Join-Path $repoRoot "localcoder\plugins\repository-coder"
+$nativeCbmBin = Join-Path $repoRoot ".tools\codebase-memory-mcp\bin\codebase-memory-mcp.exe"
 
 Import-DotEnv -Path $backendEnvPath
 
@@ -56,6 +57,12 @@ if (-not $ProviderModelId) {
 
 if (-not (Test-Path -LiteralPath $openClaudeBin)) {
   throw "openclaude_terminal_missing: expected $openClaudeBin"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $coderPluginPath ".claude-plugin\plugin.json"))) {
+  throw "openclaude_terminal_plugin_missing: expected $coderPluginPath"
+}
+if (-not (Test-Path -LiteralPath $nativeCbmBin)) {
+  throw "openclaude_terminal_cbm_missing: expected $nativeCbmBin"
 }
 
 # Force OpenClaude into OpenAI-compatible mode under backend-owned env.
@@ -87,9 +94,22 @@ if (-not $env:OPENAI_API_KEY -or -not $env:OPENAI_API_KEY.Trim()) {
   throw "openclaude_terminal_env_missing: OPENAI_API_KEY unresolved from backend env"
 }
 
-if (Test-Path -LiteralPath $mcpConfigPath) {
-  & $openClaudeBin --mcp-config $mcpConfigPath
+$mcpConfigPath = $null
+try {
+  $mcpConfigPath = Join-Path ([System.IO.Path]::GetTempPath()) ("repository-coder-mcp-{0}-{1}.json" -f $PID, [Guid]::NewGuid().ToString("N"))
+  @{
+    mcpServers = @{
+      "codebase-memory-mcp" = @{
+        type = "stdio"
+        command = $nativeCbmBin
+        args = @()
+      }
+    }
+  } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $mcpConfigPath -Encoding utf8
+  & $openClaudeBin --plugin-dir $coderPluginPath --mcp-config $mcpConfigPath --strict-mcp-config
 }
-else {
-  & $openClaudeBin
+finally {
+  if ($mcpConfigPath -and (Test-Path -LiteralPath $mcpConfigPath)) {
+    Remove-Item -LiteralPath $mcpConfigPath -Force
+  }
 }

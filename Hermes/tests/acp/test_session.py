@@ -65,6 +65,21 @@ class TestCreateSession:
         fetched = manager.get_session(state.session_id)
         assert fetched is state
 
+    def test_external_system_prompt_is_ephemeral_and_replaceable(self, manager):
+        state = manager.create_session()
+
+        updated = manager.set_ephemeral_system_prompt(
+            state.session_id, "Current saved-card instructions"
+        )
+
+        assert updated is state
+        assert state.ephemeral_system_prompt == "Current saved-card instructions"
+        assert state.agent.ephemeral_system_prompt == "Current saved-card instructions"
+
+        manager.set_ephemeral_system_prompt(state.session_id, "")
+        assert state.ephemeral_system_prompt == ""
+        assert state.agent.ephemeral_system_prompt is None
+
 
     def test_make_agent_stamps_session_cwd_for_codex_runtime(self, monkeypatch):
         class FakeAgent:

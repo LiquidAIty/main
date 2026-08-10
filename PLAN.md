@@ -49,10 +49,9 @@ Graph authorities
   = ThinkGraph, KnowGraph, CodeGraph, and AgentGraph, each with one owner
 ```
 
-OpenClaude is no longer the approved long-term Main runtime. It remains valuable and protected as
-the Coder. Hermes must become the real Main runtime through one thin, repo-owned adapter. The current
-OpenClaude-derived Main gRPC path remains **CURRENT** only until the Hermes replacement passes the
-preservation proof and the replaced Main-only path can be deleted.
+OpenClaude remains valuable and protected as the Coder. Main now executes through one thin repo-owned
+Hermes ACP adapter. The replaced OpenClaude Main gRPC client and product launcher are deleted after
+persistence, streaming, session reuse, saved-card resolution, and cancellation proof.
 
 The existing Hermes card is the controlled experiment surface. It may expose both ordinary Hermes
 work and Hermes-stewarded Magentic-One/Auto-Kanban work, but it must not become a second front door,
@@ -130,12 +129,12 @@ today’s runtime.
 
 ### CURRENT — Main Chat
 
-- Main Chat currently uses the persistent OpenClaude-derived gRPC Harness.
+- Main Chat uses a persistent repo-owned Hermes ACP process and stable conversation/card session key.
 - The client and backend stream text, reasoning signals exposed by the provider, tool starts, tool
   results, permissions, progress, completion, and errors.
 - The saved `main_chat` card supplies prompt, model, and grants.
-- A saved Hermes card can currently be rendered as a Harness-native inherited-context agent. That
-  is pre-integration plumbing, not execution of the repo-owned Hermes runtime.
+- The saved Hermes Kanban card uses the same real ACP adapter with its own saved identity, session,
+  Graphiti/KnowGraph grants, and existing Kanban workspace.
 
 ### CURRENT — Hermes
 
@@ -145,13 +144,10 @@ today’s runtime.
 - The repo-owned Hermes `0.20.0` executable passed a bounded one-shot prompt and a persistent two-turn
   ACP session using repo-local `HERMES_HOME`; the second turn correctly recalled data from the first.
   AppData Hermes was removed and was not recreated by those repo-owned tests.
-- ACP exposed streamed message, thought, command, session, and usage events. The tested ACP process
-  exited nonzero when its input connection closed, and `hermes doctor` exceeded the bounded health
-  window; graceful adapter shutdown and doctor behavior remain explicit baselines, not hidden passes.
-- The backend has a `HermesConsoleSessionManager`, but its current resolver prefers configured,
-  PATH, or AppData-installed executables and its current session mode is interactive-only.
-- The existing Hermes card, prompt, tool grants, topology, terminal/Kanban work, and AgentGraph
-  plumbing are useful experiments. They are not proof that Hermes is Main.
+- ACP exposes streamed message, reasoning, tool, permission, session, usage, and cancellation events.
+  The backend closes the persistent process on shutdown/reload.
+- The backend Hermes console and Kanban bridge resolve exact repo-owned executables and `HERMES_HOME`;
+  they do not fall back to PATH or AppData installs.
 
 ### CURRENT — Coder
 
@@ -216,7 +212,7 @@ today’s runtime.
 
 ### Main — Hermes
 
-TARGET: the saved `main_chat` card resolves to one real repo-owned Hermes session.
+CURRENT: the saved `main_chat` card resolves to one real repo-owned Hermes session.
 
 Main must provide:
 
@@ -229,10 +225,10 @@ Main must provide:
 - the ability to delegate to saved cards only through saved topology;
 - a path to Hermes profiles and Hermes-stewarded Auto-Kanban without making the UI a scheduler.
 
-The adapter should prefer an official Hermes protocol surface that supports persistent sessions and
-streaming, such as its native ACP, gateway, or another directly proven interface. One-shot mode is
-valid for health and bounded task proof but is not automatically sufficient for smooth persistent
-Main Chat. Terminal keystroke automation is not an acceptable product adapter.
+The adapter uses native ACP stdio for persistent sessions, streaming, permissions, model selection,
+and cancellation. It injects saved-card policy through the bounded ACP session configuration and
+exposes only saved grants through the role-filtered Python MCP host. Terminal keystroke automation and
+one-shot-per-message subprocesses are not product adapters.
 
 ### Coder — OpenClaude
 
@@ -690,38 +686,13 @@ Regression Ratio target for every implementation phase: **0.000**.
 
 ## Immediate next CoderPacket
 
-The next implementation task should be **Hermes Front Door — Runtime Proof and Adapter Selection**.
+Use the functional Hermes front door before polishing it. The next bounded task should verify one
+selected persisted project against the intended three-card topology, then exercise one real
+Main→Coder or Main→Hermes-Kanban delegation with observable saved-card identity and tool grants.
 
-Required outcome:
-
-```text
-prove repo-owned Hermes source execution
-→ prove one-shot behavior
-→ inspect and test one persistent streaming protocol
-→ select exactly one Main adapter boundary
-→ characterize current OpenClaude Main behavior that must be preserved
-→ make no UI route replacement until those proofs exist
-```
-
-Required CBM anchors:
-
-- `resolveMainChatRuntimeConfig`
-- `startGrpcTurn`
-- `HermesConsoleSessionManager`
-- `resolveHermesConsoleRuntime`
-- Hermes `cmd_chat`, `run_oneshot`, and persistent protocol entrypoints
-- `useAgentBuilderMainChat`
-- `openClaudeSessionClient`
-- Main Chat backend routes
-- focused Main/Hermes/Coder session tests
-
-Required direct proof:
-
-- Git/worktree and Hermes vendoring identity;
-- repo-owned Hermes executable/module import;
-- exact invocation, cwd, profile, model, input, stream/output, cancellation, and failure behavior;
-- two-turn persistent session outside the UI;
-- no product source edit until the current Main baseline is recorded.
+Defer visual polish, broader profile decisions, Kanban API replacement, and full Mag One/graph-activity
+integration until that functional use identifies the highest-value next delta. First layout option to
+evaluate: a vertical Kanban progression (top-to-bottom versus bottom-to-top) sized for the inspector.
 
 ---
 

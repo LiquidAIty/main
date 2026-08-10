@@ -33,6 +33,8 @@ export type AgentCardRuntimeOptions = {
   maxTokens?: number | null;
   maxTurns?: number | null;
   tools?: string[] | null;
+  profile?: string | null;
+  executionMode?: 'single' | 'auto-kanban' | null;
 };
 
 export type DeckNodeKind = 'agent';

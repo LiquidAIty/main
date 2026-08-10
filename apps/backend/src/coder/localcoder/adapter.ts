@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -154,19 +154,17 @@ const WINDOWS_EXEC_EXTENSIONS = ['.exe', '.cmd', '.bat', '.com'];
 const MAX_LOCALCODER_ARGV_PROMPT_CHARS = 16_000;
 const MAX_DIAGNOSTIC_LINE_CHARS = 500;
 
-/** Translate the app MCP catalog's dotted public name into the exact tool name
- * OpenClaude receives from the injected ``main`` MCP server. This is a
- * transport spelling rule, not a second capability registry. */
+/** Translate a saved CBM grant into the native server's OpenClaude tool name. */
 export function toOpenClaudeMcpToolName(name: string): string {
   const canonical = String(name || '').trim();
   if (!canonical) throw new Error('localcoder_mcp_tool_name_empty');
   if (canonical.startsWith('mcp__')) {
     throw new Error(`localcoder_mcp_tool_name_must_be_canonical: ${canonical}`);
   }
-  if (!canonical.includes('.')) {
+  if (!canonical.startsWith('cbm.') || canonical.length <= 4) {
     throw new Error(`localcoder_mcp_tool_name_invalid: ${canonical}`);
   }
-  return `mcp__main__${canonical.replace(/\./g, '_')}`;
+  return `mcp__codebase-memory-mcp__${canonical.slice(4).replace(/\./g, '_')}`;
 }
 
 export function resolveLocalCoderWorkspaceRoot(startPath: string): string {
@@ -398,84 +396,7 @@ function buildFailedReport(packetId: string, error: string, rawOutput: string): 
   };
 }
 
-// OpenClaude (`localcoder/src/services/mcp/types.ts`) discriminates MCP servers
-// by a `type` literal, NOT `transport`, and rejects anything else under
-// `--strict-mcp-config`. These transports carry a `url`.
-const MCP_URL_TRANSPORTS = new Set(['sse', 'sse-ide', 'http', 'ws']);
-
 type McpPrepResult = { flags: string[]; note: string; tempPath: string | null };
-
-/** Resolve `${VAR}` placeholders from env; flag any that cannot be resolved. */
-function resolveEnvPlaceholders(
-  node: unknown,
-  env: NodeJS.ProcessEnv,
-  state: { unresolved: boolean },
-): unknown {
-  if (typeof node === 'string') {
-    return node.replace(/\$\{([A-Za-z0-9_]+)\}/g, (match, name: string) => {
-      const value = env[name];
-      if (value === undefined || String(value).trim() === '') {
-        state.unresolved = true;
-        return match;
-      }
-      return String(value);
-    });
-  }
-  if (Array.isArray(node)) {
-    return node.map((item) => resolveEnvPlaceholders(item, env, state));
-  }
-  if (node && typeof node === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
-      out[key] = resolveEnvPlaceholders(value, env, state);
-    }
-    return out;
-  }
-  return node;
-}
-
-/**
- * Normalize one backend MCP server entry into OpenClaude's `type`-discriminated
- * shape, or reject it with an exact reason. Drops servers with unresolved env
- * placeholders or unresolvable stdio commands so they cannot fail the run.
- */
-function normalizeMcpServer(
-  name: string,
-  raw: unknown,
-  env: NodeJS.ProcessEnv,
-): { ok: true; value: Record<string, unknown> } | { ok: false; reason: string } {
-  if (!raw || typeof raw !== 'object') {
-    return { ok: false, reason: `${name}: not an object` };
-  }
-  const server = raw as Record<string, unknown>;
-  const transport = String(server.type ?? server.transport ?? '').trim();
-  if (!transport) return { ok: false, reason: `${name}: missing type/transport` };
-
-  let built: Record<string, unknown>;
-  if (transport === 'stdio') {
-    const command = typeof server.command === 'string' ? server.command.trim() : '';
-    if (!command) return { ok: false, reason: `${name}: stdio missing command` };
-    built = { type: 'stdio', command, args: Array.isArray(server.args) ? server.args : [] };
-    if (server.env && typeof server.env === 'object') built.env = server.env;
-  } else if (MCP_URL_TRANSPORTS.has(transport)) {
-    const url = typeof server.url === 'string' ? server.url.trim() : '';
-    if (!url) return { ok: false, reason: `${name}: ${transport} missing url` };
-    built = { type: transport, url };
-    if (server.headers && typeof server.headers === 'object') built.headers = server.headers;
-  } else {
-    return { ok: false, reason: `${name}: unsupported transport "${transport}"` };
-  }
-
-  const state = { unresolved: false };
-  const resolved = resolveEnvPlaceholders(built, env, state) as Record<string, unknown>;
-  if (state.unresolved) {
-    return { ok: false, reason: `${name}: unresolved env placeholder` };
-  }
-  if (transport === 'stdio' && !resolveExecutablePath(String(resolved.command), env)) {
-    return { ok: false, reason: `${name}: stdio command not found: ${String(resolved.command)}` };
-  }
-  return { ok: true, value: resolved };
-}
 
 export type LocalCoderPermissionMode = 'plan' | 'acceptEdits';
 
@@ -600,10 +521,6 @@ export class LocalCoderAdapter {
 
   private vendoredEntrypoint(): string {
     return path.join(this.vendoredRoot(), 'bin', 'openclaude');
-  }
-
-  private mcpConfigPath(): string {
-    return path.join(this.workspaceRoot, 'apps', 'backend', 'mcp.config.json');
   }
 
   /** Build a runnable command from an explicit env command/path, or null. */
@@ -762,12 +679,22 @@ export class LocalCoderAdapter {
     return {
       ready: true,
       command: runtime.command,
-      baseArgs: [...runtime.baseArgs],
+      baseArgs: [...runtime.baseArgs, ...this.coderPluginFlags()],
       describe: runtime.describe,
       shell: runtime.shell,
       source: runtime.source,
       envMissing: this.envMissing(),
     };
+  }
+
+  private coderPluginFlags(): string[] {
+    const pluginRoot = path.join(this.vendoredRoot(), 'plugins', 'repository-coder');
+    const manifest = path.join(pluginRoot, '.claude-plugin', 'plugin.json');
+    const hooks = path.join(pluginRoot, 'hooks', 'hooks.json');
+    if (!existsSync(manifest) || !existsSync(hooks)) {
+      throw new Error(`localcoder_repository_plugin_missing: ${pluginRoot}`);
+    }
+    return ['--plugin-dir', pluginRoot];
   }
 
   private envMissing(packet?: CoderPacket): string[] {
@@ -795,35 +722,23 @@ export class LocalCoderAdapter {
     };
   }
 
-  /**
-   * Build a strict-valid MCP config for OpenClaude from the backend config.
-   * Transforms each server into OpenClaude's `type`-discriminated shape and
-   * keeps only schema-valid, env-resolvable servers. If none survive (or the
-   * file is missing/unparseable) the run is MCP-less and the reason is recorded
-   * so it stays visible in the CoderReport.
-   */
-  /**
-   * The ONE app Python MCP host (apps/python-models/app/mcp_host.py), resolved
-   * from the workspace root exactly like the gRPC harness does
-   * (localcoder/scripts/start-grpc.ts). Injecting it here is what gives the
-   * card-Coder the SAME MCP tool surface the chat-Coder already gets from the
-   * server-lifetime host — including write_mag_one_instructions /
-   * read_model_results. Absent build → honest note, host omitted (no fake).
-   */
-  private resolveMainMcpServer():
+  /** Resolve the one repo-owned native CBM server used by Coder. */
+  private resolveNativeCbmServer():
     | { server: Record<string, unknown>; note: string }
     | { note: string } {
-    const pythonExe = path.join(
-      this.workspaceRoot, 'apps', 'python-models', '.venv', 'Scripts', 'python.exe',
+    const executable = path.join(
+      this.workspaceRoot,
+      '.tools',
+      'codebase-memory-mcp',
+      'bin',
+      'codebase-memory-mcp.exe',
     );
-    const hostPath = path.join(this.workspaceRoot, 'apps', 'python-models', 'app', 'mcp_host.py');
-    if (!existsSync(pythonExe) || !existsSync(hostPath)) {
-      const missing = !existsSync(pythonExe) ? pythonExe : hostPath;
-      return { note: `localcoder_main_mcp_unavailable: ${missing}` };
+    if (!existsSync(executable)) {
+      return { note: `localcoder_native_cbm_unavailable: ${executable}` };
     }
     return {
-      server: { type: 'stdio', command: pythonExe, args: [hostPath] },
-      note: 'localcoder_main_mcp_injected',
+      server: { type: 'stdio', command: executable, args: [] },
+      note: 'localcoder_native_cbm_injected',
     };
   }
 
@@ -835,54 +750,18 @@ export class LocalCoderAdapter {
         tempPath: null,
       };
     }
-    const configPath = this.mcpConfigPath();
-    // Read the declared servers when the file exists/parses; a missing or bad
-    // file is a note, not an early return — the main host is still injected.
-    let servers: Record<string, unknown> = {};
-    let fileNote = '';
-    if (!existsSync(configPath)) {
-      fileNote = `localcoder_mcp_config_absent: ${configPath}`;
-    } else {
-      try {
-        const parsed = JSON.parse(readFileSync(configPath, 'utf8'));
-        if (
-          parsed &&
-          typeof parsed === 'object' &&
-          typeof (parsed as { mcpServers?: unknown }).mcpServers === 'object' &&
-          (parsed as { mcpServers?: unknown }).mcpServers !== null
-        ) {
-          servers = (parsed as { mcpServers: Record<string, unknown> }).mcpServers;
-        }
-      } catch (error) {
-        fileNote = `localcoder_mcp_config_unparseable: ${error instanceof Error ? error.message : 'invalid json'}`;
-      }
-    }
-
     const kept: Record<string, unknown> = {};
     const keptNames: string[] = [];
-    const dropped: string[] = [];
-    for (const [name, raw] of Object.entries(servers)) {
-      if (name === 'main') continue; // injected below from the resolved layout
-      const result = normalizeMcpServer(name, raw, this.env);
-      if (result.ok) {
-        kept[name] = result.value;
-        keptNames.push(name);
-      } else {
-        dropped.push(result.reason);
-      }
-    }
-
-    const mainMcp = this.resolveMainMcpServer();
-    if ('server' in mainMcp) {
-      kept.main = mainMcp.server;
-      keptNames.push('main');
+    const nativeCbm = this.resolveNativeCbmServer();
+    if ('server' in nativeCbm) {
+      kept['codebase-memory-mcp'] = nativeCbm.server;
+      keptNames.push('codebase-memory-mcp');
     }
 
     if (keptNames.length === 0) {
       const reason = [
-        fileNote,
-        dropped.length ? `dropped: ${dropped.join('; ')}` : 'no mcpServers defined',
-        mainMcp.note,
+        'no Coder MCP server configured',
+        nativeCbm.note,
       ].filter(Boolean).join('; ');
       return { flags: [], note: `localcoder_mcp_config_omitted: ${reason}`, tempPath: null };
     }
@@ -891,9 +770,7 @@ export class LocalCoderAdapter {
     writeFileSync(tempPath, JSON.stringify({ mcpServers: kept }, null, 2));
     const note = [
       `localcoder_mcp_config_normalized: kept [${keptNames.join(', ')}]`,
-      dropped.length ? `dropped: ${dropped.join('; ')}` : '',
-      fileNote,
-      mainMcp.note,
+      nativeCbm.note,
     ].filter(Boolean).join('; ');
     return { flags: ['--mcp-config', tempPath, '--strict-mcp-config'], note, tempPath };
   }
@@ -1025,7 +902,11 @@ export class LocalCoderAdapter {
     }
 
     const mcp = this.prepareMcpConfig();
-    const args = [...runtime.baseArgs, ...this.jobArgs(packet, mcp.flags, prompt)];
+    const args = [
+      ...runtime.baseArgs,
+      ...this.coderPluginFlags(),
+      ...this.jobArgs(packet, mcp.flags, prompt),
+    ];
     runtimeDiagnostics.argvShape = redactArgv(args);
     runtimeDiagnostics.mcpConfigPassed = mcp.flags.includes('--mcp-config');
     const withMcpNote = (report: CoderReport): CoderReport => ({

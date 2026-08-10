@@ -4,7 +4,7 @@ import {
   loadSessionHistory,
   SessionStreamError,
   streamSession,
-} from './openClaudeSessionClient';
+} from './mainSessionClient';
 
 function sseResponse(frames: string[]): Response {
   const encoder = new TextEncoder();
@@ -53,7 +53,7 @@ describe('streamSession', () => {
 
   it('rejects an SSE error frame with the route and correlation evidence', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
-      'event: error\ndata: {"code":"harness_turn_failed","message":"The chat run failed.","correlationId":"req_123","route":"/api/coder/openclaude/session/chat","status":502}\n\n',
+      'event: error\ndata: {"code":"harness_turn_failed","message":"The chat run failed.","correlationId":"req_123","route":"/api/coder/main/session/chat","status":502}\n\n',
       'event: end\ndata: {}\n\n',
     ])));
 
@@ -66,7 +66,7 @@ describe('streamSession', () => {
       name: 'SessionStreamError',
       code: 'harness_turn_failed',
       correlationId: 'req_123',
-      route: '/api/coder/openclaude/session/chat',
+      route: '/api/coder/main/session/chat',
       status: 502,
     } satisfies Partial<SessionStreamError>);
   });
@@ -146,7 +146,7 @@ describe('loadSessionHistory', () => {
     })).rejects.toMatchObject({
       code: 'conversation_history_read_failed',
       status: 500,
-      route: '/api/coder/openclaude/session/history',
+      route: '/api/coder/main/session/history',
     });
   });
 });

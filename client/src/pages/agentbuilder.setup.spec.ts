@@ -44,11 +44,10 @@ function createDeck(nodes: AgentCardInstance[]): DeckDocument {
 describe('agentbuilder authoring flow', () => {
   it('ships the default example using the real magentic-led agent graph', () => {
     expect(INITIAL_DECK.nodes.map((node) => node.title)).toEqual([
-      'Main Chat / Harness',
+      'Main Chat',
       'Magentic-One',
-      'Search Agent',
       'Coder',
-      'Hermes',
+      'Hermes Kanban',
       'Trading Agent',
       'WorldSignals Agent',
     ]);
@@ -56,7 +55,6 @@ describe('agentbuilder authoring flow', () => {
     expect(INITIAL_DECK.nodes.map((node) => node.runtimeBinding)).toEqual([
       'main_chat',
       null,
-      'research_agent',
       'local_coder',
       'hermes_steward',
       'trading_agent',
@@ -65,7 +63,6 @@ describe('agentbuilder authoring flow', () => {
     expect(INITIAL_DECK.nodes.map((node) => node.templateId)).toEqual([
       'template_main_chat',
       'template_magentic',
-      'template_research_agent',
       'template_local_coder',
       'template_hermes_steward',
       'template_trading_workbench',
@@ -79,18 +76,12 @@ describe('agentbuilder authoring flow', () => {
     }))).toEqual([
       { source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
       { source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' },
-      { source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' },
       { source: 'card_hermes_steward', target: 'card_worldsignals_agent', edgeType: 'flow' },
       { source: 'card_local_coder', target: 'card_magentic', edgeType: 'magentic_option' },
       {
         source: 'card_main_chat',
         target: 'card_magentic',
         edgeType: 'magentic_control',
-      },
-      {
-        source: 'card_research_agent',
-        target: 'card_magentic',
-        edgeType: 'magentic_option',
       },
       {
         source: 'card_worldsignals_agent',

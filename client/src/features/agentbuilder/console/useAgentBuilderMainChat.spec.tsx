@@ -13,8 +13,8 @@ vi.mock('../../../components/builder/backendReadiness', () => ({
   waitForBackendReady: mocks.waitForBackendReady,
 }));
 
-vi.mock('./openClaudeSessionClient', async () => {
-  const actual = await vi.importActual<typeof import('./openClaudeSessionClient')>('./openClaudeSessionClient');
+vi.mock('./mainSessionClient', async () => {
+  const actual = await vi.importActual<typeof import('./mainSessionClient')>('./mainSessionClient');
   return {
     ...actual,
     loadSessionHistory: mocks.loadSessionHistory,

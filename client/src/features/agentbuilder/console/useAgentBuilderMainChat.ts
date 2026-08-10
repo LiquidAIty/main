@@ -6,7 +6,7 @@ import {
   type NativeSessionEvent,
   SessionStreamError,
   streamSession,
-} from './openClaudeSessionClient';
+} from './mainSessionClient';
 
 export type AgentBuilderChatMessage = {
   role: 'assistant' | 'user';
@@ -63,7 +63,6 @@ export default function useAgentBuilderMainChat({
   canvasProjectId,
   conversationId,
   initialMessages,
-  workspaceView,
   onUserTurnStarted,
   onNativeTurnEvent,
   onTurnFinished,
@@ -167,7 +166,6 @@ export default function useAgentBuilderMainChat({
           projectId: canvasProjectId,
           conversationId,
           message: trimmed,
-          mode: workspaceView === 'canvas' ? 'canvas' : 'chat',
           onEvent: (event) => {
             notifyObserver(onNativeTurnEvent, {
               projectId: canvasProjectId,
@@ -231,7 +229,6 @@ export default function useAgentBuilderMainChat({
       onNativeTurnEvent,
       onTurnFinished,
       onUserTurnStarted,
-      workspaceView,
     ],
   );
 

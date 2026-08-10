@@ -16,6 +16,12 @@ import {
   isLocalCoderControllerCard,
   normalizeLocalCoderControllerCard,
 } from './localCoderController';
+import {
+  deriveHermesSessionKey,
+  resolveDirectHermesSubagents,
+  resolveHermesCardRuntimeConfig,
+  startHermesTurn,
+} from '../hermes/mainAdapter';
 
 function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
   const provider = String(value ?? '').trim().toLowerCase();
@@ -557,6 +563,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
 
   const doc = await getDeckDocument(projectId, deckId);
   const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
+  const edges: any[] = Array.isArray((doc?.deck as any)?.edges) ? (doc!.deck as any).edges : [];
   const card = nodes.find((node) => String(node?.id || '') === cardId);
   if (!card) {
     return done({ status: 'not_found', error: `card_not_found: ${cardId}` });
@@ -565,6 +572,58 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     return done({ status: 'disabled', error: `card_disabled: ${cardId}` });
   }
   const runtimeType = resolveCardRuntimeType(card);
+  const cardBinding = resolveCardBinding(card);
+  if (cardBinding === 'hermes_steward') {
+    let config;
+    try {
+      config = resolveHermesCardRuntimeConfig(
+        card,
+        resolveDirectHermesSubagents(cardId, nodes, edges),
+      );
+    } catch (error: any) {
+      return done({
+        status: 'failed',
+        runtimeType,
+        error: String(error?.message || 'hermes_card_resolution_failed'),
+      });
+    }
+    if (config.executionMode !== 'single') {
+      return done({
+        status: 'not_runnable',
+        runtimeType,
+        tools: config.tools,
+        error: 'hermes_auto_kanban_runs_through_native_kanban_workspace',
+      });
+    }
+    try {
+      const sessionScope = conversationId || deckId;
+      const handle = await startHermesTurn(
+        {
+          ...config,
+          sessionKey: deriveHermesSessionKey(projectId, sessionScope, cardId),
+          projectId,
+          conversationId: sessionScope,
+          parentRunId,
+          message: input,
+        },
+        () => undefined,
+      );
+      const response = await handle.done;
+      return done({
+        status: 'completed',
+        runtimeType,
+        tools: config.tools,
+        output: response.finalText,
+      });
+    } catch (error: any) {
+      return done({
+        status: 'failed',
+        runtimeType,
+        tools: config.tools,
+        error: String(error?.message || 'hermes_card_transport_failed'),
+      });
+    }
+  }
   const ineligibility = genericAssistantCardIneligibility(card);
   if (ineligibility) {
     return done({

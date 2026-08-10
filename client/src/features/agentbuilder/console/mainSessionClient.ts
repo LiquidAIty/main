@@ -1,7 +1,6 @@
 /**
- * Frontend client for the persistent OpenClaude QueryEngine session bridge
- * (`/api/coder/openclaude/session/*`). The browser never speaks gRPC — it talks
- * to the backend SSE endpoint, which bridges to the gRPC QueryEngine.
+ * Frontend client for the persistent repo-owned Hermes Main session bridge.
+ * The browser consumes backend SSE; the backend owns the ACP process.
  *
  * `streamSession` forwards the RAW native event stream (verbatim) to `onEvent`
  * and resolves with `done.full_text`. No transformation, no curation.
@@ -11,7 +10,7 @@ export type NativeSessionEvent = {
   [key: string]: unknown;
 };
 
-const BASE = '/api/coder/openclaude/session';
+const BASE = '/api/coder/main/session';
 
 type SessionStreamFailure = {
   code: string;
@@ -37,16 +36,10 @@ export class SessionStreamError extends Error {
   }
 }
 
-/** Which Harness surface the turn runs in. Chat mode exposes only Main's saved
- * direct-subagent doorway; canvas (Agent Builder / Edit) mode exposes every eligible
- * saved card as a direct saved-card doorway. Explicit — never inferred. */
-type HarnessMode = 'chat' | 'canvas';
-
 export async function streamSession(args: {
   projectId: string;
   conversationId: string;
   message: string;
-  mode?: HarnessMode;
   onEvent: (event: NativeSessionEvent) => void;
   signal?: AbortSignal;
 }): Promise<{ finalText: string }> {
@@ -58,8 +51,6 @@ export async function streamSession(args: {
       projectId: args.projectId,
       conversationId: args.conversationId,
       message: args.message,
-      // Default 'chat' when omitted (backend also defaults to chat).
-      mode: args.mode === 'canvas' ? 'canvas' : 'chat',
     }),
     signal: args.signal,
   });

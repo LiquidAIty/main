@@ -93,11 +93,9 @@ export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'mag_one.describe_connected_agents',
   'run_mag_one',
 ] as const;
-export const HERMES_STEWARD_TOOLS = [
+export const HERMES_CARD_TOOLS = [
   'graphiti.search_nodes',
   'graphiti.search_memory_facts',
-  'graphiti.delete_entity_edge',
-  'graphiti.delete_episode',
   'graphiti.get_entity_edge',
   'graphiti.get_episodes',
   'graphiti.summarize_saga',
@@ -106,9 +104,7 @@ export const HERMES_STEWARD_TOOLS = [
   'graphiti.get_status',
   'graphiti.add_memory',
   'graphiti.add_triplet',
-  'graphiti.clear_graph',
   'write_mag_one_instructions',
-  'card.run_assistant_agent',
 ] as const;
 export function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   const normalized = safeText(value).trim().toLowerCase();

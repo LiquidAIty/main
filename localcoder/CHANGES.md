@@ -40,4 +40,6 @@ Verification status on 2026-08-09:
 
 The timeout is an unresolved package-runner/compiler verification blocker, not a passing result and not a reported assertion or type failure. Do not describe the LocalCoder change as package-green until those commands complete in the normal development runtime.
 
-Removal rule: if QueryEngine stops producing native `thinking_delta` events or the LiquidAIty gRPC consumer is removed, delete the proto member, serializer, tests, and this entry together. Do not retain an unused reasoning compatibility lane.
+Current status: the LiquidAIty Main gRPC consumer and launcher were removed after Main migrated to
+Hermes ACP. The generic gRPC implementation remains dormant vendor capability pending a separate
+upstream-fork cleanup decision; it is not a live product route or fallback.

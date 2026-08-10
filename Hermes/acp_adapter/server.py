@@ -223,6 +223,15 @@ _TEXT_RESOURCE_MIME_TYPES = {
 }
 
 
+def _external_session_system_prompt(kwargs: dict[str, Any]) -> str:
+    """Read an optional caller-owned prompt from ACP extension metadata."""
+    config = kwargs.get("sessionConfig")
+    if not isinstance(config, dict):
+        return ""
+    value = config.get("systemPrompt")
+    return str(value or "").strip()
+
+
 def _resource_display_name(uri: str, name: str | None = None, title: str | None = None) -> str:
     """Human-readable attachment name for prompt context."""
     raw_name = (name or "").strip()
@@ -1439,6 +1448,9 @@ class HermesACPAgent(acp.Agent):
         **kwargs: Any,
     ) -> NewSessionResponse:
         state = self.session_manager.create_session(cwd=cwd)
+        self.session_manager.set_ephemeral_system_prompt(
+            state.session_id, _external_session_system_prompt(kwargs)
+        )
         await self._register_session_mcp_servers(state, mcp_servers)
         self._schedule_mcp_late_refresh(state)
         logger.info("New session %s (cwd=%s)", state.session_id, cwd)
@@ -1464,6 +1476,9 @@ class HermesACPAgent(acp.Agent):
         if state is None:
             logger.warning("load_session: session %s not found", session_id)
             return None
+        self.session_manager.set_ephemeral_system_prompt(
+            state.session_id, _external_session_system_prompt(kwargs)
+        )
         await self._register_session_mcp_servers(state, mcp_servers)
         self._schedule_mcp_late_refresh(state)
         logger.info("Loaded session %s", session_id)
@@ -2002,7 +2017,11 @@ class HermesACPAgent(acp.Agent):
                     exc_info=True,
                 )
 
-        final_response = result.get("final_response", "")
+        # Hard interruption can return ``None`` while the cancellation event is
+        # already authoritative. Normalize it before prefix checks so ACP can
+        # return the intended cancelled stop reason instead of an internal RPC
+        # error.
+        final_response = result.get("final_response") or ""
         cancelled = bool(state.cancel_event and state.cancel_event.is_set())
         interrupted = bool(result.get("interrupted")) or cancelled
         # Hermes' local "waiting for model response" interrupt status is metadata,

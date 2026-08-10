@@ -10,17 +10,18 @@ import {
   type ConsoleMode,
 } from '../coder/openclaude/console/consoleSession';
 import { runConfiguredCard } from '../cards/runtime';
-import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../coder/workspaceRoot';
+import { resolveRepoRoot } from '../coder/workspaceRoot';
 import {
   describeConnectedAgents,
   runMagOne,
 } from '../coder/openclaude/mcp/mainAgentFlow';
 import {
-  deriveSessionId,
-  startGrpcTurn,
-  type GrpcSessionEvent,
-  type GrpcTurnHandle,
-} from '../coder/openclaude/session/grpcChatClient';
+  deriveHermesSessionKey,
+  resolveMainHermesRuntimeConfig,
+  startHermesTurn,
+  type HermesSessionEvent,
+  type HermesTurnHandle,
+} from '../hermes/mainAdapter';
 import {
   beginConversationRun,
   cancelConversationRun,
@@ -292,31 +293,24 @@ router.get('/agentgraph/card-context', async (req, res) => {
   }
 });
 
-// ── Persistent native OpenClaude session bridge (BuilderChat -> gRPC) ───────
-// SSE stream of the REAL QueryEngine event stream, verbatim. One stable session
-// id per (projectId, conversationId). The browser never touches gRPC.
-const activeGrpcTurns = new Map<string, GrpcTurnHandle>();
+// ── Persistent repo-owned Hermes Main bridge (BuilderChat -> ACP) ───────────
+// One stable native Hermes conversation per saved Main card and product
+// conversation. OpenClaude remains the separate Coder/terminal runtime.
+const activeHermesTurns = new Map<string, HermesTurnHandle>();
 
-router.post('/openclaude/session/chat', async (req, res) => {
+router.post('/main/session/chat', async (req, res) => {
   const projectId = String(req.body?.projectId || '');
   const conversationId = String(req.body?.conversationId || 'default');
   const message = String(req.body?.message || '');
-  // Explicit Harness surface state from the client (chat vs Agent Canvas /
-  // Edit mode) — decides which card doorways this turn exposes. Never inferred
-  // from message content.
-  const mode = req.body?.mode === 'canvas' ? ('canvas' as const) : ('chat' as const);
-  // A PRODUCT chat session's cwd is a neutral out-of-repo directory, NOT the
-  // repo root: a repo-root cwd makes the engine walk up and inject the repo's
-  // developer memory (AGENTS.md/CLAUDE.md, ~8.4k tokens — M-1) into Main/Hermes
-  // chat. They use MCP tools, not the filesystem, so the neutral cwd loses no
-  // capability. An explicit client-supplied workingDirectory still wins; the
-  // Coder keeps the real repo root (spawned separately via resolveRepoRoot).
-  const workingDirectory =
-    String(req.body?.workingDirectory || '').trim() || resolveProductChatWorkingDirectory();
+  const workingDirectory = String(req.body?.workingDirectory || '').trim() || undefined;
   if (!projectId || !message) {
     return res.status(400).json({ ok: false, error: 'projectId_and_message_required' });
   }
-  const sessionId = deriveSessionId(projectId, conversationId);
+  const runtimeConfig = await resolveMainHermesRuntimeConfig(projectId);
+  if (!runtimeConfig) {
+    return res.status(424).json({ ok: false, error: 'main_hermes_card_not_runnable' });
+  }
+  const sessionId = deriveHermesSessionKey(projectId, conversationId, runtimeConfig.cardId);
   // One correlation id per turn for the concise backend trace. This does NOT change
   // the SSE stream or browser behavior — it only makes the real Harness events
   // (already flowing to the browser) legible in the backend dev terminal.
@@ -359,17 +353,19 @@ router.post('/openclaude/session/chat', async (req, res) => {
     }
   };
   writeSse('session', { sessionId });
-  logHarnessTrace(`[harness] request received ${`corr=${correlationId}`} project=${projectId} mode=${mode}`);
+  logHarnessTrace(`[hermes] request received ${`corr=${correlationId}`} project=${projectId} profile=${runtimeConfig.profile}`);
   let turnFinished = false;
   let runCancelled = false;
-  let terminalDoneEvent: Extract<GrpcSessionEvent, { kind: 'done' }> | null = null;
+  let terminalDoneEvent: Extract<HermesSessionEvent, { kind: 'done' }> | null = null;
   try {
-    const handle = await startGrpcTurn({
-      sessionId,
+    const handle = await startHermesTurn({
+      ...runtimeConfig,
+      sessionKey: sessionId,
+      projectId,
+      conversationId,
+      parentRunId: correlationId,
       message,
       workingDirectory,
-      mode,
-      traceId: correlationId,
     }, async (event) => {
       if (turnFinished) return;
       if (event.kind === 'done') {
@@ -396,12 +392,12 @@ router.post('/openclaude/session/chat', async (req, res) => {
         `harness_run_persistence_failed:${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    activeGrpcTurns.set(sessionId, handle);
+    activeHermesTurns.set(sessionId, handle);
     req.on('close', () => {
       if (turnFinished) return;
       runCancelled = true;
       handle.cancel();
-      activeGrpcTurns.delete(sessionId);
+      activeHermesTurns.delete(sessionId);
       void cancelConversationRun(correlationId).catch((error) => {
         logHarnessTrace(
           `[harness] run cancellation persistence failed corr=${correlationId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
@@ -430,7 +426,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
     );
   } catch (error) {
     turnFinished = true;
-    const reason = error instanceof Error ? error.message : 'grpc_turn_failed';
+    const reason = error instanceof Error ? error.message : 'hermes_turn_failed';
     if (!runCancelled) {
       await failConversationRun(
         correlationId,
@@ -453,24 +449,28 @@ router.post('/openclaude/session/chat', async (req, res) => {
         ? 'The model finished, but its durable run record could not be completed.'
         : 'The chat run failed. Check the correlation ID in the backend logs.',
       correlationId,
-      route: '/api/coder/openclaude/session/chat',
+      route: '/api/coder/main/session/chat',
       status: 502,
     });
   } finally {
     turnFinished = true;
-    activeGrpcTurns.delete(sessionId);
+    activeHermesTurns.delete(sessionId);
     writeSse('end', {});
     if (!res.destroyed && !res.writableEnded) res.end();
   }
   return undefined;
 });
 
-router.post('/openclaude/session/answer', (req, res) => {
-  const sessionId = deriveSessionId(
-    String(req.body?.projectId || ''),
+router.post('/main/session/answer', async (req, res) => {
+  const projectId = String(req.body?.projectId || '');
+  const runtimeConfig = await resolveMainHermesRuntimeConfig(projectId);
+  if (!runtimeConfig) return res.status(404).json({ ok: false, error: 'main_hermes_card_not_runnable' });
+  const sessionId = deriveHermesSessionKey(
+    projectId,
     String(req.body?.conversationId || 'default'),
+    runtimeConfig.cardId,
   );
-  const handle = activeGrpcTurns.get(sessionId);
+  const handle = activeHermesTurns.get(sessionId);
   if (!handle) return res.status(404).json({ ok: false, error: 'no_active_turn' });
   handle.answer(String(req.body?.promptId || ''), String(req.body?.reply || ''));
   return res.json({ ok: true });
@@ -479,7 +479,7 @@ router.post('/openclaude/session/answer', (req, res) => {
 // Load the durable project-scoped transcript for a conversation so a reload
 // restores the same chat. A valid conversation with no messages returns an
 // empty transcript. A persistence failure remains a visible typed failure.
-router.get('/openclaude/session/history', async (req, res) => {
+router.get('/main/session/history', async (req, res) => {
   const projectId = String(req.query?.projectId || '');
   const conversationId = String(req.query?.conversationId || 'default');
   if (!projectId) {
@@ -503,7 +503,7 @@ router.get('/openclaude/session/history', async (req, res) => {
   }
 });
 
-router.get('/openclaude/session/conversations', async (req, res) => {
+router.get('/main/session/conversations', async (req, res) => {
   const projectId = String(req.query?.projectId || '');
   if (!projectId) {
     return res.status(400).json({ ok: false, error: 'projectId_required', conversations: [] });

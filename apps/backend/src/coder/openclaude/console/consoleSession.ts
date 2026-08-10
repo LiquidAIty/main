@@ -8,6 +8,7 @@ import {
   resolveLocalCoderWorkspaceRoot,
   type ConsoleRuntimeResolution,
 } from '../../localcoder/adapter';
+import { resolveRepoRoot } from '../../workspaceRoot';
 
 /**
  * OpenClaude Console Bridge — the smallest owned backend that runs the real
@@ -318,46 +319,30 @@ export type HermesConsoleRuntimeResolution = {
   missing: string[];
 };
 
+function resolveRepoHermesHome(): string {
+  return path.join(resolveRepoRoot(), 'Hermes', '.hermes');
+}
+
 /** Resolve the installed Hermes CLI without substituting another runtime. */
 export function resolveHermesConsoleRuntime(
-  env: NodeJS.ProcessEnv = process.env,
+  _env: NodeJS.ProcessEnv = process.env,
 ): HermesConsoleRuntimeResolution {
-  const configured = String(env.HERMES_CLI_PATH || '').trim();
-  const executableNames =
-    process.platform === 'win32'
-      ? ['hermes.exe', 'hermes.cmd', 'hermes.bat']
-      : ['hermes'];
-  const candidates = [
-    ...(configured ? [configured] : []),
-    ...String(env.PATH || '')
-      .split(path.delimiter)
-      .filter(Boolean)
-      .flatMap((directory) =>
-        executableNames.map((name) => path.join(directory, name)),
-      ),
-    ...(process.platform === 'win32' && env.LOCALAPPDATA
-      ? [
-          path.join(
-            env.LOCALAPPDATA,
-            'hermes',
-            'hermes-agent',
-            'venv',
-            'Scripts',
-            'hermes.exe',
-          ),
-        ]
-      : []),
-  ];
-  const command = candidates.find((candidate) => existsSync(candidate));
-  if (!command) {
+  const command = path.join(
+    resolveRepoRoot(),
+    'Hermes',
+    'venv',
+    'Scripts',
+    process.platform === 'win32' ? 'hermes.exe' : 'hermes',
+  );
+  if (!existsSync(command)) {
     return {
       ready: false,
       command: '',
       baseArgs: [],
       describe: '',
-      source: configured ? 'configured' : 'installed',
+      source: 'installed',
       shell: false,
-      missing: ['hermes_cli_entrypoint_missing'],
+      missing: [`hermes_repo_cli_entrypoint_missing:${command}`],
     };
   }
   return {
@@ -365,11 +350,8 @@ export function resolveHermesConsoleRuntime(
     command,
     baseArgs: ['chat', '--cli'],
     describe: `${command} chat --cli`,
-    source:
-      configured && path.resolve(configured) === path.resolve(command)
-        ? 'configured'
-        : 'installed',
-    shell: /\.(?:cmd|bat)$/i.test(command),
+    source: 'installed',
+    shell: false,
     missing: [],
   };
 }
@@ -937,7 +919,11 @@ export class HermesConsoleSessionManager {
     try {
       const child = this.ptySpawn(runtime.command, runtime.baseArgs, {
         cwd: targetRoot,
-        env: { ...this.env, HERMES_SESSION_SOURCE: 'saved-card-terminal' },
+        env: {
+          ...this.env,
+          HERMES_HOME: resolveRepoHermesHome(),
+          HERMES_SESSION_SOURCE: 'saved-card-terminal',
+        },
         shell: runtime.shell,
         interactive: true,
       });
