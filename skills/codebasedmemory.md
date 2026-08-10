@@ -11,7 +11,7 @@ project: C-Projects-main
 @skill id=codebasedmemory
 @type Skill
 @status active
-@requires fresh_cbm_index
+@requires codegraph_first_navigation
 
 This is the canonical CBM skill. Do not create a second general CBM manual under another filename.
 `skills/codegraph.md` remains separate because it defines the product's CodeGraph authority and
@@ -58,16 +58,16 @@ CBM is mandatory for repository work. Use it at the correct structural points:
 
 ## The Mandatory CBM Gate
 
-For code structure, ownership, calls, dependencies, symbols, or architecture, make one narrow
-`search_graph` call first. Then use `trace_path` only when relationships or impact matter and
-`get_code_snippet` only when a bounded snippet helps. Direct-read current source next. Most coding
-tasks should use one to three CBM calls total; more than four before meaningful source reading is a
-warning that the agent is wandering.
+For code structure, ownership, calls, dependencies, symbols, or architecture, use `search_graph` as
+the doorway. Continue useful, result-informed searches until the relevant owner, symbol, file, route,
+component, service, runtime boundary, or structural path is actually identified. There is no arbitrary
+call-count limit. Several independent structural questions may be searched concurrently through the
+same canonical owner and project.
 
-At task start, inspect the maintenance marker once and establish one cached freshness/identity state
-for the task. Call `list_projects`, `index_status`, or `detect_changes` at most once when that state is
-actually needed. Do not repeat freshness calls unless a commit occurs, `.cbmignore` changes, a large
-structural edit changes topology, the graph produces stale evidence, or the active project changes.
+Use `trace_path` only when relationships or impact matter, `get_code_snippet` after exact qualified
+symbols are known, and `search_code` when the concept is known but symbol vocabulary is not. Direct-read
+current source after CBM establishes the boundary. At Main task entry, use project/status tools once to
+verify the fixed clean rebuild; do not poll them or repeat them during the same task without new evidence.
 
 Normal route:
 
@@ -103,14 +103,14 @@ count; do not copy an old example count into a current report.
 
 **index_status** — Current index state.
 Parameter: `{"project":"C-Projects-main"}`
-Use once when task freshness cannot be established from cached task state or the maintenance marker.
-Returns status + counts. Do not poll or ask repeatedly whether the graph is clean.
+Use once after the fixed Main entry rebuild to verify ready state and live counts. Do not poll or ask
+repeatedly whether the graph is clean.
 
 **index_repository** — Native synchronization or full reindex.
 Parameter: `{"repo_path":"C:/Projects/main","name":"C-Projects-main","mode":"full"}`
-Use only for one bounded maintenance decision: no index exists, the index format changed, a pending
-checkpoint marker requires evaluation, or coverage/freshness evidence proves maintenance is needed.
-Never reindex per query, per prompt, or as a health check.
+At each new Codex Main task entry, run exactly one full rebuild immediately after exact-project deletion.
+Outside that fixed entry checkpoint, use it only for one bounded, explicitly authorized maintenance
+decision. Never repeat it for follow-ups in the same task, reindex per query, or poll it as a health check.
 
 **detect_changes** — Maps working-tree changes to affected symbols.
 Parameter: `{"project":"C-Projects-main"}`
@@ -118,14 +118,12 @@ Use once when ordinary synchronization/change impact must be evaluated. Reports 
 uncommitted modifications and does not report untracked files. Do not call it ritualistically before
 and after every edit; combine it with `git status --short` when untracked state matters.
 
-**delete_project** — Destructive. The owner has granted standing authorization only for
-`C-Projects-main` when live evidence proves that its index is stale/polluted and one clean rebuild is
-necessary. Verify the exact project/root, record status and counts, verify current `.cbmignore`, ensure
-no maintenance operation is running, then perform one delete → one rebuild → one verification. Never
-apply this authorization to another project, ordinary latency/timeouts, missing symbols, connector
-recovery, source files, or direct CBM storage. If the native tool is not exposed, restart the MCP
-connection or start a fresh thread; never substitute CLI, plugin federation, database access, or a
-second process.
+**delete_project** — `C-Projects-main` is disposable derived projection state. The owner grants standing
+authorization for exact `C-Projects-main` deletion followed immediately by one full canonical rebuild
+once at the start of each new Codex Main task. Verify exact project/root, current `.cbmignore`, and that no
+mutation is already running. Never apply this authorization to another project, source files, vendor
+projects, or direct CBM storage. Reindex alone is not an equivalent cleanup because deleted or newly
+excluded SQLite fragments may survive incremental refresh.
 
 ### Structural & Architectural
 
@@ -206,15 +204,18 @@ Note: Route nodes have empty `file_path`. Route→handler mapping requires readi
 
 ## Working-Tree Visibility
 
-The canonical `C-Projects-main` index represents committed source. The local `post-commit` hook does
-not launch, delete, synchronize, or index CBM. It only writes or refreshes one marker containing the
-project, root, Git HEAD, timestamp, and reason. Multiple commits before the next prompt coalesce into
-one pending maintenance action.
+The canonical `C-Projects-main` index is a rebuildable projection of repository source. Source and
+tests are authoritative. No delayed marker system exists. For each new Main-repository task,
+`UserPromptSubmit` injects the fixed entry SOP: if the task has not completed clean entry, the active
+agent uses the one connected native MCP owner to delete only `C-Projects-main`, perform one full
+`C:/Projects/main` rebuild, and verify exact root, readiness, live counts, exclusions, and absence of
+vendor paths once. Record completion in task context and reuse it across follow-ups, interruptions,
+clarifications, and compactions. The hook itself performs no CBM or database operation and launches no process.
 
-On the next `UserPromptSubmit`, the active native MCP owner evaluates maintenance once. If native
-detect/sync can prove the graph matches current source, synchronize and verify one representative
-query. If proof is uncertain or stale residue exists, perform one exact `C-Projects-main` clean
-delete → full rebuild → verification. Clear the marker only after proof; leave it on failure.
+After maintenance, use the four-step discovery SOP: `search_graph` until structural owners are found;
+`trace_path` when relationships matter; `get_code_snippet` for exact qualified-symbol snapshots;
+`search_code` for bounded concept/literal/residue discovery when useful; then direct-read current source.
+The Git post-commit hook remains Git LFS only.
 
 Dirty tracked edits and intentional untracked files are expected to be absent or outdated in CBM.
 Do not report that expected divergence as a coverage defect, ask to reindex it, or stage a file to
@@ -231,12 +232,10 @@ Use one doorway per run. Prefer the already-connected native MCP service. Main/G
 transparent `cbm.*` federation because it preserves native schemas and owns one persistent native
 child; do not mix that doorway with a separate direct connection after either is proven healthy.
 
-Keep dependent discovery chains and all state-changing operations sequential. After project/task
-state is established, at most two independent narrow reads may run in parallel through the same
-already-connected native MCP owner and canonical cache. This exception is for genuinely independent
-bounded reads, not several speculative searches "to see what sticks." Never parallelize
-`query_graph`, `get_architecture`, initialization, status polling, indexing, deletion, or recovery.
-Never launch CBM through CLI or shell as a concurrency or recovery strategy.
+Independent bounded read operations may run concurrently through the same already-connected native
+MCP owner, canonical cache, and project; do not impose an arbitrary concurrency count. Dependent calls
+wait for their prerequisites, and every mutation, initialization, indexing, deletion, and recovery
+operation remains sequential. Never launch several CLI processes for discovery or concurrency.
 
 Process lifecycle and index lifecycle are separate. A transport error does not authorize an index
 delete or reindex.
@@ -244,10 +243,10 @@ delete or reindex.
 ## Hybrid Workflow Pattern (The Core Loop)
 
 ```
-1. Marker/freshness state: reuse cached task state; 0-1 maintenance calls if needed
-2. CBM: one narrow search_graph
-3. CBM: 0-1 trace_path when relationships matter
-4. CBM: 0-1 get_code_snippet when useful
+1. CBM: useful search_graph calls until structural owners are found
+2. CBM: trace_path when relationships matter
+3. CBM: get_code_snippet after exact qualified symbols are known
+4. CBM: search_code when concept discovery materially helps
 5. Direct-read current source
 6. Focused rg only for its specific text/residue role
 7. Edit and test
@@ -265,7 +264,7 @@ After rg finds a text match, use trace_path on the containing function to check 
 ## Failure & Recovery
 
 When CBM returns nothing:
-1. Refine `search_graph` once only when a clearly better query exists.
+1. Refine `search_graph` while each subsequent query is usefully informed by prior results.
 2. If still unresolved, use direct source and focused `rg` as an explicit coverage fallback.
 3. Record the CBM limitation; do not start a speculative search/freshness chain.
 
@@ -376,8 +375,7 @@ Tested on: runCardWithContract — CBM shows 1 caller (spec test), but function 
 ## Pre/Post-Edit Checklist
 
 Before edit:
-- [ ] maintenance marker and cached task freshness state inspected once when relevant
-- [ ] search_graph locates symbol
+- [ ] search_graph resolves the required structural owners
 - [ ] trace_path used only when relationships/impact matter
 - [ ] get_code_snippet used only when its bounded source helps
 - [ ] current source directly read
@@ -396,9 +394,9 @@ After edit:
 @guardrail id=codebasedmemory.no-fake-code-understanding
 @guardrail id=codebasedmemory.source-wins-on-disagreement
 @guardrail id=codebasedmemory.no-reflexive-reindex
-@guardrail id=codebasedmemory.no-destructive-index-delete
+@guardrail id=codebasedmemory.exact-main-projection-maintenance
 
 ## Query Records
 
-@query id=codebasedmemory.current-code "reuse one cached freshness state, search_graph once, trace_path and get_code_snippet only when needed, then direct-read current source"
+@query id=codebasedmemory.current-code "search_graph until structural owners are found, then useful trace_path, get_code_snippet, current source, and focused residue proof"
 @query id=codebasedmemory.skill-match "retrieve skills using user intent, active CoderPacket, fresh CBM files and symbols, subsystem boundaries, and required proof"

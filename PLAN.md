@@ -187,21 +187,28 @@ today’s runtime.
   Hermes, LocalCoder, AutoGen, and the other large imported/runtime roots.
 - `C-Projects-Hermes` and `C-Projects-LocalCoder` exist only for explicit work inside those vendors.
   Do not query, refresh, preload, or cross-link them during ordinary core work.
-- CBM-first means a small sequential navigation chain, not exhaustive tool use: normally
-  `search_graph`, then `trace_path` only when relationships matter, then `get_code_snippet` only when
-  useful, followed by direct source. Run exactly one CBM call at a time and stop when the subsystem is
-  bounded; excessive or concurrent graph calls can stall the service and add confusion rather than
-  evidence.
+- Normal CBM discovery centers on four tools: `search_graph`, `trace_path`, `get_code_snippet`, and
+  `search_code`. Continue useful, result-informed `search_graph` discovery until the actual structural
+  owners are found; there is no arbitrary call-count limit. Independent bounded reads may run
+  concurrently through the same canonical owner and project. Dependent calls and all mutations remain
+  sequential. Direct current source and focused tests remain authoritative.
 - The configured native server is the only CodeGraph authority.
 - Restricted Codex profiles may expose analysis tools without project/index tools. That restriction
   must be reported; missing tools must never be invented.
 - Dedicated full indexes passed at 147,002 nodes / 769,439 edges for Hermes and 25,466 nodes / 101,429
   edges for LocalCoder; those are observation-time measurements, not permanent expected counts.
-- The existing core project is currently unhealthy for normal use: after the new exclusions were
-  applied, it still retained 7,986 stale Hermes `File` nodes because in-place indexing did not prune
-  removed paths. The explicitly authorized delete call failed at the LiquidAIty SSE doorway with a
-  `404`, and the native profile did not expose `delete_project`. Do not call the core graph clean or
-  stable until one successful native delete/rebuild proves zero Hermes and zero LocalCoder files.
+- `C-Projects-main` is disposable derived state. A clean checkpoint means deleting that exact project,
+  fully rebuilding `C:/Projects/main`, and verifying readiness, counts, and exclusions; an in-place
+  reindex is not a substitute because deleted or newly excluded SQLite fragments may survive it.
+- Each Codex task in `C:/Projects/main` receives a `UserPromptSubmit` SOP requiring the active agent to
+  perform that exact delete, full rebuild, and one health/count/exclusion verification through the
+  already-connected native MCP owner once at task entry. Follow-ups, interruptions, clarifications,
+  compactions, and later messages reuse the task's completed entry state. The hook injects context only;
+  it never launches another CBM process or opens CBM storage.
+- After that checkpoint, use the four-step daily route: `search_graph` until the structural owners are
+  found; `trace_path` when relationships matter; `get_code_snippet` for exact qualified-symbol snapshots;
+  `search_code` for bounded concept/literal/residue discovery when useful; then direct-read current source.
+- The Git post-commit hook remains Git LFS only. No delayed marker or second CBM mutation frontend exists.
 
 ---
 

@@ -183,9 +183,7 @@ index swarm. Direct source and focused tests remain authoritative after graph di
 For code and architecture work:
 
 ```text
-inspect the maintenance marker and reuse the task's cached identity/freshness state
-→ list_projects / index_status at most once only when that state is not already known
-→ search_graph for exact symbols, routes, types, files, or concepts
+search_graph for exact symbols, routes, types, files, or concepts until the structural owners are found
 → trace_path for callers, callees, data flow, and impact
 → get_code_snippet for the exact qualified symbols
 → direct-read complete relevant current source bodies
@@ -207,19 +205,20 @@ code structure. Do not use CBM ranking as semantic truth.
   names unless the live schema says otherwise.
 - `get_code_snippet` — call only after `search_graph` gives an exact qualified name and only when its
   bounded source is useful before the complete direct read.
-- `query_graph` — use read-only Cypher for multi-hop questions or index metadata not exposed elsewhere.
-- `get_architecture` — obtain bounded structure, dependencies, routes, boundaries, layers, clusters,
-  and current node/edge/file counts.
 - `search_code` — graph-augmented text search after CBM has bounded the subsystem.
+- `query_graph` — use read-only Cypher for a specific bounded multi-hop question not answered by the
+  four normal tools.
+- `get_architecture` — obtain selected broad structure, dependencies, routes, boundaries, layers, or
+  clusters only when broad orientation is actually needed.
 - `detect_changes` — map tracked changes to symbols; it is not a replacement for Git status.
-- `index_repository` — refresh once only when explicitly needed. Never reflexively reindex before every
-  query, and never run it concurrently.
+- `index_repository` — run one full rebuild after the fixed Main entry deletion, or once for another
+  explicitly authorized maintenance reason. Never reindex before individual queries or run it concurrently.
 - `delete_project`, `ingest_traces`, and `manage_adr` are state-changing. The owner has granted the
   scoped standing maintenance authorization below for `delete_project`; trace ingestion and ADR
   mutation still require an explicit task.
 
-Do not treat this catalog as a checklist. Most tasks should need only one to three useful CBM calls.
-Prefer the smallest sequence that resolves the source boundary:
+Do not treat this catalog as a checklist. There is no arbitrary CBM call-count limit: continue making
+useful, result-informed structural searches until the source boundary is actually resolved. Prefer:
 
 ```text
 search_graph
@@ -228,17 +227,17 @@ search_graph
 → direct source
 ```
 
-Use `query_graph`, `get_architecture`, `search_code`, and indexing/status operations only when the task
-actually requires them. Stop querying as soon as CBM has bounded the files and symbols. More graph
-calls are not more proof and can make the native service slow or stuck.
+Use `query_graph`, `get_architecture`, and indexing/status operations only when the task actually
+requires them. Stop when CBM has bounded the files and symbols. Several useful searches are not a
+swarm; speculative or redundant searches disconnected from prior results are.
 
 ### Keep one calm lifecycle
 
 - Choose one native CBM doorway for the run.
-- Keep dependent discovery chains and all state-changing operations sequential. After project/task
-  state is established, at most two independent, narrow read calls may run in parallel through the
-  same already-connected native MCP owner and canonical cache. Never parallelize `query_graph`,
-  `get_architecture`, initialization, status polling, indexing, deletion, or recovery.
+- Independent bounded read operations may run concurrently through the same already-connected native
+  MCP owner and the same canonical project/database. Do not impose an arbitrary concurrency count.
+  Dependent calls still wait for their prerequisites; all state changes, initialization, indexing,
+  deletion, and lifecycle recovery remain sequential.
 - Check project/readiness once, not in a polling loop.
 - On timeout or closed transport, stop equivalent retries, report the doorway/error once, and retry at
   most once after a specific lifecycle repair.
@@ -251,22 +250,36 @@ Codex has unrestricted technical access to the native CBM catalog. Do not "groun
 disabling tools, adding an `enabled_tools` allowlist, switching the project to untrusted, or changing
 the global approval policy merely because one run behaved badly. Fix the bounded misuse instead.
 
-The owner authorizes `delete_project(project="C-Projects-main")` without another permission round-trip
-only when live evidence proves that this exact Main index is stale or polluted and deletion is
-necessary for one clean rebuild. Immediately before deletion:
+`C-Projects-main` is disposable derived projection state. Repository source and tests are authoritative.
+The owner authorizes exact-project deletion and immediate canonical rebuilding without another
+permission round-trip once at the start of each Codex task whose active repository is
+`C:/Projects/main`. This fixed task-entry checkpoint replaces freshness deliberation, delayed markers,
+and the proposed post-commit checkpoint. Immediately before deletion:
 
 1. use the native doorway only;
 2. verify the exact project name and root are `C-Projects-main` and `C:/Projects/main`;
-3. record the current index status/counts and the concrete pollution or revision mismatch;
+3. record the current index status/counts or the checkpoint reason;
 4. verify `.cbmignore` contains the intended current exclusions;
 5. ensure no index/delete/recovery operation is already running.
 
-Then perform exactly one delete, exactly one `index_repository` rebuild, and exactly one readiness/count
-verification. Never delete `C-Projects-Hermes`, `C-Projects-LocalCoder`, another project, repository
-source, or CBM storage files under this authorization. Never use delete/rebuild for an ordinary timeout,
-slow query, missing symbol, or connector failure. If the native delete tool is not exposed, restart the
-Codex MCP connection or begin a fresh thread; do not use a plugin duplicate, shell CLI, direct database
-access, or a second CBM process as a substitute.
+Then perform exactly one delete, exactly one full `index_repository` rebuild of `C:/Projects/main`, and
+one readiness/count/exclusion verification phase. Reindexing alone does not replace deletion because
+SQLite-backed incremental refresh can retain deleted or newly excluded fragments. Never delete
+`C-Projects-Hermes`, `C-Projects-LocalCoder`, another project, repository source, or CBM storage files
+under this authorization. Never use delete/rebuild for an ordinary timeout or connector failure.
+
+`UserPromptSubmit` injects this maintenance and discovery SOP, but the active agent executes maintenance
+only if the current Main task has not already completed its clean entry. Use the one already-connected
+native MCP owner; the hook itself must not launch a CLI, server, indexer, or direct database process.
+Record completion in task context and never repeat delete/rebuild for an interruption, follow-up,
+clarification, compaction, or another message in the same task. After the clean rebuild, verify the exact project/root,
+ready status, live node/edge/file counts, `.cbmignore` exclusions, and absence of vendor paths once.
+Then begin discovery with the four normal tools: `search_graph`, `trace_path` when relationships matter,
+`get_code_snippet` for exact qualified-symbol snapshots, and `search_code` for bounded concept/literal/
+residue discovery when useful. Outside `C:/Projects/main`, do not perform this Main maintenance.
+
+The Git post-commit hook remains Git LFS only. Do not install a second CBM mutation frontend, kill the
+normal Codex owner, or reintroduce a delayed marker system.
 
 ### Freshness proof
 
@@ -742,7 +755,9 @@ direction. Do not solve uncertainty by writing another document.
 ## Hard stops
 
 - No commit or push unless explicitly requested.
-- No destructive Git or data operation without explicit authorization and exact target verification.
+- No destructive Git, source, unknown-project, vendor-project, or direct database operation without
+  explicit authorization and exact target verification. Exact `C-Projects-main` projection maintenance
+  follows the standing authorization above.
 - No stubs, placeholders, mocked success, fake fallback, or silent degradation.
 - No hidden second route, MCP host, runtime, graph, renderer, event bus, or prompt system.
 - No provider/model fallback.
