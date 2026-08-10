@@ -1435,9 +1435,9 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert set(card_tool.inputSchema["required"]) == {"cardId", "input"}
     assert "AutoGen AssistantAgent card" in card_tool.description
     assert "instructionId" not in by_name["card.run_assistant_agent"].inputSchema["properties"]
-    assert {scheme["scopes"][0] for scheme in by_name["engraphis.recall"].model_dump()["securitySchemes"]} == {"main"}
-    assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump()["securitySchemes"]} == {"main"}
-    assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {"main"}
+    assert {scheme["scopes"][0] for scheme in by_name["engraphis.recall"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
+    assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
+    assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert by_name["cbm.search_graph"].description == "Native search description."
     assert by_name["cbm.search_graph"].inputSchema == native_cbm_tools[0].inputSchema
     assert by_name["coder.status"].annotations.readOnlyHint is True
@@ -1787,6 +1787,7 @@ env = {{
     'MCP_AUTH0_ISSUER_URL': 'https://tenant.auth0.com/',
     'MCP_AUTH0_AUDIENCE': '{resource}',
     'MCP_AUTH0_CLIENT_ID': 'chatgpt-client',
+    'MCP_AUTH0_REQUIRED_SCOPE': 'liquidaity.main',
     'MCP_OAUTH_ENFORCED': 'true',
 }}
 server_code = r'''\
@@ -1819,7 +1820,18 @@ try:
         raise failure or RuntimeError('oauth_metadata_not_ready')
     assert metadata['resource'] == '{resource}'
     assert metadata['authorization_servers'] == ['https://tenant.auth0.com/']
-    assert metadata['scopes_supported'] == ['main']
+    assert metadata['scopes_supported'] == [
+        'openid',
+        'profile',
+        'email',
+        'offline_access',
+        'liquidaity.main',
+    ]
+    root_metadata = json.load(urlopen(
+        'http://127.0.0.1:{port}/.well-known/oauth-protected-resource',
+        timeout=1,
+    ))
+    assert root_metadata == metadata
     try:
         urlopen(Request('http://127.0.0.1:{port}/mcp', data=b'{{}}', method='POST'), timeout=2)
         raise AssertionError('anonymous_mcp_was_accepted')

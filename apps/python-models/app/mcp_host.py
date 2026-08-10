@@ -116,8 +116,16 @@ PUBLIC_MCP_RESOURCE_URL = os.environ.get(
 AUTH0_ISSUER_URL = os.environ.get("MCP_AUTH0_ISSUER_URL", "").strip()
 AUTH0_AUDIENCE = os.environ.get("MCP_AUTH0_AUDIENCE", "").strip()
 AUTH0_CLIENT_ID = os.environ.get("MCP_AUTH0_CLIENT_ID", "").strip()
-AUTH0_REQUIRED_SCOPE = os.environ.get("MCP_AUTH0_REQUIRED_SCOPE", "main").strip()
-OAUTH_SCOPES = ("main",)
+AUTH0_REQUIRED_SCOPE = os.environ.get(
+    "MCP_AUTH0_REQUIRED_SCOPE", "liquidaity.main"
+).strip()
+OAUTH_SCOPES = (
+    "openid",
+    "profile",
+    "email",
+    "offline_access",
+    "liquidaity.main",
+)
 OAUTH_ENFORCED = os.environ.get("MCP_OAUTH_ENFORCED", "false").strip().lower() in {
     "1", "true", "yes", "on",
 }
@@ -1995,7 +2003,9 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
     for tool in tools:
         payload = tool.model_dump(by_alias=True, exclude_none=True)
         meta = dict(payload.get("_meta") or {})
-        security_schemes = [{"type": "oauth2", "scopes": list(OAUTH_SCOPES)}]
+        security_schemes = [
+            {"type": "oauth2", "scopes": [AUTH0_REQUIRED_SCOPE]}
+        ]
         native_system = next(
             (system for system, prefix in _NATIVE_PREFIXES.items() if tool.name.startswith(prefix)),
             None,
@@ -2506,7 +2516,7 @@ async def _run_streamable_http() -> None:
     from starlette.applications import Starlette
     from starlette.middleware.authentication import AuthenticationMiddleware
     from starlette.responses import PlainTextResponse
-    from starlette.routing import Mount
+    from starlette.routing import Mount, Route
 
     from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
     from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend, RequireAuthMiddleware
@@ -2546,13 +2556,19 @@ async def _run_streamable_http() -> None:
         protected_endpoint = AuthContextMiddleware(protected_endpoint)
         auth_backend: AuthenticationBackend = BearerAuthBackend(Auth0TokenVerifier(config_values))
         protected_endpoint = AuthenticationMiddleware(protected_endpoint, backend=auth_backend)
+        protected_resource_routes = create_protected_resource_routes(
+            resource_url=resource_url,
+            authorization_servers=[AnyHttpUrl(config_values.issuer_url)],
+            scopes_supported=list(OAUTH_SCOPES),
+            resource_name="Main MCP",
+        )
         routes = [
-            *create_protected_resource_routes(
-                resource_url=resource_url,
-                authorization_servers=[AnyHttpUrl(config_values.issuer_url)],
-                scopes_supported=[config_values.required_scope],
-                resource_name="Main MCP",
+            Route(
+                "/.well-known/oauth-protected-resource",
+                endpoint=protected_resource_routes[0].endpoint,
+                methods=["GET", "OPTIONS"],
             ),
+            *protected_resource_routes,
             Mount("/", app=protected_endpoint),
         ]
     else:
