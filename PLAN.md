@@ -139,13 +139,15 @@ today’s runtime.
 
 ### CURRENT — Hermes
 
-- Hermes source exists on disk under `C:\Projects\main\Hermes`, but the outer repository currently
-  records `Hermes` as a `160000` gitlink and has no matching `.gitmodules` entry. A clone of the outer
-  repository therefore does not yet prove that it contains the Hermes source. Correct vendoring and
-  clone/readback proof are required before calling Hermes repo-owned or Oracle-deployable.
-- Hermes itself provides a native one-shot mode that can execute one prompt and return only the final
-  response, and it provides richer persistent CLI/gateway/ACP surfaces that must be evaluated for
-  streaming Main Chat.
+- Hermes source and its Python environment exist under `C:\Projects\main\Hermes`; the current direct
+  filesystem inspection found no nested `.git`. Git mode, outer-repository tracking, and clone/readback
+  proof remain unverified in this task because the host blocked Git commands.
+- The repo-owned Hermes `0.20.0` executable passed a bounded one-shot prompt and a persistent two-turn
+  ACP session using repo-local `HERMES_HOME`; the second turn correctly recalled data from the first.
+  AppData Hermes was removed and was not recreated by those repo-owned tests.
+- ACP exposed streamed message, thought, command, session, and usage events. The tested ACP process
+  exited nonzero when its input connection closed, and `hermes doctor` exceeded the bounded health
+  window; graceful adapter shutdown and doctor behavior remain explicit baselines, not hidden passes.
 - The backend has a `HermesConsoleSessionManager`, but its current resolver prefers configured,
   PATH, or AppData-installed executables and its current session mode is interactive-only.
 - The existing Hermes card, prompt, tool grants, topology, terminal/Kanban work, and AgentGraph
@@ -181,7 +183,10 @@ today’s runtime.
 
 ### CURRENT — CBM
 
-- The canonical CBM project is `C-Projects-main` rooted at `C:/Projects/main`.
+- Normal work uses only `C-Projects-main`, rooted at `C:/Projects/main`. Its `.cbmignore` excludes
+  Hermes, LocalCoder, AutoGen, and the other large imported/runtime roots.
+- `C-Projects-Hermes` and `C-Projects-LocalCoder` exist only for explicit work inside those vendors.
+  Do not query, refresh, preload, or cross-link them during ordinary core work.
 - CBM-first means a small sequential navigation chain, not exhaustive tool use: normally
   `search_graph`, then `trace_path` only when relationships matter, then `get_code_snippet` only when
   useful, followed by direct source. Run exactly one CBM call at a time and stop when the subsystem is
@@ -190,12 +195,13 @@ today’s runtime.
 - The configured native server is the only CodeGraph authority.
 - Restricted Codex profiles may expose analysis tools without project/index tools. That restriction
   must be reported; missing tools must never be invented.
-- The latest observed analysis graph contained 151,034 nodes, 801,294 edges, and 8,326 files, but
-  those numbers are evidence for that observation only. Every implementation run must obtain and
-  report its own live counts and freshness state.
-- The currently observed Branch record has different `head_sha` and `base_sha`, so the graph is a
-  structural anchor rather than current-source proof. Direct source, active diff, tests, and runtime
-  proof outrank it.
+- Dedicated full indexes passed at 147,002 nodes / 769,439 edges for Hermes and 25,466 nodes / 101,429
+  edges for LocalCoder; those are observation-time measurements, not permanent expected counts.
+- The existing core project is currently unhealthy for normal use: after the new exclusions were
+  applied, it still retained 7,986 stale Hermes `File` nodes because in-place indexing did not prune
+  removed paths. The explicitly authorized delete call failed at the LiquidAIty SSE doorway with a
+  `404`, and the native profile did not expose `delete_project`. Do not call the core graph clean or
+  stable until one successful native delete/rebuild proves zero Hermes and zero LocalCoder files.
 
 ---
 
@@ -419,11 +425,10 @@ This is the launch-critical route. Execute it in order and stop forward expansio
 
 ### Fable 0 — repository and baseline truth
 
-1. Verify Git HEAD, worktree status, and whether `Hermes` is vendored source or an embedded gitlink.
-2. If Hermes is an unintended embedded repository, convert it to ordinary vendored source only
-   through an explicit reviewed Git operation; never delete its working files accidentally.
-3. Prove the repo-owned Hermes source entrypoint and dependency environment.
-4. Record focused baselines for current Main chat, Main UI transcript, Coder terminal, Local Coder,
+1. Verify Git HEAD, worktree status, outer-repository tracking, and clone/readback of vendored Hermes.
+2. Preserve Hermes working files and the controlled upstream-fork boundary during any Git correction.
+3. Preserve the proven repo-owned Hermes source entrypoint, environment, and repo-local state root.
+4. Preserve focused baselines for current Main chat, Main UI transcript, Coder terminal, Local Coder,
    saved-card resolution, Hermes console, Magentic-One, AgentGraph, and graph projections.
 5. Record current persisted deck topology separately from source templates.
 

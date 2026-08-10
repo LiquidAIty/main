@@ -158,26 +158,25 @@ manage_adr
 The live profile is authoritative. Restricted profiles may intentionally expose fewer tools. Report
 the missing project/status capability; do not invent results or start another CBM process.
 
-### Keep discovery inside the active product boundary
+### Keep discovery inside the active repository ownership boundary
 
-The ordinary LiquidAIty code-work scope is the core stack:
+One repository ownership boundary equals one CBM project:
 
-```text
-apps/backend/
-client/src/
-apps/python-models/
-services/knowgraph/
-```
+| Active ownership boundary | CBM project | Root | Normal use |
+| --- | --- | --- | --- |
+| LiquidAIty core | `C-Projects-main` | `C:\Projects\main` | Default for ordinary work |
+| Hermes vendor | `C-Projects-Hermes` | `C:\Projects\main\Hermes` | Only while explicitly working in Hermes |
+| OpenClaude/LocalCoder vendor | `C-Projects-LocalCoder` | `C:\Projects\main\localcoder` | Only while explicitly working in LocalCoder |
 
-`.cbmignore` intentionally excludes large nested or alternative products such as `localcoder/`,
-`worldsignal/`, `Kronos-main/`, `engraphis-main/`, vendored code, generated output, and scratch
-artifacts. Never bypass those exclusions for an ordinary core-stack task.
+The core project excludes the large imported and vendored roots in `.cbmignore`. Normal LiquidAIty
+work uses only `C-Projects-main`; do not query, preload, merge, or cross-link the Hermes or LocalCoder
+graphs merely because they exist. When a task explicitly crosses a vendor boundary, query the core
+and owning vendor projects separately and narrowly, then join the evidence in the CoderReport—not in
+a combined CBM graph.
 
-`Hermes/` is currently visible to CBM and is large. Query it only when the active task explicitly
-concerns Hermes. Use a path/file pattern, exact qualified symbol, or already-resolved file anchor;
-do not run broad repository-wide concept searches and then treat a wall of Hermes results as the
-LiquidAIty architecture. OpenClaude/LocalCoder work likewise starts from its documented boundary
-and exact anchors rather than scanning the excluded subtree.
+Other significant imported trees remain excluded from the core graph. Create or refresh another
+dedicated project only when active work actually enters that ownership boundary. Do not create an
+index swarm. Direct source and focused tests remain authoritative after graph discovery.
 
 ### The correct discovery order
 
@@ -295,6 +294,38 @@ If CBM omits a known current file or symbol:
 
 CBM is structural navigation, not a fake proof engine. Direct source, compile output, focused tests,
 persistence readback, and real runtime evidence win when they disagree with graph memory.
+
+---
+
+## Vendored source modification law
+
+Treat `Hermes/`, `localcoder/`, `autogen-main/`, `worldsignal/`, `Kronos-main/`, and other explicitly
+vendored or imported runtimes as controlled upstream forks, not ordinary LiquidAIty cleanup targets.
+Before a nontrivial vendor edit, the active CoderPacket must record:
+
+```text
+VENDORED PROJECT
+PURPOSE
+EXTERNAL ALTERNATIVE CHECK
+FILES AND SYMBOLS
+UPSTREAM BEHAVIOR PRESERVED
+CONTRACTS
+TESTS
+FORK COST
+ROLLBACK
+```
+
+Prefer an existing public adapter, configuration, plugin, hook, MCP, protocol, or documented extension
+point. Put LiquidAIty-owned integration logic on an existing LiquidAIty adapter boundary whenever that
+can satisfy the requirement; do not invent a new wrapper directory merely to avoid a justified vendor
+edit.
+
+Inside a vendor, prohibit broad cleanup, mass rename/format/type/dependency changes, speculative dead-
+code deletion, prompt rewrites, unrelated test rewrites, and upstream documentation or terminology
+changes. Use the vendor's dedicated CBM project first, then direct-read and test the exact upstream
+contract. Record every meaningful local divergence in the single vendored divergence register in
+`ARCHITECTURE.md`, including upstream URL, version or commit when known, local files/symbols, reason,
+proof, sync cost, and whether the change can later be removed.
 
 ---
 

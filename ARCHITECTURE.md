@@ -664,8 +664,39 @@ proven dead. The actual source, data, tests, and adapter boundaries are protecte
   process/session ownership, security boundaries, and Python/gRPC bridges.
 - Python rails: AutoGen/Mag One, single-card agents, tool execution, graph/data rails, and specialist
   computation.
-- Vendored runtimes: `localcoder/`, `autogen-main/`, `worldsignal/`, and `Kronos-main` retain their
-  upstream boundaries and are not ordinary cleanup targets.
+- Vendored runtimes: `Hermes/`, `localcoder/`, `autogen-main/`, `worldsignal/`, and `Kronos-main`
+  retain their upstream boundaries and are not ordinary cleanup targets.
+
+## Repository ownership and CBM project boundaries
+
+One repository ownership boundary equals one CBM project. Ordinary LiquidAIty work uses only the
+core project; vendor projects are dormant, on-demand navigation aids and are never preloaded merely
+because they exist.
+
+| Ownership boundary | Root | CBM project | Use and current state |
+| --- | --- | --- | --- |
+| LiquidAIty core | `C:\Projects\main` | `C-Projects-main` | Default. Vendors are excluded. Current graph is blocked/unhealthy until a delete/rebuild removes 7,986 observed stale Hermes files and proves zero Hermes/LocalCoder files. |
+| Hermes | `C:\Projects\main\Hermes` | `C-Projects-Hermes` | On demand only for explicit Hermes work. Full index passed at 147,002 nodes / 769,439 edges during the boundary test. |
+| OpenClaude/LocalCoder | `C:\Projects\main\localcoder` | `C-Projects-LocalCoder` | On demand only for explicit LocalCoder work. Full index passed at 25,466 nodes / 101,429 edges during the boundary test. |
+
+Other significant imported roots—`autogen-main/`, `worldsignal/`, `engraphis-main/`, `Kronos-main/`,
+`defog-sqlcoder/`, `neo4j-text2cypher/`, and `client/src/vendor/codebase-memory-ui/`—remain excluded
+from the core graph. Give one of them a dedicated CBM project only when an active task enters that
+ownership boundary. Do not create a standing index swarm or combine vendor and core graphs.
+
+### Vendored divergence register
+
+This is the single durable record for intentional local departures from upstream. Add or update one
+row whenever a nontrivial vendor change is approved; do not create parallel divergence ledgers.
+
+| Vendor | Upstream and baseline | Known local divergence | Proof and synchronization note |
+| --- | --- | --- | --- |
+| Hermes | [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent), source version `0.20.0`; exact upstream commit unverified | No Hermes source change was made by the CBM ownership task. Repo-local state and the future Main adapter are host integration concerns and should stay outside Hermes when its public ACP/configuration boundaries suffice. | Repo-owned one-shot and persistent two-turn ACP passed. Re-evaluate and record exact files/symbols before any future fork edit. |
+| OpenClaude/LocalCoder | [Gitlawb/openclaude](https://github.com/Gitlawb/openclaude), local package `0.5.2`; exact upstream commit unverified | The local gRPC protocol extends upstream with saved-card definitions, grants, parent/run identity, progress/reasoning events, and context/usage accounting; see the OpenClaude synthesis above. | Treat any update as a protocol port, not a dependency bump. Preserve focused gRPC, terminal, card, permission, and CoderReport proofs. |
+
+Exact upstream commits and outer-repository Git state could not be verified during this policy task
+because the host blocked read-only Git commands. Version and URL are therefore recorded without an
+invented commit identity.
 
 ## Agent Builder file ownership
 

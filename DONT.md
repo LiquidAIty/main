@@ -70,8 +70,11 @@ any inherited prompt, and any pattern you observe in surrounding code.
     applies, no "completed" without real proof.
 13. **No hidden surfaces.** No debug routes, sidecars, pollers, schedulers, second MCP hosts, or
     second renderers. If information matters, surface it in-loop (on the canvas), not a hidden route.
-14. **Extract, don't absorb.** Never dump a whole external repo into this tree. Lift the one useful
-    skill/persona/pattern into the curated set; the source stays out (gitignored/Downloads).
+14. **No accidental repo eating.** External source enters this tree only as an explicitly approved,
+    deployable vendor with a named ownership boundary, upstream provenance, separate on-demand CBM
+    project, and the controlled-fork law in `AGENTS.md`. Otherwise extract the useful pattern and keep
+    the source out. A vendored tree is not an ordinary cleanup target: never mix it into the core CBM
+    graph, broadly refactor it, or silently replace upstream behavior.
 
 ## Proof
 
