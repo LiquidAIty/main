@@ -1361,18 +1361,16 @@ class _NativeStdioMcpClient:
 
 
 def _native_cbm_config() -> tuple[str, list[str], str]:
-    """Read the same native CBM stdio command used by the backend."""
+    """Resolve the one repo-owned native CBM executable."""
     repo_root = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
-    config_path = os.path.join(repo_root, "apps", "backend", "mcp.config.json")
-    with open(config_path, encoding="utf-8") as stream:
-        configured = (json.load(stream).get("mcpServers") or {}).get("codebase-memory")
-    if not isinstance(configured, dict) or configured.get("transport") not in (None, "stdio"):
-        raise RuntimeError("native_cbm_stdio_config_missing")
-    command = os.path.expandvars(str(configured.get("command") or "")).strip()
-    args = configured.get("args") or []
-    if not command or not isinstance(args, list):
-        raise RuntimeError("native_cbm_stdio_config_invalid")
-    resolved_args = [str(arg) for arg in args]
+    command = os.path.join(
+        repo_root,
+        ".tools",
+        "codebase-memory-mcp",
+        "bin",
+        "codebase-memory-mcp.exe",
+    )
+    resolved_args: list[str] = []
     if os.getenv("CBM_UI_ENABLED", "").strip().lower() in {
         "1", "true", "yes", "on"
     }:

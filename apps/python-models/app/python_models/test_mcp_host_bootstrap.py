@@ -992,7 +992,14 @@ def test_http_mcp_enables_native_cbm_ui_without_changing_shared_config(monkeypat
 
     monkeypatch.delenv("CBM_UI_ENABLED", raising=False)
     monkeypatch.delenv("CBM_UI_PORT", raising=False)
-    _command, default_args, _cwd = mcp_host._native_cbm_config()
+    command, default_args, cwd = mcp_host._native_cbm_config()
+    assert command == os.path.join(
+        cwd,
+        ".tools",
+        "codebase-memory-mcp",
+        "bin",
+        "codebase-memory-mcp.exe",
+    )
     assert "--ui=true" not in default_args
     assert not any(arg.startswith("--port=") for arg in default_args)
 

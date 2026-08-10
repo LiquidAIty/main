@@ -15,6 +15,7 @@
     "dev:tunnel": "ngrok http 8765 --url https://exemption-unstable-wolverine.ngrok-free.dev",
     "dev:all": "concurrently --names autogen,backend,grpc,frontend,knowgraph,mcp,tunnel --prefix-colors cyan,magenta,yellow,green,blue,white,gray \"npm run dev:autogen\" \"npm run dev:backend\" \"npm run dev:grpc\" \"npm run dev:frontend\" \"npm run dev:knowgraph\" \"npm run dev:mcp\" \"npm run dev:tunnel\"",
     "plugin:preflight": "apps\\python-models\\.venv\\Scripts\\python.exe scripts\\plugin-preflight.py",
+    "mcp:setup": "powershell -ExecutionPolicy Bypass -File scripts/setup-codebase-memory-mcp.ps1",
     "mcp:check": "powershell -ExecutionPolicy Bypass -File scripts/check-codebase-memory-mcp.ps1",
     "typecheck": "npm run typecheck --workspace client && npm run typecheck --workspace apps/backend",
     "typecheck:spec": "npm run typecheck:spec --workspace client && npm run typecheck:spec --workspace apps/backend",

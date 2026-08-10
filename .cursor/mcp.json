@@ -2,10 +2,6 @@
   "mcpServers": {
     "nx-mcp": {
       "url": "http://localhost:9058/sse"
-    },
-    "codebase-memory-mcp": {
-      "type": "stdio",
-      "command": "C:\\cbm\\codebase-memory-mcp.exe"
     }
   }
 }
