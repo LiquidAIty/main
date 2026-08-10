@@ -10,3 +10,7 @@ GEMINI.md
 package-lock.json
 /.claude
 coverage/
+
+# Legacy Graft evaluation cache. LocalCoder is outside the approved Graft scan
+# scope; keep any remaining cache invisible until it is deleted.
+graft/

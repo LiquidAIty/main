@@ -7,6 +7,12 @@
 # Default owned Local Coder workspace (handoff prompts, returned model artifacts,
 # and the Coder's own generated repos/apps) — never part of the LiquidAIty app repo.
 /coder-workspace/
+
+# Repo-local Hermes runtime data. Source lives visibly in /Hermes, while
+# profiles, credentials, sessions, databases, caches, backups, and the rebuilt
+# virtual environment stay local and must never be committed.
+/Hermes/.hermes/
+/Hermes/venv/
 coder-workspace/handoff/
 coder-workspace/returns/
 
