@@ -38,6 +38,12 @@ transports stable identities and the saved card topology. Python claims the corr
 assignment, hydrates its exact relational instruction and context references, executes native Mag One,
 then persists the correlated result and failure state.
 
+That is the CURRENT controller topology. The approved experiment may later move the one
+`magentic_control` authority from Main to the existing Hermes card after real Hermes execution is
+proven. The transition must update saved topology, source, and focused tests together; Main and Hermes
+must never retain competing control edges. Hermes may steward Magentic-One, but native AutoGen remains
+the execution runtime and AgentGraph remains assignment/result-lineage authority.
+
 Saved Agent Cards remain the authority for permanent prompt, provider/model, tools, permissions, and
 runtime binding. AgentGraph stores operational instructions, assignments, attempts, references, results,
 and traversal-worthy lineage; it does not copy card configuration, native graph records, or execute
@@ -64,7 +70,9 @@ run_mag_one({instructionId, projectId, deckId, conversationId})
 1. TypeScript does not resolve instruction Markdown, execute SQL/Cypher, or write AgentGraph lineage.
 2. Python AutoGen/Mag One remains the execution runtime; PostgreSQL/AGE is storage and lineage.
 3. Saved cards remain the permanent configuration authority.
-4. Main control and worker eligibility come from saved topology, not card names or TS classifiers.
+4. The single controller and worker eligibility come from saved topology, not card names or TS
+   classifiers. CURRENT controller is Main; TARGET experiment may replace it with Hermes, never add a
+   second controller.
 5. AgentGraph handoffs contain bounded text and native references, never copied graph records or saved queries.
 6. Receiving agents read the handoff without receiver-specific query registration or another policy layer.
 7. Results, failures, attempts, cancellation, and parent/child assignments remain correlated by

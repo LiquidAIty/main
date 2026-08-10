@@ -8,9 +8,10 @@ proof_level: cbm_anchor_verified_and_source_verified
 cbm:
   project_identity: C-Projects-main
   index_root: C:/Projects/main
-  full_index_nodes: 5472
-  full_index_edges: 17093
-  freshness: ready
+  observed_nodes: 151034
+  observed_edges: 801294
+  observed_files: 8326
+  freshness: structural_only_revision_behind_git_head
 
 roots:
   files:
@@ -51,6 +52,18 @@ The current Harness turns the saved Hermes card into a generic inherited-context
 definition. That preserves the correct card, prompt, model, edge, and tool-grant boundary, but it
 does not launch or prove the installed Hermes runtime. Treat it as pre-integration plumbing, not
 as native Hermes execution.
+
+## Approved replacement boundary
+
+This manifest describes the current Main transport. The approved launch target keeps the
+LiquidAIty chat UI, transcript, streaming, permission, cancellation, correlation, and saved-card
+contracts while replacing Main execution with one real repo-owned Hermes adapter. OpenClaude remains
+the contained under-chat Coder and bounded Local Coder/CoderReport runtime.
+
+The migration must not leave OpenClaude as a hidden Main fallback or permanent A/B Main. After the
+Hermes Main path passes the Preservation Set, delete only the superseded OpenClaude Main-specific
+route/client/session assembly and its obsolete tests. Preserve every OpenClaude Coder caller and
+contract. Until that proof exists, every section below remains CURRENT behavior rather than TARGET.
 
 ## What the user/agent experiences
 
@@ -121,8 +134,9 @@ Mag One (separate MCP-bridge endpoints):
    outcome but is never a mandatory node-anchor packet.
 8. Do not claim Hermes research, report revision, or Run Plan preparation until a real Hermes
    process produced runtime evidence.
-9. Only Mag One/Coder execution is user-gated; `run_mag_one` additionally requires Main's
-   `magentic_control` edge.
+9. Only Mag One/Coder execution is user-gated. CURRENT `run_mag_one` requires Main's
+   `magentic_control` edge. TARGET may move that one structural authority to the Hermes experiment
+   card only when source, topology, and focused tests change together; never permit both controllers.
 10. UTF-8 survives gRPC and SSE chunk boundaries exactly.
 
 ## Start in CBM

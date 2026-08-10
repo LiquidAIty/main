@@ -1,86 +1,144 @@
-# AGENTS.md
+# AGENTS.md — LiquidAIty execution law
 
-## STOP — read [DONT.md](./DONT.md) first
+This file tells every coding agent how to work in `C:\Projects\main`. It is repository law, not a
+product prompt and not a substitute for current source, tests, or runtime proof.
 
-Before anything else, read **[DONT.md](./DONT.md)**. This repo has been cleaned of well over
-**200,000 lines** of layered spaghetti — see the DONT.md purge log for the running tally. It keeps
-coming back because agents add new approaches without deleting the old ones, and mimic the mess.
-DONT.md is the rule set that prevents you from doing that. The one that matters most: **when you
-change approach, DELETE the abandoned path in the same change — never layer new over old.**
-TS = transport/pixels, Python = rails, models = brain. The UI is a UI, not a calculator; all logic is Python + models.
+## Start here
 
-**Quantified warning (2026-07-05 audit sweep):** in one sweep, **74 files / ~9,248 lines** of dead
-non-vendored code were deleted (3 commits, every stack green throughout) — and *every one of those
-files "worked" before it was deleted.* They came from exactly **two habits, both of which you must
-not repeat**: (1) a big file gets "split up" (the GPT "your 15k-line file is too big, I'll break it
-up" move) and the pieces are never deleted or wired back — they end up imported only by their own
-spec; (2) a config/service/script/duplicate is scaffolded "for later" and later never comes
-(`jest.config.js` shipped as a literal `{{ ... }}` placeholder; `utils/urlGuard.ts` duplicated the
-live `security/urlGuard.ts`; `.mjs` scripts nx can't even see). **If you split a file, delete the
-original and prove every piece has a live importer. If you scaffold, wire it now or don't write it.
-No duplicates, no placeholders, no `.mjs`.**
+Before doing anything else:
 
-## Code-Based Memory First
+1. Read [DONT.md](./DONT.md) completely.
+2. Read [PLAN.md](./PLAN.md) completely.
+3. Read the explicitly relevant `wiki/*.md` feature manifests.
+4. Read the relevant `skills/*.md` procedures.
+5. Establish Git and native Codebase Memory state.
+6. Use CBM to resolve the structural slice.
+7. Direct-read the current source CBM identified.
+8. Only then plan or edit.
 
-Code-Based Memory / CodeGraph is the first code-discovery system for this repo.
+The repository has deleted well over 200,000 lines of layered experiments. The most important rule is:
 
-Before planning code work, before editing, and before claiming what a file does, use Code-Based Memory.
+> When an approach changes, delete the abandoned path in the same implementation change. Never
+> declare a replacement complete while the replaced path remains live.
 
-Do not start with broad grep.
-Do not start with random file opening.
+Law in one line:
 
-**Skills:** See `skills/codebasedmemory.md` for the canonical CBM tool reference.
-The previously referenced `skills/ai-native-runtime-awareness.md` does not exist and must not be
-treated as an active runtime contract.
-Do not guess from memory.
-Do not claim code behavior without direct reads.
-Do not treat stale graph memory as proof.
-
-## Current Runtime Boundaries
-
-- Main Chat runs through the persistent OpenClaude-derived gRPC Harness.
-- The real OpenClaude Code terminal/PTY is the Coder surface intended below Main Chat.
-- `run_local_coder` and the Local Coder card are working bounded coding paths and are not cleanup
-  residue.
-- Hermes is correctly positioned as a Main sub-agent. Preserve its card, prompt, edges,
-  inherited-context selection, tool grants, and process-launch boundary.
-- The current inherited-context Agent named Hermes is pre-integration plumbing, not proof that the
-  external Hermes runtime executed. Actual Hermes must eventually launch through one real adapter,
-  potentially through the OpenClaude process/terminal boundary.
-- Hermes gets its own terminal or UI when that runtime is integrated. A Hermes activity panel is not
-  the OpenClaude Coder terminal and must not occupy the under-chat Coder slot.
-- ThinkGraph is the current SQL/SQLite Engraphis project-reasoning store.
-- KnowGraph is Neo4j sourced knowledge/provenance.
-- CodeGraph is CBM repository structure.
-- Apache AGE is the AgentGraph handoff/result-lineage authority and is not ThinkGraph.
-
-The normal code-work order is:
-
-```txt
-read AGENTS.md
-read PLAN.md
-read selected wiki/*.md feature manifest(s)
-read relevant skills/*.md
-refresh or prove Code-Based Memory
-record CBM project/root/status/nodes/edges
-use CBM graph tools to find files/symbols/routes/relationships
-direct-read the resolved files
-then plan or edit
+```text
+TypeScript = transport and pixels
+Python rails = runtime and deterministic computation
+models = semantic reasoning
+saved cards and graph topology = identity and authority
 ```
 
-Direct reads, compile output, focused tests, and live smoke proof beat graph memory if they disagree.
+Do not imitate nearby spaghetti. Follow this file and DONT.md.
 
-CBM is a structural code-navigation system.
+---
 
-CBM is not a fake proof engine.
+## Current truth versus approved target
 
-## Code-Based Memory MCP Tools
+Never collapse CURRENT and TARGET into one claim.
 
-Codebase-Memory exposes 14 MCP tools.
+### CURRENT
 
-The 14 tools are:
+- Main Chat currently runs through the persistent OpenClaude-derived gRPC Harness.
+- The saved Hermes doorway currently becomes a generic inherited-context Harness agent; that is not
+  proof that repo-owned Hermes executed.
+- A Hermes console manager and Hermes/Kanban surfaces exist, but real Main-to-Hermes execution is not
+  complete.
+- OpenClaude persistent terminal and Local Coder/CoderReport are working Coder surfaces.
+- The Knowledge workspace has a real 2D native force-directed graph surface.
+- The Agent Canvas can visually activate cards and edges, but its composition currently supplies no
+  live activity IDs.
+- The current live ThinkGraph presentation derives transient graph projection from streamed prose;
+  this is not the desired native context-activity contract.
 
-```txt
+### APPROVED TARGET
+
+- Repo-owned Hermes becomes Main Chat and the general/research runtime.
+- OpenClaude remains the contained Coder and under-chat terminal.
+- The existing Hermes card is the bounded Hermes/AutoGen experiment and may steward the one native
+  Magentic-One runtime.
+- Real native graph reads, Context Selections, handoffs, consumption, traversal, and writes drive the
+  two visual canvases.
+- The replaced OpenClaude Main-only path and transient-prose graph activity path are deleted only
+  after their replacements pass preservation proof.
+
+Do not document TARGET behavior as CURRENT. Do not preserve an abandoned runtime as a hidden fallback.
+
+---
+
+## Working with the owner
+
+The owner frequently supplies long, exploratory, rapidly typed messages while reasoning about the
+system. Treat them as high-bandwidth design input, not as permission to guess or as evidence that the
+idea is unserious.
+
+### Recover intent without patronizing
+
+- Normalize spelling and phrasing mentally; respond to the underlying architecture or product need.
+- Consolidate a long message into one Requested Delta, one Preservation Set, and an ordered route.
+- State the consolidation plainly so the owner can correct it.
+- Do not make the owner repeatedly restate decisions already made in the same task.
+- Do not call an idea dumb, delusional, confused, or impossible. Identify the concrete cost,
+  contradiction, missing authority, or proof gap instead.
+- Do not flatter. Give a direct evidence-calibrated assessment.
+
+### Most recent explicit decision wins
+
+Exploration is not approval to delete a capability. A historical migration is not a current product
+decision. When the owner explicitly retains a feature—such as generic typed SQL/Cypher in IDF—record
+that decision and do not silently narrow it because an earlier implementation was removed.
+
+If a new explicit decision replaces an older approach:
+
+1. identify the exact changed decision;
+2. identify the old implementation path it supersedes;
+3. preserve unrelated working behavior;
+4. delete the superseded path when the replacement is actually implemented and proven;
+5. update canonical docs so contradictory plans do not coexist.
+
+### Ask only when the choice is materially irreversible
+
+Proceed with reasonable bounded assumptions for ordinary read-only discovery and normal implementation
+steps. Stop and ask when a missing decision would change storage authority, delete data, change a public
+contract, spend significant money, message external people, or create an irreversible migration.
+
+### Idea Reality Check
+
+Before adding a framework, runtime, graph, schema, service, scheduler, event bus, or major UI surface,
+the agent must answer:
+
+```text
+What user problem is unsolved?
+Which existing owner should solve it?
+Why can the existing owner not solve it?
+What is the smallest reversible experiment?
+What existing path will this replace?
+What observable result means keep it?
+What observable result means remove it?
+```
+
+This is an agent reasoning discipline. Never implement it as a deterministic keyword classifier,
+content filter, prompt rewriter, approval gate, or TS router. An explicit owner decision overrides the
+experiment recommendation; the agent should record the tradeoff rather than covertly veto it.
+
+---
+
+## Codebase Memory is mandatory first navigation
+
+Codebase Memory / CodeGraph is the repository structure authority. The canonical project is:
+
+```text
+project: C-Projects-main
+root:    C:/Projects/main
+```
+
+Use the native `codebase-memory-mcp` server. Do not launch CBM through PowerShell, CLI wrappers, Python,
+Node, or another MCP host. Do not open its SQLite files. Do not write a replacement search façade.
+
+The full native catalog may expose:
+
+```text
 index_repository
 index_status
 list_projects
@@ -97,754 +155,566 @@ search_code
 manage_adr
 ```
 
-### Indexing tools
+The live profile is authoritative. Restricted profiles may intentionally expose fewer tools. Report
+the missing project/status capability; do not invent results or start another CBM process.
 
-```txt
-index_repository
-index_status
-list_projects
-delete_project
+### Keep discovery inside the active product boundary
+
+The ordinary LiquidAIty code-work scope is the core stack:
+
+```text
+apps/backend/
+client/src/
+apps/python-models/
+services/knowgraph/
 ```
 
-Use `index_repository` to build or update the graph for the repo.
+`.cbmignore` intentionally excludes large nested or alternative products such as `localcoder/`,
+`worldsignal/`, `Kronos-main/`, `engraphis-main/`, vendored code, generated output, and scratch
+artifacts. Never bypass those exclusions for an ordinary core-stack task.
 
-Use `index_status` to verify index state before relying on CBM.
+`Hermes/` is currently visible to CBM and is large. Query it only when the active task explicitly
+concerns Hermes. Use a path/file pattern, exact qualified symbol, or already-resolved file anchor;
+do not run broad repository-wide concept searches and then treat a wall of Hermes results as the
+LiquidAIty architecture. OpenClaude/LocalCoder work likewise starts from its documented boundary
+and exact anchors rather than scanning the excluded subtree.
 
-Use `list_projects` to confirm the indexed project/root is the repo actually being edited.
+### The correct discovery order
 
-Use `delete_project` only when explicitly requested. Removing an index is destructive to the local graph state.
+For code and architecture work:
 
-### Query tools
+```text
+list_projects / project identity
+→ index_status / revision and readiness
+→ get_architecture only when broad orientation is useful
+→ search_graph for exact symbols, routes, types, files, or concepts
+→ trace_path for callers, callees, data flow, and impact
+→ get_code_snippet for the exact qualified symbols
+→ direct-read complete relevant current source bodies
+→ focused rg for literals, configs, comments, non-code, missing coverage, and exhaustive residue
+→ edit
+→ focused tests and compile/build
+→ direct reread and diff
+→ post-edit CBM impact/coverage when available
+```
 
-```txt
+Do not begin with broad `rg`, random file opening, or recursive directory tours when the task concerns
+code structure. Do not use CBM ranking as semantic truth.
+
+### Tool selection
+
+- `search_graph` — default first call; find functions, methods, classes, routes, fields, modules, and
+  structural concepts.
+- `trace_path` — call next only when caller/callee or impact relationships matter. Use simple symbol
+  names unless the live schema says otherwise.
+- `get_code_snippet` — call only after `search_graph` gives an exact qualified name and only when its
+  bounded source is useful before the complete direct read.
+- `query_graph` — use read-only Cypher for multi-hop questions or index metadata not exposed elsewhere.
+- `get_architecture` — obtain bounded structure, dependencies, routes, boundaries, layers, clusters,
+  and current node/edge/file counts.
+- `search_code` — graph-augmented text search after CBM has bounded the subsystem.
+- `detect_changes` — map tracked changes to symbols; it is not a replacement for Git status.
+- `index_repository` — refresh once only when explicitly needed. Never reflexively reindex before every
+  query, and never run it concurrently.
+- `delete_project`, `ingest_traces`, and `manage_adr` — state-changing; require explicit owner request.
+
+Do not treat this catalog as a checklist. Most tasks should need only one to three useful CBM calls.
+Prefer the smallest sequence that resolves the source boundary:
+
+```text
 search_graph
-trace_path
-query_graph
-ingest_traces
+→ trace_path only if relationships matter
+→ get_code_snippet only if the bounded snippet adds value
+→ direct source
 ```
 
-Use `search_graph` to find symbols, functions, classes, files, routes, and graph entities.
+Use `query_graph`, `get_architecture`, `search_code`, and indexing/status operations only when the task
+actually requires them. Stop querying as soon as CBM has bounded the files and symbols. More graph
+calls are not more proof and can make the native service slow or stuck.
 
-Use `trace_path` for inbound/outbound call-chain traversal and impact reasoning.
+### Keep one calm lifecycle
 
-Use `query_graph` for Cypher-like graph queries when the normal search result is not enough.
+- Choose one native CBM doorway for the run.
+- Use sequential calls always; exactly one CBM call in flight. Never parallelize CBM calls.
+- Check project/readiness once, not in a polling loop.
+- On timeout or closed transport, stop equivalent retries, report the doorway/error once, and retry at
+  most once after a specific lifecycle repair.
+- Never start several CLI/indexer processes to make CBM “faster.”
+- Never delete/rebuild an index as generic process recovery.
 
-Use `ingest_traces` only when runtime trace data is intentionally being imported.
+### Freshness proof
 
-### Analysis tools
+A useful CBM report contains:
 
-```txt
-detect_changes
-get_graph_schema
-get_architecture
-```
-
-Use `get_graph_schema` to learn node and edge types before writing graph queries.
-
-Use `get_architecture` to get a structural architecture summary.
-
-Use `detect_changes` only when change-impact analysis is explicitly in scope. Do not use it as permission to rely on git diff by default.
-
-### Code tools
-
-```txt
-get_code_snippet
-search_code
-manage_adr
-```
-
-Use `get_code_snippet` for source retrieval after graph discovery.
-
-Use `search_code` for full-text search after CBM has bounded the area.
-
-Use `manage_adr` only for architecture-decision records when the user explicitly wants that kind of durable record. Do not create ADR/documentation sprawl by default.
-
-## How To Use CBM In This Repo
-
-Use CBM to answer:
-
-```txt
-what files matter?
-what symbols matter?
-what routes matter?
-what calls what?
-what imports what?
-what tests what?
-what breaks if this changes?
-what files are missing from the index?
-is the index fresh enough?
-what is safe to edit?
-what proof should be run?
-```
-
-Minimum CBM proof before edits:
-
-```txt
-project/root matched
-index status ready or explicitly blocked
-node count recorded
-edge count recorded
-relevant files found
-relevant symbols/routes found when available
-direct reads completed after graph lookup
-```
-
-If CBM is stale, unavailable, mismatched to the repo root, or missing required files, block the run and report the exact reason.
-
-Do not silently fall back to grep as if CBM were fresh.
-
-Grep/text search is allowed only after CBM bounds the area or when reporting that CBM is blocked/unavailable.
-
-## CBM Freshness Rules
-
-A CBM result is not fresh merely because a command returned.
-
-A useful CBM freshness report includes:
-
-```txt
+```text
 project name
-project root
-index status
-nodes
-edges
-indexed file count if available
-missing files if detected
-excluded vendored files if detected
-fresh/stale/unknown/blocked status
+canonical root
+index status or exact reason unavailable
+node count
+edge count
+indexed file count when exposed
+index head/base revision when exposed
+current Git HEAD when available
+dirty/untracked state from Git
+known exclusions or missing files
+fresh | stale | divergent | unknown | blocked
 ```
 
-The canonical index tracks committed source. When the worktree is clean and
-`index_status.git.head_sha` / `base_sha` equal current `HEAD`, treat committed source as fresh; the
-local post-commit hook refreshes `C-Projects-main`.
+Never copy old counts from this document, a wiki manifest, memory, or another run. Obtain live values.
 
-Dirty tracked edits and intentional untracked files are expected to diverge from that committed
-index. Do not call that divergence an index defect, ask to reindex it, or expect uncommitted files
-to have File/symbol nodes. Use the committed graph for structural anchors, then inspect the active
-diff and direct source for uncommitted work. Refresh only after commit or when the user explicitly
-requires a working-tree graph refresh.
+The committed graph can remain useful when the working tree is dirty. Use it for structural anchors,
+then inspect the active diff and direct source. Do not call ordinary dirty-worktree divergence a CBM
+defect. Refresh after commit, or when the owner explicitly requires a working-tree refresh.
 
-If node/edge counts do not change after expected new code, do not assume freshness. Confirm by file/symbol search and direct read.
+If `head_sha` and `base_sha` differ, or if CBM cannot be tied to current Git HEAD, call the index
+structural-only/divergent. Do not block all work automatically; use bounded direct-source verification
+and report the limitation.
 
-Never invent an indexed revision, indexed timestamp, chunk count, node count, or edge count.
+### Evidence tiers
 
-## Feature Manifest Registry
+**Scout** — a few narrow searches for provisional positive discovery. Never make exhaustive absence,
+dead-code, or deletion claims from Scout evidence.
 
-`wiki/*.md` is the flat Feature Manifest registry. One file equals one real product or
-runtime feature. Each feature manifest is a compact semantic pointer card — not a
-source-of-truth replacement and not a mini manual.
+**Verify** — project/status, exact search, relevant traces, qualified snippets, complete direct source,
+focused residue search, focused tests. Required for normal implementation.
 
-A feature manifest tells an agent:
-- what the feature is and what user/agent outcome it exists for;
-- what must not break;
-- where to start in CBM (exact file paths + simple symbol names);
-- which code landmarks matter;
-- what proof is valid;
-- what remains risky or unproven.
+**Auditor** — paginate every relevant result set, inspect inbound/outbound impact, verify skipped or
+missing paths directly, and state coverage limits. Required for safe deletion, duplicate-authority,
+dead-code, and exhaustive claims.
 
-Source code, tests, persisted data, real runtime evidence, and fresh CBM remain
-authoritative over any feature manifest. A manifest is stale when its anchors drift
-from the live codebase.
+### Direct-source fallback
 
-Before a coding task touching a known feature, the explicitly selected feature
-manifest(s) are loaded and their anchors are re-resolved through live CBM.
+If CBM omits a known current file or symbol:
 
-Primary and supporting features are selected by the Planner, current CoderPacket, or current
-SPEC — never inferred by regex, phrase routing, or automatic classification.
+1. verify the exact path exists and is in the requested scope;
+2. verify project/root identity and record why index coverage is insufficient;
+3. read the exact current file directly;
+4. use focused `rg` for imports, callers, contracts, and tests;
+5. continue the task without pretending CBM supplied the missing evidence;
+6. do not repair/rebuild CBM unless that is the requested task.
 
-After a coding task completes, the CoderReport identifies affected feature IDs and
-whether a manifest refresh is needed. The cheap Wiki Librarian (refresh-only agent)
-updates only the affected manifests using evidence from the completed work.
+CBM is structural navigation, not a fake proof engine. Direct source, compile output, focused tests,
+persistence readback, and real runtime evidence win when they disagree with graph memory.
 
-Do not create feature files for random folders, helpers, tests, or every source file.
-Do not create generic wiki scaffolding, nested wiki folders, or separate documentation
-ledgers.
+---
 
-## Skills System
+## Git and working-tree law
 
-Skills are reusable work knowledge.
+Read-only Git operations are normal discovery:
 
-Readable skill files live in:
-
-```txt
-skills/*.md
+```text
+git status
+git diff
+git log
+git show
+git blame
+git rev-parse
+git ls-files
+git submodule status
 ```
 
-SkillsGraph indexes and relates those skills in Neo4j / KnowGraph-style graph memory.
+If the host blocks a read-only Git command, report it as a host-policy limitation. Do not say the
+owner denied permission, do not bypass it through another shell, and do not invent a clean tree.
 
-The two layers have different jobs:
+Git mutations require explicit owner request:
 
-```txt
-skills/*.md = human-readable procedure, repo law, proof method, known trap
-SkillsGraph = machine-readable retrieval graph for matching tasks to skills
+- restore, checkout, reset, revert, stash, clean, or deletion;
+- add/stage, commit, amend, tag, push, or force-push;
+- branch creation/switching, merge, rebase, cherry-pick, pull, fetch;
+- worktree creation/removal;
+- submodule or embedded-repository conversion.
+
+An instruction to edit code is not automatic permission to discard unrelated changes or commit them.
+Never use `git reset --hard` or `git checkout --` as cleanup. Preserve unrelated owner work.
+
+Before edits, inspect the complete working-tree status and relevant diff. If host policy makes that
+impossible, either stop before risky code mutation or constrain work to an explicitly requested,
+directly inspected documentation edit and report the missing Git proof.
+
+---
+
+## Requested Delta and Preservation Set
+
+Every implementation begins with:
+
+### Requested Delta
+
+The smallest observable behavior that must change.
+
+### Preservation Set
+
+Previously working behavior that must remain working, including interfaces, routes, schemas, saved
+data, card topology, UI controls, tool grants, authentication, session behavior, and runtime boundaries.
+
+### Forbidden Regressions
+
+- an existing command, tool, route, control, or field silently disappears;
+- saved data becomes unreadable or is reset/reseeded;
+- a real runtime is replaced by a mock, generic model call, or fallback;
+- card prompts/models/tools are overridden outside saved-card authority;
+- another writer appears for an existing graph;
+- a test is deleted, weakened, skipped, or redefined to match a bug;
+- Coder is damaged while Main moves to Hermes;
+- a graph animation claims an operation that did not happen;
+- code scope expands opportunistically beyond the active CoderPacket.
+
+Regression Ratio:
+
+```text
+newly broken previously-working invariants
+÷ previously-working invariants exercised in the affected blast radius
 ```
 
-A skill may contain:
+Required value: **0.000**.
 
-```txt
-when to use it
-when not to use it
-steps
-proof commands
-known traps
-related files/systems
-success evidence
-failure evidence
-query patterns
-```
+---
 
-Skills are not PlanFlow nodes.
-Skills are not specs.
-Skills are not task files.
-Skills are not raw task history.
-Skills are not one-off CoderReports.
+## Repository runtime boundaries
 
-## How Skills Are Used
+### User interface
 
-Before a coder or agent acts, retrieve relevant skills.
+React/TypeScript renders Main Chat, Agent Canvas, knowledge graphs, inspector, Kanban/profile surfaces,
+and Coder terminal. It may validate typed transport fields and render activity states. It may not
+interpret task meaning, plan, classify intent, rank agents, merge graphs, or infer knowledge access.
 
-Skill lookup should use:
+### Backend
 
-```txt
-active user request
-selected PlanFlow node
-connected PlanFlow nodes
-Task Ledger context
-CBM / CodeGraph files and symbols
-subsystem names
-known traps
-required proof
-```
+Node/TypeScript owns HTTP/SSE transport, saved deck/conversation access, structural identity checks,
+process/session lifecycle, provider/model lookup from saved config, MCP client transport, gRPC/ACP or
+other proven protocol bridges, and event delivery. It is not an agent brain.
 
-The result should be a small set of relevant skill pointers.
+### Python rails
 
-Do not dump every skill into every prompt.
+Python owns AutoGen/Magentic-One, configured agent execution, tool execution, parameterized SQL/Cypher,
+data processing, graph/data adapters, research ingestion, deterministic validation/computation, and
+specialist runtimes.
 
-If no matching skill exists, the CoderReport should say so.
+Use the user-facing name **Python rails**, not “sidecar.” If Python rails changes, report once:
 
-A successful run may propose a new skill candidate only when the learning is reusable.
-
-## Skill Snowball
-
-LiquidAIty should get smarter after real work.
-
-The intended loop is:
-
-```txt
-task node
-→ CBM / CodeGraph lookup
-→ SkillsGraph lookup
-→ bounded CoderPacket
-→ coder execution
-→ CoderReport with proof
-→ AGEntgraph result receipt
-→ reusable lesson becomes skill candidate
-→ user approves or edits skill
-→ skill saved to skills/*.md
-→ skill indexed into SkillsGraph
-→ next run starts smarter
-```
-
-A skill is promoted only through proof.
-
-Do not create skill spam.
-
-Do not create a skill just because a task completed.
-
-Do not update skills unless the lesson is reusable.
-
-## Product Law
-
-LiquidAIty is an agentic engineering workbench.
-
-The first launch wedge is the coding loop:
-
-```txt
-user chat
-→ reviewed AGEntgraph assignment
-→ real Magentic-One / AutoGen through Python rails
-→ native team result
-→ one bounded CoderPacket
-→ coder
-→ structured CoderReport
-→ comparison, proof, memory, skills, and next job
-```
-
-`PLAN.md` is the durable living product plan and current route.
-
-`AGENTS.md` is execution law.
-
-PlanFlow is the visible task-control surface.
-
-PlanFlow is not:
-
-```txt
-doc map
-spec library
-skill library
-markdown graph
-road-sign display
-fake planner summary
-fake execution preview
-deterministic sanitizer surface
-```
-
-The product object is the task node.
-
-The proof belongs on the task node.
-
-The details belong in the inspector.
-
-The chat steers.
-
-The ledger records.
-
-The graph remembers.
-
-The skills snowball.
-
-## Runtime Naming
-
-The Python runtime is called:
-
-```txt
-Python rails
-```
-
-Do not call it sidecar in user-facing reports, docs, comments, prompts, or CoderReports.
-
-If Python rails code changes, report once:
-
-```txt
+```text
 Python rails restart/reload required: yes
 ```
 
-Do not nag repeatedly.
+### Models
 
-## Native AutoGen Ledger Boundary
+Models interpret user intent, select among granted capabilities, plan semantically, author IDF prose and
+operations, choose useful graph context, and decide what to delegate. Do not replace model reasoning with
+regex, substring, keyword, or lookup-table logic.
 
-Task and Progress Ledgers are private native AutoGen / Magentic-One runtime state.
+---
 
-Do not override AutoGen defaults.
+## Runtime roles
 
-Do not edit vendored AutoGen.
+### Main
 
-Do not override `_get_task_ledger_plan_prompt`.
+TARGET: the saved Main card executes through one repo-owned Hermes persistent chat adapter. Main is a
+LiquidAIty role, not the name of a third-party UI. The adapter must preserve saved prompt/profile/model/
+tool authority and real streaming/session/failure behavior.
 
-Do not subclass Magentic One to capture its orchestrator.
+### Hermes card
 
-Do not read `_facts`, `_plan`, `_team_description`, or other private ledger state.
+The existing `hermes_steward` card is the experiment and delegation surface. It may offer ordinary
+Hermes work and a Hermes-stewarded Auto-Kanban mode. It does not become a duplicate Main transcript or
+another card platform.
 
-Do not reconstruct, transport, project, trace, or render Task/Progress Ledger artifacts.
+### OpenClaude Coder
 
-Do not replace native ledgers with frontend/backend fake data.
+The persistent OpenClaude terminal and bounded Local Coder/CoderReport are protected. Main-to-Hermes
+migration must preserve them. Coder uses CBM first for this repository.
 
-## Deterministic Content Logic Ban
+### Magentic-One
 
-Do not add deterministic content interpretation as a substitute for AI planning or task creation.
+Use the real Microsoft AutoGen v0.4+ `MagenticOneGroupChat` on Python rails. Preserve these available
+runtime primitives:
 
-Forbidden anywhere in the planning/task path:
-
-```txt
-sanitizers
-regex cleanup
-keyword classifiers
-deterministic routers
-prompt-injection filters
-poison filters
-content guard filters
-string rewrite helpers
-agent-name stripping
-Source stripping
-AutoGen / Magentic-One stripping
-PlanAgent / ThinkGraphAgent / KnowGraphAgent stripping
-rewriting "Have PlanAgent..." into nicer wording
-turning raw plan text into fake user-facing task text
-```
-
-Do not keep this logic as:
-
-```txt
-temporary
-defensive
-fallback
-guardrail
-poison protection
-projection sanitizer
-display cleanup
-```
-
-Delete it.
-
-Normal typed code, schema validation, tests, CSS/layout logic, and structured field rendering are allowed.
-
-Deterministic code that pretends to understand or repair AI work is not allowed.
-
-## Execution Contract
-
-The active CoderPacket prompt is both the complete execution spec and the complete task.
-
-It is also called:
-
-```txt
-spec-as-prompt
-task-as-prompt
-active job contract
-```
-
-When coding:
-
-1. Read `AGENTS.md` and `PLAN.md`.
-2. Read relevant `skills/*.md`.
-3. Read the current CoderPacket when one exists.
-4. Refresh or prove fresh CBM and record status, nodes, and edges.
-5. Use CBM graph tools before focused text search.
-6. Direct-read relevant files before claims or edits.
-7. Break the spec-as-prompt into bounded tasks.
-8. Execute scoped work only.
-9. Prove the work with tests, compile, direct reads, or real smoke evidence.
-10. Compare actual work against every CoderPacket requirement.
-11. Return a structured CoderReport.
-12. Refresh or prove fresh CBM after code changes.
-13. Update skills only when the learning is reusable.
-
-Do not broaden scope.
-
-Do not start the next job without instruction.
-
-## CoderPacket
-
-A CoderPacket is one bounded job created from:
-
-```txt
-PLAN.md
-active Context Packet
-selected/connected PlanFlow nodes
-relevant ThinkGraph memory
-fresh CBM / CodeGraph anchors
-relevant SkillsGraph matches
-specific skills/*.md files
-user constraints
-```
-
-A CoderPacket is reviewable and temporary.
-
-It contains:
-
-```txt
-requirements
-scope
-files in scope
-files out of scope
-proof commands
-stop conditions
-what not to do
-expected report shape
-```
-
-Do not create:
-
-```txt
-spec files
-task files
-task ledgers as markdown files
-specs/
-tasks/
-persistent CoderPacket files
-persistent task prompt files
-```
-
-Durable product direction belongs in `PLAN.md`.
-
-Reusable learning belongs in `skills/*.md` and SkillsGraph.
-
-Current execution requirements belong only in the active CoderPacket.
-
-## CoderReport
-
-Every coding job returns a structured CoderReport containing:
-
-```txt
-verdict
-comparison against CoderPacket
-completed requirements
-incomplete requirements
-changed requirements
-files changed
-files read
-CBM before/after
-proof commands
-proof results
-blockers
-assumptions
-chosen approach
-rejected alternatives
-reusable skill updates
-next recommended task
-```
-
-Never return vague done.
-
-Never hide incomplete proof.
-
-Never report success without matching proof.
-
-## Context And Memory
-
-Magentic-One / Sol initiates Context Packet assembly before creating the next job.
-
-The Context Packet may combine:
-
-```txt
-user input
-selected PlanFlow task node
-connected PlanFlow task nodes
-PLAN.md
-ThinkGraph memory
-fresh CBM / CodeGraph evidence
-relevant SkillsGraph / Neo4j skills
-specific skills/*.md files
-KnowGraph only when relevant
-recent AGEntgraph results
-```
-
-Codebase Memory / CodeGraph is the structural map.
-
-Direct reads and proof win when graph memory disagrees.
-
-ThinkGraph stores structured reasoning, events, jobs, reports, proof, blockers, and next steps.
-
-`skills/*.md` store reusable learning and are indexed through SkillsGraph / Neo4j.
-
-Skills are not PlanFlow nodes.
-
-Skills update only for reusable procedures, boundaries, proof rules, failed attempts, adapter lessons, or repo traps.
-
-## PlanFlow Law
-
-PlanFlow is the durable task-object canvas.
-
-PlanFlow task creation is not currently wired. Until a separately reviewed native contract exists,
-it must fail closed. Forbidden sources include:
-
-```txt
-finalResponseText
-autogenMessages
-chat text
-fallback assistant text
-fake task objects
-```
-
-PlanFlow must not deterministically rewrite task text.
-
-Allowed UI behavior:
-
-```txt
-CSS clamp
-card sizing
-card spacing
-selected node styling
-inspector details
-normal typed fields
-choosing not to render optional metadata on a tiny card
-```
-
-Forbidden UI behavior:
-
-```txt
-content sanitizing
-content rewriting
-agent-name stripping
-source-name stripping
-fake user-facing conversion
-```
-
-Rendering fewer metadata fields is okay.
-
-Changing task text content is not okay.
-
-## Run Task / Approval Law
-
-Run Task must execute only approved task nodes once execution is actually wired.
-
-Until approved task-node execution is wired, Run Task must fail closed.
-
-Acceptable failure:
-
-```txt
-Run Task unavailable: approved task-node execution is not wired yet.
-```
-
-Run Task must not use:
-
-```txt
-autogenMessages as hidden task source
-chat text as task source
-finalResponseText as task source
-fake task objects
-```
-
-Run Task must not:
-
-```txt
-call coder before approval
-call LocalCoder before approval
-call terminal before approval
-call tools before approval
-call Progress Ledger before execution is wired
-mark task complete without proof
-fake execution success
-```
-
-## Skills
-
-Skills are reusable work knowledge.
-
-Skills live as readable files in:
-
-```txt
-skills/*.md
-```
-
-SkillsGraph indexes and relates those files.
-
-A skill should contain:
-
-```txt
-when to use it
-when not to use it
-steps
-proof commands
-known traps
-related files/systems
-success evidence
-failure evidence if relevant
-```
-
-A skill should usually come from:
-
-```txt
-successful CoderReport
-repeated failure pattern
-confirmed repo trap
-validated proof command
-stable workflow rule
-candidate skill tested successfully
-```
-
-Do not create skill spam.
-
-Do not update skills unless the learning is reusable.
-
-## Documentation Policy
-
-Markdown is an execution layer, but avoid documentation sprawl.
-
-Allowed durable docs:
-
-```txt
-PLAN.md
-FUTURE.md
-AGENTS.md
-DONT.md
-ARCHITECTURE.md
-skills/*.md
-repo-intake/*.md only when explicitly needed
-```
-
-Forbidden doc sprawl:
-
-```txt
-CLAUDE.md
-random architecture runbooks from one bad pass
-specs/
-tasks/
-random notes
-progress files
-evidence files
-handoff files
-completed-task piles
-raw diff dumps
-persistent CoderPacket files
-persistent task prompt files
-```
-
-Do not use docs to hide unfinished product logic.
-
-## Hard Stops
-
-No commit or push unless the user explicitly requests it.
-
-No stubs or placeholder implementations.
-
-No fake fallback.
-
-No silent fallback.
-
-No provider/model fallback unless explicitly requested.
-
-No invented tools.
-
-No hidden success.
-
-No fake final output.
-
-No mocked success.
-
-No vague done claim.
-
-No deterministic fake planning.
-
-No fake Magentic-One / Sol provenance.
-
-No Run Preview pretending to be execution.
-
-No road-sign UI as product law.
-
-No spec sprawl.
-
-No destructive git operations without explicit instruction.
-
-Preserve the real ReactFlow / TypeScript control plane, Node backend, Python rails, and Microsoft AutoGen v0.4+ / Magentic-One runtime unless explicitly changed by the user.
-
-Required runtime primitives must remain available for future wiring:
-
-```txt
+```text
 MagenticOneGroupChat
-AssistantAgent-with-tools
+AssistantAgent with tools
 Swarm
 SocietyOfMindAgent
 UserProxyAgent
 ```
 
-## Editing And Proof
+Bus connectivity through saved `magentic_option` edges is worker eligibility. Do not create a TS
+participant classifier or another scheduler.
 
-Use existing repo patterns.
+Task and Progress Ledgers are private native Magentic-One state. Never override AutoGen defaults or
+`_get_task_ledger_plan_prompt`; never subclass to capture the orchestrator; never read `_facts`,
+`_plan`, `_team_description`, or other private ledger state; and never reconstruct, transport,
+project, trace, or render ledger artifacts in LiquidAIty.
 
-Keep edits scoped.
+---
 
-Use `apply_patch` for manual edits when practical.
+## Graph law
 
-Never revert unrelated user changes.
-
-Tests scale with risk.
-
-Report blockers honestly.
-
-Do not fake proof.
-
-For serious runs report:
-
-```txt
-verdict
-files read
-CBM before/after
-work done
-CoderPacket comparison
-proof
-actual graph/code delta
-reusable skill updates
-risks
-next state
+```text
+ThinkGraph = SQLite/Engraphis project reasoning and operational knowledge
+KnowGraph  = Neo4j/Graphiti sourced knowledge and provenance
+CodeGraph  = native CBM repository structure
+AgentGraph = PostgreSQL AGE agent assignments, handoffs, results, derivation lineage
 ```
 
-Do not include routine git output or patch dumps unless the user asks.
+One authority and one writer per graph.
+
+- Pass pointers, native IDs, bounded Context Selections, and provenance—not copied subgraphs.
+- AgentGraph may reference native authorities for provenance/hydration; it does not absorb their data.
+- The UI never writes graph meaning directly.
+- TypeScript never performs semantic graph merges.
+- Files/skills describe how-to; graphs store what-is. Do not smear SkillsGraph into KnowGraph.
+- A 2D or 3D visualization is permitted only when wired to real selection, context loading, handoff,
+  consumption, traversal, or knowledge creation.
+
+### Honest graph activity
+
+Visual activation may come only from real observable events:
+
+```text
+query returned native IDs
+context included native IDs
+selection created
+selection sent/delivered/opened
+native node/edge read
+native traversal completed
+native node/edge proposed or written
+assignment completed or failed
+```
+
+Do not visualize hidden chain-of-thought. Do not infer access from answer prose. Do not create fake
+success-shaped telemetry. Technical event proof may remain in the inspector; the foreground UX is
+knowledge movement.
+
+---
+
+## IDF and IDD law
+
+IDF is loose Markdown with explicit executable/context islands. Ordinary prose is inert. Supported
+operation families may include MCP, bounded scripts, parameterized SQL, parameterized Cypher, graph
+views, imports, and typed results.
+
+IDD defines legal operations, connection/authority, parameters, limits, stored paths/versions, result
+contract, risk, and required capability. It is a type/capability vocabulary for agent actions, not a
+rigid language for agent prose.
+
+Authority is:
+
+```text
+saved card capability ceiling
+∩ assignment-scoped imports/grants
+∩ IDD operation requirements
+∩ user approval where applicable
+```
+
+Generic typed SQL/Cypher execution is retained. Implement it once on Python rails with parameterization,
+capability gating, limits, and honest results. Do not delete it because migration 016 removed an older
+overbuilt registered-query subsystem, and do not create one MCP wrapper per query.
+
+Use repo-root identities plus relative paths and content hashes for portable stored operations. Do not
+make machine-specific absolute paths the durable identity.
+
+---
+
+## Saved-card authority
+
+A saved card is the sole permanent authority for:
+
+```text
+identity
+prompt
+provider/model/profile
+runtime type and binding
+enabled state
+tool and capability grants
+saved topology
+```
+
+Callers provide task input and stable references, not alternate card definitions. Missing cards,
+models, grants, runtimes, or authorities fail honestly. No model/provider/tool fallback.
+
+AgentGraph carries task-specific exact Markdown, context references, assignments, and results. It does
+not replace saved-card configuration.
+
+---
+
+## Deterministic semantic logic ban
+
+Do not add deterministic content interpretation to the planning, routing, graph, or task path:
+
+```text
+regex cleanup or prose sanitizers
+keyword intent classifiers
+title/template substring role inference
+deterministic agent routers or cascades
+prompt-injection/poison/content filters used to rewrite model work
+agent/source name stripping
+fake user-facing rewrites of raw plan/task text
+hardcoded ontologies deciding semantic meaning
+TS scoring, ranking, planning, or priority tables
+```
+
+Normal schema validation, exact enum checking, parameter typing, path containment, size limits,
+authentication, CSS/layout logic, and structured field rendering are allowed. Deterministic code may
+validate structure and safety; it may not pretend to understand meaning.
+
+---
+
+## Active execution contract
+
+The active CoderPacket prompt is the complete current task and spec. Do not persist it as another task
+file.
+
+A CoderPacket contains:
+
+```text
+requested outcome
+requirements
+scope and files in/out
+CBM anchors and freshness
+relevant selected feature manifests and skills
+Preservation Set
+proof commands
+stop conditions
+forbidden work
+expected CoderReport shape
+```
+
+Execution order:
+
+1. Read repository law and selected manifests/skills.
+2. Establish Git and CBM state.
+3. Resolve symbols, relationships, contracts, and tests through CBM.
+4. Direct-read current source.
+5. Run the smallest meaningful pre-edit baseline.
+6. Make the smallest complete change.
+7. Delete the replaced path when replacement proof exists.
+8. Run requested-delta and Preservation Set proof.
+9. Typecheck/build the touched production boundary.
+10. Inspect current source and diff for unrelated change.
+11. Report exact completion, gaps, and Regression Ratio.
+12. Stop; do not start the next job without instruction.
+
+### CoderReport
+
+Every meaningful implementation returns:
+
+```text
+verdict
+Requested Delta comparison
+completed/incomplete/changed requirements
+Preservation Set proof
+files read
+files changed
+CBM before/after and coverage limits
+proof commands and results
+known baseline failures
+new regressions
+Regression Ratio
+blockers and assumptions
+chosen and rejected approaches
+reusable skill candidate, if genuinely proven
+next recommended bounded task
+```
+
+Never return vague “done.”
+
+---
+
+## PlanFlow and execution approval
+
+PlanFlow is a visible task-object control surface, not a document map, fake planner summary, or
+deterministic text-cleanup layer.
+
+Until approved task-node execution is genuinely wired, Run Task fails closed:
+
+```text
+Run Task unavailable: approved task-node execution is not wired yet.
+```
+
+Do not execute from fallback assistant text, `finalResponseText`, `autogenMessages`, raw chat, fake
+task objects, or reconstructed Magentic-One ledgers. Do not mark completion without proof.
+
+---
+
+## Skills and feature manifests
+
+`wiki/*.md` files are compact feature pointer manifests. They identify the outcome, exact CBM anchors,
+must-not-break behavior, valid proof, and limitations. They are not source-of-truth replacements.
+
+`skills/*.md` files are reusable proven procedures and known traps. Retrieve a small relevant set. Do
+not inject every skill into every prompt. Do not create a skill merely because a task completed.
+
+A skill is promoted only when a lesson is reusable and proven through real work. Skills are not task
+nodes, raw history, CoderReports, or specs.
+
+---
+
+## Documentation law
+
+Canonical durable documents are:
+
+```text
+PLAN.md
+AGENTS.md
+DONT.md
+ARCHITECTURE.md
+FUTURE.md
+wiki/*.md
+skills/*.md
+repo-intake/*.md only when explicitly required
+```
+
+Do not create:
+
+```text
+CLAUDE.md
+specs/
+tasks/
+progress or checkpoint docs
+handoff/evidence files
+raw diff dumps
+persistent prompt/task packets
+parallel skill directories
+random architecture runbooks
+```
+
+When the architecture changes, update the existing canonical owner and remove stale contradictory
+direction. Do not solve uncertainty by writing another document.
+
+---
+
+## Hard stops
+
+- No commit or push unless explicitly requested.
+- No destructive Git or data operation without explicit authorization and exact target verification.
+- No stubs, placeholders, mocked success, fake fallback, or silent degradation.
+- No hidden second route, MCP host, runtime, graph, renderer, event bus, or prompt system.
+- No provider/model fallback.
+- No invented tools or schemas.
+- No direct CBM database access.
+- No UI-as-brain or TypeScript semantic logic.
+- No edits to vendored AutoGen private ledger behavior.
+- No unrelated cleanup inside a bounded task.
+- No deletion of Coder while moving Main to Hermes.
+- No calling TARGET behavior CURRENT.
+- No success claim without matching proof.
+
+---
+
+## Completion standard
+
+Success requires:
+
+```text
+requested behavior directly proven
+previously working affected behavior preserved
+old replaced path removed when replacement is complete
+no hidden fallback or duplicate authority
+tests were not weakened
+saved data and contracts remain valid
+current source and diff inspected
+CBM limits reported honestly
+new regressions = NONE
+Regression Ratio = 0.000
+```
+
+If proof is incomplete, report **PARTIAL / UNPROVEN**. If a new change breaks an old invariant, stop
+forward expansion, restore the invariant, prove restoration, and only then continue.

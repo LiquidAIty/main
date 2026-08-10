@@ -320,7 +320,7 @@ The recommended sequence is:
    giving Hermes broader orchestration authority.
 
 Hermes can be the cleaner general/research agent without becoming LiquidAIty's only runtime. OpenClaude
-remains the specialist chat/coder UX; Hermes remains the memory-rich operator and durable fleet. If
+remains the contained specialist Coder UX; Hermes becomes the Main/general operator and durable fleet. If
 OpenClaude later fails the measured maintenance test, the emergency path is to port the bounded
 CoderReport and terminal/session contract to Hermes ACP or gateway—not to rewrite the whole workbench.
 
@@ -400,7 +400,7 @@ Primary sources:
 
 | Objective | OpenClaude fit | Hermes fit | Synthesis |
 | --- | --- | --- | --- |
-| User chats while revealing a live coder below | Excellent in the current custom UI/gRPC integration | Possible through JSON-RPC/API, but would require rebuilding the host event and permission bridge | Preserve OpenClaude for the MVP UX. |
+| User chats while revealing a live coder below | Excellent in the current custom UI/gRPC integration | Requires one real persistent Hermes adapter while retaining the host-owned event and permission bridge | Preserve the LiquidAIty chat UI and OpenClaude Coder reveal; migrate Main execution to Hermes. |
 | Focused repository coding | Excellent: coding-native tools, LSP/MCP, agent patterns, PTY, headless reports | Good general coder with ACP/terminal/tools, but no current LiquidAIty CoderReport adapter | OpenClaude is primary Coder; Hermes is the measured emergency/secondary path. |
 | General personal assistant and research operator | Technically possible but drags in coding-product complexity | Core product purpose, including memory, skills, web, vision, computer use, profiles, scheduling | Use real Hermes. |
 | Durable multi-agent fleet | Many subagent/team patterns, but not the same durable human-visible work queue | Native profile-routed Kanban workers and handoffs | Use Hermes Kanban, preserve single-agent Hermes alongside it. |
@@ -411,11 +411,12 @@ Primary sources:
 
 ### Final architectural decision
 
-“Main” should be a LiquidAIty product role and saved card, not the permanent name of one third-party
-runtime. For the current MVP, the OpenClaude gRPC Harness continues to execute Main because the working
-chat/session/stream/permission/UI integration already exists. The saved Hermes doorway should become a
-thin call to the real installed Hermes runtime. After that, the same Main card and UI can compare an
-OpenClaude-backed main session with a Hermes-backed main session without replacing the workbench.
+“Main” is a LiquidAIty product role and saved card, not the permanent name of one third-party runtime.
+**Current fact:** the OpenClaude gRPC Harness executes Main because that chat/session/stream/permission
+integration exists today. **Approved launch target:** one thin repo-owned Hermes adapter replaces
+OpenClaude as Main after the current chat contract is captured and the Hermes replacement passes its
+Preservation Set. This is a controlled migration, not a permanent runtime chooser, A/B Main, or hidden
+fallback. OpenClaude remains the contained Coder.
 
 The recommended stable split is:
 
@@ -423,7 +424,7 @@ The recommended stable split is:
 LiquidAIty UI and saved cards = user experience, policy, grants, visualization
 
 OpenClaude = contained specialist coding runtime
-  - current Main transport for MVP
+  - current Main transport only until the proven Hermes migration
   - under-chat interactive Coder
   - bounded Local Coder / CoderReport
 
@@ -440,10 +441,11 @@ Shared external authorities
   - CBM/CodeGraph: repository structure, symbols, relationships, and bounded source discovery
 ```
 
-This is less migration than replacing OpenClaude now and less lock-in than extending it deeply. It also
-creates a controlled exit: keep the host-owned gRPC/card/CoderReport behavior tests, and if OpenClaude's
-maintenance or licensing risk becomes unacceptable, replace only that contained adapter with Hermes ACP
-or gateway while retaining the LiquidAIty UI, IDF, graphs, cards, and proof contracts.
+This preserves the proven host-owned UI behavior while moving the general-agent role to the runtime
+designed for it. Keep the host-owned session/card/CoderReport behavior tests as the preservation
+contract. OpenClaude's contained Coder adapter can later be replaced independently if its maintenance
+or licensing risk becomes unacceptable, while the LiquidAIty UI, IDF, graphs, cards, and proof contracts
+remain stable.
 
 ### How the three agent loops actually work
 
@@ -510,7 +512,7 @@ Primary sources:
 
 ### Two launch scenarios
 
-#### Scenario A — business as usual: OpenClaude remains Main and Coder
+#### Scenario A — rejected launch alternative: OpenClaude remains Main and Coder
 
 This preserves the most code already written. Main continues through the custom gRPC Harness, saved
 doorway agents stay native to OpenClaude, and the revealable OpenClaude terminal plus Local Coder remain
@@ -602,7 +604,8 @@ IDF / DeliveredContextManifest
   instruction: exact user/card prompt and acceptance state
   loose text: bounded authored context
   relational references: conversation/message/card/deck IDs
-  typed native-tool calls: exact MCP tool name + schema-validated parameters + required card grant
+  typed operations: exact native-tool calls plus first-class parameterized SQL/Cypher query definitions
+    with authority, language, mode, limits, typed parameters, and required card capability
   Engraphis references: recalled memory IDs and support/provenance metadata
   KnowGraph references: Graphiti episode/entity/fact IDs and temporal provenance
   CodeGraph references: CBM project + file/symbol/route pointers + indexed revision state
@@ -621,7 +624,7 @@ The intended research flow is:
 ```txt
 user chat + uploaded/selected data
 → visualize and inspect the data
-→ persist a typed IDF and immutable native-authority references in PostgreSQL
+→ persist a typed IDF plus immutable native-tool and SQL/Cypher operation references in PostgreSQL
 → connect request/card/data/result lineage in AgentGraph (AGE)
 → retrieve bounded Engraphis context
 → Main or the real Hermes adapter receives one validated DeliveredContextManifest
@@ -634,8 +637,10 @@ user chat + uploaded/selected data
 For coding work the same envelope carries CBM pointers instead of dumping source. The receiving coder
 must still check CBM freshness and direct-read the resolved source before editing. Existing exact
 instructions and AgentGraph assignment-context functions are useful foundations, but the complete IDF
-schema, assembler, validation, and end-to-end consumer proof are not yet implemented. Migration 016
-removed the abandoned generic registered-query subsystem; do not recreate it as an IDF executor.
+schema, assembler, validation, generic typed SQL/Cypher execution boundary, and end-to-end consumer
+proof are not yet implemented. Migration 016 removed an earlier overbuilt registered-query subsystem;
+that deletion does not remove the product requirement for one Python-owned, capability-gated,
+parameterized query executor shared by IDF consumers.
 
 ## Trading and retained specialists
 
