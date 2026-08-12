@@ -31,8 +31,10 @@ configured-card runner exposed in Main's role-filtered Python MCP catalog.
 
 The repo-owned Coder plugin injects the bounded coding role, CBM-first discovery order, safe Git policy,
 Preservation Set, inverse deletion traversal, focused proof, and CoderReport requirement. Both terminal
-and headless launch use a strict MCP config containing only the native repo CBM server. The plugin hook
-injects context only; it never launches or reindexes CBM.
+and headless launch use a strict MCP config containing only the native repo CBM server. Session and
+prompt hooks read the shared repo-owned `.codex/cbm-handoffs/C-Projects-main.md` orientation. A guarded
+Stop hook asks the same agent to perform one native-MCP completion pass and refresh that handoff after
+tracked source changes. Hook processes never launch, wrap, or directly index CBM.
 
 Must remain true:
 
