@@ -9,3 +9,9 @@ client/dist
 *.log
 coverage
 tmp
+
+# CodeGraph obtains its checksum-pinned release inside its builder stage.
+vendor/codebase-memory-mcp
+codebase-memory-mcp-*.tar.gz
+codebase-memory-mcp-*.zip
+source-v*.tar.gz

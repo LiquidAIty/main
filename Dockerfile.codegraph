@@ -1,0 +1,45 @@
+FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241 AS fetch
+
+ARG CBM_VERSION=0.10.2
+ARG CBM_RELEASE_SHA256=4EAD161715FE959EF8A0E38946D63B1728D31E5FB1762A85DBB4B8C4ABFBE481
+ARG CBM_BINARY_SHA256=F3557B891EFCA36D8DB6508BB93C9688ADEB7C0F89236C6788DE1594C097D9FE
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    archive="/tmp/codebase-memory-mcp-linux-amd64-portable.tar.gz"; \
+    url="https://github.com/DeusData/codebase-memory-mcp/releases/download/v${CBM_VERSION}/codebase-memory-mcp-linux-amd64-portable.tar.gz"; \
+    curl --fail --location --proto '=https' --tlsv1.2 --output "${archive}" "${url}"; \
+    echo "${CBM_RELEASE_SHA256}  ${archive}" | sha256sum --check --strict; \
+    mkdir -p /out; \
+    tar -xzf "${archive}" -C /out \
+        codebase-memory-mcp \
+        LICENSE \
+        THIRD_PARTY_NOTICES.md; \
+    echo "${CBM_BINARY_SHA256}  /out/codebase-memory-mcp" | sha256sum --check --strict; \
+    chmod 0755 /out/codebase-memory-mcp; \
+    test "$(/out/codebase-memory-mcp --version)" = "codebase-memory-mcp ${CBM_VERSION}"
+
+FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
+
+ARG CBM_VERSION=0.10.2
+
+COPY --from=fetch /out/codebase-memory-mcp /opt/cbm/codebase-memory-mcp
+COPY --from=fetch /out/LICENSE /usr/share/doc/codebase-memory-mcp/LICENSE
+COPY --from=fetch /out/THIRD_PARTY_NOTICES.md /usr/share/doc/codebase-memory-mcp/THIRD_PARTY_NOTICES.md
+
+RUN test "$(/opt/cbm/codebase-memory-mcp --version)" = "codebase-memory-mcp ${CBM_VERSION}"
+
+LABEL org.opencontainers.image.title="LiquidAIty CodeGraph" \
+      org.opencontainers.image.version="${CBM_VERSION}" \
+      org.opencontainers.image.source="https://github.com/DeusData/codebase-memory-mcp" \
+      org.opencontainers.image.revision="b377c62a4e8b7ad64ccd295e4aa88abc8d275180" \
+      org.opencontainers.image.licenses="MIT"
+
+WORKDIR /workspace/main
+
+# Keep one stable execution envelope for CLI and stdio MCP consumers. CBM's
+# own short-lived helpers remain part of the single CBM runtime lifecycle.
+CMD ["tail", "-f", "/dev/null"]

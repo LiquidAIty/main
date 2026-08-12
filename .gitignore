@@ -54,8 +54,13 @@ tmp/
 # the platform binary; the graph cache is rebuilt through native MCP tools.
 /.tools/codebase-memory-mcp/bin/
 /.codebase-memory/index/
-/vendor/codebase-memory-mcp/runtime/linux-amd64-portable/codebase-memory-mcp
-/vendor/codebase-memory-mcp/archives/codebase-memory-mcp-linux-amd64-portable.tar.gz
+
+# CBM is built from its checksum-pinned official release inside Docker. Never
+# recommit the obsolete upstream source/runtime staging tree or root downloads.
+/vendor/codebase-memory-mcp/
+/codebase-memory-mcp-*.tar.gz
+/codebase-memory-mcp-*.zip
+/source-v*.tar.gz
 
 # Logs
 *.log

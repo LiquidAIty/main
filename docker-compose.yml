@@ -4,10 +4,11 @@ services:
     container_name: liquidaity-codegraph
     build:
       context: .
-      dockerfile: vendor/codebase-memory-mcp/Dockerfile
+      dockerfile: Dockerfile.codegraph
       args:
         CBM_VERSION: "0.10.2"
-        CBM_SHA256: F3557B891EFCA36D8DB6508BB93C9688ADEB7C0F89236C6788DE1594C097D9FE
+        CBM_RELEASE_SHA256: 4EAD161715FE959EF8A0E38946D63B1728D31E5FB1762A85DBB4B8C4ABFBE481
+        CBM_BINARY_SHA256: F3557B891EFCA36D8DB6508BB93C9688ADEB7C0F89236C6788DE1594C097D9FE
     init: true
     working_dir: /workspace/main
     volumes:

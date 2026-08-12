@@ -571,9 +571,11 @@ state in the named `codegraph_data` volume. CLI calls use `docker compose exec -
 stdio MCP clients use `docker exec -i liquidaity-codegraph /opt/cbm/codebase-memory-mcp` because
 Compose CLI startup output is not a clean MCP stdio transport. Runtime download, Windows AppData,
 PATH discovery, and developer-machine executable paths are prohibited. Oracle builds must obtain the
-pinned v0.10.2 Linux artifact before the image build, verify SHA-256
-`F3557B891EFCA36D8DB6508BB93C9688ADEB7C0F89236C6788DE1594C097D9FE`, and COPY it into the image.
-The deployed image never downloads CBM at runtime.
+pinned official v0.10.2 Linux portable release inside the builder stage, verify archive SHA-256
+`4EAD161715FE959EF8A0E38946D63B1728D31E5FB1762A85DBB4B8C4ABFBE481` and executable SHA-256
+`F3557B891EFCA36D8DB6508BB93C9688ADEB7C0F89236C6788DE1594C097D9FE`, and copy only the executable
+and license notices into the final image. The final image contains no build toolchain or upstream source,
+and the deployed service never downloads CBM at runtime.
 
 ### KnowledgeGraphFramework
 
