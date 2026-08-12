@@ -68,7 +68,9 @@ part of the active research loop until its own pass wires it in.
 - **Deck/conversation JSONB is app persistence for canvas/card/deck state only** — not AutoGen memory,
   not ThinkGraph, not KnowGraph, not CodeGraph. Not scheduled for replacement in cleanup passes; report
   only if it causes a real bug.
-- **Deferred maintenance** — dependency security upgrades; eslint warnings on owned code.
+- **Deferred maintenance** — dependency security upgrades; eslint warnings on owned code; production
+  orchestration beyond the packaged pinned Linux CBM `codegraph` service. Keep one persistent
+  CodeGraph volume and never run multiple independent daemons against the same cache root.
 
 ## North Star — the phased map (2026-07-10)
 

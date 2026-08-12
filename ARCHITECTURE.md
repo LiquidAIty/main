@@ -564,6 +564,17 @@ CodeGraph is repository structure from Code-Based Memory. The CBM indexer is the
 code uses thin MCP calls for status/search; developers use the canonical
 `skills/codebasedmemory.md` workflow. Direct source and tests win when graph memory disagrees.
 
+The root Compose stack owns one `codegraph` execution service built as
+`liquidaity-codegraph:0.10.2`. Its image contains the pinned Linux portable CBM binary at
+`/opt/cbm/codebase-memory-mcp`, mounts the repository read-only at `/workspace/main`, and keeps graph
+state in the named `codegraph_data` volume. CLI calls use `docker compose exec -T codegraph`, while
+stdio MCP clients use `docker exec -i liquidaity-codegraph /opt/cbm/codebase-memory-mcp` because
+Compose CLI startup output is not a clean MCP stdio transport. Runtime download, Windows AppData,
+PATH discovery, and developer-machine executable paths are prohibited. Oracle builds must obtain the
+pinned v0.10.2 Linux artifact before the image build, verify SHA-256
+`F3557B891EFCA36D8DB6508BB93C9688ADEB7C0F89236C6788DE1594C097D9FE`, and COPY it into the image.
+The deployed image never downloads CBM at runtime.
+
 ### KnowledgeGraphFramework
 
 `client/src/components/knowledge/KnowledgeGraphFramework.tsx` is the unified graph workspace shell.

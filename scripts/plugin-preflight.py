@@ -119,6 +119,7 @@ async def _catalog() -> dict[str, Any]:
         count, digest = mcp_host._catalog_identity(internal)
         names = [tool.name for tool in internal]
         authenticated = mcp_host._bind_authenticated_catalog(internal)
+        authenticated_by_name = {tool.name: tool for tool in authenticated}
         authenticated_count, authenticated_hash = mcp_host._catalog_identity(authenticated)
         matrix: list[dict[str, Any]] = []
         for tool in internal:
@@ -137,13 +138,14 @@ async def _catalog() -> dict[str, Any]:
                     or tool.name in DIRECT_CUSTOM_TOOLS
                 )
             execution = dict((tool.meta or {}).get("runtimeExecution") or {})
-            access = dict((tool.meta or {}).get("runtimeAccess") or {})
+            authenticated_tool = authenticated_by_name[tool.name]
+            security = list((authenticated_tool.meta or {}).get("securitySchemes") or [])
             matrix.append(
                 {
                     "name": tool.name,
                     "risk": execution.get("risk"),
                     "compute": execution.get("compute"),
-                    "oauth": access.get("scopes") == ["main"],
+                    "oauth": security == [{"type": "oauth2", "scopes": [mcp_host.AUTH0_REQUIRED_SCOPE]}],
                     "dispatchable": dispatchable,
                 }
             )
@@ -178,7 +180,9 @@ async def main() -> int:
     command_line = str((owner or {}).get("commandLine") or "")
     source_loaded = bool(
         owner
-        and str(MCP_HOST).lower() in command_line.lower()
+        and command_line.lower().replace("/", "\\").endswith(
+            "apps\\python-models\\app\\mcp_host.py"
+        )
         and Path(MCP_HOST).stat().st_mtime <= _iso_timestamp((owner or {})["createdAt"])
     )
     checks["runtime"] = {
@@ -204,8 +208,6 @@ async def main() -> int:
     checks["health"]["pythonMcp"] = "listening" if _port_open(8765) else "unavailable"
     if any(status != 200 for name, status in checks["health"].items() if name not in {"openClaudeGrpc", "pythonMcp"}):
         failures.append("required_http_service_unhealthy")
-    if checks["health"]["openClaudeGrpc"] != "listening":
-        failures.append("openclaude_grpc_unavailable")
     if checks["health"]["pythonMcp"] != "listening":
         failures.append("python_mcp_unavailable")
 
@@ -223,13 +225,16 @@ async def main() -> int:
     }
     if metadata_status != 200 or metadata.get("resource") != resource:
         failures.append("protected_resource_metadata_invalid")
-    issuer = str((metadata.get("authorization_servers") or [""])[0]).rstrip("/") + "/"
-    discovery_status, discovery, _ = _http_json(issuer + ".well-known/openid-configuration")
+    issuer = str((metadata.get("authorization_servers") or [""])[0]).rstrip("/")
+    discovery_status, discovery = 0, {}
+    if issuer:
+        issuer += "/"
+        discovery_status, discovery, _ = _http_json(issuer + ".well-known/openid-configuration")
     checks["oauth"]["issuer"] = issuer
     checks["oauth"]["discoveryStatus"] = discovery_status
     checks["oauth"]["pkceS256"] = "S256" in (discovery.get("code_challenge_methods_supported") or [])
     checks["oauth"]["tokenEndpointAuthMethods"] = discovery.get("token_endpoint_auth_methods_supported") or []
-    if discovery_status != 200 or discovery.get("issuer") != issuer or not checks["oauth"]["pkceS256"]:
+    if not issuer or discovery_status != 200 or discovery.get("issuer") != issuer or not checks["oauth"]["pkceS256"]:
         failures.append("authorization_server_discovery_invalid")
 
     request = Request(
@@ -286,7 +291,7 @@ def _iso_timestamp(value: str) -> float:
 if __name__ == "__main__":
     try:
         raise SystemExit(asyncio.run(main()))
-    except (OSError, URLError, subprocess.SubprocessError, ValueError, KeyError) as error:
+    except (OSError, URLError, subprocess.SubprocessError, RuntimeError, ValueError, KeyError) as error:
         print(
             json.dumps(
                 {

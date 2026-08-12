@@ -1398,15 +1398,9 @@ class _NativeStdioMcpClient:
 
 
 def _native_cbm_config() -> tuple[str, list[str], str]:
-    """Resolve the one repo-owned native CBM executable."""
+    """Invoke the installed native CBM through normal executable resolution."""
     repo_root = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
-    command = os.path.join(
-        repo_root,
-        ".tools",
-        "codebase-memory-mcp",
-        "bin",
-        "codebase-memory-mcp.exe",
-    )
+    command = "codebase-memory-mcp"
     resolved_args: list[str] = []
     if os.getenv("CBM_UI_ENABLED", "").strip().lower() in {
         "1", "true", "yes", "on"
