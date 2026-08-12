@@ -1,0 +1,32 @@
+{
+  "description": "Repository-owned native CBM graph handoff.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$(git rev-parse --show-toplevel)/.codex/hooks/cbm_graph_handoff.ps1\"",
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\\Projects\\main\\.codex\\hooks\\cbm_graph_handoff.ps1",
+            "timeout": 5,
+            "statusMessage": "Loading repository CBM graph handoff",
+            "additionalContextLimit": 2500
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$(git rev-parse --show-toplevel)/.codex/hooks/cbm_graph_handoff.ps1\"",
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\\Projects\\main\\.codex\\hooks\\cbm_graph_handoff.ps1",
+            "timeout": 10,
+            "statusMessage": "Checking repository CBM graph handoff"
+          }
+        ]
+      }
+    ]
+  }
+}
