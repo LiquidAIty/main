@@ -25,7 +25,7 @@ REMOVED_WRAPPERS = {
     "coder.steer",
     "coder.stop",
 }
-EXPECTED_PUBLIC_TOOL_COUNT = 69
+EXPECTED_PUBLIC_TOOL_COUNT = 70
 RETIRED_PUBLIC_TOOLS = {"run_coder_subagent"}
 DIRECT_CUSTOM_TOOLS = {
     "main.context",

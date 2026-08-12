@@ -1398,18 +1398,52 @@ class _NativeStdioMcpClient:
 
 
 def _native_cbm_config() -> tuple[str, list[str], str]:
-    """Invoke the installed native CBM through normal executable resolution."""
+    """Connect catalog discovery to the Compose-owned CodeGraph service."""
     repo_root = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
-    command = "codebase-memory-mcp"
-    resolved_args: list[str] = []
-    if os.getenv("CBM_UI_ENABLED", "").strip().lower() in {
-        "1", "true", "yes", "on"
-    }:
-        ui_port = int(os.getenv("CBM_UI_PORT", "9749"))
-        if not 1 <= ui_port <= 65535:
-            raise RuntimeError("native_cbm_ui_port_invalid")
-        resolved_args.extend(["--ui=true", f"--port={ui_port}"])
-    return command, resolved_args, repo_root
+    return (
+        "docker",
+        [
+            "exec",
+            "-i",
+            "liquidaity-codegraph",
+            "/opt/cbm/codebase-memory-mcp",
+        ],
+        repo_root,
+    )
+
+
+def _call_native_cbm_cli(name: str, arguments: dict[str, Any]) -> CallToolResult:
+    """Run one machine-readable CBM operation inside the CodeGraph container."""
+    command, args, repo_root = _native_cbm_config()
+    creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    try:
+        completed = subprocess.run(
+            [
+                command,
+                *args,
+                "cli",
+                name,
+                json.dumps(dict(arguments or {}), ensure_ascii=False, separators=(",", ":")),
+                "--json",
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            creationflags=creation_flags,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(f"codegraph_unavailable:{error}") from error
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "cbm_cli_failed").strip()[-2000:]
+        raise RuntimeError(f"codegraph_cbm_failed:{completed.returncode}:{detail}")
+    try:
+        payload = json.loads(completed.stdout)
+        return CallToolResult.model_validate(payload)
+    except (json.JSONDecodeError, ValueError) as error:
+        raise RuntimeError("codegraph_cbm_invalid_json") from error
 
 
 def _initialize_native_cbm_sync() -> None:
@@ -1457,18 +1491,7 @@ def _call_native_cbm(name: str, arguments: dict[str, Any]) -> CallToolResult:
     if name == "index_repository":
         return _call_native_cbm_index(arguments)
     _initialize_native_cbm_sync()
-    if _NATIVE_CBM_CLIENT is None:
-        raise RuntimeError("native_cbm_not_initialized")
-    try:
-        return _NATIVE_CBM_CLIENT.call_tool(name, arguments)
-    except RuntimeError as error:
-        # A timed-out JSON-RPC request can still leave a late response queued in
-        # the persistent stdio session. Retire that exact native process so the
-        # next dispatch starts one clean session instead of consuming stale
-        # protocol state. Do not retry the timed-out operation implicitly.
-        if str(error).startswith("native_cbm_timeout:"):
-            _close_native_cbm()
-        raise
+    return _call_native_cbm_cli(name, arguments)
 
 
 def _call_native_cbm_index(arguments: dict[str, Any]) -> CallToolResult:
@@ -1490,15 +1513,11 @@ def _call_native_cbm_index(arguments: dict[str, Any]) -> CallToolResult:
         return future.result()
     try:
         _initialize_native_cbm_sync()
-        if _NATIVE_CBM_CLIENT is None:
-            raise RuntimeError("native_cbm_not_initialized")
-        result = _NATIVE_CBM_CLIENT.call_tool("index_repository", arguments)
+        result = _call_native_cbm_cli("index_repository", arguments)
         future.set_result(result)
         return result
     except BaseException as error:
         future.set_exception(error)
-        if isinstance(error, RuntimeError) and str(error).startswith("native_cbm_timeout:"):
-            _close_native_cbm()
         raise
     finally:
         with _NATIVE_CBM_INDEX_LOCK:

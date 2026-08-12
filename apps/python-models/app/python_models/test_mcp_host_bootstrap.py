@@ -1026,51 +1026,74 @@ def test_native_cbm_replaces_a_stale_process_without_retrying_a_tool(monkeypatch
     assert mcp_host._NATIVE_CBM_NAMES == frozenset()
 
 
-def test_http_mcp_enables_native_cbm_ui_without_changing_shared_config(monkeypatch):
+def test_http_mcp_targets_compose_owned_codegraph():
     import mcp_host
 
-    monkeypatch.delenv("CBM_UI_ENABLED", raising=False)
-    monkeypatch.delenv("CBM_UI_PORT", raising=False)
-    command, default_args, cwd = mcp_host._native_cbm_config()
-    assert command == "codebase-memory-mcp"
-    assert "--ui=true" not in default_args
-    assert not any(arg.startswith("--port=") for arg in default_args)
-
-    monkeypatch.setenv("CBM_UI_ENABLED", "true")
-    monkeypatch.setenv("CBM_UI_PORT", "9749")
-    _command, http_args, _cwd = mcp_host._native_cbm_config()
-    assert http_args[-2:] == ["--ui=true", "--port=9749"]
+    command, args, _cwd = mcp_host._native_cbm_config()
+    assert command == "docker"
+    assert args == [
+        "exec",
+        "-i",
+        "liquidaity-codegraph",
+        "/opt/cbm/codebase-memory-mcp",
+    ]
 
 
-def test_native_cbm_timeout_retires_the_session_without_retrying(monkeypatch):
+def test_native_cbm_dispatch_uses_docker_cli_json(monkeypatch):
     import mcp_host
 
-    class TimedOutClient:
-        def __init__(self):
-            self.closed = False
-            self.calls = 0
+    native_tool = mcp_host.Tool(
+        name="search_graph",
+        description="Native project search.",
+        inputSchema={"type": "object", "properties": {}},
+    )
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_TOOLS", (native_tool,))
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_NAMES", frozenset({"search_graph"}))
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_CLIENT", object())
+    monkeypatch.setattr(mcp_host, "_initialize_native_cbm_sync", lambda: None)
+    calls = []
 
-        def is_running(self):
-            return True
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout=json.dumps({"content": [{"type": "text", "text": "ok"}], "isError": False}),
+            stderr="",
+        )
 
-        def call_tool(self, _name, _arguments):
-            self.calls += 1
-            raise RuntimeError("native_cbm_timeout:tools/call")
+    monkeypatch.setattr(mcp_host.subprocess, "run", run)
+    result = mcp_host._call_native_cbm(
+        "search_graph",
+        {"project": "workspace-main", "query": "HermesKanbanWorkspace"},
+    )
 
-        def close(self):
-            self.closed = True
+    argv, kwargs = calls[0]
+    assert argv[:7] == [
+        "docker", "exec", "-i", "liquidaity-codegraph",
+        "/opt/cbm/codebase-memory-mcp", "cli", "search_graph",
+    ]
+    assert json.loads(argv[7]) == {
+        "project": "workspace-main",
+        "query": "HermesKanbanWorkspace",
+    }
+    assert argv[8] == "--json"
+    assert kwargs["timeout"] == 60
+    assert result.content[0].text == "ok"
 
-    client = TimedOutClient()
-    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_CLIENT", client)
-    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_TOOLS", ())
-    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_NAMES", frozenset())
 
-    with pytest.raises(RuntimeError, match="native_cbm_timeout:tools/call"):
-        mcp_host._call_native_cbm("search_graph", {"project": "C-Projects-main"})
+def test_native_cbm_cli_failure_is_strict(monkeypatch):
+    import mcp_host
 
-    assert client.calls == 1
-    assert client.closed is True
-    assert mcp_host._NATIVE_CBM_CLIENT is None
+    monkeypatch.setattr(
+        mcp_host.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], 1, stdout="", stderr="No such container: liquidaity-codegraph"
+        ),
+    )
+    with pytest.raises(RuntimeError, match="codegraph_cbm_failed:1:No such container"):
+        mcp_host._call_native_cbm_cli("search_graph", {"project": "workspace-main"})
 
 
 def test_streamable_http_is_stateless_across_fresh_clients(monkeypatch):
@@ -1637,14 +1660,14 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
     monkeypatch.setattr(mcp_host, "get_access_token", access_token)
     canonical = asyncio.run(mcp_host.list_tools())
     canonical_names = {tool.name for tool in canonical}
-    assert len(canonical) == 69
+    assert len(canonical) == 70
     assert "run_coder_subagent" not in canonical_names
     assert "card.run_assistant_agent" in canonical_names
     assert not any(name.startswith("mcp__") for name in canonical_names)
 
     active_scopes[:] = ["main"]
     authenticated = asyncio.run(mcp_host.list_tools())
-    assert len(authenticated) == 69
+    assert len(authenticated) == 70
     assert {tool.name for tool in authenticated} == canonical_names
     main_context = asyncio.run(mcp_host.call_tool("main.context", {}))
     main_payload = json.loads(main_context[0].text)
@@ -1670,19 +1693,17 @@ def test_identical_native_cbm_index_requests_share_one_in_flight_call(monkeypatc
     entered = threading.Event()
     release = threading.Event()
 
-    class NativeCbm:
-        calls = 0
+    calls = []
 
-        def call_tool(self, name, arguments):
-            assert name == "index_repository"
-            self.calls += 1
-            entered.set()
-            assert release.wait(timeout=2)
-            return CallToolResult(content=[TextContent(type="text", text="indexed")])
+    def call_cli(name, arguments):
+        assert name == "index_repository"
+        calls.append(dict(arguments))
+        entered.set()
+        assert release.wait(timeout=2)
+        return CallToolResult(content=[TextContent(type="text", text="indexed")])
 
-    native = NativeCbm()
     monkeypatch.setattr(mcp_host, "_initialize_native_cbm_sync", lambda: None)
-    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_CLIENT", native)
+    monkeypatch.setattr(mcp_host, "_call_native_cbm_cli", call_cli)
     monkeypatch.setattr(mcp_host, "_NATIVE_CBM_INDEX_IN_FLIGHT", None)
     arguments = {"repo_path": "C:/Projects/main", "mode": "fast"}
 
@@ -1694,7 +1715,7 @@ def test_identical_native_cbm_index_requests_share_one_in_flight_call(monkeypatc
         assert first.result(timeout=2).content[0].text == "indexed"
         assert second.result(timeout=2).content[0].text == "indexed"
 
-    assert native.calls == 1
+    assert calls == [arguments]
 
 
 def test_graphiti_episode_projection_is_bounded_and_full_body_is_explicit():
