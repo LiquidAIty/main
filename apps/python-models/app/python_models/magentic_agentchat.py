@@ -16,11 +16,16 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from collections.abc import Sequence
 from typing import Any
 
-from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.agents import AssistantAgent, BaseChatAgent
+from autogen_agentchat.base import Response
+from autogen_agentchat.messages import BaseChatMessage, TextMessage
+from autogen_core import CancellationToken
 from autogen_agentchat.teams import MagenticOneGroupChat
 
+from app import control_plane
 from app.python_models import agentgraph as ag
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
 from app.python_models.tool_registry import (
@@ -79,16 +84,124 @@ def _safe_agent_name(raw: str, index: int, used: set[str]) -> str:
     return name
 
 
+class SavedHermesCardAgent(BaseChatAgent):
+    """AutoGen-facing shell for one real saved Hermes-backed card.
+
+    The shell has no model, prompt, tools, memory, or persistent identity of
+    its own. Magentic-One talks to this ChatAgent interface; the implementation
+    calls the trusted saved-card doorway, which resolves the card again from
+    the deck and executes its card-id-owned Hermes runtime.
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str,
+        context: ContextPack,
+        card_id: str,
+        outer_assignment_id: str,
+    ) -> None:
+        super().__init__(name=name, description=description)
+        self._context = context
+        self._card_id = card_id
+        self._outer_assignment_id = outer_assignment_id
+        self._invocation = 0
+
+    @property
+    def produced_message_types(self) -> tuple[type[BaseChatMessage], ...]:
+        return (TextMessage,)
+
+    async def on_reset(self, cancellation_token: CancellationToken) -> None:
+        self._invocation = 0
+
+    async def on_messages(
+        self,
+        messages: Sequence[BaseChatMessage],
+        cancellation_token: CancellationToken,
+    ) -> Response:
+        if cancellation_token.is_cancelled():
+            raise asyncio.CancelledError
+        transported = []
+        for message in messages:
+            content = _as_text(getattr(message, "content", ""))
+            if not content and hasattr(message, "to_text"):
+                content = _as_text(message.to_text())
+            if content:
+                source = _as_text(getattr(message, "source", "")) or "unknown"
+                transported.append(f"[{source}]\n{content}")
+        input_text = "\n\n".join(transported).strip()
+        if not input_text:
+            raise RuntimeError(
+                f"saved_hermes_card_messages_required: cardId={self._card_id}"
+            )
+
+        self._invocation += 1
+        correlation_id = (
+            f"{self._context.session.turnId}:{self._card_id}:{self._invocation}"
+        )
+        call = asyncio.create_task(
+            control_plane.card_run_assistant_agent(
+                {
+                    "projectId": self._context.session.projectId,
+                    "deckId": _as_text(
+                        (self._context.cardRuntime.runtimeOptions or {}).get("deckId")
+                    ),
+                    "cardId": self._card_id,
+                    "correlationId": correlation_id,
+                    "conversationId": _as_text(self._context.conversationId) or "main",
+                    "originatingAgentId": self._context.cardRuntime.cardId,
+                    "originatingRunId": self._outer_assignment_id,
+                    "input": input_text,
+                }
+            )
+        )
+        cancellation_token.link_future(call)
+        response = await call
+        if not isinstance(response, dict):
+            raise RuntimeError(
+                f"saved_hermes_card_run_failed: cardId={self._card_id} "
+                "status=invalid_response"
+            )
+        result = response.get("result")
+        status = _as_text(result.get("status")) if isinstance(result, dict) else ""
+        output = _as_text(result.get("output")) if isinstance(result, dict) else ""
+        if not response.get("ok") or status != "completed" or not output:
+            # Backend/native error text is intentionally not copied into the
+            # Mag One transcript. It may contain provider or process detail.
+            raise RuntimeError(
+                f"saved_hermes_card_run_failed: cardId={self._card_id} "
+                f"status={status or 'unknown'}"
+            )
+        return Response(
+            chat_message=TextMessage(
+                source=self.name,
+                content=output,
+                metadata={
+                    "cardId": self._card_id,
+                    "originatingAssignmentId": self._outer_assignment_id,
+                    **(
+                        {"instructionId": _as_text(response.get("instructionId"))}
+                        if _as_text(response.get("instructionId"))
+                        else {}
+                    ),
+                },
+            )
+        )
+
+
 def _build_participants(
     context: ContextPack,
     model_client: Any,
     *,
     extra_tools: list[Any] | None = None,
-) -> list[AssistantAgent]:
+    saved_hermes_cards: bool = False,
+    outer_assignment_id: str = "",
+) -> list[BaseChatAgent]:
     card = context.cardRuntime
     if card is None:
         return []
-    participants: list[AssistantAgent] = []
+    participants: list[BaseChatAgent] = []
     used_names: set[str] = set()
     configured_participants = card.participants or []
     if isinstance(model_client, (list, tuple)) and len(model_client) != len(
@@ -108,6 +221,20 @@ def _build_participants(
             or "assistant"
         )
         system_prompt = _as_text(getattr(participant, "prompt", ""))
+
+        if saved_hermes_cards and description != "local_coder":
+            if not outer_assignment_id:
+                raise RuntimeError("magentic_outer_assignment_id_required")
+            participants.append(
+                SavedHermesCardAgent(
+                    name=name,
+                    description=description,
+                    context=context,
+                    card_id=card_id,
+                    outer_assignment_id=outer_assignment_id,
+                )
+            )
+            continue
 
         selected_tools = [
             _as_text(tool)
@@ -622,9 +749,16 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
                     reasoning_effort=participant.reasoningEffort,
                 )
             )
+            if _as_text(participant.runtimeBinding) == "local_coder"
+            else None
             for participant in context.cardRuntime.participants
         ]
-        participants = _build_participants(context, participant_clients)
+        participants = _build_participants(
+            context,
+            participant_clients,
+            saved_hermes_cards=True,
+            outer_assignment_id=assignment_id,
+        )
         team_options: dict[str, Any] = {
             "participants": participants,
             "model_client": client,
@@ -735,6 +869,8 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
     finally:
         ACTIVE_AGENT_ASSIGNMENT_CONTEXT.reset(assignment_context_token)
         for owned_client in [*participant_clients, client]:
+            if owned_client is None:
+                continue
             close = getattr(owned_client, "close", None)
             if callable(close):
                 try:

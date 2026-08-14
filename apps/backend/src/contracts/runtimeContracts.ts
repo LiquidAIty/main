@@ -22,6 +22,7 @@ export type CardRunResult = {
 export type PythonAutoGenPayloadShape = {
   session: Record<string, any>;
   userText: string;
+  conversationId?: string;
   // Stable identities only. Python creates/claims the assignment and hydrates
   // the exact relational instruction.
   agentAssignment?: { instructionId: string; senderCardId: string; receiverCardId: string };

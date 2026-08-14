@@ -187,6 +187,7 @@ export async function runMagOne(
     allTemplates: [],
     previousOutput: '',
     runId,
+    conversationId,
     agentAssignment: { instructionId, senderCardId, receiverCardId },
   });
 

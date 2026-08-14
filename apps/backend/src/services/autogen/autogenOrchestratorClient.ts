@@ -250,6 +250,7 @@ export async function beginAgentAssignmentOnPython(payload: {
   senderCardId: string;
   receiverCardId: string;
   instruction: string;
+  instructionId?: string;
   parentRunId?: string;
   references?: Array<{
     referenceId: string;
@@ -261,11 +262,14 @@ export async function beginAgentAssignmentOnPython(payload: {
   modelKey?: string;
   providerModelId?: string;
 }): Promise<BegunAgentAssignment> {
-  return requestPythonRailsJson('/agentgraph/assignments/begin', {
+  return requestPythonRailsJson(
+    payload.instructionId
+      ? '/agentgraph/assignments/begin-existing'
+      : '/agentgraph/assignments/begin', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  }) as Promise<BegunAgentAssignment>;
+    }) as Promise<BegunAgentAssignment>;
 }
 
 export async function finishAgentAssignmentOnPython(

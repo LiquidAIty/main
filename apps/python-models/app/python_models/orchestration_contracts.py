@@ -79,6 +79,7 @@ class CardRuntimeParticipant(BaseModel):
     title: str
     runtimeType: Literal["assistant_agent"]
     runtimeBinding: str | None = None
+    executionMode: Literal["single", "auto-kanban"] = "single"
     tools: list[str] = Field(default_factory=list)
     prompt: str = ""
     provider: RequiredRuntimeString

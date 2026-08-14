@@ -198,6 +198,35 @@ def agentgraph_begin_assignment(payload: dict[str, Any]):
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
+@app.post("/agentgraph/assignments/begin-existing")
+def agentgraph_begin_existing_assignment(payload: dict[str, Any]):
+    """Begin an assignment from one exact instruction already owned by AgentGraph."""
+    from app.python_models.agentgraph import (
+        AgentGraphError,
+        begin_assignment_from_instruction,
+    )
+
+    try:
+        return begin_assignment_from_instruction(
+            project_id=str(payload.get("projectId") or ""),
+            deck_id=str(payload.get("deckId") or ""),
+            conversation_id=str(payload.get("conversationId") or ""),
+            correlation_id=str(payload.get("correlationId") or ""),
+            sender_card_id=str(payload.get("senderCardId") or ""),
+            receiver_card_id=str(payload.get("receiverCardId") or ""),
+            instruction_id=str(payload.get("instructionId") or ""),
+            parent_correlation_id=(str(payload.get("parentRunId") or "") or None),
+            runtime=str(payload.get("runtime") or "") or None,
+            provider=str(payload.get("provider") or "") or None,
+            model_key=str(payload.get("modelKey") or "") or None,
+            provider_model_id=(str(payload.get("providerModelId") or "") or None),
+        )
+    except (AgentGraphError, ValueError, LookupError, PermissionError) as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
 @app.post("/agentgraph/assignments/{assignment_id:path}/finish")
 def agentgraph_finish_assignment(
     assignment_id: str,

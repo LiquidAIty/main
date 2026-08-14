@@ -10,6 +10,8 @@ vi.mock('../decks/store', () => ({
   getDeckDocument: vi.fn(),
 }));
 vi.mock('../services/autogen/autogenOrchestratorClient', () => ({
+  beginAgentAssignmentOnPython: vi.fn(),
+  finishAgentAssignmentOnPython: vi.fn(),
   orchestrateWithAutoGen: vi.fn(),
   runSingleCardWithAutoGen: vi.fn(),
 }));
@@ -31,6 +33,12 @@ vi.mock('../hermes/mainAdapter', () => ({
       runtimeBinding: node.runtimeBinding,
     }))),
   resolveHermesCardRuntimeConfig: vi.fn((card: any, directSubagents: any[] = []) => ({
+    ...(card.runtimeOptions?.modelKey
+      ? {}
+      : (() => { throw new Error(`card_model_config_missing: cardId=${card.id}`); })()),
+    ...(card.runtimeOptions?.modelKey === 'retired-openai-model'
+      ? (() => { throw new Error('Unknown model key: retired-openai-model'); })()
+      : {}),
     cardId: card.id,
     title: card.title,
     prompt: card.prompt,
@@ -53,13 +61,19 @@ vi.mock('../hermes/mainAdapter', () => ({
 }));
 
 import { getDeckDocument } from '../decks/store';
-import { runSingleCardWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
+import {
+  beginAgentAssignmentOnPython,
+  finishAgentAssignmentOnPython,
+  runSingleCardWithAutoGen,
+} from '../services/autogen/autogenOrchestratorClient';
 import { startHermesTurn } from '../hermes/mainAdapter';
 import { runHermesKanbanCardTask } from '../routes/hermesKanban.routes';
 import { runConfiguredCard } from './runtime';
 
 const mockGetDeck = getDeckDocument as unknown as ReturnType<typeof vi.fn>;
 const mockRunCard = runSingleCardWithAutoGen as unknown as ReturnType<typeof vi.fn>;
+const mockBeginAssignment = beginAgentAssignmentOnPython as unknown as ReturnType<typeof vi.fn>;
+const mockFinishAssignment = finishAgentAssignmentOnPython as unknown as ReturnType<typeof vi.fn>;
 const mockStartHermes = startHermesTurn as unknown as ReturnType<typeof vi.fn>;
 const mockRunHermesKanban = runHermesKanbanCardTask as unknown as ReturnType<typeof vi.fn>;
 
@@ -118,8 +132,24 @@ const ARGS = {
 beforeEach(() => {
   mockGetDeck.mockReset();
   mockRunCard.mockReset();
+  mockBeginAssignment.mockReset();
+  mockFinishAssignment.mockReset();
   mockStartHermes.mockReset();
   mockRunHermesKanban.mockReset();
+  mockStartHermes.mockResolvedValue({
+    done: Promise.resolve({ finalText: 'real Hermes output', usage: {} }),
+    cancel: vi.fn(),
+    answer: vi.fn(),
+  });
+  mockBeginAssignment.mockResolvedValue({
+    ok: true,
+    assignmentId: 'assignment:corr-123',
+    instructionId: 'instruction:corr-123',
+    correlationId: 'corr-123',
+    claimToken: 'claim:corr-123',
+    state: 'running',
+  });
+  mockFinishAssignment.mockResolvedValue({ resultId: 'agentresult:corr-123' });
 });
 
 describe('runConfiguredCard — server-trusted single-card runtime', () => {
@@ -362,14 +392,14 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(mockRunCard).not.toHaveBeenCalled();
   });
 
-  it('transports an unknown configured tool to Python and returns its canonical rejection', async () => {
+  it('passes an unknown saved tool to Hermes and returns the native capability rejection', async () => {
     mockGetDeck.mockResolvedValue(deckWith([{ ...AGENT_CARD, runtimeOptions: { modelKey: 'gpt-5.6-luna', tools: ['not_a_real_tool'] } }]));
-    mockRunCard.mockRejectedValue(new Error('card_tool_unknown: not_a_real_tool'));
+    mockStartHermes.mockRejectedValue(new Error('hermes_saved_tool_unknown:not_a_real_tool'));
     const result = await runConfiguredCard(ARGS);
     expect(result.status).toBe('failed');
-    expect(result.error).toContain('card_tool_unknown');
-    expect(mockRunCard).toHaveBeenCalledOnce();
-    expect(mockRunCard.mock.calls[0][0].cardRuntime.participants[0].tools).toEqual(['not_a_real_tool']);
+    expect(result.error).toContain('hermes_saved_tool_unknown');
+    expect(mockStartHermes).toHaveBeenCalledOnce();
+    expect(mockRunCard).not.toHaveBeenCalled();
   });
 
   it('rejects caller-supplied runtime overrides instead of applying or ignoring them', async () => {
@@ -382,29 +412,26 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(mockRunCard).not.toHaveBeenCalled();
   });
 
-  it('completed run: resolves config server-side, preserves correlation, sends exactly one participant, no Task Ledger fields', async () => {
+  it('ordinary completed run resolves the saved card into Hermes, not an AutoGen single agent', async () => {
     mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
-    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'real agent output' });
 
     const result = await runConfiguredCard(ARGS);
     expect(result.status).toBe('completed');
-    expect(result.output).toBe('real agent output');
+    expect(result.output).toBe('real Hermes output');
     expect(result.correlationId).toBe('corr-123');
     expect(result.runtimeType).toBe('assistant_agent');
 
-    expect(mockRunCard).toHaveBeenCalledTimes(1);
-    const payload = mockRunCard.mock.calls[0][0];
-    expect(payload.session.orchestrator).toBe('assistant_agent');
-    expect(payload.session.turnId).toBe('corr-123');
-    expect(payload.session.route).toBe('single_card');
-    expect(payload.cardRuntime.runtimeType).toBe('assistant_agent');
-    expect(payload.cardRuntime.participants).toHaveLength(1);
-    expect(payload.cardRuntime.participants[0].cardId).toBe('card_saved_worker');
-    expect(payload.cardRuntime.participants[0].prompt).toBe('You are the ThinkGraph agent.');
-    expect(payload.cardRuntime).not.toHaveProperty('privateParticipants');
-    // The configured card's model — resolved server-side, never caller-supplied.
-    expect(payload.session.modelKey).toBe('gpt-5.6-luna');
-    // No Task Ledger / task-state fields ride this path.
+    expect(mockRunCard).not.toHaveBeenCalled();
+    expect(mockStartHermes).toHaveBeenCalledOnce();
+    const payload = mockStartHermes.mock.calls[0][0];
+    expect(payload.cardId).toBe('card_saved_worker');
+    expect(payload.prompt).toBe('You are the ThinkGraph agent.');
+    expect(payload.message).toBe(ARGS.input);
+    expect(result.assignmentResult).toEqual({
+      assignmentId: 'assignment:corr-123',
+      instructionId: 'instruction:corr-123',
+      resultId: 'agentresult:corr-123',
+    });
     const raw = JSON.stringify(payload);
     expect(raw).not.toContain('taskIds');
     expect(raw).not.toContain('taskLedger');
@@ -434,9 +461,9 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
         }],
       ),
     );
-    mockRunCard
-      .mockResolvedValueOnce({ ok: true, finalResponseText: 'connected standalone' })
-      .mockResolvedValueOnce({ ok: true, finalResponseText: 'disconnected standalone' });
+    mockStartHermes
+      .mockResolvedValueOnce({ done: Promise.resolve({ finalText: 'connected standalone' }) })
+      .mockResolvedValueOnce({ done: Promise.resolve({ finalText: 'disconnected standalone' }) });
 
     const connectedResult = await runConfiguredCard({
       ...ARGS,
@@ -451,8 +478,8 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
 
     expect(connectedResult.output).toBe('connected standalone');
     expect(disconnectedResult.output).toBe('disconnected standalone');
-    expect(mockRunCard).toHaveBeenCalledTimes(2);
-    expect(mockRunCard.mock.calls.map(([payload]) => payload.cardRuntime.participants[0].cardId))
+    expect(mockRunCard).not.toHaveBeenCalled();
+    expect(mockStartHermes.mock.calls.map(([payload]) => payload.cardId))
       .toEqual([connected.id, disconnected.id]);
   });
 
@@ -468,34 +495,34 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
       runtimeOptions: { modelKey: 'gpt-5.6-luna', tools: ['current_datetime'] },
     };
     mockGetDeck.mockResolvedValue(deckWith([first, target]));
-    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'target result' });
+    mockStartHermes.mockResolvedValue({ done: Promise.resolve({ finalText: 'target result' }) });
 
     const result = await runConfiguredCard({ ...ARGS, cardId: target.id });
 
     expect(result.status).toBe('completed');
     expect(result.tools).toEqual(['current_datetime']);
-    expect(mockRunCard.mock.calls[0][0].cardRuntime.participants[0].tools)
+    expect(mockStartHermes.mock.calls[0][0].tools)
       .toEqual(['current_datetime']);
   });
 
-  it('transports an AgentGraph instruction identity and conversation to Python without resolving graph content in TypeScript', async () => {
+  it('preserves the real conversation and parent run on the Hermes session', async () => {
     mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
-    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'used stored handoff' });
-
     await runConfiguredCard({
       ...ARGS,
       conversationId: 'conv-7',
       instructionId: 'instruction:one',
       senderCardId: 'card_main_chat',
+      parentRunId: 'assignment:parent',
     });
 
-    const payload = mockRunCard.mock.calls[0][0];
+    const payload = mockStartHermes.mock.calls[0][0];
     expect(payload.conversationId).toBe('conv-7');
-    expect(payload.agentAssignment).toEqual({
+    expect(payload.parentRunId).toBe('assignment:parent');
+    expect(mockBeginAssignment).toHaveBeenCalledWith(expect.objectContaining({
       instructionId: 'instruction:one',
       senderCardId: 'card_main_chat',
-      receiverCardId: 'card_saved_worker',
-    });
+      parentRunId: 'assignment:parent',
+    }));
     expect(JSON.stringify(payload)).not.toContain('stored Markdown');
   });
 
@@ -547,32 +574,32 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(String(result.error || '')).toContain('Unknown model key');
   });
 
-  it('threads the canonical assignment identity back', async () => {
-    mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
+  it('threads the canonical assignment identity back for the native AutoGen Coder exception', async () => {
+    mockGetDeck.mockResolvedValue(deckWith([LOCAL_CODER_CARD]));
     mockRunCard.mockResolvedValue({
       ok: true,
       finalResponseText: 'ok',
       assignmentId: 'assignment:corr-123',
     });
-    const result = await runConfiguredCard(ARGS);
+    const result = await runConfiguredCard({ ...ARGS, cardId: LOCAL_CODER_CARD.id });
     expect(result.assignmentResult).toEqual({
       assignmentId: 'assignment:corr-123',
     });
   });
 
-  it('propagates an honest Python failure without retry or fallback', async () => {
-    mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
+  it('propagates an honest Python failure for the native AutoGen Coder exception without retry or fallback', async () => {
+    mockGetDeck.mockResolvedValue(deckWith([LOCAL_CODER_CARD]));
     mockRunCard.mockResolvedValue({ ok: false, error: 'single_card_run_failed: provider_down' });
-    const result = await runConfiguredCard(ARGS);
+    const result = await runConfiguredCard({ ...ARGS, cardId: LOCAL_CODER_CARD.id });
     expect(result.status).toBe('failed');
     expect(result.error).toContain('provider_down');
     expect(mockRunCard).toHaveBeenCalledTimes(1); // exactly once — no retry loop
   });
 
-  it('propagates a transport failure honestly (rails unavailable)', async () => {
-    mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
+  it('propagates a Coder transport failure honestly (rails unavailable)', async () => {
+    mockGetDeck.mockResolvedValue(deckWith([LOCAL_CODER_CARD]));
     mockRunCard.mockRejectedValue(new Error('PYTHON_AUTOGEN_RAILS_UNAVAILABLE: checkedEndpoints=x'));
-    const result = await runConfiguredCard(ARGS);
+    const result = await runConfiguredCard({ ...ARGS, cardId: LOCAL_CODER_CARD.id });
     expect(result.status).toBe('failed');
     expect(result.error).toContain('PYTHON_AUTOGEN_RAILS_UNAVAILABLE');
   });

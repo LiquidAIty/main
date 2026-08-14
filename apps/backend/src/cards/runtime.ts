@@ -4,6 +4,8 @@ import {
   PythonAutoGenPayloadShape,
 } from '../contracts/runtimeContracts';
 import {
+  beginAgentAssignmentOnPython,
+  finishAgentAssignmentOnPython,
   orchestrateWithAutoGen,
   requestPythonRailsJson,
   runSingleCardWithAutoGen,
@@ -389,6 +391,8 @@ export function serializeCardParticipant(head: any): Record<string, unknown> {
     title: String(head.title || 'Agent'),
     runtimeType,
     runtimeBinding,
+    executionMode:
+      head.runtimeOptions?.executionMode === 'auto-kanban' ? 'auto-kanban' : 'single',
     prompt: String(head.prompt || ''),
     tools: selectedTools,
     provider: model.provider,
@@ -459,6 +463,7 @@ export function buildPythonAutoGenCardRuntimePayload(
       startedAt,
     },
     userText: runtimeInput,
+    conversationId: String(context.conversationId || ''),
     // Stable assignment identities only; Python owns claim and hydration.
     agentAssignment: context.agentAssignment ?? undefined,
     cardRuntime: {
@@ -580,8 +585,26 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     return done({ status: 'disabled', error: `card_disabled: ${cardId}` });
   }
   const runtimeType = resolveCardRuntimeType(card);
-  const cardBinding = resolveCardBinding(card);
-  if (cardBinding === 'hermes_steward') {
+  const ineligibility = genericAssistantCardIneligibility(card);
+  if (ineligibility) {
+    return done({
+      status: 'not_runnable',
+      runtimeType,
+      error: `${ineligibility}: cardId=${cardId}`,
+    });
+  }
+  if (String(card.kind || 'agent') !== 'agent' || !isPythonAutoGenCallableRuntimeType(runtimeType)) {
+    return done({
+      status: 'not_runnable',
+      runtimeType,
+      error: `single_card_runtime_not_supported: kind=${card.kind || 'agent'} runtimeType=${runtimeType}`,
+    });
+  }
+
+  // Ordinary LiquidAIty cards execute through their card-id-owned Hermes
+  // runtime. Local Coder is the one specialized exception: its AutoGen
+  // AssistantAgent remains the controller for the real OpenClaude runtime.
+  if (!isLocalCoderControllerCard(card)) {
     let config;
     try {
       config = resolveHermesCardRuntimeConfig(
@@ -627,6 +650,31 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         });
       }
     }
+    let begunAssignment: Awaited<ReturnType<typeof beginAgentAssignmentOnPython>>;
+    try {
+      begunAssignment = await beginAgentAssignmentOnPython({
+        projectId,
+        deckId,
+        conversationId: conversationId || 'main',
+        correlationId,
+        senderCardId: senderCardId || cardId,
+        receiverCardId: cardId,
+        instruction: input,
+        ...(instructionId ? { instructionId } : {}),
+        ...(parentRunId ? { parentRunId } : {}),
+        runtime: 'hermes',
+        provider: config.provider,
+        modelKey: config.modelKey,
+        providerModelId: config.providerModelId,
+      });
+    } catch (error: any) {
+      return done({
+        status: 'failed',
+        runtimeType,
+        tools: config.tools,
+        error: String(error?.message || 'agentgraph_assignment_begin_failed'),
+      });
+    }
     try {
       const sessionScope = conversationId || deckId;
       const handle = await startHermesTurn(
@@ -641,13 +689,52 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         () => undefined,
       );
       const response = await handle.done;
+      let finished: any;
+      try {
+        finished = await finishAgentAssignmentOnPython(begunAssignment.assignmentId, {
+          projectId,
+          claimToken: begunAssignment.claimToken,
+          status: 'completed',
+          output: response.finalText,
+        });
+      } catch {
+        return done({
+          status: 'failed',
+          runtimeType,
+          tools: config.tools,
+          error: 'agentgraph_assignment_finish_failed',
+          assignmentResult: {
+            assignmentId: begunAssignment.assignmentId,
+            instructionId: begunAssignment.instructionId,
+          },
+        });
+      }
       return done({
         status: 'completed',
         runtimeType,
         tools: config.tools,
         output: response.finalText,
+        assignmentResult: {
+          assignmentId: begunAssignment.assignmentId,
+          instructionId: begunAssignment.instructionId,
+          ...(String(finished?.resultId || '').trim()
+            ? { resultId: String(finished.resultId).trim() }
+            : {}),
+        },
       });
     } catch (error: any) {
+      try {
+        await finishAgentAssignmentOnPython(begunAssignment.assignmentId, {
+          projectId,
+          claimToken: begunAssignment.claimToken,
+          status: 'failed',
+          errorCode: 'hermes_card_transport_failed',
+          errorDetail: 'Hermes card execution failed.',
+        });
+      } catch {
+        // The returned failure remains honest without copying persistence or
+        // provider detail into logs. The running assignment is inspectable.
+      }
       return done({
         status: 'failed',
         runtimeType,
@@ -656,22 +743,6 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       });
     }
   }
-  const ineligibility = genericAssistantCardIneligibility(card);
-  if (ineligibility) {
-    return done({
-      status: 'not_runnable',
-      runtimeType,
-      error: `${ineligibility}: cardId=${cardId}`,
-    });
-  }
-  if (String(card.kind || 'agent') !== 'agent' || !isPythonAutoGenCallableRuntimeType(runtimeType)) {
-    return done({
-      status: 'not_runnable',
-      runtimeType,
-      error: `single_card_runtime_not_supported: kind=${card.kind || 'agent'} runtimeType=${runtimeType}`,
-    });
-  }
-
   const effectiveCard = normalizeLocalCoderControllerCard(card);
   let participant: Record<string, unknown>;
   let model: { provider: string; providerModelId: string };

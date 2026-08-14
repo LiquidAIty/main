@@ -604,6 +604,63 @@ def begin_assignment(
     }
 
 
+def begin_assignment_from_instruction(
+    *,
+    project_id: str,
+    deck_id: str,
+    conversation_id: str,
+    correlation_id: str,
+    sender_card_id: str,
+    receiver_card_id: str,
+    instruction_id: str,
+    parent_correlation_id: str | None = None,
+    runtime: str | None = None,
+    provider: str | None = None,
+    model_key: str | None = None,
+    provider_model_id: str | None = None,
+) -> dict[str, Any]:
+    """Claim one assignment for an already-persisted trusted instruction."""
+    with connect_postgres(autocommit=False) as connection:
+        assignment = create_assignment(
+            project_id=project_id,
+            deck_id=deck_id,
+            conversation_id=conversation_id,
+            correlation_id=correlation_id,
+            sender_card_id=sender_card_id,
+            receiver_card_id=receiver_card_id,
+            instruction_id=instruction_id,
+            parent_correlation_id=parent_correlation_id,
+            connection=connection,
+        )
+        claim = claim_assignment(
+            project_id=project_id,
+            assignment_id=assignment["assignmentId"],
+            receiver_card_id=receiver_card_id,
+            connection=connection,
+        )
+        runtime_values = (runtime, provider, model_key, provider_model_id)
+        if any(value for value in runtime_values):
+            if not all(value for value in runtime_values):
+                raise AgentGraphError("agentgraph_runtime_context_incomplete")
+            record_assignment_runtime_context(
+                project_id=project_id,
+                assignment_id=assignment["assignmentId"],
+                runtime=str(runtime),
+                provider=str(provider),
+                model_key=str(model_key),
+                provider_model_id=str(provider_model_id),
+                connection=connection,
+            )
+    return {
+        "ok": True,
+        "assignmentId": assignment["assignmentId"],
+        "instructionId": instruction_id,
+        "correlationId": assignment["correlationId"],
+        "claimToken": claim["claimToken"],
+        "state": claim["state"],
+    }
+
+
 def finish_assignment(
     *,
     project_id: str,

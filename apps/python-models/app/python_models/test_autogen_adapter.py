@@ -164,8 +164,18 @@ def test_mag_one_reads_agentgraph_text_and_native_references_before_model(
 
     monkeypatch.setattr(mac, "_build_model_client", build_model)
 
-    def build(_context, participant_clients, *, extra_tools=None):
+    def build(
+        _context,
+        participant_clients,
+        *,
+        extra_tools=None,
+        saved_hermes_cards=False,
+        outer_assignment_id="",
+    ):
         assert len(participant_clients) == 2
+        assert participant_clients == [None, None]
+        assert saved_hermes_cards is True
+        assert outer_assignment_id == "assignment:t"
         attached_tools.extend(tool.name for tool in (extra_tools or []))
         return [SimpleNamespace()]
 
@@ -195,11 +205,9 @@ def test_mag_one_reads_agentgraph_text_and_native_references_before_model(
     response = asyncio.run(mac.run_native_magentic_mission(context))
 
     assert response.ok is True
-    assert events == ["read", "claimed", "model", "model", "model"]
+    assert events == ["read", "claimed", "model"]
     assert model_configs == [
         ("openrouter", MODEL, 0.4, 2400),
-        ("openrouter", "deepseek/deepseek-v4-flash-0731", None, None),
-        ("openrouter", "z-ai/glm-5.2", None, None),
     ]
     assert tasks == [
         "[AGENTGRAPH_ASSIGNMENT]\n\n"
@@ -313,6 +321,100 @@ def test_each_participant_receives_its_own_saved_card_model_client():
 def test_participant_model_client_count_mismatch_fails_loudly():
     with pytest.raises(RuntimeError, match="participant_model_count_mismatch"):
         mac._build_participants(_tools_context([]), [_FakeToolClient()])
+
+
+def test_magentic_ordinary_card_is_a_thin_saved_hermes_shell_and_coder_stays_native():
+    context = _tools_context([])
+    context.cardRuntime.participants[1].runtimeBinding = "local_coder"
+    ordinary, coder = mac._build_participants(
+        context,
+        [None, _FakeToolClient()],
+        saved_hermes_cards=True,
+        outer_assignment_id="assignment:outer",
+    )
+    assert isinstance(ordinary, mac.SavedHermesCardAgent)
+    assert isinstance(coder, AssistantAgent)
+    assert ordinary.name == "Research_Agent"
+    assert coder.name == "Plain_Agent"
+
+
+def test_saved_hermes_shell_calls_trusted_card_runner_with_real_parent_ids(monkeypatch):
+    context = _context_pack("mission")
+    context.conversationId = "conversation:one"
+    context.cardRuntime.runtimeOptions = {"deckId": "deck_builder"}
+    calls: list[dict] = []
+
+    async def run_saved_card(payload: dict):
+        calls.append(payload)
+        return {
+            "ok": True,
+            "instructionId": "instruction:child",
+            "result": {"status": "completed", "output": "Hermes card result"},
+        }
+
+    monkeypatch.setattr(mac.control_plane, "card_run_assistant_agent", run_saved_card)
+    shell = mac.SavedHermesCardAgent(
+        name="Research_Agent",
+        description="research_agent",
+        context=context,
+        card_id="r",
+        outer_assignment_id="assignment:outer",
+    )
+    response = asyncio.run(
+        shell.on_messages(
+            [mac.TextMessage(source="MagenticOneOrchestrator", content="Do the research.")],
+            CancellationToken(),
+        )
+    )
+    assert response.chat_message.content == "Hermes card result"
+    assert response.chat_message.metadata == {
+        "cardId": "r",
+        "originatingAssignmentId": "assignment:outer",
+        "instructionId": "instruction:child",
+    }
+    assert calls == [
+        {
+            "projectId": "p",
+            "deckId": "deck_builder",
+            "cardId": "r",
+            "correlationId": "t:r:1",
+            "conversationId": "conversation:one",
+            "originatingAgentId": "orch",
+            "originatingRunId": "assignment:outer",
+            "input": "[MagenticOneOrchestrator]\nDo the research.",
+        }
+    ]
+
+
+def test_saved_hermes_shell_failure_does_not_copy_secret_error(monkeypatch):
+    context = _context_pack("mission")
+
+    async def fail_saved_card(_payload: dict):
+        return {
+            "ok": False,
+            "result": {
+                "status": "failed",
+                "error": "provider failed with sk-secret-value",
+            },
+        }
+
+    monkeypatch.setattr(mac.control_plane, "card_run_assistant_agent", fail_saved_card)
+    shell = mac.SavedHermesCardAgent(
+        name="Research_Agent",
+        description="research_agent",
+        context=context,
+        card_id="r",
+        outer_assignment_id="assignment:outer",
+    )
+    with pytest.raises(RuntimeError) as raised:
+        asyncio.run(
+            shell.on_messages(
+                [mac.TextMessage(source="orchestrator", content="Run")],
+                CancellationToken(),
+            )
+        )
+    assert "saved_hermes_card_run_failed" in str(raised.value)
+    assert "sk-secret-value" not in str(raised.value)
 
 
 def test_unknown_tool_id_fails_loudly_not_silently_dropped():

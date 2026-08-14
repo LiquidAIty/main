@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  beginAgentAssignmentOnPython,
   orchestrateWithAutoGen,
   projectLiveThinkGraph,
 } from './autogenOrchestratorClient';
@@ -47,6 +48,43 @@ describe('autogenOrchestratorClient', () => {
       expect.objectContaining({
         method: 'POST',
       }),
+    );
+  });
+
+  it('begins a Hermes assignment from the exact existing AgentGraph instruction', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({
+        ok: true,
+        assignmentId: 'assignment:child',
+        instructionId: 'instruction:child',
+        correlationId: 'child',
+        claimToken: 'claim:child',
+        state: 'running',
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock as any);
+    const payload = {
+      projectId: 'p1',
+      deckId: 'deck_builder',
+      conversationId: 'conversation:one',
+      correlationId: 'child',
+      senderCardId: 'card_magentic',
+      receiverCardId: 'card_research',
+      instruction: 'Exact instruction.',
+      instructionId: 'instruction:child',
+      parentRunId: 'assignment:outer',
+      runtime: 'hermes',
+      provider: 'openai',
+      modelKey: 'gpt-5.6-luna',
+      providerModelId: 'gpt-5.6-luna',
+    };
+
+    await beginAgentAssignmentOnPython(payload);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://python-rails:8001/agentgraph/assignments/begin-existing',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify(payload) }),
     );
   });
 

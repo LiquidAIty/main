@@ -251,3 +251,64 @@ def test_worldsignals_reference_is_relational_and_linked_to_assignment_in_age() 
     finally:
         connection.rollback()
         connection.close()
+def test_begin_existing_instruction_claims_and_records_one_assignment(monkeypatch) -> None:
+    connection = object()
+
+    class ConnectionScope:
+        def __enter__(self):
+            return connection
+
+        def __exit__(self, *_args):
+            return False
+
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(ag, "connect_postgres", lambda **_kwargs: ConnectionScope())
+    monkeypatch.setattr(
+        ag,
+        "create_assignment",
+        lambda **kwargs: calls.append(("create", kwargs)) or {
+            "assignmentId": "assignment:child",
+            "correlationId": "child",
+        },
+    )
+    monkeypatch.setattr(
+        ag,
+        "claim_assignment",
+        lambda **kwargs: calls.append(("claim", kwargs)) or {
+            "claimToken": "claim:child",
+            "state": "running",
+        },
+    )
+    monkeypatch.setattr(
+        ag,
+        "record_assignment_runtime_context",
+        lambda **kwargs: calls.append(("runtime", kwargs)),
+    )
+
+    result = ag.begin_assignment_from_instruction(
+        project_id="p",
+        deck_id="deck_builder",
+        conversation_id="conversation:one",
+        correlation_id="child",
+        sender_card_id="card_magentic",
+        receiver_card_id="card_research",
+        instruction_id="instruction:child",
+        parent_correlation_id="assignment:outer",
+        runtime="hermes",
+        provider="openai",
+        model_key="gpt-5.6-luna",
+        provider_model_id="gpt-5.6-luna",
+    )
+
+    assert result == {
+        "ok": True,
+        "assignmentId": "assignment:child",
+        "instructionId": "instruction:child",
+        "correlationId": "child",
+        "claimToken": "claim:child",
+        "state": "running",
+    }
+    assert [name for name, _kwargs in calls] == ["create", "claim", "runtime"]
+    assert calls[0][1]["instruction_id"] == "instruction:child"
+    assert calls[0][1]["parent_correlation_id"] == "assignment:outer"
+    assert all(kwargs["connection"] is connection for _name, kwargs in calls)
