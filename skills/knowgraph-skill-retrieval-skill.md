@@ -8,7 +8,7 @@
 
 ## Vector Summary
 
-Retrieve relevant reusable learning from Neo4j/SkillGraph for Context Packet and active CoderPacket
+Retrieve relevant reusable learning from Neo4j/SkillGraph for actual IDF assembly and active CoderPacket
 creation.
 
 ## Procedure
@@ -17,7 +17,7 @@ creation.
 2. Match skills using user intent, current `PLAN.md`, active prompt, subsystem, CBM nodes, and
    guardrails.
 3. Retrieve relevant procedures, failures, proof rules, and query patterns.
-4. Feed relevant learning into the Context Packet.
+4. Feed selected relevant learning into the actual IDF or active CoderPacket as appropriate.
 5. Keep retrieval bounded and report warnings honestly.
 
 ## Guardrails
@@ -31,4 +31,3 @@ creation.
 @query id=knowgraph-skill-retrieval.get "py -3.12 services/knowgraph/skill_ingest.py get --skill-id <skill-id>"
 @query id=knowgraph-skill-retrieval.match "py -3.12 services/knowgraph/skill_ingest.py match --prompt <text> --limit 5"
 @query id=knowgraph-skill-retrieval.packet "py -3.12 services/knowgraph/skill_ingest.py packet --prompt <text> --limit 5 --json"
-

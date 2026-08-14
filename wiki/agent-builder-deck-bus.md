@@ -6,8 +6,8 @@ status: partial
 proof_level: cbm_anchor_verified_and_source_verified
 
 cbm:
-  project_identity: C-Projects-main
-  index_root: C:/Projects/main
+  project_identity: C-Projects-LiquidAIty-main
+  index_root: C:/Projects/LiquidAIty/main
   full_index_nodes: 3395
   full_index_edges: 9902
   freshness: ready
@@ -54,8 +54,7 @@ state. Card positions, edges, prompt templates, and unknown future fields surviv
 reload exactly; malformed state fails clearly.
 
 **Selected-card inspector**: clicking a card in `AgentCanvasPane` selects the
-saved card already loaded from the deck. It does not maintain a second runtime
-assignment record.
+saved card already loaded from the deck. It does not maintain a second runtime identity.
 
 **Bus**: an enabled card with a `magentic_option` edge from the orchestrator is
 discoverable on the bus, including a card nested in a visual/workbench parent.
@@ -102,15 +101,15 @@ Main Chat control edge: the persisted deck uses source='card_main_chat',
 ## Start in CBM
 
 ```
-search_graph(project="C-Projects-main", query="getDeckDocument")
-search_graph(project="C-Projects-main", query="parseDeckDocument")
-search_graph(project="C-Projects-main", query="resolvedMagenticOptions")
-search_graph(project="C-Projects-main", query="canvas_inspect")
+search_graph(project="C-Projects-LiquidAIty-main", query="getDeckDocument")
+search_graph(project="C-Projects-LiquidAIty-main", query="parseDeckDocument")
+search_graph(project="C-Projects-LiquidAIty-main", query="resolvedMagenticOptions")
+search_graph(project="C-Projects-LiquidAIty-main", query="canvas_inspect")
 
-trace_path(project="C-Projects-main", function_name="resolvedMagenticOptions",
+trace_path(project="C-Projects-LiquidAIty-main", function_name="resolvedMagenticOptions",
            mode="calls", direction="inbound", depth=1)
 
-index_status(project="C-Projects-main")
+index_status(project="C-Projects-LiquidAIty-main")
 ```
 
 ## Valid proof

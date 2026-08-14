@@ -3,7 +3,7 @@ name: codebasedmemory
 description: Canonical operating guide for Code-Based Memory (CBM) inside LiquidAIty. Use it for repository analysis, cleanup, architecture, refactoring, deletion-impact, and code changes.
 version: 4.0.0
 cbm_version: 0.9.0
-project: C-Projects-main
+project: C-Projects-LiquidAIty-main
 ---
 
 # Code Based Memory Skill
@@ -102,24 +102,24 @@ Use: first call when project identity is uncertain. Record the returned root, no
 count; do not copy an old example count into a current report.
 
 **index_status** — Current index state.
-Parameter: `{"project":"C-Projects-main"}`
+Parameter: `{"project":"C-Projects-LiquidAIty-main"}`
 Use once after the fixed Main entry rebuild to verify ready state and live counts. Do not poll or ask
 repeatedly whether the graph is clean.
 
 **index_repository** — Native synchronization or full reindex.
-Parameter: `{"repo_path":"C:/Projects/main","name":"C-Projects-main","mode":"full"}`
+Parameter: `{"repo_path":"C:/Projects/LiquidAIty/main","name":"C-Projects-LiquidAIty-main","mode":"full"}`
 At each new Codex Main task entry, run exactly one full rebuild immediately after exact-project deletion.
 Outside that fixed entry checkpoint, use it only for one bounded, explicitly authorized maintenance
 decision. Never repeat it for follow-ups in the same task, reindex per query, or poll it as a health check.
 
 **detect_changes** — Maps working-tree changes to affected symbols.
-Parameter: `{"project":"C-Projects-main"}`
+Parameter: `{"project":"C-Projects-LiquidAIty-main"}`
 Use once when ordinary synchronization/change impact must be evaluated. Reports tracked files with
 uncommitted modifications and does not report untracked files. Do not call it ritualistically before
 and after every edit; combine it with `git status --short` when untracked state matters.
 
-**delete_project** — `C-Projects-main` is disposable derived projection state. The owner grants standing
-authorization for exact `C-Projects-main` deletion followed immediately by one full canonical rebuild
+**delete_project** — `C-Projects-LiquidAIty-main` is disposable derived projection state. The owner grants standing
+authorization for exact `C-Projects-LiquidAIty-main` deletion followed immediately by one full canonical rebuild
 once at the start of each new Codex Main task. Verify exact project/root, current `.cbmignore`, and that no
 mutation is already running. Never apply this authorization to another project, source files, vendor
 projects, or direct CBM storage. Reindex alone is not an equivalent cleanup because deleted or newly
@@ -128,7 +128,7 @@ excluded SQLite fragments may survive incremental refresh.
 ### Structural & Architectural
 
 **get_graph_schema** — Node labels, edge types, properties.
-Parameter: `{"project":"C-Projects-main"}`
+Parameter: `{"project":"C-Projects-LiquidAIty-main"}`
 Use: early in a serious session, before writing custom Cypher. Record the live node labels and
 edge types instead of relying on counts copied from a previous index.
 
@@ -137,17 +137,17 @@ HTTP_CALLS, GRPC_CALLS, CROSS_HTTP_CALLS, CROSS_ASYNC_CALLS, DATA_FLOWS, and CON
 belong in the live `get_graph_schema` result, not in this skill.
 
 **get_architecture** — Structure overview.
-Parameter: `{"project":"C-Projects-main"}`
+Parameter: `{"project":"C-Projects-LiquidAIty-main"}`
 The installed 0.9.0 build can return structure, dependencies, routes, entry points, hotspots,
 boundaries, layers, file tree, and graph-derived clusters. Use only the aspects needed for the
 current task. It is an optional cold-start/broad-orientation tool, not a normal first call.
 
 **search_graph** — Locate symbols by name, label, file pattern.
-Parameters: `{"project":"C-Projects-main","query":"<name>","label":"Function"}`
+Parameters: `{"project":"C-Projects-LiquidAIty-main","query":"<name>","label":"Function"}`
 Uses BM25 ranking. Returns name, qualified_name, file_path, start_line, end_line, rank. Supports pagination with has_more. Prefer this over rg when the question concerns a symbol or structural entity. Use the `name` field (not qualified_name) for subsequent trace_path calls.
 
 **trace_path** — Inbound callers / outbound callees. This is the current MCP name.
-Parameters: `{"project":"C-Projects-main","function_name":"<simple-name>","direction":"inbound|outbound","depth":2}`
+Parameters: `{"project":"C-Projects-LiquidAIty-main","function_name":"<simple-name>","direction":"inbound|outbound","depth":2}`
 Uses simple function names (the `name` field from search_graph), NOT qualified names. Returns caller/callee lists with hop distance. Depth 2 is usually sufficient. Depth 1 = direct, depth 2 = transitive. Known limitation: does not resolve Python functions or TypeScript dotted methods.
 
 Some older documentation and older clients called this operation `trace_call_path`. Treat that as a
@@ -155,7 +155,7 @@ historical alias only. The installed v0.9.0 MCP surface exposed to this reposito
 do not invent or call an unavailable alias.
 
 **query_graph** — Custom Cypher queries.
-Parameters: `{"project":"C-Projects-main","query":"MATCH ..."}`
+Parameters: `{"project":"C-Projects-LiquidAIty-main","query":"MATCH ..."}`
 Use only for a specific bounded structural question not covered by simpler tools, with an explicit row
 bound. Cypher support is limited — no subqueries and no OPTIONAL MATCH with complex patterns. Run
 `get_graph_schema` first only when custom Cypher actually requires it.
@@ -163,7 +163,7 @@ bound. Cypher support is limited — no subqueries and no OPTIONAL MATCH with co
 ### Source & Text
 
 **get_code_snippet** — Full source for a qualified symbol.
-Parameters: `{"project":"C-Projects-main","qualified_name":"<exact-qualified-name>"}`
+Parameters: `{"project":"C-Projects-LiquidAIty-main","qualified_name":"<exact-qualified-name>"}`
 Use after locating symbol via search_graph. Returns source, signature, return type, complexity, lines, fingerprint. Discover qualified names through search_graph — do not guess them. Known bug: line-offset can return wrong function for ambiguous names; verify against expected line range.
 
 **search_code** — Graph-augmented code search. The installed 0.9.0 build returns graph-ranked
@@ -174,7 +174,7 @@ Use `rg` for files outside CBM coverage, configs, docs, comments, and exhaustive
 ### Knowledge & Evidence
 
 **manage_adr** — Architecture Decision Records.
-Parameters: `{"project":"C-Projects-main","action":"list|update","content":"..."}`
+Parameters: `{"project":"C-Projects-LiquidAIty-main","action":"list|update","content":"..."}`
 Use for durable architecture decisions only. Not for temporary notes, cleanup findings, or unapproved decisions. Current repo: no ADRs exist.
 
 **ingest_traces** — Runtime trace ingestion.
@@ -204,11 +204,11 @@ Note: Route nodes have empty `file_path`. Route→handler mapping requires readi
 
 ## Working-Tree Visibility
 
-The canonical `C-Projects-main` index is a rebuildable projection of repository source. Source and
+The canonical `C-Projects-LiquidAIty-main` index is a rebuildable projection of repository source. Source and
 tests are authoritative. No delayed marker system exists. For each new Main-repository task,
 `UserPromptSubmit` injects the fixed entry SOP: if the task has not completed clean entry, the active
-agent uses the one connected native MCP owner to delete only `C-Projects-main`, perform one full
-`C:/Projects/main` rebuild, and verify exact root, readiness, live counts, exclusions, and absence of
+agent uses the one connected native MCP owner to delete only `C-Projects-LiquidAIty-main`, perform one full
+`C:/Projects/LiquidAIty/main` rebuild, and verify exact root, readiness, live counts, exclusions, and absence of
 vendor paths once. Record completion in task context and reuse it across follow-ups, interruptions,
 clarifications, and compactions. The hook itself performs no CBM or database operation and launches no process.
 

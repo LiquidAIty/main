@@ -3,7 +3,7 @@
 @skill id=magentic-one-runtime
 @type Skill
 @status active
-@related_to context-packet
+@related_to idf-context
 @related_to spec-as-prompt
 @related_to coder-report-protocol
 @requires fresh_cbm_index
@@ -85,8 +85,8 @@ never spawn a real coder.
 
 ## Chat-To-Active-Job Rule
 
-Normal Agent Builder chat may run the real Magentic-One deck path first, then send real runtime
-provenance and selected workspace context to a backend Context Packet/planning service. The backend
+Normal Agent Builder chat may run the real Magentic-One deck path first, then store real runtime
+provenance and selected workspace context for the canonical IDF/planning boundary. The backend
 planner must be explicitly configured and schema-validated. PlanFlow receives one editable
 CoderPacket and waits for user Go; neither chat nor the planner automatically executes LocalCoder.
 

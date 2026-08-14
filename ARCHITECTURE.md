@@ -64,7 +64,7 @@ created; it is never a runtime fallback and is not proof of current persisted st
 
 The Code Console is an interactive persistent local process. The backend owns its `node-pty` session,
 transcript stream, input, resize, interrupt, and stop lifecycle. The client renders the session with
-xterm. It is bound to `C:/Projects/main` and runs with the machine's permissions; it is not a sandbox.
+xterm. It is bound to `C:/Projects/LiquidAIty/main` and runs with the machine's permissions; it is not a sandbox.
 
 The console is now mounted directly below Main Chat by `HarnessChatPanel`. A draggable reveal handle
 expands and collapses the real OpenClaude Code terminal without replacing the chat session. The same
@@ -165,10 +165,10 @@ Main Chat
 → persistent repo-owned `Hermes\\venv\\Scripts\\hermes-acp.exe`
 → saved prompt, profile, model, grants, and direct saved children
 
-Hermes Kanban card
+Hermes planning/memory/KnowGraph helper
 → saved `card_hermes_steward` identity and familiar canvas position
 → a second persistent Hermes ACP session
-→ KnowGraph/Graphiti grants and the existing native Kanban workspace
+→ KnowGraph/Graphiti grants; `single` or `auto-kanban` remains a saved execution choice
 
 Hermes Terminal
 → separate `/api/coder/hermes/console` route family
@@ -181,9 +181,15 @@ Hermes Kanban
 → durable worker processes and board state
 ```
 
-Main, the separate Hermes Kanban helper, the Hermes terminal, and the Kanban workspace now use the
+Main, the separate Hermes helper, the Hermes terminal, and the Kanban workspace now use the
 repo-owned installation. Main and the helper preserve distinct saved-card identities and session keys;
 neither is a generic AutoGen call renamed Hermes. OpenClaude remains the Coder runtime.
+
+There is no Kanban card type or Kanban profile schema. Every ordinary Hermes-backed card keeps the
+same saved identity, prompt, memory, grants, and runtime-state home when its saved `executionMode`
+changes between `single` and `auto-kanban`. Main defaults to `single`; `card_hermes_steward` is a
+persistent helper rather than the system's Kanban identity. Temporary swarm workers are not saved
+LiquidAIty cards.
 
 The product must preserve both real Hermes modes:
 
@@ -211,9 +217,9 @@ checkout 863 commits behind `origin/main`. The updater created a 144.6 MB full p
 advanced the source to `56dc01d904d5826957208450e62a1634b5dc76a3` before the outside-repo update was
 stopped.
 
-The canonical readable source is now cloned at `C:\Projects\main\Hermes`, on the same current-main
+The canonical readable source is now cloned at `C:\Projects\LiquidAIty\main\Hermes`, on the same current-main
 commit with the official NousResearch origin. Its repo-local data home is
-`C:\Projects\main\Hermes\.hermes`; current memory files, config, Kanban/project databases, and the
+`C:\Projects\LiquidAIty\main\Hermes\.hermes`; current memory files, config, Kanban/project databases, and the
 94.8 MB session database were migrated and hash-checked. The old AppData install remains only as a
 fallback snapshot. `pyproject.toml` reports version `0.20.0` while the latest public tagged release
 observed during this audit was `v0.18.2`, so this is an ahead-of-tag main checkout, not a confirmed
@@ -423,8 +429,8 @@ Hermes = general/research runtime
   - profile-routed durable Kanban fleet
 
 Shared external authorities
-  - PostgreSQL: typed IDF and relational records
-  - AGE AgentGraph: assignments, dependencies, derivation/result lineage
+  - PostgreSQL: saved cards, IDD definitions, actual IDFs, and dynamic AgentGraph context
+  - AGE: optional meta-knowledge about IDFs, runs, references, consumption, and production
   - Engraphis/ThinkGraph: project reasoning and recall
   - Graphiti/KnowGraph: sourced domain knowledge and provenance
   - CBM/CodeGraph: repository structure, symbols, relationships, and bounded source discovery
@@ -444,7 +450,7 @@ how much platform surrounds the loop, and what persists between turns.
 **OpenClaude / LocalCoder Coder:**
 
 ```txt
-saved Coder assignment or persistent terminal input
+saved Coder run input or persistent terminal input
 → OpenClaude composes its coding prompt + native tools + native CBM
 → provider streams reasoning/text/tool-use events
 → permission check when required
@@ -583,26 +589,34 @@ and the deployed service never downloads CBM at runtime.
 It selects and renders the current ThinkGraph, KnowGraph, and CodeGraph surfaces without becoming a
 fourth data authority.
 
-### AgentGraph
+### AgentGraph and optional AGE meta-knowledge
 
-PostgreSQL AGE is the sole AgentGraph authority. It stores exact Markdown agent handoffs, sender and
-receiver identity, and minimal result/derivation lineage. It does not copy, proxy, expand, or merge
-the native graph authorities, tools, models, or Card Canvas configuration.
+AgentGraph is dynamic graph-aware context persisted in PostgreSQL and used to evolve the next IDF. It
+contains instantiated prompt/query/script/reference content, not card authority, a scheduler, or a
+parallel runtime lifecycle. It may point to native graph records and may include bounded resolved data
+needed by the model call; it does not absorb or rewrite native graph authorities.
 
-## Typed Input Data File and delivered context
+Apache AGE is an optional meta-knowledge projection over stable IDs. It may relate an IDF, card/model,
+native run, result, and native graph references with relationships such as `REFERENCES`, `READ_BY`,
+`CONSUMED_BY`, `MADE_BY`, or `PRODUCED`. Those edges describe what happened. AGE never selects a card,
+grants permission, claims work, schedules a runtime, or decides whether Hermes, Mag One, or Coder may
+succeed.
 
-The proposed **Input Data File (IDF)** is viable as a typed, persisted input object. It should not be a
-literal loose file passed between agents and it should not become a fifth graph authority. The clean
-contract is a versioned PostgreSQL record whose payload is schema-validated and whose relationships and
-execution lineage are projected into AGE.
+## Input Data File and Input Data Dictionary
 
-An IDF may contain references to, rather than copies of, heterogeneous input:
+The **Input Data File (IDF)** is the actual versioned model-context document stored in PostgreSQL. The
+same assembled document reaches the actual model/runtime call; it is not a receipt, manifest, trace,
+assignment, or post-run reconstruction. Runtime adapters may mechanically format transport framing but
+must not assemble separate competing meanings.
+
+An IDF may contain concrete bounded material and references to heterogeneous native authorities:
 
 ```txt
-IDF / DeliveredContextManifest
-  identity: project, request, version, author, timestamps
-  instruction: exact user/card prompt and acceptance state
-  loose text: bounded authored context
+IDF
+  identity: project, native run, version, originating card, timestamps
+  stable card context: exact saved prompt/profile/model/grants needed by the call
+  dynamic context: instantiated AgentGraph prompt/query/script/reference content
+  flexible text: bounded user/agent-authored context
   relational references: conversation/message/card/deck IDs
   typed operations: exact native-tool calls plus first-class parameterized SQL/Cypher query definitions
     with authority, language, mode, limits, typed parameters, and required card capability
@@ -610,37 +624,44 @@ IDF / DeliveredContextManifest
   KnowGraph references: Graphiti episode/entity/fact IDs and temporal provenance
   CodeGraph references: CBM project + file/symbol/route pointers + indexed revision state
   attachments: content-addressed artifact references and media metadata
-  output contract: expected schema, proof requirements, and destination
+  run input: the current exact user/task content and explicit output/proof requirements
 ```
 
-PostgreSQL owns the typed manifest, query versions, parameters, and durable payload. AGE owns only the
-assignment, sender/receiver, dependency, derivation, and result-lineage edges. Engraphis owns project
-reasoning and recall. Graphiti/KnowGraph owns sourced knowledge and provenance. CBM owns code structure.
-An IDF records references and the evidence used for one request; it must not duplicate entire native
-graphs into PostgreSQL or AGE.
+The **Input Data Dictionary (IDD)** defines the structural rules used to construct, edit, render, and
+validate valid input: card fields, provider/model/catalog lists, tool schemas, graph-reference and
+typed query/script forms, parameter types/defaults/limits, output shapes, risk, and required capability.
+IDD definitions are not injected into model context. Natural-language IDF content stays flexible.
+
+PostgreSQL owns IDD definitions, instantiated values, IDF versions, and the actual durable model input.
+Engraphis owns project reasoning and recall. Graphiti/KnowGraph owns sourced knowledge and provenance.
+CBM owns code structure. AGE only relates stable IDs when the meta graph is useful.
 
 The intended research flow is:
 
 ```txt
 user chat + uploaded/selected data
 → visualize and inspect the data
-→ persist a typed IDF plus immutable native-tool and SQL/Cypher operation references in PostgreSQL
-→ connect request/card/data/result lineage in AgentGraph (AGE)
+→ use IDD rules to construct and validate one actual IDF in PostgreSQL
 → retrieve bounded Engraphis context
-→ Main or the real Hermes adapter receives one validated DeliveredContextManifest
+→ instantiate selected dynamic AgentGraph context into the same IDF version
+→ Main or the real Hermes adapter sends that actual IDF to the model/runtime call
 → Hermes uses the exact prompt + recalled context to disambiguate research
 → source retrieval and processing
 → Graphiti ingests authoritative episodes into KnowGraph with provenance
-→ result references and proof return to the IDF/assignment, without copying KnowGraph into AGE
+→ result references and proof return to the native run/originating card
+→ optional AGE meta-knowledge relates what was referenced, consumed, and produced
 ```
 
 For coding work the same envelope carries CBM pointers instead of dumping source. The receiving coder
 must still check CBM freshness and direct-read the resolved source before editing. Existing exact
-instructions and AgentGraph assignment-context functions are useful foundations, but the complete IDF
-schema, assembler, validation, generic typed SQL/Cypher execution boundary, and end-to-end consumer
-proof are not yet implemented. Migration 016 removed an earlier overbuilt registered-query subsystem;
-that deletion does not remove the product requirement for one Python-owned, capability-gated,
-parameterized query executor shared by IDF consumers.
+instruction bodies, saved cards, and the surviving tool input dictionary are useful foundations.
+Verified Git archaeology found no complete earlier implementation to restore: `ContextPack` had no
+production caller; `unified_context.py` / `DeliveredContextManifest` rebuilt assignment-coupled graph
+projections; AGE `AgentContext` and the registered-query/GraphView path mixed context with runtime
+control. The explicit IDF/IDD law arrived in `fe6daa9d`; `toolInputDataDictionary.ts` is only a tool
+schema/catalog subset. The shared PostgreSQL assembler, full IDD-driven editor/validation boundary,
+generic capability-gated parameterized SQL/Cypher execution, and actual Hermes/Mag One/Coder consumer
+proof remain TARGET / INCOMPLETE.
 
 ## Trading and retained specialists
 
@@ -675,9 +696,9 @@ because they exist.
 
 | Ownership boundary | Root | CBM project | Use and current state |
 | --- | --- | --- | --- |
-| LiquidAIty core | `C:\Projects\main` | `C-Projects-main` | Default. Vendors are excluded. Current graph is blocked/unhealthy until a delete/rebuild removes 7,986 observed stale Hermes files and proves zero Hermes/LocalCoder files. |
-| Hermes | `C:\Projects\main\Hermes` | `C-Projects-Hermes` | On demand only for explicit Hermes work. Full index passed at 147,002 nodes / 769,439 edges during the boundary test. |
-| OpenClaude/LocalCoder | `C:\Projects\main\localcoder` | `C-Projects-LocalCoder` | On demand only for explicit LocalCoder work. Full index passed at 25,466 nodes / 101,429 edges during the boundary test. |
+| LiquidAIty core | `C:\Projects\LiquidAIty\main` | `C-Projects-LiquidAIty-main` | Default. Vendors are excluded. Re-prove live counts and exclusions; old counts from another checkout are not current evidence. |
+| Hermes | `C:\Projects\LiquidAIty\main\Hermes` | `C-Projects-Hermes` | On demand only for explicit Hermes work. |
+| OpenClaude/LocalCoder | `C:\Projects\LiquidAIty\main\localcoder` | `C-Projects-LocalCoder` | On demand only for explicit LocalCoder work. |
 
 Other significant imported roots—`autogen-main/`, `worldsignal/`, `engraphis-main/`, `Kronos-main/`,
 `defog-sqlcoder/`, `neo4j-text2cypher/`, and `client/src/vendor/codebase-memory-ui/`—remain excluded
@@ -783,9 +804,8 @@ cost.
 
 - Persisted ADMIN Hermes/graph cards and edges; source template presence is not database recovery.
 - Full Main → actual Hermes → approved Mag One end-to-end proof.
-- Full Main → AgentGraph → Hermes/Coder product activation; the AGE store and Coder consumer exist,
-  but the current saved-card grants and native Hermes doorway do not yet expose the complete flow.
-- A complete typed IDF/DeliveredContextManifest schema and proven assembler/consumer flow.
+- Full Main → PostgreSQL IDF/AgentGraph context → Hermes/Mag One/Coder consumer proof.
+- A complete IDD-driven input editor/validation boundary and actual IDF assembler/consumer flow.
 - Runtime Observatory and RunManifest; both are intentionally absent.
 
 These states must remain explicit. Do not hide them with placeholders, fake success, generic model

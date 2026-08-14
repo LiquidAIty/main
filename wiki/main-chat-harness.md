@@ -6,8 +6,8 @@ status: working
 proof_level: source_tests_and_live_runtime
 
 cbm:
-  project_identity: C-Projects-main
-  index_root: C:/Projects/main
+  project_identity: C-Projects-LiquidAIty-main
+  index_root: C:/Projects/LiquidAIty/main
   freshness: task_entry_live_counts_recorded_elsewhere
 
 roots:
@@ -67,8 +67,10 @@ browser → POST /api/coder/main/session/chat
 → durable completion/failure record
 ```
 
-The saved `card_hermes_steward` binding enters the same ACP adapter through `runConfiguredCard`, but
-uses its own saved policy and session key. It is not generic AutoGen and not another Main transcript.
+The saved `card_hermes_steward` planning/memory/KnowGraph helper enters the same ACP adapter through
+`runConfiguredCard`, but uses its own saved policy, memory, and session key. It is an ordinary
+Hermes-backed card that may save `single` or `auto-kanban`; it is not the Kanban identity, generic
+AutoGen, or another Main transcript.
 
 ## Must not break
 
@@ -84,11 +86,11 @@ uses its own saved policy and session key. It is not generic AutoGen and not ano
 ## Start in CBM
 
 ```text
-search_graph(project="C-Projects-main", query="resolveMainHermesRuntimeConfig")
-search_graph(project="C-Projects-main", query="startHermesTurn")
-trace_path(project="C-Projects-main", function_name="startHermesTurn",
+search_graph(project="C-Projects-LiquidAIty-main", query="resolveMainHermesRuntimeConfig")
+search_graph(project="C-Projects-LiquidAIty-main", query="startHermesTurn")
+trace_path(project="C-Projects-LiquidAIty-main", function_name="startHermesTurn",
            mode="calls", direction="inbound", depth=2)
-search_graph(project="C-Projects-main", query="runConfiguredCard")
+search_graph(project="C-Projects-LiquidAIty-main", query="runConfiguredCard")
 ```
 
 ## Valid proof

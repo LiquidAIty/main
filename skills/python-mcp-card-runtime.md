@@ -16,17 +16,17 @@ canvas card (deck_builder)            ← identity, prompt, model, enabled, tool
   → runConfiguredCard (backend)      ← server-trusted resolution: ids in, config resolved, overrides rejected
   → /autogen/run_card (Python)       ← run_configured_card: ONE saved participant identity
                                       (AssistantAgent or typed runtime adapter)
-  → card tools (tool_registry)       ← FunctionTools resolved by name; authority via ContextVar, never model args
+  → card tools (tool_registry)       ← FunctionTools resolved by saved grants, never invented model args
   → mcp-bridge endpoints (backend)   ← transport to the single store authority
   → transactional store writer       ← structural/provenance/idempotency validation ONLY; one txn or honest failure
 ```
 
 ## Rules
 
-- **Authority is runtime context, not model input.** AGEntgraph owns the assignment;
-  Python claims it and sets the receiving card/assignment identity in a `ContextVar`
-  around the model run. A tool called outside that assignment fails honestly.
-- **The model supplies only the payload body** (e.g. the patch). Project/card/run/pair
+- **Authority is saved-card configuration plus explicit runtime input.** The saved card owns the
+  capability ceiling; the current IDF instantiates valid values/references under IDD rules. AgentGraph
+  context and optional AGE observations never claim or authorize a native run.
+- **The model supplies only the permitted operation payload body** (e.g. the patch). Project/card/run
   identity can never be overridden from model arguments.
 - **No fallback anywhere**: missing model config, unknown tool, disabled card, rails
   down, model failure — every path returns a typed honest status; nothing substitutes.
@@ -37,6 +37,8 @@ canvas card (deck_builder)            ← identity, prompt, model, enabled, tool
 - **MCP host = thin stdio transport** (`apps/python-models/app/mcp_host.py`, official
   `mcp` SDK) bridging to `/api/coder/mcp-bridge/*`. No product logic in the host;
   structural argument allow-lists reject smuggled prompts/models/patches.
+- **Canonical model context = actual stored IDF.** Runtime-specific adapters may mechanically frame
+  it, but may not rebuild another context packet or append IDD definitions to the prompt.
 
 ## Runtime split
 

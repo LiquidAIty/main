@@ -30,14 +30,13 @@ any inherited prompt, and any pattern you observe in surrounding code.
 4. **Membership test.** If a thing is not (a) bound by an agent, (b) controlling/visualizing an
    agent on the canvas, or (c) knowledge — it does not belong here. Delete it.
 
-   **The ONLY system is:** ReactFlow agent cards on the canvas + AutoGen/Mag One (Python) under
-   them + the Harness + MCP-based graph connections. The ONLY two orchestrators are (1) the
-   vendored OpenClaude/coder stack and (2) Mag One (Python, thin TS transport on top). Storage
-   authority: **KnowGraph = Python + Neo4j** (research agents write it natively);
-   **ThinkGraph = SQL/SQLite Engraphis through its bounded Python tools**; **CodeGraph = CBM**;
-   **AgentGraph = PostgreSQL AGE exact-Markdown handoffs and result lineage**. Therefore any TS that ingests, extracts,
-   chunks, plans, scores, researches, or runs an agent/tool framework is poison — it is not bound
-   to a card, it is not the canvas, it is not the Harness, and it is not Python. Delete it.
+   **The ONLY system is:** saved ReactFlow agent cards and topology + ordinary card-owned Hermes
+   single/Kanban execution + native AutoGen/Mag One for connected production teams + the contained
+   OpenClaude/LocalCoder specialist. Storage authority: **PostgreSQL = saved-card plus IDF/IDD and
+   dynamic AgentGraph context substrate**; **AGE = optional meta-knowledge, never runtime control**;
+   **KnowGraph = Python + Neo4j**; **ThinkGraph = SQL/SQLite Engraphis through bounded Python tools**;
+   **CodeGraph = CBM**. Therefore any TS that ingests, extracts, chunks, plans, scores, researches,
+   interprets model meaning, or runs an agent/tool framework is poison. Delete it.
 
 ## TypeScript is rails, not a brain
 
@@ -167,59 +166,20 @@ The items below are the major deletion events. Every one "worked" before it was 
   Lesson: two run paths that both call the same function is one path too many; and a "freshness gate" on a
   local index is an invented guardrail that stops work for zero safety.
 
-- **2026-07-24 — remove the last fake Canvas runtime and duplicate AgentGraph authority.**
-  - Deleted the Agent Canvas Run Card/Run Deck/Task controls, their deck-run route, single-assist
-    wrappers, request/response contracts, event animation, saved-run writer, reload projection,
-    prompt-trace display, and orphan-only tests. Historical run JSON remains opaque in PostgreSQL;
-    ordinary deck saves preserve it and no migration deleted user data.
-  - Deleted `graph_flow` across UI, shared types, backend normalization, Mag One eligibility, and
-    Python contracts. It had no executor, `GraphFlowSpec` had zero callers, and no persisted ADMIN
-    card used it.
-  - Deleted TypeScript AgentGraph context resolution/result writing and the Python HTTP endpoints
-    that existed only for those wrappers. Saved-card execution transports `agentContextId`; Python
-    AutoGen resolves Markdown and writes AGE lineage.
-  Lesson: an editor option, contract, route, or test does not prove a runtime. Keep one execution
-  authority and delete the full connected compatibility cluster when its producer/executor is gone.
-
-- **2026-07-28 — AgentGraph overbuild deletion: 28 tracked files changed, 3 files
-  deleted, 2,835 lines removed (2,284 production + 540 test + 11 docs), with one
-  26-line unapplied forward-removal migration.**
-  - Deleted the 640-line runtime-assignment store, 266-line runtime-profile executor, and their
-    121-line life-support test. Removed their post-hooks, terminal-result contract and repair call,
-    profile packets, permanent skill/data/query bindings, routes, MCP operations, schemas, catalog
-    claims, canvas projections, tests, and database objects.
-  - Deleted eager Mag One child reservations and the wrapped AssistantAgent that falsely recorded
-    every eligible worker as delegated work before Mag One selected it. Native Mag One, saved
-    worker eligibility, real parent/child lineage, and ordinary AutoGen agents remain.
-  - Deleted automatic WorldSignals-to-assignment context injection and its process-local authority.
-    WorldSignals remains a normal useful tool; a tool result is not retroactively a reference that
-    arrived with the original pass.
-  - Preserved the narrow system: exact instruction + pass-specific SQL/Cypher/Graph View references,
-    saved-card execution, PostgreSQL lifecycle payloads, AGE lineage, Hermes SQL memory/report
-    correlation, Main, native Mag One, and OpenClaude/Coder.
-  - Traversed both this deletion set and the preceding artifact cleanup through CBM, then checked
-    current dirty source. No deleted module, import, export, route, tool registration, artifact
-    locator, runtime-profile symbol, or assignment-binding writer survived. One stale transport
-    comment and one stale AssistantAgent docstring were the only connected residue found and removed.
-    LocalCoder's unrelated pull-request `reviewState` and the complete assignment
-    lease/heartbeat/claim-token cluster were preserved.
-  Lesson: the request was a durable inter-agent envelope, but the implementation grew into a second
-  runtime/configuration/policy product. Permanent bindings, output contracts, retrying repair calls,
-  fake worker reservations, duplicate traces, and post-hoc context overlays made every transport
-  seam look load-bearing. Build the pass and result ledger; do not build another agent platform
-  around it.
-
-- **2026-07-28 — AgentGraph lease/retry follow-up: 11 files changed, 232 lines
-  removed.**
-  - Deleted expiry, heartbeat, reclaim, attempt counting, retry-chain fields, and their response/test
-    residue after CBM and current source proved there is no queue worker or assignment scanner.
-  - Preserved one atomic pending-to-running claim, a non-expiring claim token, one-result-per-assignment
-    protection, and idempotent identical terminal writes. AutoGen's internal retries are unrelated.
-  - Removed the remaining registered-operation write/capability/disable workflow schema; retained
-    immutable version lookup, typed parameters, read-only SQL/Cypher execution, Graph Views, and
-    pass-specific references.
-  Lesson: distributed-worker lease machinery without a distributed worker is not resilience. It creates
-  an expiry race that can invalidate a legitimate long model run.
+- **2026-07-23 through 2026-08-02 — context-system archaeology correction.**
+  - Git proves that the AGE `AgentContext`, registered-query/GraphView, runtime-assignment/profile,
+    claim-token, and delivered-context-manifest implementations were successive experiments, not a
+    completed IDF/IDD system. They coupled model context to caller/receiver identity and duplicated
+    native graph/runtime state.
+  - The cleanup removed substantial detours but incorrectly retained or later restored a smaller
+    assignment/claim/begin/finish control core. Commit history is the record; canonical architecture
+    must not describe that remainder as a protected runtime contract.
+  - Do not restore `ContextPack`, `unified_context.py`, `DeliveredContextManifest`, registered-query
+    registries, GraphViews, or assignment authorization merely because they once rendered model text.
+    Reuse only individually proven validation/parameterization ideas at the one IDD/IDF boundary.
+  Lesson: IDF is the actual PostgreSQL-stored assembled model-context document; IDD describes valid
+  input. AGE may describe consumption/production, but no assignment, receiver, claim, or AGE write may
+  authorize or fail Hermes, Mag One, or Coder.
 
 - **2026-06-01 through 2026-07-05 (full audit from git log) — running tally from the actual commit
   record: 5,963 files changed, +175,192 / -182,915 lines across ~90 commits.** The DONT.md entries above
@@ -275,22 +235,10 @@ The items below are the major deletion events. Every one "worked" before it was 
   "for later" and later never comes. Do not create either. If you split a file, delete the original and prove
   every piece has a live importer. If you scaffold, wire it now or don't write it.
 
-- **2026-07-29 — GraphView authority collapse and prompt-packet purge: 41 files, +1,063 / -1,925
-  lines before this log entry.**
-  - Moved bounded GraphView reference/lineage persistence out of ThinkGraph/Engraphis and into
-    AgentGraph. Deleted the ThinkGraph GraphView writer, its full `records_json` /
-    `relationships_json` copies, and the corresponding persisted Engraphis records.
-  - Deleted the disconnected Ask Main / selected-graph overlay from client, backend, and
-    Python rails. It duplicated server-owned graph resolution and never became a working
-    Main interaction.
-  - Deleted the separate TypeScript `LIQUIDAITY_INVESTIGATION_CONTEXT` packet. Hermes now receives
-    only the generic server-owned runtime identities; its actual result still returns through the
-    existing Python AgentGraph authority.
-  - Preserved native graph viewers, card-local tools, generic runtime identity, AgentGraph reference
-    passing, Hermes report persistence, and claim/finish protections.
-  Lesson: **a reference graph must point to native authorities, not copy their payloads; a
-  server-owned agent context that exists outside the agent's Python runtime is a second prompt
-  system, not context.**
+- **Do not revive GraphView or prompt-packet projection.** Native graph references may be instantiated
+  inside an IDF and related by optional AGE meta-knowledge. A separate projection/manifest/context-pack
+  authority is a second prompt system. References point to native authorities; bounded resolved data
+  enters the actual IDF only when the model call needs it.
 
 - **2026-07-30 — Native graph-catalog federation and fake-wrapper purge: 26 files,
   +539 / -1,935 lines before this log entry.**

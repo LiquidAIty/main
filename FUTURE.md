@@ -45,13 +45,13 @@ part of the active research loop until its own pass wires it in.
 - **Auth on Prisma, app state on raw Postgres, graphs in their own stores** — login/signup →
   `auth/userService` + `auth/sessionStore` → `services/database.ts` (Prisma) is the correct, deliberate
   split: Prisma owns auth/session; raw Postgres owns project/deck/conversation app state;
-  SQLite/Engraphis owns ThinkGraph; Neo4j owns KnowGraph; CBM owns CodeGraph; and Apache AGE owns
-  exact-Markdown AgentGraph handoffs plus result lineage. This split is deliberate.
-- **Hermes runtime/UI (pre-integration)** — preserve the source seed's Hermes card, Main→Hermes edge,
-  inherited-context selection, prompt/model/tool grants, and report seams. The current ADMIN deck
-  lacks that persisted topology, and no installed Hermes process has been runtime-proven. Restore the
-  saved data only in a separate reviewed database task, then integrate one real Hermes process
-  boundary and give it a separate terminal/UI.
+  SQLite/Engraphis owns ThinkGraph; Neo4j owns KnowGraph; CBM owns CodeGraph; PostgreSQL owns IDD,
+  actual IDFs, and dynamic AgentGraph context; Apache AGE is optional meta-knowledge. This split is
+  deliberate.
+- **Hermes runtime/UI** — Main and ordinary Hermes-backed saved cards use the repo-owned persistent
+  Hermes boundary. Preserve saved prompt/profile/model/tool authority, stable card identity across
+  `single` and `auto-kanban`, distinct sessions, and the separate Hermes terminal. The saved
+  `card_hermes_steward` is a planning/memory/KnowGraph helper, not a Kanban card type.
 - **Card model authority is per-card, by design** — current ADMIN readback has Main and Local Coder on
   `openrouter/z-ai/glm-5.2` and Magentic-One on `openrouter/openai/gpt-5.1-chat`. Mixed models
   across cards are correct when the live card configs say so — never normalize all cards to one
@@ -190,12 +190,18 @@ No model statement becomes KnowGraph fact without source provenance.
 skills to systems/files/tasks/proof-commands/traps/success/failure. A skill is created/updated only
 after real work produced proof worth preserving.
 
-## Context Policy (vision)
+## IDF Context Policy (target; implementation incomplete)
 
-The Context Pack is the controlled input to a model/agent. A normal turn receives only the relevant
-bounded slice: active conversation-branch tail, selected reply anchor, active Plan + selected step,
-scoped ThinkGraph, scoped KnowGraph evidence, scoped CodeGraph/CBM when code matters, relevant skills,
-linked prior runs/artifacts/reviews. Each item carries source, reference, timestamp, relevance reason.
+The PostgreSQL IDF is the actual controlled document sent to a model/agent. A normal turn receives only
+the relevant bounded slice: saved-card context, current exact input, active conversation-branch tail,
+selected reply anchor, scoped ThinkGraph, scoped KnowGraph evidence, scoped CodeGraph/CBM when code
+matters, relevant skills, and linked prior runs/artifacts/reviews. Dynamic AgentGraph content is
+instantiated into that same IDF version; it is not another packet or manifest.
+
+IDD supplies the structural rules, catalogs, field definitions, constraints, and typed operation forms
+used to construct/edit/validate the IDF. IDD definitions are not sent to the model. Optional AGE
+meta-knowledge may relate the IDF, run, card/model, native references, and produced results, but never
+authorizes or schedules execution.
 
 Excluded by default: entire chat history, retired unrelated messages, entire user graph, raw hidden
 reasoning, raw tool payloads, secrets, unverified model claims, unrelated skills, whole repositories.
@@ -219,7 +225,7 @@ The system states honest emptiness when grounded context is unavailable.
 
 ```txt
 user request or selected Plan step
-→ bounded Context Pack
+→ bounded actual PostgreSQL IDF assembled under IDD rules
 → Plan creation/revision or approved-step mission
 → agent work
 → real artifacts/evidence
@@ -254,7 +260,7 @@ contradicted/competing · unknown · model-interpretation. Never present generat
 ## Deferred features (base functions first)
 
 - **No graph access for the Orchestrator (Mag One).** It runs a Harness-authored prompt and has no
-  direct graph tools; the Harness owns graph reads and distills what a run needs into the prompt.
+  direct graph tools by default; the originating card/runtime uses the selected material in the IDF.
 - **ThinkGraph slicing/filtering tool for chat.** For now the Harness reads the graph plainly; a
   bounded filtered "slice" tool (richer than `thinkgraph.get_graph_slice`'s current plain read) is later.
 - **Durable run-folder layer around the coder.** The coder seam is wired (`run_local_coder`, server
@@ -267,11 +273,12 @@ contradicted/competing · unknown · model-interpretation. Never present generat
 1. Audit and freeze a real baseline. 2. Wire user-scoped ThinkGraph records for Plan/revision refs,
 requested outcomes, constraints, open questions, run/review links. 3. Wire user-scoped KnowGraph
 source-backed retrieval + explicit Plan-step links. 4. Feed scoped ThinkGraph + KnowGraph into the live
-Harness Context Pack. 5. Prove a fresh turn uses real graph context without full chat history.
+actual IDF consumed by the model call. 5. Prove a fresh turn uses real graph context without full chat
+history and that the stored IDF matches what reached the runtime.
 
 ### Batch B — Contextual Capabilities
 1. CodeGraph/CBM scoped retrieval for code steps. 2. Deliberate SkillsGraph retrieval. 3. Extend Context
-Pack with code/skills only when relevant. 4. Report stale or incomplete CBM honestly and use direct
+IDF with code/skills only when relevant. 4. Report stale or incomplete CBM honestly and use direct
 source reads plus focused proof; never treat stale graph memory as authority or invent context.
 
 ### Batch C — Bounded Harness Work and Review

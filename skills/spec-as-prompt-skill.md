@@ -3,7 +3,7 @@
 @skill id=spec-as-prompt
 @type Skill
 @status active
-@related_to context-packet
+@related_to idf-context
 @related_to coder-report-protocol
 @requires fresh_cbm_index
 
@@ -15,7 +15,8 @@ a bounded part of `PLAN.md`. Never create spec files or task files.
 ## Procedure
 
 1. Read `PLAN.md` and current PlanFlow state.
-2. Pull a Context Packet with fresh CBM/code anchors and relevant skills.
+2. Assemble bounded current evidence with fresh CBM/code anchors and relevant skills for the active
+   CoderPacket/IDF; do not create another packet type.
 3. Create one active CoderPacket prompt containing requirements, scope, proof, and stop conditions.
 4. Let the user review or edit the active prompt.
 5. Send it to a coder only after Go.

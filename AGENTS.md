@@ -1,6 +1,6 @@
 # AGENTS.md — LiquidAIty execution law
 
-This file tells every coding agent how to work in `C:\Projects\main`. It is repository law, not a
+This file tells every coding agent how to work in `C:\Projects\LiquidAIty\main`. It is repository law, not a
 product prompt and not a substitute for current source, tests, or runtime proof.
 
 ## Start here
@@ -129,8 +129,8 @@ experiment recommendation; the agent should record the tradeoff rather than cove
 Codebase Memory / CodeGraph is the repository structure authority. The canonical project is:
 
 ```text
-project: C-Projects-main
-root:    C:/Projects/main
+project: C-Projects-LiquidAIty-main
+root:    C:/Projects/LiquidAIty/main
 ```
 
 Use the native `codebase-memory-mcp` server. Do not launch CBM through PowerShell, CLI wrappers, Python,
@@ -164,12 +164,12 @@ One repository ownership boundary equals one CBM project:
 
 | Active ownership boundary | CBM project | Root | Normal use |
 | --- | --- | --- | --- |
-| LiquidAIty core | `C-Projects-main` | `C:\Projects\main` | Default for ordinary work |
-| Hermes vendor | `C-Projects-Hermes` | `C:\Projects\main\Hermes` | Only while explicitly working in Hermes |
-| OpenClaude/LocalCoder vendor | `C-Projects-LocalCoder` | `C:\Projects\main\localcoder` | Only while explicitly working in LocalCoder |
+| LiquidAIty core | `C-Projects-LiquidAIty-main` | `C:\Projects\LiquidAIty\main` | Default for ordinary work |
+| Hermes vendor | `C-Projects-Hermes` | `C:\Projects\LiquidAIty\main\Hermes` | Only while explicitly working in Hermes |
+| OpenClaude/LocalCoder vendor | `C-Projects-LocalCoder` | `C:\Projects\LiquidAIty\main\localcoder` | Only while explicitly working in LocalCoder |
 
 The core project excludes the large imported and vendored roots in `.cbmignore`. Normal LiquidAIty
-work uses only `C-Projects-main`; do not query, preload, merge, or cross-link the Hermes or LocalCoder
+work uses only `C-Projects-LiquidAIty-main`; do not query, preload, merge, or cross-link the Hermes or LocalCoder
 graphs merely because they exist. When a task explicitly crosses a vendor boundary, query the core
 and owning vendor projects separately and narrowly, then join the evidence in the CoderReport—not in
 a combined CBM graph.
@@ -250,19 +250,19 @@ Codex has unrestricted technical access to the native CBM catalog. Do not "groun
 disabling tools, adding an `enabled_tools` allowlist, switching the project to untrusted, or changing
 the global approval policy merely because one run behaved badly. Fix the bounded misuse instead.
 
-`C-Projects-main` is disposable derived projection state. Repository source and tests are authoritative.
+`C-Projects-LiquidAIty-main` is disposable derived projection state. Repository source and tests are authoritative.
 The owner authorizes exact-project deletion and immediate canonical rebuilding without another
 permission round-trip once at the start of each Codex task whose active repository is
-`C:/Projects/main`. This fixed task-entry checkpoint replaces freshness deliberation, delayed markers,
+`C:/Projects/LiquidAIty/main`. This fixed task-entry checkpoint replaces freshness deliberation, delayed markers,
 and the proposed post-commit checkpoint. Immediately before deletion:
 
 1. use the native doorway only;
-2. verify the exact project name and root are `C-Projects-main` and `C:/Projects/main`;
+2. verify the exact project name and root are `C-Projects-LiquidAIty-main` and `C:/Projects/LiquidAIty/main`;
 3. record the current index status/counts or the checkpoint reason;
 4. verify `.cbmignore` contains the intended current exclusions;
 5. ensure no index/delete/recovery operation is already running.
 
-Then perform exactly one delete, exactly one full `index_repository` rebuild of `C:/Projects/main`, and
+Then perform exactly one delete, exactly one full `index_repository` rebuild of `C:/Projects/LiquidAIty/main`, and
 one readiness/count/exclusion verification phase. Reindexing alone does not replace deletion because
 SQLite-backed incremental refresh can retain deleted or newly excluded fragments. Never delete
 `C-Projects-Hermes`, `C-Projects-LocalCoder`, another project, repository source, or CBM storage files
@@ -276,7 +276,7 @@ clarification, compaction, or another message in the same task. After the clean 
 ready status, live node/edge/file counts, `.cbmignore` exclusions, and absence of vendor paths once.
 Then begin discovery with the four normal tools: `search_graph`, `trace_path` when relationships matter,
 `get_code_snippet` for exact qualified-symbol snapshots, and `search_code` for bounded concept/literal/
-residue discovery when useful. Outside `C:/Projects/main`, do not perform this Main maintenance.
+residue discovery when useful. Outside `C:/Projects/LiquidAIty/main`, do not perform this Main maintenance.
 
 The Git post-commit hook remains Git LFS only. Do not install a second CBM mutation frontend, kill the
 normal Codex owner, or reintroduce a delayed marker system.
@@ -478,15 +478,19 @@ regex, substring, keyword, or lookup-table logic.
 
 ### Main
 
-TARGET: the saved Main card executes through one repo-owned Hermes persistent chat adapter. Main is a
-LiquidAIty role, not the name of a third-party UI. The adapter must preserve saved prompt/profile/model/
-tool authority and real streaming/session/failure behavior.
+The saved Main card executes through the repo-owned Hermes persistent chat adapter. Main is the fast
+LiquidAIty front door, not the name of a third-party UI. Its default execution mode is `single`, but
+Main is not a distinct card type and must not be structurally forbidden from using the same card-owned
+Hermes Kanban/swarm capability when explicitly selected. The adapter preserves saved prompt/profile/
+model/tool authority and real streaming/session/failure behavior.
 
-### Hermes card
+### Hermes planning/memory/KnowGraph helper
 
-The existing `hermes_steward` card is the experiment and delegation surface. It may offer ordinary
-Hermes work and a Hermes-stewarded Auto-Kanban mode. It does not become a duplicate Main transcript or
-another card platform.
+The stable card currently identified as `card_hermes_steward` is a persistent planning, memory,
+research, and KnowGraph helper. Preserve its saved identity and data, but do not define it as "the
+Kanban card." It is an ordinary Hermes-backed card and may run either `single` or `auto-kanban` without
+changing its identity, profile home, memory, or capability ceiling. Temporary Hermes swarm workers are
+not saved LiquidAIty cards.
 
 ### OpenClaude Coder
 
@@ -522,13 +526,16 @@ project, trace, or render ledger artifacts in LiquidAIty.
 ThinkGraph = SQLite/Engraphis project reasoning and operational knowledge
 KnowGraph  = Neo4j/Graphiti sourced knowledge and provenance
 CodeGraph  = native CBM repository structure
-AgentGraph = PostgreSQL AGE agent assignments, handoffs, results, derivation lineage
+AgentGraph = PostgreSQL dynamic graph-aware context used to assemble the next IDF
+AGE        = optional meta-knowledge about IDFs, executions, references, consumption, and production
 ```
 
 One authority and one writer per graph.
 
 - Pass pointers, native IDs, bounded Context Selections, and provenance—not copied subgraphs.
-- AgentGraph may reference native authorities for provenance/hydration; it does not absorb their data.
+- AgentGraph may reference native authorities for context hydration; it does not absorb their data.
+- AGE may relate stable native IDs, IDFs, cards/models, runs, and results. It observes; it never
+  authorizes a runtime, chooses a card, or owns native runtime lifecycle.
 - The UI never writes graph meaning directly.
 - TypeScript never performs semantic graph merges.
 - Files/skills describe how-to; graphs store what-is. Do not smear SkillsGraph into KnowGraph.
@@ -547,7 +554,7 @@ selection sent/delivered/opened
 native node/edge read
 native traversal completed
 native node/edge proposed or written
-assignment completed or failed
+native run completed or failed
 ```
 
 Do not visualize hidden chain-of-thought. Do not infer access from answer prose. Do not create fake
@@ -558,19 +565,32 @@ knowledge movement.
 
 ## IDF and IDD law
 
-IDF is loose Markdown with explicit executable/context islands. Ordinary prose is inert. Supported
-operation families may include MCP, bounded scripts, parameterized SQL, parameterized Cypher, graph
-views, imports, and typed results.
+IDF is the actual assembled model-context document. It contains the concrete saved-card context and
+the instantiated dynamic AgentGraph prompt/query/script/reference content selected for one model call,
+including bounded resolved native data when required. The versioned IDF is stored in PostgreSQL and the
+same document—not a reconstructed receipt, envelope, manifest, or telemetry record—is transported to
+the actual model/runtime call. Runtime adapters may format it mechanically; they must not independently
+invent conflicting context semantics.
 
-IDD defines legal operations, connection/authority, parameters, limits, stored paths/versions, result
-contract, risk, and required capability. It is a type/capability vocabulary for agent actions, not a
-rigid language for agent prose.
+IDD is the Input Data Dictionary: rules for constructing, validating, rendering, and editing valid
+structured input. It covers typed card fields, catalogs/lists, tool schemas, graph-reference forms,
+query parameters, script/directive inputs, defaults, constraints, and metadata where structure is
+useful. IDD definitions help create an IDF; the definitions themselves are not appended to the model
+payload. Natural-language IDF content remains flexible and is not forced into a rigid schema.
+
+Verified history matters here. Git archaeology found no completed historical PostgreSQL IDF assembler
+or shared model-consumer path to restore. The July `ContextPack`, `unified_context.py` /
+`DeliveredContextManifest`, AGE `AgentContext`, and registered-query subsystems were different,
+assignment-coupled or duplicate experiments. The broader IDF/IDD law entered canonical docs in commit
+`fe6daa9d` on 2026-08-10; `toolInputDataDictionary.ts` (commit `d374097c`) is only the surviving tool
+schema/catalog subset. Until the implementation is completed and proven, documentation must call the
+IDF/IDD runtime path TARGET / INCOMPLETE rather than CURRENT.
 
 Authority is:
 
 ```text
 saved card capability ceiling
-∩ assignment-scoped imports/grants
+∩ run/input-scoped instantiated values and references
 ∩ IDD operation requirements
 ∩ user approval where applicable
 ```
@@ -601,8 +621,10 @@ saved topology
 Callers provide task input and stable references, not alternate card definitions. Missing cards,
 models, grants, runtimes, or authorities fail honestly. No model/provider/tool fallback.
 
-AgentGraph carries task-specific exact Markdown, context references, assignments, and results. It does
-not replace saved-card configuration.
+AgentGraph carries the instantiated dynamic prompt/query/script/reference content that evolves the
+next IDF. PostgreSQL persists that context; optional AGE meta-knowledge may relate what an execution
+read, referenced, produced, or derived. Neither replaces saved-card configuration or native runtime
+truth.
 
 ---
 
@@ -756,7 +778,7 @@ direction. Do not solve uncertainty by writing another document.
 
 - No commit or push unless explicitly requested.
 - No destructive Git, source, unknown-project, vendor-project, or direct database operation without
-  explicit authorization and exact target verification. Exact `C-Projects-main` projection maintenance
+  explicit authorization and exact target verification. Exact `C-Projects-LiquidAIty-main` projection maintenance
   follows the standing authorization above.
 - No stubs, placeholders, mocked success, fake fallback, or silent degradation.
 - No hidden second route, MCP host, runtime, graph, renderer, event bus, or prompt system.

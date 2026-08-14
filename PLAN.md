@@ -109,7 +109,8 @@ user question or selected data
 → research or reasoning produces proposed entities and relationships
 → accepted knowledge is written by the native graph owner
 → new nodes and edges settle into the durable graph
-→ AgentGraph records assignment/result/provenance lineage
+→ the next PostgreSQL IDF records the selected dynamic context
+→ optional AGE meta-knowledge records what the execution referenced, consumed, or produced
 → future work can retrieve and extend the accumulated knowledge
 ```
 
@@ -133,12 +134,12 @@ today’s runtime.
 - The client and backend stream text, reasoning signals exposed by the provider, tool starts, tool
   results, permissions, progress, completion, and errors.
 - The saved `main_chat` card supplies prompt, model, and grants.
-- The saved Hermes Kanban card uses the same real ACP adapter with its own saved identity, session,
-  Graphiti/KnowGraph grants, and existing Kanban workspace.
+- The saved Hermes planning/memory/KnowGraph helper uses the same real ACP adapter with its own saved
+  identity, session, grants, and existing Kanban capability. It is not a separate Kanban card type.
 
 ### CURRENT — Hermes
 
-- Hermes source and its Python environment exist under `C:\Projects\main\Hermes`; the current direct
+- Hermes source and its Python environment exist under `C:\Projects\LiquidAIty\main\Hermes`; the current direct
   filesystem inspection found no nested `.git`. Git mode, outer-repository tracking, and clone/readback
   proof remain unverified in this task because the host blocked Git commands.
 - The repo-owned Hermes `0.20.0` executable passed a bounded one-shot prompt and a persistent two-turn
@@ -179,7 +180,7 @@ today’s runtime.
 
 ### CURRENT — CBM
 
-- Normal work uses only `C-Projects-main`, rooted at `C:/Projects/main`. Its `.cbmignore` excludes
+- Normal work uses only `C-Projects-LiquidAIty-main`, rooted at `C:/Projects/LiquidAIty/main`. Its `.cbmignore` excludes
   Hermes, LocalCoder, AutoGen, and the other large imported/runtime roots.
 - `C-Projects-Hermes` and `C-Projects-LocalCoder` exist only for explicit work inside those vendors.
   Do not query, refresh, preload, or cross-link them during ordinary core work.
@@ -193,10 +194,10 @@ today’s runtime.
   must be reported; missing tools must never be invented.
 - Dedicated full indexes passed at 147,002 nodes / 769,439 edges for Hermes and 25,466 nodes / 101,429
   edges for LocalCoder; those are observation-time measurements, not permanent expected counts.
-- `C-Projects-main` is disposable derived state. A clean checkpoint means deleting that exact project,
-  fully rebuilding `C:/Projects/main`, and verifying readiness, counts, and exclusions; an in-place
+- `C-Projects-LiquidAIty-main` is disposable derived state. A clean checkpoint means deleting that exact project,
+  fully rebuilding `C:/Projects/LiquidAIty/main`, and verifying readiness, counts, and exclusions; an in-place
   reindex is not a substitute because deleted or newly excluded SQLite fragments may survive it.
-- Each Codex task in `C:/Projects/main` receives a `UserPromptSubmit` SOP requiring the active agent to
+- Each Codex task in `C:/Projects/LiquidAIty/main` receives a `UserPromptSubmit` SOP requiring the active agent to
   perform that exact delete, full rebuild, and one health/count/exclusion verification through the
   already-connected native MCP owner once at task entry. Follow-ups, interruptions, clarifications,
   compactions, and later messages reuse the task's completed entry state. The hook injects context only;
@@ -249,9 +250,9 @@ Microsoft AutoGen/Magentic-One remains on Python rails. Connected `magentic_opti
 eligible workers. The runtime retains its private native Task and Progress Ledgers. LiquidAIty does
 not inspect, reconstruct, rewrite, or visualize those private ledgers.
 
-Hermes may steward Magentic-One by authoring a bounded exact IDF/AgentGraph assignment, presenting it
-for required user approval, and invoking the one existing `run_mag_one` authority. This is orchestration
-through the existing runtime, not a Hermes reimplementation of Magentic-One.
+The helper may prepare a bounded exact Mag One mission in dynamic AgentGraph context, Main may review
+and approve it, and the one existing `run_mag_one` authority launches native Magentic-One. AgentGraph
+does not claim, authorize, schedule, or translate the run.
 
 ---
 
@@ -264,13 +265,14 @@ they do not merge or copy native authorities.
 |---|---|---|---|
 | ThinkGraph | SQLite / Engraphis through Python rails | project reasoning, conversation-linked operational knowledge, jobs, proof, blockers, next steps | sourced external knowledge, code structure, agent topology |
 | KnowGraph | Neo4j / Graphiti and Python research | sourced entities, relationships, episodes, temporal facts, citations, provenance | task orchestration, UI state, code structure |
-| CodeGraph | CBM | repository files, symbols, calls, imports, routes, structural relationships, index state | product knowledge, agent assignments, source edits |
-| AgentGraph | PostgreSQL AGE plus relational payloads | agents, exact Markdown instructions, assignments, context-reference lineage, results, derivation | copies of native graph records, agent runtime, private Magentic ledgers |
+| CodeGraph | CBM | repository files, symbols, calls, imports, routes, structural relationships, index state | product knowledge, native agent runs, source edits |
+| AgentGraph | PostgreSQL relational context records | instantiated dynamic prompt/query/script/reference content used to evolve the next IDF | runtime authorization, saved topology, copies of native graphs, private Magentic ledgers |
+| AGE meta graph | Apache AGE in PostgreSQL | optional IDF/run/card/model/native-reference consumption, production, and derivation relationships | runtime permission, card selection, Hermes/Mag One/Coder lifecycle |
 | Telemetry | existing runtime event stream plus bounded append-only activity storage where required | high-volume transient read/select/send/open/traverse/write activity | durable knowledge meaning or another graph authority |
 
 References across authorities are allowed only as provenance and hydration pointers. No graph writes
-another graph’s records. AgentGraph may say an assignment referenced native IDs; it must not absorb
-the referenced subgraph.
+another graph’s records. An IDF may contain bounded resolved material and native IDs needed for one
+model call; AGE may relate those IDs without absorbing the referenced subgraph.
 
 ---
 
@@ -289,9 +291,9 @@ ContextSelection
   native node IDs
   native edge IDs
   purpose expressed by the agent/user
-  sender card ID
-  intended recipient card ID
-  instruction / assignment ID
+  originating card/run ID
+  intended recipient card ID when topology explicitly passes it
+  IDF/input identity
   created, delivered, and opened timestamps
   resulting native entity/relationship IDs when work expands knowledge
 ```
@@ -308,12 +310,12 @@ query alone because the graph may change between delivery and consumption.
 
 ---
 
-## IDF and IDD — loose executable Markdown
+## IDF and IDD — actual model input and its input rules
 
-IDF is an agent-readable Markdown document with structured executable islands. It is not a rigid
-EnergyPlus-style file and it is not untyped arbitrary command execution.
-
-Normal prose is inert and flexible. Explicit fenced blocks can carry:
+IDF is the actual assembled model-context document stored in PostgreSQL and transported to the actual
+model call. It combines stable saved-card context with instantiated dynamic AgentGraph content and
+bounded resolved native data. It is not an abstract artifact, assignment, receipt, context envelope,
+or post-run reconstruction. Normal prose remains flexible; explicit typed islands may carry:
 
 ```text
 idf-imports
@@ -325,13 +327,13 @@ idf-view
 idf-result
 ```
 
-IDD is the assignable vocabulary and capability contract—the rough equivalent of a type system for
-agent actions, not agent thoughts. It defines:
+IDD is the Input Data Dictionary. It defines rules used to validate, render, edit, and construct
+structured values; it is not included in the model payload. It covers:
 
+- card fields and model/provider/catalog/list choices;
+- tool schemas and valid graph-reference/query/script forms;
+- required and optional parameters, types, defaults, constraints, and limits;
 - legal authority and connection identity;
-- operation language and execution mode;
-- required and optional parameters;
-- parameter types and limits;
 - stored repo-relative operation paths and content hashes;
 - output/result shape;
 - risk and approval class;
@@ -341,7 +343,7 @@ Execution authority is the intersection of:
 
 ```text
 saved card capability ceiling
-∩ assignment-scoped imports/grants
+∩ run/input-scoped instantiated values and references
 ∩ IDD operation requirements
 ∩ user approval where required
 ```
@@ -360,6 +362,20 @@ contentHash/version: immutable operation identity
 ```
 
 Do not persist machine-specific absolute paths as portable product identity.
+
+### Verified implementation state (2026-08-14)
+
+- Git contains no completed historical PostgreSQL IDF assembler or shared model-consumer path.
+- `ContextPack` (June 24–July 5) had no production caller.
+- `unified_context.py` / `DeliveredContextManifest` (July 15–August 2) rebuilt and serialized selected
+  graph projections but was not a PostgreSQL-stored IDF and was coupled to GraphViews/assignments.
+- AGE `AgentContext` (July 23 onward) and registered operations (July 26–August 2) mixed context with
+  sender/receiver/assignment control and were removed as detours.
+- `toolInputDataDictionary.ts` (August 8) is a real tool-schema/catalog subset, not the general IDD and
+  is not wired to the card editor.
+- The explicit IDF/IDD product law entered docs in `fe6daa9d` on August 10. Current Hermes, AutoGen, and
+  Coder paths still assemble context independently. Therefore the canonical IDF/IDD runtime is
+  **TARGET / INCOMPLETE**, and completing it is the next context-backbone implementation.
 
 ---
 
@@ -383,13 +399,14 @@ graph.node.proposed
 graph.edge.proposed
 graph.node.written
 graph.edge.written
-assignment.started
-assignment.completed
-assignment.failed
+run.started
+run.completed
+run.failed
 ```
 
 Events must come from operations that really occurred. The event payload carries native authority,
-native IDs, run/assignment identity, sender/recipient card identity, and status. TypeScript validates
+native IDs, run and IDF identity, sender/recipient card identity where a real topology handoff exists,
+and status. TypeScript validates
 and transports these fields but does not infer semantic meaning from tool names or model text.
 
 ### Knowledge graph visual states
@@ -439,7 +456,7 @@ Exit: current facts and baseline failures are known; no product behavior changed
 
 ### Fable 1 — repo-owned Hermes health
 
-1. Launch Hermes from `C:\Projects\main\Hermes` using its actual module/source entrypoint.
+1. Launch Hermes from `C:\Projects\LiquidAIty\main\Hermes` using its actual module/source entrypoint.
 2. Prove provider/profile/model resolution without copying secrets into card data or telemetry.
 3. Prove one bounded one-shot prompt and honest stdout/stderr/exit behavior.
 4. Inspect and choose one native persistent/streaming interface for Main.
@@ -485,30 +502,30 @@ Exit: one Main runtime, one Coder runtime boundary, no layered fallback.
 
 ---
 
-## Hermes card and Auto-Kanban
+## Ordinary cards and Hermes Auto-Kanban
 
-The existing Hermes card is the first controlled hybrid experiment. Its stable runtime binding remains
-`hermes_steward`; its persisted card ID remains whatever the saved deck owns. The user-facing mode may
-choose:
+Every ordinary Hermes-backed saved card uses one card/profile envelope and keeps one durable identity.
+Its saved `executionMode` selects behavior without creating another card type or profile registry:
 
 ```text
 Single
   → real repo-owned Hermes bounded task/session
 
 Auto-Kanban
-  → Hermes authors exact IDF/AgentGraph assignment
+  → the same saved card authors/receives the exact IDF
   → user approval when execution requires it
-  → one existing run_mag_one authority
-  → native Magentic-One selects connected workers
-  → result and lineage return through AgentGraph
+  → native Hermes Kanban/swarm performs decomposition and synthesis
+  → the final result returns to the originating card/run
 ```
 
-The card must not dynamically pretend to be multiple unrelated runtime types. The mode selects an
-existing authority. Magentic-One remains a separate native runtime card underneath the UI.
+Changing mode does not change the card ID, profile home, memory, grants, or result destination. Main
+defaults to `single` but is not a separate schema and is not structurally forbidden from an explicitly
+selected Auto-Kanban run.
 
-When Hermes becomes the steward, move the single structural Magentic control authority from Main to
-Hermes rather than keeping two competing controllers. Main delegates to Hermes; Hermes invokes the
-existing Magentic-One path. Preserve user approval and bus-connected worker eligibility.
+`card_hermes_steward` is a persistent planning, memory, research, and KnowGraph helper, not the special
+Kanban card. It uses the same ordinary card contract. Magentic-One remains the native AutoGen production
+team selected through saved topology and its own existing runtime entry; do not silently equate Hermes
+Kanban with Magentic-One.
 
 Kanban profiles are useful runtime configuration, but the board does not replace Hermes chat and
 Hermes chat does not replace the board. Both must use the same real profile/session/runtime identities.
@@ -567,7 +584,8 @@ user question + selected visual context
 → research agents retrieve citeable sources
 → Graphiti writes authoritative episodes/entities/relationships to KnowGraph
 → UI reveals candidate and accepted knowledge progressively
-→ AgentGraph links the assignment/result to native provenance references
+→ the next IDF incorporates the accepted dynamic context
+→ optional AGE meta-knowledge relates the run/result to native provenance references
 → future questions retrieve and extend the accumulated KnowGraph
 ```
 
@@ -587,7 +605,8 @@ Main/Hermes or Magentic-One identifies bounded code work
 → saved OpenClaude Coder card or interactive terminal executes
 → Coder uses native CBM first, then direct source and focused tests
 → structured CoderReport returns
-→ AgentGraph records result lineage
+→ the result is stored against the native run and originating card
+→ optional AGE meta-knowledge records result/reference lineage
 → reusable proven lesson may become one skill
 ```
 

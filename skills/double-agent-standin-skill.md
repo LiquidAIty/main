@@ -34,8 +34,8 @@ The leak inspection rides along; it never becomes the Goal unless Main deliberat
 | Coder/CodeGraph | code inspector | **CBM** (`search_graph`/`get_code_snippet`/`search_code`) | CodeFindings (+ freshness) |
 | Hermes | native agent | saved prompt + native assigned Graphiti tools + normal Agent result | evidence selection + recommendation |
 | KnowGraph | research/retrieval | real hybrid retrieval over existing project scope | trusted-Claim evidence packet |
-| Mag One | worker orchestrator | AgentGraph instruction + claimed assignment | native task ledger / approved instruction |
-| Coder-impl | implementer | correlated AgentGraph assignment → real edit | CoderReport + registered artifact references |
+| Mag One | worker orchestrator | canonical IDF + saved connected participants | native task ledger / final result |
+| Coder-impl | implementer | reviewed CoderPacket + saved Coder identity → real edit | CoderReport + artifact references |
 | Reviewer | reviewer | correlated result + ThinkGraph ReviewResult | review verdict |
 
 **Input contract (required):** every job's inputs MUST include `{project, conversation, goal}` — not

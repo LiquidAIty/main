@@ -3,14 +3,14 @@
 @skill id=graph-context-prompt-writer
 @type Skill
 @status active
-@related_to context-packet
+@related_to idf-context
 @related_to spec-as-prompt
 @related_to codegraph-context-reader
 @requires fresh_cbm_index
 
 ## Vector Summary
 
-Turn planner-initiated Context Packet evidence into one active CoderPacket prompt that is both the
+Turn bounded IDF/native-context evidence into one active CoderPacket prompt that is both the
 spec and task. The user describes the desired outcome; the user does not prompt a prompt.
 
 ## Procedure
@@ -32,4 +32,3 @@ spec and task. The user describes the desired outcome; the user does not prompt 
 ## Query Patterns
 
 @query id=graph-context-prompt-writer.code-evidence "refresh CBM, retrieve relevant skills, and direct-read code anchors before creating the active CoderPacket prompt"
-

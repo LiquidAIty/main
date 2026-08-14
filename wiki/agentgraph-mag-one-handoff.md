@@ -1,95 +1,99 @@
 ---
 id: feature.agentgraph-mag-one-handoff
-title: AgentGraph Mag One Handoff
+title: AgentGraph Context and Native Mag One
 kind: feature
-status: partial
-proof_level: source_and_focused_tests
+status: target_incomplete
+proof_level: git_archaeology_and_source
 
 cbm:
-  project_identity: C-Projects-main
-  index_root: C:/Projects/main
-  coverage: committed_graph_plus_working_tree_direct_reads
+  project_identity: C-Projects-LiquidAIty-main
+  index_root: C:/Projects/LiquidAIty/main
+  coverage: divergent_structural_graph_plus_working_tree_and_git_history
 
 roots:
-  files:
-    - apps/backend/src/coder/openclaude/mcp/liquidAItyAgentFlow.ts
+  current_replacement_files:
     - apps/backend/src/cards/runtime.ts
+    - apps/backend/src/cards/runtimeContracts.ts
     - apps/python-models/app/python_models/agentgraph.py
     - apps/python-models/app/python_models/magentic_agentchat.py
-  symbols:
-    - runMagOne
-    - create_instruction
-    - create_assignment
-    - claim_assignment
-    - read_assignment
-    - finish_assignment
-  tests:
-    - apps/backend/src/coder/openclaude/mcp/liquidAItyAgentFlow.spec.ts
-    - apps/python-models/app/python_models/test_agentgraph.py
-    - apps/python-models/app/python_models/test_autogen_adapter.py
+  intended_idd_subset:
+    - apps/backend/src/coder/toolInputDataDictionary.ts
 ---
 
-# AgentGraph Mag One Handoff
+# AgentGraph Context and Native Mag One
 
 ## Outcome
 
-One saved Main controller sends an approved `instructionId` to the connected Mag One card. TypeScript
-transports stable identities and the saved card topology. Python claims the corresponding AgentGraph
-assignment, hydrates its exact relational instruction and context references, executes native Mag One,
-then persists the correlated result and failure state.
+AgentGraph is dynamic graph-aware context persisted in PostgreSQL and used to assemble the next actual
+IDF. The IDF is the versioned model-context document that reaches the runtime/model call. Native
+AutoGen `MagenticOneGroupChat` remains the Mag One execution authority, with worker eligibility from
+saved `magentic_option` topology and permanent configuration from saved cards.
 
-That is the CURRENT controller topology. The approved experiment may later move the one
-`magentic_control` authority from Main to the existing Hermes card after real Hermes execution is
-proven. The transition must update saved topology, source, and focused tests together; Main and Hermes
-must never retain competing control edges. Hermes may steward Magentic-One, but native AutoGen remains
-the execution runtime and AgentGraph remains assignment/result-lineage authority.
+Apache AGE is optional meta-knowledge. It may relate stable IDs for IDFs, runs, cards/models, native
+references, consumption, production, and derivation. It does not claim assignments, grant permission,
+select workers, schedule execution, or decide native run success.
 
-Saved Agent Cards remain the authority for permanent prompt, provider/model, tools, permissions, and
-runtime binding. AgentGraph stores operational instructions, assignments, attempts, references, results,
-and traversal-worthy lineage; it does not copy card configuration, native graph records, or execute
-agents itself. The sender chooses bounded instruction text and typed native references. The receiving
-agent reads that handoff directly; native Engraphis, Graphiti, or CBM tools are available only when the
-agent needs to inspect the referenced source more deeply.
+## Verified current replacement seam
 
-## Runtime path
+Current source still couples ordinary Hermes and Mag One execution to a relational/AGE assignment
+lifecycle through `create` / `claim` / `begin` / `finish` calls and assignment-shaped transport
+contracts. This is **WRONG CURRENT / SCHEDULED FOR REMOVAL**, not protected architecture. Removing it
+must preserve native run IDs, cancellation/failure/running/completed truth, originating card identity,
+saved topology, exact input, final result, and actual AutoGen/Hermes execution.
+
+## Historical recovery result
+
+Git history contains no completed earlier IDF/IDD system to restore:
+
+- June `ContextPack` was bounded context packaging but had no production consumer.
+- July `unified_context.py` / `DeliveredContextManifest` rebuilt selected graph projections and was
+  coupled to GraphViews and assignments; it was not the stored document sent through every model path.
+- AGE `AgentContext` made sender/receiver context an AGE authority.
+- registered-query/GraphView machinery mixed typed query ideas with another registry and assignment
+  control layer.
+- the explicit IDF/IDD product law entered canonical documentation in `fe6daa9d` on 2026-08-10.
+- `toolInputDataDictionary.ts`, introduced in `d374097c`, is a useful tool-schema/catalog subset only.
+
+Reuse the exact saved-card contract, exact instruction bodies, typed parameter validation/read-only
+query ideas, and surviving tool dictionary. Do not restore the old packet, manifest, registry,
+GraphView, receiver, claim, or assignment systems under new names.
+
+## Intended runtime path
 
 ```text
-run_mag_one({instructionId, projectId, deckId, conversationId})
-→ TypeScript resolves the saved Main control edge and connected Mag One worker cards
-→ runCardWithContract transports instruction/card/project/run identities
-→ Python create_assignment / read_assignment / claim_assignment
-   → exact instruction text
-   → typed native context references selected by the sender
-→ native Mag One / AutoGen execution
-→ finish_assignment
-→ correlated AgentGraph result lineage
+saved originating card + exact current input + explicit selected native references
+→ IDD validates structured values and operation forms
+→ PostgreSQL stores one versioned actual IDF
+→ runtime receives that same IDF through its existing native adapter
+→ Hermes single/Kanban, native Mag One, or Coder executes with real native run identity
+→ result returns to the originating run/card
+→ dynamic AgentGraph context evolves the next IDF
+→ optional AGE meta-knowledge relates references consumed and results produced
 ```
 
 ## Must not break
 
-1. TypeScript does not resolve instruction Markdown, execute SQL/Cypher, or write AgentGraph lineage.
-2. Python AutoGen/Mag One remains the execution runtime; PostgreSQL/AGE is storage and lineage.
-3. Saved cards remain the permanent configuration authority.
-4. The single controller and worker eligibility come from saved topology, not card names or TS
-   classifiers. CURRENT controller is Main; TARGET experiment may replace it with Hermes, never add a
-   second controller.
-5. AgentGraph handoffs contain bounded text and native references, never copied graph records or saved queries.
-6. Receiving agents read the handoff without receiver-specific query registration or another policy layer.
-7. Results, failures, attempts, cancellation, and parent/child assignments remain correlated by
-   stable identities.
-8. OpenClaude/Local Coder sessions, terminals, tools, streaming, and provider selection are separate preserved
-   runtime boundaries.
+1. Saved cards remain the sole permanent authority for identity, prompt, model/profile, runtime, tools,
+   capabilities, and topology.
+2. Native Mag One remains `MagenticOneGroupChat`; its private ledgers are not transported or rebuilt.
+3. Hermes single and Hermes Auto-Kanban are execution modes of the same ordinary card identity.
+4. TypeScript transports and renders structured fields; it does not interpret task meaning.
+5. The actual stored IDF reaches the actual runtime/model consumer; a receipt or manifest is not proof.
+6. AGE failure cannot fail an otherwise valid native runtime execution.
+7. Native graphs remain authoritative; IDFs contain bounded material/pointers, not copied graph stores.
+8. OpenClaude/LocalCoder remains the contained Coder boundary.
 
 ## Valid proof
 
-- Backend focused tests prove the saved topology and identity-only Mag One transport.
-- Mag One adapter tests prove exact AgentGraph instruction/reference delivery before model construction.
-- AgentGraph tests prove exact instruction/assignment/result identity and AGE traversal.
-- Python import/type checks and backend typechecks prove imports and contracts after removal of obsolete
-  job-folder transport.
-- A real product run is still required before this feature can be marked complete.
+- persistence readback proves the versioned IDF equals the assembled consumer input;
+- focused adapter tests prove Hermes, native Mag One, and Coder receive the canonical IDF;
+- native runtime tests prove real statuses/results without assignment/claim machinery;
+- IDD tests prove editor/runtime validation uses one definition boundary and does not enter prompts;
+- focused residue search proves assignment/claim/manifest/GraphView runtime authority is gone;
+- a real configured product run is still required before the complete feature is marked current.
 
 ## CBM limitation
 
-The committed CBM graph is a structural anchor. Direct working-tree reads and focused tests outrank it
-while this cleanup remains uncommitted; refresh after the completed change is committed.
+The current CBM project was structurally useful but divergent and included stale/excluded paths during
+this recovery. Git history, complete direct source, focused searches, compile/tests, persistence
+readback, and live runtime evidence outrank it until the canonical project is cleanly refreshed.
