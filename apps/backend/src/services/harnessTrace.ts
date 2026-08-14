@@ -16,18 +16,11 @@
 
 export type TraceableEvent = { kind: string; [key: string]: unknown };
 
-const SECRET_PATTERNS: RegExp[] = [
-  /sk-[A-Za-z0-9_-]{12,}/g,
-  /Bearer\s+[A-Za-z0-9._-]{12,}/gi,
-  /\b[A-Za-z0-9_-]*(?:API[_-]?KEY|SECRET|TOKEN|PASSWORD)[A-Za-z0-9_-]*\b\s*[:=]\s*\S+/gi,
-];
-
-/** Redact obvious secrets and bound the length of a trace fragment (e.g. an error
- * reason). Never used to print prompts or model output — only short state text. */
+/** Runtime/provider error text is untrusted and may contain credentials in an
+ * unknown format. Never echo it to logs; correlation and the typed failure code
+ * carry the safe operational signal. */
 export function redactTrace(value: string): string {
-  let out = String(value ?? '');
-  for (const pattern of SECRET_PATTERNS) out = out.replace(pattern, '<redacted>');
-  return out.replace(/\s+/g, ' ').trim().slice(0, 200);
+  return String(value ?? '').trim() ? '<redacted>' : '';
 }
 
 function isCardDoorway(toolName: string): boolean {

@@ -16,6 +16,7 @@ function withIdf(context: Record<string, any> = {}, userText = 'test') {
       idfId: 'idf:test', projectId: String(context.projectId || 'p'),
       deckId: String(context.deckId || 'd'), conversationId: 'c', runId: 'run:test',
       originatingCardId: 'mag1', version: 1, systemText: '', userText,
+      cardContext: null,
       dynamicContextMarkdown: '', nativeReferences: [], modelInputMarkdown: userText,
       contentMarkdown: userText, contentSha256: 'hash', createdAt: 'now',
     },

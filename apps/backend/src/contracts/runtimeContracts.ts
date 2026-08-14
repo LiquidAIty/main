@@ -10,6 +10,7 @@ export type InputDataFile = {
   version: number;
   systemText: string;
   userText: string;
+  cardContext: Record<string, unknown> | null;
   dynamicContextMarkdown: string;
   nativeReferences: Array<{ authority: string; nativeId: string; required: boolean }>;
   modelInputMarkdown: string;

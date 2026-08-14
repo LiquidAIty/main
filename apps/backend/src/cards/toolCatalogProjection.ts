@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-export type ToolInputDictionarySource = {
+export type ToolCatalogSource = {
   sourceId?: unknown;
   kind?: unknown;
   namespace?: unknown;
@@ -19,7 +19,7 @@ export type ToolInputDictionarySource = {
   metadata?: unknown;
 };
 
-export type ToolInputReference = {
+export type ToolCatalogReference = {
   canonicalId: string;
   kind: 'tool' | 'agent';
   namespace: string;
@@ -52,27 +52,27 @@ export type ToolInputReference = {
   };
 };
 
-export type ToolInputImplementation = {
+export type ToolCatalogImplementation = {
   sourceId: string;
-  kind: ToolInputReference['kind'];
+  kind: ToolCatalogReference['kind'];
   nativeName: string;
   enabled: boolean;
-  publication: ToolInputReference['publication'];
-  execution: ToolInputReference['execution'];
+  publication: ToolCatalogReference['publication'];
+  execution: ToolCatalogReference['execution'];
   inputSchema: Record<string, unknown>;
-  capability: ToolInputReference['capability'];
+  capability: ToolCatalogReference['capability'];
 };
 
-export type ToolInputDefinition = ToolInputReference & {
-  implementations: ToolInputImplementation[];
+export type ToolCatalogDefinition = ToolCatalogReference & {
+  implementations: ToolCatalogImplementation[];
 };
 
-export type ToolInputDataDictionary = {
-  references: ToolInputReference[];
-  definitionsById: ReadonlyMap<string, ToolInputDefinition>;
+export type ToolCatalogProjection = {
+  references: ToolCatalogReference[];
+  definitionsById: ReadonlyMap<string, ToolCatalogDefinition>;
 };
 
-export type ToolInputSearch = {
+export type ToolCatalogSearch = {
   query?: string;
   namespace?: string;
   selectedIds?: readonly string[];
@@ -122,12 +122,12 @@ function optionalText(metadata: Record<string, unknown>, key: string): string | 
   return value || undefined;
 }
 
-function definitionFrom(source: ToolInputDictionarySource): ToolInputDefinition {
+function definitionFrom(source: ToolCatalogSource): ToolCatalogDefinition {
   const canonicalId = asText(source.name) || asText(source.id);
-  if (!canonicalId) throw new Error('tool_input_dictionary_id_missing');
+  if (!canonicalId) throw new Error('tool_catalog_id_missing');
   const sourceId = asText(source.sourceId) || 'main_mcp';
   if (!source.inputSchema || typeof source.inputSchema !== 'object' || Array.isArray(source.inputSchema)) {
-    throw new Error(`tool_input_dictionary_schema_invalid:${canonicalId}`);
+    throw new Error(`tool_catalog_schema_invalid:${canonicalId}`);
   }
   const inputSchema = source.inputSchema as Record<string, unknown>;
   const capability = object(source.capability);
@@ -195,15 +195,15 @@ function unique(values: readonly string[]): string[] {
 }
 
 function mergeDefinitions(
-  current: ToolInputDefinition,
-  incoming: ToolInputDefinition,
-): ToolInputDefinition {
+  current: ToolCatalogDefinition,
+  incoming: ToolCatalogDefinition,
+): ToolCatalogDefinition {
   const incomingSourceId = incoming.implementations[0].sourceId;
   if (current.sourceIds.includes(incomingSourceId)) {
-    throw new Error(`tool_input_dictionary_duplicate_id:${incoming.canonicalId}`);
+    throw new Error(`tool_catalog_duplicate_id:${incoming.canonicalId}`);
   }
   if (current.kind !== incoming.kind) {
-    throw new Error(`tool_input_dictionary_kind_conflict:${incoming.canonicalId}`);
+    throw new Error(`tool_catalog_kind_conflict:${incoming.canonicalId}`);
   }
   const implementations = [...current.implementations, ...incoming.implementations];
   const enabled = implementations.some((implementation) => implementation.enabled);
@@ -249,11 +249,11 @@ function mergeDefinitions(
   };
 }
 
-export function buildToolInputDataDictionary(
-  catalog: readonly ToolInputDictionarySource[],
-): ToolInputDataDictionary {
+export function buildToolCatalogProjection(
+  catalog: readonly ToolCatalogSource[],
+): ToolCatalogProjection {
   const sourceDefinitions = catalog.map(definitionFrom);
-  const definitionsById = new Map<string, ToolInputDefinition>();
+  const definitionsById = new Map<string, ToolCatalogDefinition>();
   for (const definition of sourceDefinitions) {
     const current = definitionsById.get(definition.canonicalId);
     definitionsById.set(
@@ -267,44 +267,44 @@ export function buildToolInputDataDictionary(
   return { references, definitionsById };
 }
 
-export function resolveToolInputDefinitions(
-  dictionary: ToolInputDataDictionary,
+export function resolveToolCatalogDefinitions(
+  catalog: ToolCatalogProjection,
   selectedIds: readonly string[],
-): ToolInputDefinition[] {
+): ToolCatalogDefinition[] {
   const seen = new Set<string>();
   return selectedIds.map((rawId) => {
     const id = asText(rawId);
-    if (!id) throw new Error('tool_input_dictionary_selected_id_empty');
-    if (seen.has(id)) throw new Error(`tool_input_dictionary_selected_id_duplicate:${id}`);
+    if (!id) throw new Error('tool_catalog_selected_id_empty');
+    if (seen.has(id)) throw new Error(`tool_catalog_selected_id_duplicate:${id}`);
     seen.add(id);
-    const definition = dictionary.definitionsById.get(id);
-    if (!definition) throw new Error(`tool_input_dictionary_selected_id_unknown:${id}`);
+    const definition = catalog.definitionsById.get(id);
+    if (!definition) throw new Error(`tool_catalog_selected_id_unknown:${id}`);
     return definition;
   });
 }
 
-export function searchToolInputReferences(dictionary: ToolInputDataDictionary, search: ToolInputSearch) {
+export function searchToolCatalogReferences(catalog: ToolCatalogProjection, search: ToolCatalogSearch) {
   const query = asText(search.query).toLowerCase();
   const namespace = asText(search.namespace).toLowerCase();
   const selectedIds = (search.selectedIds || []).map(asText).filter(Boolean);
-  const unresolvedSelectedIds = selectedIds.filter((id) => !dictionary.definitionsById.has(id));
+  const unresolvedSelectedIds = selectedIds.filter((id) => !catalog.definitionsById.has(id));
   const offset = Math.max(0, Math.floor(Number(search.offset) || 0));
   const limit = Math.min(MAX_LIMIT, Math.max(1, Math.floor(Number(search.limit) || DEFAULT_LIMIT)));
-  const matches = dictionary.references.filter((reference) => {
+  const matches = catalog.references.filter((reference) => {
     if (namespace && reference.namespace.toLowerCase() !== namespace) return false;
     if (!query) return true;
     const haystack = [reference.canonicalId, reference.nativeName, reference.namespace, reference.displayName, reference.shortDescription]
       .join('\n').toLowerCase();
     return query.split(/\s+/).every((term) => haystack.includes(term));
   });
-  const selectedKnownIds = selectedIds.filter((id) => dictionary.definitionsById.has(id));
-  const selectedKnownReferences = resolveToolInputDefinitions(dictionary, selectedKnownIds)
+  const selectedKnownIds = selectedIds.filter((id) => catalog.definitionsById.has(id));
+  const selectedKnownReferences = resolveToolCatalogDefinitions(catalog, selectedKnownIds)
     .map(({ implementations: _implementations, ...reference }) => reference);
   return {
     references: matches.slice(offset, offset + limit),
     selectedKnownReferences,
     unresolvedSelectedIds,
-    namespaces: [...new Set(dictionary.references.map((reference) => reference.namespace))].sort(),
+    namespaces: [...new Set(catalog.references.map((reference) => reference.namespace))].sort(),
     total: matches.length,
     offset,
     limit,

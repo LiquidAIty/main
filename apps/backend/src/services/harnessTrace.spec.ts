@@ -41,8 +41,8 @@ describe('formatHarnessTrace — only real events, concise, with correlation id'
 });
 
 describe('redactTrace', () => {
-  it('masks provider keys / bearer tokens and bounds length', () => {
+  it('never echoes provider or arbitrary secret-shaped runtime text', () => {
     expect(redactTrace('Bearer sk-ABCDEFGHIJKLMNOP')).not.toContain('sk-ABCDEFGHIJKLMNOP');
-    expect(redactTrace('x'.repeat(500)).length).toBeLessThanOrEqual(200);
+    expect(redactTrace('unknown credential value with no recognizable prefix')).toBe('<redacted>');
   });
 });

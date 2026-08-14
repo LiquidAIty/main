@@ -155,6 +155,7 @@ beforeEach(() => {
       version: 1,
       systemText: input.systemText,
       userText: input.userText,
+      cardContext: input.cardContext,
       dynamicContextMarkdown: '',
       nativeReferences: [],
       modelInputMarkdown: input.userText,
@@ -489,6 +490,14 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.cardId).toBe('card_saved_worker');
     expect(payload.prompt).toBe('You are the ThinkGraph agent.');
     expect(payload.message).toBe(ARGS.input);
+    expect(mockCreateIdf).toHaveBeenCalledWith(expect.objectContaining({
+      originatingCardId: 'card_saved_worker',
+      cardContext: expect.objectContaining({
+        cardId: 'card_saved_worker',
+        runtimeType: 'assistant_agent',
+        executionMode: 'single',
+      }),
+    }));
     expect(result.nativeRunResult).toEqual({ runId: 'corr-123', idfId: 'idf:corr-123' });
     const raw = JSON.stringify(payload);
     expect(raw).not.toContain('taskIds');

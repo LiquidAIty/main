@@ -41,12 +41,40 @@ import {
 } from '../services/autogen/autogenOrchestratorClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 import {
-  buildToolInputDataDictionary,
-  searchToolInputReferences,
-  type ToolInputDictionarySource,
-} from '../cards/toolInputDataDictionary';
+  buildToolCatalogProjection,
+  searchToolCatalogReferences,
+  type ToolCatalogSource,
+} from '../cards/toolCatalogProjection';
+import { listConfiguredModelOptions } from '../llm/models.config';
 
 const router = Router();
+
+router.get('/input-data-dictionary/card-editor', async (_req, res) => {
+  try {
+    const openaiDefault = process.env.OPENAI_DEFAULT_MODEL || 'gpt-5.6-luna';
+    const materialized = await requestPythonRailsJson('/idd/card-editor/materialize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ models: listConfiguredModelOptions(openaiDefault) }),
+    }) as Record<string, unknown>;
+    if (
+      !materialized?.dictionary
+      || !Array.isArray(materialized.fields)
+      || !materialized.catalogs
+      || typeof materialized.catalogs !== 'object'
+    ) {
+      throw new Error('input_data_dictionary_card_editor_invalid');
+    }
+    return res.json({ ok: true, ...materialized });
+  } catch {
+    return res.status(503).json({
+      ok: false,
+      error: 'input_data_dictionary_card_editor_unavailable',
+      fields: [],
+      catalogs: { 'configured-models': [] },
+    });
+  }
+});
 
 router.get('/input-data-dictionary/tools', async (req, res) => {
   try {
@@ -57,7 +85,7 @@ router.get('/input-data-dictionary/tools', async (req, res) => {
     if (!Array.isArray(privateRuntimeManifest?.tools)) {
       throw new Error('python_runtime_tool_manifest_invalid');
     }
-    const dictionary = buildToolInputDataDictionary([
+    const catalog = buildToolCatalogProjection([
       ...canonicalMcpTools.map((tool) => ({
         ...tool,
         sourceId: 'main_mcp',
@@ -65,8 +93,20 @@ router.get('/input-data-dictionary/tools', async (req, res) => {
         publication: { externalMcp: true },
         execution: { authority: 'main_mcp', nativeName: tool.name },
       })),
-      ...privateRuntimeManifest.tools as ToolInputDictionarySource[],
+      ...privateRuntimeManifest.tools as ToolCatalogSource[],
     ]);
+    const materialized = await requestPythonRailsJson('/idd/tools/materialize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ references: catalog.references }),
+    }) as { references?: unknown };
+    if (!Array.isArray(materialized?.references)) {
+      throw new Error('input_data_dictionary_tool_catalog_invalid');
+    }
+    const validatedCatalog = {
+      ...catalog,
+      references: materialized.references as typeof catalog.references,
+    };
     const selectedIds = Array.isArray(req.query.selectedIds)
       ? req.query.selectedIds.map(String)
       : typeof req.query.selectedIds === 'string'
@@ -74,7 +114,7 @@ router.get('/input-data-dictionary/tools', async (req, res) => {
         : [];
     return res.json({
       ok: true,
-      ...searchToolInputReferences(dictionary, {
+      ...searchToolCatalogReferences(validatedCatalog, {
         query: typeof req.query.query === 'string' ? req.query.query : undefined,
         namespace: typeof req.query.namespace === 'string' ? req.query.namespace : undefined,
         selectedIds,
@@ -82,10 +122,10 @@ router.get('/input-data-dictionary/tools', async (req, res) => {
         limit: typeof req.query.limit === 'string' ? Number(req.query.limit) : undefined,
       }),
     });
-  } catch (error) {
+  } catch {
     return res.status(503).json({
       ok: false,
-      error: error instanceof Error ? error.message : 'python_agent_mcp_catalog_unavailable',
+      error: 'input_data_dictionary_tool_catalog_unavailable',
       references: [],
       selectedKnownReferences: [],
       unresolvedSelectedIds: [],
@@ -318,6 +358,10 @@ router.post('/main/session/chat', async (req, res) => {
       originatingCardId: runtimeConfig.cardId,
       systemText: runtimeConfig.prompt,
       userText: message,
+      cardContext: {
+        ...runtimeConfig,
+        runtimeType: 'main_chat',
+      },
     })).idf;
   } catch {
     await failConversationRun(
@@ -331,6 +375,7 @@ router.post('/main/session/chat', async (req, res) => {
       correlationId,
     });
   }
+  const idfRuntimeConfig = idf.cardContext as typeof runtimeConfig;
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -349,13 +394,13 @@ router.post('/main/session/chat', async (req, res) => {
     }
   };
   writeSse('session', { sessionId });
-  logHarnessTrace(`[hermes] request received ${`corr=${correlationId}`} project=${projectId} profile=${runtimeConfig.profile}`);
+  logHarnessTrace(`[hermes] request received ${`corr=${correlationId}`} project=${projectId} profile=${idfRuntimeConfig.profile}`);
   let turnFinished = false;
   let runCancelled = false;
   let terminalDoneEvent: Extract<HermesSessionEvent, { kind: 'done' }> | null = null;
   try {
     const handle = await startHermesTurn({
-      ...runtimeConfig,
+      ...idfRuntimeConfig,
       prompt: idf.systemText,
       sessionKey: sessionId,
       projectId,

@@ -7,6 +7,61 @@ import type {
 } from '../types/agentgraph';
 
 type ModelOption = { key: string; label: string; providerModelId: string };
+export type InputDictionaryEditorOption = { value: string; label: string };
+export type InputDictionaryEditorField = {
+  name: string;
+  label: string;
+  path: string;
+  control: 'select' | 'catalog-select' | 'catalog-multiselect' | 'number' | 'integer';
+  allowUnset?: boolean;
+  catalog?: string;
+  filteredBy?: string;
+  minimum?: number;
+  maximum?: number;
+  step?: number;
+  blockedRuntimeBindings?: string[];
+  blockedRuntimeTypes?: string[];
+  help?: string;
+  options?: InputDictionaryEditorOption[];
+};
+
+export function parseCardEditorInputDataDictionary(payload: unknown): {
+  fields: InputDictionaryEditorField[];
+  modelsByProvider: Record<string, ModelOption[]>;
+} {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('input_data_dictionary_card_editor_invalid');
+  }
+  const document = payload as Record<string, unknown>;
+  if (!Array.isArray(document.fields)) {
+    throw new Error('input_data_dictionary_card_editor_invalid');
+  }
+  const fields = document.fields.filter((field): field is InputDictionaryEditorField => (
+    Boolean(field)
+    && typeof field === 'object'
+    && typeof (field as InputDictionaryEditorField).name === 'string'
+    && typeof (field as InputDictionaryEditorField).label === 'string'
+    && typeof (field as InputDictionaryEditorField).control === 'string'
+  ));
+  const catalogs = document.catalogs && typeof document.catalogs === 'object'
+    ? document.catalogs as Record<string, unknown>
+    : {};
+  const models = Array.isArray(catalogs['configured-models'])
+    ? catalogs['configured-models']
+    : [];
+  const modelsByProvider: Record<string, ModelOption[]> = {};
+  for (const rawModel of models) {
+    if (!rawModel || typeof rawModel !== 'object') continue;
+    const model = rawModel as Record<string, unknown>;
+    const provider = String(model.provider || '').trim();
+    const key = String(model.key || '').trim();
+    const label = String(model.label || '').trim();
+    const providerModelId = String(model.providerModelId || '').trim();
+    if (!provider || !key || !label || !providerModelId) continue;
+    (modelsByProvider[provider] ||= []).push({ key, label, providerModelId });
+  }
+  return { fields, modelsByProvider };
+}
 export type ToolDescriptor = {
   name: string;
   kind?: 'tool' | 'agent';
@@ -391,6 +446,7 @@ export function AgentManager({
     'low' | 'medium' | 'high' | 'xhigh' | ''
   >('');
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelOption[]>>({});
+  const [cardEditorFields, setCardEditorFields] = useState<InputDictionaryEditorField[]>([]);
   const [toolDictionaryPage, setToolDictionaryPage] = useState<InputDictionaryToolPage>({
     references: [],
     selectedKnownReferences: [],
@@ -431,30 +487,23 @@ export function AgentManager({
 
   useEffect(() => {
     let active = true;
-    void fetch('/api/config/models')
+    void fetch('/api/coder/input-data-dictionary/card-editor')
       .then(async (response) => {
         const payload = await response.json();
-        if (!response.ok) throw new Error(String(payload?.error || `Model registry unavailable (HTTP ${response.status})`));
-        const toOptions = (value: unknown): ModelOption[] => {
-          if (!Array.isArray(value)) return [];
-          return value.flatMap((entry) => {
-            if (!entry || typeof entry !== 'object') return [];
-            const item = entry as Record<string, unknown>;
-            const key = String(item.key || '').trim();
-            const label = String(item.label || key).trim();
-            const providerModelId = String(item.id || key).trim();
-            return key ? [{ key, label, providerModelId }] : [];
-          });
-        };
+        if (!response.ok || payload?.ok !== true) {
+          throw new Error('input_data_dictionary_card_editor_unavailable');
+        }
+        const parsed = parseCardEditorInputDataDictionary(payload);
         if (active) {
-          setModelsByProvider({
-            openai: toOptions(payload?.openai?.options),
-            openrouter: toOptions(payload?.openrouter?.options),
-          });
+          setCardEditorFields(parsed.fields);
+          setModelsByProvider(parsed.modelsByProvider);
         }
       })
       .catch(() => {
-        if (active) setModelsByProvider({});
+        if (active) {
+          setCardEditorFields([]);
+          setModelsByProvider({});
+        }
       });
     return () => {
       active = false;
@@ -693,9 +742,29 @@ export function AgentManager({
   ]);
 
   const availableModels = provider ? modelsByProvider[provider] || [] : [];
-  const canChooseExecutionMode = canChooseCardExecutionMode(
+  const editorField = (name: string) => cardEditorFields.find((field) => field.name === name);
+  const executionModeField = editorField('executionMode');
+  const providerField = editorField('provider');
+  const modelKeyField = editorField('modelKey');
+  const reasoningEffortField = editorField('reasoningEffort');
+  const temperatureField = editorField('temperature');
+  const maxTokensField = editorField('maxTokens');
+  const maxTurnsField = editorField('maxTurns');
+  const providerOptions = (providerField?.options || []).filter(
+    (option) => (modelsByProvider[option.value] || []).length > 0,
+  );
+  const canChooseExecutionMode = Boolean(executionModeField) && canChooseCardExecutionMode(
     runtimeBinding,
     localConfig?.runtime_type,
+  ) && !(executionModeField?.blockedRuntimeBindings || []).includes(String(runtimeBinding || ''))
+    && !(executionModeField?.blockedRuntimeTypes || []).includes(String(localConfig?.runtime_type || ''));
+  const runtimeDictionaryReady = Boolean(
+    providerField
+    && modelKeyField
+    && reasoningEffortField
+    && temperatureField
+    && maxTokensField
+    && maxTurnsField,
   );
   const savedToolNames = parseListText(toolsText);
   const selectedToolRows = buildInputDictionarySelectedRows(
@@ -971,13 +1040,20 @@ export function AgentManager({
     }
 
     if (activeTab === 'Runtime') {
+      if (!runtimeDictionaryReady) {
+        return (
+          <div role="alert" style={{ color: '#FFA2A2', fontSize: 12 }}>
+            Input Data Dictionary unavailable. Runtime choices cannot be edited safely.
+          </div>
+        );
+      }
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             {canChooseExecutionMode ? (
               <div>
                 <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                  Execution mode
+                  {executionModeField?.label}
                 </label>
                 <select
                   data-testid="agent-execution-mode"
@@ -995,14 +1071,15 @@ export function AgentManager({
                     borderRadius: 8,
                   }}
                 >
-                  <option value="single">Single</option>
-                  <option value="auto-kanban">Auto-Kanban</option>
+                  {(executionModeField?.options || []).map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
               </div>
             ) : null}
             <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Provider
+                {providerField?.label}
               </label>
               <select
                 value={provider}
@@ -1027,14 +1104,15 @@ export function AgentManager({
                 }}
               >
                 <option value="">Unset</option>
-                <option value="openai">OpenAI Account</option>
-                <option value="openrouter">OpenRouter</option>
+                {providerOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </select>
             </div>
 
             <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Model
+                {modelKeyField?.label}
               </label>
               <select
                 value={modelKey}
@@ -1062,7 +1140,7 @@ export function AgentManager({
 
             <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Reasoning
+                {reasoningEffortField?.label}
               </label>
               <select
                 value={reasoningEffort}
@@ -1082,10 +1160,9 @@ export function AgentManager({
                 }}
               >
                 <option value="">Model default</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="xhigh">Extra high</option>
+                {(reasoningEffortField?.options || []).map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </select>
             </div>
           </div>
@@ -1095,13 +1172,14 @@ export function AgentManager({
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
             <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Temperature
+                {temperatureField?.label}
               </label>
               <input
-                aria-label="Temperature"
+                aria-label={temperatureField?.label}
                 type="number"
-                min="0"
-                step="0.1"
+                min={temperatureField?.minimum}
+                max={temperatureField?.maximum}
+                step={temperatureField?.step}
                 value={temperature}
                 onChange={(event) => {
                   setTemperature(event.target.value === '' ? '' : event.target.valueAsNumber);
@@ -1111,13 +1189,14 @@ export function AgentManager({
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Max tokens
+                {maxTokensField?.label}
               </label>
               <input
-                aria-label="Max tokens"
+                aria-label={maxTokensField?.label}
                 type="number"
-                min="1"
-                step="1"
+                min={maxTokensField?.minimum}
+                max={maxTokensField?.maximum}
+                step={maxTokensField?.step}
                 value={maxTokens}
                 onChange={(event) => {
                   setMaxTokens(event.target.value === '' ? '' : event.target.valueAsNumber);
@@ -1127,13 +1206,14 @@ export function AgentManager({
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Max turns
+                {maxTurnsField?.label}
               </label>
               <input
-                aria-label="Max turns"
+                aria-label={maxTurnsField?.label}
                 type="number"
-                min="1"
-                step="1"
+                min={maxTurnsField?.minimum}
+                max={maxTurnsField?.maximum}
+                step={maxTurnsField?.step}
                 value={maxTurns}
                 onChange={(event) => {
                   setMaxTurns(event.target.value === '' ? '' : event.target.valueAsNumber);
@@ -1150,7 +1230,7 @@ export function AgentManager({
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-            Input Data Dictionary · tools
+            Input Data Dictionary · Tools
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
             <input

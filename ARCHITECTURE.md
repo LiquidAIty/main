@@ -632,9 +632,10 @@ validate valid input: card fields, provider/model/catalog lists, tool schemas, g
 typed query/script forms, parameter types/defaults/limits, output shapes, risk, and required capability.
 IDD definitions are not injected into model context. Natural-language IDF content stays flexible.
 
-PostgreSQL owns IDD definitions, instantiated values, IDF versions, and the actual durable model input.
-Engraphis owns project reasoning and recall. Graphiti/KnowGraph owns sourced knowledge and provenance.
-CBM owns code structure. AGE only relates stable IDs when the meta graph is useful.
+The repo-root `LiquidAIty.idd` file owns IDD definitions. PostgreSQL owns instantiated values, IDF
+versions, and the actual durable Markdown model input. Engraphis owns project reasoning and recall.
+Graphiti/KnowGraph owns sourced knowledge and provenance. CBM owns code structure. AGE only relates
+stable IDs when the meta graph is useful.
 
 The intended research flow is:
 
@@ -654,14 +655,17 @@ user chat + uploaded/selected data
 
 For coding work the same envelope carries CBM pointers instead of dumping source. The receiving coder
 must still check CBM freshness and direct-read the resolved source before editing. Existing exact
-instruction bodies, saved cards, and the surviving tool input dictionary are useful foundations.
+instruction bodies, saved cards, and the live native tool catalog projection are useful foundations.
 Verified Git archaeology found no complete earlier implementation to restore: `ContextPack` had no
 production caller; `unified_context.py` / `DeliveredContextManifest` rebuilt assignment-coupled graph
 projections; AGE `AgentContext` and the registered-query/GraphView path mixed context with runtime
-control. The explicit IDF/IDD law arrived in `fe6daa9d`; `toolInputDataDictionary.ts` is only a tool
-schema/catalog subset. The shared PostgreSQL assembler, full IDD-driven editor/validation boundary,
-generic capability-gated parameterized SQL/Cypher execution, and actual Hermes/Mag One/Coder consumer
-proof remain TARGET / INCOMPLETE.
+control. The explicit IDF/IDD law arrived in `fe6daa9d`. Current source now has one literal
+`LiquidAIty.idd`, a generic Python interpreter, a mixed-language loose-Markdown PostgreSQL IDF assembler, persisted
+card-context consumption by Hermes, and an exact IDF/card-runtime equality guard on Python rails.
+`toolCatalogProjection.ts` remains a live native-catalog projection only. The full editor, live selected
+tool-schema materialization, generic capability-gated parameterized SQL/Cypher and bounded-script
+execution, result islands, optional AGE observation, and full Coder outer-boundary proof remain
+TARGET / INCOMPLETE.
 
 ## Trading and retained specialists
 

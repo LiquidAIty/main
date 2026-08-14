@@ -10,6 +10,7 @@ import {
   canChooseCardExecutionMode,
   buildInputDictionarySelectedRows,
   buildDisplayedToolRows,
+  parseCardEditorInputDataDictionary,
   toggleSavedToolAssignment,
 } from './AgentManager';
 
@@ -93,6 +94,7 @@ describe('AgentManager active builder config', () => {
   it('keeps the card identity fields without adding another persistence path', () => {
     const filePath = path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx');
     const source = readFileSync(filePath, 'utf8');
+    const idd = readFileSync(path.resolve(process.cwd(), 'LiquidAIty.idd'), 'utf8');
 
     expect(source).toContain('cardName');
     expect(source).toContain('cardSubtext');
@@ -101,19 +103,59 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain('Description');
     expect(source).not.toContain('Card mode');
     expect(source).not.toContain('Runtime Type');
-    expect(source).toContain('Execution mode');
+    expect(idd).toContain('label = "Execution mode"');
     expect(source).toContain('data-testid="agent-execution-mode"');
     expect(source).toContain('Advanced runtime');
     expect(source).not.toContain('GlassInspectorSection');
     expect(source).not.toContain('roleBadge');
-    expect(source).toContain('Temperature');
-    expect(source).toContain('Max tokens');
-    expect(source).toContain('Max turns');
+    expect(idd).toContain('label = "Temperature"');
+    expect(idd).toContain('label = "Max tokens"');
+    expect(idd).toContain('label = "Max turns"');
+    expect(source).toContain('/api/coder/input-data-dictionary/card-editor');
+    expect(source).not.toContain('/api/config/models');
+    expect(source).not.toContain('<option value="openai">');
     expect(source).toContain('Enabled skills');
     expect(source).toContain('MCP connections');
     expect(source).toContain('Connection references only');
     expect(source).not.toContain('Profile selector');
     expect(source).not.toContain('HERMES_HOME');
+  });
+
+  it('consumes IDD fields and materialized provider models without redefining them', () => {
+    const parsed = parseCardEditorInputDataDictionary({
+      fields: [
+        {
+          name: 'temperature',
+          label: 'Temperature',
+          path: 'runtimeOptions.temperature',
+          control: 'number',
+          minimum: 0,
+          step: 0.1,
+        },
+      ],
+      catalogs: {
+        'configured-models': [
+          {
+            provider: 'openrouter',
+            key: 'provider/model',
+            label: 'Provider Model',
+            providerModelId: 'provider/model',
+            default: false,
+          },
+        ],
+      },
+    });
+
+    expect(parsed.fields).toEqual([
+      expect.objectContaining({ name: 'temperature', minimum: 0, step: 0.1 }),
+    ]);
+    expect(parsed.modelsByProvider.openrouter).toEqual([
+      {
+        key: 'provider/model',
+        label: 'Provider Model',
+        providerModelId: 'provider/model',
+      },
+    ]);
   });
 
   it('separates Main availability from saved assignment across authority families', () => {

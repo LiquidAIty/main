@@ -7,6 +7,14 @@ export type ModelEntry = {
   context?: number;
 };
 
+export type ConfiguredModelOption = {
+  provider: Provider;
+  key: string;
+  label: string;
+  providerModelId: string;
+  default: boolean;
+};
+
 /**
  * The ACTIVE, selectable model catalog. Account-login entries are the currently
  * supported OpenAI GPT-5 family. OpenRouter entries are curated defaults that
@@ -27,6 +35,48 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   "deepseek/deepseek-v4-flash-0731": { label: "OpenRouter DeepSeek V4 Flash 0731", provider: "openrouter", id: "deepseek/deepseek-v4-flash-0731" },
   "z-ai/glm-5.2": { label: "OpenRouter Z.ai GLM 5.2", provider: "openrouter", id: "z-ai/glm-5.2", context: 1000000 }
 };
+
+/** Materialize the saved-card model choices from the canonical runtime registry.
+ * The IDD validates these records before the card editor consumes them. */
+export function listConfiguredModelOptions(openaiDefault: string): ConfiguredModelOption[] {
+  const byProviderAndKey = new Map<string, ConfiguredModelOption>();
+  const add = (option: ConfiguredModelOption) => {
+    const identity = `${option.provider}:${option.key}`;
+    if (!byProviderAndKey.has(identity)) byProviderAndKey.set(identity, option);
+  };
+
+  for (const [key, model] of Object.entries(MODEL_REGISTRY)) {
+    add({
+      provider: model.provider,
+      key,
+      label: model.label,
+      providerModelId: model.id,
+      default: model.provider === 'openai' && key === openaiDefault,
+    });
+    if (model.provider === 'openrouter') {
+      add({
+        provider: model.provider,
+        key: model.id,
+        label: `${model.label} (Direct ID)`,
+        providerModelId: model.id,
+        default: false,
+      });
+    }
+  }
+
+  if (![...byProviderAndKey.values()].some(
+    (option) => option.provider === 'openai' && option.key === openaiDefault,
+  )) {
+    add({
+      provider: 'openai',
+      key: openaiDefault,
+      label: `${openaiDefault} (default)`,
+      providerModelId: openaiDefault,
+      default: true,
+    });
+  }
+  return [...byProviderAndKey.values()];
+}
 
 /** Resolve a selectable model key to its registry entry. Throws on unknown or
  * removed keys — a persisted stale value fails honestly at resolution. */

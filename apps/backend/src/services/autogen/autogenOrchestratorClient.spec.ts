@@ -68,6 +68,10 @@ describe('autogenOrchestratorClient', () => {
       originatingCardId: 'card_research',
       systemText: 'Saved prompt.',
       userText: 'Exact input.',
+      cardContext: {
+        cardId: 'card_research', title: 'Research', prompt: 'Saved prompt.',
+        runtimeType: 'assistant_agent',
+      },
     };
 
     await createInputDataFileOnPython(payload);

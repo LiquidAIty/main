@@ -30,6 +30,11 @@ def test_idf_postgres_round_trip_preserves_exact_model_input() -> None:
             originating_card_id="card_main_chat",
             system_text="Saved system",
             user_text="Exact input",
+            card_context={
+                "cardId": "card_main_chat", "title": "Main",
+                "prompt": "Saved system", "runtimeType": "main_chat",
+                "executionMode": "single",
+            },
             dynamic_context_markdown="Dynamic context",
             native_references=[
                 {"authority": "knowgraph", "nativeId": "node:one", "required": True}
@@ -42,7 +47,7 @@ def test_idf_postgres_round_trip_preserves_exact_model_input() -> None:
         )
         assert loaded == created
         assert "Dynamic context" in loaded["modelInputMarkdown"]
-        assert "knowgraph:node:one [required]" in loaded["modelInputMarkdown"]
+        assert '"nativeId": "node:one"' in loaded["modelInputMarkdown"]
     finally:
         connection.rollback()
         connection.close()

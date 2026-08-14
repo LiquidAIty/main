@@ -327,8 +327,9 @@ idf-view
 idf-result
 ```
 
-IDD is the Input Data Dictionary. It defines rules used to validate, render, edit, and construct
-structured values; it is not included in the model payload. It covers:
+IDD is the one repo-root `LiquidAIty.idd` file. It defines rules used to validate, render, edit, and
+construct structured values; it is not included in the model payload. Python rails interprets the
+file without embedding a second dictionary. It covers:
 
 - card fields and model/provider/catalog/list choices;
 - tool schemas and valid graph-reference/query/script forms;
@@ -371,11 +372,18 @@ Do not persist machine-specific absolute paths as portable product identity.
   graph projections but was not a PostgreSQL-stored IDF and was coupled to GraphViews/assignments.
 - AGE `AgentContext` (July 23 onward) and registered operations (July 26–August 2) mixed context with
   sender/receiver/assignment control and were removed as detours.
-- `toolInputDataDictionary.ts` (August 8) is a real tool-schema/catalog subset, not the general IDD and
-  is not wired to the card editor.
-- The explicit IDF/IDD product law entered docs in `fe6daa9d` on August 10. Current Hermes, AutoGen, and
-  Coder paths still assemble context independently. Therefore the canonical IDF/IDD runtime is
-  **TARGET / INCOMPLETE**, and completing it is the next context-backbone implementation.
+- `LiquidAIty.idd` is now the one literal rule catalog. Its generic Python interpreter validates the
+  current structured card snapshot and the bracketed native-language island vocabulary. Ordinary
+  Markdown remains the default; JSON is used only for bounded exact structured values where useful.
+- PostgreSQL stores the exact rendered Markdown IDF. Main and ordinary Hermes consume the card snapshot,
+  system text, and model input returned from persistence. AutoGen single-card and Mag One payloads carry
+  that same card snapshot, and Python rails rejects a separately supplied runtime config that differs.
+- `toolCatalogProjection.ts` is only a live projection of native MCP/private runtime manifests. It is
+  neither the IDD nor another tool authority; the misleading old TypeScript dictionary and route names
+  were deleted.
+- Typed SQL/Cypher/script/view/result execution, live selected-schema materialization into IDF, the full
+  editor, and optional AGE observation remain **TARGET / INCOMPLETE**. Their schemas must follow proven
+  Python execution contracts, not be invented ahead of them.
 
 ---
 

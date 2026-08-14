@@ -1,0 +1,140 @@
+# LiquidAIty Example IDF
+# Mixed-language model context artifact
+# Loose text is the default. Typed/native-language islands can appear anywhere.
+
+[SYSTEM]
+You are the saved LiquidAIty research agent for this project. Use the context below as the complete working context for this turn. Prefer graph-first discovery, preserve native runtime ownership, and return concise source-grounded findings.
+[/SYSTEM]
+
+[CARD]
+name: Research Helper
+role: planning, research, memory, KnowGraph assistance
+model: selected-at-runtime
+tools: inherited from saved card grants
+[/CARD]
+
+The current task is to determine why the canonical context reaching a model may differ from the context that was assembled earlier. Start with CodeGraph and current source before broad search.
+
+The first question is whether the current IDF storage record actually contains the same context that reaches the provider. Check it directly:
+
+[SQL]
+SELECT
+    id,
+    card_id,
+    content_markdown,
+    structured_context,
+    created_at
+FROM input_data_files
+WHERE card_id = :card_id
+ORDER BY created_at DESC
+LIMIT 5;
+[/SQL]
+
+Use that result as context, not as a separate workflow. If the stored record points to a CodeGraph symbol, inspect the symbol immediately:
+
+[CYPHER]
+MATCH (a)-[r]->(b)
+WHERE a.name IN ['materializeInputDataFile', 'runConfiguredCard']
+RETURN a.name AS source, type(r) AS relation, b.name AS target
+LIMIT 50;
+[/CYPHER]
+
+If the graph result is incomplete, query the real CodeGraph tool:
+
+[MCP]
+tool: cbm.search_graph
+arguments:
+  query: materializeInputDataFile
+  limit: 20
+[/MCP]
+
+The sentence can continue after the tool call: compare the returned owners and callers with the persisted IDF path, then identify any code that appends a second semantic prompt after persistence.
+
+A bounded script may appear in the middle of the reasoning when transformation is useful. For example, normalize returned references:
+
+[SCRIPT language=python]
+unique = []
+seen = set()
+
+for item in results:
+    key = (item.get("authority"), item.get("id") or item.get("name"))
+    if key not in seen:
+        seen.add(key)
+        unique.append(item)
+
+result = unique[:25]
+[/SCRIPT]
+
+Continue from that result in ordinary text. Do not preserve script syntax if prose is more useful after execution; summarize the important outcome for the next model.
+
+A graph reference can remain structured when exact identity matters:
+
+[JSON]
+{
+  "type": "graph-reference",
+  "authority": "CodeGraph",
+  "references": [
+    "materializeInputDataFile",
+    "runConfiguredCard",
+    "MagenticOneGroupChat"
+  ]
+}
+[/JSON]
+
+The same IDF can move between paragraphs, pages, tools, and code without becoming one giant JSON object.
+
+For example, while explaining a finding, a sentence may be interrupted by a direct data lookup: the latest persisted context for this card is
+
+[SQL]
+SELECT content_markdown
+FROM input_data_files
+WHERE card_id = :card_id
+ORDER BY created_at DESC
+LIMIT 1;
+[/SQL]
+
+and after that result returns, continue the sentence by comparing the exact text with the provider-bound request.
+
+Likewise, a paragraph can call a tool in the middle of the handoff. Before claiming that an old assignment/claim symbol is gone, verify:
+
+[MCP]
+tool: cbm.search_graph
+arguments:
+  query: claim_assignment
+  limit: 20
+[/MCP]
+
+Then continue in plain language with the evidence.
+
+[SEARCH_TERMS]
+canonical IDF
+provider request
+modelInputMarkdown
+graph materialization
+claim_assignment
+runConfiguredCard
+MagenticOneGroupChat
+[/SEARCH_TERMS]
+
+[KNOWN_CONTEXT]
+- IDD defines the legal structured vocabulary and rules.
+- IDF is the actual assembled model context.
+- Outside bounded islands, text/Markdown is preferred.
+- Inside bounded islands, use the language that best fits the operation.
+- JSON, SQL, Cypher, MCP, and Python/script islands are all valid categories when supported by the current runtime and grants.
+- PostgreSQL persists the canonical IDF.
+- AGE records observational provenance and meta-knowledge.
+- Native graph and runtime systems remain authoritative for their own execution/data.
+[/KNOWN_CONTEXT]
+
+[RETURN]
+Return:
+1. the exact persisted-IDF -> provider-request path;
+2. any competing context owner;
+3. the CodeGraph evidence;
+4. the SQL/graph/tool results summarized in plain language;
+5. remaining unknowns;
+6. the smallest corrective change, if one is needed.
+[/RETURN]
+
+The final answer should be ordinary readable text unless exact structure is useful. A later model should be able to receive this same IDF, understand the mission and current knowledge, execute or interpret the bounded islands it has authority to use, and continue the work without reconstructing the context from scratch.

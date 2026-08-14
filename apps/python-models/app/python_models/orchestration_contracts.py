@@ -68,7 +68,12 @@ class CardRuntimeConfig(BaseModel):
         "magentic_one",
         "assistant_agent",
     ]
+    runtimeBinding: str | None = None
+    executionMode: Literal["single", "auto-kanban"] | None = None
     prompt: str = ""
+    provider: str | None = None
+    modelKey: str | None = None
+    providerModelId: str | None = None
     runtimeOptions: dict = Field(default_factory=dict)
     assistant: dict | None = None
     magentic: dict | None = None
@@ -128,6 +133,7 @@ class InputDataFile(BaseModel):
     version: int = Field(ge=1)
     systemText: str = ""
     userText: RequiredRuntimeString
+    cardContext: dict[str, Any] | None = None
     dynamicContextMarkdown: str = ""
     nativeReferences: list[NativeReference] = Field(default_factory=list)
     modelInputMarkdown: RequiredRuntimeString
@@ -140,6 +146,15 @@ class RuntimeRequest(BaseModel):
     session: ProjectSession
     idf: InputDataFile
     cardRuntime: CardRuntimeConfig | None = None
+
+
+def require_idf_card_runtime(context: RuntimeRequest) -> CardRuntimeConfig:
+    """Return the runtime config only when it is the exact IDF card snapshot."""
+    if context.cardRuntime is None:
+        raise RuntimeError("card_runtime_missing")
+    if context.idf.cardContext != context.cardRuntime.model_dump(exclude_none=True):
+        raise RuntimeError("runtime_idf_card_context_mismatch")
+    return context.cardRuntime
 
 
 class OrchestratorRunResponse(BaseModel):

@@ -572,19 +572,22 @@ same document—not a reconstructed receipt, envelope, manifest, or telemetry re
 the actual model/runtime call. Runtime adapters may format it mechanically; they must not independently
 invent conflicting context semantics.
 
-IDD is the Input Data Dictionary: rules for constructing, validating, rendering, and editing valid
-structured input. It covers typed card fields, catalogs/lists, tool schemas, graph-reference forms,
-query parameters, script/directive inputs, defaults, constraints, and metadata where structure is
-useful. IDD definitions help create an IDF; the definitions themselves are not appended to the model
-payload. Natural-language IDF content remains flexible and is not forced into a rigid schema.
+IDD is the Input Data Dictionary: the one literal repo-root `LiquidAIty.idd` catalog of rules for
+constructing, validating, rendering, and editing structured input where structure is useful. Python
+rails interprets that file mechanically; TypeScript and Python must not contain a copied competing
+dictionary. IDD definitions help create an IDF but are not appended to the model payload. IDF remains
+loose Markdown for prompts, current input, search terms, handoffs, summaries, and ordinary context;
+only explicitly cataloged bracketed native-language islands are typed.
 
 Verified history matters here. Git archaeology found no completed historical PostgreSQL IDF assembler
 or shared model-consumer path to restore. The July `ContextPack`, `unified_context.py` /
 `DeliveredContextManifest`, AGE `AgentContext`, and registered-query subsystems were different,
 assignment-coupled or duplicate experiments. The broader IDF/IDD law entered canonical docs in commit
-`fe6daa9d` on 2026-08-10; `toolInputDataDictionary.ts` (commit `d374097c`) is only the surviving tool
-schema/catalog subset. Until the implementation is completed and proven, documentation must call the
-IDF/IDD runtime path TARGET / INCOMPLETE rather than CURRENT.
+`fe6daa9d` on 2026-08-10. The old TypeScript `toolInputDataDictionary.ts` name was removed: its useful
+logic is now honestly named `toolCatalogProjection.ts` and remains only a projection of live native MCP
+and private runtime manifests. The literal IDD, Markdown assembler, PostgreSQL persistence, Hermes
+consumers, and AutoGen equality guard are CURRENT. Typed SQL/Cypher/script execution, full live-schema
+materialization, the editor, and optional AGE observation remain TARGET / INCOMPLETE.
 
 Authority is:
 

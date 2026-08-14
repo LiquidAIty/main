@@ -1,0 +1,1128 @@
+# LiquidAIty Input Data Dictionary
+#
+# One repository-owned catalog for the structured records and mixed-language
+# islands that may appear inside a LiquidAIty IDF. The file uses TOML syntax so
+# Python rails can interpret it with the standard library. It is not JSON, and
+# TypeScript/Python contain no generated copy of these definitions.
+
+[dictionary]
+name = "LiquidAIty"
+version = 1
+idfFormat = "mixed-markdown"
+islandStyle = "bracketed-native-language"
+unknownIslands = "inert"
+
+[dictionary.markdown]
+looseTextDefault = true
+commonContent = [
+  "current task",
+  "dynamic context",
+  "search terms",
+  "handoffs",
+  "returned summaries",
+  "ordinary reasoning and instructions",
+]
+
+[[catalogs]]
+name = "configured-models"
+record = "model-option"
+authority = "LiquidAIty.idd"
+entries = "models"
+liveCheck = "availability-and-contract-only"
+identityFields = ["provider", "key"]
+
+[[catalogs]]
+name = "native-tools"
+record = "tool-catalog-reference"
+authority = "LiquidAIty.idd"
+entries = "toolGroups.tools"
+liveCheck = "availability-and-contract-only"
+identityFields = ["canonicalId"]
+sources = [
+  "LiquidAIty custom MCP tools",
+  "Codebase Memory / CodeGraph MCP",
+  "Engraphis / ThinkGraph MCP",
+  "Graphiti / KnowGraph MCP",
+  "private AutoGen and specialist runtime tools",
+]
+
+# Permanent model vocabulary. Runtime configuration decides whether a declared
+# model is currently available and which declared model is the local default;
+# it may not introduce an undeclared card choice.
+
+[[models]]
+provider = "openai"
+key = "gpt-5.6-sol"
+label = "GPT-5.6 Sol"
+providerModelId = "gpt-5.6-sol"
+
+[[models]]
+provider = "openai"
+key = "gpt-5.6-terra"
+label = "GPT-5.6 Terra"
+providerModelId = "gpt-5.6-terra"
+
+[[models]]
+provider = "openai"
+key = "gpt-5.6-luna"
+label = "GPT-5.6 Luna"
+providerModelId = "gpt-5.6-luna"
+
+[[models]]
+provider = "openrouter"
+key = "or-google-gemini-2.5-pro"
+label = "OpenRouter Gemini 2.5 Pro"
+providerModelId = "google/gemini-2.5-pro"
+
+[[models]]
+provider = "openrouter"
+key = "google/gemini-2.5-pro"
+label = "OpenRouter Gemini 2.5 Pro (Direct ID)"
+providerModelId = "google/gemini-2.5-pro"
+
+[[models]]
+provider = "openrouter"
+key = "or-deepseek-chat"
+label = "OpenRouter DeepSeek Chat"
+providerModelId = "deepseek/deepseek-chat"
+
+[[models]]
+provider = "openrouter"
+key = "deepseek/deepseek-chat"
+label = "OpenRouter DeepSeek Chat (Direct ID)"
+providerModelId = "deepseek/deepseek-chat"
+
+[[models]]
+provider = "openrouter"
+key = "deepseek/deepseek-v4-flash-0731"
+label = "OpenRouter DeepSeek V4 Flash 0731"
+providerModelId = "deepseek/deepseek-v4-flash-0731"
+
+[[models]]
+provider = "openrouter"
+key = "z-ai/glm-5.2"
+label = "OpenRouter Z.ai GLM 5.2"
+providerModelId = "z-ai/glm-5.2"
+
+# Permanent tool vocabulary. These are tool declarations only: names,
+# contracts, capability ceilings, and native authorities. No CodeGraph,
+# ThinkGraph, or KnowGraph node, edge, memory, episode, or fact is stored here.
+
+[[toolGroups]]
+namespace = "main"
+sourceId = "main_mcp"
+kind = "tool"
+runtimeCompatibility = ["harness_mcp"]
+assignableRuntimeBindings = ["main_chat", "hermes_steward"]
+assignableRuntimeTypes = []
+cardAssignable = true
+publication = "external-mcp"
+executionAuthority = "main_mcp"
+
+[[toolGroups.tools]]
+name = "main.context"
+displayName = "Main context"
+description = "Read server-owned Main request and saved-card identities."
+parameters = []
+required = []
+cardAssignable = false
+assignableRuntimeBindings = []
+
+[[toolGroups.tools]]
+name = "coder.status"
+displayName = "Coder status"
+description = "Read the canonical OpenClaude Coder process state."
+parameters = []
+required = []
+assignableRuntimeBindings = ["main_chat"]
+
+[[toolGroups.tools]]
+name = "mag_one.describe_connected_agents"
+displayName = "Describe connected Mag One agents"
+description = "Read saved bus-eligible Mag One card capabilities."
+parameters = ["projectId", "deckId"]
+required = ["projectId"]
+
+[[toolGroups.tools]]
+name = "run_mag_one"
+displayName = "Run Magentic-One"
+description = "Submit one approved canonical IDF identity to native Magentic-One."
+parameters = ["projectId", "deckId", "idfId", "conversationId"]
+required = ["idfId", "projectId", "deckId"]
+assignableRuntimeBindings = ["main_chat"]
+
+[[toolGroups.tools]]
+name = "write_mag_one_instructions"
+displayName = "Write Mag One instructions"
+description = "Persist proposed Mag One instructions as an IDF without starting a run."
+parameters = ["instructions"]
+required = ["instructions"]
+assignableRuntimeBindings = ["hermes_steward"]
+
+[[toolGroups.tools]]
+name = "canvas.inspect"
+displayName = "Inspect canvas"
+description = "Read a bounded saved card and wire view."
+parameters = ["projectId", "deckId"]
+required = ["projectId", "deckId"]
+
+[[toolGroups.tools]]
+name = "card.update_configuration"
+displayName = "Update card configuration"
+description = "Update the strict allowlist of saved card configuration fields."
+parameters = ["projectId", "deckId", "cardId", "updates"]
+required = ["projectId", "deckId", "cardId", "updates"]
+
+[[toolGroups.tools]]
+name = "canvas.upsert_wire"
+displayName = "Upsert canvas wire"
+description = "Create, update, or remove one saved flow or Mag One option wire."
+parameters = ["projectId", "deckId", "op", "wire"]
+required = ["projectId", "deckId", "op", "wire"]
+
+[[toolGroups.tools]]
+name = "web_search"
+displayName = "Web search"
+description = "Search the live web through the configured provider."
+parameters = ["query", "max_results"]
+required = ["query"]
+
+[[toolGroups.tools]]
+name = "card.run_assistant_agent"
+displayName = "Run AssistantAgent card"
+description = "Run one saved AutoGen AssistantAgent card with saved authority."
+parameters = ["projectId", "deckId", "cardId", "correlationId", "conversationId", "originatingAgentId", "originatingRunId", "input"]
+required = ["cardId", "input"]
+
+[[toolGroups]]
+namespace = "cbm"
+sourceId = "cbm"
+kind = "tool"
+runtimeCompatibility = ["harness_mcp"]
+assignableRuntimeBindings = ["local_coder"]
+assignableRuntimeTypes = []
+cardAssignable = true
+publication = "external-mcp"
+executionAuthority = "cbm"
+graphAuthority = "CodeGraph"
+
+[[toolGroups.tools]]
+name = "delete_project"
+description = "Delete one named CBM projection."
+parameters = ["project"]
+required = ["project"]
+
+[[toolGroups.tools]]
+name = "detect_changes"
+description = "Map Git changes to their code impact."
+parameters = ["base_branch", "depth", "project", "scope", "since"]
+required = ["project"]
+
+[[toolGroups.tools]]
+name = "get_architecture"
+description = "Read a high-level code architecture view."
+parameters = ["aspects", "project"]
+required = ["project"]
+
+[[toolGroups.tools]]
+name = "get_code_snippet"
+description = "Read a bounded indexed symbol source snippet."
+parameters = ["include_neighbors", "project", "qualified_name"]
+required = ["project", "qualified_name"]
+
+[[toolGroups.tools]]
+name = "get_graph_schema"
+description = "Read the CodeGraph schema."
+parameters = ["project"]
+required = ["project"]
+
+[[toolGroups.tools]]
+name = "index_repository"
+description = "Build or refresh a CodeGraph project projection."
+parameters = ["mode", "repo_path"]
+required = ["repo_path"]
+
+[[toolGroups.tools]]
+name = "index_status"
+description = "Read CodeGraph project indexing state."
+parameters = ["project"]
+required = ["project"]
+
+[[toolGroups.tools]]
+name = "ingest_traces"
+description = "Add runtime traces to CodeGraph."
+parameters = ["project", "traces"]
+required = ["project", "traces"]
+
+[[toolGroups.tools]]
+name = "list_projects"
+description = "List indexed CodeGraph projects."
+parameters = []
+required = []
+
+[[toolGroups.tools]]
+name = "manage_adr"
+description = "Read or update a CodeGraph architecture decision record."
+parameters = ["content", "mode", "project", "sections"]
+required = ["project"]
+
+[[toolGroups.tools]]
+name = "query_graph"
+description = "Run bounded Cypher against CodeGraph structure."
+parameters = ["max_rows", "project", "query"]
+required = ["project", "query"]
+
+[[toolGroups.tools]]
+name = "search_code"
+description = "Search source text with CodeGraph enrichment."
+parameters = ["context", "file_pattern", "limit", "mode", "path_filter", "pattern", "project", "regex"]
+required = ["pattern", "project"]
+
+[[toolGroups.tools]]
+name = "search_graph"
+description = "Search CodeGraph symbols, routes, types, and structure."
+parameters = ["exclude_entry_points", "file_pattern", "include_connected", "label", "limit", "max_degree", "min_degree", "name_pattern", "offset", "project", "qn_pattern", "query", "relationship", "semantic_query"]
+required = ["project"]
+
+[[toolGroups.tools]]
+name = "trace_path"
+description = "Trace CodeGraph calls, data flow, or cross-service paths."
+parameters = ["depth", "direction", "edge_types", "function_name", "include_tests", "mode", "parameter_name", "project", "risk_labels"]
+required = ["function_name", "project"]
+
+[[toolGroups]]
+namespace = "engraphis"
+sourceId = "engraphis"
+kind = "tool"
+runtimeCompatibility = ["harness_mcp"]
+assignableRuntimeBindings = ["main_chat"]
+assignableRuntimeTypes = []
+cardAssignable = true
+publication = "external-mcp"
+executionAuthority = "engraphis"
+graphAuthority = "ThinkGraph"
+
+[[toolGroups.tools]]
+name = "answer"
+description = "Answer from bounded project reasoning memory."
+parameters = ["as_of", "diagnostics", "k", "known_at", "min_support", "query", "repo", "retrieval_profile", "token_budget", "valid_at", "workspace"]
+required = ["query"]
+
+[[toolGroups.tools]]
+name = "check_update"
+description = "Check Engraphis update state."
+parameters = ["force"]
+required = []
+
+[[toolGroups.tools]]
+name = "code_impact"
+description = "Read impact for changed files in project reasoning."
+parameters = ["as_of", "changed_files", "known_at", "repo", "valid_at", "workspace"]
+required = ["changed_files", "repo", "workspace"]
+
+[[toolGroups.tools]]
+name = "code_path"
+description = "Read a bounded source-to-target code path."
+parameters = ["as_of", "known_at", "max_depth", "repo", "source", "target", "valid_at", "workspace"]
+required = ["repo", "source", "target", "workspace"]
+
+[[toolGroups.tools]]
+name = "consolidate"
+description = "Consolidate project reasoning memory."
+parameters = ["dry_run", "profiles", "repo", "supersede_sources", "workspace"]
+required = ["workspace"]
+
+[[toolGroups.tools]]
+name = "context_savings"
+description = "Read measured context savings."
+parameters = ["repo", "workspace"]
+required = ["repo", "workspace"]
+
+[[toolGroups.tools]]
+name = "correct"
+description = "Correct one reasoning-memory record."
+parameters = ["memory_id", "new_content", "reason", "workspace"]
+required = ["memory_id", "new_content", "workspace"]
+
+[[toolGroups.tools]]
+name = "end_session"
+description = "End a reasoning-memory session."
+parameters = ["open_threads", "outcome", "session_id", "summary"]
+required = ["session_id"]
+
+[[toolGroups.tools]]
+name = "export_code_graph"
+description = "Export bounded repository structure into project reasoning."
+parameters = ["as_of", "known_at", "repo", "valid_at", "workspace"]
+required = ["repo", "workspace"]
+
+[[toolGroups.tools]]
+name = "export_receipts"
+description = "Export project reasoning receipts."
+parameters = ["workspace"]
+required = ["workspace"]
+
+[[toolGroups.tools]]
+name = "forget"
+description = "Forget one reasoning-memory record."
+parameters = ["memory_id", "reason", "workspace"]
+required = ["memory_id", "workspace"]
+
+[[toolGroups.tools]]
+name = "index_repo"
+description = "Index repository content into project reasoning."
+parameters = ["languages"]
+required = []
+
+[[toolGroups.tools]]
+name = "ingest"
+description = "Ingest one typed project reasoning item."
+parameters = ["mtype", "repo", "scope", "session_id", "workspace"]
+required = ["workspace"]
+
+[[toolGroups.tools]]
+name = "ingest_postgres_schema"
+description = "Ingest a PostgreSQL schema into project reasoning."
+parameters = ["dsn", "repo", "workspace"]
+required = ["dsn", "repo", "workspace"]
+
+[[toolGroups.tools]]
+name = "link"
+description = "Link two project reasoning records."
+parameters = ["a", "b", "layer", "reason", "relation", "workspace"]
+required = ["a", "b", "workspace"]
+
+[[toolGroups.tools]]
+name = "pin"
+description = "Pin or unpin a reasoning-memory record."
+parameters = ["memory_id", "pinned", "workspace"]
+required = ["memory_id", "workspace"]
+
+[[toolGroups.tools]]
+name = "proactive_context"
+description = "Read proactive project context for an agent state."
+parameters = ["agent_state", "k", "repo", "task", "workspace"]
+required = ["workspace"]
+
+[[toolGroups.tools]]
+name = "promote"
+description = "Promote one reasoning-memory record to another scope."
+parameters = ["memory_id", "repo", "target_scope"]
+required = ["memory_id", "target_scope"]
+
+[[toolGroups.tools]]
+name = "recall"
+description = "Recall bounded project reasoning memory."
+parameters = ["as_of", "diagnostics", "k", "known_at", "mtypes", "query", "repo", "retrieval_profile", "token_budget", "valid_at", "workspace"]
+required = ["query"]
+
+[[toolGroups.tools]]
+name = "recall_context"
+description = "Recall context-shaped project reasoning memory."
+parameters = ["as_of", "diagnostics", "k", "known_at", "mtypes", "query", "repo", "retrieval_profile", "token_budget", "valid_at", "workspace"]
+required = ["query"]
+
+[[toolGroups.tools]]
+name = "recall_grounded"
+description = "Recall grounded project reasoning memory."
+parameters = ["as_of", "diagnostics", "k", "known_at", "mtypes", "query", "repo", "retrieval_profile", "token_budget", "valid_at", "workspace"]
+required = ["query"]
+
+[[toolGroups.tools]]
+name = "recall_proactive"
+description = "Recall proactive project reasoning memory."
+parameters = ["k", "workspace"]
+required = ["workspace"]
+
+[[toolGroups.tools]]
+name = "receipts"
+description = "Read project reasoning receipts."
+parameters = ["limit", "workspace"]
+required = ["workspace"]
+
+[[toolGroups.tools]]
+name = "record_event"
+description = "Record a typed project reasoning event."
+parameters = ["content", "kind", "repo", "session_id", "workspace"]
+required = ["content", "kind"]
+
+[[toolGroups.tools]]
+name = "remember"
+description = "Store a typed project reasoning memory."
+parameters = ["claim_kind", "content", "keywords", "kind", "mtype", "repo", "scope", "session_id", "subject_key", "title", "trusted", "valid_from", "workspace"]
+required = ["content"]
+
+[[toolGroups.tools]]
+name = "search_code"
+description = "Search indexed code through project reasoning."
+parameters = ["as_of", "known_at", "limit", "query", "repo", "valid_at", "workspace"]
+required = ["query", "repo", "workspace"]
+
+[[toolGroups.tools]]
+name = "start_session"
+description = "Start or resume a project reasoning session."
+parameters = ["agent", "force_new", "goal", "repo", "workspace"]
+required = []
+
+[[toolGroups.tools]]
+name = "stats"
+description = "Read project reasoning statistics."
+parameters = ["workspace"]
+required = []
+
+[[toolGroups.tools]]
+name = "timeline"
+description = "Read a bounded project reasoning timeline."
+parameters = ["limit", "query", "repo", "workspace"]
+required = ["query", "workspace"]
+
+[[toolGroups.tools]]
+name = "verify_receipts"
+description = "Verify project reasoning receipt continuity."
+parameters = ["expected_count", "expected_head", "workspace"]
+required = ["workspace"]
+
+[[toolGroups.tools]]
+name = "why"
+description = "Explain why project reasoning memories were retrieved."
+parameters = ["k", "query", "repo", "workspace"]
+required = ["query", "workspace"]
+
+[[toolGroups]]
+namespace = "graphiti"
+sourceId = "graphiti"
+kind = "tool"
+runtimeCompatibility = ["harness_mcp"]
+assignableRuntimeBindings = ["hermes_steward"]
+assignableRuntimeTypes = []
+cardAssignable = true
+publication = "external-mcp"
+executionAuthority = "graphiti"
+graphAuthority = "KnowGraph"
+
+[[toolGroups.tools]]
+name = "add_memory"
+description = "Add a provenance-bearing KnowGraph episode."
+parameters = ["custom_extraction_instructions", "episode_body", "excluded_entity_types", "name", "previous_episode_uuids", "reference_time", "saga", "saga_previous_episode_uuid", "source", "source_description", "update_communities", "uuid"]
+required = ["episode_body", "name"]
+
+[[toolGroups.tools]]
+name = "add_triplet"
+description = "Add one explicit KnowGraph source-edge-target fact."
+parameters = ["edge_name", "fact", "source_node_name", "source_node_uuid", "target_node_name", "target_node_uuid"]
+required = ["edge_name", "fact", "source_node_name", "target_node_name"]
+
+[[toolGroups.tools]]
+name = "build_communities"
+description = "Build KnowGraph communities."
+parameters = []
+required = []
+
+[[toolGroups.tools]]
+name = "clear_graph"
+description = "Clear the configured KnowGraph authority."
+parameters = []
+required = []
+cardAssignable = false
+
+[[toolGroups.tools]]
+name = "delete_entity_edge"
+description = "Delete one KnowGraph entity edge by native ID."
+parameters = ["uuid"]
+required = ["uuid"]
+
+[[toolGroups.tools]]
+name = "delete_episode"
+description = "Delete one KnowGraph episode by native ID."
+parameters = ["uuid"]
+required = ["uuid"]
+
+[[toolGroups.tools]]
+name = "get_entity_edge"
+description = "Read one KnowGraph entity edge by native ID."
+parameters = ["uuid"]
+required = ["uuid"]
+
+[[toolGroups.tools]]
+name = "get_episode_entities"
+description = "Read entities extracted from bounded KnowGraph episodes."
+parameters = ["episode_uuids"]
+required = ["episode_uuids"]
+
+[[toolGroups.tools]]
+name = "get_episodes"
+description = "Read bounded KnowGraph episodes."
+parameters = ["body_preview_chars", "max_episodes", "max_response_chars"]
+required = []
+
+[[toolGroups.tools]]
+name = "get_status"
+description = "Read KnowGraph service status."
+parameters = []
+required = []
+
+[[toolGroups.tools]]
+name = "search_memory_facts"
+description = "Search KnowGraph facts using bounded native filters."
+parameters = ["center_node_uuid", "edge_types", "invalid_at_after", "invalid_at_before", "max_facts", "query", "valid_at_after", "valid_at_before"]
+required = ["query"]
+
+[[toolGroups.tools]]
+name = "search_nodes"
+description = "Search KnowGraph nodes using bounded native filters."
+parameters = ["center_node_uuid", "entity_types", "max_nodes", "query"]
+required = ["query"]
+
+[[toolGroups.tools]]
+name = "summarize_saga"
+description = "Summarize one named KnowGraph saga."
+parameters = ["saga_name"]
+required = ["saga_name"]
+
+[[toolGroups]]
+namespace = "python"
+sourceId = "python_autogen"
+kind = "tool"
+runtimeCompatibility = ["autogen"]
+assignableRuntimeBindings = []
+assignableRuntimeTypes = ["magentic_one", "assistant_agent"]
+cardAssignable = true
+publication = "private-runtime"
+executionAuthority = "python_autogen"
+
+[[toolGroups.tools]]
+name = "calculator"
+namespace = "autogen"
+sourceId = "autogen"
+description = "Evaluate a bounded arithmetic expression."
+parameters = ["expression"]
+required = ["expression"]
+
+[[toolGroups.tools]]
+name = "current_datetime"
+namespace = "autogen"
+sourceId = "autogen"
+description = "Return the current UTC time."
+parameters = []
+required = []
+
+[[toolGroups.tools]]
+name = "find_recent_sec_filing_signals"
+namespace = "trading"
+sourceId = "worldsignals"
+description = "Read bounded recent SEC filing signals for an explicit issuer."
+parameters = ["form_types", "from_date", "issuer_cik", "issuer_company_name", "issuer_ticker", "limit", "to_date"]
+required = ["form_types", "from_date", "to_date"]
+assignableRuntimeBindings = ["trading_agent"]
+assignableRuntimeTypes = []
+
+[[toolGroups.tools]]
+name = "get_historical_bars"
+namespace = "trading"
+sourceId = "trading_data"
+description = "Read bounded Alpaca paper historical bars."
+parameters = ["end", "feed", "limit", "start", "symbol", "timeframe"]
+required = ["symbol", "timeframe"]
+assignableRuntimeBindings = ["trading_agent"]
+assignableRuntimeTypes = []
+
+[[toolGroups.tools]]
+name = "get_market_snapshot"
+namespace = "trading"
+sourceId = "trading_data"
+description = "Read an Alpaca paper market snapshot."
+parameters = ["feed", "symbol"]
+required = ["symbol"]
+assignableRuntimeBindings = ["trading_agent"]
+assignableRuntimeTypes = []
+
+[[toolGroups.tools]]
+name = "get_paper_account_readiness"
+namespace = "trading"
+sourceId = "trading_data"
+description = "Read Alpaca paper account readiness."
+parameters = []
+required = []
+assignableRuntimeBindings = ["trading_agent"]
+assignableRuntimeTypes = []
+
+[[toolGroups.tools]]
+name = "run_local_coder"
+namespace = "coder"
+sourceId = "local_coder"
+kind = "agent"
+description = "Run a bounded LocalCoder task and return its CoderReport."
+parameters = ["allowed_files", "cbm_queries", "code_anchors", "context_summary", "forbidden_work", "guardrails", "objective", "plan_excerpt", "project_id", "proof_required", "report_format", "stop_conditions", "write_mode"]
+required = ["objective"]
+assignableRuntimeBindings = ["local_coder"]
+assignableRuntimeTypes = []
+
+[[toolGroups.tools]]
+name = "web_search"
+namespace = "web"
+sourceId = "autogen"
+description = "Search the live web through the configured Python provider."
+parameters = ["max_results", "query"]
+required = ["query"]
+assignableRuntimeBindings = ["research_agent"]
+assignableRuntimeTypes = []
+
+[[toolGroups.tools]]
+name = "worldsignals.batch"
+namespace = "worldsignals"
+sourceId = "worldsignals"
+description = "Run a bounded batch of WorldSignals commands."
+parameters = ["commands"]
+required = ["commands"]
+assignableRuntimeBindings = ["worldsignals_agent"]
+assignableRuntimeTypes = []
+
+[[toolGroups.tools]]
+name = "worldsignals.capabilities"
+namespace = "worldsignals"
+sourceId = "worldsignals"
+description = "Read a bounded WorldSignals command-capability view."
+parameters = ["command", "domain", "keyword", "limit", "operation_class"]
+required = []
+assignableRuntimeBindings = ["worldsignals_agent"]
+assignableRuntimeTypes = []
+
+[[toolGroups.tools]]
+name = "worldsignals.command"
+namespace = "worldsignals"
+sourceId = "worldsignals"
+description = "Run one declared WorldSignals command."
+parameters = ["arguments", "command"]
+required = ["command"]
+assignableRuntimeBindings = ["worldsignals_agent"]
+assignableRuntimeTypes = []
+
+[[toolGroups.tools]]
+name = "worldsignals.poll"
+namespace = "worldsignals"
+sourceId = "worldsignals"
+description = "Poll WorldSignals task results."
+parameters = []
+required = []
+assignableRuntimeBindings = ["worldsignals_agent"]
+assignableRuntimeTypes = []
+
+[[toolGroups.tools]]
+name = "worldsignals.stream_events"
+namespace = "worldsignals"
+sourceId = "worldsignals"
+description = "Read a bounded WorldSignals event stream."
+parameters = ["max_events", "timeout_seconds"]
+required = []
+assignableRuntimeBindings = ["worldsignals_agent"]
+assignableRuntimeTypes = []
+
+[[records]]
+name = "card-context"
+allowUnknownFields = false
+description = "Exact resolved saved-card/runtime snapshot persisted with the IDF."
+
+[[records.fields]]
+name = "cardId"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "title"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "prompt"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "runtimeType"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "runtimeBinding"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "profile"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "provider"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "modelKey"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "providerModelId"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "executionMode"
+type = "string"
+required = false
+values = ["single", "auto-kanban"]
+
+[[records.fields]]
+name = "tools"
+type = "string-array"
+required = false
+
+[[records.fields]]
+name = "nativeTools"
+type = "string-array"
+required = false
+
+[[records.fields]]
+name = "skills"
+type = "string-array"
+required = false
+
+[[records.fields]]
+name = "toolsets"
+type = "string-array"
+required = false
+
+[[records.fields]]
+name = "mcpConnectionIds"
+type = "string-array"
+required = false
+
+[[records.fields]]
+name = "coderCardIds"
+type = "string-array"
+required = false
+
+[[records.fields]]
+name = "directSubagents"
+type = "object-array"
+required = false
+
+[[records.fields]]
+name = "runtimeOptions"
+type = "object"
+required = false
+
+[[records.fields]]
+name = "participants"
+type = "object-array"
+required = false
+
+[[records.fields]]
+name = "assistant"
+type = "object"
+required = false
+
+[[records.fields]]
+name = "magentic"
+type = "object"
+required = false
+
+[[records]]
+name = "model-option"
+allowUnknownFields = false
+description = "One current provider/model choice materialized for the card editor."
+
+[[records.fields]]
+name = "provider"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "key"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "label"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "providerModelId"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "default"
+type = "boolean"
+required = true
+
+[[records]]
+name = "tool-catalog-reference"
+allowUnknownFields = false
+description = "Bounded editor reference to one current native tool or runnable specialist."
+
+[[records.fields]]
+name = "canonicalId"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "kind"
+type = "string"
+required = true
+values = ["tool", "agent"]
+
+[[records.fields]]
+name = "namespace"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "sourceId"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "sourceIds"
+type = "string-array"
+required = true
+
+[[records.fields]]
+name = "nativeName"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "displayName"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "shortDescription"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "availability"
+type = "string"
+required = true
+values = ["available", "disabled"]
+
+[[records.fields]]
+name = "enabled"
+type = "boolean"
+required = true
+
+[[records.fields]]
+name = "schemaHash"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "publication"
+type = "object"
+required = true
+
+[[records.fields]]
+name = "execution"
+type = "object"
+required = true
+
+[[records.fields]]
+name = "capability"
+type = "object"
+required = true
+
+[[records.fields]]
+name = "effect"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "location"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "schemaVersion"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "latency"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "reliability"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "cost"
+type = "string"
+required = false
+
+# These definitions drive the existing card editor. Options from a catalog are
+# materialized from that catalog's native authority and validated above; they
+# are not copied into this file as stale provider/tool inventories.
+
+[[editorFields]]
+name = "executionMode"
+label = "Execution mode"
+path = "executionMode"
+control = "select"
+allowUnset = false
+blockedRuntimeBindings = ["main_chat", "local_coder"]
+blockedRuntimeTypes = ["magentic_one"]
+help = "Ordinary cards may use Hermes single or Auto-Kanban without changing identity."
+
+[[editorFields.options]]
+value = "single"
+label = "Single"
+
+[[editorFields.options]]
+value = "auto-kanban"
+label = "Auto-Kanban"
+
+[[editorFields]]
+name = "provider"
+label = "Provider"
+path = "provider"
+control = "select"
+allowUnset = true
+catalog = "configured-models"
+help = "Only providers with current configured model choices are shown."
+
+[[editorFields.options]]
+value = "openai"
+label = "OpenAI Account"
+
+[[editorFields.options]]
+value = "openrouter"
+label = "OpenRouter"
+
+[[editorFields]]
+name = "modelKey"
+label = "Model"
+path = "modelKey"
+control = "catalog-select"
+allowUnset = true
+catalog = "configured-models"
+filteredBy = "provider"
+
+[[editorFields]]
+name = "reasoningEffort"
+label = "Reasoning"
+path = "runtimeOptions.reasoningEffort"
+control = "select"
+allowUnset = true
+
+[[editorFields.options]]
+value = "low"
+label = "Low"
+
+[[editorFields.options]]
+value = "medium"
+label = "Medium"
+
+[[editorFields.options]]
+value = "high"
+label = "High"
+
+[[editorFields.options]]
+value = "xhigh"
+label = "Extra high"
+
+[[editorFields]]
+name = "temperature"
+label = "Temperature"
+path = "runtimeOptions.temperature"
+control = "number"
+allowUnset = true
+minimum = 0.0
+step = 0.1
+
+[[editorFields]]
+name = "maxTokens"
+label = "Max tokens"
+path = "runtimeOptions.maxTokens"
+control = "integer"
+allowUnset = true
+minimum = 1
+step = 1
+
+[[editorFields]]
+name = "maxTurns"
+label = "Max turns"
+path = "runtimeOptions.maxTurns"
+control = "integer"
+allowUnset = true
+minimum = 1
+step = 1
+
+[[editorFields]]
+name = "tools"
+label = "Tools"
+path = "tools"
+control = "catalog-multiselect"
+allowUnset = true
+catalog = "native-tools"
+
+[[islands]]
+name = "SYSTEM"
+language = "markdown"
+repeatable = false
+
+[[islands]]
+name = "CARD"
+language = "loose-key-values"
+repeatable = false
+
+[[islands]]
+name = "SQL"
+language = "sql"
+repeatable = true
+execution = "not-wired"
+
+[[islands]]
+name = "CYPHER"
+language = "cypher"
+repeatable = true
+execution = "not-wired"
+
+[[islands]]
+name = "MCP"
+language = "loose-key-values"
+repeatable = true
+execution = "native-catalog-required"
+
+[[islands]]
+name = "SCRIPT"
+language = "attribute-selected"
+repeatable = true
+allowedAttributes = ["language"]
+requiredAttributes = ["language"]
+execution = "not-wired"
+
+[[islands]]
+name = "JSON"
+language = "json"
+repeatable = true
+
+[[islands]]
+name = "SEARCH_TERMS"
+language = "text"
+repeatable = true
+
+[[islands]]
+name = "KNOWN_CONTEXT"
+language = "markdown"
+repeatable = true
+
+[[islands]]
+name = "RETURN"
+language = "markdown"
+repeatable = true

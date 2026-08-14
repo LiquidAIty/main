@@ -45,9 +45,9 @@ part of the active research loop until its own pass wires it in.
 - **Auth on Prisma, app state on raw Postgres, graphs in their own stores** — login/signup →
   `auth/userService` + `auth/sessionStore` → `services/database.ts` (Prisma) is the correct, deliberate
   split: Prisma owns auth/session; raw Postgres owns project/deck/conversation app state;
-  SQLite/Engraphis owns ThinkGraph; Neo4j owns KnowGraph; CBM owns CodeGraph; PostgreSQL owns IDD,
-  actual IDFs, and dynamic AgentGraph context; Apache AGE is optional meta-knowledge. This split is
-  deliberate.
+  SQLite/Engraphis owns ThinkGraph; Neo4j owns KnowGraph; CBM owns CodeGraph; repo-root
+  `LiquidAIty.idd` owns IDD definitions; PostgreSQL owns actual IDFs and dynamic AgentGraph context;
+  Apache AGE is optional meta-knowledge. This split is deliberate.
 - **Hermes runtime/UI** — Main and ordinary Hermes-backed saved cards use the repo-owned persistent
   Hermes boundary. Preserve saved prompt/profile/model/tool authority, stable card identity across
   `single` and `auto-kanban`, distinct sessions, and the separate Hermes terminal. The saved

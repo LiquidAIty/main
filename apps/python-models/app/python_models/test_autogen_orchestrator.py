@@ -21,6 +21,10 @@ def test_orchestrate_requires_saved_card_runtime():
         idf=InputDataFile.model_validate(assemble_input_data_file(
             project_id="p", deck_id="d", conversation_id="c", run_id="run:one",
             originating_card_id="card:one", system_text="", user_text="hi",
+            card_context={
+                "cardId": "card:one", "title": "One", "prompt": "",
+                "runtimeType": "magentic_one",
+            },
         )),
         cardRuntime=None,
     )

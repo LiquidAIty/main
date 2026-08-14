@@ -37,7 +37,7 @@ function deps(runCard = vi.fn()) {
       version: 1, systemText: '', userText: 'Approved task.',
       dynamicContextMarkdown: '', nativeReferences: [],
       modelInputMarkdown: 'Approved task.', contentMarkdown: 'Approved task.',
-      contentSha256: 'hash', createdAt: 'now',
+      cardContext: null, contentSha256: 'hash', createdAt: 'now',
     } })) as any,
     resolveWorkerReadiness: vi.fn(async (cards: any[]) => cards.map((card) => ({
       card,

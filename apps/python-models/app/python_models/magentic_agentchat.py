@@ -30,7 +30,11 @@ from app.python_models.tool_registry import (
     DEFAULT_TOOL_REGISTRY,
     build_local_coder_tool,
 )
-from app.python_models.orchestration_contracts import RuntimeRequest, OrchestratorRunResponse
+from app.python_models.orchestration_contracts import (
+    RuntimeRequest,
+    OrchestratorRunResponse,
+    require_idf_card_runtime,
+)
 
 
 def _as_text(value: Any) -> str:
@@ -351,6 +355,7 @@ def _tool_evidence_from_result(result: Any) -> list[dict[str, str]]:
 
 async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunResponse:
     """Run one configured saved card using the exact canonical IDF fields."""
+    require_idf_card_runtime(context)
     guard = _validate_single_card_context(context)
     run_id = _as_text(context.session.runId) or context.session.turnId
     if guard:

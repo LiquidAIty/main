@@ -132,10 +132,23 @@ const orchestratorMocks = vi.hoisted(() => ({
     conversationId: input.conversationId, runId: input.runId,
     originatingCardId: input.originatingCardId, version: 1,
     systemText: input.systemText, userText: input.userText,
+    cardContext: input.cardContext,
     dynamicContextMarkdown: '', nativeReferences: [], modelInputMarkdown: input.userText,
     contentMarkdown: input.userText, contentSha256: 'hash', createdAt: 'now',
   } })),
-  requestPythonRailsJson: vi.fn(async (): Promise<any> => ({ tools: [] })),
+  requestPythonRailsJson: vi.fn(async (endpoint: string, init?: RequestInit): Promise<any> => {
+    const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
+    if (endpoint === '/tools/manifest') return { tools: [] };
+    if (endpoint === '/idd/tools/materialize') return { references: body.references };
+    if (endpoint === '/idd/card-editor/materialize') {
+      return {
+        dictionary: { name: 'LiquidAIty', version: 1, idfFormat: 'mixed-markdown' },
+        fields: [{ name: 'provider', label: 'Provider', path: 'provider', control: 'select' }],
+        catalogs: { 'configured-models': body.models },
+      };
+    }
+    return {};
+  }),
 }));
 
 const dbMocks = vi.hoisted(() => ({
@@ -264,6 +277,30 @@ describe('coder routes', () => {
       expect(payload.references[0]).not.toHaveProperty('inputSchema');
       expect(payload.selectedKnownReferences.map((entry: any) => entry.canonicalId)).toEqual(['run_local_coder']);
       expect(payload.unresolvedSelectedIds).toEqual(['missing.tool']);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('materializes configured card-editor choices through the literal IDD boundary', async () => {
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/input-data-dictionary/card-editor`);
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(payload).toMatchObject({
+        ok: true,
+        dictionary: { name: 'LiquidAIty', version: 1 },
+        fields: [expect.objectContaining({ name: 'provider' })],
+      });
+      expect(payload.catalogs['configured-models']).toEqual(expect.arrayContaining([
+        expect.objectContaining({ provider: 'openai', key: 'gpt-5.6-luna' }),
+        expect.objectContaining({ provider: 'openrouter' }),
+      ]));
+      expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledWith(
+        '/idd/card-editor/materialize',
+        expect.objectContaining({ method: 'POST' }),
+      );
     } finally {
       await closeServer(server);
     }

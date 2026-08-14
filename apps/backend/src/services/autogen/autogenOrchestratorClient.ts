@@ -237,6 +237,7 @@ export async function createInputDataFileOnPython(payload: {
   originatingCardId: string;
   systemText: string;
   userText: string;
+  cardContext: Record<string, unknown>;
   dynamicContextMarkdown?: string;
   nativeReferences?: Array<{
     authority: string;

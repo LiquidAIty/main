@@ -412,15 +412,12 @@ function cleanReasoningEffort(value: unknown): 'low' | 'medium' | 'high' | 'xhig
   throw new Error(`card_reasoning_effort_invalid: ${String(value)}`);
 }
 
-export function buildPythonAutoGenCardRuntimePayload(
+export function buildPythonAutoGenCardRuntimeContext(
   card: any,
   context: any,
   modelConfig: any,
   callableHeads: any[],
-  startedAt: string,
-): PythonAutoGenPayloadShape {
-  const sessionId = `${context.deckId || 'deck'}:${card.id}:${Date.now()}`;
-  const turnId = `${card.id}:${Date.now()}`;
+): PythonAutoGenPayloadShape['cardRuntime'] & Record<string, unknown> {
   // Native team selection from the deck/card config: every eligible bus-connected
   // agent that the Python rails can run. No project-specific participant filtering —
   // Mag One sees the team exactly as configured on the Magentic bus.
@@ -446,6 +443,36 @@ export function buildPythonAutoGenCardRuntimePayload(
     if (value !== null) safeRuntimeOptions[key] = value;
   }
 
+  return {
+    cardId: String(card.id || ''),
+    title: String(card.title || 'Magentic Agent'),
+    runtimeType: 'magentic_one',
+    prompt: systemPrompt,
+    provider: modelConfig.provider,
+    modelKey: modelConfig.modelKey,
+    providerModelId: modelConfig.providerModelId,
+    runtimeOptions: safeRuntimeOptions,
+    participants,
+  };
+}
+
+export function buildPythonAutoGenCardRuntimePayload(
+  card: any,
+  context: any,
+  modelConfig: any,
+  callableHeads: any[],
+  startedAt: string,
+  persistedCardRuntime?: PythonAutoGenPayloadShape['cardRuntime'],
+): PythonAutoGenPayloadShape {
+  const sessionId = `${context.deckId || 'deck'}:${card.id}:${Date.now()}`;
+  const turnId = `${card.id}:${Date.now()}`;
+  const cardRuntime = persistedCardRuntime ?? buildPythonAutoGenCardRuntimeContext(
+    card,
+    context,
+    modelConfig,
+    callableHeads,
+  );
+
   // The mission input passes through normally. Native Mag One owns interpretation.
   const payload: PythonAutoGenPayloadShape = {
     session: {
@@ -462,14 +489,7 @@ export function buildPythonAutoGenCardRuntimePayload(
       startedAt,
     },
     idf: context.idf,
-    cardRuntime: {
-      cardId: String(card.id || ''),
-      title: String(card.title || 'Magentic Agent'),
-      runtimeType: 'magentic_one',
-      prompt: systemPrompt,
-      runtimeOptions: safeRuntimeOptions,
-      participants,
-    }
+    cardRuntime,
   };
 
   return payload;
@@ -607,6 +627,10 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         originatingCardId: cardId,
         systemText: config.prompt,
         userText: input,
+        cardContext: {
+          ...config,
+          runtimeType,
+        },
       })).idf;
     } catch {
       return done({
@@ -617,29 +641,30 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       });
     }
 
-    if (config.executionMode === 'auto-kanban') {
+    const idfConfig = idf.cardContext as typeof config;
+    if (idfConfig.executionMode === 'auto-kanban') {
       try {
         let hermesKanban = await runHermesKanbanCardTask({
           projectId,
           deckId,
           correlationId,
           cardId,
-          title: config.title,
+          title: idfConfig.title,
           prompt: idf.systemText,
-          profile: config.profile,
-          provider: providerForHermes(config.provider),
-          providerModelId: config.providerModelId,
-          skills: config.skills,
+          profile: idfConfig.profile,
+          provider: providerForHermes(idfConfig.provider),
+          providerModelId: idfConfig.providerModelId,
+          skills: idfConfig.skills,
           input: idf.modelInputMarkdown,
         });
         if (parentRunId && hermesKanban.snapshot.task.status !== 'done') {
-          hermesKanban = await waitForHermesKanbanCardTask(config.profile, hermesKanban.taskId);
+          hermesKanban = await waitForHermesKanbanCardTask(idfConfig.profile, hermesKanban.taskId);
         }
         const nativeCompleted = hermesKanban.snapshot.task.status === 'done';
         return done({
           status: nativeCompleted ? 'completed' : 'submitted',
           runtimeType,
-          tools: config.tools,
+          tools: idfConfig.tools,
           output: String(hermesKanban.snapshot.task.result || ''),
           hermesKanban,
           nativeRunResult: { runId: hermesKanban.taskId, idfId: idf.idfId },
@@ -648,7 +673,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         return done({
           status: 'failed',
           runtimeType,
-          tools: config.tools,
+          tools: idfConfig.tools,
           error: 'hermes_kanban_card_transport_failed',
           nativeRunResult: { runId: correlationId, idfId: idf.idfId },
         });
@@ -659,7 +684,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       const sessionScope = conversationId || deckId;
       const handle = await startHermesTurn(
         {
-          ...config,
+          ...idfConfig,
           prompt: idf.systemText,
           sessionKey: deriveHermesSessionKey(projectId, sessionScope, cardId),
           projectId,
@@ -673,7 +698,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       return done({
         status: 'completed',
         runtimeType,
-        tools: config.tools,
+        tools: idfConfig.tools,
         output: response.finalText,
         nativeRunResult: { runId: correlationId, idfId: idf.idfId },
       });
@@ -681,7 +706,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       return done({
         status: 'failed',
         runtimeType,
-        tools: config.tools,
+        tools: idfConfig.tools,
         error: String(error?.message || 'hermes_card_transport_failed'),
         nativeRunResult: { runId: correlationId, idfId: idf.idfId },
       });
@@ -702,6 +727,19 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     });
   }
 
+  const resolvedBinding = resolveRuntimeBinding(effectiveCard?.runtimeBinding);
+  const cardRuntime = {
+    cardId,
+    title: String(effectiveCard.title || 'Agent'),
+    runtimeType: 'assistant_agent' as const,
+    runtimeBinding: resolvedBinding,
+    prompt: String((participant as any).prompt || ''),
+    provider: model.provider,
+    modelKey: String(effectiveCard.runtimeOptions?.modelKey || ''),
+    providerModelId: model.providerModelId,
+    runtimeOptions: { deckId },
+    participants: [participant],
+  };
   let idf;
   try {
     idf = (await createInputDataFileOnPython({
@@ -710,14 +748,14 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       conversationId,
       runId: correlationId,
       originatingCardId: cardId,
-      systemText: String((participant as any).prompt || ''),
+      systemText: cardRuntime.prompt,
       userText: input,
+      cardContext: cardRuntime,
     })).idf;
   } catch {
     return done({ status: 'failed', runtimeType, error: 'idf_persistence_failed' });
   }
 
-  const resolvedBinding = resolveRuntimeBinding(effectiveCard?.runtimeBinding);
   const payload = {
     session: {
       sessionId: `${deckId}:${cardId}:${correlationId}`,
@@ -733,14 +771,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       startedAt,
     },
     idf,
-    cardRuntime: {
-      cardId,
-      title: String(effectiveCard.title || 'Agent'),
-      runtimeType: 'assistant_agent' as const,
-      prompt: idf.systemText,
-      runtimeOptions: { deckId },
-      participants: [participant],
-    },
+    cardRuntime: idf.cardContext,
   };
 
   logHarnessTrace(
@@ -819,6 +850,12 @@ export async function runCardWithContract(
     }
     
     const modelConfig = resolveOrchestratorCardModel(card);
+    const resolvedCardRuntime = buildPythonAutoGenCardRuntimeContext(
+      card,
+      context,
+      modelConfig,
+      callableHeads,
+    );
 
     const idf = context.idf ?? (await createInputDataFileOnPython({
       projectId: String(context.projectId || ''),
@@ -828,13 +865,18 @@ export async function runCardWithContract(
       originatingCardId: String(card.id || ''),
       systemText: String(card.prompt || ''),
       userText: input,
+      cardContext: resolvedCardRuntime,
     })).idf;
+    if (!idf.cardContext || idf.cardContext.cardId !== String(card.id || '')) {
+      throw new Error('runtime_idf_card_context_mismatch');
+    }
     const payload = buildPythonAutoGenCardRuntimePayload(
       card,
       { ...context, idf },
       modelConfig,
       callableHeads,
       startedAt,
+      idf.cardContext as PythonAutoGenPayloadShape['cardRuntime'],
     );
 
     // Call the Python AutoGen rails. Mock success is not allowed on this route.

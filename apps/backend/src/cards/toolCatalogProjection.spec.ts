@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildToolInputDataDictionary,
-  resolveToolInputDefinitions,
-  searchToolInputReferences,
-} from './toolInputDataDictionary';
+  buildToolCatalogProjection,
+  resolveToolCatalogDefinitions,
+  searchToolCatalogReferences,
+} from './toolCatalogProjection';
 
-describe('tool input data dictionary', () => {
+describe('live tool catalog projection', () => {
   it('bounds a 10,000-entry reference search and resolves definitions only for requested ids', () => {
     const catalog = Array.from({ length: 10_000 }, (_, index) => ({
       name: `cbm.tool_${String(index).padStart(5, '0')}`,
@@ -14,8 +14,8 @@ describe('tool input data dictionary', () => {
       inputSchema: { type: 'object', properties: { index: { type: 'integer', const: index } } },
       capability: { runtimeCompatibility: ['autogen'] },
     }));
-    const dictionary = buildToolInputDataDictionary(catalog);
-    const page = searchToolInputReferences(dictionary, {
+    const projection = buildToolCatalogProjection(catalog);
+    const page = searchToolCatalogReferences(projection, {
       query: 'repository slice',
       offset: 200,
       limit: 25,
@@ -39,29 +39,29 @@ describe('tool input data dictionary', () => {
     expect(page.selectedKnownReferences[0].nativeName).toBe('cbm.tool_00005');
     expect(page.unresolvedSelectedIds).toEqual(['missing.tool']);
 
-    const definitions = resolveToolInputDefinitions(dictionary, ['cbm.tool_00003']);
+    const definitions = resolveToolCatalogDefinitions(projection, ['cbm.tool_00003']);
     expect(definitions).toHaveLength(1);
     expect(definitions[0].implementations).toHaveLength(1);
     expect(definitions[0].implementations[0].inputSchema).toEqual(catalog[3].inputSchema);
-    expect(() => resolveToolInputDefinitions(dictionary, ['missing.tool'])).toThrow(
-      'tool_input_dictionary_selected_id_unknown:missing.tool',
+    expect(() => resolveToolCatalogDefinitions(projection, ['missing.tool'])).toThrow(
+      'tool_catalog_selected_id_unknown:missing.tool',
     );
-    expect(() => resolveToolInputDefinitions(dictionary, ['cbm.tool_00003', 'cbm.tool_00003'])).toThrow(
-      'tool_input_dictionary_selected_id_duplicate:cbm.tool_00003',
+    expect(() => resolveToolCatalogDefinitions(projection, ['cbm.tool_00003', 'cbm.tool_00003'])).toThrow(
+      'tool_catalog_selected_id_duplicate:cbm.tool_00003',
     );
   });
 
   it('rejects duplicate canonical ids inside one live source', () => {
-    expect(() => buildToolInputDataDictionary(
+    expect(() => buildToolCatalogProjection(
       [
         { name: 'shared.tool', inputSchema: {}, capability: {} },
         { name: 'shared.tool', inputSchema: {}, capability: {} },
       ],
-    )).toThrow('tool_input_dictionary_duplicate_id:shared.tool');
+    )).toThrow('tool_catalog_duplicate_id:shared.tool');
   });
 
   it('keeps one canonical id with runtime-specific live implementations', () => {
-    const dictionary = buildToolInputDataDictionary([
+    const projection = buildToolCatalogProjection([
       {
         sourceId: 'mcp_server_one',
         publication: { externalMcp: true },
@@ -88,8 +88,8 @@ describe('tool input data dictionary', () => {
       },
     ]);
 
-    expect(dictionary.references).toHaveLength(1);
-    expect(dictionary.references[0]).toMatchObject({
+    expect(projection.references).toHaveLength(1);
+    expect(projection.references[0]).toMatchObject({
       canonicalId: 'web_search',
       sourceId: 'federated',
       sourceIds: ['mcp_server_one', 'mcp_server_two'],
@@ -102,11 +102,11 @@ describe('tool input data dictionary', () => {
         cardAssignable: true,
       },
     });
-    expect(resolveToolInputDefinitions(dictionary, ['web_search'])[0].implementations).toHaveLength(2);
+    expect(resolveToolCatalogDefinitions(projection, ['web_search'])[0].implementations).toHaveLength(2);
   });
 
   it('keeps a private native agent referenceable without publishing it as MCP', () => {
-    const dictionary = buildToolInputDataDictionary([{
+    const projection = buildToolCatalogProjection([{
       id: 'run_local_coder',
       kind: 'agent',
       sourceId: 'local_coder',
@@ -122,7 +122,7 @@ describe('tool input data dictionary', () => {
       },
     }]);
 
-    expect(dictionary.references).toEqual([
+    expect(projection.references).toEqual([
       expect.objectContaining({
         canonicalId: 'run_local_coder',
         kind: 'agent',

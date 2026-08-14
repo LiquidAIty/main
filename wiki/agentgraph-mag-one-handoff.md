@@ -2,8 +2,8 @@
 id: feature.agentgraph-mag-one-handoff
 title: AgentGraph Context and Native Mag One
 kind: feature
-status: target_incomplete
-proof_level: git_archaeology_and_source
+status: current_partial
+proof_level: focused_tests_and_source
 
 cbm:
   project_identity: C-Projects-LiquidAIty-main
@@ -12,12 +12,13 @@ cbm:
 
 roots:
   current_replacement_files:
+    - LiquidAIty.idd
     - apps/backend/src/cards/runtime.ts
-    - apps/backend/src/cards/runtimeContracts.ts
-    - apps/python-models/app/python_models/agentgraph.py
+    - apps/backend/src/contracts/runtimeContracts.ts
+    - apps/backend/src/cards/toolCatalogProjection.ts
+    - apps/python-models/app/python_models/idd.py
+    - apps/python-models/app/python_models/idf.py
     - apps/python-models/app/python_models/magentic_agentchat.py
-  intended_idd_subset:
-    - apps/backend/src/coder/toolInputDataDictionary.ts
 ---
 
 # AgentGraph Context and Native Mag One
@@ -35,11 +36,11 @@ select workers, schedule execution, or decide native run success.
 
 ## Verified current replacement seam
 
-Current source still couples ordinary Hermes and Mag One execution to a relational/AGE assignment
-lifecycle through `create` / `claim` / `begin` / `finish` calls and assignment-shaped transport
-contracts. This is **WRONG CURRENT / SCHEDULED FOR REMOVAL**, not protected architecture. Removing it
-must preserve native run IDs, cancellation/failure/running/completed truth, originating card identity,
-saved topology, exact input, final result, and actual AutoGen/Hermes execution.
+Current source has no live assignment/claim runtime owner. One literal `LiquidAIty.idd` defines the
+currently proven typed helpers. Python rails assembles and persists one mixed-language loose-Markdown IDF containing
+the exact prompt, saved-card runtime snapshot, dynamic Markdown, native-reference island, and current
+input. Main and ordinary Hermes consume the persisted snapshot. AutoGen single-card and Mag One receive
+the same snapshot as `cardRuntime`, and Python rejects a mismatched parallel definition before execution.
 
 ## Historical recovery result
 
@@ -52,10 +53,11 @@ Git history contains no completed earlier IDF/IDD system to restore:
 - registered-query/GraphView machinery mixed typed query ideas with another registry and assignment
   control layer.
 - the explicit IDF/IDD product law entered canonical documentation in `fe6daa9d` on 2026-08-10.
-- `toolInputDataDictionary.ts`, introduced in `d374097c`, is a useful tool-schema/catalog subset only.
+- the former `toolInputDataDictionary.ts` logic is now `toolCatalogProjection.ts`, a live projection of
+  native catalogs only; it is not the IDD and does not own tools.
 
 Reuse the exact saved-card contract, exact instruction bodies, typed parameter validation/read-only
-query ideas, and surviving tool dictionary. Do not restore the old packet, manifest, registry,
+query ideas, and live tool catalog projection. Do not restore the old packet, manifest, registry,
 GraphView, receiver, claim, or assignment systems under new names.
 
 ## Intended runtime path

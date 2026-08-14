@@ -20,12 +20,6 @@ MODEL = "deepseek/deepseek-v4-flash-0731"
 
 
 def _context() -> RuntimeRequest:
-    idf = InputDataFile.model_validate(assemble_input_data_file(
-        project_id="p", deck_id="d", conversation_id="c", run_id="mag:one",
-        originating_card_id="mag:card", system_text="saved orchestrator system",
-        user_text="approved task", dynamic_context_markdown="native context",
-        idf_id="idf:mag", created_at="2026-08-14T00:00:00Z",
-    ))
     participants = [
         CardRuntimeParticipant(
             cardId="research", title="Research Agent", runtimeType="assistant_agent",
@@ -36,6 +30,19 @@ def _context() -> RuntimeRequest:
             runtimeBinding="local_coder", provider="openrouter", providerModelId=MODEL,
         ),
     ]
+    card_runtime = CardRuntimeConfig(
+        cardId="mag:card", title="Mag One", runtimeType="magentic_one",
+        prompt="saved orchestrator system", provider="openrouter",
+        modelKey=MODEL, providerModelId=MODEL,
+        runtimeOptions={"deckId": "d"}, participants=participants,
+    )
+    idf = InputDataFile.model_validate(assemble_input_data_file(
+        project_id="p", deck_id="d", conversation_id="c", run_id="mag:one",
+        originating_card_id="mag:card", system_text="saved orchestrator system",
+        user_text="approved task", dynamic_context_markdown="native context",
+        card_context=card_runtime.model_dump(exclude_none=True),
+        idf_id="idf:mag", created_at="2026-08-14T00:00:00Z",
+    ))
     return RuntimeRequest(
         session=ProjectSession(
             sessionId="s", projectId="p", turnId="t", runId="mag:one", route="r",
@@ -43,10 +50,7 @@ def _context() -> RuntimeRequest:
             providerModelId=MODEL, startedAt="now",
         ),
         idf=idf,
-        cardRuntime=CardRuntimeConfig(
-            cardId="mag:card", title="Mag One", runtimeType="magentic_one",
-            runtimeOptions={"deckId": "d"}, participants=participants,
-        ),
+        cardRuntime=card_runtime,
     )
 
 

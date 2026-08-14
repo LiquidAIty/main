@@ -12,6 +12,11 @@ from app.python_models.alpaca_market_data import (
     get_paper_account_readiness,
 )
 from app.python_models.autogen_orchestrator import orchestrate_runtime
+from app.python_models.idd import (
+    IddValidationError,
+    materialize_card_editor,
+    materialize_catalog,
+)
 from app.python_models.magentic_agentchat import run_configured_card
 from app.python_models.orchestration_contracts import RuntimeRequest
 from app.python_models.tool_registry import tool_manifest
@@ -72,6 +77,24 @@ def tools_manifest():
     return {"tools": tool_manifest()}
 
 
+@app.post("/idd/card-editor/materialize")
+def idd_card_editor_materialize(payload: dict[str, Any]):
+    """Materialize current model choices through the one literal IDD."""
+    try:
+        return materialize_card_editor(payload.get("models"))
+    except IddValidationError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
+@app.post("/idd/tools/materialize")
+def idd_tools_materialize(payload: dict[str, Any]):
+    """Validate the current federated native tool references through the IDD."""
+    try:
+        return {"references": materialize_catalog("native-tools", payload.get("references"))}
+    except IddValidationError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
 @app.post("/autogen/orchestrate")
 async def autogen_orchestrate(req: RuntimeRequest):
     try:
@@ -115,7 +138,7 @@ def thinkgraph_live_projection(payload: dict[str, Any]):
 
 @app.post("/idf/documents")
 def idf_create(payload: dict[str, Any]):
-    """Validate, persist, and return the actual immutable model input."""
+    """Validate, persist, and return the actual Markdown model input."""
     from app.python_models.idf import InputDataFileError, create_input_data_file
 
     try:
@@ -127,6 +150,7 @@ def idf_create(payload: dict[str, Any]):
             originating_card_id=str(payload.get("originatingCardId") or ""),
             system_text=payload.get("systemText") if isinstance(payload.get("systemText"), str) else "",
             user_text=payload.get("userText"),
+            card_context=payload.get("cardContext"),
             dynamic_context_markdown=(
                 payload.get("dynamicContextMarkdown")
                 if isinstance(payload.get("dynamicContextMarkdown"), str)
