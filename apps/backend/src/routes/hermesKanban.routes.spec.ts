@@ -26,6 +26,7 @@ import {
   parseYamlishConfig,
   parseProfileTable,
   runHermesKanbanCardTask,
+  waitForHermesKanbanCardTask,
 } from './hermesKanban.routes';
 
 function echo(fixture: unknown, exitCode = 0, stderr = '') {
@@ -78,6 +79,58 @@ describe('hermesKanban helpers', () => {
     ).toEqual({ ok: true });
     expect(parseHermesJson(`[{"id":"t"}]`)).toEqual([{ id: 't' }]);
     expect(() => parseHermesJson('not json at all')).toThrow(/json_not_found/);
+  });
+
+  it('bounded join returns the exact native done snapshot after re-reading Hermes', async () => {
+    let clock = 0;
+    const snapshots = [
+      { task: { id: 't_join', status: 'running', result: null }, runs: [{ id: 4 }] },
+      { task: { id: 't_join', status: 'done', result: 'synthesized' }, runs: [{ id: 5 }] },
+    ];
+    const runner = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: JSON.stringify(snapshots.shift()),
+      stderr: '',
+    }));
+    const result = await waitForHermesKanbanCardTask('card_research', 't_join', {
+      runner,
+      now: () => clock,
+      pause: async (delayMs) => { clock += delayMs; },
+      pollMs: 10,
+      timeoutMs: 100,
+    });
+    expect(result).toEqual({
+      taskId: 't_join',
+      runId: 5,
+      snapshot: {
+        task: { id: 't_join', status: 'done', result: 'synthesized' },
+        runs: [{ id: 5 }],
+      },
+    });
+    expect(runner).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounded join fails honestly on native blocked and timeout states', async () => {
+    const blockedRunner = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: JSON.stringify({ task: { id: 't_blocked', status: 'blocked' }, runs: [] }),
+      stderr: '',
+    }));
+    await expect(waitForHermesKanbanCardTask('card_research', 't_blocked', {
+      runner: blockedRunner,
+      timeoutMs: 100,
+    })).rejects.toThrow('hermes_kanban_card_blocked');
+
+    const runningRunner = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: JSON.stringify({ task: { id: 't_timeout', status: 'running' }, runs: [] }),
+      stderr: '',
+    }));
+    await expect(waitForHermesKanbanCardTask('card_research', 't_timeout', {
+      runner: runningRunner,
+      now: () => 0,
+      timeoutMs: 0,
+    })).rejects.toThrow('hermes_kanban_card_join_timeout');
   });
 
   it('parseYamlishConfig decodes scalars without logic', () => {

@@ -85,6 +85,77 @@ export type HermesKanbanCardTaskResult = {
   snapshot: HermesKanbanTaskSnapshot;
 };
 
+type HermesKanbanJoinOptions = {
+  timeoutMs?: number;
+  pollMs?: number;
+  runner?: typeof runHermes;
+  now?: () => number;
+  pause?: (delayMs: number) => Promise<void>;
+};
+
+/** Bounded read/join over one native Hermes task for a synchronous caller.
+ * Hermes remains the lifecycle owner; this function only re-reads `show` and
+ * returns its terminal snapshot without translating native task state. */
+export async function waitForHermesKanbanCardTask(
+  profile: string,
+  taskId: string,
+  options: HermesKanbanJoinOptions = {},
+): Promise<HermesKanbanCardTaskResult> {
+  const safeSavedProfile = String(profile || '').trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(safeSavedProfile)) {
+    throw new Error('hermes_kanban_card_profile_invalid');
+  }
+  if (!/^t_[A-Za-z0-9_-]+$/.test(taskId)) {
+    throw new Error('hermes_kanban_card_task_id_invalid');
+  }
+  const timeoutMs = options.timeoutMs ?? 120_000;
+  const pollMs = options.pollMs ?? 1_000;
+  const runner = options.runner ?? runHermes;
+  const now = options.now ?? Date.now;
+  const pause = options.pause ?? ((delayMs: number) => new Promise((resolve) => setTimeout(resolve, delayMs)));
+  const deadline = now() + timeoutMs;
+
+  for (;;) {
+    const showResult = await runner([
+      '-p',
+      safeSavedProfile,
+      'kanban',
+      'show',
+      taskId,
+      '--json',
+    ]);
+    if (showResult.exitCode !== 0) {
+      throw new Error('hermes_kanban_card_show_failed');
+    }
+    let snapshot: HermesKanbanTaskSnapshot;
+    try {
+      snapshot = parseHermesJson<HermesKanbanTaskSnapshot>(showResult.stdout);
+    } catch {
+      throw new Error('hermes_kanban_card_show_response_invalid');
+    }
+    if (String(snapshot?.task?.id || '').trim() !== taskId || !Array.isArray(snapshot?.runs)) {
+      throw new Error('hermes_kanban_card_snapshot_invalid');
+    }
+    const status = String(snapshot.task.status || '').trim().toLowerCase();
+    const latestRun = snapshot.runs.at(-1);
+    const rawRunId = latestRun?.id;
+    const runId = typeof rawRunId === 'string' || typeof rawRunId === 'number' ? rawRunId : null;
+    if (status === 'done') {
+      if (!String(snapshot.task.result || '').trim()) {
+        throw new Error('hermes_kanban_card_result_missing');
+      }
+      return { taskId, runId, snapshot };
+    }
+    if (status === 'blocked' || status === 'archived') {
+      throw new Error(`hermes_kanban_card_${status}`);
+    }
+    if (now() >= deadline) {
+      throw new Error('hermes_kanban_card_join_timeout');
+    }
+    await pause(pollMs);
+  }
+}
+
 /**
  * Submit one saved Hermes-bound card to Hermes' native Kanban owner.
  *

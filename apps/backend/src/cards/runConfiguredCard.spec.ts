@@ -17,6 +17,7 @@ vi.mock('../services/autogen/autogenOrchestratorClient', () => ({
 }));
 vi.mock('../routes/hermesKanban.routes', () => ({
   runHermesKanbanCardTask: vi.fn(),
+  waitForHermesKanbanCardTask: vi.fn(),
 }));
 vi.mock('../hermes/mainAdapter', () => ({
   deriveHermesSessionKey: vi.fn((projectId, conversationId, cardId) =>
@@ -67,7 +68,10 @@ import {
   runSingleCardWithAutoGen,
 } from '../services/autogen/autogenOrchestratorClient';
 import { startHermesTurn } from '../hermes/mainAdapter';
-import { runHermesKanbanCardTask } from '../routes/hermesKanban.routes';
+import {
+  runHermesKanbanCardTask,
+  waitForHermesKanbanCardTask,
+} from '../routes/hermesKanban.routes';
 import { runConfiguredCard } from './runtime';
 
 const mockGetDeck = getDeckDocument as unknown as ReturnType<typeof vi.fn>;
@@ -76,6 +80,7 @@ const mockBeginAssignment = beginAgentAssignmentOnPython as unknown as ReturnTyp
 const mockFinishAssignment = finishAgentAssignmentOnPython as unknown as ReturnType<typeof vi.fn>;
 const mockStartHermes = startHermesTurn as unknown as ReturnType<typeof vi.fn>;
 const mockRunHermesKanban = runHermesKanbanCardTask as unknown as ReturnType<typeof vi.fn>;
+const mockWaitHermesKanban = waitForHermesKanbanCardTask as unknown as ReturnType<typeof vi.fn>;
 
 const AGENT_CARD = {
   id: 'card_saved_worker',
@@ -136,6 +141,7 @@ beforeEach(() => {
   mockFinishAssignment.mockReset();
   mockStartHermes.mockReset();
   mockRunHermesKanban.mockReset();
+  mockWaitHermesKanban.mockReset();
   mockStartHermes.mockResolvedValue({
     done: Promise.resolve({ finalText: 'real Hermes output', usage: {} }),
     cancel: vi.fn(),
@@ -303,6 +309,8 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     });
     expect(mockStartHermes).not.toHaveBeenCalled();
     expect(mockRunCard).not.toHaveBeenCalled();
+    expect(mockWaitHermesKanban).not.toHaveBeenCalled();
+    expect(mockBeginAssignment).not.toHaveBeenCalled();
   });
 
   it('returns a fixed transport failure without leaking native stderr or secrets', async () => {
@@ -324,10 +332,68 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
 
     expect(result).toMatchObject({
       status: 'failed',
-      error: 'hermes_kanban_card_create_failed',
+      error: 'hermes_kanban_card_transport_failed',
       hermesKanban: null,
     });
     expect(JSON.stringify(result)).not.toContain('sk-secret-value');
+    expect(mockStartHermes).not.toHaveBeenCalled();
+    expect(mockRunCard).not.toHaveBeenCalled();
+  });
+
+  it('joins native auto-kanban for a Mag One child assignment and returns one final result', async () => {
+    const kanbanCard = {
+      ...AGENT_CARD,
+      runtimeOptions: {
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        executionMode: 'auto-kanban',
+        tools: [],
+      },
+    };
+    mockGetDeck.mockResolvedValue(deckWith([kanbanCard]));
+    mockRunHermesKanban.mockResolvedValue({
+      taskId: 't_native123',
+      runId: 5,
+      snapshot: { task: { id: 't_native123', status: 'running', result: null }, runs: [] },
+    });
+    const joined = {
+      taskId: 't_native123',
+      runId: 6,
+      snapshot: {
+        task: { id: 't_native123', status: 'done', result: 'native synthesized result' },
+        runs: [{ id: 6, status: 'done', outcome: 'completed' }],
+      },
+    };
+    mockWaitHermesKanban.mockResolvedValue(joined);
+
+    const result = await runConfiguredCard({
+      ...ARGS,
+      cardId: kanbanCard.id,
+      conversationId: 'conversation:one',
+      instructionId: 'instruction:child',
+      senderCardId: 'card_magentic',
+      parentRunId: 'assignment:outer',
+    });
+
+    expect(mockWaitHermesKanban).toHaveBeenCalledWith(kanbanCard.id, 't_native123');
+    expect(result).toMatchObject({
+      status: 'completed',
+      output: 'native synthesized result',
+      hermesKanban: joined,
+      assignmentResult: {
+        assignmentId: 'assignment:corr-123',
+        instructionId: 'instruction:corr-123',
+        resultId: 'agentresult:corr-123',
+      },
+    });
+    expect(mockBeginAssignment).toHaveBeenCalledWith(expect.objectContaining({
+      instructionId: 'instruction:child',
+      parentRunId: 'assignment:outer',
+    }));
+    expect(mockFinishAssignment).toHaveBeenCalledWith(
+      'assignment:corr-123',
+      expect.objectContaining({ status: 'completed', output: 'native synthesized result' }),
+    );
     expect(mockStartHermes).not.toHaveBeenCalled();
     expect(mockRunCard).not.toHaveBeenCalled();
   });

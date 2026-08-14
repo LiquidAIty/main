@@ -27,6 +27,7 @@ import {
 } from '../hermes/mainAdapter';
 import {
   runHermesKanbanCardTask,
+  waitForHermesKanbanCardTask,
   type HermesKanbanCardTaskResult,
 } from '../routes/hermesKanban.routes';
 
@@ -618,9 +619,37 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         error: String(error?.message || 'hermes_card_resolution_failed'),
       });
     }
+    const joinKanbanForParentAssignment = Boolean(instructionId && parentRunId);
+    let begunAssignment: Awaited<ReturnType<typeof beginAgentAssignmentOnPython>> | null = null;
+    if (config.executionMode === 'single' || joinKanbanForParentAssignment) {
+      try {
+        begunAssignment = await beginAgentAssignmentOnPython({
+          projectId,
+          deckId,
+          conversationId: conversationId || 'main',
+          correlationId,
+          senderCardId: senderCardId || cardId,
+          receiverCardId: cardId,
+          instruction: input,
+          ...(instructionId ? { instructionId } : {}),
+          ...(parentRunId ? { parentRunId } : {}),
+          runtime: 'hermes',
+          provider: config.provider,
+          modelKey: config.modelKey,
+          providerModelId: config.providerModelId,
+        });
+      } catch {
+        return done({
+          status: 'failed',
+          runtimeType,
+          tools: config.tools,
+          error: 'agentgraph_assignment_begin_failed',
+        });
+      }
+    }
     if (config.executionMode === 'auto-kanban') {
       try {
-        const hermesKanban = await runHermesKanbanCardTask({
+        let hermesKanban = await runHermesKanbanCardTask({
           projectId,
           deckId,
           correlationId,
@@ -633,46 +662,62 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
           skills: config.skills,
           input,
         });
+        if (joinKanbanForParentAssignment && hermesKanban.snapshot.task.status !== 'done') {
+          hermesKanban = await waitForHermesKanbanCardTask(config.profile, hermesKanban.taskId);
+        }
         const nativeCompleted = hermesKanban.snapshot.task.status === 'done';
+        let assignmentResult: AgentAssignmentRunResult | null = null;
+        if (nativeCompleted && begunAssignment) {
+          const finished: any = await finishAgentAssignmentOnPython(begunAssignment.assignmentId, {
+            projectId,
+            claimToken: begunAssignment.claimToken,
+            status: 'completed',
+            output: String(hermesKanban.snapshot.task.result || ''),
+          });
+          assignmentResult = {
+            assignmentId: begunAssignment.assignmentId,
+            instructionId: begunAssignment.instructionId,
+            ...(String(finished?.resultId || '').trim()
+              ? { resultId: String(finished.resultId).trim() }
+              : {}),
+          };
+        }
         return done({
           status: nativeCompleted ? 'completed' : 'submitted',
           runtimeType,
           tools: config.tools,
           output: String(hermesKanban.snapshot.task.result || ''),
           hermesKanban,
+          assignmentResult,
         });
-      } catch (error: any) {
+      } catch {
+        if (begunAssignment) {
+          try {
+            await finishAgentAssignmentOnPython(begunAssignment.assignmentId, {
+              projectId,
+              claimToken: begunAssignment.claimToken,
+              status: 'failed',
+              errorCode: 'hermes_kanban_card_run_failed',
+              errorDetail: 'Hermes Kanban card execution failed or did not complete within the bounded join.',
+            });
+          } catch {
+            // The assignment remains inspectable if terminal persistence fails.
+          }
+        }
         return done({
           status: 'failed',
           runtimeType,
           tools: config.tools,
-          error: String(error?.message || 'hermes_kanban_card_transport_failed'),
+          error: 'hermes_kanban_card_transport_failed',
         });
       }
     }
-    let begunAssignment: Awaited<ReturnType<typeof beginAgentAssignmentOnPython>>;
-    try {
-      begunAssignment = await beginAgentAssignmentOnPython({
-        projectId,
-        deckId,
-        conversationId: conversationId || 'main',
-        correlationId,
-        senderCardId: senderCardId || cardId,
-        receiverCardId: cardId,
-        instruction: input,
-        ...(instructionId ? { instructionId } : {}),
-        ...(parentRunId ? { parentRunId } : {}),
-        runtime: 'hermes',
-        provider: config.provider,
-        modelKey: config.modelKey,
-        providerModelId: config.providerModelId,
-      });
-    } catch (error: any) {
+    if (!begunAssignment) {
       return done({
         status: 'failed',
         runtimeType,
         tools: config.tools,
-        error: String(error?.message || 'agentgraph_assignment_begin_failed'),
+        error: 'agentgraph_assignment_begin_missing',
       });
     }
     try {
