@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 // Static imports: NodeNext ESM rejects extensionless dynamic import('./coder.routes')
 // after the '.routes' infix strip. vitest hoists vi.mock() above these.
 import router from './coder.routes';
+import { resolveRepoRoot } from '../coder/workspaceRoot';
 
 // Capture the repoPath the edit-scope gate is called with. The gate is invoked
 // as this.cbmScopeGate(packet.repoPath), so it observes exactly the root the
@@ -63,7 +64,7 @@ describe('POST /localcoder/run — trusted root injection', () => {
           },
         }),
       });
-      const trustedRoot = process.env.LIQUIDAITY_GRPC_CWD || 'C:/Projects/main';
+      const trustedRoot = resolveRepoRoot();
       expect(captured.repoPaths).toContain(trustedRoot);
       expect(captured.repoPaths).not.toContain(evilRoot);
     } finally {

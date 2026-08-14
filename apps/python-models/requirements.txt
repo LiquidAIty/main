@@ -1,5 +1,7 @@
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
+# Smallest resolver-verified pair compatible with mcp 1.28.1:
+# FastAPI 0.108.0 permits AnyIO 4 and MCP requires Uvicorn >=0.31.1.
+fastapi==0.108.0
+uvicorn[standard]==0.31.1
 pydantic==2.12.5
 pytest==8.4.2
 python-dotenv==1.2.2

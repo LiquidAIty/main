@@ -1,9 +1,26 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 export function resolveRepoRoot(): string {
-  return process.env.LIQUIDAITY_GRPC_CWD || 'C:/Projects/main';
+  const configured = String(process.env.LIQUIDAITY_GRPC_CWD || '').trim();
+  if (configured) return path.resolve(configured);
+
+  for (const start of [process.cwd(), __dirname]) {
+    let candidate = path.resolve(start);
+    for (;;) {
+      if (
+        existsSync(path.join(candidate, 'package.json')) &&
+        existsSync(path.join(candidate, 'apps', 'backend', 'package.json'))
+      ) {
+        return candidate;
+      }
+      const parent = path.dirname(candidate);
+      if (parent === candidate) break;
+      candidate = parent;
+    }
+  }
+  throw new Error('missing_required_config: LIQUIDAITY_GRPC_CWD');
 }
 
 /**

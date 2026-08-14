@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $repoPath = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $exePath = Join-Path $repoPath ".tools\codebase-memory-mcp\bin\codebase-memory-mcp.exe"
+$expectedCommandPath = $exePath.Replace('\', '/')
 $expectedVersion = "codebase-memory-mcp 0.9.1-rc.1"
 $repoConfigPath = Join-Path $repoPath ".mcp.json"
 $backendConfigPath = Join-Path $repoPath "apps\backend\mcp.config.json"
@@ -36,7 +37,7 @@ if (Test-Path -LiteralPath $codexConfigPath -PathType Leaf) {
     $commandLine = $codexLines[($section + 1)..([Math]::Min($section + 4, $codexLines.Count - 1))] |
         Where-Object { $_ -match '^command\s*=' } |
         Select-Object -First 1
-    if (-not $commandLine -or $commandLine -notmatch [Regex]::Escape('C:/Projects/main/.tools/codebase-memory-mcp/bin/codebase-memory-mcp.exe')) {
+    if (-not $commandLine -or $commandLine -notmatch [Regex]::Escape($expectedCommandPath)) {
         throw "Codex native CBM command does not resolve to the repo-owned executable."
     }
 }

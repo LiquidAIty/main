@@ -15,6 +15,28 @@ describe('resolveProductChatWorkingDirectory — no repo-memory walk', () => {
     expect(existsSync(cwd)).toBe(true);
   });
 
+  it('discovers this checkout from repository markers without a machine path', () => {
+    const previous = process.env.LIQUIDAITY_GRPC_CWD;
+    try {
+      delete process.env.LIQUIDAITY_GRPC_CWD;
+      expect(path.resolve(resolveRepoRoot())).toBe(path.resolve(process.cwd()));
+    } finally {
+      if (previous === undefined) delete process.env.LIQUIDAITY_GRPC_CWD;
+      else process.env.LIQUIDAITY_GRPC_CWD = previous;
+    }
+  });
+
+  it('honors the injected repository root used by packaged and Docker runtimes', () => {
+    const previous = process.env.LIQUIDAITY_GRPC_CWD;
+    try {
+      process.env.LIQUIDAITY_GRPC_CWD = path.join(process.cwd(), 'injected-root');
+      expect(resolveRepoRoot()).toBe(path.resolve(process.cwd(), 'injected-root'));
+    } finally {
+      if (previous === undefined) delete process.env.LIQUIDAITY_GRPC_CWD;
+      else process.env.LIQUIDAITY_GRPC_CWD = previous;
+    }
+  });
+
   it('is OUTSIDE the repo tree (so the walk-up finds no AGENTS.md/CLAUDE.md)', () => {
     const resolved = path.resolve(cwd);
     expect(resolved.startsWith(repoRoot + path.sep)).toBe(false);
