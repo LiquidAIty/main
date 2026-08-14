@@ -1,15 +1,13 @@
-"""Canonical PostgreSQL Input Data File boundary.
+"""PostgreSQL persistence and transport for one assembled Input Data File.
 
-An IDF is the actual structured model input: exact system text, exact user/task
-text, instantiated dynamic AgentGraph context, and bounded native references.
-IDD validation happens once here. Runtime adapters consume these exact fields;
-the dictionary/schema itself never enters the model payload.
+This module does not define the Input Data Dictionary. It accepts already
+selected context fields, performs only mechanical shape checks, renders the
+stored document, and persists the exact value supplied to runtime adapters.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -19,49 +17,39 @@ from uuid import uuid4
 from app.python_models.postgres import connect_postgres
 
 
-_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
-_MAX_SYSTEM_CHARS = 200_000
-_MAX_USER_CHARS = 500_000
-_MAX_DYNAMIC_CHARS = 500_000
-_MAX_REFERENCES = 256
-
-
 class InputDataFileError(ValueError):
-    """Typed structural failure at the IDD/IDF boundary."""
+    """Typed structural failure at the IDF transport/storage boundary."""
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _required_text(value: Any, field: str, maximum: int = 512) -> str:
-    text = str(value or "").strip()
-    if not text or len(text) > maximum:
+def _required_text(value: Any, field: str) -> str:
+    if not isinstance(value, str):
+        raise InputDataFileError(f"idf_{field}_invalid")
+    text = value.strip()
+    if not text:
         raise InputDataFileError(f"idf_{field}_invalid")
     return text
 
 
 def _required_id(value: Any, field: str) -> str:
-    text = _required_text(value, field, 256)
-    if not _ID.fullmatch(text):
-        raise InputDataFileError(f"idf_{field}_invalid")
-    return text
+    return _required_text(value, field)
 
 
-def _bounded_text(value: Any, field: str, maximum: int, *, required: bool) -> str:
+def _text(value: Any, field: str, *, required: bool) -> str:
     if not isinstance(value, str):
         raise InputDataFileError(f"idf_{field}_invalid")
     if required and not value.strip():
         raise InputDataFileError(f"idf_{field}_invalid")
-    if len(value) > maximum:
-        raise InputDataFileError(f"idf_{field}_too_large")
     return value
 
 
 def _references(value: Any) -> list[dict[str, Any]]:
     if value is None:
         return []
-    if not isinstance(value, list) or len(value) > _MAX_REFERENCES:
+    if not isinstance(value, list):
         raise InputDataFileError("idf_native_references_invalid")
     normalized: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -69,7 +57,7 @@ def _references(value: Any) -> list[dict[str, Any]]:
         if not isinstance(item, dict) or set(item) - {"authority", "nativeId", "required"}:
             raise InputDataFileError("idf_native_reference_invalid")
         authority = _required_id(item.get("authority"), "reference_authority")
-        native_id = _required_text(item.get("nativeId"), "reference_native_id", 2_048)
+        native_id = _required_text(item.get("nativeId"), "reference_native_id")
         key = (authority, native_id)
         if key in seen:
             raise InputDataFileError("idf_native_reference_duplicate")
@@ -141,18 +129,17 @@ def assemble_input_data_file(
     idf_id: str | None = None,
     created_at: str | None = None,
 ) -> dict[str, Any]:
-    """Validate under IDD rules and assemble one immutable IDF version."""
+    """Mechanically assemble one immutable IDF version from supplied fields."""
     project_id = _required_text(project_id, "project_id")
     deck_id = _required_text(deck_id, "deck_id")
     conversation_id = _required_text(conversation_id, "conversation_id")
     run_id = _required_id(run_id, "run_id")
     originating_card_id = _required_id(originating_card_id, "originating_card_id")
-    system_text = _bounded_text(system_text, "system_text", _MAX_SYSTEM_CHARS, required=False)
-    user_text = _bounded_text(user_text, "user_text", _MAX_USER_CHARS, required=True)
-    dynamic_context_markdown = _bounded_text(
+    system_text = _text(system_text, "system_text", required=False)
+    user_text = _text(user_text, "user_text", required=True)
+    dynamic_context_markdown = _text(
         dynamic_context_markdown,
         "dynamic_context_markdown",
-        _MAX_DYNAMIC_CHARS,
         required=False,
     )
     references = _references(native_references)

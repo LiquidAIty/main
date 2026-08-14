@@ -117,7 +117,7 @@ class NativeReference(BaseModel):
 
 
 class InputDataFile(BaseModel):
-    """The actual validated model input; IDD definitions are not payload."""
+    """Transport representation of one assembled model-input document."""
 
     idfId: RequiredRuntimeString
     projectId: RequiredRuntimeString

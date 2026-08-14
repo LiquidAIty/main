@@ -31,13 +31,13 @@ def test_idf_is_the_exact_validated_model_input() -> None:
     assert len(document["contentSha256"]) == 64
 
 
-def test_idd_rejects_invalid_structure_without_interpreting_content() -> None:
+def test_idf_transport_rejects_invalid_structure_without_interpreting_content() -> None:
     try:
         assemble_input_data_file(
             project_id="project-1",
             deck_id="deck-builder",
             conversation_id="conversation-1",
-            run_id="bad run with spaces",
+            run_id="",
             originating_card_id="card_main_chat",
             system_text="",
             user_text="Any natural language remains valid.",
@@ -59,10 +59,12 @@ def test_idf_errors_do_not_echo_model_input_or_secret_shaped_text() -> None:
             originating_card_id="card_main_chat",
             system_text="",
             user_text=secret,
-            native_references=[{"authority": "bad authority", "nativeId": secret}],
+            native_references=[
+                {"authority": "thinkgraph", "nativeId": secret, "unexpected": secret}
+            ],
         )
     except InputDataFileError as error:
-        assert str(error) == "idf_reference_authority_invalid"
+        assert str(error) == "idf_native_reference_invalid"
         assert secret not in str(error)
     else:
         raise AssertionError("invalid reference authority was accepted")
