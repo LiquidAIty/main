@@ -2,6 +2,8 @@ type AutoGenOrchestratorSession = {
   sessionId: string;
   projectId: string;
   turnId: string;
+  runId?: string;
+  parentRunId?: string;
   route: string;
   orchestrator: 'magentic_one' | 'assistant_agent';
   modelProvider: string;
@@ -14,12 +16,7 @@ const AUTOGEN_ORCHESTRATE_ENDPOINT = '/autogen/orchestrate';
 
 export type AutoGenOrchestratorRequest = {
   session: AutoGenOrchestratorSession;
-  userText: string;
-  agentAssignment?: {
-    instructionId: string;
-    senderCardId: string;
-    receiverCardId: string;
-  };
+  idf: import('../../contracts/runtimeContracts').InputDataFile;
   cardRuntime?: Record<string, unknown>;
 };
 
@@ -31,8 +28,8 @@ export type AutoGenMessage = {
 
 export type AutoGenOrchestratorResponse = {
   ok: boolean;
-  assignmentId?: string | null;
-  instructionId?: string | null;
+  runId: string;
+  idfId: string;
   resultId?: string | null;
   // Real last AutoGen message text (transport invariant only; not rendered in chat).
   finalResponseText?: string;
@@ -232,89 +229,37 @@ export async function projectLiveThinkGraph(
   });
 }
 
-export type BegunAgentAssignment = {
-  ok: true;
-  assignmentId: string;
-  instructionId: string;
-  correlationId: string;
-  claimToken: string;
-  state: 'running';
-};
-
-/** Transport-only lifecycle calls; Python remains the sole AgentGraph writer. */
-export async function beginAgentAssignmentOnPython(payload: {
+export async function createInputDataFileOnPython(payload: {
   projectId: string;
   deckId: string;
   conversationId: string;
-  correlationId: string;
-  senderCardId: string;
-  receiverCardId: string;
-  instruction: string;
-  instructionId?: string;
-  parentRunId?: string;
-  references?: Array<{
-    referenceId: string;
-    referenceType: string;
+  runId: string;
+  originatingCardId: string;
+  systemText: string;
+  userText: string;
+  dynamicContextMarkdown?: string;
+  nativeReferences?: Array<{
+    authority: string;
+    nativeId: string;
     required: boolean;
   }>;
-  runtime?: string;
-  provider?: string;
-  modelKey?: string;
-  providerModelId?: string;
-}): Promise<BegunAgentAssignment> {
-  return requestPythonRailsJson(
-    payload.instructionId
-      ? '/agentgraph/assignments/begin-existing'
-      : '/agentgraph/assignments/begin', {
+}): Promise<{ ok: true; idf: import('../../contracts/runtimeContracts').InputDataFile }> {
+  return requestPythonRailsJson('/idf/documents', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-    }) as Promise<BegunAgentAssignment>;
+  }) as Promise<{ ok: true; idf: import('../../contracts/runtimeContracts').InputDataFile }>;
 }
 
-export async function finishAgentAssignmentOnPython(
-  assignmentId: string,
-  payload: {
-    projectId: string;
-    claimToken: string;
-    status: 'completed' | 'failed' | 'cancelled';
-    output?: string;
-    summary?: string;
-    errorCode?: string;
-    errorDetail?: string;
-    toolEvidence?: Array<{
-      callId?: string;
-      toolName?: string;
-      event?: string;
-      status?: string;
-    }>;
-  },
-): Promise<unknown> {
-  return requestPythonRailsJson(
-    `/agentgraph/assignments/${encodeURIComponent(assignmentId)}/finish`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    },
-  );
-}
-
-export async function fetchAgentCardContext(params: {
+export async function fetchInputDataFile(params: {
   projectId: string;
-  deckId: string;
-  conversationId: string;
-  receiverCardId: string;
-  assignmentId?: string;
-}): Promise<unknown> {
+  idfId: string;
+}): Promise<{ ok: true; idf: import('../../contracts/runtimeContracts').InputDataFile }> {
   const query = new URLSearchParams({
     projectId: params.projectId,
-    deckId: params.deckId,
-    conversationId: params.conversationId,
   });
-  if (params.assignmentId) query.set('assignmentId', params.assignmentId);
   return requestPythonRailsJson(
-    `/agentgraph/cards/${encodeURIComponent(params.receiverCardId)}/context?${query.toString()}`,
+    `/idf/documents/${encodeURIComponent(params.idfId)}?${query.toString()}`,
     { method: 'GET' },
-  );
+  ) as Promise<{ ok: true; idf: import('../../contracts/runtimeContracts').InputDataFile }>;
 }

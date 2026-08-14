@@ -1,12 +1,11 @@
-from __future__ import annotations
+"""PostgreSQL integration proof for the canonical IDF replacement boundary."""
 
 from uuid import uuid4
 
 import pytest
 
-from app.python_models import agentgraph as ag
+from app.python_models.idf import create_input_data_file, read_input_data_file
 from app.python_models.postgres import connect_postgres
-
 
 PROJECT_ID = "20ac92da-01fd-4cf6-97cc-0672421e751a"
 DECK_ID = "deck_builder"
@@ -14,301 +13,36 @@ DECK_ID = "deck_builder"
 
 def test_postgres_connection_names_missing_injected_password(monkeypatch) -> None:
     monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
-
+    monkeypatch.delenv("POSTGRES_PASSWORD_FILE", raising=False)
     with pytest.raises(RuntimeError, match="missing_required_config: POSTGRES_PASSWORD"):
         connect_postgres()
 
 
-def test_assignment_claim_finish_and_hydration() -> None:
-    correlation = f"agentgraph-test-{uuid4().hex}"
+def test_idf_postgres_round_trip_preserves_exact_model_input() -> None:
+    identity = uuid4().hex
     connection = connect_postgres(autocommit=False)
     try:
-        instruction = ag.create_instruction(
+        created = create_input_data_file(
             project_id=PROJECT_ID,
             deck_id=DECK_ID,
             conversation_id="main",
-            body="  Exact instruction bytes.\n",
-            prepared_by_card_id="card_main_chat",
-            connection=connection,
-        )
-        kwargs = dict(
-            project_id=PROJECT_ID,
-            deck_id=DECK_ID,
-            conversation_id="main",
-            correlation_id=correlation,
-            sender_card_id="card_main_chat",
-            receiver_card_id="card_magentic",
-            instruction_id=instruction["instructionId"],
-            connection=connection,
-        )
-        assignment = ag.create_assignment(**kwargs)
-        assert ag.create_assignment(**kwargs)["state"] == "existing"
-        claim = ag.claim_assignment(
-            project_id=PROJECT_ID,
-            assignment_id=assignment["assignmentId"],
-            receiver_card_id="card_magentic",
-            connection=connection,
-        )
-        assert claim["instruction"] == "  Exact instruction bytes.\n"
-        ag.record_assignment_runtime_context(
-            project_id=PROJECT_ID,
-            assignment_id=assignment["assignmentId"],
-            runtime="assistant_agent",
-            provider="openrouter",
-            model_key="model-key",
-            provider_model_id="provider/model",
-            connection=connection,
-        )
-        tool_evidence = [
-            {
-                "callId": "call-one",
-                "toolName": "agentgraph.inspect",
-                "event": "ToolCallExecutionEvent",
-                "status": "completed",
-            }
-        ]
-        first = ag.finish_assignment(
-            project_id=PROJECT_ID,
-            assignment_id=assignment["assignmentId"],
-            claim_token=claim["claimToken"],
-            status="completed",
-            output="Exact result.",
-            tool_evidence=tool_evidence,
-            connection=connection,
-        )
-        assert first["created"] is True
-        assert ag.finish_assignment(
-            project_id=PROJECT_ID,
-            assignment_id=assignment["assignmentId"],
-            claim_token=claim["claimToken"],
-            status="completed",
-            output="Exact result.",
-            tool_evidence=tool_evidence,
-            connection=connection,
-        )["created"] is False
-        with pytest.raises(ag.AgentGraphError, match="already_terminal"):
-            ag.finish_assignment(
-                project_id=PROJECT_ID,
-                assignment_id=assignment["assignmentId"],
-                claim_token=claim["claimToken"],
-                status="failed",
-                error_code="late",
-                error_detail="late",
-                connection=connection,
-            )
-        hydrated = ag.read_assignment(
-            project_id=PROJECT_ID,
-            assignment_id=assignment["assignmentId"],
-            receiving_card_id="card_magentic",
-            connection=connection,
-        )
-        assert hydrated["instruction"] == "  Exact instruction bytes.\n"
-        assert hydrated["result"]["output"] == "Exact result."
-        assert hydrated["result"]["toolEvidence"] == tool_evidence
-        assert hydrated["runTrace"]["runtime"] == "assistant_agent"
-        assert hydrated["runTrace"]["provider"] == "openrouter"
-        assert hydrated["runTrace"]["providerModelId"] == "provider/model"
-        assert "operationReferences" not in hydrated
-        assert "body" not in hydrated["ageIdentity"]["instruction"]
-        scoped = ag.inspect_assignments(
-            project_id=PROJECT_ID,
-            deck_id=DECK_ID,
-            conversation_id="main",
-            connection=connection,
-        )
-        assert any(
-            row["assignmentId"] == assignment["assignmentId"]
-            for row in scoped["assignments"]
-        )
-        project_wide = ag.inspect_assignments(
-            project_id=PROJECT_ID,
-            deck_id=DECK_ID,
-            conversation_id=None,
-            project_wide=True,
-            connection=connection,
-        )
-        inspected = next(
-            row
-            for row in project_wide["assignments"]
-            if row["assignmentId"] == assignment["assignmentId"]
-        )
-        assert project_wide["readScope"] == "project"
-        assert inspected["conversationId"] == "main"
-    finally:
-        connection.rollback()
-        connection.close()
-
-def test_sender_can_cancel_pending_assignment_idempotently() -> None:
-    correlation = f"agentgraph-cancel-{uuid4().hex}"
-    connection = connect_postgres(autocommit=False)
-    try:
-        instruction = ag.create_instruction(
-            project_id=PROJECT_ID,
-            deck_id=DECK_ID,
-            conversation_id="main",
-            body="Cancel this pending work.",
-            prepared_by_card_id="card_main_chat",
-            connection=connection,
-        )
-        assignment = ag.create_assignment(
-            project_id=PROJECT_ID,
-            deck_id=DECK_ID,
-            conversation_id="main",
-            correlation_id=correlation,
-            sender_card_id="card_main_chat",
-            receiver_card_id="card_magentic",
-            instruction_id=instruction["instructionId"],
-            connection=connection,
-        )
-        cancelled = ag.cancel_assignment(
-            project_id=PROJECT_ID,
-            assignment_id=assignment["assignmentId"],
-            requested_by_card_id="card_main_chat",
-            reason="User cancelled.",
-            connection=connection,
-        )
-        assert cancelled["created"] is True
-        assert ag.cancel_assignment(
-            project_id=PROJECT_ID,
-            assignment_id=assignment["assignmentId"],
-            requested_by_card_id="card_main_chat",
-            reason="User cancelled.",
-            connection=connection,
-        )["created"] is False
-    finally:
-        connection.rollback()
-        connection.close()
-
-
-def test_worldsignals_reference_is_relational_and_linked_to_assignment_in_age() -> None:
-    correlation = f"agentgraph-worldsignals-{uuid4().hex}"
-    reference_id = f"worldsignals:command:{uuid4().hex}"
-    connection = connect_postgres(autocommit=False)
-    try:
-        instruction = ag.create_instruction(
-            project_id=PROJECT_ID,
-            deck_id=DECK_ID,
-            conversation_id="main",
-            body="Use one current WorldSignals result.",
-            prepared_by_card_id="card_main_chat",
-            connection=connection,
-        )
-        assignment = ag.create_assignment(
-            project_id=PROJECT_ID,
-            deck_id=DECK_ID,
-            conversation_id="main",
-            correlation_id=correlation,
-            sender_card_id="card_main_chat",
-            receiver_card_id="card_worldsignals_agent",
-            instruction_id=instruction["instructionId"],
-            connection=connection,
-        )
-        ag.add_assignment_references(
-            project_id=PROJECT_ID,
-            assignment_id=assignment["assignmentId"],
-            receiver_card_id="card_worldsignals_agent",
-            references=[
-                {
-                    "referenceId": reference_id,
-                    "referenceType": "worldsignals",
-                    "required": False,
-                }
+            run_id=f"idf-test:{identity}",
+            originating_card_id="card_main_chat",
+            system_text="Saved system",
+            user_text="Exact input",
+            dynamic_context_markdown="Dynamic context",
+            native_references=[
+                {"authority": "knowgraph", "nativeId": "node:one", "required": True}
             ],
+            idf_id=f"idf:{identity}",
             connection=connection,
+        )["idf"]
+        loaded = read_input_data_file(
+            project_id=PROJECT_ID, idf_id=created["idfId"], connection=connection
         )
-        hydrated = ag.read_assignment(
-            project_id=PROJECT_ID,
-            assignment_id=assignment["assignmentId"],
-            receiving_card_id="card_worldsignals_agent",
-            connection=connection,
-        )
-        assert hydrated["contextReferences"] == [
-            {
-                "referenceId": reference_id,
-                "referenceType": "worldsignals",
-                "required": False,
-            }
-        ]
-        with connection.cursor() as cursor:
-            rows = ag._run_cypher(
-                cursor,
-                """
-                MATCH (assignment:Assignment)-[:REFERENCES]->
-                      (reference:WorldSignalsReference)
-                WHERE assignment.assignmentId=$assignmentId
-                  AND assignment.projectId=$projectId
-                  AND reference.referenceId=$referenceId
-                RETURN reference.referenceId
-                """,
-                "reference_id agtype",
-                {
-                    "assignmentId": assignment["assignmentId"],
-                    "projectId": PROJECT_ID,
-                    "referenceId": reference_id,
-                },
-            )
-        assert rows
+        assert loaded == created
+        assert "Dynamic context" in loaded["modelInputMarkdown"]
+        assert "knowgraph:node:one [required]" in loaded["modelInputMarkdown"]
     finally:
         connection.rollback()
         connection.close()
-def test_begin_existing_instruction_claims_and_records_one_assignment(monkeypatch) -> None:
-    connection = object()
-
-    class ConnectionScope:
-        def __enter__(self):
-            return connection
-
-        def __exit__(self, *_args):
-            return False
-
-    calls: list[tuple[str, dict]] = []
-    monkeypatch.setattr(ag, "connect_postgres", lambda **_kwargs: ConnectionScope())
-    monkeypatch.setattr(
-        ag,
-        "create_assignment",
-        lambda **kwargs: calls.append(("create", kwargs)) or {
-            "assignmentId": "assignment:child",
-            "correlationId": "child",
-        },
-    )
-    monkeypatch.setattr(
-        ag,
-        "claim_assignment",
-        lambda **kwargs: calls.append(("claim", kwargs)) or {
-            "claimToken": "claim:child",
-            "state": "running",
-        },
-    )
-    monkeypatch.setattr(
-        ag,
-        "record_assignment_runtime_context",
-        lambda **kwargs: calls.append(("runtime", kwargs)),
-    )
-
-    result = ag.begin_assignment_from_instruction(
-        project_id="p",
-        deck_id="deck_builder",
-        conversation_id="conversation:one",
-        correlation_id="child",
-        sender_card_id="card_magentic",
-        receiver_card_id="card_research",
-        instruction_id="instruction:child",
-        parent_correlation_id="assignment:outer",
-        runtime="hermes",
-        provider="openai",
-        model_key="gpt-5.6-luna",
-        provider_model_id="gpt-5.6-luna",
-    )
-
-    assert result == {
-        "ok": True,
-        "assignmentId": "assignment:child",
-        "instructionId": "instruction:child",
-        "correlationId": "child",
-        "claimToken": "claim:child",
-        "state": "running",
-    }
-    assert [name for name, _kwargs in calls] == ["create", "claim", "runtime"]
-    assert calls[0][1]["instruction_id"] == "instruction:child"
-    assert calls[0][1]["parent_correlation_id"] == "assignment:outer"
-    assert all(kwargs["connection"] is connection for _name, kwargs in calls)

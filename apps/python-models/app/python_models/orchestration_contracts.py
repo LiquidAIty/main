@@ -45,6 +45,7 @@ class ProjectSession(BaseModel):
     turnId: str
     # The backend's run identity when the caller supplies one.
     runId: str | None = None
+    parentRunId: str | None = None
     route: str
     orchestrator: Literal[
         "magentic_one",
@@ -109,27 +110,43 @@ class AutoGenMessage(BaseModel):
     content: str
 
 
-class AgentAssignmentRequest(BaseModel):
-    """Stable identities needed for Python to create and claim one assignment."""
-
-    instructionId: RequiredRuntimeString
-    senderCardId: RequiredRuntimeString
-    receiverCardId: RequiredRuntimeString
+class NativeReference(BaseModel):
+    authority: RequiredRuntimeString
+    nativeId: RequiredRuntimeString
+    required: bool = False
 
 
-class ContextPack(BaseModel):
+class InputDataFile(BaseModel):
+    """The actual validated model input; IDD definitions are not payload."""
+
+    idfId: RequiredRuntimeString
+    projectId: RequiredRuntimeString
+    deckId: RequiredRuntimeString
+    conversationId: RequiredRuntimeString
+    runId: RequiredRuntimeString
+    originatingCardId: RequiredRuntimeString
+    version: int = Field(ge=1)
+    systemText: str = ""
+    userText: RequiredRuntimeString
+    dynamicContextMarkdown: str = ""
+    nativeReferences: list[NativeReference] = Field(default_factory=list)
+    modelInputMarkdown: RequiredRuntimeString
+    contentMarkdown: RequiredRuntimeString
+    contentSha256: RequiredRuntimeString
+    createdAt: RequiredRuntimeString
+
+
+class RuntimeRequest(BaseModel):
     session: ProjectSession
-    userText: str
-    conversationId: str = ""
-    agentAssignment: AgentAssignmentRequest | None = None
+    idf: InputDataFile
     cardRuntime: CardRuntimeConfig | None = None
 
 
 class OrchestratorRunResponse(BaseModel):
     ok: bool
     session: ProjectSession
-    assignmentId: str | None = None
-    instructionId: str | None = None
+    runId: str
+    idfId: str
     resultId: str | None = None
     stopReason: str | None = None
     # finalResponseText is the real last AutoGen message text (never an app-authored

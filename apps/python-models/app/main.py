@@ -11,9 +11,9 @@ from app.python_models.alpaca_market_data import (
     get_market_snapshot,
     get_paper_account_readiness,
 )
-from app.python_models.autogen_orchestrator import orchestrate_context_pack
+from app.python_models.autogen_orchestrator import orchestrate_runtime
 from app.python_models.magentic_agentchat import run_configured_card
-from app.python_models.orchestration_contracts import ContextPack
+from app.python_models.orchestration_contracts import RuntimeRequest
 from app.python_models.tool_registry import tool_manifest
 from app.python_models.thinkgraph_live_projection import project_live_thinkgraph
 
@@ -73,9 +73,9 @@ def tools_manifest():
 
 
 @app.post("/autogen/orchestrate")
-async def autogen_orchestrate(req: ContextPack):
+async def autogen_orchestrate(req: RuntimeRequest):
     try:
-        return await orchestrate_context_pack(req)
+        return await orchestrate_runtime(req)
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err
 
@@ -113,164 +113,47 @@ def thinkgraph_live_projection(payload: dict[str, Any]):
         raise HTTPException(status_code=400, detail=str(err)) from err
 
 
-@app.get("/agentgraph/assignments/{assignment_id:path}")
-def agentgraph_read_assignment(
-    assignment_id: str,
-    projectId: str,
-    receiverCardId: str,
-):
-    """Read one exact assignment by identity; no latest selection or scan."""
-    from app.python_models.agentgraph import read_assignment
+@app.post("/idf/documents")
+def idf_create(payload: dict[str, Any]):
+    """Validate, persist, and return the actual immutable model input."""
+    from app.python_models.idf import InputDataFileError, create_input_data_file
 
     try:
-        return read_assignment(
-            project_id=projectId,
-            assignment_id=assignment_id,
-            receiving_card_id=receiverCardId,
-        )
-    except (ValueError, LookupError, PermissionError) as err:
-        raise HTTPException(status_code=404, detail=str(err)) from err
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err)) from err
-
-
-@app.get("/agentgraph/cards/{receiver_card_id:path}/context")
-def agentgraph_read_card_context(
-    receiver_card_id: str,
-    projectId: str,
-    deckId: str,
-    conversationId: str,
-    assignmentId: str | None = None,
-):
-    """Read a card's exact returned assignment or its active/latest assignment."""
-    from app.python_models import agentgraph
-
-    try:
-        assignment = (
-            agentgraph.read_assignment(
-                project_id=projectId,
-                assignment_id=assignmentId,
-                receiving_card_id=receiver_card_id,
-            )
-            if assignmentId
-            else agentgraph.read_latest_card_assignment(
-                project_id=projectId,
-                deck_id=deckId,
-                conversation_id=conversationId,
-                receiving_card_id=receiver_card_id,
-            )
-        )
-        return {"ok": True, "assignment": assignment}
-    except (ValueError, LookupError, PermissionError) as err:
-        raise HTTPException(status_code=404, detail=str(err)) from err
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err)) from err
-
-
-@app.post("/agentgraph/assignments/begin")
-def agentgraph_begin_assignment(payload: dict[str, Any]):
-    """Begin one Python-owned outer assignment before a saved runtime executes."""
-    from app.python_models.agentgraph import AgentGraphError, begin_assignment
-
-    try:
-        return begin_assignment(
+        return create_input_data_file(
             project_id=str(payload.get("projectId") or ""),
             deck_id=str(payload.get("deckId") or ""),
             conversation_id=str(payload.get("conversationId") or ""),
-            correlation_id=str(payload.get("correlationId") or ""),
-            sender_card_id=str(payload.get("senderCardId") or ""),
-            receiver_card_id=str(payload.get("receiverCardId") or ""),
-            body=str(payload.get("instruction") or ""),
-            parent_correlation_id=(
-                str(payload.get("parentRunId") or "") or None
+            run_id=str(payload.get("runId") or ""),
+            originating_card_id=str(payload.get("originatingCardId") or ""),
+            system_text=payload.get("systemText") if isinstance(payload.get("systemText"), str) else "",
+            user_text=payload.get("userText"),
+            dynamic_context_markdown=(
+                payload.get("dynamicContextMarkdown")
+                if isinstance(payload.get("dynamicContextMarkdown"), str)
+                else ""
             ),
-            references=list(payload.get("references") or []),
-            runtime=str(payload.get("runtime") or "") or None,
-            provider=str(payload.get("provider") or "") or None,
-            model_key=str(payload.get("modelKey") or "") or None,
-            provider_model_id=(
-                str(payload.get("providerModelId") or "") or None
-            ),
+            native_references=payload.get("nativeReferences"),
         )
-    except (AgentGraphError, ValueError, LookupError, PermissionError) as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
+    except InputDataFileError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
     except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err)) from err
+        raise HTTPException(status_code=500, detail="idf_persistence_failed") from err
 
 
-@app.post("/agentgraph/assignments/begin-existing")
-def agentgraph_begin_existing_assignment(payload: dict[str, Any]):
-    """Begin an assignment from one exact instruction already owned by AgentGraph."""
-    from app.python_models.agentgraph import (
-        AgentGraphError,
-        begin_assignment_from_instruction,
-    )
+@app.get("/idf/documents/{idf_id:path}")
+def idf_read(idf_id: str, projectId: str):
+    from app.python_models.idf import InputDataFileError, read_input_data_file
 
     try:
-        return begin_assignment_from_instruction(
-            project_id=str(payload.get("projectId") or ""),
-            deck_id=str(payload.get("deckId") or ""),
-            conversation_id=str(payload.get("conversationId") or ""),
-            correlation_id=str(payload.get("correlationId") or ""),
-            sender_card_id=str(payload.get("senderCardId") or ""),
-            receiver_card_id=str(payload.get("receiverCardId") or ""),
-            instruction_id=str(payload.get("instructionId") or ""),
-            parent_correlation_id=(str(payload.get("parentRunId") or "") or None),
-            runtime=str(payload.get("runtime") or "") or None,
-            provider=str(payload.get("provider") or "") or None,
-            model_key=str(payload.get("modelKey") or "") or None,
-            provider_model_id=(str(payload.get("providerModelId") or "") or None),
-        )
-    except (AgentGraphError, ValueError, LookupError, PermissionError) as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
+        return {"ok": True, "idf": read_input_data_file(project_id=projectId, idf_id=idf_id)}
+    except InputDataFileError as err:
+        raise HTTPException(status_code=404, detail=str(err)) from err
     except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err)) from err
-
-
-@app.post("/agentgraph/assignments/{assignment_id:path}/finish")
-def agentgraph_finish_assignment(
-    assignment_id: str,
-    payload: dict[str, Any],
-):
-    """Finish the same claimed outer assignment with its real runtime result."""
-    from app.python_models.agentgraph import AgentGraphError, finish_assignment
-
-    try:
-        return finish_assignment(
-            project_id=str(payload.get("projectId") or ""),
-            assignment_id=assignment_id,
-            claim_token=str(payload.get("claimToken") or ""),
-            status=str(payload.get("status") or ""),
-            output=(
-                str(payload["output"])
-                if payload.get("output") is not None
-                else None
-            ),
-            summary=(
-                str(payload["summary"])
-                if payload.get("summary") is not None
-                else None
-            ),
-            error_code=(
-                str(payload["errorCode"])
-                if payload.get("errorCode") is not None
-                else None
-            ),
-            error_detail=(
-                str(payload["errorDetail"])
-                if payload.get("errorDetail") is not None
-                else None
-            ),
-            tool_evidence=list(payload.get("toolEvidence") or []),
-        )
-    except (AgentGraphError, ValueError, LookupError, PermissionError) as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err)) from err
+        raise HTTPException(status_code=500, detail="idf_read_failed") from err
 
 
 @app.post("/autogen/run_card")
-async def autogen_run_card(req: ContextPack):
+async def autogen_run_card(req: RuntimeRequest):
     """Run ONE configured canvas card as a single AssistantAgent.
 
     Not an orchestrator: exactly one participant, no team, no Task Ledger.

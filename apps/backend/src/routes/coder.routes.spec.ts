@@ -127,7 +127,14 @@ const mcpClientMocks = vi.hoisted(() => ({
 }));
 
 const orchestratorMocks = vi.hoisted(() => ({
-  fetchAgentCardContext: vi.fn(async () => ({ ok: true })),
+  createInputDataFileOnPython: vi.fn(async (input: any) => ({ ok: true, idf: {
+    idfId: `idf:${input.runId}`, projectId: input.projectId, deckId: input.deckId,
+    conversationId: input.conversationId, runId: input.runId,
+    originatingCardId: input.originatingCardId, version: 1,
+    systemText: input.systemText, userText: input.userText,
+    dynamicContextMarkdown: '', nativeReferences: [], modelInputMarkdown: input.userText,
+    contentMarkdown: input.userText, contentSha256: 'hash', createdAt: 'now',
+  } })),
   requestPythonRailsJson: vi.fn(async (): Promise<any> => ({ tools: [] })),
 }));
 
@@ -337,8 +344,6 @@ describe('coder routes', () => {
           cardId: 'card_worker',
           correlationId: 'corr-1',
           conversationId: 'conv-1',
-          instructionId: 'instruction:one',
-          senderCardId: 'card_main_chat',
           parentRunId: 'req_1234abcd',
           input: 'Use the stored handoff.',
         }),
@@ -360,8 +365,6 @@ describe('coder routes', () => {
         cardId: 'card_worker',
         correlationId: 'corr-1',
         conversationId: 'conv-1',
-        instructionId: 'instruction:one',
-        senderCardId: 'card_main_chat',
         parentRunId: 'req_1234abcd',
         input: 'Use the stored handoff.',
       });

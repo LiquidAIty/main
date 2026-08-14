@@ -165,6 +165,9 @@ export function resolveHermesCardRuntimeConfig(
 ): HermesRuntimeConfig {
   const model = resolveSavedCardModel(card);
   const runtimeBinding = resolveRuntimeBinding(card?.runtimeBinding);
+  if (!runtimeBinding) {
+    throw new Error('hermes_runtime_binding_required');
+  }
   const requestedExecutionMode =
     card?.runtimeOptions?.executionMode === 'auto-kanban' ? 'auto-kanban' : 'single';
   if (runtimeBinding === 'main_chat' && requestedExecutionMode !== 'single') {

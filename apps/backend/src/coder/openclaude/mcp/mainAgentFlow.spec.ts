@@ -31,6 +31,14 @@ function deps(runCard = vi.fn()) {
   return {
     loadDeck: vi.fn(async () => ({ deck: { nodes, edges } })) as any,
     runCard: runCard as any,
+    fetchIdf: vi.fn(async () => ({ ok: true, idf: {
+      idfId: 'idf:abc', projectId: 'project-1', deckId: 'deck-1',
+      conversationId: 'main', runId: 'prepared:one', originatingCardId: 'card_main_chat',
+      version: 1, systemText: '', userText: 'Approved task.',
+      dynamicContextMarkdown: '', nativeReferences: [],
+      modelInputMarkdown: 'Approved task.', contentMarkdown: 'Approved task.',
+      contentSha256: 'hash', createdAt: 'now',
+    } })) as any,
     resolveWorkerReadiness: vi.fn(async (cards: any[]) => cards.map((card) => ({
       card,
       connected: true as const,
@@ -41,7 +49,7 @@ function deps(runCard = vi.fn()) {
   };
 }
 
-describe('AgentGraph-native Mag One flow', () => {
+describe('canonical-IDF Mag One flow', () => {
   it('describes only bus-connected saved worker cards', async () => {
     const result = await describeConnectedAgents(
       { projectId: 'project-1', deckId: 'deck-1' },
@@ -97,14 +105,12 @@ describe('AgentGraph-native Mag One flow', () => {
     });
   });
 
-  it('transports only stable assignment identities to the Python-owned runtime', async () => {
+  it('transports the exact persisted IDF to the Python-owned runtime', async () => {
     const runCard = vi.fn(
       async (_card: any, _taskText: string, _context: any) => ({
       status: 'success',
       output: 'done',
-      agentAssignmentResult: {
-        assignmentId: 'assignment:run-1',
-      },
+      nativeRunResult: { runId: 'native:run-1', idfId: 'idf:abc' },
       }),
     );
     const result = await runMagOne(
@@ -112,22 +118,18 @@ describe('AgentGraph-native Mag One flow', () => {
         projectId: 'project-1',
         deckId: 'deck-1',
         conversationId: 'main',
-        instructionId: 'instruction:abc',
+        idfId: 'idf:abc',
       },
       deps(runCard),
     );
     expect(runCard).toHaveBeenCalledOnce();
     const [card, taskText, context] = runCard.mock.calls[0];
     expect(card.id).toBe('card_mag_one');
-    expect(taskText).toBe('');
-    expect(context.agentAssignment).toEqual({
-      instructionId: 'instruction:abc',
-      senderCardId: 'card_main_chat',
-      receiverCardId: 'card_mag_one',
-    });
+    expect(taskText).toBe('Approved task.');
+    expect(context.idf.idfId).toBe('idf:abc');
     expect(JSON.stringify(context)).not.toContain('prompt.md');
     expect(JSON.stringify(context)).not.toContain('workspaceRoot');
-    expect(result.assignmentId).toBe('assignment:run-1');
+    expect(result.idfId).toBe('idf:abc');
   });
 
   it('keeps a saved Local Coder card in the Mag One roster with its canonical runtime binding', async () => {
@@ -156,10 +158,10 @@ describe('AgentGraph-native Mag One flow', () => {
     );
 
     const result = await runMagOne(
-      { projectId: 'project-1', deckId: 'deck-1', instructionId: 'instruction:coder' },
+      { projectId: 'project-1', deckId: 'deck-1', idfId: 'idf:abc' },
       {
+        ...deps(runCard),
         loadDeck: vi.fn(async () => ({ deck: { nodes: coderNodes, edges: coderEdges } })) as any,
-        runCard: runCard as any,
       },
     );
 
@@ -169,10 +171,10 @@ describe('AgentGraph-native Mag One flow', () => {
     expect(context.allCards).toContainEqual(localCoder);
   });
 
-  it('fails before runtime when the stable instruction identity is absent', async () => {
+  it('fails before runtime when the stable IDF identity is absent', async () => {
     await expect(
       runMagOne(
-        { projectId: 'project-1', deckId: 'deck-1', instructionId: '' },
+        { projectId: 'project-1', deckId: 'deck-1', idfId: '' },
         deps(),
       ),
     ).rejects.toThrow('run_mag_one_missing_identity');
@@ -184,7 +186,7 @@ describe('AgentGraph-native Mag One flow', () => {
     }));
     await expect(
       runMagOne(
-        { projectId: 'project-1', deckId: 'deck-1', instructionId: 'instruction:abc' },
+        { projectId: 'project-1', deckId: 'deck-1', idfId: 'idf:abc' },
         { loadDeck: loadDeck as any, runCard: vi.fn() as any },
       ),
     ).rejects.toThrow('run_mag_one_main_control_not_authorized');

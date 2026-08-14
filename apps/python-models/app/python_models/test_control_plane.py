@@ -131,52 +131,6 @@ class TestUpsertWire:
         assert any(e["edgeType"] == "magentic_option" for e in edges)
 
 
-class TestGraphInspection:
-    def test_agentgraph_inspection_uses_exact_server_scope(self, monkeypatch):
-        calls = []
-        monkeypatch.setattr(cp.ag, "inspect_assignments", lambda **kwargs: calls.append(kwargs) or {
-            "ok": True, "receiverCardId": "card_agent",
-        })
-        monkeypatch.setattr(
-            cp,
-            "resolve_saved_card_reference",
-            lambda *_args, **_kwargs: {"cardId": "card_agent"},
-        )
-        result = asyncio.run(cp.agentgraph_inspect({
-            "projectId": "p",
-            "deckId": "deck_builder",
-            "conversationId": "conv",
-            "assignmentId": "assignment:one",
-            "limit": 5,
-        }))
-        assert result["ok"] is True
-        assert result["savedCardReference"] == {"cardId": "card_agent"}
-        assert calls == [{
-            "project_id": "p",
-            "deck_id": "deck_builder",
-            "conversation_id": "conv",
-            "project_wide": False,
-            "assignment_id": "assignment:one",
-            "limit": 5,
-        }]
-
-    def test_agentgraph_operator_read_is_project_wide(self, monkeypatch):
-        calls = []
-        monkeypatch.setattr(cp.ag, "inspect_assignments", lambda **kwargs: calls.append(kwargs) or {
-            "ok": True,
-            "readScope": "project",
-            "assignments": [],
-        })
-        result = asyncio.run(cp.agentgraph_inspect({
-            "projectId": "p",
-            "deckId": "deck_builder",
-            "conversationId": "external",
-            "projectWide": True,
-        }))
-        assert result["readScope"] == "project"
-        assert calls[0]["project_wide"] is True
-
-
 class TestRunAssistantAgent:
     def test_all_structural_references_required(self):
         with pytest.raises(cp.ControlPlaneError, match="input_required"):
@@ -184,7 +138,7 @@ class TestRunAssistantAgent:
                 "projectId": "p", "deckId": "d", "cardId": "c", "correlationId": "x",
             }))
 
-    def test_forwards_only_saved_references_and_optional_instruction_id(self, monkeypatch):
+    def test_forwards_only_saved_references_and_input(self, monkeypatch):
         calls = []
 
         def backend(method, path, payload=None):
@@ -202,19 +156,13 @@ class TestRunAssistantAgent:
         asyncio.run(cp.card_run_assistant_agent({
             "projectId": "p", "deckId": "d", "cardId": "c",
             "correlationId": "y", "conversationId": "conv-1",
-            "instructionId": "instruction:one", "input": "use the handoff",
+            "input": "use the handoff",
         }))
         forwarded = calls[1][2]
         assert forwarded["conversationId"] == "conv-1"
-        assert forwarded["instructionId"] == "instruction:one"
 
-    def test_trusted_inter_agent_call_creates_handoff_and_correlates_result(self, monkeypatch):
+    def test_trusted_inter_agent_call_forwards_native_parent_run(self, monkeypatch):
         calls = []
-        created = []
-
-        def create_instruction(**kwargs):
-            created.append(kwargs)
-            return {"ok": True, "instructionId": "instruction:hermes-search"}
 
         def backend(method, path, payload=None):
             calls.append((method, path, payload))
@@ -227,7 +175,6 @@ class TestRunAssistantAgent:
                 },
             }
 
-        monkeypatch.setattr(cp.ag, "create_instruction", create_instruction)
         monkeypatch.setattr(cp, "_backend_json", backend)
 
         response = asyncio.run(cp.card_run_assistant_agent({
@@ -241,24 +188,12 @@ class TestRunAssistantAgent:
             "input": "Find one primary source.",
         }))
 
-        assert created == [{
-            "project_id": "p",
-            "deck_id": "deck_builder",
-            "conversation_id": "conv-1",
-            "body": "Find one primary source.",
-            "prepared_by_card_id": "card_hermes_steward",
-        }]
-        assert calls[0][2]["instructionId"] == "instruction:hermes-search"
-        assert calls[0][2]["senderCardId"] == "card_hermes_steward"
-        assert response["instructionId"] == "instruction:hermes-search"
+        assert calls[0][2]["parentRunId"] == "main-turn-1"
+        assert calls[0][2]["input"] == "Find one primary source."
+        assert response["result"]["status"] == "completed"
 
 
     def test_inter_agent_failure_records_backend_error(self, monkeypatch):
-        monkeypatch.setattr(
-            cp.ag,
-            "create_instruction",
-            lambda **_kwargs: {"ok": True, "instructionId": "instruction:failed"},
-        )
         monkeypatch.setattr(cp, "_backend_json", lambda *_args, **_kwargs: {
             "ok": False,
             "error": "configured_card_failed",
@@ -279,12 +214,7 @@ class TestRunAssistantAgent:
         # The Python saved-card runner is the one result writer. The doorway
         # never copies or reinterprets the backend result.
 
-    def test_plain_standalone_call_does_not_create_agentgraph_handoff(self, monkeypatch):
-        monkeypatch.setattr(
-            cp.ag,
-            "create_instruction",
-            lambda **_kwargs: pytest.fail("standalone runs must not create AgentGraph handoffs"),
-        )
+    def test_plain_standalone_call_uses_same_doorway(self, monkeypatch):
         monkeypatch.setattr(cp, "_backend_json", lambda *_args, **_kwargs: {
             "ok": True,
             "result": {"status": "completed", "output": "standalone"},
@@ -298,18 +228,11 @@ class TestRunAssistantAgent:
             "input": "Run independently.",
         }))
         assert response["result"]["status"] == "completed"
-        assert "instructionId" not in response
 
-    def test_inter_agent_call_rejects_context_override(self):
-        with pytest.raises(cp.ControlPlaneError, match="agentgraph_instruction_override_rejected"):
+    def test_inter_agent_call_requires_real_conversation_and_parent_run(self):
+        with pytest.raises(cp.ControlPlaneError, match="conversationId_required"):
             asyncio.run(cp.card_run_assistant_agent({
-                "projectId": "p",
-                "deckId": "deck_builder",
-                "cardId": "card_research_agent",
-                "correlationId": "search-run-1",
-                "conversationId": "conv-1",
-                "originatingAgentId": "card_hermes_steward",
-                "originatingRunId": "main-turn-1",
-                "instructionId": "instruction:forged",
-                "input": "Find one source.",
+                "projectId": "p", "deckId": "deck_builder", "cardId": "card_research_agent",
+                "correlationId": "search-run-1", "originatingAgentId": "card_hermes_steward",
+                "originatingRunId": "main-turn-1", "input": "Find one source.",
             }))

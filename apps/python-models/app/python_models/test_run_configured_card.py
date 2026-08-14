@@ -1,430 +1,110 @@
-"""Focused single-card runtime coverage. No network/model call.
+"""Focused canonical-IDF single-card runtime coverage. No provider calls."""
 
-Proves: the structural guard is honest (magentic runtime rejected, orchestrator
-mismatch rejected, participant count enforced, empty task rejected), a guard
-failure starts no model, and the single participant is built
-through the SAME shared builder the Mag One path uses (same tool registry with
-loud unknown-tool failure — never silently dropped).
-"""
 import asyncio
-import json
 from types import SimpleNamespace
 
 import pytest
-from autogen_core import FunctionCall
-from autogen_core.models import CreateResult, ModelFamily, RequestUsage
-from autogen_core.tools import FunctionTool
-from autogen_ext.models.replay import ReplayChatCompletionClient
 
 from app.python_models import magentic_agentchat as mac
+from app.python_models.idf import assemble_input_data_file
 from app.python_models.orchestration_contracts import (
     CardRuntimeConfig,
     CardRuntimeParticipant,
-    ContextPack,
+    InputDataFile,
     ProjectSession,
+    RuntimeRequest,
 )
 
 MODEL = "deepseek/deepseek-v4-flash-0731"
-REPLAY_MODEL_INFO = {
-    "vision": False,
-    "function_calling": True,
-    "json_output": True,
-    "family": ModelFamily.UNKNOWN,
-    "structured_output": False,
-}
 
 
-class _FakeToolClient:
-    """Minimal model client: AssistantAgent only checks model_info for tools."""
-
-    model_info = {"function_calling": True}
-
-
-def _session(orchestrator: str = "assistant_agent") -> ProjectSession:
-    return ProjectSession(
-        sessionId="s", projectId="p", turnId="corr-1", route="single_card",
-        orchestrator=orchestrator, modelProvider="openrouter",
-        modelKey="deepseek/deepseek-v4-flash-0731", providerModelId=MODEL, startedAt="now",
-    )
-
-
-def _participant(tools: list[str] | None = None) -> CardRuntimeParticipant:
-    return CardRuntimeParticipant(
-        cardId="tg", title="ThinkGraph Agent", runtimeType="assistant_agent",
-        role="thinkgraph", tools=tools or [], provider="openrouter", providerModelId=MODEL,
-    )
-
-
-def _context(
-    user_text: str = "run",
-    runtime_type: str = "assistant_agent",
-    participants: list[CardRuntimeParticipant] | None = None,
-    orchestrator: str = "assistant_agent",
-) -> ContextPack:
+def _context(*, user_text: str = "run", runtime_type: str = "assistant_agent",
+             participants: list[CardRuntimeParticipant] | None = None,
+             orchestrator: str = "assistant_agent") -> RuntimeRequest:
+    document = InputDataFile.model_validate(assemble_input_data_file(
+        project_id="p", deck_id="d", conversation_id="c", run_id="run:one",
+        originating_card_id="card:one", system_text="saved system",
+        user_text=user_text, dynamic_context_markdown="bounded context",
+        native_references=[{"authority": "knowgraph", "nativeId": "node:1", "required": True}],
+        idf_id="idf:one", created_at="2026-08-14T00:00:00Z",
+    ))
     card = CardRuntimeConfig(
-        cardId="tg", title="ThinkGraph Agent", runtimeType=runtime_type,
-        participants=[_participant()] if participants is None else participants,
-    )
-    return ContextPack(session=_session(orchestrator), userText=user_text, cardRuntime=card)
-
-
-@pytest.fixture(autouse=True)
-def _durable_outer_boundaries(monkeypatch):
-    monkeypatch.setattr(
-        mac.ag,
-        "create_instruction",
-        lambda **_kwargs: {"instructionId": "instruction:test"},
-    )
-    monkeypatch.setattr(
-        mac.ag,
-        "create_assignment",
-        lambda **kwargs: {"assignmentId": f"assignment:{kwargs['correlation_id']}"},
-    )
-    monkeypatch.setattr(
-        mac.ag,
-        "read_assignment",
-        lambda **_kwargs: {"instruction": "run", "contextReferences": []},
-    )
-    monkeypatch.setattr(
-        mac.ag,
-        "claim_assignment",
-        lambda **_kwargs: {"claimToken": "claim:test"},
-    )
-    monkeypatch.setattr(mac.ag, "record_assignment_runtime_context", lambda **_kwargs: None)
-    monkeypatch.setattr(
-        mac.ag,
-        "finish_assignment",
-        lambda **kwargs: {
-            "resultId": f"agentresult:{kwargs['assignment_id']}",
-            "artifacts": [],
-        },
-    )
-
-
-# --------------------------------------------------------------------------- #
-# structural guard — pure, honest, no model construction
-# --------------------------------------------------------------------------- #
-class TestSingleCardGuard:
-    def test_valid_single_card_context_passes(self):
-        assert mac._validate_single_card_context(_context()) is None
-
-    def test_magentic_runtime_type_is_rejected(self):
-        err = mac._validate_single_card_context(_context(runtime_type="magentic_one"))
-        assert err is not None and "single_card_runtime_invalid" in err
-
-    def test_orchestrator_mismatch_is_rejected(self):
-        err = mac._validate_single_card_context(_context(orchestrator="magentic_one"))
-        assert err is not None and "single_card_orchestrator_invalid" in err
-
-    def test_zero_participants_rejected(self):
-        err = mac._validate_single_card_context(_context(participants=[]))
-        assert err is not None and "single_card_participant_count_invalid: 0" in err
-
-    def test_two_participants_rejected(self):
-        err = mac._validate_single_card_context(
-            _context(participants=[_participant(), _participant()])
-        )
-        assert err is not None and "single_card_participant_count_invalid: 2" in err
-
-    def test_empty_task_rejected(self):
-        err = mac._validate_single_card_context(_context(user_text="   "))
-        assert err is not None and err == "empty_user_message"
-
-
-# --------------------------------------------------------------------------- #
-# guard failure path — honest error, no model client built
-# --------------------------------------------------------------------------- #
-class TestGuardFailureResponse:
-    def test_guard_failure_returns_honest_error(self):
-        response = asyncio.run(mac.run_configured_card(_context(participants=[])))
-        assert response.ok is False
-        assert "single_card_participant_count_invalid" in (response.error or "")
-        assert response.finalResponseText == ""
-        assert response.session.turnId == "corr-1"  # correlation preserved
-
-    def test_assignment_read_failure_starts_no_model(self, monkeypatch):
-        model_calls: list[str] = []
-        cancelled: list[dict[str, object]] = []
-        monkeypatch.setattr(
-            mac.ag,
-            "read_assignment",
-            lambda **_kwargs: (_ for _ in ()).throw(
-                RuntimeError("assignment_reference_read_failed")
-            ),
-        )
-        monkeypatch.setattr(
-            mac,
-            "_build_model_client",
-            lambda _config: model_calls.append("model"),
-        )
-        monkeypatch.setattr(
-            mac.ag,
-            "cancel_assignment",
-            lambda **kwargs: (
-                cancelled.append(kwargs)
-                or {
-                    "resultId": f"agentresult:{kwargs['assignment_id']}",
-                    "status": "cancelled",
-                }
-            ),
-        )
-
-        response = asyncio.run(mac.run_configured_card(_context()))
-
-        assert response.ok is False
-        assert "assignment_reference_read_failed" in (response.error or "")
-        assert model_calls == []
-        assert response.assignmentId == "assignment:corr-1"
-        assert response.resultId == "agentresult:assignment:corr-1"
-        assert cancelled == [
-            {
-                "project_id": "p",
-                "assignment_id": "assignment:corr-1",
-                "requested_by_card_id": "tg",
-                "reason": (
-                    "agentgraph_assignment_begin_failed: "
-                    "assignment_reference_read_failed"
-                ),
-            }
-        ]
-
-    def test_model_client_construction_failure_finishes_assignment(self, monkeypatch):
-        finished: list[dict[str, object]] = []
-        monkeypatch.setattr(
-            mac,
-            "_build_model_client",
-            lambda _config: (_ for _ in ()).throw(RuntimeError("provider config invalid")),
-        )
-        monkeypatch.setattr(
-            mac.ag,
-            "finish_assignment",
-            lambda **kwargs: (
-                finished.append(kwargs)
-                or {
-                    "resultId": f"agentresult:{kwargs['assignment_id']}",
-                    "artifacts": [],
-                }
-            ),
-        )
-
-        response = asyncio.run(mac.run_configured_card(_context()))
-
-        assert response.ok is False
-        assert "provider config invalid" in (response.error or "")
-        assert response.assignmentId == "assignment:corr-1"
-        assert response.instructionId == "instruction:test"
-        assert response.resultId == "agentresult:assignment:corr-1"
-        assert finished == [
-            {
-                "project_id": "p",
-                "assignment_id": "assignment:corr-1",
-                "claim_token": "claim:test",
-                "status": "failed",
-                "error_code": "run_failed",
-                "error_detail": "single_card_run_failed: provider config invalid",
-            }
-        ]
-
-# --------------------------------------------------------------------------- #
-# shared builder reuse — the SAME code path Mag One participants use
-# --------------------------------------------------------------------------- #
-class TestSharedBuilderReuse:
-    def test_single_card_uses_its_saved_temperature_and_max_tokens(self, monkeypatch):
-        context = _context()
-        context.cardRuntime.participants[0].temperature = 0.7
-        context.cardRuntime.participants[0].maxTokens = 3210
-        captured = []
-
-        class FakeAgent:
-            async def run(self, *, task):
-                return SimpleNamespace(messages=[SimpleNamespace(content="done")])
-
-        def build_client(config):
-            captured.append(config)
-            return _FakeToolClient()
-
-        monkeypatch.setattr(mac, "_build_model_client", build_client)
-        monkeypatch.setattr(
-            mac,
-            "_build_participants",
-            lambda _context, _client: [FakeAgent()],
-        )
-
-        response = asyncio.run(mac.run_configured_card(context))
-
-        assert response.ok is True
-        assert len(captured) == 1
-        assert captured[0].provider == "openrouter"
-        assert captured[0].provider_model_id == MODEL
-        assert captured[0].temperature == 0.7
-        assert captured[0].max_tokens == 3210
-
-    def test_single_participant_built_via_shared_builder(self):
-        agents = mac._build_participants(_context(), _FakeToolClient())
-        assert len(agents) == 1
-        assert agents[0].name == "ThinkGraph_Agent"
-
-    def test_unknown_tool_fails_loudly_never_silently_dropped(self):
-        ctx = _context(participants=[_participant(tools=["not_a_real_tool"])])
-        with pytest.raises(RuntimeError):
-            mac._build_participants(ctx, _FakeToolClient())
-
-    def test_local_coder_single_run_uses_normal_assistant_agent_and_saved_tool_binding(
-        self, monkeypatch
-    ):
-        participant = CardRuntimeParticipant(
-            cardId="card_local_coder",
-            title="Coder",
-            runtimeType="assistant_agent",
-            runtimeBinding="local_coder",
-            role="coder",
-            tools=["run_local_coder"],
-            provider="openai",
-            providerModelId="gpt-5.6-luna",
-            reasoningEffort="high",
-            innerMcpTools=["search_graph", "get_code_snippet"],
-        )
-        context = _context(participants=[participant])
-        coder_report = {
-            "status": "succeeded",
-            "filesChanged": [],
-            "proofResults": ["stand-in completed"],
-            "blockers": [],
-            "nextRecommendedTask": None,
-        }
-        completion = CreateResult(
-            finish_reason="function_calls",
-            content=[
-                FunctionCall(
-                    id="coder-call-1",
-                    name="run_local_coder",
-                    arguments=json.dumps({"objective": "Inspect the repository without edits."}),
-                )
-            ],
-            usage=RequestUsage(prompt_tokens=0, completion_tokens=0),
-            cached=False,
-        )
-        replay = ReplayChatCompletionClient([completion], model_info=REPLAY_MODEL_INFO)
-        model_configs = []
-        bound_configs = []
-        tool_calls = []
-        finished = []
-
-        async def stand_in_coder(objective: str) -> str:
-            tool_calls.append(
-                {
-                    "objective": objective,
-                    "assignment": mac.ACTIVE_AGENT_ASSIGNMENT_CONTEXT.get(),
-                }
+        cardId="card:one", title="One", runtimeType=runtime_type,
+        participants=participants if participants is not None else [
+            CardRuntimeParticipant(
+                cardId="card:one", title="One", runtimeType="assistant_agent",
+                provider="openrouter", providerModelId=MODEL,
             )
-            return json.dumps({"report": coder_report})
-
-        def stand_in_binding(provider, model, reasoning, mcp_tools):
-            bound_configs.append(
-                {
-                    "provider": provider,
-                    "model": model,
-                    "reasoning": reasoning,
-                    "mcpTools": mcp_tools,
-                }
-            )
-            return FunctionTool(
-                stand_in_coder,
-                name="run_local_coder",
-                description="Established in-process Local Coder stand-in.",
-            )
-
-        def build_client(config):
-            model_configs.append(config)
-            return replay
-
-        monkeypatch.setattr(mac, "_build_model_client", build_client)
-        monkeypatch.setattr(mac, "build_local_coder_tool", stand_in_binding)
-        monkeypatch.setattr(
-            mac.ag,
-            "finish_assignment",
-            lambda **kwargs: (
-                finished.append(kwargs)
-                or {
-                    "resultId": f"agentresult:{kwargs['assignment_id']}",
-                    "artifacts": [],
-                }
-            ),
-        )
-
-        response = asyncio.run(mac.run_configured_card(context))
-
-        assert response.ok is True
-        assert len(model_configs) == 1
-        assert model_configs[0].provider == "openai"
-        assert model_configs[0].provider_model_id == "gpt-5.6-luna"
-        assert bound_configs == [
-            {
-                "provider": "openai",
-                "model": "gpt-5.6-luna",
-                "reasoning": "high",
-                "mcpTools": ["search_graph", "get_code_snippet"],
-            }
-        ]
-        assert tool_calls == [
-            {
-                "objective": "Inspect the repository without edits.",
-                "assignment": {
-                    "projectId": "p",
-                    "assignmentId": "assignment:corr-1",
-                    "receiverCardId": "card_local_coder",
-                },
-            }
-        ]
-        assert '"status": "succeeded"' in response.finalResponseText
-        assert response.assignmentId == "assignment:corr-1"
-        assert response.resultId == "agentresult:assignment:corr-1"
-        assert len(finished) == 1
-        assert finished[0]["status"] == "completed"
-        assert '"status": "succeeded"' in finished[0]["output"]
-        assert finished[0]["tool_evidence"] == [
-            {
-                "event": "ToolCallRequestEvent",
-                "callId": "coder-call-1",
-                "toolName": "run_local_coder",
-            },
-            {
-                "event": "ToolCallExecutionEvent",
-                "callId": "coder-call-1",
-                "toolName": "run_local_coder",
-                "status": "completed",
-            }
-        ]
+        ],
+    )
+    return RuntimeRequest(
+        session=ProjectSession(
+            sessionId="s", projectId="p", turnId="turn:one", runId="run:one",
+            route="single_card", orchestrator=orchestrator,
+            modelProvider="openrouter", modelKey=MODEL, providerModelId=MODEL,
+            startedAt="now",
+        ),
+        idf=document,
+        cardRuntime=card,
+    )
 
 
-class TestAssignmentToolAuthority:
-    def test_assignment_authority_is_scoped_to_the_model_pass_and_reset(
-        self, monkeypatch
-    ):
-        observed: list[dict[str, str] | None] = []
+@pytest.mark.parametrize(
+    ("context", "error"),
+    [
+        (_context(runtime_type="magentic_one"), "single_card_runtime_invalid"),
+        (_context(orchestrator="magentic_one"), "single_card_orchestrator_invalid"),
+        (_context(participants=[]), "single_card_participant_count_invalid: 0"),
+        (_context(participants=[_context().cardRuntime.participants[0]] * 2), "single_card_participant_count_invalid: 2"),
+    ],
+)
+def test_structural_guard_rejects_invalid_runtime_without_model(context, error):
+    assert error in str(mac._validate_single_card_context(context))
 
-        class FakeAgent:
-            async def run(self, *, task):
-                observed.append(
-                    mac.ACTIVE_AGENT_ASSIGNMENT_CONTEXT.get()
-                )
-                return SimpleNamespace(messages=[SimpleNamespace(content="done")])
 
-        monkeypatch.setattr(mac, "_build_model_client", lambda _config: _FakeToolClient())
-        monkeypatch.setattr(
-            mac,
-            "_build_participants",
-            lambda _context, _client: [FakeAgent()],
-        )
+def test_single_card_consumes_exact_idf_model_input(monkeypatch):
+    observed: list[str] = []
 
-        response = asyncio.run(mac.run_configured_card(_context()))
+    class Agent:
+        async def run(self, *, task):
+            observed.append(task)
+            return SimpleNamespace(messages=[SimpleNamespace(content="native answer")])
 
-        assert response.ok is True
-        assert observed == [
-            {
-                "projectId": "p",
-                "assignmentId": "assignment:corr-1",
-                "receiverCardId": "tg",
-            }
-        ]
-        assert mac.ACTIVE_AGENT_ASSIGNMENT_CONTEXT.get() is None
+    class Client:
+        async def close(self):
+            return None
+
+    context = _context()
+    monkeypatch.setattr(mac, "_build_model_client", lambda _config: Client())
+    monkeypatch.setattr(mac, "_build_participants", lambda *_args, **_kwargs: [Agent()])
+    result = asyncio.run(mac.run_configured_card(context))
+
+    assert result.ok is True
+    assert result.runId == "run:one"
+    assert result.idfId == "idf:one"
+    assert observed == [context.idf.modelInputMarkdown]
+    assert "bounded context" in observed[0]
+    assert "knowgraph:node:1" in observed[0]
+
+
+def test_single_card_error_never_echoes_idf_secret(monkeypatch):
+    secret = "sk-secret-value-that-must-not-escape"
+    context = _context(user_text=secret)
+
+    class Agent:
+        async def run(self, *, task):
+            raise RuntimeError(task)
+
+    monkeypatch.setattr(mac, "_build_model_client", lambda _config: object())
+    monkeypatch.setattr(mac, "_build_participants", lambda *_args, **_kwargs: [Agent()])
+    result = asyncio.run(mac.run_configured_card(context))
+    assert result.error == "single_card_run_failed"
+    assert secret not in result.model_dump_json()
+
+
+def test_unknown_saved_tool_fails_loudly():
+    participant = _context().cardRuntime.participants[0].model_copy(
+        update={"tools": ["not-a-real-tool"]}
+    )
+    with pytest.raises(Exception, match="not-a-real-tool"):
+        mac._build_participants(_context(participants=[participant]), object())

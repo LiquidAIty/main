@@ -9,7 +9,7 @@ env vars, no .env, no per-turn spawn, no fallback host.
 Exposes this application tool surface plus the dynamically discovered native
 Engraphis, Codebase Memory, and official Graphiti MCP registries:
   * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
-  * run_mag_one                      (Main-only approved AgentGraph assignment)
+  * run_mag_one                      (Main-only approved canonical IDF)
   * web_search                       (real Tavily search; Search Agent only by grant)
   * canvas.inspect / card.update_configuration / canvas.upsert_wire /
     card.run_assistant_agent         (user-directed Harness control surface;
@@ -507,9 +507,6 @@ def _tool_capability_metadata(
     elif name.startswith("cbm."):
         graph_authority = "cbm"
         authority_class = "repository_structure"
-    elif name.startswith("agentgraph."):
-        graph_authority = "agentgraph"
-        authority_class = "assignment_lineage"
     elif name.startswith("hermes.memory_"):
         graph_authority = "agentgraph"
         authority_class = "agent_memory"
@@ -1700,36 +1697,12 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
-            name="agentgraph.inspect",
-            description=(
-                "Read AgentGraph assignments and correlated results from the existing PostgreSQL/AGE "
-                "runtime fabric. Returns one exact assignment when assignmentId is supplied, otherwise "
-                "a bounded conversation or project summary. Project, deck, and conversation identity "
-                "are supplied by the authenticated server."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "assignmentId": {"type": "string"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
-                    "projectWide": {"type": "boolean", "default": False},
-                },
-                "required": [],
-            },
-        ),
-        Tool(
             name="coder.status",
             description=(
                 "Read the canonical OpenClaude Coder session/process state. Reports running only "
-                "when the backend's live session owner has a starting or running process; historical "
-                "AgentGraph assignments are not process evidence. When assignmentId is supplied, "
-                "reload that exact durable AgentGraph assignment instead of consulting live process state."
+                "when the backend's live session owner has a starting or running process."
             ),
-            inputSchema={
-                "type": "object",
-                "properties": {"assignmentId": {"type": "string"}},
-                "required": [],
-            },
+            inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
             name="mag_one.describe_connected_agents",
@@ -1753,9 +1726,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="run_mag_one",
             description=(
-                "Main Chat only: submit one existing AgentGraph instruction identity. "
-                "Python creates and transactionally claims the assignment, reads its exact "
-                "instruction and sender-selected native references, and gives that handoff to "
+                "Main Chat only: submit one existing canonical Input Data File identity to "
                 "native MagenticOneGroupChat. "
                 "The backend resolves the live worker roster from blue SIDE connections; never type "
                 "a roster. Execute only on an explicit user request — Hermes never launches Mag One."
@@ -1765,18 +1736,18 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "projectId": {"type": "string"},
                     "deckId": {"type": "string"},
-                    "instructionId": {"type": "string"},
+                    "idfId": {"type": "string"},
                     "conversationId": {"type": "string"},
                 },
-                "required": ["instructionId", "projectId", "deckId"],
+                "required": ["idfId", "projectId", "deckId"],
             },
         ),
         Tool(
             name="write_mag_one_instructions",
             description=(
                 "Hermes Run Plan preparation: persist the exact proposed Mag One task as "
-                "an AgentGraph instruction. Main owns presentation, review, and approval; "
-                "creating the instruction never starts Mag One. Returns the stable instructionId "
+                "a canonical PostgreSQL Input Data File. Main owns presentation, review, and approval; "
+                "creating the IDF never starts Mag One. Returns the stable idfId "
                 "for Main to pass to run_mag_one."
             ),
             inputSchema={
@@ -1898,8 +1869,8 @@ async def list_tools() -> list[Tool]:
                 "the canonical Agent Canvas deck. On the Harness saved-card doorway path, the "
                 "server injects projectId/correlationId/conversationId; the model supplies the "
                 "bound cardId plus the task input only. conversationId is the real live "
-                "conversation this run belongs to, when one exists. Inter-agent doorway calls "
-                "create an exact AgentGraph instruction and transport only its identity."
+                "conversation this run belongs to, when one exists. The backend persists one "
+                "canonical IDF before the selected runtime receives the input."
             ),
             inputSchema={
                 "type": "object",
@@ -1909,13 +1880,6 @@ async def list_tools() -> list[Tool]:
                     "cardId": {"type": "string"},
                     "correlationId": {"type": "string"},
                     "conversationId": {"type": "string"},
-                    "instructionId": {
-                        "type": "string",
-                        "description": (
-                            "Existing canonical AgentGraph instruction identity. "
-                            "The tool transports the id unchanged."
-                        ),
-                    },
                     "originatingAgentId": {
                         "type": "string",
                         "description": "Server-owned saved-card identity for an inter-agent doorway call.",
@@ -1984,7 +1948,6 @@ async def list_tools() -> list[Tool]:
 
 _READ_ONLY_TOOLS = {
     "main.context",
-    "agentgraph.inspect",
     "coder.status",
     "mag_one.describe_connected_agents",
     "canvas.inspect",
@@ -2019,7 +1982,6 @@ def _tool_access_metadata(name: str, execution: dict[str, str]) -> dict[str, Any
                 ("engraphis.", "engraphis"),
                 ("graphiti.", "graphiti"),
                 ("cbm.", "cbm"),
-                ("agentgraph.", "agentgraph"),
             )
             if name.startswith(prefix)
         ),
@@ -2125,13 +2087,6 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
                 schema["required"] = [
                     field for field in required if field not in _SERVER_OWNED_ARGUMENTS
                 ]
-            if tool.name == "card.run_assistant_agent":
-                if isinstance(properties, dict):
-                    properties.pop("instructionId", None)
-                if isinstance(schema.get("required"), list):
-                    schema["required"] = [
-                        field for field in schema["required"] if field != "instructionId"
-                    ]
             payload["inputSchema"] = schema
         elif native_system == "graphiti":
             schema = copy.deepcopy(tool.inputSchema)
@@ -2156,17 +2111,9 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
     "main.context": set(),
-    "agentgraph.inspect": {
-        "projectId",
-        "deckId",
-        "conversationId",
-        "assignmentId",
-        "limit",
-        "projectWide",
-    },
-    "coder.status": {"assignmentId"},
+    "coder.status": set(),
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
-    "run_mag_one": {"projectId", "deckId", "instructionId", "conversationId"},
+    "run_mag_one": {"projectId", "deckId", "idfId", "conversationId"},
     "write_mag_one_instructions": {
         "projectId",
         "deckId",
@@ -2182,7 +2129,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "cardId",
         "correlationId",
         "conversationId",
-        "instructionId",
         "originatingAgentId",
         "originatingRunId",
         "input",
@@ -2199,7 +2145,6 @@ _BRIDGE_PATHS: dict[str, str] = {
 # Control tools dispatch to the Python control-plane handlers (app/control_plane.py).
 # Imported lazily so bridge-only usage never requires the psycopg dependency chain.
 _CONTROL_HANDLER_NAMES: dict[str, str] = {
-    "agentgraph.inspect": "agentgraph_inspect",
     "canvas.inspect": "canvas_inspect",
     "card.update_configuration": "card_update_configuration",
     "canvas.upsert_wire": "canvas_upsert_wire",
@@ -2334,20 +2279,22 @@ async def _dispatch_tool(
             )
         ]
     if name == "write_mag_one_instructions":
-        from app.python_models import agentgraph
+        from app.python_models import idf
 
         try:
             result = await asyncio.to_thread(
-                agentgraph.create_instruction,
+                idf.create_input_data_file,
                 project_id=str(args.get("projectId") or ""),
                 deck_id=str(args.get("deckId") or ""),
                 conversation_id=str(args.get("conversationId") or ""),
-                body=args.get("instructions"),
-                prepared_by_card_id=caller_card_id,
+                run_id=f"idf-preparation:{uuid4().hex[:20]}",
+                originating_card_id=caller_card_id,
+                system_text="",
+                user_text=str(args.get("instructions") or ""),
             )
             return [TextContent(type="text", text=json.dumps(result))]
-        except agentgraph.AgentGraphError as err:
-            return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
+        except idf.InputDataFileError:
+            return [TextContent(type="text", text=json.dumps({"ok": False, "error": "idf_persistence_failed"}))]
     if name == "main.context":
         if context is None:
             return [
@@ -2382,19 +2329,6 @@ async def _dispatch_tool(
             max_results=int(args.get("max_results") or 5),
         )
         return [TextContent(type="text", text=result)]
-    if name == "coder.status" and str(args.get("assignmentId") or "").strip():
-        from app import control_plane
-
-        try:
-            result = await control_plane.agentgraph_inspect({
-                "projectId": str(context["projectId"]) if context is not None else "",
-                "deckId": str(context["deckId"]) if context is not None else "",
-                "conversationId": str(context["conversationId"]) if context is not None else "",
-                "assignmentId": str(args["assignmentId"]).strip(),
-            })
-            return [TextContent(type="text", text=json.dumps(result))]
-        except control_plane.ControlPlaneError as err:
-            return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
     handler_name = _CONTROL_HANDLER_NAMES.get(name)
     if handler_name is not None:
         from app import control_plane

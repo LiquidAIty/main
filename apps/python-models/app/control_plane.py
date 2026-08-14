@@ -22,8 +22,6 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from app.python_models import agentgraph as ag
-
 _BACKEND = os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
 
 SUPPORTED_WIRE_TYPES = ("flow", "magentic_option")
@@ -294,31 +292,6 @@ async def canvas_upsert_wire(args: dict[str, Any]) -> dict[str, Any]:
     return await asyncio.to_thread(_apply)
 
 
-async def agentgraph_inspect(args: dict[str, Any]) -> dict[str, Any]:
-    _require(args, "projectId", "deckId", "conversationId")
-    project_wide = args.get("projectWide") is True
-    try:
-        result = await asyncio.to_thread(
-            ag.inspect_assignments,
-            project_id=str(args["projectId"]).strip(),
-            deck_id=str(args["deckId"]).strip(),
-            conversation_id=str(args["conversationId"]).strip(),
-            project_wide=project_wide,
-            assignment_id=str(args.get("assignmentId") or "").strip() or None,
-            limit=args.get("limit") if isinstance(args.get("limit"), int) else 20,
-        )
-        if str(args.get("assignmentId") or "").strip():
-            result["savedCardReference"] = await asyncio.to_thread(
-                resolve_saved_card_reference,
-                str(args["projectId"]).strip(),
-                str(args["deckId"]).strip(),
-                str(result["receiverCardId"]),
-            )
-        return result
-    except ag.AgentGraphError as err:
-        raise ControlPlaneError(str(err)) from err
-
-
 # ---------------------------------------------------------------------------
 # card.run_assistant_agent
 # ---------------------------------------------------------------------------
@@ -332,7 +305,6 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
     _require(args, "projectId", "cardId", "correlationId", "input")
     deck_id = str(args.get("deckId") or "").strip()
     conversation_id = str(args.get("conversationId") or "").strip()
-    instruction_id = str(args.get("instructionId") or "").strip()
     originating_agent_id = str(args.get("originatingAgentId") or "").strip()
     originating_run_id = str(args.get("originatingRunId") or "").strip()
     project_id = str(args["projectId"]).strip()
@@ -340,28 +312,12 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
     correlation_id = str(args["correlationId"]).strip()
     instruction = str(args["input"])
 
-    # A trusted doorway creates the exact relational instruction. The saved-card
-    # runner creates and claims the one canonical assignment.
     if originating_agent_id:
-        if instruction_id:
-            raise ControlPlaneError("agentgraph_instruction_override_rejected")
         if not conversation_id:
             raise ControlPlaneError("conversationId_required_for_agent_handoff")
         if not originating_run_id:
             raise ControlPlaneError("originatingRunId_required_for_agent_handoff")
         deck_id = deck_id or "deck_builder"
-        try:
-            created = await asyncio.to_thread(
-                ag.create_instruction,
-                project_id=project_id,
-                deck_id=deck_id,
-                conversation_id=conversation_id,
-                body=instruction,
-                prepared_by_card_id=originating_agent_id,
-            )
-        except Exception as err:
-            raise ControlPlaneError(f"agentgraph_instruction_create_failed: {err}") from err
-        instruction_id = str(created["instructionId"])
 
     payload = {
         "projectId": project_id,
@@ -369,8 +325,6 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
         "cardId": card_id,
         "correlationId": correlation_id,
         **({"conversationId": conversation_id} if conversation_id else {}),
-        **({"instructionId": instruction_id} if instruction_id else {}),
-        **({"senderCardId": originating_agent_id} if instruction_id else {}),
         **({"parentRunId": originating_run_id} if originating_run_id else {}),
         "input": instruction,
     }
@@ -385,4 +339,4 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         raise
 
-    return {**response, **({"instructionId": instruction_id} if instruction_id else {})}
+    return response

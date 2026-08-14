@@ -373,10 +373,9 @@ def test_authenticated_connection_reaches_read_only_handler_without_context_inje
     assert "context" not in result[0].text
 
 
-def test_coder_status_reloads_one_exact_durable_assignment(monkeypatch):
+def test_coder_status_rejects_assignment_identity_and_uses_live_process_bridge(monkeypatch):
     import asyncio
     import mcp_host
-    from app import control_plane
 
     context = {
         "projectId": "project-1",
@@ -385,52 +384,20 @@ def test_coder_status_reloads_one_exact_durable_assignment(monkeypatch):
         "parentRunId": "external-main:grant-1",
         "mainCardId": "card_main_chat",
     }
-    calls = []
-    current = {"context": context}
     monkeypatch.setattr(
         mcp_host,
         "_authenticated_main_context",
-        lambda: dict(current["context"]) if current["context"] is not None else None,
+        lambda: dict(context),
     )
-
-    async def inspect(arguments):
-        if not all(arguments.get(field) for field in ("projectId", "deckId", "conversationId")):
-            raise control_plane.ControlPlaneError("projectId, deckId, conversationId required")
-        calls.append(arguments)
-        return {
-            "ok": True,
-            "assignmentId": "assignment:coder-1",
-            "status": "completed",
-            "receiverCardId": "card_local_coder",
-        }
-
-    async def unexpected_bridge(*_args, **_kwargs):
-        raise AssertionError("durable assignment status must not use live process state")
-
-    monkeypatch.setattr(control_plane, "agentgraph_inspect", inspect)
-    monkeypatch.setattr(mcp_host, "_bridge", unexpected_bridge)
-
-    result = asyncio.run(
-        mcp_host.call_tool("coder.status", {"assignmentId": "assignment:coder-1"})
-    )
-    assert json.loads(result[0].text) == {
-        "ok": True,
-        "assignmentId": "assignment:coder-1",
-        "status": "completed",
-        "receiverCardId": "card_local_coder",
-    }
-    assert calls == [{
-        "projectId": "project-1",
-        "deckId": "deck_builder",
-        "conversationId": "external-mcp:grant-1",
-        "assignmentId": "assignment:coder-1",
-    }]
-    current["context"] = None
-    missing_scope = asyncio.run(
-        mcp_host.call_tool("coder.status", {"assignmentId": "assignment:coder-1"})
-    )
-    assert missing_scope.isError is True
-    assert "projectId, deckId, conversationId required" in missing_scope.content[0].text
+    async def bridge(path, payload):
+        assert path == "coder_status"
+        assert payload == {}
+        return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True, "state": "idle"}))]
+    monkeypatch.setattr(mcp_host, "_bridge", bridge)
+    rejected = asyncio.run(mcp_host.call_tool("coder.status", {"assignmentId": "old"}))
+    assert "tool_arguments_rejected: assignmentId" in rejected.content[0].text
+    result = asyncio.run(mcp_host.call_tool("coder.status", {}))
+    assert json.loads(result[0].text) == {"ok": True, "state": "idle"}
 
 
 def test_lifecycle_errors_remain_typed_and_distinct(monkeypatch):
@@ -651,7 +618,7 @@ def test_mcp_host_bootstrap_makes_app_and_control_handlers_importable():
     result = _run_in_script_launch_context(
         "import mcp_host;"
         "from app import control_plane;"
-        "from app.python_models import agentgraph;"
+        "from app.python_models import idf;"
         "print('APP_IMPORT_OK')"
     )
     assert "APP_IMPORT_OK" in result.stdout, result.stderr
@@ -660,7 +627,7 @@ def test_mcp_host_bootstrap_makes_app_and_control_handlers_importable():
 def test_app_bootstrap_lives_once_at_the_host_boundary():
     host = open(os.path.join(_APP_DIR, "mcp_host.py"), encoding="utf-8").read()
     assert host.count("sys.path.insert") == 1
-    text = open(os.path.join(_APP_DIR, "python_models", "agentgraph.py"), encoding="utf-8").read()
+    text = open(os.path.join(_APP_DIR, "python_models", "idf.py"), encoding="utf-8").read()
     assert "sys.path.insert" not in text
 
 
@@ -671,9 +638,9 @@ async def check():
     tools = await mcp_host.list_tools()
     by_name = {tool.name: tool for tool in tools}
     assert set(by_name['card.run_assistant_agent'].inputSchema['required']) == {'cardId', 'input'}
-    assert 'instructionId' in by_name['card.run_assistant_agent'].inputSchema['properties']
+    assert 'instructionId' not in by_name['card.run_assistant_agent'].inputSchema['properties']
     assert set(by_name['write_mag_one_instructions'].inputSchema['properties']) == {'instructions'}
-    assert by_name['run_mag_one'].inputSchema['required'] == ['instructionId', 'projectId', 'deckId']
+    assert by_name['run_mag_one'].inputSchema['required'] == ['idfId', 'projectId', 'deckId']
     assert 'minProperties' not in str(by_name['card.update_configuration'].inputSchema)
     reasoning_schema = by_name['card.update_configuration'].inputSchema['properties']['updates']['properties']['reasoningEffort']
     assert reasoning_schema == {
@@ -681,7 +648,7 @@ async def check():
         'enum': ['low', 'medium', 'high', 'xhigh'],
     }
     assert 'main.context' in by_name
-    assert 'agentgraph.inspect' in by_name
+    assert 'agentgraph.inspect' not in by_name
     assert 'coder.status' in by_name
     assert all(
         tool.inputSchema.get('additionalProperties') is False
@@ -733,20 +700,20 @@ def test_catalog_identity_covers_the_complete_frozen_tool_descriptor():
     assert mcp_host._catalog_identity([original])[1] != mcp_host._catalog_identity([changed])[1]
 
 
-def test_mag_one_instruction_authoring_persists_the_exact_instruction(monkeypatch):
+def test_mag_one_instruction_authoring_persists_the_exact_idf(monkeypatch):
     import asyncio
     import json
     import mcp_host
-    from app.python_models import agentgraph
+    from app.python_models import idf
 
     captured = []
     monkeypatch.setattr(mcp_host, "_native_engraphis_tools", lambda: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(
-        agentgraph,
-        "create_instruction",
+        idf,
+        "create_input_data_file",
         lambda **kwargs: (
             captured.append(kwargs)
-            or {"ok": True, "instructionId": "instruction:one"}
+            or {"ok": True, "idf": {"idfId": "idf:one"}}
         ),
     )
 
@@ -764,9 +731,9 @@ def test_mag_one_instruction_authoring_persists_the_exact_instruction(monkeypatc
         )
     )
 
-    assert json.loads(result[0].text)["instructionId"] == "instruction:one"
-    assert captured[0]["body"] == "Approved task."
-    assert captured[0]["prepared_by_card_id"] == "card_hermes"
+    assert json.loads(result[0].text)["idf"]["idfId"] == "idf:one"
+    assert captured[0]["user_text"] == "Approved task."
+    assert captured[0]["originating_card_id"] == "card_hermes"
 
 
 def test_native_engraphis_registry_is_initialized_once_without_schema_adaptation():
@@ -793,7 +760,6 @@ async def check():
     assert len(combined_identity[1]) == 64
     assert {
         'main.context', 'canvas.inspect', 'coder.status', 'card.run_assistant_agent',
-        'agentgraph.inspect',
     }.issubset(set(combined_names))
     assert {
         'coder.inspect', 'coder.effective_tools', 'coder.account', 'coder.stop', 'coder.steer',
@@ -1271,7 +1237,7 @@ def test_streamable_http_is_stateless_across_fresh_clients(monkeypatch):
             second_catalog, second_context = await fresh_client()
             assert first_catalog == second_catalog
             assert "main.context" in first_catalog
-            assert "agentgraph.inspect" in first_catalog
+            assert "agentgraph.inspect" not in first_catalog
             assert "coder.status" in first_catalog
             assert first_context == second_context == context
         finally:
@@ -1306,7 +1272,7 @@ async def check():
             assert actual == expected
             assert len(actual) == len(set(actual))
             assert 'main.context' in actual
-            assert 'agentgraph.inspect' in actual
+            assert 'agentgraph.inspect' not in actual
             assert sum(name.startswith('engraphis.') for name in actual) == 31
             assert elapsed < 10
             print(json.dumps({{'status': 'STDIO_OK', 'count': len(actual), 'elapsed': elapsed}}))
@@ -1528,7 +1494,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
             or tool.name.startswith(tuple(mcp_host._NATIVE_PREFIXES.values()))
         ), f"advertised but undispatchable: {tool.name}"
     assert "main.context" in by_name
-    assert "agentgraph.inspect" in by_name
+    assert "agentgraph.inspect" not in by_name
     assert "coder.status" in by_name
     assert "card.run_assistant_agent" in by_name
     assert "run_coder_subagent" not in by_name
@@ -1600,7 +1566,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     active_scopes[:] = ["main"]
     main_names = {tool.name for tool in asyncio.run(mcp_host.list_tools())}
     assert {
-        "main.context", "agentgraph.inspect", "canvas.inspect",
+        "main.context", "canvas.inspect",
         "card.run_assistant_agent", "run_mag_one", "cbm.search_graph",
         "graphiti.search_nodes",
     }.issubset(main_names)

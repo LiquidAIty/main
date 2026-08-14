@@ -36,7 +36,7 @@ import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/ha
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantStore';
 import {
-  fetchAgentCardContext,
+  createInputDataFileOnPython,
   requestPythonRailsJson,
 } from '../services/autogen/autogenOrchestratorClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
@@ -171,11 +171,11 @@ router.post('/mcp-bridge/coder_status', async (_req, res) => {
 
 router.post('/mcp-bridge/run_mag_one', async (req, res) => {
   try {
-    const instructionId = String(req.body?.instructionId || '').trim();
+    const idfId = String(req.body?.idfId || '').trim();
     const deckId = String(req.body?.deckId || BUILDER_DECK_ID);
     const result = await runMagOne({
       ...(req.body || {}),
-      instructionId,
+      idfId,
       projectId: String(req.body?.projectId || ''),
       deckId,
     });
@@ -184,7 +184,7 @@ router.post('/mcp-bridge/run_mag_one', async (req, res) => {
       result: {
         status: result.status,
         runId: result.runId,
-        assignmentId: result.assignmentId,
+        idfId: result.idfId,
         conversationId: result.conversationId,
         connectedParticipants: result.connectedParticipants,
         failure: result.failure,
@@ -255,8 +255,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       correlationId: String(body.correlationId || ''),
       input: String(body.input || ''),
       conversationId: String(body.conversationId || ''),
-      instructionId: String(body.instructionId || ''),
-      senderCardId: String(body.senderCardId || ''),
       parentRunId: String(body.parentRunId || ''),
     });
     return res.json({
@@ -265,34 +263,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'run_configured_card_failed' });
-  }
-});
-
-router.get('/agentgraph/card-context', async (req, res) => {
-  const projectId = String(req.query.projectId || '').trim();
-  const deckId = String(req.query.deckId || '').trim();
-  const conversationId = String(req.query.conversationId || '').trim();
-  const receiverCardId = String(req.query.receiverCardId || '').trim();
-  const assignmentId = String(req.query.assignmentId || '').trim();
-  if (!projectId || !deckId || !conversationId || !receiverCardId) {
-    return res.status(400).json({
-      ok: false,
-      error: 'project_deck_conversation_receiver_required',
-    });
-  }
-  try {
-    return res.json(await fetchAgentCardContext({
-      projectId,
-      deckId,
-      conversationId,
-      receiverCardId,
-      ...(assignmentId ? { assignmentId } : {}),
-    }));
-  } catch (error) {
-    return res.status(502).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'agent_card_context_failed',
-    });
   }
 });
 
@@ -338,6 +308,29 @@ router.post('/main/session/chat', async (req, res) => {
       correlationId,
     });
   }
+  let idf;
+  try {
+    idf = (await createInputDataFileOnPython({
+      projectId,
+      deckId: BUILDER_DECK_ID,
+      conversationId,
+      runId: correlationId,
+      originatingCardId: runtimeConfig.cardId,
+      systemText: runtimeConfig.prompt,
+      userText: message,
+    })).idf;
+  } catch {
+    await failConversationRun(
+      correlationId,
+      'idf_persistence_failed',
+      'canonical input persistence failed before runtime launch',
+    ).catch(() => undefined);
+    return res.status(503).json({
+      ok: false,
+      error: 'idf_persistence_failed',
+      correlationId,
+    });
+  }
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -363,11 +356,12 @@ router.post('/main/session/chat', async (req, res) => {
   try {
     const handle = await startHermesTurn({
       ...runtimeConfig,
+      prompt: idf.systemText,
       sessionKey: sessionId,
       projectId,
       conversationId,
       parentRunId: correlationId,
-      message,
+      message: idf.modelInputMarkdown,
       workingDirectory,
     }, async (event) => {
       if (turnFinished) return;

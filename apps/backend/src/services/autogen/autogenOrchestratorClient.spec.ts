@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  beginAgentAssignmentOnPython,
+  createInputDataFileOnPython,
   orchestrateWithAutoGen,
   projectLiveThinkGraph,
 } from './autogenOrchestratorClient';
@@ -51,16 +51,12 @@ describe('autogenOrchestratorClient', () => {
     );
   });
 
-  it('begins a Hermes assignment from the exact existing AgentGraph instruction', async () => {
+  it('persists one canonical IDF through Python rails', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       text: async () => JSON.stringify({
         ok: true,
-        assignmentId: 'assignment:child',
-        instructionId: 'instruction:child',
-        correlationId: 'child',
-        claimToken: 'claim:child',
-        state: 'running',
+        idf: { idfId: 'idf:child' },
       }),
     });
     vi.stubGlobal('fetch', fetchMock as any);
@@ -68,22 +64,16 @@ describe('autogenOrchestratorClient', () => {
       projectId: 'p1',
       deckId: 'deck_builder',
       conversationId: 'conversation:one',
-      correlationId: 'child',
-      senderCardId: 'card_magentic',
-      receiverCardId: 'card_research',
-      instruction: 'Exact instruction.',
-      instructionId: 'instruction:child',
-      parentRunId: 'assignment:outer',
-      runtime: 'hermes',
-      provider: 'openai',
-      modelKey: 'gpt-5.6-luna',
-      providerModelId: 'gpt-5.6-luna',
+      runId: 'child',
+      originatingCardId: 'card_research',
+      systemText: 'Saved prompt.',
+      userText: 'Exact input.',
     };
 
-    await beginAgentAssignmentOnPython(payload);
+    await createInputDataFileOnPython(payload);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://python-rails:8001/agentgraph/assignments/begin-existing',
+      'http://python-rails:8001/idf/documents',
       expect.objectContaining({ method: 'POST', body: JSON.stringify(payload) }),
     );
   });

@@ -10,8 +10,7 @@ vi.mock('../decks/store', () => ({
   getDeckDocument: vi.fn(),
 }));
 vi.mock('../services/autogen/autogenOrchestratorClient', () => ({
-  beginAgentAssignmentOnPython: vi.fn(),
-  finishAgentAssignmentOnPython: vi.fn(),
+  createInputDataFileOnPython: vi.fn(),
   orchestrateWithAutoGen: vi.fn(),
   runSingleCardWithAutoGen: vi.fn(),
 }));
@@ -63,8 +62,7 @@ vi.mock('../hermes/mainAdapter', () => ({
 
 import { getDeckDocument } from '../decks/store';
 import {
-  beginAgentAssignmentOnPython,
-  finishAgentAssignmentOnPython,
+  createInputDataFileOnPython,
   runSingleCardWithAutoGen,
 } from '../services/autogen/autogenOrchestratorClient';
 import { startHermesTurn } from '../hermes/mainAdapter';
@@ -76,8 +74,7 @@ import { runConfiguredCard } from './runtime';
 
 const mockGetDeck = getDeckDocument as unknown as ReturnType<typeof vi.fn>;
 const mockRunCard = runSingleCardWithAutoGen as unknown as ReturnType<typeof vi.fn>;
-const mockBeginAssignment = beginAgentAssignmentOnPython as unknown as ReturnType<typeof vi.fn>;
-const mockFinishAssignment = finishAgentAssignmentOnPython as unknown as ReturnType<typeof vi.fn>;
+const mockCreateIdf = createInputDataFileOnPython as unknown as ReturnType<typeof vi.fn>;
 const mockStartHermes = startHermesTurn as unknown as ReturnType<typeof vi.fn>;
 const mockRunHermesKanban = runHermesKanbanCardTask as unknown as ReturnType<typeof vi.fn>;
 const mockWaitHermesKanban = waitForHermesKanbanCardTask as unknown as ReturnType<typeof vi.fn>;
@@ -137,8 +134,7 @@ const ARGS = {
 beforeEach(() => {
   mockGetDeck.mockReset();
   mockRunCard.mockReset();
-  mockBeginAssignment.mockReset();
-  mockFinishAssignment.mockReset();
+  mockCreateIdf.mockReset();
   mockStartHermes.mockReset();
   mockRunHermesKanban.mockReset();
   mockWaitHermesKanban.mockReset();
@@ -147,15 +143,26 @@ beforeEach(() => {
     cancel: vi.fn(),
     answer: vi.fn(),
   });
-  mockBeginAssignment.mockResolvedValue({
+  mockCreateIdf.mockImplementation(async (input: any) => ({
     ok: true,
-    assignmentId: 'assignment:corr-123',
-    instructionId: 'instruction:corr-123',
-    correlationId: 'corr-123',
-    claimToken: 'claim:corr-123',
-    state: 'running',
-  });
-  mockFinishAssignment.mockResolvedValue({ resultId: 'agentresult:corr-123' });
+    idf: {
+      idfId: `idf:${input.runId}`,
+      projectId: input.projectId,
+      deckId: input.deckId,
+      conversationId: input.conversationId,
+      runId: input.runId,
+      originatingCardId: input.originatingCardId,
+      version: 1,
+      systemText: input.systemText,
+      userText: input.userText,
+      dynamicContextMarkdown: '',
+      nativeReferences: [],
+      modelInputMarkdown: input.userText,
+      contentMarkdown: input.userText,
+      contentSha256: 'hash',
+      createdAt: 'now',
+    },
+  }));
 });
 
 describe('runConfiguredCard — server-trusted single-card runtime', () => {
@@ -310,7 +317,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(mockStartHermes).not.toHaveBeenCalled();
     expect(mockRunCard).not.toHaveBeenCalled();
     expect(mockWaitHermesKanban).not.toHaveBeenCalled();
-    expect(mockBeginAssignment).not.toHaveBeenCalled();
+    expect(mockCreateIdf).toHaveBeenCalledOnce();
   });
 
   it('returns a fixed transport failure without leaking native stderr or secrets', async () => {
@@ -340,7 +347,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(mockRunCard).not.toHaveBeenCalled();
   });
 
-  it('joins native auto-kanban for a Mag One child assignment and returns one final result', async () => {
+  it('joins native auto-kanban for a parent run and returns one final result', async () => {
     const kanbanCard = {
       ...AGENT_CARD,
       runtimeOptions: {
@@ -370,9 +377,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
       ...ARGS,
       cardId: kanbanCard.id,
       conversationId: 'conversation:one',
-      instructionId: 'instruction:child',
-      senderCardId: 'card_magentic',
-      parentRunId: 'assignment:outer',
+      parentRunId: 'mag-one:outer',
     });
 
     expect(mockWaitHermesKanban).toHaveBeenCalledWith(kanbanCard.id, 't_native123');
@@ -380,20 +385,11 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
       status: 'completed',
       output: 'native synthesized result',
       hermesKanban: joined,
-      assignmentResult: {
-        assignmentId: 'assignment:corr-123',
-        instructionId: 'instruction:corr-123',
-        resultId: 'agentresult:corr-123',
-      },
+      nativeRunResult: { runId: 't_native123', idfId: 'idf:corr-123' },
     });
-    expect(mockBeginAssignment).toHaveBeenCalledWith(expect.objectContaining({
-      instructionId: 'instruction:child',
-      parentRunId: 'assignment:outer',
+    expect(mockCreateIdf).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'corr-123', originatingCardId: kanbanCard.id,
     }));
-    expect(mockFinishAssignment).toHaveBeenCalledWith(
-      'assignment:corr-123',
-      expect.objectContaining({ status: 'completed', output: 'native synthesized result' }),
-    );
     expect(mockStartHermes).not.toHaveBeenCalled();
     expect(mockRunCard).not.toHaveBeenCalled();
   });
@@ -493,11 +489,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.cardId).toBe('card_saved_worker');
     expect(payload.prompt).toBe('You are the ThinkGraph agent.');
     expect(payload.message).toBe(ARGS.input);
-    expect(result.assignmentResult).toEqual({
-      assignmentId: 'assignment:corr-123',
-      instructionId: 'instruction:corr-123',
-      resultId: 'agentresult:corr-123',
-    });
+    expect(result.nativeRunResult).toEqual({ runId: 'corr-123', idfId: 'idf:corr-123' });
     const raw = JSON.stringify(payload);
     expect(raw).not.toContain('taskIds');
     expect(raw).not.toContain('taskLedger');
@@ -576,25 +568,21 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     await runConfiguredCard({
       ...ARGS,
       conversationId: 'conv-7',
-      instructionId: 'instruction:one',
-      senderCardId: 'card_main_chat',
-      parentRunId: 'assignment:parent',
+      parentRunId: 'main:parent',
     });
 
     const payload = mockStartHermes.mock.calls[0][0];
     expect(payload.conversationId).toBe('conv-7');
-    expect(payload.parentRunId).toBe('assignment:parent');
-    expect(mockBeginAssignment).toHaveBeenCalledWith(expect.objectContaining({
-      instructionId: 'instruction:one',
-      senderCardId: 'card_main_chat',
-      parentRunId: 'assignment:parent',
-    }));
+    expect(payload.parentRunId).toBe('main:parent');
     expect(JSON.stringify(payload)).not.toContain('stored Markdown');
   });
 
   it('runs the saved Local Coder card through the normal single-card doorway and its real tool', async () => {
     mockGetDeck.mockResolvedValue(deckWith([LOCAL_CODER_CARD]));
-    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: '{"status":"succeeded"}' });
+    mockRunCard.mockResolvedValue({
+      ok: true, finalResponseText: '{"status":"succeeded"}',
+      runId: 'corr-123', idfId: 'idf:corr-123',
+    });
 
     const result = await runConfiguredCard({
       ...ARGS,
@@ -640,17 +628,16 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(String(result.error || '')).toContain('Unknown model key');
   });
 
-  it('threads the canonical assignment identity back for the native AutoGen Coder exception', async () => {
+  it('threads the canonical IDF and native run identity back for the AutoGen Coder exception', async () => {
     mockGetDeck.mockResolvedValue(deckWith([LOCAL_CODER_CARD]));
     mockRunCard.mockResolvedValue({
       ok: true,
       finalResponseText: 'ok',
-      assignmentId: 'assignment:corr-123',
+      runId: 'coder:native',
+      idfId: 'idf:corr-123',
     });
     const result = await runConfiguredCard({ ...ARGS, cardId: LOCAL_CODER_CARD.id });
-    expect(result.assignmentResult).toEqual({
-      assignmentId: 'assignment:corr-123',
-    });
+    expect(result.nativeRunResult).toEqual({ runId: 'coder:native', idfId: 'idf:corr-123' });
   });
 
   it('propagates an honest Python failure for the native AutoGen Coder exception without retry or fallback', async () => {
@@ -672,7 +659,9 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
 
   it('rejects caller-supplied runAuthority as a runtime override', async () => {
     mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
-    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'ok' });
+    mockRunCard.mockResolvedValue({
+      ok: true, finalResponseText: 'ok', runId: 'corr-123', idfId: 'idf:corr-123',
+    });
     const explicitAuthority = {
       kind: 'hidden_scope',
       projectId: 'proj-1',

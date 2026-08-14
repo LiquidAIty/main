@@ -1,6 +1,6 @@
 """Real AutoGen/Magentic-One adapter.
 
-This module is a thin bridge from the app ContextPack into real
+This module is a thin bridge from the canonical IDF runtime request into real
 ``MagenticOneGroupChat`` execution. It does not recreate Magentic-One prompts
 or task-ledger internals in app code.
 
@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-import time
 from collections.abc import Sequence
 from typing import Any
 
@@ -26,14 +25,12 @@ from autogen_core import CancellationToken
 from autogen_agentchat.teams import MagenticOneGroupChat
 
 from app import control_plane
-from app.python_models import agentgraph as ag
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
 from app.python_models.tool_registry import (
-    ACTIVE_AGENT_ASSIGNMENT_CONTEXT,
     DEFAULT_TOOL_REGISTRY,
     build_local_coder_tool,
 )
-from app.python_models.orchestration_contracts import ContextPack, OrchestratorRunResponse
+from app.python_models.orchestration_contracts import RuntimeRequest, OrchestratorRunResponse
 
 
 def _as_text(value: Any) -> str:
@@ -51,7 +48,7 @@ def _as_text(value: Any) -> str:
     return str(value).strip()
 
 
-def connected_agent_names(context: ContextPack) -> list[str]:
+def connected_agent_names(context: RuntimeRequest) -> list[str]:
     card = context.cardRuntime
     if card is None:
         return []
@@ -98,14 +95,14 @@ class SavedHermesCardAgent(BaseChatAgent):
         *,
         name: str,
         description: str,
-        context: ContextPack,
+        context: RuntimeRequest,
         card_id: str,
-        outer_assignment_id: str,
+        outer_run_id: str,
     ) -> None:
         super().__init__(name=name, description=description)
         self._context = context
         self._card_id = card_id
-        self._outer_assignment_id = outer_assignment_id
+        self._outer_run_id = outer_run_id
         self._invocation = 0
 
     @property
@@ -149,9 +146,9 @@ class SavedHermesCardAgent(BaseChatAgent):
                     ),
                     "cardId": self._card_id,
                     "correlationId": correlation_id,
-                    "conversationId": _as_text(self._context.conversationId) or "main",
+                    "conversationId": self._context.idf.conversationId,
                     "originatingAgentId": self._context.cardRuntime.cardId,
-                    "originatingRunId": self._outer_assignment_id,
+                    "originatingRunId": self._outer_run_id,
                     "input": input_text,
                 }
             )
@@ -179,24 +176,20 @@ class SavedHermesCardAgent(BaseChatAgent):
                 content=output,
                 metadata={
                     "cardId": self._card_id,
-                    "originatingAssignmentId": self._outer_assignment_id,
-                    **(
-                        {"instructionId": _as_text(response.get("instructionId"))}
-                        if _as_text(response.get("instructionId"))
-                        else {}
-                    ),
+                    "originatingRunId": self._outer_run_id,
+                    "idfId": self._context.idf.idfId,
                 },
             )
         )
 
 
 def _build_participants(
-    context: ContextPack,
+    context: RuntimeRequest,
     model_client: Any,
     *,
     extra_tools: list[Any] | None = None,
     saved_hermes_cards: bool = False,
-    outer_assignment_id: str = "",
+    outer_run_id: str = "",
 ) -> list[BaseChatAgent]:
     card = context.cardRuntime
     if card is None:
@@ -223,15 +216,15 @@ def _build_participants(
         system_prompt = _as_text(getattr(participant, "prompt", ""))
 
         if saved_hermes_cards and description != "local_coder":
-            if not outer_assignment_id:
-                raise RuntimeError("magentic_outer_assignment_id_required")
+            if not outer_run_id:
+                raise RuntimeError("magentic_outer_run_id_required")
             participants.append(
                 SavedHermesCardAgent(
                     name=name,
                     description=description,
                     context=context,
                     card_id=card_id,
-                    outer_assignment_id=outer_assignment_id,
+                    outer_run_id=outer_run_id,
                 )
             )
             continue
@@ -286,7 +279,7 @@ def _build_participants(
     raise RuntimeError("card_runtime_participants_required")
 
 
-def _validate_single_card_context(context: ContextPack) -> str | None:
+def _validate_single_card_context(context: RuntimeRequest) -> str | None:
     """Structural guard for the single-card runtime. Returns an honest error code or None.
 
     Pure (no model/client construction) so it is directly unit-testable. It never
@@ -303,7 +296,7 @@ def _validate_single_card_context(context: ContextPack) -> str | None:
     count = len(card.participants or [])
     if count != 1:
         return f"single_card_participant_count_invalid: {count}"
-    if not _as_text(context.userText):
+    if not _as_text(context.idf.userText):
         return "empty_user_message"
     return None
 
@@ -356,162 +349,22 @@ def _tool_evidence_from_result(result: Any) -> list[dict[str, str]]:
     return evidence
 
 
-async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
-    """Run ONE configured canvas card through its saved AutoGen/runtime identity.
-
-    Reuses ``_build_participants`` unchanged (same prompt/runtime resolution and
-    same tool registry with loud unknown/disabled failures). Guard or
-    runtime failures return an honest error — never a fallback model, another
-    card, or a plain completion. No Task Ledger is read or produced.
-
-    The saved card supplies its existing AutoGen identity and runtime configuration.
-    AgentGraph supplies the durable assignment, bounded context references, and
-    direct context references for this execution.
-    """
-    assignment_id: str | None = None
-    instruction_id: str | None = None
-    result_id: str | None = None
-    claim_token: str | None = None
-    hydrated_assignment: dict[str, Any] | None = None
-
+async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunResponse:
+    """Run one configured saved card using the exact canonical IDF fields."""
     guard = _validate_single_card_context(context)
+    run_id = _as_text(context.session.runId) or context.session.turnId
     if guard:
         return OrchestratorRunResponse(
             ok=False,
             session=context.session,
-            assignmentId=assignment_id,
+            runId=run_id,
+            idfId=context.idf.idfId,
             finalResponseText="",
             error=guard,
         )
 
-    async def _fail(error: str, summary: str) -> OrchestratorRunResponse:
-        nonlocal result_id
-        durable_error = ""
-        if assignment_id is not None and claim_token is not None:
-            try:
-                completed = await asyncio.to_thread(
-                    ag.finish_assignment,
-                    project_id=context.session.projectId,
-                    assignment_id=assignment_id,
-                    claim_token=claim_token,
-                    status="failed",
-                    error_code=summary,
-                    error_detail=error,
-                )
-                result_id = str(completed.get("resultId") or "") or None
-            except Exception as persistence_error:
-                durable_error = f"; outer_assignment_persist_failed: {persistence_error}"
-        return OrchestratorRunResponse(
-            ok=False,
-            session=context.session,
-            **_assignment_fields(),
-            finalResponseText="",
-            error=error + durable_error,
-        )
-
-    runtime_options = getattr(context.cardRuntime, "runtimeOptions", None) or {}
     single = context.cardRuntime.participants[0]
-    deck_id = _as_text(runtime_options.get("deckId") if isinstance(runtime_options, dict) else "")
-    def _assignment_fields() -> dict:
-        return {
-            "assignmentId": assignment_id,
-            "instructionId": instruction_id,
-            "resultId": result_id,
-        }
-
-    selected_tools = [_as_text(t) for t in (single.tools or []) if _as_text(t)]
-    request = context.agentAssignment
-    if request is not None and request.receiverCardId != single.cardId:
-        return await _fail(
-            "agentgraph_assignment_receiver_mismatch",
-            "agentgraph_assignment_receiver_mismatch",
-        )
-    instruction_body = _as_text(context.userText)
-    sender_card_id = request.senderCardId if request is not None else single.cardId
-    try:
-        if request is None:
-            instruction = await asyncio.to_thread(
-                ag.create_instruction,
-                project_id=context.session.projectId,
-                deck_id=deck_id,
-                conversation_id=_as_text(context.conversationId) or "main",
-                body=instruction_body,
-                prepared_by_card_id=sender_card_id,
-            )
-            instruction_id = instruction["instructionId"]
-        else:
-            instruction_id = request.instructionId
-        assignment = await asyncio.to_thread(
-            ag.create_assignment,
-            project_id=context.session.projectId,
-            deck_id=deck_id,
-            conversation_id=_as_text(context.conversationId) or "main",
-            correlation_id=context.session.turnId,
-            sender_card_id=sender_card_id,
-            receiver_card_id=single.cardId,
-            instruction_id=instruction_id,
-            parent_correlation_id=_as_text(context.session.runId) or None,
-        )
-        assignment_id = assignment["assignmentId"]
-        hydrated_assignment = await asyncio.to_thread(
-            ag.read_assignment,
-            project_id=context.session.projectId,
-            assignment_id=assignment_id,
-            receiving_card_id=single.cardId,
-        )
-        claimed = await asyncio.to_thread(
-            ag.claim_assignment,
-            project_id=context.session.projectId,
-            assignment_id=assignment_id,
-            receiver_card_id=single.cardId,
-        )
-        claim_token = claimed["claimToken"]
-        instruction_body = str(hydrated_assignment["instruction"])
-        await asyncio.to_thread(
-            ag.record_assignment_runtime_context,
-            project_id=context.session.projectId,
-            assignment_id=assignment_id,
-            runtime="assistant_agent",
-            provider=context.session.modelProvider,
-            model_key=context.session.modelKey,
-            provider_model_id=context.session.providerModelId,
-        )
-    except Exception as err:
-        durable_error = ""
-        if assignment_id is not None:
-            try:
-                cancelled = await asyncio.to_thread(
-                    ag.cancel_assignment,
-                    project_id=context.session.projectId,
-                    assignment_id=assignment_id,
-                    requested_by_card_id=sender_card_id,
-                    reason=f"agentgraph_assignment_begin_failed: {err}",
-                )
-                result_id = str(cancelled.get("resultId") or "") or None
-            except Exception as persistence_error:
-                durable_error = (
-                    f"; outer_assignment_cancel_failed: {persistence_error}"
-                )
-        return OrchestratorRunResponse(
-            ok=False,
-            session=context.session,
-            **_assignment_fields(),
-            finalResponseText="",
-            error=f"agentgraph_assignment_begin_failed: {err}{durable_error}",
-        )
-
     client = None
-
-    assignment_context_token = ACTIVE_AGENT_ASSIGNMENT_CONTEXT.set(
-        {
-            "projectId": context.session.projectId,
-            "assignmentId": assignment_id,
-            "receiverCardId": single.cardId,
-        }
-    )
-
-    started = time.monotonic()
-
     try:
         client = _build_model_client(
             AutoGenAgentConfig(
@@ -523,75 +376,37 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             )
         )
         participants = _build_participants(context, client)
-        # The guard guarantees exactly one real configured participant, so the
-        # default-"Assist" branch of _build_participants is unreachable here.
         agent = participants[0]
-        # An inter-agent handoff owns the exact target instruction. userText is
-        # still required by the transport guard, but is not duplicated into the
-        # model task when a durable handoff is present. Standalone calls without
-        # AgentGraph continue to use their ordinary userText unchanged.
-        reference_lines = [
-            f"- {reference['referenceType']}:{reference['referenceId']}"
-            + (" [required]" if reference.get("required") else "")
-            for reference in hydrated_assignment.get("contextReferences") or []
-        ]
-        task = "\n\n".join(
-            part
-            for part in [
-                "[AGENTGRAPH_ASSIGNMENT]",
-                f"assignmentId: {assignment_id}",
-                f"instructionId: {instruction_id}",
-                "Exact instruction:",
-                instruction_body,
-                "\n".join(["[AGENTGRAPH_CONTEXT_REFERENCES]", *reference_lines])
-                if reference_lines else "",
-            ]
-            if part
-        )
-        result = await agent.run(task=task)
-
+        # IDD validated this field once. The adapter passes the exact stored
+        # current input; it does not rebuild an assignment-shaped prompt.
+        result = await agent.run(task=context.idf.modelInputMarkdown)
         final_text = _final_text_from_result(result)
-
-        elapsed_ms = int((time.monotonic() - started) * 1000)
-        single = context.cardRuntime.participants[0]
-        tools_attached = [_as_text(t) for t in (single.tools or []) if _as_text(t)]
-        run_info = (
-            f"single_card cardId={single.cardId} runtime=assistant_agent "
-            f"tools={','.join(tools_attached) or 'none'} elapsedMs={elapsed_ms} "
-            f"turnId={context.session.turnId}"
-        )
-
         if not final_text:
-            return await _fail(
-                "single_card_empty_response",
-                "empty_response",
+            return OrchestratorRunResponse(
+                ok=False,
+                session=context.session,
+                runId=run_id,
+                idfId=context.idf.idfId,
+                finalResponseText="",
+                error="single_card_empty_response",
             )
-
-        completed = await asyncio.to_thread(
-            ag.finish_assignment,
-            project_id=context.session.projectId,
-            assignment_id=assignment_id,
-            claim_token=claim_token,
-            status="completed",
-            output=final_text,
-            tool_evidence=_tool_evidence_from_result(result),
-        )
-        result_id = str(completed.get("resultId") or "") or None
-        assignment_fields = _assignment_fields()
-
         return OrchestratorRunResponse(
             ok=True,
             session=context.session,
+            runId=run_id,
+            idfId=context.idf.idfId,
             finalResponseText=final_text,
-            **assignment_fields,
         )
-    except Exception as err:  # honest runtime failure — no retry, no fallback
-        return await _fail(
-            f"single_card_run_failed: {err}",
-            "run_failed",
+    except Exception:
+        return OrchestratorRunResponse(
+            ok=False,
+            session=context.session,
+            runId=run_id,
+            idfId=context.idf.idfId,
+            finalResponseText="",
+            error="single_card_run_failed",
         )
     finally:
-        ACTIVE_AGENT_ASSIGNMENT_CONTEXT.reset(assignment_context_token)
         if client is not None:
             close = getattr(client, "close", None)
             if callable(close):
@@ -601,7 +416,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                     pass
 
 
-def _read_max_turns(context: ContextPack) -> int | None:
+def _read_max_turns(context: RuntimeRequest) -> int | None:
     runtime_options = getattr(context.cardRuntime, "runtimeOptions", None) or {}
     if not isinstance(runtime_options, dict) or "maxTurns" not in runtime_options:
         return None
@@ -618,116 +433,23 @@ def _read_max_turns(context: ContextPack) -> int | None:
 def _magentic_completion_status(
     final_response_text: str,
 ) -> tuple[bool, str | None]:
-    """Derive completion from the result persisted through AgentGraph."""
+    """Derive completion from the native result text without another authority."""
     if not _as_text(final_response_text):
         return False, "no_model_output"
     return True, None
 
 
-async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunResponse:
+async def run_native_magentic_mission(
+    context: RuntimeRequest,
+) -> OrchestratorRunResponse:
+    """Run native Magentic-One with the exact canonical IDF and saved roster."""
     if context.cardRuntime is None:
         raise RuntimeError("card_runtime_missing")
-
-    request = context.agentAssignment
-    if request is None:
-        return OrchestratorRunResponse(
-            ok=False,
-            session=context.session,
-            assignmentId=assignment["assignmentId"] if "assignment" in locals() else None,
-            finalResponseText="",
-            error="agentgraph_assignment_required",
-        )
-    runtime_options = getattr(context.cardRuntime, "runtimeOptions", None) or {}
-    deck_id = _as_text(runtime_options.get("deckId"))
-    assignment_id: str | None = None
-    claim_token: str | None = None
-    result_id: str | None = None
-    try:
-        assignment = await asyncio.to_thread(
-            ag.create_assignment,
-            project_id=context.session.projectId,
-            deck_id=deck_id,
-            conversation_id=_as_text(context.conversationId) or "main",
-            correlation_id=context.session.turnId,
-            sender_card_id=request.senderCardId,
-            receiver_card_id=request.receiverCardId,
-            instruction_id=request.instructionId,
-            parent_correlation_id=_as_text(context.session.runId) or None,
-        )
-        assignment_id = assignment["assignmentId"]
-        hydrated_assignment = await asyncio.to_thread(
-            ag.read_assignment,
-            project_id=context.session.projectId,
-            assignment_id=assignment_id,
-            receiving_card_id=request.receiverCardId,
-        )
-        claimed = await asyncio.to_thread(
-            ag.claim_assignment,
-            project_id=context.session.projectId,
-            assignment_id=assignment_id,
-            receiver_card_id=request.receiverCardId,
-        )
-        claim_token = claimed["claimToken"]
-        await asyncio.to_thread(
-            ag.record_assignment_runtime_context,
-            project_id=context.session.projectId,
-            assignment_id=assignment_id,
-            runtime="magentic_one",
-            provider=context.session.modelProvider,
-            model_key=context.session.modelKey,
-            provider_model_id=context.session.providerModelId,
-        )
-    except Exception as err:
-        durable_error = ""
-        if assignment_id is not None:
-            try:
-                cancelled = await asyncio.to_thread(
-                    ag.cancel_assignment,
-                    project_id=context.session.projectId,
-                    assignment_id=assignment_id,
-                    requested_by_card_id=request.senderCardId,
-                    reason=f"agentgraph_assignment_begin_failed: {err}",
-                )
-                result_id = str(cancelled.get("resultId") or "") or None
-            except Exception as persistence_error:
-                durable_error = f"; outer_assignment_cancel_failed: {persistence_error}"
-        return OrchestratorRunResponse(
-            ok=False,
-            session=context.session,
-            assignmentId=assignment_id,
-            resultId=result_id,
-            finalResponseText="",
-            error=f"agentgraph_assignment_begin_failed: {err}{durable_error}",
-        )
-    reference_lines = [
-        f"- {reference['referenceType']}:{reference['referenceId']}"
-        + (" [required]" if reference.get("required") else "")
-        for reference in hydrated_assignment.get("contextReferences") or []
-    ]
-    task = "\n\n".join(
-        part
-        for part in [
-            "[AGENTGRAPH_ASSIGNMENT]",
-            f"assignmentId: {assignment_id}",
-            f"instructionId: {request.instructionId}",
-            "Exact instruction:",
-            str(hydrated_assignment["instruction"]),
-            "\n".join(["[AGENTGRAPH_CONTEXT_REFERENCES]", *reference_lines])
-            if reference_lines else "",
-        ]
-        if part
-    )
+    run_id = _as_text(context.session.runId) or context.session.turnId
+    task = context.idf.modelInputMarkdown
 
     client = None
     participant_clients: list[Any] = []
-    assignment_context_token = ACTIVE_AGENT_ASSIGNMENT_CONTEXT.set(
-        {
-            "projectId": context.session.projectId,
-            "assignmentId": assignment["assignmentId"],
-            "receiverCardId": request.receiverCardId,
-        }
-    )
-
     try:
         runtime_options = context.cardRuntime.runtimeOptions or {}
         client = _build_model_client(
@@ -757,7 +479,7 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             context,
             participant_clients,
             saved_hermes_cards=True,
-            outer_assignment_id=assignment_id,
+            outer_run_id=run_id,
         )
         team_options: dict[str, Any] = {
             "participants": participants,
@@ -766,19 +488,17 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
         max_turns = _read_max_turns(context)
         if max_turns is not None:
             team_options["max_turns"] = max_turns
-        team = MagenticOneGroupChat(
-            **team_options,
-        )
+        team = MagenticOneGroupChat(**team_options)
 
         autogen_messages: list[dict[str, str]] = []
         autogen_events: list[dict[str, str]] = []
         stop_reason: str | None = None
         final_response_text = ""
 
-
         async for emitted in team.run_stream(task=task):
-            # TaskResult terminal item
-            if hasattr(emitted, "messages") and isinstance(getattr(emitted, "messages", None), list):
+            if hasattr(emitted, "messages") and isinstance(
+                getattr(emitted, "messages", None), list
+            ):
                 stop_reason = _as_text(getattr(emitted, "stop_reason", None)) or None
                 for msg in reversed(getattr(emitted, "messages", []) or []):
                     content = _as_text(getattr(msg, "content", ""))
@@ -794,10 +514,8 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
                 content = _as_text(emitted.to_text())
             if not content:
                 continue
-
-            source = _as_text(getattr(emitted, "source", "")) or "unknown"
             payload = {
-                "source": source,
+                "source": _as_text(getattr(emitted, "source", "")) or "unknown",
                 "type": emitted.__class__.__name__,
                 "content": content,
             }
@@ -809,6 +527,8 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
         print(
             "[magentic] run_stream meta:",
             {
+                "run_id": run_id,
+                "idf_id": context.idf.idfId,
                 "messages": len(autogen_messages),
                 "events": len(autogen_events),
                 "message_types": sorted({m["type"] for m in autogen_messages}),
@@ -818,56 +538,27 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
         )
 
         ok, completion_error = _magentic_completion_status(final_response_text)
-        completed = await asyncio.to_thread(
-            ag.finish_assignment,
-            project_id=context.session.projectId,
-            assignment_id=assignment_id,
-            claim_token=claim_token,
-            status="completed" if ok else "failed",
-            output=final_response_text or None,
-            error_code=completion_error,
-            error_detail=completion_error,
-        )
-        result_id = str(completed.get("resultId") or "") or None
         return OrchestratorRunResponse(
             ok=ok,
             session=context.session,
-            assignmentId=assignment_id,
-            instructionId=request.instructionId,
-            resultId=result_id,
+            runId=run_id,
+            idfId=context.idf.idfId,
             stopReason=stop_reason,
             finalResponseText=final_response_text,
             autogenMessages=autogen_messages,
             autogenEvents=autogen_events,
             error=completion_error,
         )
-    except Exception as err:
-        durable_error = ""
-        if assignment_id is not None and claim_token is not None:
-            try:
-                failed = await asyncio.to_thread(
-                    ag.finish_assignment,
-                    project_id=context.session.projectId,
-                    assignment_id=assignment_id,
-                    claim_token=claim_token,
-                    status="failed",
-                    error_code="magentic_run_failed",
-                    error_detail=str(err),
-                )
-                result_id = str(failed.get("resultId") or "") or None
-            except Exception as persistence_error:
-                durable_error = f"; outer_assignment_persist_failed: {persistence_error}"
+    except Exception:
         return OrchestratorRunResponse(
             ok=False,
             session=context.session,
-            assignmentId=assignment_id,
-            instructionId=request.instructionId,
-            resultId=result_id,
+            runId=run_id,
+            idfId=context.idf.idfId,
             finalResponseText="",
-            error=f"magentic_run_failed: {err}{durable_error}",
+            error="magentic_run_failed",
         )
     finally:
-        ACTIVE_AGENT_ASSIGNMENT_CONTEXT.reset(assignment_context_token)
         for owned_client in [*participant_clients, client]:
             if owned_client is None:
                 continue

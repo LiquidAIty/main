@@ -1,10 +1,26 @@
 export type DeckRunStatus = 'idle' | 'running' | 'success' | 'error' | 'skipped';
 
-// AgentGraph assignment, instruction, and result identities transported
-// verbatim from Python rails.
-export type AgentAssignmentRunResult = {
-  assignmentId: string;
-  instructionId?: string;
+export type InputDataFile = {
+  idfId: string;
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  runId: string;
+  originatingCardId: string;
+  version: number;
+  systemText: string;
+  userText: string;
+  dynamicContextMarkdown: string;
+  nativeReferences: Array<{ authority: string; nativeId: string; required: boolean }>;
+  modelInputMarkdown: string;
+  contentMarkdown: string;
+  contentSha256: string;
+  createdAt: string;
+};
+
+export type NativeRunResult = {
+  runId: string;
+  idfId: string;
   resultId?: string;
 };
 
@@ -16,16 +32,12 @@ export type CardRunResult = {
   endedAt: string;
   runtimeBinding?: string | null;
   runtimeType?: string | null;
-  agentAssignmentResult?: AgentAssignmentRunResult | null;
+  nativeRunResult?: NativeRunResult | null;
 };
 
 export type PythonAutoGenPayloadShape = {
   session: Record<string, any>;
-  userText: string;
-  conversationId?: string;
-  // Stable identities only. Python creates/claims the assignment and hydrates
-  // the exact relational instruction.
-  agentAssignment?: { instructionId: string; senderCardId: string; receiverCardId: string };
+  idf: InputDataFile;
   cardRuntime: {
     cardId: string;
     title: string;

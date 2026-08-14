@@ -1,26 +1,28 @@
-"""Focused coverage for the orchestrate_context_pack runtime boundary guards.
+"""Focused guards for the native AutoGen orchestration boundary."""
 
-These assert the strict card requirements without any model/network call.
-"""
 import asyncio
 
 import pytest
 
-from app.python_models.autogen_orchestrator import orchestrate_context_pack
-from app.python_models.orchestration_contracts import ContextPack, ProjectSession
+from app.python_models.autogen_orchestrator import orchestrate_runtime
+from app.python_models.idf import assemble_input_data_file
+from app.python_models.orchestration_contracts import InputDataFile, ProjectSession, RuntimeRequest
 
 MODEL = "deepseek/deepseek-v4-flash-0731"
 
 
-def _session() -> ProjectSession:
-    return ProjectSession(
-        sessionId="s", projectId="p", turnId="t", route="r",
-        modelProvider="openrouter", modelKey="deepseek/deepseek-v4-flash-0731", providerModelId=MODEL,
-        startedAt="now",
+def test_orchestrate_requires_saved_card_runtime():
+    context = RuntimeRequest(
+        session=ProjectSession(
+            sessionId="s", projectId="p", turnId="t", route="r",
+            modelProvider="openrouter", modelKey=MODEL, providerModelId=MODEL,
+            startedAt="now",
+        ),
+        idf=InputDataFile.model_validate(assemble_input_data_file(
+            project_id="p", deck_id="d", conversation_id="c", run_id="run:one",
+            originating_card_id="card:one", system_text="", user_text="hi",
+        )),
+        cardRuntime=None,
     )
-
-
-def test_orchestrate_requires_card_runtime():
-    ctx = ContextPack(session=_session(), userText="hi", cardRuntime=None)
     with pytest.raises(RuntimeError, match="card_runtime_missing"):
-        asyncio.run(orchestrate_context_pack(ctx))
+        asyncio.run(orchestrate_runtime(context))

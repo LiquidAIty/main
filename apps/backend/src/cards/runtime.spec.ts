@@ -9,6 +9,19 @@ import {
   resolveCardTools,
 } from './runtime';
 
+function withIdf(context: Record<string, any> = {}, userText = 'test') {
+  return {
+    ...context,
+    idf: {
+      idfId: 'idf:test', projectId: String(context.projectId || 'p'),
+      deckId: String(context.deckId || 'd'), conversationId: 'c', runId: 'run:test',
+      originatingCardId: 'mag1', version: 1, systemText: '', userText,
+      dynamicContextMarkdown: '', nativeReferences: [], modelInputMarkdown: userText,
+      contentMarkdown: userText, contentSha256: 'hash', createdAt: 'now',
+    },
+  };
+}
+
 // Canonical DeepSeek model — same saved-card validation path as any other
 // OpenRouter entry; no override logic, no OpenAI fallback.
 describe('canonical DeepSeek V4 Flash 0731 card contract', () => {
@@ -181,7 +194,7 @@ describe('Canonical Cards Runtime', () => {
     }));
     const callable = resolvedMagenticOptions(mag.id, allCards, allEdges);
     const payload = buildPythonAutoGenCardRuntimePayload(
-      mag, 'fix the code', { projectId: 'admin', deckId: 'deck', allCards, allEdges }, {}, callable, '2026',
+      mag, withIdf({ projectId: 'admin', deckId: 'deck', allCards, allEdges }, 'fix the code'), {}, callable, '2026',
     );
 
     // No TypeScript coder packet is ever attached to a planning turn. Retired
@@ -283,8 +296,7 @@ describe('Canonical Cards Runtime', () => {
   it('passes mission input through normally and preserves prior assistant text (no keyword classifier)', () => {
     const payload = buildPythonAutoGenCardRuntimePayload(
       { id: 'mag1' },
-      'test',
-      { previousOutput: 'Some Apollo 11 text' },
+      withIdf({ previousOutput: 'Some Apollo 11 text' }, 'test'),
       {},
       [{ id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5.6-luna' } }],
       '2026'
@@ -292,14 +304,13 @@ describe('Canonical Cards Runtime', () => {
     // No deterministic keyword classifier: 'test'/'go'/'hello' no longer strip the
     // prior assistant text — the mission passes through unchanged.
     expect(payload).not.toHaveProperty('priorAssistantText');
-    expect(payload.userText).toBe('test');
+    expect(payload.idf.modelInputMarkdown).toBe('test');
   });
 
   it('invalid saved maxTokens fails visibly instead of being omitted', () => {
     expect(() => buildPythonAutoGenCardRuntimePayload(
       { id: 'mag1', runtimeOptions: { maxTokens: 0 } },
-      'test input',
-      {},
+      withIdf({}, 'test input'),
       {},
       [{ id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5.6-luna' } }],
       '2026'
@@ -316,7 +327,7 @@ describe('Canonical Cards Runtime', () => {
     const allEdges = [{ id: 'e', source: research.id, target: cardM.id, edgeType: 'magentic_option' }];
     const callable = resolvedMagenticOptions(cardM.id, allCards, allEdges);
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, 'do research', { projectId: 'p', deckId: 'd', allCards, allEdges }, {}, callable, '2026',
+      cardM, withIdf({ projectId: 'p', deckId: 'd', allCards, allEdges }, 'do research'), {}, callable, '2026',
     );
     const participant = payload.cardRuntime.participants.find((p) => p.cardId === 'research');
     expect(participant?.tools).toContain('calculator');
@@ -348,7 +359,7 @@ describe('Canonical Cards Runtime', () => {
     }));
     const callable = resolvedMagenticOptions(cardM.id, allCards, allEdges);
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, 'probe graph tools', { projectId: 'project-1', deckId: 'deck', allCards, allEdges }, {}, callable, '2026',
+      cardM, withIdf({ projectId: 'project-1', deckId: 'deck', allCards, allEdges }, 'probe graph tools'), {}, callable, '2026',
     );
 
     expect(payload.cardRuntime.participants.find((p) => p.cardId === 'think')?.tools).toEqual([
@@ -367,7 +378,7 @@ describe('Canonical Cards Runtime', () => {
       runtimeOptions: { modelKey: 'z-ai/glm-5.2', provider: 'openrouter', tools: ['worldsignals.capabilities'] },
     };
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, 'generic task', { projectId: 'project-1', deckId: 'deck', allCards: [cardM, think], allEdges: [] }, {}, [think], '2026',
+      cardM, withIdf({ projectId: 'project-1', deckId: 'deck', allCards: [cardM, think], allEdges: [] }, 'generic task'), {}, [think], '2026',
     );
     const raw = JSON.stringify(payload);
     expect(raw).not.toContain('thinkGraphReadAuthority');
@@ -382,7 +393,7 @@ describe('Canonical Cards Runtime', () => {
     const cardA = { id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5.6-luna' } };
     const context = { deckId: 'deck1', allCards: [cardM, cardA], allEdges: [] };
 
-    const payload = buildPythonAutoGenCardRuntimePayload(cardM, 'hello', context, {}, [cardA], '2026');
+    const payload = buildPythonAutoGenCardRuntimePayload(cardM, withIdf(context, 'hello'), {}, [cardA], '2026');
 
     expect(payload.session.orchestrator).toBe('magentic_one');
     // System prompt is EXACTLY the card's own prompt — no backend-authored global
@@ -406,7 +417,7 @@ describe('Canonical Cards Runtime', () => {
     };
     const cardA = { id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5.6-luna' } };
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, 'Continue RDW research', { allCards: [cardM, cardA], allEdges: [] }, {}, [cardA], '2026',
+      cardM, withIdf({ allCards: [cardM, cardA], allEdges: [] }, 'Continue RDW research'), {}, [cardA], '2026',
     );
     // No grounding field on the payload and no grounding/ActiveGraphContext prose in
     // the system prompt — the system prompt is exactly the card prompt.
@@ -450,8 +461,7 @@ describe('Canonical Cards Runtime', () => {
     const callable = resolvedMagenticOptions(mag.id, allCards, allEdges);
     const payload = buildPythonAutoGenCardRuntimePayload(
       mag,
-      'fix the code',
-      { projectId: 'admin', deckId: 'deck', allCards, allEdges },
+      withIdf({ projectId: 'admin', deckId: 'deck', allCards, allEdges }, 'fix the code'),
       {},
       callable,
       '2026',
@@ -484,7 +494,7 @@ describe('Canonical Cards Runtime', () => {
     const callableHeads = resolvedMagenticOptions(cardM.id, context.allCards, context.allEdges);
 
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, 'hello', context, {}, callableHeads, '2026'
+      cardM, withIdf(context, 'hello'), {}, callableHeads, '2026'
     );
 
     // disconnected cards should not be in participants
@@ -506,7 +516,7 @@ describe('Canonical Cards Runtime', () => {
     const callableHeads = resolvedMagenticOptions(cardM.id, context.allCards, context.allEdges);
 
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, 'hello', context, {}, callableHeads, '2026'
+      cardM, withIdf(context, 'hello'), {}, callableHeads, '2026'
     );
 
     expect(payload.cardRuntime.participants.map(p => p.cardId)).not.toContain('flow1');
@@ -527,7 +537,7 @@ describe('Canonical Cards Runtime', () => {
     };
 
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, 'test', {}, {}, [cardA], '2026',
+      cardM, withIdf({}, 'test'), {}, [cardA], '2026',
     );
 
     const participant = payload.cardRuntime.participants[0];
@@ -551,7 +561,7 @@ describe('Canonical Cards Runtime', () => {
     };
 
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, 'test', {}, {}, [cardA], '2026',
+      cardM, withIdf({}, 'test'), {}, [cardA], '2026',
     );
 
     const pub = payload.cardRuntime.participants?.[0];
@@ -565,7 +575,7 @@ describe('Canonical Cards Runtime', () => {
     const cardA = { id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent' };
 
     expect(() =>
-      buildPythonAutoGenCardRuntimePayload(cardM, 'test', {}, {}, [cardA], '2026'),
+      buildPythonAutoGenCardRuntimePayload(cardM, withIdf({}, 'test'), {}, [cardA], '2026'),
     ).toThrow('card_model_config_missing');
   });
 
@@ -580,7 +590,7 @@ describe('Canonical Cards Runtime', () => {
     };
 
     expect(() =>
-      buildPythonAutoGenCardRuntimePayload(cardM, 'test', {}, {}, [cardA], '2026'),
+      buildPythonAutoGenCardRuntimePayload(cardM, withIdf({}, 'test'), {}, [cardA], '2026'),
     ).toThrow('card_model_config_mismatch');
   });
 
@@ -615,7 +625,7 @@ describe('Canonical Cards Runtime', () => {
     };
 
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, 'hello', context, {}, [cardFan, cardSom], '2026',
+      cardM, withIdf(context, 'hello'), {}, [cardFan, cardSom], '2026',
     );
 
     const fanParticipant = payload.cardRuntime.participants.find((p) => p.cardId === 'fan1');
@@ -633,7 +643,7 @@ describe('Canonical Cards Runtime', () => {
       runtimeOptions: { modelKey: 'gpt-5.6-luna', tools: ['made_up_tool'] },
     };
 
-    const payload = buildPythonAutoGenCardRuntimePayload(cardM, 'test', {}, {}, [cardA], '2026');
+    const payload = buildPythonAutoGenCardRuntimePayload(cardM, withIdf({}, 'test'), {}, [cardA], '2026');
     const participant = payload.cardRuntime.participants.find((entry) => entry.cardId === 'agentA');
     expect(participant?.tools).toEqual(['made_up_tool']);
   });
@@ -646,7 +656,7 @@ describe('Canonical Cards Runtime', () => {
     };
 
     expect(() =>
-      buildPythonAutoGenCardRuntimePayload(cardM, 'test', {}, {}, [cardA], '2026'),
+      buildPythonAutoGenCardRuntimePayload(cardM, withIdf({}, 'test'), {}, [cardA], '2026'),
     ).toThrow('card_tool_name_empty');
   });
 
@@ -657,7 +667,7 @@ describe('Canonical Cards Runtime', () => {
       runtimeOptions: { modelKey: 'gpt-5.6-luna', tools: ['current_datetime', 'calculator'] },
     };
 
-    const payload = buildPythonAutoGenCardRuntimePayload(cardM, 'test', {}, {}, [cardA], '2026');
+    const payload = buildPythonAutoGenCardRuntimePayload(cardM, withIdf({}, 'test'), {}, [cardA], '2026');
     const participant = payload.cardRuntime.participants.find((p) => p.cardId === 'agentA');
     expect(participant?.tools).toEqual(['current_datetime', 'calculator']);
   });
@@ -672,7 +682,7 @@ describe('Canonical Cards Runtime', () => {
     };
 
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, 'test', {}, {}, [cardA], '2026',
+      cardM, withIdf({}, 'test'), {}, [cardA], '2026',
     );
 
     const pub = payload.cardRuntime.participants?.[0];

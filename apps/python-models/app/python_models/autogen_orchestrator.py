@@ -6,10 +6,10 @@ ledgers, no fake success.
 """
 
 from app.python_models.magentic_agentchat import run_native_magentic_mission
-from app.python_models.orchestration_contracts import ContextPack, OrchestratorRunResponse
+from app.python_models.orchestration_contracts import RuntimeRequest, OrchestratorRunResponse
 
 
-async def orchestrate_context_pack(context: ContextPack) -> OrchestratorRunResponse:
+async def orchestrate_runtime(context: RuntimeRequest) -> OrchestratorRunResponse:
     if context.cardRuntime is None:
         raise RuntimeError("card_runtime_missing: strict ReactFlow card payload is required")
     if context.cardRuntime.runtimeType != "magentic_one":
