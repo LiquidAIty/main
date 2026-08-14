@@ -106,6 +106,17 @@ export const HERMES_CARD_TOOLS = [
   'graphiti.add_triplet',
   'write_mag_one_instructions',
 ] as const;
+
+export type AgentExecutionMode = NonNullable<AgentCardRuntimeOptions['executionMode']>;
+
+export function normalizeAgentExecutionMode(
+  value: unknown,
+  runtimeBinding?: unknown,
+): AgentExecutionMode {
+  if (normalizeRuntimeBinding(runtimeBinding) === 'main_chat') return 'single';
+  return value === 'auto-kanban' ? 'auto-kanban' : 'single';
+}
+
 export function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   const normalized = safeText(value).trim().toLowerCase();
   if (normalized === 'assistant_agent') return 'assistant_agent';

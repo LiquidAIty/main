@@ -50,9 +50,7 @@ function trimBaseUrl(value: string): string {
 function buildPythonRailsBaseUrls(): string[] {
   const configured = trimBaseUrl(String(process.env.AUTOGEN_ORCHESTRATOR_URL || '').trim());
   if (!configured) {
-    throw new Error(
-      'autogen_orchestrator_url_missing: set AUTOGEN_ORCHESTRATOR_URL in apps/backend/.env',
-    );
+    throw new Error('missing_required_config: AUTOGEN_ORCHESTRATOR_URL');
   }
   return [configured];
 }

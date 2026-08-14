@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildActiveAgentManagerLocalConfig,
+  canChooseCardExecutionMode,
   buildInputDictionarySelectedRows,
   buildDisplayedToolRows,
   toggleSavedToolAssignment,
@@ -16,25 +17,62 @@ describe('AgentManager active builder config', () => {
   it('builds the exact active local configuration payload', () => {
     const payload = buildActiveAgentManagerLocalConfig({
       runtimeBinding: 'main_chat',
+      executionMode: 'auto-kanban',
       provider: 'openai',
       modelKey: 'gpt-test',
       reasoningEffort: 'medium',
       temperature: 0.2,
       maxTokens: 800,
+      maxTurns: 12,
       promptTemplate: 'test prompt',
       toolsText: 'web',
+      skillsText: 'research\nplanning',
+      toolsetsText: 'browser',
+      mcpConnectionIdsText: 'github\nproject-research',
     });
 
     expect(payload).toEqual({
       runtime_binding: 'main_chat',
+      execution_mode: 'single',
       provider: 'openai',
       model_key: 'gpt-test',
       reasoning_effort: 'medium',
       temperature: 0.2,
       max_tokens: 800,
+      max_turns: 12,
       prompt_template: 'test prompt',
       tools: ['web'],
+      skills: ['research', 'planning'],
+      toolsets: ['browser'],
+      mcp_connection_ids: ['github', 'project-research'],
     });
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toMatch(/api.?key|access.?token|refresh.?token|client.?secret/i);
+  });
+
+  it('offers one execution-mode field only to ordinary cards', () => {
+    expect(canChooseCardExecutionMode('assist', 'assistant_agent')).toBe(true);
+    expect(canChooseCardExecutionMode(null, 'assistant_agent')).toBe(true);
+    expect(canChooseCardExecutionMode('main_chat', 'assistant_agent')).toBe(false);
+    expect(canChooseCardExecutionMode('local_coder', 'assistant_agent')).toBe(false);
+    expect(canChooseCardExecutionMode(null, 'magentic_one')).toBe(false);
+
+    const ordinary = buildActiveAgentManagerLocalConfig({
+      runtimeBinding: 'assist',
+      executionMode: 'auto-kanban',
+      provider: 'openai',
+      modelKey: 'gpt-test',
+      reasoningEffort: '',
+      temperature: '',
+      maxTokens: '',
+      maxTurns: '',
+      promptTemplate: '',
+      toolsText: '',
+      skillsText: '',
+      toolsetsText: '',
+      mcpConnectionIdsText: '',
+    });
+    expect(ordinary.execution_mode).toBe('auto-kanban');
   });
 
   it('restores the canonical Save and Run actions without the regressed Run Test', () => {
@@ -63,12 +101,19 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain('Description');
     expect(source).not.toContain('Card mode');
     expect(source).not.toContain('Runtime Type');
-    expect(source).not.toContain('Execution Mode');
-    expect(source).not.toContain('Advanced');
+    expect(source).toContain('Execution mode');
+    expect(source).toContain('data-testid="agent-execution-mode"');
+    expect(source).toContain('Advanced runtime');
     expect(source).not.toContain('GlassInspectorSection');
     expect(source).not.toContain('roleBadge');
-    expect(source).not.toContain('>Temperature<');
-    expect(source).not.toContain('>Max Tokens<');
+    expect(source).toContain('Temperature');
+    expect(source).toContain('Max tokens');
+    expect(source).toContain('Max turns');
+    expect(source).toContain('Enabled skills');
+    expect(source).toContain('MCP connections');
+    expect(source).toContain('Connection references only');
+    expect(source).not.toContain('Profile selector');
+    expect(source).not.toContain('HERMES_HOME');
   });
 
   it('separates Main availability from saved assignment across authority families', () => {

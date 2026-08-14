@@ -317,6 +317,15 @@ describe('coder routes', () => {
 
   it('forwards only AgentGraph assignment identities on the configured-card bridge', async () => {
     runtimeMocks.runConfiguredCard.mockClear();
+    runtimeMocks.runConfiguredCard.mockResolvedValueOnce({
+      status: 'submitted',
+      output: '',
+      hermesKanban: {
+        taskId: 't_native123',
+        runId: null,
+        snapshot: { task: { id: 't_native123', status: 'ready' }, runs: [] },
+      },
+    } as any);
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
@@ -335,6 +344,16 @@ describe('coder routes', () => {
         }),
       });
       expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        result: {
+          status: 'submitted',
+          hermesKanban: {
+            taskId: 't_native123',
+            snapshot: { task: { status: 'ready' } },
+          },
+        },
+      });
       expect(runtimeMocks.runConfiguredCard).toHaveBeenCalledWith({
         projectId: 'project-1',
         deckId: 'deck_builder',

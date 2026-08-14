@@ -8,16 +8,24 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 const execMocks = vi.hoisted(() => ({
   execFile: vi.fn(),
 }));
+const fsMocks = vi.hoisted(() => ({
+  mkdirSync: vi.fn(),
+}));
 
 vi.mock('node:child_process', () => ({
   execFile: execMocks.execFile,
 }));
+vi.mock('node:fs', async () => {
+  const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+  return { ...actual, mkdirSync: fsMocks.mkdirSync };
+});
 
 import router from './hermesKanban.routes';
 import {
   parseHermesJson,
   parseYamlishConfig,
   parseProfileTable,
+  runHermesKanbanCardTask,
 } from './hermesKanban.routes';
 
 function echo(fixture: unknown, exitCode = 0, stderr = '') {
@@ -113,6 +121,130 @@ describe('hermesKanban helpers', () => {
       gateway: 'running',
     });
     expect(rows[1]).toMatchObject({ name: 'research', active: false, model: 'z-ai/glm-5.2', gateway: 'stopped' });
+  });
+});
+
+describe('saved-card native Hermes Kanban submission', () => {
+  beforeEach(() => {
+    execMocks.execFile.mockReset();
+    fsMocks.mkdirSync.mockReset();
+  });
+
+  it('creates under the stable card profile and returns the exact native task/run snapshot', async () => {
+    const snapshot = {
+      task: {
+        id: 't_native123',
+        status: 'done',
+        result: 'native synthesized result',
+      },
+      latest_summary: 'native summary',
+      parents: [],
+      children: ['t_worker1'],
+      comments: [],
+      events: [{ kind: 'completed' }],
+      runs: [{ id: 6, status: 'done', outcome: 'completed' }],
+    };
+    execMocks.execFile.mockImplementation((_bin, args, _opts, cb) => {
+      if (args.includes('create')) {
+        cb(null, JSON.stringify({ id: 't_native123', status: 'ready' }), '');
+        return;
+      }
+      cb(null, JSON.stringify(snapshot), '');
+    });
+
+    const result = await runHermesKanbanCardTask({
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      correlationId: 'corr-1',
+      cardId: 'card_hermes_steward',
+      title: 'Kanban',
+      prompt: 'Saved card instructions.',
+      profile: 'card_hermes_steward',
+      provider: 'openai-codex',
+      providerModelId: 'gpt-5.6-luna',
+      input: 'Perform the bounded assignment.',
+    });
+
+    expect(result).toEqual({
+      taskId: 't_native123',
+      runId: 6,
+      snapshot,
+    });
+    expect(fsMocks.mkdirSync).toHaveBeenCalledWith(
+      expect.stringMatching(/[\\/]Hermes[\\/]\.hermes[\\/]profiles[\\/]card_hermes_steward$/i),
+      { recursive: true },
+    );
+    const [, createArgs] = execMocks.execFile.mock.calls[0];
+    expect(createArgs).toEqual(expect.arrayContaining([
+      '-p',
+      'card_hermes_steward',
+      'kanban',
+      'create',
+      'Kanban',
+      '--assignee',
+      'card_hermes_steward',
+      '--created-by',
+      'card_hermes_steward',
+      '--model',
+      'gpt-5.6-luna',
+      '--provider',
+      'openai-codex',
+      '--json',
+    ]));
+    const bodyIndex = createArgs.indexOf('--body');
+    expect(createArgs[bodyIndex + 1]).toBe([
+      '[LIQUIDAITY_SAVED_CARD_INSTRUCTIONS]',
+      'Saved card instructions.',
+      '',
+      '[ASSIGNMENT]',
+      'Perform the bounded assignment.',
+    ].join('\n'));
+    const idempotencyIndex = createArgs.indexOf('--idempotency-key');
+    expect(createArgs[idempotencyIndex + 1]).toMatch(/^liquidaity-[a-f0-9]{64}$/);
+    const [, showArgs] = execMocks.execFile.mock.calls[1];
+    expect(showArgs).toEqual([
+      '-p',
+      'card_hermes_steward',
+      'kanban',
+      'show',
+      't_native123',
+      '--json',
+    ]);
+  });
+
+  it('does not expose native stderr through its failure contract', async () => {
+    const secret = 'sk-secret-value';
+    execMocks.execFile.mockImplementation(echo('', 1, `provider failed with ${secret}`));
+
+    await expect(runHermesKanbanCardTask({
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      correlationId: 'corr-secret',
+      cardId: 'card_hermes_steward',
+      title: 'Kanban',
+      prompt: 'Saved card instructions.',
+      profile: 'card_hermes_steward',
+      provider: 'openai-codex',
+      providerModelId: 'gpt-5.6-luna',
+      input: 'Perform the bounded assignment.',
+    })).rejects.toThrow('hermes_kanban_card_create_failed');
+
+    try {
+      await runHermesKanbanCardTask({
+        projectId: 'project-1',
+        deckId: 'deck_builder',
+        correlationId: 'corr-secret-2',
+        cardId: 'card_hermes_steward',
+        title: 'Kanban',
+        prompt: 'Saved card instructions.',
+        profile: 'card_hermes_steward',
+        provider: 'openai-codex',
+        providerModelId: 'gpt-5.6-luna',
+        input: 'Perform the bounded assignment.',
+      });
+    } catch (error) {
+      expect(String(error)).not.toContain(secret);
+    }
   });
 });
 

@@ -185,6 +185,7 @@ interface AgentManagerProps {
 export type AgentManagerLocalConfig = {
   runtime_binding?: RuntimeBinding | null;
   runtime_type?: AgentCardRuntimeType | null;
+  execution_mode?: 'single' | 'auto-kanban' | null;
   runtime_options?: AgentCardRuntimeOptions | null;
   parent_graph_id?: string | null;
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | '' | null;
@@ -192,8 +193,12 @@ export type AgentManagerLocalConfig = {
   reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
   temperature?: number | null;
   max_tokens?: number | null;
+  max_turns?: number | null;
   prompt_template?: string | null;
   tools?: unknown[];
+  skills?: unknown[];
+  toolsets?: unknown[];
+  mcp_connection_ids?: unknown[];
 };
 
 export type StandaloneCardTestResult = {
@@ -310,24 +315,46 @@ function parseListText(value: string): string[] {
 
 export function buildActiveAgentManagerLocalConfig(input: {
   runtimeBinding: RuntimeBinding | '';
+  executionMode: 'single' | 'auto-kanban';
   provider: 'openai' | 'openrouter' | '';
   modelKey: string;
   reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | '';
   temperature: number | '';
   maxTokens: number | '';
+  maxTurns: number | '';
   promptTemplate: string;
   toolsText: string;
+  skillsText: string;
+  toolsetsText: string;
+  mcpConnectionIdsText: string;
 }): AgentManagerLocalConfig {
   return {
     runtime_binding: input.runtimeBinding || null,
+    execution_mode:
+      input.runtimeBinding === 'main_chat' ? 'single' : input.executionMode,
     provider: input.provider,
     model_key: input.modelKey || null,
     reasoning_effort: input.reasoningEffort || null,
     temperature: typeof input.temperature === 'number' ? input.temperature : null,
     max_tokens: typeof input.maxTokens === 'number' ? input.maxTokens : null,
+    max_turns: typeof input.maxTurns === 'number' ? input.maxTurns : null,
     prompt_template: input.promptTemplate,
     tools: parseListText(input.toolsText),
+    skills: parseListText(input.skillsText),
+    toolsets: parseListText(input.toolsetsText),
+    mcp_connection_ids: parseListText(input.mcpConnectionIdsText),
   };
+}
+
+export function canChooseCardExecutionMode(
+  runtimeBinding: RuntimeBinding | '' | null | undefined,
+  runtimeType: AgentCardRuntimeType | null | undefined,
+): boolean {
+  return (
+    runtimeBinding !== 'main_chat' &&
+    runtimeBinding !== 'local_coder' &&
+    runtimeType !== 'magentic_one'
+  );
 }
 
 export function AgentManager({
@@ -355,6 +382,7 @@ export function AgentManager({
   const saveCardStatusRef = useRef<SaveCardStatus>('idle');
   saveCardStatusRef.current = saveCardStatus;
   const [runtimeBinding, setRuntimeBinding] = useState<RuntimeBinding | ''>('');
+  const [executionMode, setExecutionMode] = useState<'single' | 'auto-kanban'>('single');
   const [cardNameDraft, setCardNameDraft] = useState(cardName);
   const [cardSubtextDraft, setCardSubtextDraft] = useState(cardSubtext);
   const [provider, setProvider] = useState<'openai' | 'openrouter' | ''>('');
@@ -380,6 +408,7 @@ export function AgentManager({
   const [toolDictionaryBusy, setToolDictionaryBusy] = useState(false);
   const [temperature, setTemperature] = useState<number | ''>('');
   const [maxTokens, setMaxTokens] = useState<number | ''>('');
+  const [maxTurns, setMaxTurns] = useState<number | ''>('');
   const [promptText, setPromptText] = useState('');
   const [promptParts, setPromptParts] = useState({
     role: '',
@@ -390,6 +419,9 @@ export function AgentManager({
   });
   const [promptPartsTouched, setPromptPartsTouched] = useState(false);
   const [toolsText, setToolsText] = useState('');
+  const [skillsText, setSkillsText] = useState('');
+  const [toolsetsText, setToolsetsText] = useState('');
+  const [mcpConnectionIdsText, setMcpConnectionIdsText] = useState('');
   const draftDirtyRef = useRef(false);
 
   useEffect(() => {
@@ -440,6 +472,13 @@ export function AgentManager({
     setSaveCardStatus('idle');
     setSaveCardErrorMessage(null);
     setRuntimeBinding(localConfig.runtime_binding || '');
+    setExecutionMode(
+      localConfig.runtime_binding === 'main_chat'
+        ? 'single'
+        : localConfig.execution_mode === 'auto-kanban'
+          ? 'auto-kanban'
+          : 'single',
+    );
     setProvider(
       localConfig.provider === 'openai' || localConfig.provider === 'openrouter'
         ? localConfig.provider
@@ -449,12 +488,30 @@ export function AgentManager({
     setReasoningEffort(localConfig.reasoning_effort || '');
     setTemperature(typeof localConfig.temperature === 'number' ? localConfig.temperature : '');
     setMaxTokens(typeof localConfig.max_tokens === 'number' ? localConfig.max_tokens : '');
+    setMaxTurns(typeof localConfig.max_turns === 'number' ? localConfig.max_turns : '');
     setPromptText(localConfig.prompt_template || '');
     setPromptParts(parsePromptTemplate(localConfig.prompt_template || ''));
     setPromptPartsTouched(false);
     setToolsText(
       Array.isArray(localConfig.tools)
         ? localConfig.tools
+            .filter((entry): entry is string => typeof entry === 'string')
+            .join('\n')
+        : '',
+    );
+    setSkillsText(
+      Array.isArray(localConfig.skills)
+        ? localConfig.skills.filter((entry): entry is string => typeof entry === 'string').join('\n')
+        : '',
+    );
+    setToolsetsText(
+      Array.isArray(localConfig.toolsets)
+        ? localConfig.toolsets.filter((entry): entry is string => typeof entry === 'string').join('\n')
+        : '',
+    );
+    setMcpConnectionIdsText(
+      Array.isArray(localConfig.mcp_connection_ids)
+        ? localConfig.mcp_connection_ids
             .filter((entry): entry is string => typeof entry === 'string')
             .join('\n')
         : '',
@@ -470,13 +527,18 @@ export function AgentManager({
     if (saveCardStatus === 'saving') return;
     const editedConfig = buildActiveAgentManagerLocalConfig({
       runtimeBinding,
+      executionMode,
       provider,
       modelKey,
       reasoningEffort,
       temperature,
       maxTokens,
+      maxTurns,
       promptTemplate: promptPartsTouched ? serializePromptFields(promptParts) : promptText,
       toolsText,
+      skillsText,
+      toolsetsText,
+      mcpConnectionIdsText,
     });
     const payload = {
       ...localConfig,
@@ -512,15 +574,20 @@ export function AgentManager({
     onSaveLocalConfig,
     saveCardStatus,
     runtimeBinding,
+    executionMode,
     provider,
     modelKey,
     reasoningEffort,
     temperature,
     maxTokens,
+    maxTurns,
     promptPartsTouched,
     promptParts,
     promptText,
     toolsText,
+    skillsText,
+    toolsetsText,
+    mcpConnectionIdsText,
   ]);
 
   const saveRevisionAtStartRef = useRef<string | null>(null);
@@ -582,13 +649,18 @@ export function AgentManager({
     draftDirtyRef.current = false;
     const editedConfig = buildActiveAgentManagerLocalConfig({
       runtimeBinding,
+      executionMode,
       provider,
       modelKey,
       reasoningEffort,
       temperature,
       maxTokens,
+      maxTurns,
       promptTemplate: promptPartsTouched ? serializePromptFields(promptParts) : promptText,
       toolsText,
+      skillsText,
+      toolsetsText,
+      mcpConnectionIdsText,
     });
     void onSaveLocalConfig({
       ...localConfig,
@@ -604,18 +676,27 @@ export function AgentManager({
     localConfig,
     onSaveLocalConfig,
     runtimeBinding,
+    executionMode,
     provider,
     modelKey,
     reasoningEffort,
     temperature,
     maxTokens,
+    maxTurns,
     promptText,
     promptParts,
     promptPartsTouched,
     toolsText,
+    skillsText,
+    toolsetsText,
+    mcpConnectionIdsText,
   ]);
 
   const availableModels = provider ? modelsByProvider[provider] || [] : [];
+  const canChooseExecutionMode = canChooseCardExecutionMode(
+    runtimeBinding,
+    localConfig?.runtime_type,
+  );
   const savedToolNames = parseListText(toolsText);
   const selectedToolRows = buildInputDictionarySelectedRows(
     toolDictionaryPage.selectedKnownReferences,
@@ -893,6 +974,32 @@ export function AgentManager({
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {canChooseExecutionMode ? (
+              <div>
+                <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                  Execution mode
+                </label>
+                <select
+                  data-testid="agent-execution-mode"
+                  value={executionMode}
+                  onChange={(event) => {
+                    setExecutionMode(event.target.value as 'single' | 'auto-kanban');
+                    markDraftDirty();
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: 8,
+                    background: '#2B2B2B',
+                    color: '#FFF',
+                    border: '1px solid #3A3A3A',
+                    borderRadius: 8,
+                  }}
+                >
+                  <option value="single">Single</option>
+                  <option value="auto-kanban">Auto-Kanban</option>
+                </select>
+              </div>
+            ) : null}
             <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
                 Provider
@@ -981,13 +1088,65 @@ export function AgentManager({
                 <option value="xhigh">Extra high</option>
               </select>
             </div>
-
+          </div>
+          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
+            Advanced runtime
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                Temperature
+              </label>
+              <input
+                aria-label="Temperature"
+                type="number"
+                min="0"
+                step="0.1"
+                value={temperature}
+                onChange={(event) => {
+                  setTemperature(event.target.value === '' ? '' : event.target.valueAsNumber);
+                  markDraftDirty();
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                Max tokens
+              </label>
+              <input
+                aria-label="Max tokens"
+                type="number"
+                min="1"
+                step="1"
+                value={maxTokens}
+                onChange={(event) => {
+                  setMaxTokens(event.target.value === '' ? '' : event.target.valueAsNumber);
+                  markDraftDirty();
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                Max turns
+              </label>
+              <input
+                aria-label="Max turns"
+                type="number"
+                min="1"
+                step="1"
+                value={maxTurns}
+                onChange={(event) => {
+                  setMaxTurns(event.target.value === '' ? '' : event.target.valueAsNumber);
+                  markDraftDirty();
+                }}
+              />
+            </div>
           </div>
         </div>
       );
     }
 
-    if (activeTab === 'Tools') {
+    if (activeTab === 'Capabilities') {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
@@ -1156,6 +1315,56 @@ export function AgentManager({
               </button>
             </div>
           ) : null}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                Enabled skills
+              </label>
+              <textarea
+                aria-label="Enabled skills"
+                value={skillsText}
+                onChange={(event) => {
+                  setSkillsText(event.target.value);
+                  markDraftDirty();
+                }}
+                placeholder="One skill ID per line"
+                rows={4}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                Toolsets
+              </label>
+              <textarea
+                aria-label="Toolsets"
+                value={toolsetsText}
+                onChange={(event) => {
+                  setToolsetsText(event.target.value);
+                  markDraftDirty();
+                }}
+                placeholder="One toolset ID per line"
+                rows={4}
+              />
+            </div>
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+              MCP connections
+            </label>
+            <textarea
+              aria-label="MCP connections"
+              value={mcpConnectionIdsText}
+              onChange={(event) => {
+                setMcpConnectionIdsText(event.target.value);
+                markDraftDirty();
+              }}
+              placeholder="One configured connection ID per line"
+              rows={4}
+            />
+            <div style={{ color: '#80969F', fontSize: 10, marginTop: 4 }}>
+              Connection references only. Credentials and tokens remain in global runtime configuration.
+            </div>
+          </div>
         </div>
       );
     }

@@ -11,14 +11,15 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from ingest import ingest_pdf, ingest_web_documents
+from runtime_config import load_runtime_environment
 
-load_dotenv()
+load_runtime_environment()
+
+from ingest import ingest_pdf, ingest_web_documents
 
 app = FastAPI(title="KnowGraph")
 UPLOADS_DIR = Path(__file__).resolve().parent / "uploads"

@@ -7,6 +7,7 @@ vi.mock('../db/pool', () => ({
 
 import {
   getDeckDocument,
+  saveDeckDocument,
 } from './store';
 
 beforeEach(() => {
@@ -14,6 +15,95 @@ beforeEach(() => {
 });
 
 describe('deck store edge persistence', () => {
+  it('forces Main to single while preserving another card auto-kanban mode and identity', async () => {
+    let persisted: Record<string, unknown> = {
+      v3_state: { decks: {}, meta: { decks: {} } },
+    };
+    dbMocks.query.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (String(sql).includes('SELECT agent_io_schema')) {
+        return { rows: [{ agent_io_schema: persisted }] };
+      }
+      persisted = JSON.parse(String(params[params.length - 2]));
+      return { rows: [{ agent_io_schema: persisted }] };
+    });
+    const deck = {
+      id: 'deck_builder',
+      name: 'Execution Modes',
+      version: 1,
+      promptTemplates: [],
+      nodes: [
+        {
+          id: 'card_main_chat',
+          runtimeBinding: 'main_chat',
+          runtimeType: 'assistant_agent',
+          runtimeOptions: { executionMode: 'auto-kanban' },
+        },
+        {
+          id: 'card_luna',
+          runtimeBinding: 'assist',
+          runtimeType: 'assistant_agent',
+          runtimeOptions: { executionMode: 'auto-kanban' },
+        },
+      ],
+      edges: [],
+    };
+
+    const saved = await saveDeckDocument('project-one', 'deck_builder', deck as any);
+
+    expect(saved.deck.nodes.map((card) => card.id)).toEqual(['card_main_chat', 'card_luna']);
+    expect(saved.deck.nodes[0].runtimeOptions?.executionMode).toBe('single');
+    expect(saved.deck.nodes[1].runtimeOptions?.executionMode).toBe('auto-kanban');
+  });
+
+  it('round-trips card skills and MCP references without serializing credentials', async () => {
+    let persisted: Record<string, unknown> = {
+      v3_state: { decks: {}, meta: { decks: {} } },
+    };
+    dbMocks.query.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (String(sql).includes('SELECT agent_io_schema')) {
+        return { rows: [{ agent_io_schema: persisted }] };
+      }
+      const nextSchema = JSON.parse(String(params[params.length - 2]));
+      persisted = nextSchema;
+      return { rows: [{ agent_io_schema: persisted }] };
+    });
+    const deck = {
+      id: 'deck_builder',
+      name: 'Unified Card Deck',
+      version: 1,
+      promptTemplates: [],
+      nodes: [{
+        id: 'card_research',
+        kind: 'agent' as const,
+        templateId: 'template_assist',
+        title: 'Research',
+        runtimeType: 'assistant_agent' as const,
+        runtimeOptions: {
+          provider: 'openai' as const,
+          modelKey: 'gpt-5.6-luna',
+          skills: ['research', 'citations'],
+          toolsets: ['web-research'],
+          mcpConnectionIds: ['github', 'research-service'],
+        },
+        position: { x: 1, y: 2 },
+      }],
+      edges: [],
+    };
+
+    const saved = await saveDeckDocument('project-one', 'deck_builder', deck);
+    const loaded = await getDeckDocument('project-one', 'deck_builder');
+
+    expect(saved.deck.nodes[0].runtimeOptions).toMatchObject({
+      skills: ['research', 'citations'],
+      toolsets: ['web-research'],
+      mcpConnectionIds: ['github', 'research-service'],
+    });
+    expect(loaded.deck).toEqual(saved.deck);
+    expect(JSON.stringify(saved.deck)).not.toMatch(
+      /api.?key|access.?token|refresh.?token|client.?secret/i,
+    );
+  });
+
   it('does not inject Main, prompt templates, or control edges into saved state', async () => {
     const deck = {
       id: 'deck_builder',

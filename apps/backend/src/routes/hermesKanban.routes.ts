@@ -1,5 +1,7 @@
 import { Router } from 'express';
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 
@@ -12,8 +14,9 @@ import { resolveRepoRoot } from '../coder/workspaceRoot';
  * JSON / plain output verbatim-shaped. No logic, no fallbacks, no fake data.
  *
  * Read routes are safe (list/show/stats/boards/profiles/config). Mutation
- * routes (create/block/comment/...) run the real CLI and are only invoked by
- * explicit user action in the Hermes Kanban app. Nothing here auto-mutates.
+ * routes (create/block/comment/...) run the real CLI from explicit user action
+ * in the Hermes Kanban app. The one exported saved-card submission function is
+ * also used by configured-card dispatch when that card selected auto-Kanban.
  */
 
 const HERMES_ROOT = path.join(resolveRepoRoot(), 'Hermes');
@@ -68,6 +71,117 @@ export function parseHermesJson<T>(stdout: string): T {
     throw new Error(`hermes_cli_json_not_found: ${trimmed.slice(0, 120)}`);
   }
   return JSON.parse(trimmed.slice(start)) as T;
+}
+
+export type HermesKanbanTaskSnapshot = {
+  task: Record<string, unknown>;
+  runs: Record<string, unknown>[];
+  [key: string]: unknown;
+};
+
+export type HermesKanbanCardTaskResult = {
+  taskId: string;
+  runId: string | number | null;
+  snapshot: HermesKanbanTaskSnapshot;
+};
+
+/**
+ * Submit one saved Hermes-bound card to Hermes' native Kanban owner.
+ *
+ * This is transport only: Hermes creates the task, assigns/runs/retries it,
+ * and owns every native status and result. The returned show envelope is not
+ * translated into a LiquidAIty lifecycle.
+ */
+export async function runHermesKanbanCardTask(args: {
+  projectId: string;
+  deckId: string;
+  correlationId: string;
+  cardId: string;
+  title: string;
+  prompt: string;
+  profile: string;
+  provider: string;
+  providerModelId: string;
+  input: string;
+}): Promise<HermesKanbanCardTaskResult> {
+  const profile = String(args.profile || '').trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile)) {
+    throw new Error('hermes_kanban_card_profile_invalid');
+  }
+  mkdirSync(path.join(HERMES_HOME, 'profiles', profile), { recursive: true });
+  const idempotencyKey = `liquidaity-${createHash('sha256')
+    .update([args.projectId, args.deckId, args.cardId, args.correlationId].join('\u0000'))
+    .digest('hex')}`;
+  const body = [
+    '[LIQUIDAITY_SAVED_CARD_INSTRUCTIONS]',
+    args.prompt,
+    '',
+    '[ASSIGNMENT]',
+    args.input,
+  ].join('\n');
+  const createResult = await runHermes([
+    '-p',
+    profile,
+    'kanban',
+    'create',
+    args.title,
+    '--body',
+    body,
+    '--assignee',
+    profile,
+    '--created-by',
+    args.cardId,
+    '--idempotency-key',
+    idempotencyKey,
+    '--model',
+    args.providerModelId,
+    '--provider',
+    args.provider,
+    '--json',
+  ]);
+  if (createResult.exitCode !== 0) {
+    throw new Error('hermes_kanban_card_create_failed');
+  }
+
+  let taskId = '';
+  try {
+    const created = parseHermesJson<{ id?: unknown }>(createResult.stdout);
+    taskId = String(created?.id || '').trim();
+  } catch {
+    throw new Error('hermes_kanban_card_create_response_invalid');
+  }
+  if (!/^t_[A-Za-z0-9_-]+$/.test(taskId)) {
+    throw new Error('hermes_kanban_card_task_id_invalid');
+  }
+
+  const showResult = await runHermes([
+    '-p',
+    profile,
+    'kanban',
+    'show',
+    taskId,
+    '--json',
+  ]);
+  if (showResult.exitCode !== 0) {
+    throw new Error('hermes_kanban_card_show_failed');
+  }
+
+  let snapshot: HermesKanbanTaskSnapshot;
+  try {
+    snapshot = parseHermesJson<HermesKanbanTaskSnapshot>(showResult.stdout);
+  } catch {
+    throw new Error('hermes_kanban_card_show_response_invalid');
+  }
+  if (String(snapshot?.task?.id || '').trim() !== taskId || !Array.isArray(snapshot?.runs)) {
+    throw new Error('hermes_kanban_card_snapshot_invalid');
+  }
+  const latestRun = snapshot.runs.at(-1);
+  const rawRunId = latestRun?.id;
+  const runId =
+    typeof rawRunId === 'string' || typeof rawRunId === 'number'
+      ? rawRunId
+      : null;
+  return { taskId, runId, snapshot };
 }
 
 export function parseYamlishConfig(block: string): Record<string, unknown> {

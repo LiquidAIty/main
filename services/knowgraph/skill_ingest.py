@@ -46,6 +46,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from runtime_config import load_runtime_environment
+
 IMPORT_KIND = "skill_markdown"
 SOURCE = "repo"
 RESET_SKILL_GRAPH_CYPHER = """
@@ -1537,6 +1539,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_runtime_environment()
     args = build_arg_parser().parse_args(argv)
     try:
         return args.func(args)

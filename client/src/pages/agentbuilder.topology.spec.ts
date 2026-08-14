@@ -97,8 +97,8 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(hermesTools).not.toEqual(expect.arrayContaining(['web_search', 'run_mag_one']));
     expect(byId.has('card_research_agent')).toBe(false);
     const hermesPrompt = byId.get('card_hermes_steward')?.prompt ?? '';
-    expect(hermesPrompt).toContain('repo-owned persistent Hermes ACP runtime');
-    expect(byId.get('card_hermes_steward')?.title).toBe('Hermes Kanban');
+    expect(hermesPrompt).toContain('saved Kanban agent');
+    expect(byId.get('card_hermes_steward')?.title).toBe('Kanban');
     expect(hermesPrompt).not.toContain('external Hermes agent runtime');
   });
 

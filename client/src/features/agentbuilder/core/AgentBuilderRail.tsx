@@ -169,8 +169,8 @@ export default function AgentBuilderRail({
       {visibleRailItems.showHermesKanban ? (
         <button
           type="button"
-          title="Hermes Kanban"
-          aria-label="Hermes Kanban"
+          title="Kanban"
+          aria-label="Kanban"
           data-testid="rail-hermes-kanban-button"
           onClick={onOpenHermesKanban}
           className="p-2 rounded"

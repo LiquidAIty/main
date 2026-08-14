@@ -67,20 +67,18 @@ function logStartupBanner() {
   const redactedKey = process.env.OPENAI_API_KEY ? "(set)" : "(not set)";
 
   // Parse DATABASE_URL to show connection details
-  const dbUrl = process.env.DATABASE_URL || 'postgresql://liquidaity-user:***@localhost:5433/liquidaity';
-  let dbHost = 'localhost';
-  let dbPort = '5433';
-  let dbName = 'liquidaity';
-  let dbUser = 'liquidaity-user';
+  const dbUrl = process.env.DATABASE_URL!;
+  let dbHost = '(invalid DATABASE_URL)';
+  let dbPort = '';
+  let dbName = '';
+  let dbUser = '';
   try {
     const url = new URL(dbUrl);
     dbHost = url.hostname;
     dbPort = url.port || '5432';
     dbName = url.pathname.slice(1).split('?')[0];
     dbUser = url.username;
-  } catch {
-    // fallback already set
-  }
+  } catch {}
 
   console.log("────────────── LIQUIDAITY BACKEND START ─────────────");
   console.log(`NODE_ENV:         ${nodeEnv}`);

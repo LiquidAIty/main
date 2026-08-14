@@ -13,10 +13,14 @@ vi.mock('../services/autogen/autogenOrchestratorClient', () => ({
   orchestrateWithAutoGen: vi.fn(),
   runSingleCardWithAutoGen: vi.fn(),
 }));
+vi.mock('../routes/hermesKanban.routes', () => ({
+  runHermesKanbanCardTask: vi.fn(),
+}));
 vi.mock('../hermes/mainAdapter', () => ({
   deriveHermesSessionKey: vi.fn((projectId, conversationId, cardId) =>
     `hermes:${projectId}:${conversationId}:${cardId}`,
   ),
+  providerForHermes: vi.fn((provider: string) => provider === 'openai' ? 'openai-codex' : provider),
   resolveDirectHermesSubagents: vi.fn((parentCardId: string, nodes: any[], edges: any[]) => edges
     .filter((edge: any) => edge.source === parentCardId && edge.edgeType === 'flow')
     .map((edge: any) => nodes.find((node: any) => node.id === edge.target))
@@ -30,7 +34,7 @@ vi.mock('../hermes/mainAdapter', () => ({
     cardId: card.id,
     title: card.title,
     prompt: card.prompt,
-    profile: 'default',
+    profile: card.id,
     provider: 'openai',
     modelKey: 'gpt-5.6-luna',
     providerModelId: 'gpt-5.6-luna',
@@ -47,11 +51,13 @@ vi.mock('../hermes/mainAdapter', () => ({
 import { getDeckDocument } from '../decks/store';
 import { runSingleCardWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
 import { startHermesTurn } from '../hermes/mainAdapter';
+import { runHermesKanbanCardTask } from '../routes/hermesKanban.routes';
 import { runConfiguredCard } from './runtime';
 
 const mockGetDeck = getDeckDocument as unknown as ReturnType<typeof vi.fn>;
 const mockRunCard = runSingleCardWithAutoGen as unknown as ReturnType<typeof vi.fn>;
 const mockStartHermes = startHermesTurn as unknown as ReturnType<typeof vi.fn>;
+const mockRunHermesKanban = runHermesKanbanCardTask as unknown as ReturnType<typeof vi.fn>;
 
 const AGENT_CARD = {
   id: 'card_saved_worker',
@@ -109,6 +115,7 @@ beforeEach(() => {
   mockGetDeck.mockReset();
   mockRunCard.mockReset();
   mockStartHermes.mockReset();
+  mockRunHermesKanban.mockReset();
 });
 
 describe('runConfiguredCard — server-trusted single-card runtime', () => {
@@ -201,6 +208,131 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
       }),
       expect.any(Function),
     );
+    expect(mockRunCard).not.toHaveBeenCalled();
+  });
+
+  it('submits auto-kanban through the native Hermes task boundary without AutoGen or ACP', async () => {
+    const kanbanCard = {
+      ...AGENT_CARD,
+      id: 'card_hermes_steward',
+      runtimeBinding: 'hermes_steward',
+      runtimeOptions: {
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        executionMode: 'auto-kanban',
+        tools: [],
+      },
+    };
+    mockGetDeck.mockResolvedValue(deckWith([kanbanCard]));
+    const snapshot = {
+      task: {
+        id: 't_native123',
+        status: 'ready',
+        result: null,
+      },
+      latest_summary: null,
+      parents: [],
+      children: [],
+      comments: [],
+      events: [],
+      runs: [],
+    };
+    mockRunHermesKanban.mockResolvedValue({
+      taskId: 't_native123',
+      runId: null,
+      snapshot,
+    });
+
+    const result = await runConfiguredCard({ ...ARGS, cardId: kanbanCard.id });
+
+    expect(result).toMatchObject({
+      status: 'submitted',
+      output: '',
+      hermesKanban: {
+        taskId: 't_native123',
+        runId: null,
+        snapshot,
+      },
+    });
+    expect(mockRunHermesKanban).toHaveBeenCalledWith({
+      projectId: ARGS.projectId,
+      deckId: ARGS.deckId,
+      correlationId: ARGS.correlationId,
+      cardId: kanbanCard.id,
+      title: kanbanCard.title,
+      prompt: kanbanCard.prompt,
+      profile: kanbanCard.id,
+      provider: 'openai-codex',
+      providerModelId: 'gpt-5.6-luna',
+      input: ARGS.input,
+    });
+    expect(mockStartHermes).not.toHaveBeenCalled();
+    expect(mockRunCard).not.toHaveBeenCalled();
+  });
+
+  it('returns a fixed transport failure without leaking native stderr or secrets', async () => {
+    const kanbanCard = {
+      ...AGENT_CARD,
+      id: 'card_hermes_steward',
+      runtimeBinding: 'hermes_steward',
+      runtimeOptions: {
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        executionMode: 'auto-kanban',
+        tools: [],
+      },
+    };
+    mockGetDeck.mockResolvedValue(deckWith([kanbanCard]));
+    mockRunHermesKanban.mockRejectedValue(new Error('hermes_kanban_card_create_failed'));
+
+    const result = await runConfiguredCard({ ...ARGS, cardId: kanbanCard.id });
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: 'hermes_kanban_card_create_failed',
+      hermesKanban: null,
+    });
+    expect(JSON.stringify(result)).not.toContain('sk-secret-value');
+    expect(mockStartHermes).not.toHaveBeenCalled();
+    expect(mockRunCard).not.toHaveBeenCalled();
+  });
+
+  it('returns the real result when an idempotent native Hermes task is already done', async () => {
+    const kanbanCard = {
+      ...AGENT_CARD,
+      id: 'card_hermes_steward',
+      runtimeBinding: 'hermes_steward',
+      runtimeOptions: {
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        executionMode: 'auto-kanban',
+        tools: [],
+      },
+    };
+    mockGetDeck.mockResolvedValue(deckWith([kanbanCard]));
+    mockRunHermesKanban.mockResolvedValue({
+      taskId: 't_native123',
+      runId: 6,
+      snapshot: {
+        task: { id: 't_native123', status: 'done', result: 'native final result' },
+        runs: [{ id: 6, status: 'done', outcome: 'completed' }],
+      },
+    });
+
+    const result = await runConfiguredCard({ ...ARGS, cardId: kanbanCard.id });
+
+    expect(result).toMatchObject({
+      status: 'completed',
+      output: 'native final result',
+      hermesKanban: {
+        taskId: 't_native123',
+        runId: 6,
+        snapshot: {
+          task: { status: 'done', result: 'native final result' },
+        },
+      },
+    });
+    expect(mockStartHermes).not.toHaveBeenCalled();
     expect(mockRunCard).not.toHaveBeenCalled();
   });
 

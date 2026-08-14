@@ -105,6 +105,60 @@ def test_graphiti_preserves_explicit_embedder_model_override(monkeypatch):
     assert mcp_host._graphiti_config().embedder.model == "local/embeddinggemma"
 
 
+def test_graphiti_is_optional_when_provider_credentials_are_absent(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_MODULE", None)
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_TOOLS", None)
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_NAMES", frozenset())
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_UNAVAILABLE", None)
+
+    assert asyncio.run(mcp_host._native_graphiti_tools()) == []
+    assert mcp_host._NATIVE_GRAPHITI_NAMES == frozenset()
+    assert mcp_host._NATIVE_GRAPHITI_UNAVAILABLE == {
+        "ok": False,
+        "failureCode": "optional_capability_unavailable",
+        "errorCategory": "DEPENDENCY_UNAVAILABLE",
+        "retryable": False,
+        "dependency": "graphiti",
+        "detail": "Graphiti provider credentials are not configured.",
+    }
+
+
+def test_graphiti_initialization_failure_never_leaks_secrets_or_kills_mcp(monkeypatch):
+    import asyncio
+    import builtins
+    import mcp_host
+
+    secret = "sk-sensitive-provider-value"
+    monkeypatch.setenv("OPENROUTER_API_KEY", secret)
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_MODULE", None)
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_TOOLS", None)
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_NAMES", frozenset())
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_UNAVAILABLE", None)
+    real_import = builtins.__import__
+
+    def failing_import(name, *args, **kwargs):
+        if name == "graphiti_mcp_server":
+            raise RuntimeError(f"provider rejected {secret}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", failing_import)
+
+    assert asyncio.run(mcp_host._native_graphiti_tools()) == []
+    failure_text = json.dumps(mcp_host._NATIVE_GRAPHITI_UNAVAILABLE)
+    assert secret not in failure_text
+    assert "RuntimeError" in failure_text
+
+    later = asyncio.run(mcp_host.call_tool("main.context", {}))
+    assert later.isError is True
+    later_payload = json.loads(later.content[0].text)
+    assert later_payload["error"] == "main_context_unavailable"
+    assert secret not in json.dumps(later_payload)
+
+
 def test_call_tool_appends_canonical_receipt_and_typed_provider_failure(monkeypatch):
     import asyncio
     import mcp_host

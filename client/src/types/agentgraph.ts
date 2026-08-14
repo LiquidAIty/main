@@ -33,6 +33,15 @@ export type AgentCardRuntimeOptions = {
   maxTokens?: number | null;
   maxTurns?: number | null;
   tools?: string[] | null;
+  /** Runtime-specific native grants remain distinct from ordinary tool grants. */
+  nativeTools?: string[] | null;
+  /** Saved skill identities. Runtime homes materialize/cache them separately. */
+  skills?: string[] | null;
+  /** Named capability bundles; resolution belongs to the owning runtime. */
+  toolsets?: string[] | null;
+  /** References to globally configured MCP connections; never credentials. */
+  mcpConnectionIds?: string[] | null;
+  /** @deprecated Read-only compatibility. Stable card id owns runtime identity. */
   profile?: string | null;
   executionMode?: 'single' | 'auto-kanban' | null;
 };

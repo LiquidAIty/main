@@ -64,7 +64,7 @@ describe('Installed Hermes terminal remains separate from Kanban and Coder', () 
 
   it('keeps the rail destination Kanban-first instead of adding a second rail icon', () => {
     const rail = read(RAIL);
-    expect(rail).toContain('aria-label="Hermes Kanban"');
+    expect(rail).toContain('aria-label="Kanban"');
     expect(rail).not.toContain('rail-hermes-terminal-button');
   });
 });
@@ -81,7 +81,7 @@ describe('Shared/Coder terminal infrastructure is untouched', () => {
     expect(page).toContain("import('../components/AgentManager')");
     expect(page).toContain("'Prompt'");
     expect(page).toContain("'Knowledge'");
-    expect(page).toContain("'Tools'");
+    expect(page).toContain("'Capabilities'");
     expect(page).toContain("'Runtime'");
     const manager = read(AGENT_MANAGER);
     // The Agent Card editor still defines the saved Hermes card.

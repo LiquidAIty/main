@@ -192,7 +192,7 @@ class CardEditorErrorBoundary extends React.Component<
 }
 
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime'] as const;
+const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Capabilities', 'Runtime'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
@@ -913,7 +913,7 @@ export default function AgentBuilder(): React.ReactElement {
         if (
           tab === 'Prompt' ||
           tab === 'Knowledge' ||
-          tab === 'Tools' ||
+          tab === 'Capabilities' ||
           tab === 'Runtime'
         ) {
           return (

@@ -10,6 +10,11 @@ client/dist
 coverage
 tmp
 
+# Local dotenv files are development conveniences, never image inputs.
+**/.env
+**/.env.*
+!**/.env.example
+
 # CodeGraph obtains its checksum-pinned release inside its builder stage.
 vendor/codebase-memory-mcp
 codebase-memory-mcp-*.tar.gz

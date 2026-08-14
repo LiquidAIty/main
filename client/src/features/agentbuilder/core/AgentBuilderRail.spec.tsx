@@ -140,7 +140,7 @@ describe('AgentBuilderRail Hermes Kanban icon', () => {
     expect(host.querySelector('[data-testid="rail-hermes-kanban-button"]')).not.toBeNull();
   });
 
-  it('labels the app as Hermes Kanban (no terminal), not Hermes Terminal', () => {
+  it('labels the product surface as Kanban, not the implementation runtime', () => {
     const host = render(
       <AgentBuilderRail
         {...baseProps}
@@ -150,8 +150,8 @@ describe('AgentBuilderRail Hermes Kanban icon', () => {
     const button = host.querySelector(
       '[data-testid="rail-hermes-kanban-button"]',
     ) as HTMLButtonElement;
-    expect(button.getAttribute('aria-label')).toBe('Hermes Kanban');
-    expect(button.getAttribute('title')).toBe('Hermes Kanban');
+    expect(button.getAttribute('aria-label')).toBe('Kanban');
+    expect(button.getAttribute('title')).toBe('Kanban');
   });
 
   it('hides the Kanban icon when the Hermes card is not on the canvas', () => {

@@ -259,7 +259,10 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       senderCardId: String(body.senderCardId || ''),
       parentRunId: String(body.parentRunId || ''),
     });
-    return res.json({ ok: result.status === 'completed', result });
+    return res.json({
+      ok: result.status === 'completed' || result.status === 'submitted',
+      result,
+    });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'run_configured_card_failed' });
   }

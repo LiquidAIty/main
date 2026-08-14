@@ -12,6 +12,13 @@ PROJECT_ID = "20ac92da-01fd-4cf6-97cc-0672421e751a"
 DECK_ID = "deck_builder"
 
 
+def test_postgres_connection_names_missing_injected_password(monkeypatch) -> None:
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+
+    with pytest.raises(RuntimeError, match="missing_required_config: POSTGRES_PASSWORD"):
+        connect_postgres()
+
+
 def test_assignment_claim_finish_and_hydration() -> None:
     correlation = f"agentgraph-test-{uuid4().hex}"
     connection = connect_postgres(autocommit=False)

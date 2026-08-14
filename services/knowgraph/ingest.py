@@ -16,10 +16,10 @@ from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
-from dotenv import load_dotenv
 from graphiti_identity import graphiti_project_group_id
+from runtime_config import load_runtime_environment
 
-load_dotenv()
+load_runtime_environment()
 
 GRAPHITI_VERSION = "0.29.3"
 GRAPHITI_EPISODE_NAMESPACE = "liquidaity:knowgraph:episode"

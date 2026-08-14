@@ -85,7 +85,7 @@ def _startup_source_identity() -> tuple[str, str]:
         source_sha256 = ""
     return revision, source_sha256
 
-from dotenv import load_dotenv
+from app.python_models.provider_config import ensure_env_loaded
 from mcp.server import Server
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
@@ -93,7 +93,7 @@ from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
-load_dotenv(os.path.join(_REPO_ROOT, "apps", "backend", ".env"), override=False)
+ensure_env_loaded()
 
 _GRAPHITI_PROJECT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -777,6 +777,7 @@ _NATIVE_CBM_INDEX_IN_FLIGHT: tuple[str, Future[CallToolResult]] | None = None
 _NATIVE_GRAPHITI_MODULE: Any | None = None
 _NATIVE_GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_GRAPHITI_NAMES: frozenset[str] = frozenset()
+_NATIVE_GRAPHITI_UNAVAILABLE: dict[str, Any] | None = None
 _TOOL_EXECUTION_CONTRACTS: dict[str, dict[str, str]] = {}
 
 _NATIVE_PREFIXES = {
@@ -1024,64 +1025,102 @@ def _graphiti_provider_settings(section: Any) -> Any:
 
 
 async def _initialize_native_graphiti() -> None:
-    """Initialize the installed official Graphiti MCP server exactly once."""
+    """Initialize optional Graphiti once without making it an MCP boot dependency."""
     global _NATIVE_GRAPHITI_MODULE, _NATIVE_GRAPHITI_NAMES, _NATIVE_GRAPHITI_TOOLS
+    global _NATIVE_GRAPHITI_UNAVAILABLE
     if _NATIVE_GRAPHITI_TOOLS is not None:
         return
-    import graphiti_mcp_server as native
+    if not os.environ.get("OPENROUTER_API_KEY", "").strip():
+        _NATIVE_GRAPHITI_TOOLS = ()
+        _NATIVE_GRAPHITI_NAMES = frozenset()
+        _NATIVE_GRAPHITI_UNAVAILABLE = {
+            "ok": False,
+            "failureCode": "optional_capability_unavailable",
+            "errorCategory": "DEPENDENCY_UNAVAILABLE",
+            "retryable": False,
+            "dependency": "graphiti",
+            "detail": "Graphiti provider credentials are not configured.",
+        }
+        return
 
-    native.config = _graphiti_config()
-    native.graphiti_service = native.GraphitiService(native.config, native.SEMAPHORE_LIMIT)
-    native.queue_service = native.QueueService()
-    await native.graphiti_service.initialize()
-    native.graphiti_client = await native.graphiti_service.get_client()
-    native.semaphore = native.graphiti_service.semaphore
-    await native.queue_service.initialize(native.graphiti_client)
-    llm_provider = _graphiti_provider_settings(native.config.llm)
-    embedder_provider = _graphiti_provider_settings(native.config.embedder)
-    _instrument_graphiti_provider_client(
-        native.graphiti_client.llm_client,
-        method_names=("generate_response",),
-        compute="api_llm",
-        dependency="graphiti_llm",
-        provider=_provider_identity(
-            str(native.config.llm.provider), str(llm_provider.api_url or "")
-        ),
-        model=str(native.config.llm.model),
-        base_url=str(llm_provider.api_url or ""),
-        credential_configured=bool(llm_provider.api_key),
-    )
-    _instrument_graphiti_provider_client(
-        native.graphiti_client.embedder,
-        method_names=("create", "create_batch"),
-        compute="api_embedding",
-        dependency="graphiti_embedding",
-        provider=_provider_identity(
-            str(native.config.embedder.provider), str(embedder_provider.api_url or "")
-        ),
-        model=str(native.config.embedder.model),
-        base_url=str(embedder_provider.api_url or ""),
-        credential_configured=bool(embedder_provider.api_key),
-    )
-    _instrument_graphiti_provider_client(
-        native.graphiti_client.cross_encoder,
-        method_names=("rank",),
-        compute="api_llm",
-        dependency="graphiti_reranker",
-        provider=_provider_identity(
-            str(native.config.llm.provider), str(llm_provider.api_url or "")
-        ),
-        model=str(native.config.llm.model),
-        base_url=str(llm_provider.api_url or ""),
-        credential_configured=bool(llm_provider.api_key),
-    )
-    tools = tuple(await native.mcp.list_tools())
-    names = [tool.name for tool in tools]
-    if len(names) != len(set(names)):
-        raise RuntimeError("native_graphiti_duplicate_tool_name")
+    native: Any | None = None
+    try:
+        import graphiti_mcp_server as native_module
+
+        native = native_module
+        native.config = _graphiti_config()
+        native.graphiti_service = native.GraphitiService(native.config, native.SEMAPHORE_LIMIT)
+        native.queue_service = native.QueueService()
+        await native.graphiti_service.initialize()
+        native.graphiti_client = await native.graphiti_service.get_client()
+        native.semaphore = native.graphiti_service.semaphore
+        await native.queue_service.initialize(native.graphiti_client)
+        llm_provider = _graphiti_provider_settings(native.config.llm)
+        embedder_provider = _graphiti_provider_settings(native.config.embedder)
+        _instrument_graphiti_provider_client(
+            native.graphiti_client.llm_client,
+            method_names=("generate_response",),
+            compute="api_llm",
+            dependency="graphiti_llm",
+            provider=_provider_identity(
+                str(native.config.llm.provider), str(llm_provider.api_url or "")
+            ),
+            model=str(native.config.llm.model),
+            base_url=str(llm_provider.api_url or ""),
+            credential_configured=bool(llm_provider.api_key),
+        )
+        _instrument_graphiti_provider_client(
+            native.graphiti_client.embedder,
+            method_names=("create", "create_batch"),
+            compute="api_embedding",
+            dependency="graphiti_embedding",
+            provider=_provider_identity(
+                str(native.config.embedder.provider), str(embedder_provider.api_url or "")
+            ),
+            model=str(native.config.embedder.model),
+            base_url=str(embedder_provider.api_url or ""),
+            credential_configured=bool(embedder_provider.api_key),
+        )
+        _instrument_graphiti_provider_client(
+            native.graphiti_client.cross_encoder,
+            method_names=("rank",),
+            compute="api_llm",
+            dependency="graphiti_reranker",
+            provider=_provider_identity(
+                str(native.config.llm.provider), str(llm_provider.api_url or "")
+            ),
+            model=str(native.config.llm.model),
+            base_url=str(llm_provider.api_url or ""),
+            credential_configured=bool(llm_provider.api_key),
+        )
+        tools = tuple(await native.mcp.list_tools())
+        names = [tool.name for tool in tools]
+        if len(names) != len(set(names)):
+            raise RuntimeError("native_graphiti_duplicate_tool_name")
+    except Exception as error:
+        client = getattr(native, "graphiti_client", None) if native is not None else None
+        close = getattr(getattr(client, "driver", None), "close", None)
+        if callable(close):
+            close_result = close()
+            if inspect.isawaitable(close_result):
+                await close_result
+        _NATIVE_GRAPHITI_MODULE = None
+        _NATIVE_GRAPHITI_TOOLS = ()
+        _NATIVE_GRAPHITI_NAMES = frozenset()
+        _NATIVE_GRAPHITI_UNAVAILABLE = {
+            "ok": False,
+            "failureCode": "optional_capability_unavailable",
+            "errorCategory": "DEPENDENCY_UNAVAILABLE",
+            "retryable": False,
+            "dependency": "graphiti",
+            "detail": f"Graphiti initialization failed ({error.__class__.__name__}).",
+        }
+        return
+
     _NATIVE_GRAPHITI_MODULE = native
     _NATIVE_GRAPHITI_TOOLS = tools
     _NATIVE_GRAPHITI_NAMES = frozenset(names)
+    _NATIVE_GRAPHITI_UNAVAILABLE = None
 
 
 async def _native_graphiti_tools() -> list[Tool]:
@@ -1216,10 +1255,12 @@ def _normalize_native_tool_result(result: Any, *, dependency: str) -> Any:
 
 async def _close_native_graphiti() -> None:
     global _NATIVE_GRAPHITI_MODULE, _NATIVE_GRAPHITI_NAMES, _NATIVE_GRAPHITI_TOOLS
+    global _NATIVE_GRAPHITI_UNAVAILABLE
     native = _NATIVE_GRAPHITI_MODULE
     _NATIVE_GRAPHITI_MODULE = None
     _NATIVE_GRAPHITI_TOOLS = None
     _NATIVE_GRAPHITI_NAMES = frozenset()
+    _NATIVE_GRAPHITI_UNAVAILABLE = None
     client = getattr(native, "graphiti_client", None) if native is not None else None
     driver = getattr(client, "driver", None)
     close = getattr(driver, "close", None)

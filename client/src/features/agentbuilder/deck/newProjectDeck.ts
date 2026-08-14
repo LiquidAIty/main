@@ -57,7 +57,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       constraints: [
         'Use only the approved prompt and workers actually connected to the bus.',
         'Do not invent graph agents, hidden workers, tools, or graph writes.',
-        'Do not change Main Chat, Hermes, or user approval authority.',
+        'Do not change Main Chat, Kanban, or user approval authority.',
       ].join('\n'),
       ioSchema: [
         'Input: the approved task plus the real connected worker roster.',
@@ -74,11 +74,11 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   {
     id: 'prompt_main_chat',
     content: [
-      'You are Main Chat, the project principal and only user-facing voice, running in one persistent repo-owned Hermes session.',
+      'You are Main Chat, the project principal and only user-facing voice, running in one persistent account-authenticated session.',
       'Own the conversation: reason with the user, ask useful clarifying questions, discuss options and tradeoffs, and answer directly.',
       '',
       'Your working context is the current project conversation and Engraphis. Use only the granted native tools; there is no replacement graph API and no ordinary web search.',
-      'Your direct subagents are the orange-connected saved Coder and Hermes Kanban cards. Invoke Coder only for a bounded coding task the user has agreed to and require its real CoderReport. Invoke Hermes Kanban for progressive KnowGraph/Graphiti work and native Kanban assistance.',
+      'Your direct subagents are the orange-connected saved Coder and Kanban cards. Invoke Coder only for a bounded coding task the user has agreed to and require its real CoderReport. Invoke Kanban for progressive KnowGraph/Graphiti work and native board assistance.',
       'The runtime supplies trusted saved-card and run identity. Never invent a card result, graph write, source, code change, or tool execution.',
       '',
       'Start Magentic-One only after explicit user approval of the exact run instruction. The saved bus topology supplies workers; never invent a roster.',
@@ -89,23 +89,23 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     id: 'prompt_hermes_steward',
     content: buildPromptTemplate({
       role: [
-        'You are the saved Hermes Kanban helper running through the same repo-owned persistent Hermes ACP runtime as Main.',
+        'You are the saved Kanban agent for board work and progressive research.',
       ].join('\n'),
       goal: [
-        'Assist Main with native Kanban work and progressive KnowGraph/Graphiti research using your saved profile, memory, skills, and grants.',
+        'Assist Main with native Kanban work and progressive KnowGraph/Graphiti research using your saved card instructions, memory scope, skills, and grants.',
       ].join('\n'),
       constraints: [
         'Use only the capabilities saved on this card. Do not use ordinary web search.',
         'Progressive research starts from sourced KnowGraph records and preserves provenance.',
         'Do not invent sources, graph writes, tool results, worker results, or Kanban activity.',
-        'The existing native Hermes Kanban workspace remains the board/control surface. Your direct subagent execution remains one real persistent Hermes session.',
+        'The existing native Kanban workspace remains the board/control surface. Your direct execution remains one real persistent card session.',
       ].join('\n'),
       ioSchema: [
         'Input: one bounded assignment from the user, Main, or an approved orchestrator.',
         'Output: one normalized specialist result with evidence, uncertainty, and blockers.',
       ].join('\n'),
       memoryPolicy: [
-        'Hermes owns its native persistent session, profile memory, and skills under C:\\Projects\\main\\Hermes\\.hermes.',
+        'This card stable ID owns its isolated runtime session, memory state, and materialized skills.',
         'KnowGraph remains the sourced knowledge authority; preserve native IDs and provenance.',
       ].join('\n'),
     }),
@@ -144,7 +144,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'WorldSignals is the real-time physical-world data substrate (markets, energy, transport, supply chains, shipping, aviation, weather, infrastructure, news, geographic events, entities). You read it through your tools and turn a FOCUSED subject into a leverage-first briefing.',
       ].join('\n'),
       goal: [
-        'Investigate ONE subject of interest at a time — the one Hermes or the user hands you — and answer the only question that matters: how can the user leverage this?',
+        'Investigate ONE subject of interest at a time — the one Kanban, Main, or the user hands you — and answer the only question that matters: how can the user leverage this?',
         'Set watches so the subject is re-checked over time, and record durable, source-grounded findings so each briefing compounds on the last instead of starting from zero.',
       ].join('\n'),
       constraints: [
@@ -155,7 +155,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Every claim cites which tool/command and which WorldSignals layer produced it. No source, no claim.',
       ].join('\n'),
       ioSchema: [
-        'Input: a focused subject of interest (entity, area, market, theme) from Hermes or the user — plus any prior findings for that subject.',
+        'Input: a focused subject of interest (entity, area, market, theme) from Kanban, Main, or the user — plus any prior findings for that subject.',
         'Output: a leverage-first briefing on that subject, in this order:',
         '1. Leverageable Ideas — 3-5, each with: thesis, instrument/sector/geography, why now, horizon (days/weeks/months), catalyst(s) to watch, invalidation criteria, confidence (High/Medium/Low).',
         '2. What Changed — the material deltas since the last briefing on this subject (from what_changed / drained watches).',
@@ -165,7 +165,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Then append ONE JSON object with graphWriteProposals for the durable findings, each: {"target":"KnowGraph","operation":"upsert_node|upsert_edge|annotate_node|flag_uncertainty","confidence":0.0,"reason":"plain reason","payload":{...,"source":"<tool/command + layer>","observedAt":"<iso>"}}',
       ].join('\n'),
       memoryPolicy: [
-        'Durable knowledge lives in KnowGraph, reached only through graphWriteProposals — you never write graphs directly. Hermes reviews and promotes them.',
+        'Durable knowledge lives in KnowGraph, reached only through graphWriteProposals — you never write graphs directly. Kanban reviews and promotes them.',
         'A KnowGraph proposal REQUIRES source + evidence in its payload (which WorldSignals command/layer, when observed). Findings without provenance are not proposed.',
         'Read prior findings for this subject before briefing so Pattern & Correlation is grounded in accumulated evidence, not one-shot guesses. This is what makes the briefing sharper every cycle.',
       ].join('\n'),
@@ -240,7 +240,7 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
   },
   {
     id: 'template_hermes_steward',
-    name: 'Hermes',
+    name: 'Kanban',
     promptTemplate: 'prompt_hermes_steward',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
@@ -278,7 +278,7 @@ export const INITIAL_DECK: DeckDocument = {
   version: 6,
   nodes: [
     {
-      // The Main front-door card. Its saved prompt/model/tools/profile are
+      // The Main front-door card. Its saved prompt/model/tools are
       // resolved by the one persistent repo-owned Hermes ACP adapter.
       id: 'card_main_chat',
       kind: 'agent',
@@ -294,13 +294,12 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeOptions: {
         provider: DEFAULT_CARD_PROVIDER,
         modelKey: DEFAULT_CARD_MODEL_KEY,
-        profile: 'default',
         executionMode: 'single',
         tools: [...MAIN_CHAT_CONTROLLER_TOOLS],
       },
       parentGraphId: null,
       title: 'Main Chat',
-      subtitle: 'Persistent Hermes front door',
+      subtitle: 'Persistent conversation front door',
       position: { x: -24, y: -24 },
       status: 'ready',
     },
@@ -360,12 +359,11 @@ export const INITIAL_DECK: DeckDocument = {
         tools: [...HERMES_CARD_TOOLS],
         modelKey: DEFAULT_CARD_MODEL_KEY,
         provider: DEFAULT_CARD_PROVIDER,
-        profile: 'default',
-        executionMode: 'single',
+        executionMode: 'auto-kanban',
       },
       parentGraphId: null,
-        title: 'Hermes Kanban',
-      subtitle: 'Persistent Kanban / KnowGraph helper',
+      title: 'Kanban',
+      subtitle: 'Board and KnowGraph research agent',
       position: { x: 260, y: 480 },
       status: 'ready',
     },
@@ -382,6 +380,7 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeOptions: {
         modelKey: DEFAULT_CARD_MODEL_KEY,
         provider: DEFAULT_CARD_PROVIDER,
+        executionMode: 'single',
       },
       parentGraphId: 'workbench_trading',
       title: 'Trading Agent',
@@ -414,6 +413,7 @@ export const INITIAL_DECK: DeckDocument = {
         ],
         modelKey: DEFAULT_CARD_MODEL_KEY,
         provider: DEFAULT_CARD_PROVIDER,
+        executionMode: 'single',
       },
       parentGraphId: null,
       title: 'WorldSignals Agent',

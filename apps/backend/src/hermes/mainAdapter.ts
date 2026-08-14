@@ -69,7 +69,7 @@ type ActiveTurn = {
 };
 
 function safeProfile(value: unknown): string {
-  const profile = String(value || 'default').trim().toLowerCase();
+  const profile = String(value || '').trim().toLowerCase();
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile)) {
     throw new Error('hermes_profile_invalid');
   }
@@ -85,13 +85,11 @@ function resolveHermesInstall(): { root: string; executable: string } {
   return { root, executable };
 }
 
-function resolveProfileHome(root: string, profile: string): string {
-  return profile === 'default'
-    ? path.join(root, '.hermes')
-    : path.join(root, '.hermes', 'profiles', profile);
+export function resolveHermesCardRuntimeHome(root: string, cardId: string): string {
+  return path.join(root, '.hermes', 'profiles', safeProfile(cardId));
 }
 
-function providerForHermes(provider: string): string {
+export function providerForHermes(provider: string): string {
   const normalized = String(provider || '').trim().toLowerCase();
   if (normalized === 'openai') return 'openai-codex';
   return normalized;
@@ -153,6 +151,12 @@ export function resolveHermesCardRuntimeConfig(
   directSubagents: { cardId: string; title: string; runtimeBinding: string }[] = [],
 ): HermesRuntimeConfig {
   const model = resolveSavedCardModel(card);
+  const runtimeBinding = resolveRuntimeBinding(card?.runtimeBinding);
+  const requestedExecutionMode =
+    card?.runtimeOptions?.executionMode === 'auto-kanban' ? 'auto-kanban' : 'single';
+  if (runtimeBinding === 'main_chat' && requestedExecutionMode !== 'single') {
+    throw new Error('main_execution_mode_must_be_single');
+  }
   const coderCardIds = directSubagents
     .filter((child) => child.runtimeBinding === 'local_coder')
     .map((child) => child.cardId);
@@ -179,11 +183,13 @@ export function resolveHermesCardRuntimeConfig(
           ].join('\n')
         : '',
     ].filter(Boolean).join('\n\n'),
-    profile: safeProfile(card?.runtimeOptions?.profile),
+    // The saved LiquidAIty card is the profile authority. A separate selectable
+    // Hermes profile would create a second agent identity/configuration owner.
+    profile: safeProfile(card?.id),
     provider: model.provider,
     modelKey: model.modelKey,
     providerModelId: model.providerModelId,
-    executionMode: card?.runtimeOptions?.executionMode === 'auto-kanban' ? 'auto-kanban' : 'single',
+    executionMode: requestedExecutionMode,
     tools: [
       ...(Array.isArray(card?.runtimeOptions?.tools)
         ? card.runtimeOptions.tools.map((tool: unknown) => String(tool || '').trim()).filter(Boolean)
@@ -225,7 +231,7 @@ class AcpProcess {
   constructor(profile: string) {
     const install = resolveHermesInstall();
     this.executable = install.executable;
-    this.profileHome = resolveProfileHome(install.root, profile);
+    this.profileHome = resolveHermesCardRuntimeHome(install.root, profile);
     mkdirSync(this.profileHome, { recursive: true });
     this.child = spawn(this.executable, [], {
       cwd: install.root,
@@ -483,7 +489,7 @@ class AcpProcess {
   async startTurn(args: HermesTurnArgs, onEvent: (event: HermesSessionEvent) => void): Promise<HermesTurnHandle> {
     await this.ready;
     if (args.executionMode !== 'single') {
-      throw new Error('hermes_auto_kanban_requires_python_rails_runtime');
+      throw new Error('hermes_auto_kanban_card_execution_not_wired');
     }
     const sessionId = await this.resolveSession(args);
     if (this.turns.has(sessionId)) throw new Error('hermes_session_turn_already_running');

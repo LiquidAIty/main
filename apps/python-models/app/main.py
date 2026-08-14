@@ -1,6 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from typing import Any
 
+from app.python_models.provider_config import ensure_env_loaded
+
+ensure_env_loaded()
+
 from app.python_models.alpaca_market_data import (
     AlpacaInstrumentRef,
     get_historical_bars,

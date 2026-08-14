@@ -8,6 +8,7 @@ import type {
   DeckDocument,
 } from '../../../types/agentgraph';
 import {
+  normalizeAgentExecutionMode,
   cleanOptionalText,
   normalizeRuntimeBinding,
   normalizeRuntimeOptions,
@@ -21,6 +22,15 @@ type UseAgentBuilderCardEditorArgs = {
   selectedCardId: string | null;
   setDeck: Dispatch<SetStateAction<DeckDocument>>;
 };
+
+function normalizeStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((entry): entry is string => typeof entry === 'string')
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+    : [];
+}
 
 function resolveAgentTemplate(
   card: DeckDocument['nodes'][number] | null,
@@ -71,6 +81,10 @@ export default function useAgentBuilderCardEditor({
     return {
       runtime_binding: selectedCard.runtimeBinding ?? null,
       runtime_type: selectedCard.runtimeType ?? 'assistant_agent',
+      execution_mode: normalizeAgentExecutionMode(
+        runtimeOptions.executionMode,
+        selectedCard.runtimeBinding,
+      ),
       runtime_options: runtimeOptions,
       parent_graph_id: selectedCard.parentGraphId ?? null,
       provider:
@@ -84,12 +98,16 @@ export default function useAgentBuilderCardEditor({
       temperature:
         runtimeOptions.temperature ?? effectiveAgent?.temperature ?? null,
       max_tokens: runtimeOptions.maxTokens ?? effectiveAgent?.maxTokens ?? null,
+      max_turns: runtimeOptions.maxTurns ?? null,
       prompt_template: selectedCard.prompt || '',
       tools: Array.isArray(runtimeOptions.tools)
         ? runtimeOptions.tools
         : Array.isArray(selectedCard.tools)
           ? selectedCard.tools
           : effectiveAgent?.tools || [],
+      skills: normalizeStringList(runtimeOptions.skills),
+      toolsets: normalizeStringList(runtimeOptions.toolsets),
+      mcp_connection_ids: normalizeStringList(runtimeOptions.mcpConnectionIds),
     };
   }, [effectiveAgent, selectedCard]);
 
@@ -106,6 +124,10 @@ export default function useAgentBuilderCardEditor({
           normalizeRuntimeType(nextConfig.runtime_type) ??
           normalizeRuntimeType(selectedCard.runtimeType) ??
           'assistant_agent';
+        const nextExecutionMode = normalizeAgentExecutionMode(
+          nextConfig.execution_mode,
+          nextRuntimeBinding,
+        );
         const nextParentGraphId = cleanOptionalText(
           nextConfig.parent_graph_id,
         );
@@ -131,12 +153,11 @@ export default function useAgentBuilderCardEditor({
           typeof nextConfig.max_tokens === 'number'
             ? nextConfig.max_tokens
             : null;
-        const nextTools = Array.isArray(nextConfig.tools)
-          ? nextConfig.tools
-              .filter((tool): tool is string => typeof tool === 'string')
-              .map((tool) => tool.trim())
-              .filter(Boolean)
-          : [];
+        const nextMaxTurns =
+          typeof nextConfig.max_turns === 'number'
+            ? nextConfig.max_turns
+            : null;
+        const nextTools = normalizeStringList(nextConfig.tools);
         const nextRuntimeOptions = normalizeRuntimeOptions({
           ...(nextConfig.runtime_options || {}),
           provider: nextProvider,
@@ -144,7 +165,12 @@ export default function useAgentBuilderCardEditor({
           reasoningEffort: nextReasoningEffort,
           temperature: nextTemperature,
           maxTokens: nextMaxTokens,
+          maxTurns: nextMaxTurns,
+          executionMode: nextExecutionMode,
           tools: nextTools,
+          skills: normalizeStringList(nextConfig.skills),
+          toolsets: normalizeStringList(nextConfig.toolsets),
+          mcpConnectionIds: normalizeStringList(nextConfig.mcp_connection_ids),
         });
         const nextOverrides = compactAgentOverrides({
           ...(selectedCard.overrides || {}),

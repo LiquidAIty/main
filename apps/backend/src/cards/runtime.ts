@@ -18,10 +18,15 @@ import {
 } from './localCoderController';
 import {
   deriveHermesSessionKey,
+  providerForHermes,
   resolveDirectHermesSubagents,
   resolveHermesCardRuntimeConfig,
   startHermesTurn,
 } from '../hermes/mainAdapter';
+import {
+  runHermesKanbanCardTask,
+  type HermesKanbanCardTaskResult,
+} from '../routes/hermesKanban.routes';
 
 function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
   const provider = String(value ?? '').trim().toLowerCase();
@@ -495,7 +500,7 @@ export type ConfiguredCardRunArgs = {
 };
 
 export type ConfiguredCardRunResult = {
-  status: 'completed' | 'failed' | 'disabled' | 'not_found' | 'not_runnable';
+  status: 'submitted' | 'completed' | 'failed' | 'disabled' | 'not_found' | 'not_runnable';
   correlationId: string;
   cardId: string;
   runtimeType: string | null;
@@ -506,6 +511,8 @@ export type ConfiguredCardRunResult = {
   endedAt: string;
   /** Canonical AgentGraph assignment and result identities. */
   assignmentResult: AgentAssignmentRunResult | null;
+  /** Exact native Hermes task/run envelope for an auto-Kanban submission. */
+  hermesKanban: HermesKanbanCardTaskResult | null;
 };
 
 export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<ConfiguredCardRunResult> {
@@ -529,6 +536,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       startedAt,
       endedAt: new Date().toISOString(),
       assignmentResult: null,
+      hermesKanban: null,
       ...partial,
     };
     logHarnessTrace(
@@ -587,13 +595,36 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         error: String(error?.message || 'hermes_card_resolution_failed'),
       });
     }
-    if (config.executionMode !== 'single') {
-      return done({
-        status: 'not_runnable',
-        runtimeType,
-        tools: config.tools,
-        error: 'hermes_auto_kanban_runs_through_native_kanban_workspace',
-      });
+    if (config.executionMode === 'auto-kanban') {
+      try {
+        const hermesKanban = await runHermesKanbanCardTask({
+          projectId,
+          deckId,
+          correlationId,
+          cardId,
+          title: config.title,
+          prompt: config.prompt,
+          profile: config.profile,
+          provider: providerForHermes(config.provider),
+          providerModelId: config.providerModelId,
+          input,
+        });
+        const nativeCompleted = hermesKanban.snapshot.task.status === 'done';
+        return done({
+          status: nativeCompleted ? 'completed' : 'submitted',
+          runtimeType,
+          tools: config.tools,
+          output: String(hermesKanban.snapshot.task.result || ''),
+          hermesKanban,
+        });
+      } catch (error: any) {
+        return done({
+          status: 'failed',
+          runtimeType,
+          tools: config.tools,
+          error: String(error?.message || 'hermes_kanban_card_transport_failed'),
+        });
+      }
     }
     try {
       const sessionScope = conversationId || deckId;

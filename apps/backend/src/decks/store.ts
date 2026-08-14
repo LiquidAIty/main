@@ -48,6 +48,21 @@ function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function normalizeMainExecutionMode(card: Record<string, unknown>): Record<string, unknown> {
+  if (String(card.runtimeBinding || '').trim().toLowerCase() !== 'main_chat') return card;
+  const runtimeOptions =
+    card.runtimeOptions && typeof card.runtimeOptions === 'object' && !Array.isArray(card.runtimeOptions)
+      ? card.runtimeOptions as Record<string, unknown>
+      : {};
+  return {
+    ...card,
+    runtimeOptions: {
+      ...runtimeOptions,
+      executionMode: 'single',
+    },
+  };
+}
+
 function parseDeckDocument(value: unknown, expectedId: string): DeckDocument {
   const raw = parseJsonObject(value, 'invalid_deck_document');
   if (raw.id !== expectedId) throw new Error('deck_id_mismatch');
@@ -59,7 +74,7 @@ function parseDeckDocument(value: unknown, expectedId: string): DeckDocument {
   const nodes = raw.nodes.map((node) => {
     const card = parseJsonObject(node, 'deck_card_invalid');
     if (typeof card.id !== 'string' || !card.id) throw new Error('deck_card_id_invalid');
-    return normalizeLocalCoderControllerCard(card);
+    return normalizeMainExecutionMode(normalizeLocalCoderControllerCard(card));
   });
   for (const edge of raw.edges) {
     const wire = parseJsonObject(edge, 'deck_edge_invalid');

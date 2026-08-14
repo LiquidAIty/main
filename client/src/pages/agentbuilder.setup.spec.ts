@@ -47,7 +47,7 @@ describe('agentbuilder authoring flow', () => {
       'Main Chat',
       'Magentic-One',
       'Coder',
-      'Hermes Kanban',
+      'Kanban',
       'Trading Agent',
       'WorldSignals Agent',
     ]);
@@ -91,8 +91,14 @@ describe('agentbuilder authoring flow', () => {
     ]);
     const systemCoder = INITIAL_DECK.nodes.find((node) => node.id === 'card_local_coder');
     expect(systemCoder?.runtimeType).toBe('assistant_agent');
+    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_magentic')?.runtimeType).toBe('magentic_one');
+    expect(systemCoder?.runtimeBinding).toBe('local_coder');
     expect(systemCoder?.runtimeOptions?.tools).toContain('cbm.search_graph');
     expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_local_coder' && edge.edgeType === 'magentic_option')).toBe(true);
+    expect(INITIAL_DECK.nodes.every((node) => node.runtimeOptions?.profile === undefined)).toBe(true);
+    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_main_chat')?.runtimeOptions?.executionMode).toBe('single');
+    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_hermes_steward')?.runtimeOptions?.executionMode).toBe('auto-kanban');
+    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_worldsignals_agent')?.runtimeOptions?.executionMode).toBe('single');
   });
 
   it('loads a real saved deck and preserves its visible chain', () => {
@@ -129,6 +135,28 @@ describe('agentbuilder authoring flow', () => {
         edgeType: 'flow',
       },
     ]);
+  });
+
+  it('keeps a legacy profile field readable without making it runtime identity', () => {
+    const legacy = createDeck([
+      createCard('card_legacy', 'assistant_agent', {
+        runtimeOptions: {
+          provider: 'openai',
+          modelKey: 'gpt-5.6-luna',
+          profile: 'old-selector',
+          skills: ['saved-skill'],
+          mcpConnectionIds: ['saved-connection'],
+        },
+      }),
+    ]);
+
+    const loaded = readDeckDocument(JSON.parse(JSON.stringify(legacy)));
+
+    expect(loaded.nodes[0].runtimeOptions).toMatchObject({
+      profile: 'old-selector',
+      skills: ['saved-skill'],
+      mcpConnectionIds: ['saved-connection'],
+    });
   });
 
   it('round-trips real restored research cards with saved branch and recombine topology intact', () => {

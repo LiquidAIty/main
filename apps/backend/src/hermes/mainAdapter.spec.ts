@@ -8,6 +8,7 @@ vi.mock('../decks/store', () => ({
 import { getDeckDocument } from '../decks/store';
 import {
   resolveHermesCardRuntimeConfig,
+  resolveHermesCardRuntimeHome,
   resolveMainHermesRuntimeConfig,
 } from './mainAdapter';
 
@@ -23,7 +24,6 @@ const main = {
   runtimeOptions: {
     provider: 'openai',
     modelKey: 'gpt-5.6-luna',
-    profile: 'default',
     executionMode: 'single',
     tools: ['engraphis.recall', 'web_search'],
   },
@@ -49,7 +49,7 @@ describe('Hermes saved-card runtime resolution', () => {
     const kanban = {
       id: 'card_hermes_steward',
       kind: 'agent',
-      title: 'Hermes Kanban',
+      title: 'Kanban',
       runtimeBinding: 'hermes_steward',
       runtimeType: 'assistant_agent',
     };
@@ -68,14 +68,14 @@ describe('Hermes saved-card runtime resolution', () => {
 
     expect(config).toMatchObject({
       cardId: main.id,
-      profile: 'default',
+      profile: main.id,
       provider: 'openai',
       modelKey: 'gpt-5.6-luna',
       executionMode: 'single',
       coderCardIds: [coder.id],
       directSubagents: [
         { cardId: coder.id, title: coder.id, runtimeBinding: 'local_coder' },
-        { cardId: kanban.id, title: 'Hermes Kanban', runtimeBinding: 'hermes_steward' },
+        { cardId: kanban.id, title: 'Kanban', runtimeBinding: 'hermes_steward' },
         { cardId: unrelated.id, title: unrelated.id, runtimeBinding: 'worldsignals_agent' },
       ],
     });
@@ -85,26 +85,81 @@ describe('Hermes saved-card runtime resolution', () => {
     expect(config?.prompt).toContain(kanban.id);
   });
 
-  it('resolves the separate Hermes card through the same saved-card contract', () => {
+  it('resolves the separate Kanban card through the same saved-card contract', () => {
     const config = resolveHermesCardRuntimeConfig({
       ...main,
       id: 'card_hermes_steward',
-      title: 'Hermes',
+      title: 'Kanban',
       runtimeBinding: 'hermes_steward',
       runtimeOptions: {
         provider: 'openai',
         modelKey: 'gpt-5.6-luna',
-        profile: 'research',
-        executionMode: 'single',
+        profile: 'legacy-profile-selector-must-not-win',
+        executionMode: 'auto-kanban',
         tools: ['graphiti.search_nodes'],
       },
     });
 
     expect(config).toMatchObject({
       cardId: 'card_hermes_steward',
-      profile: 'research',
-      executionMode: 'single',
+      profile: 'card_hermes_steward',
+      executionMode: 'auto-kanban',
       tools: ['graphiti.search_nodes'],
     });
+  });
+
+  it('uses the stable saved card id as runtime profile identity', () => {
+    const config = resolveHermesCardRuntimeConfig({
+      ...main,
+      id: 'card_luna',
+      runtimeOptions: {
+        ...main.runtimeOptions,
+        profile: 'shared-selector-is-not-authority',
+      },
+    });
+
+    expect(config.profile).toBe('card_luna');
+  });
+
+  it('rejects auto-kanban on Main at the runtime boundary', () => {
+    expect(() => resolveHermesCardRuntimeConfig({
+      ...main,
+      runtimeOptions: {
+        ...main.runtimeOptions,
+        executionMode: 'auto-kanban',
+      },
+    })).toThrow('main_execution_mode_must_be_single');
+  });
+
+  it('isolates runtime homes by stable card id, not mutable card configuration', () => {
+    const root = 'C:\\runtime';
+    const mainHome = resolveHermesCardRuntimeHome(root, 'card_main_chat');
+    const kanbanHome = resolveHermesCardRuntimeHome(root, 'card_hermes_steward');
+    const lunaHome = resolveHermesCardRuntimeHome(root, 'card_luna');
+
+    expect(mainHome).not.toBe(kanbanHome);
+    expect(mainHome).not.toContain(`${root}\\.hermes\\profiles\\default`);
+    expect(
+      resolveHermesCardRuntimeHome(root, 'card_main_chat'),
+    ).toBe(mainHome);
+
+    const renamedAndReconfigured = resolveHermesCardRuntimeConfig({
+      ...main,
+      id: 'card_luna',
+      runtimeBinding: 'assist',
+      title: 'Renamed Luna',
+      prompt: 'Changed instructions',
+      runtimeOptions: {
+        ...main.runtimeOptions,
+        modelKey: 'gpt-5.6-terra',
+        tools: ['canvas.inspect'],
+        skills: ['planning'],
+        mcpConnectionIds: ['github'],
+        executionMode: 'auto-kanban',
+      },
+    });
+    expect(
+      resolveHermesCardRuntimeHome(root, renamedAndReconfigured.cardId),
+    ).toBe(lunaHome);
   });
 });

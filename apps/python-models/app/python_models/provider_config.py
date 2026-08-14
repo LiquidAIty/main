@@ -17,12 +17,26 @@ from __future__ import annotations
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Mapping, MutableMapping, Optional
 
 from dotenv import load_dotenv
 
 # One clear, non-secret bootstrap override for the canonical env-file path.
 ENV_FILE_OVERRIDE = "LIQUIDAITY_ENV_FILE"
+FILE_BACKED_CONFIG = (
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "TAVILY_API_KEY",
+    "AUTH_BOOTSTRAP_TOKEN",
+    "NEO4J_PASSWORD",
+    "POSTGRES_PASSWORD",
+    "ALPACA_API_KEY_ID",
+    "ALPACA_API_SECRET_KEY",
+    "SEC_API_KEY",
+    "MCP_AUTH0_CLIENT_SECRET",
+    "WORLDSIGNALS_HMAC_SECRET",
+)
 
 # Alpaca endpoint defaults (host roots; paper lane only).
 DEFAULT_DATA_URL = "https://data.alpaca.markets"
@@ -39,6 +53,18 @@ MODE_READ_ONLY = "read_only"
 MODE_UNAVAILABLE = "unavailable"
 
 _env_loaded = False
+
+
+def _resolve_file_backed_config(env: MutableMapping[str, str]) -> None:
+    for variable in FILE_BACKED_CONFIG:
+        file_variable = f"{variable}_FILE"
+        configured_path = str(env.get(file_variable, "")).strip()
+        if not configured_path or str(env.get(variable, "")).strip():
+            continue
+        try:
+            env[variable] = Path(configured_path).read_text(encoding="utf-8").rstrip("\r\n")
+        except OSError as error:
+            raise RuntimeError(f"config_secret_file_unreadable: {file_variable}") from error
 
 
 def _canonical_env_path() -> Optional[Path]:
@@ -60,9 +86,11 @@ def ensure_env_loaded(*, force: bool = False) -> None:
     global _env_loaded
     if _env_loaded and not force:
         return
+    _resolve_file_backed_config(os.environ)
     path = _canonical_env_path()
     if path is not None:
         load_dotenv(path, override=False)
+    _resolve_file_backed_config(os.environ)
     _env_loaded = True
 
 

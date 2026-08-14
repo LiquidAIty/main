@@ -84,6 +84,24 @@ def test_env_file_override_loads_that_exact_file_only(tmp_path):
         ensure_env_loaded(force=True)  # restore canonical load
 
 
+def test_file_backed_secret_loads_once_without_overriding_process_env(tmp_path):
+    secret_file = tmp_path / "openai-key"
+    secret_file.write_text("file-secret\n", encoding="utf-8")
+    os.environ["OPENAI_API_KEY_FILE"] = str(secret_file)
+    os.environ.pop("OPENAI_API_KEY", None)
+    try:
+        ensure_env_loaded(force=True)
+        assert os.environ["OPENAI_API_KEY"] == "file-secret"
+
+        os.environ["OPENAI_API_KEY"] = "process-secret"
+        ensure_env_loaded(force=True)
+        assert os.environ["OPENAI_API_KEY"] == "process-secret"
+    finally:
+        os.environ.pop("OPENAI_API_KEY_FILE", None)
+        os.environ.pop("OPENAI_API_KEY", None)
+        ensure_env_loaded(force=True)
+
+
 def test_public_config_never_carries_secret_values():
     env = {"ALPACA_API_KEY_ID": "SECRETKID", "ALPACA_API_SECRET_KEY": "SECRETVAL", "SEC_API_KEY": "SECKEY"}
     blob = json.dumps(load_alpaca_config(env).to_dict()) + json.dumps(load_sec_api_config(env).to_dict())
