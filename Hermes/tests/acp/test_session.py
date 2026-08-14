@@ -29,6 +29,9 @@ def manager():
 
 
 class TestCreateSession:
+    def test_explicit_empty_acp_toolsets_do_not_restore_default_bundle(self):
+        assert acp_session._expand_acp_enabled_toolsets([]) == []
+
     def test_create_session_returns_state(self, manager):
         state = manager.create_session(cwd="/tmp/work")
         assert isinstance(state, SessionState)

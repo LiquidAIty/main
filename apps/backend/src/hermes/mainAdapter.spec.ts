@@ -26,6 +26,10 @@ const main = {
     modelKey: 'gpt-5.6-luna',
     executionMode: 'single',
     tools: ['engraphis.recall', 'web_search'],
+    nativeTools: ['memory'],
+    skills: ['conversation'],
+    toolsets: ['skills'],
+    mcpConnectionIds: ['github'],
   },
 };
 
@@ -80,6 +84,10 @@ describe('Hermes saved-card runtime resolution', () => {
       ],
     });
     expect(config?.tools).toEqual(['engraphis.recall', 'card.run_assistant_agent']);
+    expect(config?.nativeTools).toEqual(['memory']);
+    expect(config?.skills).toEqual(['conversation']);
+    expect(config?.toolsets).toEqual(['skills']);
+    expect(config?.mcpConnectionIds).toEqual(['github']);
     expect(config?.prompt).toContain('Saved Main prompt.');
     expect(config?.prompt).toContain(coder.id);
     expect(config?.prompt).toContain(kanban.id);
@@ -153,7 +161,9 @@ describe('Hermes saved-card runtime resolution', () => {
         ...main.runtimeOptions,
         modelKey: 'gpt-5.6-terra',
         tools: ['canvas.inspect'],
+        nativeTools: ['memory'],
         skills: ['planning'],
+        toolsets: ['skills'],
         mcpConnectionIds: ['github'],
         executionMode: 'auto-kanban',
       },
@@ -161,5 +171,11 @@ describe('Hermes saved-card runtime resolution', () => {
     expect(
       resolveHermesCardRuntimeHome(root, renamedAndReconfigured.cardId),
     ).toBe(lunaHome);
+    expect(renamedAndReconfigured).toMatchObject({
+      nativeTools: ['memory'],
+      skills: ['planning'],
+      toolsets: ['skills'],
+      mcpConnectionIds: ['github'],
+    });
   });
 });

@@ -40,6 +40,10 @@ vi.mock('../hermes/mainAdapter', () => ({
     providerModelId: 'gpt-5.6-luna',
     executionMode: card.runtimeOptions?.executionMode || 'single',
     tools: card.runtimeOptions?.tools || [],
+    nativeTools: card.runtimeOptions?.nativeTools || [],
+    skills: card.runtimeOptions?.skills || [],
+    toolsets: card.runtimeOptions?.toolsets || [],
+    mcpConnectionIds: card.runtimeOptions?.mcpConnectionIds || [],
     coderCardIds: directSubagents
       .filter((child: any) => child.runtimeBinding === 'local_coder')
       .map((child: any) => child.cardId),
@@ -264,6 +268,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
       profile: kanbanCard.id,
       provider: 'openai-codex',
       providerModelId: 'gpt-5.6-luna',
+      skills: [],
       input: ARGS.input,
     });
     expect(mockStartHermes).not.toHaveBeenCalled();

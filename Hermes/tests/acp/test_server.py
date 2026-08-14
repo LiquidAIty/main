@@ -196,6 +196,81 @@ class TestSessionOps:
         assert state.agent.ephemeral_system_prompt == "Updated saved-card prompt"
 
     @pytest.mark.asyncio
+    async def test_saved_card_capabilities_and_skills_are_exact_and_survive_model_switch(
+        self, agent
+    ):
+        def tool_definitions(*, enabled_toolsets=None, **_kwargs):
+            if enabled_toolsets is None:
+                return [
+                    {"type": "function", "function": {"name": "memory", "description": "Memory"}},
+                    {"type": "function", "function": {"name": "terminal", "description": "Terminal"}},
+                ]
+            if "skills" in enabled_toolsets:
+                return [
+                    {"type": "function", "function": {"name": "skills_list", "description": "Skills"}},
+                ]
+            return []
+
+        with (
+            patch("toolsets.validate_toolset", return_value=True),
+            patch("model_tools.get_tool_definitions", side_effect=tool_definitions),
+            patch("agent.memory_manager.inject_memory_provider_tools"),
+            patch(
+                "agent.skill_commands.build_preloaded_skills_prompt",
+                return_value=("Loaded planning skill", ["planning"], []),
+            ),
+        ):
+            created = await agent.new_session(
+                cwd="/tmp",
+                sessionConfig={
+                    "systemPrompt": "Saved card prompt",
+                    "enabledTools": ["memory"],
+                    "enabledToolsets": ["skills"],
+                    "skills": ["planning"],
+                },
+            )
+            state = agent.session_manager.get_session(created.session_id)
+            assert state.agent.ephemeral_system_prompt == (
+                "Saved card prompt\n\nLoaded planning skill"
+            )
+            assert state.agent.valid_tool_names == {"memory", "skills_list"}
+            assert state.external_native_tools == ["memory"]
+            assert state.external_toolsets == ["skills"]
+            assert state.external_skills == ["planning"]
+
+            agent._resolve_model_selection = MagicMock(
+                return_value=("openai-codex", "gpt-5.6-luna")
+            )
+            state.agent.provider = "openai-codex"
+            await agent.set_session_model(
+                model_id="openai-codex:gpt-5.6-luna",
+                session_id=created.session_id,
+            )
+
+            assert state.agent.ephemeral_system_prompt == (
+                "Saved card prompt\n\nLoaded planning skill"
+            )
+            assert state.agent.valid_tool_names == {"memory", "skills_list"}
+
+    @pytest.mark.asyncio
+    async def test_missing_saved_skill_fails_by_identifier_without_prompt_leak(self, agent):
+        secret = "secret-prompt-value"
+        with patch(
+            "agent.skill_commands.build_preloaded_skills_prompt",
+            return_value=("", [], ["missing-skill"]),
+        ):
+            with pytest.raises(ValueError) as error:
+                await agent.new_session(
+                    cwd="/tmp",
+                    sessionConfig={
+                        "systemPrompt": secret,
+                        "skills": ["missing-skill"],
+                    },
+                )
+        assert str(error.value) == "acp_session_skills_missing: missing-skill"
+        assert secret not in str(error.value)
+
+    @pytest.mark.asyncio
     async def test_new_session_returns_authenticated_cross_provider_model_state(self):
         manager = SessionManager(
             agent_factory=lambda: SimpleNamespace(

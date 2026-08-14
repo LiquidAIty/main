@@ -232,6 +232,30 @@ def _external_session_system_prompt(kwargs: dict[str, Any]) -> str:
     return str(value or "").strip()
 
 
+def _external_session_string_list(
+    kwargs: dict[str, Any], key: str
+) -> list[str] | None:
+    """Read one explicit saved-card string list from ACP extension metadata.
+
+    ``None`` means the external client did not claim authority for this field;
+    an empty list is an explicit empty capability grant.
+    """
+    config = kwargs.get("sessionConfig")
+    if not isinstance(config, dict) or key not in config:
+        return None
+    value = config.get(key)
+    if not isinstance(value, list):
+        raise ValueError(f"acp_session_config_invalid: field={key}")
+    result: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str):
+            raise ValueError(f"acp_session_config_invalid: field={key}")
+        normalized = entry.strip()
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result
+
+
 def _resource_display_name(uri: str, name: str | None = None, title: str | None = None) -> str:
     """Human-readable attachment name for prompt context."""
     raw_name = (name or "").strip()
@@ -976,6 +1000,105 @@ class HermesACPAgent(acp.Agent):
         loop = asyncio.get_running_loop()
         loop.call_soon(asyncio.create_task, self._send_usage_update(state))
 
+    def _refresh_external_tool_surface(self, state: SessionState) -> None:
+        """Apply an exact caller-owned native capability ceiling when present."""
+        if state.external_native_tools is None and state.external_toolsets is None:
+            return
+
+        from agent.memory_manager import inject_memory_provider_tools
+        from model_tools import get_tool_definitions
+        from toolsets import validate_toolset
+
+        requested_toolsets = list(state.external_toolsets or [])
+        missing_toolsets = [name for name in requested_toolsets if not validate_toolset(name)]
+        if missing_toolsets:
+            raise ValueError(
+                "acp_session_toolsets_missing: " + ",".join(missing_toolsets)
+            )
+        enabled_toolsets = _expand_acp_enabled_toolsets(
+            requested_toolsets,
+            mcp_server_names=state.external_mcp_server_names,
+        )
+        selected = get_tool_definitions(
+            enabled_toolsets=enabled_toolsets,
+            quiet_mode=True,
+            skip_tool_search_assembly=True,
+        )
+
+        requested_native = list(state.external_native_tools or [])
+        if requested_native:
+            all_available = get_tool_definitions(
+                enabled_toolsets=None,
+                quiet_mode=True,
+                skip_tool_search_assembly=True,
+            )
+            available_by_name = {
+                tool.get("function", {}).get("name"): tool
+                for tool in all_available or []
+                if isinstance(tool, dict)
+            }
+            missing_native = [
+                name for name in requested_native if name not in available_by_name
+            ]
+            if missing_native:
+                raise ValueError(
+                    "acp_session_native_tools_missing: " + ",".join(missing_native)
+                )
+            selected.extend(available_by_name[name] for name in requested_native)
+
+        deduped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for tool in selected:
+            name = str(tool.get("function", {}).get("name") or "")
+            if name and name not in seen:
+                seen.add(name)
+                deduped.append(tool)
+
+        state.agent.enabled_toolsets = enabled_toolsets
+        state.agent.tools = deduped
+        state.agent.valid_tool_names = set(seen)
+        inject_memory_provider_tools(state.agent)
+        invalidate = getattr(state.agent, "_invalidate_system_prompt", None)
+        if callable(invalidate):
+            invalidate()
+
+    def _apply_external_session_config(
+        self, state: SessionState, kwargs: dict[str, Any]
+    ) -> None:
+        """Materialize saved-card prompt, skills, and capability grants once."""
+        skills = _external_session_string_list(kwargs, "skills")
+        enabled_tools = _external_session_string_list(kwargs, "enabledTools")
+        enabled_toolsets = _external_session_string_list(kwargs, "enabledToolsets")
+
+        prompt_parts = [_external_session_system_prompt(kwargs)]
+        if skills is not None:
+            state.external_skills = skills
+            if skills:
+                from agent.skill_commands import build_preloaded_skills_prompt
+
+                skill_prompt, _loaded, missing = build_preloaded_skills_prompt(
+                    skills, task_id=state.session_id
+                )
+                if missing:
+                    raise ValueError(
+                        "acp_session_skills_missing: " + ",".join(missing)
+                    )
+                prompt_parts.append(skill_prompt)
+
+        self.session_manager.set_ephemeral_system_prompt(
+            state.session_id,
+            "\n\n".join(part for part in prompt_parts if part),
+        )
+        if enabled_tools is not None:
+            state.external_native_tools = enabled_tools
+        if enabled_toolsets is not None:
+            state.external_toolsets = enabled_toolsets
+        if enabled_tools is not None or enabled_toolsets is not None:
+            # The current ACP load/new request is authoritative. Re-add only
+            # the MCP server names actually supplied on this request below.
+            state.external_mcp_server_names = []
+        self._refresh_external_tool_surface(state)
+
     async def _register_session_mcp_servers(
         self,
         state: SessionState,
@@ -1014,6 +1137,16 @@ class HermesACPAgent(acp.Agent):
             return
 
         try:
+            state.external_mcp_server_names = [server.name for server in mcp_servers]
+            if state.external_native_tools is not None or state.external_toolsets is not None:
+                self._refresh_external_tool_surface(state)
+                logger.info(
+                    "Session %s: refreshed exact external tool surface after ACP MCP registration (%d tools)",
+                    state.session_id,
+                    len(state.agent.tools or []),
+                )
+                return
+
             from model_tools import get_tool_definitions
             from agent.memory_manager import inject_memory_provider_tools
 
@@ -1448,9 +1581,7 @@ class HermesACPAgent(acp.Agent):
         **kwargs: Any,
     ) -> NewSessionResponse:
         state = self.session_manager.create_session(cwd=cwd)
-        self.session_manager.set_ephemeral_system_prompt(
-            state.session_id, _external_session_system_prompt(kwargs)
-        )
+        self._apply_external_session_config(state, kwargs)
         await self._register_session_mcp_servers(state, mcp_servers)
         self._schedule_mcp_late_refresh(state)
         logger.info("New session %s (cwd=%s)", state.session_id, cwd)
@@ -1476,9 +1607,7 @@ class HermesACPAgent(acp.Agent):
         if state is None:
             logger.warning("load_session: session %s not found", session_id)
             return None
-        self.session_manager.set_ephemeral_system_prompt(
-            state.session_id, _external_session_system_prompt(kwargs)
-        )
+        self._apply_external_session_config(state, kwargs)
         await self._register_session_mcp_servers(state, mcp_servers)
         self._schedule_mcp_late_refresh(state)
         logger.info("Loaded session %s", session_id)
@@ -1527,6 +1656,7 @@ class HermesACPAgent(acp.Agent):
         if state is None:
             logger.warning("resume_session: session %s not found, creating new", session_id)
             state = self.session_manager.create_session(cwd=cwd)
+        self._apply_external_session_config(state, kwargs)
         await self._register_session_mcp_servers(state, mcp_servers)
         self._schedule_mcp_late_refresh(state)
         logger.info("Resumed session %s", state.session_id)
@@ -2201,6 +2331,8 @@ class HermesACPAgent(acp.Agent):
             model=new_model,
             requested_provider=target_provider,
         )
+        state.agent.ephemeral_system_prompt = state.ephemeral_system_prompt or None
+        self._refresh_external_tool_surface(state)
         self.session_manager.save_session(state.session_id)
         provider_label = getattr(state.agent, "provider", None) or target_provider or current_provider
         logger.info("Session %s: model switched to %s", state.session_id, new_model)
@@ -2208,6 +2340,19 @@ class HermesACPAgent(acp.Agent):
 
     def _cmd_tools(self, args: str, state: SessionState) -> str:
         try:
+            if state.external_native_tools is not None or state.external_toolsets is not None:
+                tools = list(getattr(state.agent, "tools", None) or [])
+                if not tools:
+                    return "No tools available."
+                lines = [f"Available tools ({len(tools)}):"]
+                for tool in tools:
+                    name = (tool.get("function") or {}).get("name", "?")
+                    desc = (tool.get("function") or {}).get("description", "")
+                    if len(desc) > 80:
+                        desc = desc[:77] + "..."
+                    lines.append(f"  {name}: {desc}")
+                return "\n".join(lines)
+
             from model_tools import get_tool_definitions
             from types import SimpleNamespace
             from agent.memory_manager import inject_memory_provider_tools
@@ -2453,6 +2598,8 @@ class HermesACPAgent(acp.Agent):
                 base_url=current_base_url,
                 api_mode=current_api_mode,
             )
+            state.agent.ephemeral_system_prompt = state.ephemeral_system_prompt or None
+            self._refresh_external_tool_surface(state)
             self.session_manager.save_session(session_id)
             logger.info(
                 "Session %s: model switched to %s via provider %s",

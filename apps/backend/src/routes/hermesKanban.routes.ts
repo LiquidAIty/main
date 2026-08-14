@@ -102,6 +102,7 @@ export async function runHermesKanbanCardTask(args: {
   profile: string;
   provider: string;
   providerModelId: string;
+  skills: string[];
   input: string;
 }): Promise<HermesKanbanCardTaskResult> {
   const profile = String(args.profile || '').trim().toLowerCase();
@@ -119,7 +120,7 @@ export async function runHermesKanbanCardTask(args: {
     '[ASSIGNMENT]',
     args.input,
   ].join('\n');
-  const createResult = await runHermes([
+  const createArgs = [
     '-p',
     profile,
     'kanban',
@@ -137,8 +138,13 @@ export async function runHermesKanbanCardTask(args: {
     args.providerModelId,
     '--provider',
     args.provider,
-    '--json',
-  ]);
+  ];
+  for (const skill of args.skills) {
+    const savedSkill = String(skill || '').trim();
+    if (savedSkill) createArgs.push('--skill', savedSkill);
+  }
+  createArgs.push('--json');
+  const createResult = await runHermes(createArgs);
   if (createResult.exitCode !== 0) {
     throw new Error('hermes_kanban_card_create_failed');
   }

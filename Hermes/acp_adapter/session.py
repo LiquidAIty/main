@@ -132,7 +132,8 @@ def _expand_acp_enabled_toolsets(
 ) -> List[str]:
     """Return ACP toolsets plus explicit MCP server toolsets for this session."""
     expanded: List[str] = []
-    for name in list(toolsets or ["hermes-acp"]):
+    base_toolsets = ["hermes-acp"] if toolsets is None else list(toolsets)
+    for name in base_toolsets:
         if name and name not in expanded:
             expanded.append(name)
 
@@ -171,6 +172,10 @@ class SessionState:
     current_prompt_text: str = ""
     interrupted_prompt_text: str = ""
     ephemeral_system_prompt: str = ""
+    external_native_tools: Optional[List[str]] = None
+    external_toolsets: Optional[List[str]] = None
+    external_skills: Optional[List[str]] = None
+    external_mcp_server_names: List[str] = field(default_factory=list)
 
 
 class SessionManager:

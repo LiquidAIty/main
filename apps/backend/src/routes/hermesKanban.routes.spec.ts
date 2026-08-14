@@ -162,6 +162,7 @@ describe('saved-card native Hermes Kanban submission', () => {
       profile: 'card_hermes_steward',
       provider: 'openai-codex',
       providerModelId: 'gpt-5.6-luna',
+      skills: ['planning', 'verification'],
       input: 'Perform the bounded assignment.',
     });
 
@@ -189,6 +190,10 @@ describe('saved-card native Hermes Kanban submission', () => {
       'gpt-5.6-luna',
       '--provider',
       'openai-codex',
+      '--skill',
+      'planning',
+      '--skill',
+      'verification',
       '--json',
     ]));
     const bodyIndex = createArgs.indexOf('--body');
@@ -226,6 +231,7 @@ describe('saved-card native Hermes Kanban submission', () => {
       profile: 'card_hermes_steward',
       provider: 'openai-codex',
       providerModelId: 'gpt-5.6-luna',
+      skills: [],
       input: 'Perform the bounded assignment.',
     })).rejects.toThrow('hermes_kanban_card_create_failed');
 
@@ -240,6 +246,7 @@ describe('saved-card native Hermes Kanban submission', () => {
         profile: 'card_hermes_steward',
         provider: 'openai-codex',
         providerModelId: 'gpt-5.6-luna',
+        skills: [],
         input: 'Perform the bounded assignment.',
       });
     } catch (error) {

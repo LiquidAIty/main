@@ -607,6 +607,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
           profile: config.profile,
           provider: providerForHermes(config.provider),
           providerModelId: config.providerModelId,
+          skills: config.skills,
           input,
         });
         const nativeCompleted = hermesKanban.snapshot.task.status === 'done';

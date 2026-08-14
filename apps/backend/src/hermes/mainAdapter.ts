@@ -6,6 +6,7 @@ import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
 import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../coder/workspaceRoot';
 import { resolveModel } from '../llm/models.config';
+import { resolveSavedMcpConnections } from './mcpConnections';
 
 export type HermesTurnUsage = {
   providerInputTokens: number | null;
@@ -35,6 +36,10 @@ export type HermesRuntimeConfig = {
   providerModelId: string;
   executionMode: 'single' | 'auto-kanban';
   tools: string[];
+  nativeTools: string[];
+  skills: string[];
+  toolsets: string[];
+  mcpConnectionIds: string[];
   coderCardIds: string[];
   directSubagents: { cardId: string; title: string; runtimeBinding: string }[];
 };
@@ -74,6 +79,13 @@ function safeProfile(value: unknown): string {
     throw new Error('hermes_profile_invalid');
   }
   return profile;
+}
+
+function savedStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => String(entry || '').trim())
+    .filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index);
 }
 
 function resolveHermesInstall(): { root: string; executable: string } {
@@ -191,11 +203,13 @@ export function resolveHermesCardRuntimeConfig(
     providerModelId: model.providerModelId,
     executionMode: requestedExecutionMode,
     tools: [
-      ...(Array.isArray(card?.runtimeOptions?.tools)
-        ? card.runtimeOptions.tools.map((tool: unknown) => String(tool || '').trim()).filter(Boolean)
-        : []),
+      ...savedStringList(card?.runtimeOptions?.tools),
       ...(directSubagents.length > 0 ? ['card.run_assistant_agent'] : []),
     ].filter((tool, index, all) => tool !== 'web_search' && all.indexOf(tool) === index),
+    nativeTools: savedStringList(card?.runtimeOptions?.nativeTools),
+    skills: savedStringList(card?.runtimeOptions?.skills),
+    toolsets: savedStringList(card?.runtimeOptions?.toolsets),
+    mcpConnectionIds: savedStringList(card?.runtimeOptions?.mcpConnectionIds),
     coderCardIds,
     directSubagents,
   };
@@ -419,8 +433,9 @@ class AcpProcess {
   }
 
   private mcpServers(args: HermesTurnArgs): Record<string, unknown>[] {
+    const referenced = resolveSavedMcpConnections(args.mcpConnectionIds);
     const granted = args.tools.filter((name) => name !== 'web_search');
-    if (granted.length === 0) return [];
+    if (granted.length === 0) return referenced;
     const root = resolveRepoRoot();
     const python = path.join(root, 'apps', 'python-models', '.venv', 'Scripts', 'python.exe');
     const host = path.join(root, 'apps', 'python-models', 'app', 'mcp_host.py');
@@ -446,13 +461,18 @@ class AcpProcess {
           }),
         },
       ],
-    }];
+    }, ...referenced];
   }
 
   private async resolveSession(args: HermesTurnArgs): Promise<string> {
     const existing = this.sessionByKey.get(args.sessionKey);
     const cwd = this.sessionCwd(args.sessionKey, args.workingDirectory);
-    const sessionConfig = { systemPrompt: args.prompt };
+    const sessionConfig = {
+      systemPrompt: args.prompt,
+      enabledTools: args.nativeTools,
+      enabledToolsets: args.toolsets,
+      skills: args.skills,
+    };
     const mcpServers = this.mcpServers(args);
     if (existing) {
       await this.request('session/load', {
