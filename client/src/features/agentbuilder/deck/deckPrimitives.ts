@@ -94,6 +94,7 @@ export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'run_mag_one',
 ] as const;
 export const HERMES_CARD_TOOLS = [
+  'agentgraph.inspect',
   'graphiti.search_nodes',
   'graphiti.search_memory_facts',
   'graphiti.get_entity_edge',

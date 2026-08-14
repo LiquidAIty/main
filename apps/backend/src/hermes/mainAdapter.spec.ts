@@ -73,6 +73,7 @@ describe('Hermes saved-card runtime resolution', () => {
     expect(config).toMatchObject({
       cardId: main.id,
       profile: main.id,
+      runtimeBinding: 'main_chat',
       provider: 'openai',
       modelKey: 'gpt-5.6-luna',
       executionMode: 'single',
@@ -111,6 +112,7 @@ describe('Hermes saved-card runtime resolution', () => {
     expect(config).toMatchObject({
       cardId: 'card_hermes_steward',
       profile: 'card_hermes_steward',
+      runtimeBinding: 'hermes_steward',
       executionMode: 'auto-kanban',
       tools: ['graphiti.search_nodes'],
     });

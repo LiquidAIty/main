@@ -29,6 +29,7 @@ export type HermesSessionEvent =
 export type HermesRuntimeConfig = {
   cardId: string;
   title: string;
+  runtimeBinding: string;
   prompt: string;
   profile: string;
   provider: string;
@@ -175,6 +176,7 @@ export function resolveHermesCardRuntimeConfig(
   return {
     cardId: String(card?.id || ''),
     title: String(card?.title || card?.id || ''),
+    runtimeBinding,
     prompt: [
       String(card?.prompt || '').trim(),
       directSubagents.length > 0
@@ -458,6 +460,7 @@ class AcpProcess {
             conversationId: args.conversationId,
             parentRunId: args.parentRunId,
             mainCardId: args.cardId,
+            callerRuntimeBinding: args.runtimeBinding,
           }),
         },
       ],

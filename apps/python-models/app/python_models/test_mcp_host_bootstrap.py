@@ -293,6 +293,38 @@ def test_stdio_process_owned_context_and_tool_allowlist_are_fail_closed(monkeypa
     assert mcp_host._configured_tool_allowlist() is None
 
 
+def test_trusted_hermes_stdio_context_enforces_main_and_helper_tool_roles(monkeypatch):
+    import mcp_host
+
+    helper_context = {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-1",
+        "parentRunId": "parent-1",
+        "mainCardId": "card_hermes_steward",
+        "callerRuntimeBinding": "hermes_steward",
+    }
+    monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "stdio")
+    monkeypatch.setenv("MCP_TRUSTED_MAIN_CONTEXT", json.dumps(helper_context))
+
+    assert mcp_host._trusted_stdio_main_context() == helper_context
+    assert mcp_host._enforce_tool_caller(
+        "write_mag_one_instructions",
+        {"_callerCardId": "card_hermes_steward", "_callerRuntimeBinding": "hermes_steward"},
+        authenticated_external=True,
+    ) is None
+    assert mcp_host._enforce_tool_caller(
+        "run_mag_one",
+        {"_callerCardId": "card_hermes_steward", "_callerRuntimeBinding": "hermes_steward"},
+        authenticated_external=True,
+    ) == "tool_caller_not_authorized: run_mag_one requires main_chat"
+    assert mcp_host._enforce_tool_caller(
+        "write_mag_one_instructions",
+        {"_callerCardId": "card_main_chat", "_callerRuntimeBinding": "main_chat"},
+        authenticated_external=True,
+    ) == "tool_caller_not_authorized: write_mag_one_instructions requires hermes_steward"
+
+
 def test_authenticated_connection_reaches_read_only_handler_without_context_injection(
     monkeypatch,
 ):

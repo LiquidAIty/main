@@ -148,6 +148,7 @@ _GRAPHITI_PROVIDER_HEALTH: dict[str, Any] = {
 _MAIN_CONTEXT_FIELDS = frozenset(
     {"projectId", "deckId", "conversationId", "parentRunId", "mainCardId"}
 )
+_TRUSTED_STDIO_OPTIONAL_CONTEXT_FIELDS = frozenset({"callerRuntimeBinding"})
 
 
 def _configured_tool_allowlist() -> frozenset[str] | None:
@@ -182,7 +183,11 @@ def _trusted_stdio_main_context() -> dict[str, Any] | None:
         return None
     if not isinstance(value, dict) or not _MAIN_CONTEXT_FIELDS.issubset(value):
         return None
-    return {field: str(value[field]) for field in _MAIN_CONTEXT_FIELDS}
+    context = {field: str(value[field]) for field in _MAIN_CONTEXT_FIELDS}
+    for field in _TRUSTED_STDIO_OPTIONAL_CONTEXT_FIELDS:
+        if str(value.get(field, "") or "").strip():
+            context[field] = str(value[field])
+    return context
 
 
 def _safe_hash(value: Any) -> str:
@@ -2082,8 +2087,10 @@ def _enforce_tool_caller(
     )
     card_id = str(args.pop("_callerCardId", "") or "").strip()
     binding = str(args.pop("_callerRuntimeBinding", "") or "").strip()
-    if authenticated_external:
-        return None
+    if authenticated_external and not binding:
+        # The authenticated account MCP surface is the Main doorway. Hermes
+        # stdio processes supply their exact saved runtime binding instead.
+        binding = "main_chat"
     if expected is None:
         return None
     if not card_id or not binding:
@@ -2300,7 +2307,9 @@ async def _dispatch_tool(
                 args["originatingRunId"] = str(context["parentRunId"])
             if name in _MAIN_ONLY_TOOLS or name in _HERMES_ONLY_TOOLS:
                 args["_callerCardId"] = str(context["mainCardId"])
-                args["_callerRuntimeBinding"] = "external_gpt"
+                args["_callerRuntimeBinding"] = str(
+                    context.get("callerRuntimeBinding") or "main_chat"
+                )
         except (KeyError, RuntimeError, ValueError) as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
     caller_card_id = str(args.get("_callerCardId", "") or "").strip()
