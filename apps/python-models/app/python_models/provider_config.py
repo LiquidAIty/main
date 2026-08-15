@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 # One clear, non-secret bootstrap override for the canonical env-file path.
 ENV_FILE_OVERRIDE = "LIQUIDAITY_ENV_FILE"
 FILE_BACKED_CONFIG = (
+    "DATABASE_URL",
     "OPENAI_API_KEY",
     "OPENROUTER_API_KEY",
     "ANTHROPIC_API_KEY",

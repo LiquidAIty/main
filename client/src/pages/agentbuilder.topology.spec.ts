@@ -90,15 +90,16 @@ describe('Main / Hermes / graph authority topology', () => {
     ]));
     expect(mainTools).not.toContain('web_search');
     expect(hermesTools).toEqual(expect.arrayContaining([
-      'agentgraph.inspect',
       'graphiti.search_nodes',
       'graphiti.add_memory',
       'graphiti.add_triplet',
     ]));
+    expect(hermesTools).not.toContain('agentgraph.inspect');
     expect(hermesTools).not.toEqual(expect.arrayContaining(['web_search', 'run_mag_one']));
     expect(byId.has('card_research_agent')).toBe(false);
     const hermesPrompt = byId.get('card_hermes_steward')?.prompt ?? '';
-    expect(hermesPrompt).toContain('saved Kanban agent');
+    expect(hermesPrompt).toContain('saved Hermes steward');
+    expect(hermesPrompt).toContain('Kanban is an execution mode on an ordinary card, not your identity');
     expect(hermesPrompt).toContain('Before Magentic-One');
     expect(hermesPrompt).toContain('After Magentic-One');
     expect(byId.get('card_hermes_steward')?.title).toBe('Kanban');

@@ -1448,45 +1448,11 @@ def _native_cbm_config() -> tuple[str, list[str], str]:
         [
             "exec",
             "-i",
-            "liquidaity-codegraph",
+            "codegraph",
             "/opt/cbm/codebase-memory-mcp",
         ],
         repo_root,
     )
-
-
-def _call_native_cbm_cli(name: str, arguments: dict[str, Any]) -> CallToolResult:
-    """Run one machine-readable CBM operation inside the CodeGraph container."""
-    command, args, repo_root = _native_cbm_config()
-    creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    try:
-        completed = subprocess.run(
-            [
-                command,
-                *args,
-                "cli",
-                name,
-                json.dumps(dict(arguments or {}), ensure_ascii=False, separators=(",", ":")),
-                "--json",
-            ],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=60,
-            creationflags=creation_flags,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise RuntimeError(f"codegraph_unavailable:{error}") from error
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "cbm_cli_failed").strip()[-2000:]
-        raise RuntimeError(f"codegraph_cbm_failed:{completed.returncode}:{detail}")
-    try:
-        payload = json.loads(completed.stdout)
-        return CallToolResult.model_validate(payload)
-    except (json.JSONDecodeError, ValueError) as error:
-        raise RuntimeError("codegraph_cbm_invalid_json") from error
 
 
 def _initialize_native_cbm_sync() -> None:
@@ -1534,7 +1500,10 @@ def _call_native_cbm(name: str, arguments: dict[str, Any]) -> CallToolResult:
     if name == "index_repository":
         return _call_native_cbm_index(arguments)
     _initialize_native_cbm_sync()
-    return _call_native_cbm_cli(name, arguments)
+    client = _NATIVE_CBM_CLIENT
+    if client is None:
+        raise RuntimeError("native_cbm_client_unavailable")
+    return client.call_tool(name, arguments)
 
 
 def _call_native_cbm_index(arguments: dict[str, Any]) -> CallToolResult:
@@ -1556,7 +1525,10 @@ def _call_native_cbm_index(arguments: dict[str, Any]) -> CallToolResult:
         return future.result()
     try:
         _initialize_native_cbm_sync()
-        result = _call_native_cbm_cli("index_repository", arguments)
+        client = _NATIVE_CBM_CLIENT
+        if client is None:
+            raise RuntimeError("native_cbm_client_unavailable")
+        result = client.call_tool("index_repository", arguments)
         future.set_result(result)
         return result
     except BaseException as error:

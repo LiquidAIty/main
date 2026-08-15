@@ -1086,13 +1086,14 @@ def test_http_mcp_targets_compose_owned_codegraph():
     assert args == [
         "exec",
         "-i",
-        "liquidaity-codegraph",
+        "codegraph",
         "/opt/cbm/codebase-memory-mcp",
     ]
 
 
-def test_native_cbm_dispatch_uses_docker_cli_json(monkeypatch):
+def test_native_cbm_dispatch_uses_the_initialized_stdio_client(monkeypatch):
     import mcp_host
+    from mcp.types import CallToolResult, TextContent
 
     native_tool = mcp_host.Tool(
         name="search_graph",
@@ -1101,51 +1102,43 @@ def test_native_cbm_dispatch_uses_docker_cli_json(monkeypatch):
     )
     monkeypatch.setattr(mcp_host, "_NATIVE_CBM_TOOLS", (native_tool,))
     monkeypatch.setattr(mcp_host, "_NATIVE_CBM_NAMES", frozenset({"search_graph"}))
-    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_CLIENT", object())
-    monkeypatch.setattr(mcp_host, "_initialize_native_cbm_sync", lambda: None)
     calls = []
 
-    def run(argv, **kwargs):
-        calls.append((argv, kwargs))
-        return subprocess.CompletedProcess(
-            argv,
-            0,
-            stdout=json.dumps({"content": [{"type": "text", "text": "ok"}], "isError": False}),
-            stderr="",
-        )
+    class NativeClient:
+        def call_tool(self, name, arguments):
+            calls.append((name, dict(arguments)))
+            return CallToolResult(content=[TextContent(type="text", text="ok")])
 
-    monkeypatch.setattr(mcp_host.subprocess, "run", run)
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_CLIENT", NativeClient())
+    monkeypatch.setattr(mcp_host, "_initialize_native_cbm_sync", lambda: None)
     result = mcp_host._call_native_cbm(
         "search_graph",
         {"project": "workspace-main", "query": "HermesKanbanWorkspace"},
     )
 
-    argv, kwargs = calls[0]
-    assert argv[:7] == [
-        "docker", "exec", "-i", "liquidaity-codegraph",
-        "/opt/cbm/codebase-memory-mcp", "cli", "search_graph",
+    assert calls == [
+        (
+            "search_graph",
+            {
+                "project": "workspace-main",
+                "query": "HermesKanbanWorkspace",
+            },
+        )
     ]
-    assert json.loads(argv[7]) == {
-        "project": "workspace-main",
-        "query": "HermesKanbanWorkspace",
-    }
-    assert argv[8] == "--json"
-    assert kwargs["timeout"] == 60
     assert result.content[0].text == "ok"
 
 
-def test_native_cbm_cli_failure_is_strict(monkeypatch):
+def test_native_cbm_client_failure_is_strict(monkeypatch):
     import mcp_host
 
-    monkeypatch.setattr(
-        mcp_host.subprocess,
-        "run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            [], 1, stdout="", stderr="No such container: liquidaity-codegraph"
-        ),
-    )
-    with pytest.raises(RuntimeError, match="codegraph_cbm_failed:1:No such container"):
-        mcp_host._call_native_cbm_cli("search_graph", {"project": "workspace-main"})
+    class FailingClient:
+        def call_tool(self, _name, _arguments):
+            raise RuntimeError("native transport closed")
+
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_CLIENT", FailingClient())
+    monkeypatch.setattr(mcp_host, "_initialize_native_cbm_sync", lambda: None)
+    with pytest.raises(RuntimeError, match="native transport closed"):
+        mcp_host._call_native_cbm("search_graph", {"project": "workspace-main"})
 
 
 def test_streamable_http_is_stateless_across_fresh_clients(monkeypatch):
@@ -1747,15 +1740,16 @@ def test_identical_native_cbm_index_requests_share_one_in_flight_call(monkeypatc
 
     calls = []
 
-    def call_cli(name, arguments):
-        assert name == "index_repository"
-        calls.append(dict(arguments))
-        entered.set()
-        assert release.wait(timeout=2)
-        return CallToolResult(content=[TextContent(type="text", text="indexed")])
+    class IndexClient:
+        def call_tool(self, name, arguments):
+            assert name == "index_repository"
+            calls.append(dict(arguments))
+            entered.set()
+            assert release.wait(timeout=2)
+            return CallToolResult(content=[TextContent(type="text", text="indexed")])
 
     monkeypatch.setattr(mcp_host, "_initialize_native_cbm_sync", lambda: None)
-    monkeypatch.setattr(mcp_host, "_call_native_cbm_cli", call_cli)
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_CLIENT", IndexClient())
     monkeypatch.setattr(mcp_host, "_NATIVE_CBM_INDEX_IN_FLIGHT", None)
     arguments = {"repo_path": "C:/Projects/main", "mode": "fast"}
 

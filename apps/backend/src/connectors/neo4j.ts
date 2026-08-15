@@ -28,7 +28,7 @@ export async function pingNeo4j(): Promise<'up' | 'down'> {
   try {
     session = getNeo4jDriver().session();
     const result = await session.run('RETURN 1 AS ok');
-    const ok = result.records[0]?.get('ok') === 1;
+    const ok = Number(result.records[0]?.get('ok')) === 1;
     return ok ? 'up' : 'down';
   } catch (error) {
     console.warn('[Neo4j] connectivity check failed:', error);

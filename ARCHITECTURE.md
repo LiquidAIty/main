@@ -20,8 +20,8 @@ runtime responses, durable job artifacts, and direct inspection of the real auth
 ## Runtime topology
 
 `npm run dev`, `npm run dev:fresh`, and `npm run dev:all` converge on one visible foreground
-launcher. It stops only the prior verified application stack, preserves and verifies the existing
-databases, starts every application process, and shuts the stack down together:
+launcher for the core local application. It stops prior application port listeners without touching
+the database containers, then starts and shuts down the four core processes together:
 
 | Process | Port | Owner | Start command |
 | --- | ---: | --- | --- |
@@ -29,13 +29,13 @@ databases, starts every application process, and shuts the stack down together:
 | Express backend | 4000 | `apps/backend/` | `npm run dev:fresh` |
 | Graphiti ingestion API | 8001 | `services/knowgraph/` | `npm run dev:fresh` |
 | Python rails | 8003 | `apps/python-models/` | `npm run dev:fresh` |
-| Authenticated GPT plugin MCP | 8765 | `apps/python-models/` | `npm run dev:fresh` |
-| Public MCP tunnel | public URL | local ngrok | `npm run dev:fresh` |
+| Authenticated GPT plugin MCP | 8765 | `apps/python-models/` | optional `npm run dev:public` |
+| Public MCP tunnel | public URL | local ngrok | optional `npm run dev:public` |
 
 PostgreSQL normally listens on 5433 and owns projects, saved decks, and conversations.
 Neo4j normally listens on 7474/7687 and owns KnowGraph. ThinkGraph is SQLite/Engraphis. CodeGraph is
-the CBM index. Startup guards reuse only verified healthy LiquidAIty processes and refuse unknown port
-owners. Isolated service startup is not a supported application proof path.
+the CBM index. Public MCP/OAuth/ngrok operation is an explicit optional integration path and is not a
+prerequisite for ordinary local development.
 
 ## Current working workflow
 
@@ -574,7 +574,7 @@ The root Compose stack owns one `codegraph` execution service built as
 `liquidaity-codegraph:0.10.2`. Its image contains the pinned Linux portable CBM binary at
 `/opt/cbm/codebase-memory-mcp`, mounts the repository read-only at `/workspace/main`, and keeps graph
 state in the named `codegraph_data` volume. CLI calls use `docker compose exec -T codegraph`, while
-stdio MCP clients use `docker exec -i liquidaity-codegraph /opt/cbm/codebase-memory-mcp` because
+stdio MCP clients use `docker exec -i codegraph /opt/cbm/codebase-memory-mcp` because
 Compose CLI startup output is not a clean MCP stdio transport. Runtime download, Windows AppData,
 PATH discovery, and developer-machine executable paths are prohibited. Oracle builds must obtain the
 pinned official v0.10.2 Linux portable release inside the builder stage, verify archive SHA-256

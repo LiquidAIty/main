@@ -19,7 +19,6 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
     const names = await listPythonAgentMcpTools();
     expect(new Set(names).size).toBe(names.length);
     expect(names).toEqual(expect.arrayContaining([
-      'agentgraph.inspect',
       'canvas.inspect',
       'canvas.upsert_wire',
       'card.run_assistant_agent',
@@ -37,6 +36,7 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'web_search',
       'write_mag_one_instructions',
     ]));
+    expect(names).not.toContain('agentgraph.inspect');
     // Obsolete model-facing graph and agent-fabric wrappers are all gone.
     expect(names).not.toContain('thinkgraph.process_conversation_pair');
     expect(names).not.toContain('thinkgraph.apply_live_patch');
@@ -54,7 +54,9 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
     expect(names).toContain('engraphis.check_update');
     expect(names).toContain('engraphis.context_savings');
     expect(names).toContain('engraphis.answer');
-  }, 30_000);
+  // A cold host initializes three native catalogs; slower backup/development
+  // machines can cross 30s even when the real catalog completes successfully.
+  }, 60_000);
 
   it('rejects smuggled prompt/model/tool arguments at the MCP boundary', async () => {
     const result = await callPythonAgentMcpTool('card.run_assistant_agent', {

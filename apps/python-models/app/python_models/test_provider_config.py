@@ -102,6 +102,36 @@ def test_file_backed_secret_loads_once_without_overriding_process_env(tmp_path):
         ensure_env_loaded(force=True)
 
 
+def test_file_backed_database_url_loads_without_overriding_process_env(tmp_path):
+    original = {
+        key: os.environ.get(key)
+        for key in ("DATABASE_URL_FILE", "DATABASE_URL")
+    }
+    database_url_file = tmp_path / "database-url"
+    database_url_file.write_text(
+        "postgresql://file-user:file-secret@database.internal/app\n",
+        encoding="utf-8",
+    )
+    os.environ["DATABASE_URL_FILE"] = str(database_url_file)
+    os.environ.pop("DATABASE_URL", None)
+    try:
+        ensure_env_loaded(force=True)
+        assert os.environ["DATABASE_URL"].startswith("postgresql://file-user:")
+
+        os.environ["DATABASE_URL"] = (
+            "postgresql://process-user:process-secret@database.internal/app"
+        )
+        ensure_env_loaded(force=True)
+        assert os.environ["DATABASE_URL"].startswith("postgresql://process-user:")
+    finally:
+        for key, value in original.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        ensure_env_loaded(force=True)
+
+
 def test_public_config_never_carries_secret_values():
     env = {"ALPACA_API_KEY_ID": "SECRETKID", "ALPACA_API_SECRET_KEY": "SECRETVAL", "SEC_API_KEY": "SECKEY"}
     blob = json.dumps(load_alpaca_config(env).to_dict()) + json.dumps(load_sec_api_config(env).to_dict())

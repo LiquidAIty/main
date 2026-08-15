@@ -1,5 +1,6 @@
 neo4j
 graphiti-core==0.29.3
+httpx==0.28.1
 pypdf>=6.14,<7
 fastapi
 uvicorn
