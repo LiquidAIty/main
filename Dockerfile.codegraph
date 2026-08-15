@@ -26,6 +26,10 @@ FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639
 
 ARG CBM_VERSION=0.10.2
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=fetch /out/codebase-memory-mcp /opt/cbm/codebase-memory-mcp
 COPY --from=fetch /out/LICENSE /usr/share/doc/codebase-memory-mcp/LICENSE
 COPY --from=fetch /out/THIRD_PARTY_NOTICES.md /usr/share/doc/codebase-memory-mcp/THIRD_PARTY_NOTICES.md

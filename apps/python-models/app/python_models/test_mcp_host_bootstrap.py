@@ -460,6 +460,17 @@ def test_timed_out_call_does_not_block_completed_sibling(monkeypatch):
     assert json.loads(timed_out.content[0].text)["failureCode"] == "timeout"
 
 
+def test_only_native_cbm_index_uses_the_native_request_timeout(monkeypatch):
+    import mcp_host
+
+    monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 30.0)
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_REQUEST_TIMEOUT_SECONDS", 300.0)
+
+    assert mcp_host._mcp_tool_timeout_seconds("cbm.index_repository") == 300.0
+    assert mcp_host._mcp_tool_timeout_seconds("cbm.index_status") == 30.0
+    assert mcp_host._mcp_tool_timeout_seconds("graphiti.get_status") == 30.0
+
+
 def test_plain_text_does_not_hide_a_later_structured_tool_error():
     import json
     import mcp_host
@@ -1029,6 +1040,36 @@ def test_http_mcp_targets_compose_owned_codegraph():
     ]
 
 
+def test_native_cbm_index_maps_the_canonical_checkout_into_the_container():
+    import mcp_host
+
+    normalized = mcp_host._normalize_native_cbm_index_arguments({
+        "repo_path": mcp_host._REPO_ROOT.replace("\\", "/"),
+        "name": "workspace-main",
+        "mode": "full",
+        "persistence": False,
+    })
+
+    assert normalized == {
+        "repo_path": "/workspace/main",
+        "name": "C-Projects-LiquidAIty-main",
+        "mode": "full",
+        "persistence": False,
+    }
+
+
+def test_native_cbm_index_does_not_redirect_an_unmounted_checkout():
+    import mcp_host
+
+    arguments = {
+        "repo_path": r"C:\Projects\main",
+        "name": "workspace-main",
+        "mode": "fast",
+    }
+
+    assert mcp_host._normalize_native_cbm_index_arguments(arguments) == arguments
+
+
 def test_native_cbm_dispatch_uses_the_initialized_stdio_client(monkeypatch):
     import mcp_host
     from mcp.types import CallToolResult, TextContent
@@ -1051,14 +1092,14 @@ def test_native_cbm_dispatch_uses_the_initialized_stdio_client(monkeypatch):
     monkeypatch.setattr(mcp_host, "_initialize_native_cbm_sync", lambda: None)
     result = mcp_host._call_native_cbm(
         "search_graph",
-        {"project": "workspace-main", "query": "HermesKanbanWorkspace"},
+        {"project": "C-Projects-LiquidAIty-main", "query": "HermesKanbanWorkspace"},
     )
 
     assert calls == [
         (
             "search_graph",
             {
-                "project": "workspace-main",
+                "project": "C-Projects-LiquidAIty-main",
                 "query": "HermesKanbanWorkspace",
             },
         )
@@ -1076,7 +1117,9 @@ def test_native_cbm_client_failure_is_strict(monkeypatch):
     monkeypatch.setattr(mcp_host, "_NATIVE_CBM_CLIENT", FailingClient())
     monkeypatch.setattr(mcp_host, "_initialize_native_cbm_sync", lambda: None)
     with pytest.raises(RuntimeError, match="native transport closed"):
-        mcp_host._call_native_cbm("search_graph", {"project": "workspace-main"})
+        mcp_host._call_native_cbm(
+            "search_graph", {"project": "C-Projects-LiquidAIty-main"}
+        )
 
 
 def test_streamable_http_is_stateless_across_fresh_clients(monkeypatch):
@@ -1655,6 +1698,33 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
         "sourceSha256": mcp_host._STARTUP_SOURCE_SHA256,
     }
 
+
+def test_oauth_catalog_declares_security_before_main_context_resolution(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    async def empty_catalog():
+        return []
+
+    monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", True)
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
+    monkeypatch.setattr(mcp_host, "_native_engraphis_tools", empty_catalog)
+    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", empty_catalog)
+    monkeypatch.setattr(mcp_host, "_native_cbm_tools", empty_catalog)
+
+    tools = asyncio.run(mcp_host.list_tools())
+    assert tools
+    assert all(
+        tool.model_dump(exclude_none=True)["securitySchemes"]
+        == [{"type": "oauth2", "scopes": [mcp_host.AUTH0_REQUIRED_SCOPE]}]
+        for tool in tools
+    )
+    assert all(
+        tool.model_dump(by_alias=True, exclude_none=True)["_meta"]["securitySchemes"]
+        == [{"type": "oauth2", "scopes": [mcp_host.AUTH0_REQUIRED_SCOPE]}]
+        for tool in tools
+    )
+
 def test_identical_native_cbm_index_requests_share_one_in_flight_call(monkeypatch):
     import threading
     from concurrent.futures import ThreadPoolExecutor
@@ -1872,6 +1942,7 @@ try:
     except HTTPError as exc:
         assert exc.code == 401
         challenge = exc.headers['WWW-Authenticate']
+        assert 'scope="liquidaity.main"' in challenge
         assert 'resource_metadata="{resource.replace('/mcp', '/.well-known/oauth-protected-resource/mcp')}"' in challenge
     print('OAUTH_METADATA_AND_CHALLENGE_OK')
 finally:

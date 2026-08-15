@@ -136,7 +136,7 @@ _TRACE_LOCK = threading.Lock()
 _CATALOG_DIAGNOSTIC_LOCK = threading.Lock()
 _LATEST_CATALOG_DIAGNOSTIC: dict[str, Any] | None = None
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
-_NATIVE_CBM_REQUEST_TIMEOUT_SECONDS = 60.0
+_NATIVE_CBM_REQUEST_TIMEOUT_SECONDS = 300.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
 _PUBLIC_MCP_NAME = "LiquidAIty"
 _PUBLIC_MCP_DESCRIPTION = (
@@ -614,6 +614,8 @@ _NATIVE_CBM_NAMES: frozenset[str] = frozenset()
 _NATIVE_CBM_INIT_LOCK = threading.Lock()
 _NATIVE_CBM_INDEX_LOCK = threading.Lock()
 _NATIVE_CBM_INDEX_IN_FLIGHT: tuple[str, Future[CallToolResult]] | None = None
+_NATIVE_CBM_CONTAINER_REPO_ROOT = "/workspace/main"
+_NATIVE_CBM_PROJECT = "C-Projects-LiquidAIty-main"
 _NATIVE_GRAPHITI_MODULE: Any | None = None
 _NATIVE_GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_GRAPHITI_NAMES: frozenset[str] = frozenset()
@@ -1313,6 +1315,28 @@ def _native_cbm_config() -> tuple[str, list[str], str]:
     )
 
 
+def _normalize_native_cbm_index_arguments(
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Translate the one mounted Main checkout into the CodeGraph container."""
+    normalized = dict(arguments or {})
+    repo_path = normalized.get("repo_path")
+    if not isinstance(repo_path, str):
+        return normalized
+
+    requested_path = repo_path.strip().rstrip("/\\")
+    host_path = os.path.normcase(os.path.normpath(requested_path))
+    canonical_host_path = os.path.normcase(os.path.normpath(_REPO_ROOT))
+    container_path = requested_path.replace("\\", "/")
+    if (
+        host_path == canonical_host_path
+        or container_path == _NATIVE_CBM_CONTAINER_REPO_ROOT
+    ):
+        normalized["repo_path"] = _NATIVE_CBM_CONTAINER_REPO_ROOT
+        normalized["name"] = _NATIVE_CBM_PROJECT
+    return normalized
+
+
 def _initialize_native_cbm_sync() -> None:
     global _NATIVE_CBM_CLIENT, _NATIVE_CBM_NAMES, _NATIVE_CBM_TOOLS
     if (
@@ -1367,6 +1391,7 @@ def _call_native_cbm(name: str, arguments: dict[str, Any]) -> CallToolResult:
 def _call_native_cbm_index(arguments: dict[str, Any]) -> CallToolResult:
     """Coalesce identical indexing requests without spawning another CBM process."""
     global _NATIVE_CBM_INDEX_IN_FLIGHT
+    arguments = _normalize_native_cbm_index_arguments(arguments)
     request_key = json.dumps(arguments, sort_keys=True, separators=(",", ":"), default=str)
     leader = False
     with _NATIVE_CBM_INDEX_LOCK:
@@ -1746,10 +1771,15 @@ async def list_tools() -> list[Tool]:
         duplicates = sorted({name for name in names if names.count(name) > 1})
         raise RuntimeError("federated_duplicate_tool_name:" + ",".join(duplicates))
     context = _authenticated_main_context()
-    if context is None:
-        published = tools
-    else:
-        published = _bind_authenticated_catalog(tools)
+    # The public catalog is an OAuth-protected resource contract, independent
+    # of whether this particular principal has resolved a Main project yet.
+    # ChatGPT discovers securitySchemes from tools/list; omitting them until
+    # after application-context resolution makes the live metadata circular.
+    published = (
+        _bind_authenticated_catalog(tools)
+        if OAUTH_ENFORCED or context is not None
+        else tools
+    )
     catalog_count, catalog_hash = _catalog_identity(published)
     with _CATALOG_DIAGNOSTIC_LOCK:
         _LATEST_CATALOG_DIAGNOSTIC = {
@@ -2160,6 +2190,12 @@ def _attach_execution_receipt(result: Any, receipt: dict[str, Any]) -> Any:
     return CallToolResult(content=[TextContent(type="text", text=str(result)), block])
 
 
+def _mcp_tool_timeout_seconds(name: str) -> float:
+    if name == "cbm.index_repository":
+        return _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
+    return _MCP_CALL_TIMEOUT_SECONDS
+
+
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     started_clock = time.monotonic()
@@ -2176,7 +2212,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             raise PermissionError(f"tool_not_granted: {name}")
         result = await asyncio.wait_for(
             _dispatch_tool(name, arguments),
-            timeout=_MCP_CALL_TIMEOUT_SECONDS,
+            timeout=_mcp_tool_timeout_seconds(name),
         )
         result_category = _tool_result_category(result)
         receipt["durationMs"] = int((time.monotonic() - started_clock) * 1000)
@@ -2331,9 +2367,51 @@ async def _run_streamable_http() -> None:
             await asyncio.to_thread(_close_native_cbm)
 
     if OAUTH_ENFORCED:
+        class ScopedRequireAuthMiddleware(RequireAuthMiddleware):
+            """Emit the complete RFC 6750/MCP OAuth discovery challenge."""
+
+            async def _send_auth_error(
+                self,
+                send: Any,
+                status_code: int,
+                error: str,
+                description: str,
+            ) -> None:
+                challenge_parts = [
+                    f'error="{error}"',
+                    f'error_description="{description}"',
+                    f'scope="{" ".join(self.required_scopes)}"',
+                ]
+                if self.resource_metadata_url:
+                    challenge_parts.append(
+                        f'resource_metadata="{self.resource_metadata_url}"'
+                    )
+                body = json.dumps(
+                    {
+                        "error": error,
+                        "error_description": description,
+                        "scope": " ".join(self.required_scopes),
+                    }
+                ).encode("utf-8")
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": status_code,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(body)).encode("ascii")),
+                            (
+                                b"www-authenticate",
+                                f'Bearer {", ".join(challenge_parts)}'.encode("utf-8"),
+                            ),
+                        ],
+                    }
+                )
+                await send({"type": "http.response.body", "body": body})
+
         resource_url = AnyHttpUrl(config_values.resource_url)
         metadata_url = build_resource_metadata_url(resource_url)
-        protected_endpoint: Any = RequireAuthMiddleware(
+        protected_endpoint: Any = ScopedRequireAuthMiddleware(
             endpoint,
             required_scopes=[config_values.required_scope],
             resource_metadata_url=metadata_url,
