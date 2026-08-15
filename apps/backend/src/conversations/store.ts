@@ -2,9 +2,9 @@
 // @graph role: normalized-conversation-and-run-persistence
 //
 // PostgreSQL is the exact-content and lifecycle authority for the product
-// transcript around the OpenClaude runtime. OpenClaude may retain its native
-// in-process message history for live model continuity; that cache is not the
-// product's durable conversation or run ledger.
+// transcript around LiquidAIty runtimes. Hermes and OpenClaude may retain
+// native in-process history for live model continuity; those caches are not
+// the product's durable conversation or run ledger.
 
 import { randomUUID } from 'crypto';
 import type { PoolClient } from 'pg';
@@ -86,7 +86,9 @@ export type BeginConversationRunInput = {
   runId: string;
   projectId: string;
   deckId: string;
+  cardId: string;
   conversationId: string;
+  runtime: string;
   sessionId: string;
   userContent: string;
 };
@@ -282,12 +284,14 @@ export async function beginConversationRun(
          session_id,
          user_message_id
        )
-       VALUES ($1, $2, $3, '', 'pending', $4, 'openclaude', 'pending', $5, $6)`,
+       VALUES ($1, $2, $3, $4, 'pending', $5, $6, 'pending', $7, $8)`,
       [
         input.runId,
         projectId,
         input.deckId,
+        input.cardId,
         input.conversationId,
+        input.runtime,
         input.sessionId,
         userMessage.messageId,
       ],
@@ -299,6 +303,7 @@ export async function beginConversationRun(
 export async function markConversationRunRunning(input: {
   runId: string;
   invokingCardId: string;
+  runtime: string;
   provider: string;
   modelKey: string;
   providerModelId: string;
@@ -308,14 +313,22 @@ export async function markConversationRunRunning(input: {
      SET state = 'running',
          outcome = 'running',
          card_id = $2,
-         provider = $3,
-         model_key = $4,
-         provider_model_id = $5,
+         runtime = $3,
+         provider = $4,
+         model_key = $5,
+         provider_model_id = $6,
          started_at = COALESCE(started_at, NOW()),
          updated_at = NOW()
      WHERE correlation_id = $1 AND state = 'pending'
      RETURNING correlation_id`,
-    [input.runId, input.invokingCardId, input.provider, input.modelKey, input.providerModelId],
+    [
+      input.runId,
+      input.invokingCardId,
+      input.runtime,
+      input.provider,
+      input.modelKey,
+      input.providerModelId,
+    ],
   );
   if (!result.rows.length) throw new Error(`agent_run_transition_conflict:${input.runId}:running`);
 }

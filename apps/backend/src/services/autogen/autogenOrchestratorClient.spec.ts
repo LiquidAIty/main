@@ -5,6 +5,28 @@ import {
   orchestrateWithAutoGen,
   projectLiveThinkGraph,
 } from './autogenOrchestratorClient';
+import type { InputDataFile } from '../../contracts/runtimeContracts';
+
+function testIdf(userText: string): InputDataFile {
+  return {
+    idfId: 'idf:test-run',
+    projectId: 'p1',
+    deckId: 'deck_builder',
+    conversationId: 'main',
+    runId: 'test-run',
+    originatingCardId: 'card_magentic',
+    version: 1,
+    systemText: 'Saved prompt.',
+    userText,
+    cardContext: { cardId: 'card_magentic' },
+    dynamicContextMarkdown: '',
+    nativeReferences: [],
+    modelInputMarkdown: userText,
+    contentMarkdown: userText,
+    contentSha256: 'test-sha256',
+    createdAt: '2026-08-15T00:00:00.000Z',
+  };
+}
 
 describe('autogenOrchestratorClient', () => {
   const envSnapshot = { ...process.env };
@@ -39,7 +61,7 @@ describe('autogenOrchestratorClient', () => {
         providerModelId: 'gpt-5.6-luna',
         startedAt: new Date().toISOString(),
       },
-      userText: 'run this',
+      idf: testIdf('run this'),
     });
 
     expect(result.finalResponseText).toBe('from Python rails');
@@ -104,7 +126,7 @@ describe('autogenOrchestratorClient', () => {
           providerModelId: 'gpt-5.6-luna',
           startedAt: new Date().toISOString(),
         },
-        userText: 'run this',
+        idf: testIdf('run this'),
       }),
     ).rejects.toThrow('autogen_orchestrator_http_500:card_runtime_sidecar_disabled');
   });
@@ -134,7 +156,7 @@ describe('autogenOrchestratorClient', () => {
           providerModelId: 'gpt-5.6-luna',
           startedAt: new Date().toISOString(),
         },
-        userText: 'run this',
+        idf: testIdf('run this'),
       }),
     ).rejects.toThrow('tool_selection_invalid: unknown_tool');
   });
@@ -159,7 +181,7 @@ describe('autogenOrchestratorClient', () => {
           providerModelId: 'gpt-5.6-luna',
           startedAt: new Date().toISOString(),
         },
-        userText: 'run this',
+        idf: testIdf('run this'),
       }),
     ).rejects.toThrow('PYTHON_AUTOGEN_RAILS_UNAVAILABLE');
   });

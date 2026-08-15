@@ -29,7 +29,20 @@ const planningMocks = vi.hoisted(() => ({
 const runtimeMocks = vi.hoisted(() => ({
   runConfiguredCard: vi.fn(async () => ({
     status: 'completed' as const,
+    cardId: 'card_saved_worker',
+    runtime: 'hermes' as const,
+    provider: 'openai',
+    modelKey: 'gpt-5.6-luna',
+    providerModelId: 'gpt-5.6-luna',
     output: 'ok',
+    usage: {
+      providerInputTokens: null,
+      providerOutputTokens: null,
+      totalCostUsd: null,
+      usageAvailable: false,
+      usageSource: 'unavailable' as const,
+      contextBreakdownJson: '',
+    },
   })),
   resolveCardModelStrict: vi.fn(() => ({
     provider: 'openrouter',
@@ -381,9 +394,19 @@ describe('coder routes', () => {
 
   it('forwards only AgentGraph assignment identities on the configured-card bridge', async () => {
     runtimeMocks.runConfiguredCard.mockClear();
+    chatSessionMocks.beginConversationRun.mockClear();
+    chatSessionMocks.markConversationRunRunning.mockClear();
+    chatSessionMocks.completeConversationRun.mockClear();
+    chatSessionMocks.failConversationRun.mockClear();
     runtimeMocks.runConfiguredCard.mockResolvedValueOnce({
       status: 'submitted',
+      cardId: 'card_worker',
+      runtime: 'hermes_kanban',
+      provider: 'openai',
+      modelKey: 'gpt-5.6-luna',
+      providerModelId: 'gpt-5.6-luna',
       output: '',
+      usage: chatSessionMocks.usage,
       hermesKanban: {
         taskId: 't_native123',
         runId: null,
@@ -425,6 +448,86 @@ describe('coder routes', () => {
         parentRunId: 'req_1234abcd',
         input: 'Use the stored handoff.',
       });
+      expect(chatSessionMocks.beginConversationRun).toHaveBeenCalledWith({
+        runId: 'corr-1',
+        projectId: 'project-1',
+        deckId: 'deck_builder',
+        cardId: 'card_worker',
+        conversationId: 'conv-1',
+        runtime: 'configured_card',
+        sessionId: 'configured:deck_builder:card_worker:conv-1',
+        userContent: 'Use the stored handoff.',
+      });
+      expect(chatSessionMocks.markConversationRunRunning).toHaveBeenCalledWith({
+        runId: 'corr-1',
+        invokingCardId: 'card_worker',
+        runtime: 'hermes_kanban',
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        providerModelId: 'gpt-5.6-luna',
+      });
+      expect(chatSessionMocks.completeConversationRun).not.toHaveBeenCalled();
+      expect(chatSessionMocks.failConversationRun).not.toHaveBeenCalled();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('persists one completed configured-card run with the resolved saved-card identity', async () => {
+    runtimeMocks.runConfiguredCard.mockClear();
+    chatSessionMocks.beginConversationRun.mockClear();
+    chatSessionMocks.markConversationRunRunning.mockClear();
+    chatSessionMocks.completeConversationRun.mockClear();
+    chatSessionMocks.failConversationRun.mockClear();
+    runtimeMocks.runConfiguredCard.mockResolvedValueOnce({
+      status: 'completed',
+      cardId: 'card_main_chat',
+      runtime: 'hermes',
+      provider: 'openai',
+      modelKey: 'gpt-5.6-luna',
+      providerModelId: 'gpt-5.6-luna',
+      output: 'Saved Main reply.',
+      usage: chatSessionMocks.usage,
+    } as any);
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'card_main_chat',
+          correlationId: 'corr-main-1',
+          conversationId: 'main',
+          input: 'Use saved Main.',
+        }),
+      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        result: { status: 'completed', output: 'Saved Main reply.' },
+      });
+      expect(chatSessionMocks.beginConversationRun).toHaveBeenCalledWith(expect.objectContaining({
+        runId: 'corr-main-1',
+        cardId: 'card_main_chat',
+        runtime: 'configured_card',
+        userContent: 'Use saved Main.',
+      }));
+      expect(chatSessionMocks.markConversationRunRunning).toHaveBeenCalledWith({
+        runId: 'corr-main-1',
+        invokingCardId: 'card_main_chat',
+        runtime: 'hermes',
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        providerModelId: 'gpt-5.6-luna',
+      });
+      expect(chatSessionMocks.completeConversationRun).toHaveBeenCalledWith({
+        runId: 'corr-main-1',
+        assistantContent: 'Saved Main reply.',
+        usage: chatSessionMocks.usage,
+      });
+      expect(chatSessionMocks.failConversationRun).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }

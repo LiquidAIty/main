@@ -23,6 +23,7 @@ import {
   resolveDirectHermesSubagents,
   resolveHermesCardRuntimeConfig,
   startHermesTurn,
+  type HermesTurnUsage,
 } from '../hermes/mainAdapter';
 import {
   runHermesKanbanCardTask,
@@ -293,15 +294,20 @@ function isPythonAutoGenCallableRuntimeType(runtimeType: string): boolean {
 }
 
 function genericAssistantCardIneligibility(card: any): string | null {
-  const binding = resolveCardBinding(card);
-  if (binding === 'main_chat') {
-    return 'single_card_main_chat_not_runnable';
-  }
   if (String(card?.parentGraphId || '').trim()) {
     return 'single_card_workspace_card_not_runnable';
   }
   return null;
 }
+
+const UNAVAILABLE_RUN_USAGE: HermesTurnUsage = {
+  providerInputTokens: null,
+  providerOutputTokens: null,
+  totalCostUsd: null,
+  usageAvailable: false,
+  usageSource: 'unavailable',
+  contextBreakdownJson: '',
+};
 
 /** Resolve the saved card model exactly once for every card-owned execution path. */
 export function resolveCardModelStrict(card: any): {
@@ -515,6 +521,10 @@ export type ConfiguredCardRunResult = {
   correlationId: string;
   cardId: string;
   runtimeType: string | null;
+  runtime: 'hermes' | 'hermes_kanban' | 'local_coder' | null;
+  provider: string | null;
+  modelKey: string | null;
+  providerModelId: string | null;
   tools: string[];
   output: string;
   error: string | null;
@@ -524,6 +534,7 @@ export type ConfiguredCardRunResult = {
   nativeRunResult: NativeRunResult | null;
   /** Exact native Hermes task/run envelope for an auto-Kanban submission. */
   hermesKanban: HermesKanbanCardTaskResult | null;
+  usage: HermesTurnUsage;
 };
 
 export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<ConfiguredCardRunResult> {
@@ -538,6 +549,10 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       correlationId: String(args?.correlationId || ''),
       cardId: String(args?.cardId || ''),
       runtimeType: null,
+      runtime: null,
+      provider: null,
+      modelKey: null,
+      providerModelId: null,
       tools: [],
       output: '',
       error: null,
@@ -545,6 +560,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       endedAt: new Date().toISOString(),
       nativeRunResult: null,
       hermesKanban: null,
+      usage: UNAVAILABLE_RUN_USAGE,
       ...partial,
     };
     logHarnessTrace(
@@ -635,6 +651,11 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     }
 
     const idfConfig = idf.cardContext as typeof config;
+    const runtimeIdentity = {
+      provider: idfConfig.provider,
+      modelKey: idfConfig.modelKey,
+      providerModelId: idfConfig.providerModelId,
+    };
     if (idfConfig.executionMode === 'auto-kanban') {
       try {
         let hermesKanban = await runHermesKanbanCardTask({
@@ -657,6 +678,8 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         return done({
           status: nativeCompleted ? 'completed' : 'submitted',
           runtimeType,
+          runtime: 'hermes_kanban',
+          ...runtimeIdentity,
           tools: idfConfig.tools,
           output: String(hermesKanban.snapshot.task.result || ''),
           hermesKanban,
@@ -666,6 +689,8 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         return done({
           status: 'failed',
           runtimeType,
+          runtime: 'hermes_kanban',
+          ...runtimeIdentity,
           tools: idfConfig.tools,
           error: 'hermes_kanban_card_transport_failed',
           nativeRunResult: { runId: correlationId, idfId: idf.idfId },
@@ -691,14 +716,19 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       return done({
         status: 'completed',
         runtimeType,
+        runtime: 'hermes',
+        ...runtimeIdentity,
         tools: idfConfig.tools,
         output: response.finalText,
         nativeRunResult: { runId: correlationId, idfId: idf.idfId },
+        usage: response.usage || UNAVAILABLE_RUN_USAGE,
       });
     } catch (error: any) {
       return done({
         status: 'failed',
         runtimeType,
+        runtime: 'hermes',
+        ...runtimeIdentity,
         tools: idfConfig.tools,
         error: String(error?.message || 'hermes_card_transport_failed'),
         nativeRunResult: { runId: correlationId, idfId: idf.idfId },
@@ -780,6 +810,10 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       return done({
         status: 'failed',
         runtimeType,
+        runtime: 'local_coder',
+        provider: model.provider,
+        modelKey: String(effectiveCard.runtimeOptions?.modelKey || ''),
+        providerModelId: model.providerModelId,
         tools,
         error: String(response.error || 'single_card_run_failed'),
         nativeRunResult: { runId: response.runId || correlationId, idfId: idf.idfId },
@@ -789,6 +823,10 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       return done({
         status: 'failed',
         runtimeType,
+        runtime: 'local_coder',
+        provider: model.provider,
+        modelKey: String(effectiveCard.runtimeOptions?.modelKey || ''),
+        providerModelId: model.providerModelId,
         tools,
         error: 'runtime_idf_identity_mismatch',
         nativeRunResult: { runId: response.runId || correlationId, idfId: idf.idfId },
@@ -797,6 +835,10 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     return done({
       status: 'completed',
       runtimeType,
+      runtime: 'local_coder',
+      provider: model.provider,
+      modelKey: String(effectiveCard.runtimeOptions?.modelKey || ''),
+      providerModelId: model.providerModelId,
       tools,
       output: String(response.finalResponseText || ''),
       nativeRunResult: {
@@ -809,6 +851,10 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     return done({
       status: 'failed',
       runtimeType,
+      runtime: 'local_coder',
+      provider: model.provider,
+      modelKey: String(effectiveCard.runtimeOptions?.modelKey || ''),
+      providerModelId: model.providerModelId,
       error: String(error?.message || 'single_card_transport_failed'),
       nativeRunResult: { runId: correlationId, idfId: idf.idfId },
     });

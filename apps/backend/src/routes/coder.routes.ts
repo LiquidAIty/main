@@ -277,25 +277,101 @@ router.post('/mcp-bridge/coder_steer', async (req, res) => {
 // Saved card identity/prompt/model/tools only — runConfiguredCard structurally
 // rejects every extra key, so no browser/MCP-supplied override can reach the run.
 router.post('/mcp-bridge/run_configured_card', async (req, res) => {
+  const body = req.body || {};
+  const projectId = String(body.projectId || '').trim();
+  const deckId = String(body.deckId || BUILDER_DECK_ID).trim();
+  const cardId = String(body.cardId || '').trim();
+  const correlationId = String(body.correlationId || '').trim();
+  const conversationId = String(body.conversationId || '').trim() || 'main';
+  const parentRunId = String(body.parentRunId || '').trim();
+  const input = String(body.input || '').trim();
+  if (!projectId || !deckId || !cardId || !correlationId || !input) {
+    return res.status(400).json({ ok: false, error: 'card_run_args_incomplete' });
+  }
+
   try {
-    const body = req.body || {};
+    await beginConversationRun({
+      runId: correlationId,
+      projectId,
+      deckId,
+      cardId,
+      conversationId,
+      runtime: 'configured_card',
+      sessionId: `configured:${deckId}:${cardId}:${conversationId}`,
+      userContent: input,
+    });
+  } catch {
+    return res.status(503).json({
+      ok: false,
+      error: 'conversation_persistence_unavailable',
+      correlationId,
+    });
+  }
+
+  try {
     // conversationId is a structural reference to the real live conversation
     // (the Harness injects it server-side for doorway calls). Card-specific authority is minted inside
     // runConfiguredCard itself — never accepted from the caller.
     const result = await runConfiguredCard({
-      projectId: String(body.projectId || ''),
-      deckId: String(body.deckId || BUILDER_DECK_ID),
-      cardId: String(body.cardId || ''),
-      correlationId: String(body.correlationId || ''),
-      input: String(body.input || ''),
-      conversationId: String(body.conversationId || ''),
-      parentRunId: String(body.parentRunId || ''),
+      projectId,
+      deckId,
+      cardId,
+      correlationId,
+      input,
+      conversationId,
+      parentRunId,
     });
+    try {
+      if (
+        result.runtime
+        && result.provider
+        && result.modelKey
+        && result.providerModelId
+      ) {
+        await markConversationRunRunning({
+          runId: correlationId,
+          invokingCardId: result.cardId,
+          runtime: result.runtime,
+          provider: result.provider,
+          modelKey: result.modelKey,
+          providerModelId: result.providerModelId,
+        });
+      }
+      if (result.status === 'completed') {
+        await completeConversationRun({
+          runId: correlationId,
+          assistantContent: result.output,
+          usage: result.usage,
+        });
+      } else if (result.status !== 'submitted') {
+        await failConversationRun(
+          correlationId,
+          result.error || `configured_card_${result.status}`,
+          result.error || result.status,
+        );
+      }
+    } catch {
+      await failConversationRun(
+        correlationId,
+        'configured_card_persistence_failed',
+        'configured card result could not be persisted',
+      ).catch(() => undefined);
+      return res.status(503).json({
+        ok: false,
+        error: 'configured_card_persistence_failed',
+        correlationId,
+      });
+    }
     return res.json({
       ok: result.status === 'completed' || result.status === 'submitted',
       result,
     });
   } catch (error) {
+    await failConversationRun(
+      correlationId,
+      'run_configured_card_failed',
+      error instanceof Error ? error.message : 'run_configured_card_failed',
+    ).catch(() => undefined);
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'run_configured_card_failed' });
   }
 });
@@ -327,7 +403,9 @@ router.post('/main/session/chat', async (req, res) => {
       runId: correlationId,
       projectId,
       deckId: BUILDER_DECK_ID,
+      cardId: runtimeConfig.cardId,
       conversationId,
+      runtime: 'hermes',
       sessionId,
       userContent: message,
     });
@@ -418,6 +496,7 @@ router.post('/main/session/chat', async (req, res) => {
       await markConversationRunRunning({
         runId: correlationId,
         invokingCardId: handle.resolved.cardId,
+        runtime: 'hermes',
         provider: handle.resolved.provider,
         modelKey: handle.resolved.modelKey,
         providerModelId: handle.resolved.providerModelId,

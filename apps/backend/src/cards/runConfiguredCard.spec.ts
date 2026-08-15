@@ -190,15 +190,36 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(mockRunCard).not.toHaveBeenCalled();
   });
 
-  it('rejects Main before the generic assistant runner reaches Python', async () => {
+  it('runs saved Main through persistent Hermes with its OAuth-backed model identity', async () => {
     mockGetDeck.mockResolvedValue(deckWith([{
       ...AGENT_CARD,
       id: 'card_main_chat',
+      title: 'Main',
       runtimeBinding: 'main_chat',
+      runtimeOptions: {
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        executionMode: 'single',
+        tools: [],
+      },
     }]));
     const result = await runConfiguredCard({ ...ARGS, cardId: 'card_main_chat' });
-    expect(result.status).toBe('not_runnable');
-    expect(result.error).toContain('single_card_main_chat_not_runnable');
+    expect(result).toMatchObject({
+      status: 'completed',
+      cardId: 'card_main_chat',
+      runtime: 'hermes',
+      provider: 'openai',
+      modelKey: 'gpt-5.6-luna',
+      providerModelId: 'gpt-5.6-luna',
+      output: 'real Hermes output',
+    });
+    expect(mockStartHermes).toHaveBeenCalledOnce();
+    expect(mockStartHermes.mock.calls[0][0]).toMatchObject({
+      cardId: 'card_main_chat',
+      provider: 'openai',
+      modelKey: 'gpt-5.6-luna',
+      providerModelId: 'gpt-5.6-luna',
+    });
     expect(mockRunCard).not.toHaveBeenCalled();
   });
 
