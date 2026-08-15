@@ -7,6 +7,8 @@ from app.python_models.idd import (
     load_input_data_dictionary,
     materialize_card_editor,
     materialize_catalog,
+    materialize_tool_catalog,
+    required_tool_caller_runtime_binding,
     validate_idf_islands,
     validate_record,
 )
@@ -148,25 +150,46 @@ def test_card_editor_materializes_models_and_bounds_from_the_literal_idd() -> No
     assert fields["maxTokens"]["minimum"] == 1
 
 
-def test_native_tool_catalog_is_idd_validated_without_copying_tool_schemas() -> None:
-    reference = {
-        "canonicalId": "cbm.search_graph",
+def test_live_mcp_contract_is_ingested_into_the_one_permanent_idd_vocabulary() -> None:
+    annotations = {"readOnlyHint": True, "destructiveHint": False}
+    security = [{"type": "oauth2", "scopes": ["liquidaity.main"]}]
+    references = materialize_tool_catalog([{
+        "name": "cbm.search_graph",
         "kind": "tool",
         "namespace": "cbm",
-        "sourceId": "main_mcp",
-        "sourceIds": ["main_mcp"],
-        "nativeName": "cbm.search_graph",
-        "displayName": "Search graph",
-        "shortDescription": "Search CodeGraph.",
-        "availability": "available",
-        "enabled": True,
-        "schemaHash": "abc123",
-        "publication": {"externalMcp": True},
-        "execution": {"authority": "main_mcp", "nativeName": "cbm.search_graph"},
-        "capability": {"cardAssignable": True},
-    }
+        "sourceId": "cbm",
+        "nativeName": "search_graph",
+        "connectionKind": "external-mcp",
+        "description": "Native search description.",
+        "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}}},
+        "outputSchema": {"type": "object"},
+        "annotations": annotations,
+        "securitySchemes": security,
+    }])
+    by_id = {reference["canonicalId"]: reference for reference in references}
 
-    assert materialize_catalog("native-tools", [reference]) == [reference]
+    assert "cbm.search_graph" in by_id
+    assert "graphiti.search_nodes" in by_id
+    assert by_id["graphiti.search_nodes"]["availability"] == "disabled"
+    live = by_id["cbm.search_graph"]
+    assert live["availability"] == "available"
+    assert live["contracts"] == [{
+        "sourceId": "cbm",
+        "nativeName": "search_graph",
+        "connectionKind": "external-mcp",
+        "available": True,
+        "description": "Native search description.",
+        "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}}},
+        "outputSchema": {"type": "object"},
+        "annotations": annotations,
+        "securitySchemes": security,
+    }]
+
+
+def test_explicit_tool_permissions_come_from_the_idd() -> None:
+    assert required_tool_caller_runtime_binding("run_mag_one") == "main_chat"
+    assert required_tool_caller_runtime_binding("write_mag_one_instructions") == "hermes_steward"
+    assert required_tool_caller_runtime_binding("cbm.search_graph") is None
 
 
 def test_materialized_catalog_errors_do_not_echo_secret_values() -> None:

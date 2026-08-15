@@ -80,7 +80,7 @@ def test_defaults_are_read_only_and_schema_safe():
 
 def test_registered_and_manifested():
     assert "run_local_coder" in t.DEFAULT_TOOL_REGISTRY._specs
-    ids = [m["id"] for m in t.tool_manifest()]
+    ids = [m["name"] for m in t.tool_manifest()]
     assert "run_local_coder" in ids
 
 

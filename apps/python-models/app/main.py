@@ -15,7 +15,7 @@ from app.python_models.autogen_orchestrator import orchestrate_runtime
 from app.python_models.idd import (
     IddValidationError,
     materialize_card_editor,
-    materialize_catalog,
+    materialize_tool_catalog,
 )
 from app.python_models.magentic_agentchat import run_configured_card
 from app.python_models.orchestration_contracts import RuntimeRequest
@@ -69,11 +69,7 @@ def market_paper_account_readiness():
 
 @app.get("/tools/manifest")
 def tools_manifest():
-    """Read-only capability manifest from the real Mag One tool registry.
-
-    The registry is the single source of truth; the frontend renders this to
-    surface available Mag One capabilities on the existing card Tools surface.
-    """
+    """Expose factual live contracts from the private Python tool registry."""
     return {"tools": tool_manifest()}
 
 
@@ -88,9 +84,9 @@ def idd_card_editor_materialize(payload: dict[str, Any]):
 
 @app.post("/idd/tools/materialize")
 def idd_tools_materialize(payload: dict[str, Any]):
-    """Validate the current federated native tool references through the IDD."""
+    """Ingest live native contracts into the one current IDD vocabulary."""
     try:
-        return {"references": materialize_catalog("native-tools", payload.get("references"))}
+        return {"references": materialize_tool_catalog(payload.get("tools"))}
     except IddValidationError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 

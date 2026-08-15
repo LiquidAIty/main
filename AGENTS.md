@@ -583,11 +583,12 @@ Verified history matters here. Git archaeology found no completed historical Pos
 or shared model-consumer path to restore. The July `ContextPack`, `unified_context.py` /
 `DeliveredContextManifest`, AGE `AgentContext`, and registered-query subsystems were different,
 assignment-coupled or duplicate experiments. The broader IDF/IDD law entered canonical docs in commit
-`fe6daa9d` on 2026-08-10. The old TypeScript `toolInputDataDictionary.ts` name was removed: its useful
-logic is now honestly named `toolCatalogProjection.ts` and remains only a projection of live native MCP
-and private runtime manifests. The literal IDD, Markdown assembler, PostgreSQL persistence, Hermes
-consumers, and AutoGen equality guard are CURRENT. Typed SQL/Cypher/script execution, full live-schema
-materialization, the editor, and optional AGE observation remain TARGET / INCOMPLETE.
+`fe6daa9d` on 2026-08-10. The old TypeScript `toolInputDataDictionary.ts` name was removed. Live MCP and
+private Python registry contracts now feed the literal IDD mechanically; `toolCatalogProjection.ts`
+only indexes/searches the resulting IDD records and owns no vocabulary or semantic metadata. The IDD,
+Markdown assembler, PostgreSQL persistence, Hermes
+consumers, and AutoGen equality guard are CURRENT. Typed SQL/Cypher/script execution, selected live-schema
+materialization into each IDF, the full editor, and optional AGE observation remain TARGET / INCOMPLETE.
 
 Authority is:
 

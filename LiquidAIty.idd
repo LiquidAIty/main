@@ -105,19 +105,15 @@ label = "OpenRouter Z.ai GLM 5.2"
 providerModelId = "z-ai/glm-5.2"
 
 # Permanent tool vocabulary. These are tool declarations only: names,
-# contracts, capability ceilings, and native authorities. No CodeGraph,
+# descriptions, explicit permission requirements, and native source identities. No CodeGraph,
 # ThinkGraph, or KnowGraph node, edge, memory, episode, or fact is stored here.
 
 [[toolGroups]]
 namespace = "main"
+namePrefix = ""
 sourceId = "main_mcp"
 kind = "tool"
-runtimeCompatibility = ["harness_mcp"]
-assignableRuntimeBindings = ["main_chat", "hermes_steward"]
-assignableRuntimeTypes = []
-cardAssignable = true
 publication = "external-mcp"
-executionAuthority = "main_mcp"
 
 [[toolGroups.tools]]
 name = "main.context"
@@ -125,8 +121,6 @@ displayName = "Main context"
 description = "Read server-owned Main request and saved-card identities."
 parameters = []
 required = []
-cardAssignable = false
-assignableRuntimeBindings = []
 
 [[toolGroups.tools]]
 name = "coder.status"
@@ -134,7 +128,6 @@ displayName = "Coder status"
 description = "Read the canonical OpenClaude Coder process state."
 parameters = []
 required = []
-assignableRuntimeBindings = ["main_chat"]
 
 [[toolGroups.tools]]
 name = "mag_one.describe_connected_agents"
@@ -149,7 +142,7 @@ displayName = "Run Magentic-One"
 description = "Submit one approved canonical IDF identity to native Magentic-One."
 parameters = ["projectId", "deckId", "idfId", "conversationId"]
 required = ["idfId", "projectId", "deckId"]
-assignableRuntimeBindings = ["main_chat"]
+requiredCallerRuntimeBinding = "main_chat"
 
 [[toolGroups.tools]]
 name = "write_mag_one_instructions"
@@ -157,7 +150,7 @@ displayName = "Write Mag One instructions"
 description = "Persist proposed Mag One instructions as an IDF without starting a run."
 parameters = ["instructions"]
 required = ["instructions"]
-assignableRuntimeBindings = ["hermes_steward"]
+requiredCallerRuntimeBinding = "hermes_steward"
 
 [[toolGroups.tools]]
 name = "canvas.inspect"
@@ -196,15 +189,10 @@ required = ["cardId", "input"]
 
 [[toolGroups]]
 namespace = "cbm"
+namePrefix = "cbm."
 sourceId = "cbm"
 kind = "tool"
-runtimeCompatibility = ["harness_mcp"]
-assignableRuntimeBindings = ["local_coder"]
-assignableRuntimeTypes = []
-cardAssignable = true
 publication = "external-mcp"
-executionAuthority = "cbm"
-graphAuthority = "CodeGraph"
 
 [[toolGroups.tools]]
 name = "delete_project"
@@ -292,15 +280,10 @@ required = ["function_name", "project"]
 
 [[toolGroups]]
 namespace = "engraphis"
+namePrefix = "engraphis."
 sourceId = "engraphis"
 kind = "tool"
-runtimeCompatibility = ["harness_mcp"]
-assignableRuntimeBindings = ["main_chat"]
-assignableRuntimeTypes = []
-cardAssignable = true
 publication = "external-mcp"
-executionAuthority = "engraphis"
-graphAuthority = "ThinkGraph"
 
 [[toolGroups.tools]]
 name = "answer"
@@ -490,15 +473,10 @@ required = ["query", "workspace"]
 
 [[toolGroups]]
 namespace = "graphiti"
+namePrefix = "graphiti."
 sourceId = "graphiti"
 kind = "tool"
-runtimeCompatibility = ["harness_mcp"]
-assignableRuntimeBindings = ["hermes_steward"]
-assignableRuntimeTypes = []
-cardAssignable = true
 publication = "external-mcp"
-executionAuthority = "graphiti"
-graphAuthority = "KnowGraph"
 
 [[toolGroups.tools]]
 name = "add_memory"
@@ -523,7 +501,6 @@ name = "clear_graph"
 description = "Clear the configured KnowGraph authority."
 parameters = []
 required = []
-cardAssignable = false
 
 [[toolGroups.tools]]
 name = "delete_entity_edge"
@@ -581,14 +558,10 @@ required = ["saga_name"]
 
 [[toolGroups]]
 namespace = "python"
+namePrefix = ""
 sourceId = "python_autogen"
 kind = "tool"
-runtimeCompatibility = ["autogen"]
-assignableRuntimeBindings = []
-assignableRuntimeTypes = ["magentic_one", "assistant_agent"]
-cardAssignable = true
 publication = "private-runtime"
-executionAuthority = "python_autogen"
 
 [[toolGroups.tools]]
 name = "calculator"
@@ -613,8 +586,6 @@ sourceId = "worldsignals"
 description = "Read bounded recent SEC filing signals for an explicit issuer."
 parameters = ["form_types", "from_date", "issuer_cik", "issuer_company_name", "issuer_ticker", "limit", "to_date"]
 required = ["form_types", "from_date", "to_date"]
-assignableRuntimeBindings = ["trading_agent"]
-assignableRuntimeTypes = []
 
 [[toolGroups.tools]]
 name = "get_historical_bars"
@@ -623,8 +594,6 @@ sourceId = "trading_data"
 description = "Read bounded Alpaca paper historical bars."
 parameters = ["end", "feed", "limit", "start", "symbol", "timeframe"]
 required = ["symbol", "timeframe"]
-assignableRuntimeBindings = ["trading_agent"]
-assignableRuntimeTypes = []
 
 [[toolGroups.tools]]
 name = "get_market_snapshot"
@@ -633,8 +602,6 @@ sourceId = "trading_data"
 description = "Read an Alpaca paper market snapshot."
 parameters = ["feed", "symbol"]
 required = ["symbol"]
-assignableRuntimeBindings = ["trading_agent"]
-assignableRuntimeTypes = []
 
 [[toolGroups.tools]]
 name = "get_paper_account_readiness"
@@ -643,8 +610,6 @@ sourceId = "trading_data"
 description = "Read Alpaca paper account readiness."
 parameters = []
 required = []
-assignableRuntimeBindings = ["trading_agent"]
-assignableRuntimeTypes = []
 
 [[toolGroups.tools]]
 name = "run_local_coder"
@@ -654,8 +619,6 @@ kind = "agent"
 description = "Run a bounded LocalCoder task and return its CoderReport."
 parameters = ["allowed_files", "cbm_queries", "code_anchors", "context_summary", "forbidden_work", "guardrails", "objective", "plan_excerpt", "project_id", "proof_required", "report_format", "stop_conditions", "write_mode"]
 required = ["objective"]
-assignableRuntimeBindings = ["local_coder"]
-assignableRuntimeTypes = []
 
 [[toolGroups.tools]]
 name = "web_search"
@@ -664,8 +627,6 @@ sourceId = "autogen"
 description = "Search the live web through the configured Python provider."
 parameters = ["max_results", "query"]
 required = ["query"]
-assignableRuntimeBindings = ["research_agent"]
-assignableRuntimeTypes = []
 
 [[toolGroups.tools]]
 name = "worldsignals.batch"
@@ -674,8 +635,6 @@ sourceId = "worldsignals"
 description = "Run a bounded batch of WorldSignals commands."
 parameters = ["commands"]
 required = ["commands"]
-assignableRuntimeBindings = ["worldsignals_agent"]
-assignableRuntimeTypes = []
 
 [[toolGroups.tools]]
 name = "worldsignals.capabilities"
@@ -684,8 +643,6 @@ sourceId = "worldsignals"
 description = "Read a bounded WorldSignals command-capability view."
 parameters = ["command", "domain", "keyword", "limit", "operation_class"]
 required = []
-assignableRuntimeBindings = ["worldsignals_agent"]
-assignableRuntimeTypes = []
 
 [[toolGroups.tools]]
 name = "worldsignals.command"
@@ -694,8 +651,6 @@ sourceId = "worldsignals"
 description = "Run one declared WorldSignals command."
 parameters = ["arguments", "command"]
 required = ["command"]
-assignableRuntimeBindings = ["worldsignals_agent"]
-assignableRuntimeTypes = []
 
 [[toolGroups.tools]]
 name = "worldsignals.poll"
@@ -704,8 +659,6 @@ sourceId = "worldsignals"
 description = "Poll WorldSignals task results."
 parameters = []
 required = []
-assignableRuntimeBindings = ["worldsignals_agent"]
-assignableRuntimeTypes = []
 
 [[toolGroups.tools]]
 name = "worldsignals.stream_events"
@@ -714,8 +667,6 @@ sourceId = "worldsignals"
 description = "Read a bounded WorldSignals event stream."
 parameters = ["max_events", "timeout_seconds"]
 required = []
-assignableRuntimeBindings = ["worldsignals_agent"]
-assignableRuntimeTypes = []
 
 [[records]]
 name = "card-context"
@@ -880,18 +831,8 @@ type = "string"
 required = true
 
 [[records.fields]]
-name = "sourceId"
-type = "string"
-required = true
-
-[[records.fields]]
 name = "sourceIds"
 type = "string-array"
-required = true
-
-[[records.fields]]
-name = "nativeName"
-type = "string"
 required = true
 
 [[records.fields]]
@@ -911,57 +852,12 @@ required = true
 values = ["available", "disabled"]
 
 [[records.fields]]
-name = "enabled"
-type = "boolean"
+name = "contracts"
+type = "object-array"
 required = true
 
 [[records.fields]]
-name = "schemaHash"
-type = "string"
-required = true
-
-[[records.fields]]
-name = "publication"
-type = "object"
-required = true
-
-[[records.fields]]
-name = "execution"
-type = "object"
-required = true
-
-[[records.fields]]
-name = "capability"
-type = "object"
-required = true
-
-[[records.fields]]
-name = "effect"
-type = "string"
-required = false
-
-[[records.fields]]
-name = "location"
-type = "string"
-required = false
-
-[[records.fields]]
-name = "schemaVersion"
-type = "string"
-required = false
-
-[[records.fields]]
-name = "latency"
-type = "string"
-required = false
-
-[[records.fields]]
-name = "reliability"
-type = "string"
-required = false
-
-[[records.fields]]
-name = "cost"
+name = "requiredCallerRuntimeBinding"
 type = "string"
 required = false
 

@@ -16,6 +16,17 @@ if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
 
 
+def test_public_mcp_identity_is_liquidaity():
+    import mcp_host
+
+    options = mcp_host.server.create_initialization_options()
+    assert options.server_name == "LiquidAIty"
+    assert options.instructions == (
+        "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
+        "ThinkGraph, KnowGraph, and supported agent runtimes."
+    )
+
+
 def test_execution_receipt_observes_the_actual_provider_client_boundary():
     import asyncio
     import mcp_host
@@ -52,28 +63,17 @@ def test_execution_receipt_observes_the_actual_provider_client_boundary():
     assert receipt["providerSubstitution"] is False
 
 
-def test_card_assignment_compatibility_matches_mcp_caller_enforcement():
+def test_caller_enforcement_reads_explicit_idd_permissions():
     import mcp_host
 
-    safe = {"risk": "safe read", "compute": "database_read"}
-    assert mcp_host._tool_capability_metadata(
-        "write_mag_one_instructions", safe
-    )["assignableRuntimeBindings"] == ["hermes_steward"]
-    assert mcp_host._tool_capability_metadata(
-        "engraphis.recall", safe
-    )["assignableRuntimeBindings"] == ["main_chat"]
-    assert mcp_host._tool_capability_metadata(
-        "graphiti.search_nodes", safe
-    )["assignableRuntimeBindings"] == ["hermes_steward"]
-    assert mcp_host._tool_capability_metadata(
-        "cbm.search_graph", safe
-    )["assignableRuntimeBindings"] == ["local_coder"]
-    assert mcp_host._tool_capability_metadata(
-        "web_search", safe
-    )["assignableRuntimeBindings"] == ["main_chat", "hermes_steward"]
-    assert mcp_host._tool_capability_metadata(
-        "main.context", safe
-    )["assignableRuntimeBindings"] == []
+    args = {"_callerCardId": "card-hermes", "_callerRuntimeBinding": "hermes_steward"}
+    assert mcp_host._enforce_tool_caller("write_mag_one_instructions", args) is None
+    denied = {"_callerCardId": "card-main", "_callerRuntimeBinding": "main_chat"}
+    assert mcp_host._enforce_tool_caller("write_mag_one_instructions", denied) == (
+        "tool_caller_not_authorized: write_mag_one_instructions requires hermes_steward"
+    )
+    unrestricted: dict[str, str] = {}
+    assert mcp_host._enforce_tool_caller("cbm.search_graph", unrestricted) is None
 
 
 def test_graphiti_uses_knowgraph_openrouter_embedding_configuration(monkeypatch):
@@ -185,7 +185,8 @@ def test_call_tool_appends_canonical_receipt_and_typed_provider_failure(monkeypa
     later = asyncio.run(mcp_host.call_tool("main.context", {}))
     assert json.loads(later[0].text)["ok"] is True
     later_receipt = json.loads(later[-1].text)["executionReceipt"]
-    assert later_receipt["compute"] == "deterministic"
+    assert "compute" not in later_receipt
+    assert "risk" not in later_receipt
     assert later_receipt["state"] == "completed"
 
 
@@ -474,95 +475,32 @@ def test_plain_text_does_not_hide_a_later_structured_tool_error():
     assert mcp_host._tool_result_category(result) == "tool_error"
 
 
-def test_catalog_contract_metadata_is_generated_from_each_tool():
+def test_catalog_preserves_native_annotations_and_adds_only_source_identity():
     import mcp_host
 
-    safe = mcp_host._bind_tool_execution_contract(mcp_host.Tool(
-        name="main.context",
-        description="read",
-        inputSchema={"type": "object", "properties": {}},
-    ))
-    destructive = mcp_host._bind_tool_execution_contract(mcp_host.Tool(
-        name="cbm.delete_project",
-        description="delete",
-        inputSchema={"type": "object", "properties": {}},
-    ))
-    assert safe.meta["runtimeExecution"] == {
-        "risk": "safe read",
-        "compute": "deterministic",
-        "readOnly": True,
-        "destructive": False,
-        "openWorld": False,
-    }
-    assert destructive.meta["runtimeExecution"]["risk"] == "destructive"
-    assert safe.annotations.readOnlyHint is True
-    assert safe.annotations.destructiveHint is False
-    assert safe.annotations.idempotentHint is True
-    web_search = mcp_host._bind_tool_execution_contract(mcp_host.Tool(
-        name="web_search",
-        description="provider-backed read",
-        inputSchema={"type": "object", "properties": {}},
-    ))
-    assert web_search.meta["runtimeExecution"] == {
-        "risk": "paid/provider-backed",
-        "compute": "mixed",
-        "readOnly": True,
-        "destructive": False,
-        "openWorld": True,
-    }
-    assert web_search.annotations.readOnlyHint is True
-    assert web_search.annotations.destructiveHint is False
-    assert web_search.annotations.idempotentHint is True
-    assert web_search.annotations.openWorldHint is True
-    assert safe.annotations.openWorldHint is False
-    assert destructive.annotations.readOnlyHint is False
-    assert destructive.annotations.destructiveHint is True
-    graphiti_status = mcp_host._bind_tool_execution_contract(mcp_host.Tool(
-        name="graphiti.get_status",
-        description="dependency health",
-        inputSchema={"type": "object", "properties": {}},
-    ))
-    assert graphiti_status.meta["runtimeExecution"] == {
-        "risk": "safe read",
-        "compute": "database_read",
-        "readOnly": True,
-        "destructive": False,
-        "openWorld": False,
-    }
-    assert mcp_host._tool_execution_contract("engraphis.recall_context") == {
-        "risk": "safe read",
-        "compute": "local_embedding",
-        "readOnly": True,
-        "destructive": False,
-        "openWorld": False,
-    }
-    engraphis_recall = mcp_host._bind_tool_execution_contract(mcp_host.Tool(
-        name="engraphis.recall",
-        description="stateful recall receipt",
-        inputSchema={"type": "object", "properties": {}},
+    native = mcp_host.Tool(
+        name="search_graph",
+        description="native",
+        inputSchema={"type": "object", "properties": {"project": {"type": "string"}}},
         annotations={
-            "readOnlyHint": False,
+            "readOnlyHint": True,
             "destructiveHint": False,
-            "idempotentHint": False,
+            "idempotentHint": True,
             "openWorldHint": False,
         },
-    ))
-    assert engraphis_recall.annotations.readOnlyHint is True
-    assert engraphis_recall.annotations.idempotentHint is False
-    assert engraphis_recall.meta["runtimeExecution"]["risk"] == "safe read"
-    assert mcp_host._tool_execution_contract("graphiti.clear_graph") == {
-        "risk": "destructive",
-        "compute": "mixed",
-        "readOnly": False,
-        "destructive": True,
-        "openWorld": False,
-    }
-    assert mcp_host._tool_execution_contract("web_search") == {
-        "risk": "paid/provider-backed",
-        "compute": "mixed",
-        "readOnly": True,
-        "destructive": False,
-        "openWorld": True,
+    )
+    bound = mcp_host._namespace_native_tools("cbm", [native])[0]
+
+    assert bound.name == "cbm.search_graph"
+    assert bound.inputSchema == native.inputSchema
+    assert bound.annotations == native.annotations
+    assert bound.meta == {
+        "liquidaitySource": {
+            "sourceId": "cbm",
+            "namespace": "cbm",
+            "nativeName": "search_graph",
+            "connectionKind": "external-mcp",
+        }
     }
 
 
@@ -1473,15 +1411,10 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     by_name = {tool.name: tool for tool in tools}
     assert len(tools) == len(by_name)
     for tool in tools:
-        contract = tool.meta["runtimeExecution"]
-        assert contract["compute"] in {
-            "deterministic", "database_read", "database_write", "local_embedding",
-            "api_embedding", "api_llm", "mixed", "unknown",
-        }
-        assert contract["risk"] in {
-            "safe read", "deterministic write", "paid/provider-backed",
-            "background", "destructive", "runtime-launching",
-        }
+        assert "liquidaitySource" in tool.meta
+        assert "runtimeExecution" not in tool.meta
+        assert "runtimeCapability" not in tool.meta
+        assert "runtimeAccess" not in tool.meta
         assert (
             tool.name in mcp_host._ALLOWED_KEYS
             or tool.name.startswith(tuple(mcp_host._NATIVE_PREFIXES.values()))
@@ -1508,8 +1441,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     }
     assert removed_public_wrappers.isdisjoint(mcp_host._ALLOWED_KEYS)
     assert removed_public_wrappers.isdisjoint(mcp_host._BRIDGE_PATHS)
-    assert removed_public_wrappers.isdisjoint(mcp_host._READ_ONLY_TOOLS)
-    assert removed_public_wrappers.isdisjoint(mcp_host._MAIN_ONLY_TOOLS)
     native_names = {
         f"engraphis.{tool.name.removeprefix('engraphis_')}"
         for tool in native_engraphis_tools
@@ -1529,12 +1460,11 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "codegraph.status" not in by_name
     assert "codegraph.search" not in by_name
     assert {"cbm.search_graph", "cbm.index_status"}.issubset(by_name)
-    assert by_name["cbm.search_graph"].meta["runtimeExecution"] == {
-        "risk": "safe read",
-        "compute": "database_read",
-        "readOnly": True,
-        "destructive": False,
-        "openWorld": False,
+    assert by_name["cbm.search_graph"].meta["liquidaitySource"] == {
+        "sourceId": "cbm",
+        "namespace": "cbm",
+        "nativeName": "search_graph",
+        "connectionKind": "external-mcp",
     }
     assert {"graphiti.get_status", "graphiti.search_nodes"}.issubset(by_name)
     assert "run_mag_one" in by_name
@@ -1548,13 +1478,9 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert by_name["cbm.search_graph"].description == "Native search description."
     assert by_name["cbm.search_graph"].inputSchema == native_cbm_tools[0].inputSchema
-    assert by_name["coder.status"].annotations.readOnlyHint is True
-    assert by_name["cbm.search_graph"].annotations.readOnlyHint is True
-    assert by_name["cbm.search_graph"].annotations.destructiveHint is False
-    assert by_name["graphiti.search_nodes"].annotations.readOnlyHint is True
-    assert by_name["graphiti.search_nodes"].annotations.destructiveHint is False
-    assert by_name["card.run_assistant_agent"].annotations.readOnlyHint is False
-    assert by_name["card.run_assistant_agent"].annotations.destructiveHint is False
+    assert by_name["coder.status"].annotations is None
+    assert by_name["cbm.search_graph"].annotations is None
+    assert by_name["graphiti.search_nodes"].annotations is None
 
     active_scopes[:] = ["main"]
     main_names = {tool.name for tool in asyncio.run(mcp_host.list_tools())}
@@ -1621,8 +1547,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     )
     assert calls[-1] == ("search_graph", {"project": "C-Projects-main"})
     cbm_receipt = json.loads(cbm_result.content[-1].text)["executionReceipt"]
-    assert cbm_receipt["risk"] == "safe read"
-    assert cbm_receipt["compute"] == "database_read"
+    assert "risk" not in cbm_receipt
+    assert "compute" not in cbm_receipt
 
     asyncio.run(mcp_host.call_tool("graphiti.search_nodes", {"query": "Main"}))
     assert calls[-1] == (
@@ -1705,14 +1631,14 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
     monkeypatch.setattr(mcp_host, "get_access_token", access_token)
     canonical = asyncio.run(mcp_host.list_tools())
     canonical_names = {tool.name for tool in canonical}
-    assert len(canonical) == 70
+    assert canonical
     assert "run_coder_subagent" not in canonical_names
     assert "card.run_assistant_agent" in canonical_names
     assert not any(name.startswith("mcp__") for name in canonical_names)
 
     active_scopes[:] = ["main"]
     authenticated = asyncio.run(mcp_host.list_tools())
-    assert len(authenticated) == 70
+    assert len(authenticated) == len(canonical)
     assert {tool.name for tool in authenticated} == canonical_names
     main_context = asyncio.run(mcp_host.call_tool("main.context", {}))
     main_payload = json.loads(main_context[0].text)
@@ -1934,6 +1860,7 @@ try:
         'offline_access',
         'liquidaity.main',
     ]
+    assert metadata['resource_name'] == 'LiquidAIty'
     root_metadata = json.load(urlopen(
         'http://127.0.0.1:{port}/.well-known/oauth-protected-resource',
         timeout=1,

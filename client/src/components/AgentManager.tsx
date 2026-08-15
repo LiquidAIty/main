@@ -65,28 +65,22 @@ export function parseCardEditorInputDataDictionary(payload: unknown): {
 export type ToolDescriptor = {
   name: string;
   kind?: 'tool' | 'agent';
-  sourceId?: string;
+  sourceIds?: string[];
   title?: string;
   description?: string;
-  capability?: {
-    runtimeCompatibility?: string[];
-    assignableRuntimeBindings?: string[];
-    assignableRuntimeTypes?: string[];
-    cardAssignable?: boolean;
-  };
 };
 export type DisplayedToolRow = ToolDescriptor & {
-  availability: 'available' | 'stale' | 'incompatible' | 'not_assignable';
+  availability: 'available' | 'disabled' | 'stale';
 };
 
 export type InputDictionaryToolReference = {
   canonicalId: string;
   kind?: 'tool' | 'agent';
-  sourceId?: string;
+  sourceIds: string[];
   namespace?: string;
   displayName?: string;
   shortDescription?: string;
-  capability?: ToolDescriptor['capability'];
+  availability: 'available' | 'disabled';
 };
 
 export type InputDictionaryToolPage = {
@@ -103,27 +97,15 @@ export type InputDictionaryToolPage = {
 export function buildInputDictionarySelectedRows(
   selectedReferences: InputDictionaryToolReference[],
   unresolvedSelectedIds: string[],
-  runtimeBinding: RuntimeBinding | '' | null,
-  runtimeType: AgentCardRuntimeType | null,
 ): DisplayedToolRow[] {
-  const known = selectedReferences.map((reference) => {
-    const descriptor: ToolDescriptor = {
+  const known = selectedReferences.map((reference) => ({
       name: reference.canonicalId,
       kind: reference.kind,
-      sourceId: reference.sourceId,
+      sourceIds: reference.sourceIds,
       title: reference.displayName || reference.canonicalId,
       description: reference.shortDescription,
-      capability: reference.capability,
-    };
-    return {
-      ...descriptor,
-      availability: isToolAssignable(descriptor, runtimeBinding, runtimeType)
-        ? 'available' as const
-        : descriptor.capability?.cardAssignable === false
-          ? 'not_assignable' as const
-          : 'incompatible' as const,
-    };
-  });
+      availability: reference.availability,
+    }));
   const knownNames = new Set(known.map((reference) => reference.name));
   return [
     ...known,
@@ -133,53 +115,26 @@ export function buildInputDictionarySelectedRows(
   ];
 }
 
-function isToolAssignable(
-  tool: ToolDescriptor,
-  runtimeBinding: RuntimeBinding | '' | null,
-  runtimeType: AgentCardRuntimeType | null,
-): boolean {
-  if (tool.capability?.cardAssignable !== true) return false;
-  const bindings = tool.capability.assignableRuntimeBindings || [];
-  const runtimeTypes = tool.capability.assignableRuntimeTypes || [];
-  return (
-    (Boolean(runtimeBinding) && bindings.includes(String(runtimeBinding))) ||
-    (Boolean(runtimeType) && runtimeTypes.includes(String(runtimeType)))
-  );
-}
-
 export function buildDisplayedToolRows(
   toolCatalog: ToolDescriptor[],
   savedToolNames: string[],
-  runtimeBinding: RuntimeBinding | '' | null,
-  runtimeType: AgentCardRuntimeType | null,
 ): DisplayedToolRow[] {
-  const catalogByName = new Map<string, ToolDescriptor[]>();
+  const catalogByName = new Map<string, ToolDescriptor>();
   for (const tool of toolCatalog) {
-    const descriptors = catalogByName.get(tool.name) || [];
-    descriptors.push(tool);
-    catalogByName.set(tool.name, descriptors);
+    if (catalogByName.has(tool.name)) throw new Error(`duplicate_idd_tool:${tool.name}`);
+    catalogByName.set(tool.name, tool);
   }
   const savedNames = Array.from(new Set(savedToolNames));
   const savedNameSet = new Set(savedNames);
   const rows: DisplayedToolRow[] = savedNames.map((name) => {
-    const registered = catalogByName.get(name) || [];
-    if (!registered.length) return { name, availability: 'stale' };
-    const assignable = registered.find((tool) =>
-      isToolAssignable(tool, runtimeBinding, runtimeType),
-    );
-    if (assignable) return { ...assignable, availability: 'available' };
-    const display = registered[0];
-    if (registered.every((tool) => tool.capability?.cardAssignable !== true)) {
-      return { ...display, availability: 'not_assignable' };
-    }
-    return { ...display, availability: 'incompatible' };
+    const registered = catalogByName.get(name);
+    return registered
+      ? { ...registered, availability: 'available' }
+      : { name, availability: 'stale' };
   });
 
   for (const tool of toolCatalog) {
-    if (
-      !isToolAssignable(tool, runtimeBinding, runtimeType) ||
-      savedNameSet.has(tool.name)
-    ) continue;
+    if (savedNameSet.has(tool.name)) continue;
     rows.push({ ...tool, availability: 'available' });
     savedNameSet.add(tool.name);
   }
@@ -770,16 +725,10 @@ export function AgentManager({
   const selectedToolRows = buildInputDictionarySelectedRows(
     toolDictionaryPage.selectedKnownReferences,
     toolDictionaryPage.unresolvedSelectedIds,
-    runtimeBinding,
-    localConfig?.runtime_type || null,
   );
   const availableToolRows = toolDictionaryPage.references.filter((reference) =>
     !savedToolNames.includes(reference.canonicalId) &&
-    isToolAssignable(
-      { name: reference.canonicalId, capability: reference.capability },
-      runtimeBinding,
-      localConfig?.runtime_type || null,
-    ),
+    reference.availability === 'available',
   );
   const toggleTool = (name: string, checked: boolean) => {
     setToolsText(toggleSavedToolAssignment(savedToolNames, name, checked).join('\n'));
@@ -1316,11 +1265,10 @@ export function AgentManager({
                     <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
                       {tool.name}
                       {tool.kind ? ` · ${tool.kind}` : ''}
-                      {tool.sourceId ? ` · ${tool.sourceId}` : ''}
+                      {tool.sourceIds?.length ? ` · ${tool.sourceIds.join(', ')}` : ''}
                       {tool.description ? ` · ${tool.description}` : ''}
-                      {tool.availability === 'stale' ? ' · Missing from current catalogs' : ''}
-                      {tool.availability === 'incompatible' ? ' · Incompatible with this card runtime' : ''}
-                      {tool.availability === 'not_assignable' ? ' · Not card-assignable' : ''}
+                      {tool.availability === 'stale' ? ' · Missing from current dictionary' : ''}
+                      {tool.availability === 'disabled' ? ' · Currently unavailable' : ''}
                     </span>
                   </span>
                 </label>
@@ -1358,7 +1306,7 @@ export function AgentManager({
                       {tool.canonicalId}
                       {tool.namespace ? ` · ${tool.namespace}` : ''}
                       {tool.kind ? ` · ${tool.kind}` : ''}
-                      {tool.sourceId ? ` · ${tool.sourceId}` : ''}
+                      {tool.sourceIds?.length ? ` · ${tool.sourceIds.join(', ')}` : ''}
                       {tool.shortDescription ? ` · ${tool.shortDescription}` : ''}
                     </span>
                   </span>

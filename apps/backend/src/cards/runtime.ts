@@ -192,8 +192,7 @@ export type MagenticWorkerReadiness = {
 };
 
 type RuntimeToolManifestItem = {
-  id?: unknown;
-  agentCompatibility?: unknown;
+  name?: unknown;
 };
 
 /** Resolve execution readiness from saved card structure plus the one live Python
@@ -208,7 +207,7 @@ export async function resolveMagenticWorkerReadiness(
     const manifest = Array.isArray(response?.tools) ? response.tools : null;
     if (!manifest) throw new Error('autogen_tool_manifest_invalid');
     const entries: Array<readonly [string, RuntimeToolManifestItem]> = manifest
-      .map((item: RuntimeToolManifestItem) => [String(item?.id || '').trim(), item] as const)
+      .map((item: RuntimeToolManifestItem) => [String(item?.name || '').trim(), item] as const)
       .filter((entry: readonly [string, RuntimeToolManifestItem]) => Boolean(entry[0]));
     manifestById = new Map(entries);
   } catch (error: any) {
@@ -240,12 +239,6 @@ export async function resolveMagenticWorkerReadiness(
       for (const toolId of selectedTools) {
         const descriptor = manifestById.get(toolId);
         if (!descriptor) throw new Error(`card_tool_unknown: ${toolId}`);
-        const compatibility = Array.isArray(descriptor.agentCompatibility)
-          ? descriptor.agentCompatibility.map((value) => String(value))
-          : [];
-        if (compatibility.length > 0 && !compatibility.includes('assistant_agent') && !compatibility.includes('magentic_one')) {
-          throw new Error(`card_tool_runtime_incompatible: ${toolId}`);
-        }
       }
       return {
         card,

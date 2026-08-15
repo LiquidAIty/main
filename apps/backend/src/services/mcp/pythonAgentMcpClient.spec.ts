@@ -7,6 +7,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import {
   callPythonAgentMcpTool,
   closePythonAgentMcpClient,
+  listPythonAgentMcpCatalog,
   listPythonAgentMcpTools,
 } from './pythonAgentMcpClient';
 
@@ -56,6 +57,19 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
     expect(names).toContain('engraphis.answer');
   // A cold host initializes three native catalogs; slower backup/development
   // machines can cross 30s even when the real catalog completes successfully.
+  }, 60_000);
+
+  it('returns factual native contracts without runtime capability classifiers', async () => {
+    const catalog = await listPythonAgentMcpCatalog();
+    const search = catalog.find((tool) => tool.name === 'cbm.search_graph');
+    expect(search).toMatchObject({
+      sourceId: 'cbm',
+      namespace: 'cbm',
+      nativeName: 'search_graph',
+      connectionKind: 'external-mcp',
+      inputSchema: expect.any(Object),
+    });
+    expect(search).not.toHaveProperty('capability');
   }, 60_000);
 
   it('rejects smuggled prompt/model/tool arguments at the MCP boundary', async () => {

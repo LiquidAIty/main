@@ -139,7 +139,7 @@ const orchestratorMocks = vi.hoisted(() => ({
   requestPythonRailsJson: vi.fn(async (endpoint: string, init?: RequestInit): Promise<any> => {
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
     if (endpoint === '/tools/manifest') return { tools: [] };
-    if (endpoint === '/idd/tools/materialize') return { references: body.references };
+    if (endpoint === '/idd/tools/materialize') return { references: body.tools };
     if (endpoint === '/idd/card-editor/materialize') {
       return {
         dictionary: { name: 'LiquidAIty', version: 1, idfFormat: 'mixed-markdown' },
@@ -220,37 +220,52 @@ describe('coder routes', () => {
   // vendored runtime is built or API keys are exported on the test machine.
   const BROKEN_COMMAND = 'node C:/liquidaity/nonexistent/openclaude.mjs';
 
-  it('federates public MCP and private runtime references without leaking schemas to the UI', async () => {
+  it('passes factual live contracts to the one IDD and returns its current vocabulary', async () => {
     mcpClientMocks.listPythonAgentMcpCatalog.mockResolvedValueOnce([{
       name: 'cbm.search_graph',
       title: 'Search graph',
       description: 'Search CodeGraph.',
+      sourceId: 'cbm',
+      namespace: 'cbm',
+      nativeName: 'search_graph',
+      connectionKind: 'external-mcp',
       inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
-      capability: {
-        runtimeCompatibility: ['harness'],
-        assignableRuntimeBindings: ['local_coder'],
-        assignableRuntimeTypes: [],
-        cardAssignable: true,
-      } as any,
+      annotations: { readOnlyHint: true },
     }]);
     orchestratorMocks.requestPythonRailsJson.mockResolvedValueOnce({
       tools: [{
-        id: 'run_local_coder',
-        kind: 'agent',
-        sourceId: 'local_coder',
-        namespace: 'coder',
-        displayName: 'Local Coder',
+        name: 'run_local_coder',
+        nativeName: 'run_local_coder',
+        kind: 'tool',
+        sourceId: 'python_runtime',
+        namespace: 'python',
+        connectionKind: 'private-runtime',
         description: 'Run the saved Coder runtime.',
-        publication: { externalMcp: false },
-        execution: { authority: 'local_coder', nativeName: 'run_local_coder' },
         inputSchema: { type: 'object', properties: { objective: { type: 'string' } } },
-        capability: {
-          runtimeCompatibility: ['autogen'],
-          assignableRuntimeBindings: ['local_coder'],
-          assignableRuntimeTypes: [],
-          cardAssignable: true,
-        },
       }],
+    }).mockResolvedValueOnce({
+      references: [
+        {
+          canonicalId: 'cbm.search_graph', kind: 'tool', namespace: 'cbm',
+          sourceIds: ['cbm'], displayName: 'Search graph', shortDescription: 'Search CodeGraph.',
+          availability: 'available', contracts: [{
+            sourceId: 'cbm', nativeName: 'search_graph', connectionKind: 'external-mcp',
+            available: true, description: 'Search CodeGraph.',
+            inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
+            annotations: { readOnlyHint: true },
+          }],
+        },
+        {
+          canonicalId: 'run_local_coder', kind: 'agent', namespace: 'coder',
+          sourceIds: ['local_coder', 'python_runtime'], displayName: 'Local Coder',
+          shortDescription: 'Run a bounded LocalCoder task.', availability: 'available',
+          contracts: [{
+            sourceId: 'python_runtime', nativeName: 'run_local_coder', connectionKind: 'private-runtime',
+            available: true, description: 'Run the saved Coder runtime.',
+            inputSchema: { type: 'object', properties: { objective: { type: 'string' } } },
+          }],
+        },
+      ],
     });
     const { server, baseUrl } = await createApiServer();
     try {
@@ -262,21 +277,26 @@ describe('coder routes', () => {
         expect.objectContaining({
           canonicalId: 'cbm.search_graph',
           kind: 'tool',
-          sourceId: 'main_mcp',
-          publication: { externalMcp: true },
+          sourceIds: ['cbm'],
+          contracts: [expect.objectContaining({ annotations: { readOnlyHint: true } })],
         }),
         expect.objectContaining({
           canonicalId: 'run_local_coder',
           kind: 'agent',
           displayName: 'Local Coder',
-          sourceId: 'local_coder',
-          publication: { externalMcp: false },
-          execution: { authority: 'local_coder', nativeName: 'run_local_coder' },
+          sourceIds: ['local_coder', 'python_runtime'],
         }),
       ]));
-      expect(payload.references[0]).not.toHaveProperty('inputSchema');
       expect(payload.selectedKnownReferences.map((entry: any) => entry.canonicalId)).toEqual(['run_local_coder']);
       expect(payload.unresolvedSelectedIds).toEqual(['missing.tool']);
+      const materializeCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+        ([endpoint]) => endpoint === '/idd/tools/materialize',
+      );
+      const materializeBody = JSON.parse(String(materializeCall?.[1]?.body || '{}'));
+      expect(materializeBody.tools).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: 'cbm.search_graph', annotations: { readOnlyHint: true } }),
+        expect.objectContaining({ name: 'run_local_coder', sourceId: 'python_runtime' }),
+      ]));
     } finally {
       await closeServer(server);
     }

@@ -219,6 +219,178 @@ def materialize_catalog(name: str, values: Any) -> list[dict[str, Any]]:
     return materialized
 
 
+def _declared_tool_references() -> dict[str, dict[str, Any]]:
+    """Read permanent tool declarations from the literal IDD without adding policy."""
+    groups = load_input_data_dictionary().get("toolGroups")
+    if not isinstance(groups, list):
+        raise IddValidationError("idd_tool_groups_invalid")
+    references: dict[str, dict[str, Any]] = {}
+    for group in groups:
+        if not isinstance(group, dict):
+            raise IddValidationError("idd_tool_group_invalid")
+        namespace = group.get("namespace")
+        name_prefix = group.get("namePrefix")
+        source_id = group.get("sourceId")
+        group_kind = group.get("kind")
+        publication = group.get("publication")
+        tools = group.get("tools")
+        if (
+            not isinstance(namespace, str)
+            or not isinstance(name_prefix, str)
+            or not isinstance(source_id, str)
+            or group_kind not in {"tool", "agent"}
+            or publication not in {"external-mcp", "private-runtime"}
+            or not isinstance(tools, list)
+        ):
+            raise IddValidationError("idd_tool_group_invalid")
+        for tool in tools:
+            if not isinstance(tool, dict):
+                raise IddValidationError("idd_tool_declaration_invalid")
+            native_name = tool.get("name")
+            if not isinstance(native_name, str) or not native_name:
+                raise IddValidationError("idd_tool_declaration_name_invalid")
+            canonical_id = name_prefix + native_name
+            required_binding = tool.get("requiredCallerRuntimeBinding")
+            if required_binding is not None and (
+                not isinstance(required_binding, str) or not required_binding
+            ):
+                raise IddValidationError("idd_tool_permission_invalid")
+            current = references.get(canonical_id)
+            declared_source = tool.get("sourceId", source_id)
+            if current is not None:
+                if current["kind"] != tool.get("kind", group_kind):
+                    raise IddValidationError("idd_tool_declaration_kind_conflict")
+                current_requirement = current.get("requiredCallerRuntimeBinding")
+                if (
+                    required_binding is not None
+                    and current_requirement is not None
+                    and required_binding != current_requirement
+                ):
+                    raise IddValidationError("idd_tool_permission_conflict")
+                if declared_source not in current["sourceIds"]:
+                    current["sourceIds"].append(declared_source)
+                if required_binding is not None:
+                    current["requiredCallerRuntimeBinding"] = required_binding
+                continue
+            reference = {
+                "canonicalId": canonical_id,
+                "kind": tool.get("kind", group_kind),
+                "namespace": tool.get("namespace", namespace),
+                "sourceIds": [declared_source],
+                "displayName": tool.get("displayName", canonical_id),
+                "shortDescription": tool.get("description", ""),
+                "availability": "disabled",
+                "contracts": [],
+            }
+            if required_binding is not None:
+                reference["requiredCallerRuntimeBinding"] = required_binding
+            references[canonical_id] = validate_record(
+                "tool-catalog-reference", reference
+            )
+    return references
+
+
+def required_tool_caller_runtime_binding(name: str) -> str | None:
+    """Return an explicit IDD permission requirement; never infer one from a name."""
+    reference = _declared_tool_references().get(name)
+    if reference is None:
+        return None
+    value = reference.get("requiredCallerRuntimeBinding")
+    return value if isinstance(value, str) and value else None
+
+
+def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
+    """Combine permanent IDD declarations with factual live native contracts.
+
+    Discovery contributes only native contract data and current availability.
+    The function does not infer risk, compatibility, runtime ownership, graph
+    meaning, or card assignability from tool names or descriptions.
+    """
+    if not isinstance(discovered, list):
+        raise IddValidationError("idd_tool_discovery_invalid")
+    references = deepcopy(_declared_tool_references())
+    seen_contracts: set[tuple[str, str, str]] = set()
+    for raw in discovered:
+        if not isinstance(raw, dict):
+            raise IddValidationError("idd_tool_discovery_entry_invalid")
+        canonical_id = raw.get("name")
+        source_id = raw.get("sourceId")
+        native_name = raw.get("nativeName")
+        namespace = raw.get("namespace")
+        connection_kind = raw.get("connectionKind")
+        input_schema = raw.get("inputSchema")
+        if (
+            not isinstance(canonical_id, str)
+            or not canonical_id
+            or not isinstance(source_id, str)
+            or not source_id
+            or not isinstance(native_name, str)
+            or not native_name
+            or not isinstance(namespace, str)
+            or not namespace
+            or not isinstance(connection_kind, str)
+            or not connection_kind
+            or not isinstance(input_schema, dict)
+        ):
+            raise IddValidationError("idd_tool_discovery_contract_invalid")
+        output_schema = raw.get("outputSchema")
+        annotations = raw.get("annotations")
+        security_schemes = raw.get("securitySchemes")
+        if output_schema is not None and not isinstance(output_schema, dict):
+            raise IddValidationError("idd_tool_discovery_output_schema_invalid")
+        if annotations is not None and not isinstance(annotations, dict):
+            raise IddValidationError("idd_tool_discovery_annotations_invalid")
+        if security_schemes is not None and (
+            not isinstance(security_schemes, list)
+            or not all(isinstance(item, dict) for item in security_schemes)
+        ):
+            raise IddValidationError("idd_tool_discovery_security_invalid")
+        kind = raw.get("kind", "tool")
+        if kind not in {"tool", "agent"}:
+            raise IddValidationError("idd_tool_discovery_kind_invalid")
+        available = raw.get("available", raw.get("enabled", True)) is not False
+        contract_key = (canonical_id, source_id, native_name)
+        if contract_key in seen_contracts:
+            raise IddValidationError("idd_tool_discovery_duplicate")
+        seen_contracts.add(contract_key)
+        contract: dict[str, Any] = {
+            "sourceId": source_id,
+            "nativeName": native_name,
+            "connectionKind": connection_kind,
+            "available": available,
+            "description": raw.get("description", ""),
+            "inputSchema": deepcopy(input_schema),
+        }
+        if output_schema is not None:
+            contract["outputSchema"] = deepcopy(output_schema)
+        if annotations is not None:
+            contract["annotations"] = deepcopy(annotations)
+        if security_schemes is not None:
+            contract["securitySchemes"] = deepcopy(security_schemes)
+        reference = references.get(canonical_id)
+        if reference is None:
+            reference = {
+                "canonicalId": canonical_id,
+                "kind": kind,
+                "namespace": namespace,
+                "sourceIds": [],
+                "displayName": raw.get("title") or canonical_id,
+                "shortDescription": raw.get("description", ""),
+                "availability": "disabled",
+                "contracts": [],
+            }
+            references[canonical_id] = reference
+        if source_id not in reference["sourceIds"]:
+            reference["sourceIds"].append(source_id)
+        reference["contracts"].append(contract)
+        if available:
+            reference["availability"] = "available"
+    return [
+        deepcopy(validate_record("tool-catalog-reference", references[key]))
+        for key in sorted(references)
+    ]
+
+
 def materialize_card_editor(model_options: Any) -> dict[str, Any]:
     """Return the public IDD slice consumed by the existing card editor."""
     document = load_input_data_dictionary()

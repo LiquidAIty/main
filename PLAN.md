@@ -378,9 +378,10 @@ Do not persist machine-specific absolute paths as portable product identity.
 - PostgreSQL stores the exact rendered Markdown IDF. Main and ordinary Hermes consume the card snapshot,
   system text, and model input returned from persistence. AutoGen single-card and Mag One payloads carry
   that same card snapshot, and Python rails rejects a separately supplied runtime config that differs.
-- `toolCatalogProjection.ts` is only a live projection of native MCP/private runtime manifests. It is
-  neither the IDD nor another tool authority; the misleading old TypeScript dictionary and route names
-  were deleted.
+- Live MCP discovery and the private Python registry now feed their factual names, schemas, annotations,
+  security metadata, source identity, and availability into the literal IDD materializer. The backend
+  `toolCatalogProjection.ts` file only indexes and searches the already-materialized IDD records; it
+  does not infer, merge, or classify tool meaning or compatibility.
 - Typed SQL/Cypher/script/view/result execution, live selected-schema materialization into IDF, the full
   editor, and optional AGE observation remain **TARGET / INCOMPLETE**. Their schemas must follow proven
   Python execution contracts, not be invented ahead of them.

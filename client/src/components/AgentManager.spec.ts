@@ -158,89 +158,35 @@ describe('AgentManager active builder config', () => {
     ]);
   });
 
-  it('separates Main availability from saved assignment across authority families', () => {
+  it('shows the one IDD vocabulary without runtime assignability filtering', () => {
     const rows = buildDisplayedToolRows(
       [
-        { name: 'engraphis.recall', title: 'Recall', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat'] } },
-        { name: 'graphiti.search_nodes', title: 'Search nodes', capability: { cardAssignable: true, assignableRuntimeBindings: ['hermes_steward'] } },
-        { name: 'cbm.search_graph', title: 'Search graph', capability: { cardAssignable: true, assignableRuntimeBindings: ['local_coder'] } },
-        { name: 'canvas.inspect', title: 'Inspect canvas', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat'] } },
-        { name: 'main.context', capability: { cardAssignable: false, assignableRuntimeBindings: [] } },
+        { name: 'engraphis.recall', title: 'Recall', sourceIds: ['engraphis'] },
+        { name: 'graphiti.search_nodes', title: 'Search nodes', sourceIds: ['graphiti'] },
+        { name: 'cbm.search_graph', title: 'Search graph', sourceIds: ['cbm'] },
+        { name: 'canvas.inspect', title: 'Inspect canvas', sourceIds: ['main_mcp'] },
+        { name: 'main.context', sourceIds: ['main_mcp'] },
       ],
       ['graphiti.search_nodes', 'mystery.tool'],
-      'main_chat',
-      'assistant_agent',
     );
 
     expect(rows.map((row) => row.name)).toEqual([
       'graphiti.search_nodes',
       'mystery.tool',
       'engraphis.recall',
+      'cbm.search_graph',
       'canvas.inspect',
+      'main.context',
     ]);
-    expect(rows[0]).toMatchObject({ title: 'Search nodes', availability: 'incompatible' });
+    expect(rows[0]).toMatchObject({ title: 'Search nodes', availability: 'available' });
     expect(rows[1]).toEqual({ name: 'mystery.tool', availability: 'stale' });
-    expect(rows.find((row) => row.name === 'cbm.search_graph')).toBeUndefined();
-    expect(rows.find((row) => row.name === 'main.context')).toBeUndefined();
   });
 
-  it('uses runtime-owned compatibility metadata instead of graph-authority policy', () => {
-    const catalog = [
-      { name: 'cbm.search_graph', capability: { cardAssignable: true, assignableRuntimeBindings: ['local_coder'] } },
-      { name: 'write_mag_one_instructions', capability: { cardAssignable: true, assignableRuntimeBindings: ['hermes_steward'] } },
-      { name: 'run_local_coder', capability: { cardAssignable: true, assignableRuntimeBindings: ['local_coder'] } },
-      { name: 'main.context', capability: { cardAssignable: false } },
-    ];
-
-    expect(
-      buildDisplayedToolRows(catalog, [], 'local_coder', 'assistant_agent').map((row) => row.name),
-    ).toEqual(['cbm.search_graph', 'run_local_coder']);
-    expect(
-      buildDisplayedToolRows(catalog, [], 'hermes_steward', 'assistant_agent').map((row) => row.name),
-    ).toEqual(['write_mag_one_instructions']);
-    expect(toggleSavedToolAssignment([], 'cbm.search_graph', false)).toEqual([]);
-  });
-
-  it('coalesces duplicate catalog names by the current runtime without duplicating saved state', () => {
-    const rows = buildDisplayedToolRows(
-      [
-        { name: 'web_search', title: 'Harness search', capability: { cardAssignable: true, assignableRuntimeBindings: ['main_chat'] } },
-        { name: 'web_search', title: 'AutoGen search', capability: { cardAssignable: true, assignableRuntimeTypes: ['magentic_one'] } },
-      ],
-      ['web_search'],
-      'assist',
-      'magentic_one',
-    );
-
-    expect(rows).toEqual([
-      expect.objectContaining({ name: 'web_search', title: 'AutoGen search', availability: 'available' }),
-    ]);
-  });
-
-  it('keeps a saved registered but incompatible tool visible and removable', () => {
-    const rows = buildDisplayedToolRows(
-      [{ name: 'write_mag_one_instructions', capability: { cardAssignable: true, assignableRuntimeBindings: ['hermes_steward'] } }],
-      ['write_mag_one_instructions'],
-      'main_chat',
-      'assistant_agent',
-    );
-
-    expect(rows).toEqual([
-      expect.objectContaining({ name: 'write_mag_one_instructions', availability: 'incompatible' }),
-    ]);
-  });
-
-  it('shows a saved non-assignable tool only as removable assigned state', () => {
-    const rows = buildDisplayedToolRows(
-      [{ name: 'main.context', capability: { cardAssignable: false } }],
-      ['main.context'],
-      'main_chat',
-      'assistant_agent',
-    );
-
-    expect(rows).toEqual([
-      expect.objectContaining({ name: 'main.context', availability: 'not_assignable' }),
-    ]);
+  it('rejects duplicate IDs because the IDD must materialize one entry per tool', () => {
+    expect(() => buildDisplayedToolRows(
+      [{ name: 'web_search' }, { name: 'web_search' }],
+      [],
+    )).toThrow('duplicate_idd_tool:web_search');
   });
 
   it('changes only the exact saved assignment and preserves order', () => {
@@ -261,17 +207,13 @@ describe('AgentManager active builder config', () => {
       canonicalId: `catalog.tool.${index}`,
       namespace: 'catalog',
       displayName: `Tool ${index}`,
-      capability: {
-        cardAssignable: true,
-        assignableRuntimeBindings: ['main_chat'],
-      },
+      sourceIds: ['catalog'],
+      availability: 'available' as const,
     }));
     const page = allReferences.slice(4_000, 4_100);
     const selected = buildInputDictionarySelectedRows(
       [allReferences[9_999]],
       ['removed.tool'],
-      'main_chat',
-      'assistant_agent',
     );
 
     expect(page).toHaveLength(100);
@@ -282,24 +224,20 @@ describe('AgentManager active builder config', () => {
     expect(page.some((reference) => reference.canonicalId === 'catalog.tool.9999')).toBe(false);
   });
 
-  it('keeps an incompatible selected dictionary tool removable', () => {
+  it('keeps a currently unavailable selected dictionary tool removable', () => {
     expect(
       buildInputDictionarySelectedRows(
         [{
           canonicalId: 'write_mag_one_instructions',
-          capability: {
-            cardAssignable: true,
-            assignableRuntimeBindings: ['hermes_steward'],
-          },
+          sourceIds: ['main_mcp'],
+          availability: 'disabled',
         }],
         [],
-        'main_chat',
-        'assistant_agent',
       ),
     ).toEqual([
       expect.objectContaining({
         name: 'write_mag_one_instructions',
-        availability: 'incompatible',
+        availability: 'disabled',
       }),
     ]);
   });
@@ -310,22 +248,17 @@ describe('AgentManager active builder config', () => {
         [{
           canonicalId: 'run_local_coder',
           kind: 'agent',
-          sourceId: 'local_coder',
+          sourceIds: ['local_coder', 'python_runtime'],
           displayName: 'Local Coder',
-          capability: {
-            cardAssignable: true,
-            assignableRuntimeBindings: ['local_coder'],
-          },
+          availability: 'available',
         }],
         [],
-        'local_coder',
-        'assistant_agent',
       ),
     ).toEqual([
       expect.objectContaining({
         name: 'run_local_coder',
         kind: 'agent',
-        sourceId: 'local_coder',
+        sourceIds: ['local_coder', 'python_runtime'],
         availability: 'available',
       }),
     ]);

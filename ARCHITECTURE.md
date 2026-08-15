@@ -629,7 +629,8 @@ IDF
 
 The **Input Data Dictionary (IDD)** defines the structural rules used to construct, edit, render, and
 validate valid input: card fields, provider/model/catalog lists, tool schemas, graph-reference and
-typed query/script forms, parameter types/defaults/limits, output shapes, risk, and required capability.
+typed query/script forms, parameter types/defaults/limits, output shapes, and explicitly declared
+permissions/capabilities. It does not infer risk, compatibility, runtime meaning, or graph authority.
 IDD definitions are not injected into model context. Natural-language IDF content stays flexible.
 
 The repo-root `LiquidAIty.idd` file owns IDD definitions. PostgreSQL owns instantiated values, IDF
@@ -662,8 +663,9 @@ projections; AGE `AgentContext` and the registered-query/GraphView path mixed co
 control. The explicit IDF/IDD law arrived in `fe6daa9d`. Current source now has one literal
 `LiquidAIty.idd`, a generic Python interpreter, a mixed-language loose-Markdown PostgreSQL IDF assembler, persisted
 card-context consumption by Hermes, and an exact IDF/card-runtime equality guard on Python rails.
-`toolCatalogProjection.ts` remains a live native-catalog projection only. The full editor, live selected
-tool-schema materialization, generic capability-gated parameterized SQL/Cypher and bounded-script
+Live MCP discovery and the private Python registry are mechanically ingested into that same IDD;
+`toolCatalogProjection.ts` only indexes/searches its materialized records. The full editor, selected
+tool-schema materialization into each IDF, generic capability-gated parameterized SQL/Cypher and bounded-script
 execution, result islands, optional AGE observation, and full Coder outer-boundary proof remain
 TARGET / INCOMPLETE.
 

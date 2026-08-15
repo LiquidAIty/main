@@ -30,9 +30,8 @@ export type EffectiveCoderTool = {
   runtimeName: string | null;
   displayName: string;
   description: string;
-  source: 'openclaude_native' | 'codebase_memory' | 'main_mcp' | 'runtime_control' | 'saved_unavailable';
-  group: 'Native' | 'Codebase Memory' | 'Engraphis' | 'Other MCP' | 'Runtime controls' | 'Unavailable';
-  risk: 'read' | 'write' | 'shell' | 'network' | 'paid' | 'control';
+  source: string;
+  group: string;
   saved: boolean;
   enabled: boolean;
   callable: boolean;
@@ -45,7 +44,6 @@ export type EffectiveCoderToolSnapshot = {
   allowsShell: boolean;
   allowsWrite: boolean;
   allowsNetwork: boolean;
-  hasPaidTools: boolean;
   unresolved: string[];
   nativeTools: string[];
   allowedTools: string[];
@@ -69,13 +67,6 @@ function runtimeMcpName(server: string, tool: string): string {
   return `mcp__${normalizeMcpName(server)}__${normalizeMcpName(tool)}`;
 }
 
-function nativeRisk(name: string): EffectiveCoderTool['risk'] {
-  if (['Edit', 'Write', 'NotebookEdit'].includes(name)) return 'write';
-  if (['Bash', 'PowerShell'].includes(name)) return 'shell';
-  if (['WebFetch', 'WebSearch'].includes(name)) return 'network';
-  return name.startsWith('Task') || name === 'Agent' ? 'control' : 'read';
-}
-
 /** Resolve one immutable, complete view of the tools a Coder run may actually
  * invoke. The live Python MCP catalog remains catalog authority; this function
  * only combines it with saved grants and the checked-in OpenClaude contract. */
@@ -96,7 +87,6 @@ export function resolveEffectiveCoderToolSnapshot(opts: {
     description: 'OpenClaude native tool.',
     source: 'openclaude_native',
     group: 'Native',
-    risk: nativeRisk(name),
     saved: false,
     enabled: enabledNative.has(name),
     callable: enabledNative.has(name),
@@ -112,7 +102,7 @@ export function resolveEffectiveCoderToolSnapshot(opts: {
       tools.push({
         canonicalName, runtimeName: null, displayName: 'Run Local Coder',
         description: 'Required controller doorway that starts this Coder; it is not callable from inside its own run.',
-        source: 'runtime_control', group: 'Runtime controls', risk: 'control', saved: true,
+        source: 'runtime_control', group: 'Runtime controls', saved: true,
         enabled: true, callable: false, reason: 'Controller capability; recursion is intentionally disabled.',
       });
       continue;
@@ -123,34 +113,35 @@ export function resolveEffectiveCoderToolSnapshot(opts: {
       tools.push({
         canonicalName, runtimeName: null, displayName: canonicalName,
         description: 'Saved grant is absent from the live canonical catalog.',
-        source: 'saved_unavailable', group: 'Unavailable', risk: 'control', saved: true,
+        source: 'saved_unavailable', group: 'Unavailable', saved: true,
         enabled: false, callable: false, reason: 'Unavailable in the live Python MCP catalog.',
       });
       continue;
     }
-    const isCbm = canonicalName.startsWith('cbm.');
+    const isCbm = descriptor.sourceId === 'cbm';
     const runtimeName = isCbm
-      ? runtimeMcpName(CODEBASE_MEMORY_MCP_SERVER, canonicalName.slice(4))
+      ? runtimeMcpName(CODEBASE_MEMORY_MCP_SERVER, descriptor.nativeName)
       : runtimeMcpName('main', canonicalName);
+    const annotations = descriptor.annotations || {};
     const deniedByAuditAuthority = opts.authority === 'direct_main_audit'
-      && (descriptor.capability.approvalRequired || descriptor.capability.providerPossible);
+      && !(
+        annotations.readOnlyHint === true
+        && annotations.destructiveHint !== true
+        && annotations.openWorldHint !== true
+      );
     const enabled = !deniedByAuditAuthority;
     if (enabled) {
       if (isCbm) needsCodeGraph = true;
       else needsMainMcp = true;
       selectedMcpRuntimeNames.push(runtimeName);
     }
-    const group: EffectiveCoderTool['group'] = isCbm
-      ? 'Codebase Memory'
-      : canonicalName.startsWith('engraphis.') ? 'Engraphis' : 'Other MCP';
-    const risk: EffectiveCoderTool['risk'] = descriptor.capability.providerPossible
-      ? 'paid'
-      : descriptor.capability.approvalRequired ? 'write' : 'read';
     tools.push({
       canonicalName, runtimeName,
       displayName: descriptor.title || canonicalName,
-      description: descriptor.description || descriptor.capability.recommendedUse,
-      source: isCbm ? 'codebase_memory' : 'main_mcp', group, risk, saved: true,
+      description: descriptor.description || '',
+      source: descriptor.sourceId,
+      group: descriptor.namespace,
+      saved: true,
       enabled, callable: enabled,
       reason: enabled
         ? `Saved grant; callable in ${opts.authority}.`
@@ -161,7 +152,7 @@ export function resolveEffectiveCoderToolSnapshot(opts: {
   tools.push({
     canonicalName: 'Stop', runtimeName: null, displayName: 'Stop',
     description: 'Stops the one live OpenClaude process owned by this session.',
-    source: 'runtime_control', group: 'Runtime controls', risk: 'control', saved: false,
+    source: 'runtime_control', group: 'Runtime controls', saved: false,
     enabled: true, callable: false, reason: 'Available to the user through the canonical session owner.',
   });
   const mcpServers = buildCoderMcpServers({
@@ -180,7 +171,6 @@ export function resolveEffectiveCoderToolSnapshot(opts: {
     allowsShell: policy.allowsMutatingShell,
     allowsWrite: enabledNative.has('Edit') || enabledNative.has('Write'),
     allowsNetwork: enabledNative.has('WebFetch') || enabledNative.has('WebSearch'),
-    hasPaidTools: tools.some((tool) => tool.enabled && tool.risk === 'paid'),
     unresolved,
     nativeTools: [...enabledNative],
     allowedTools,

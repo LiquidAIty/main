@@ -136,7 +136,13 @@ _TRACE_LOCK = threading.Lock()
 _CATALOG_DIAGNOSTIC_LOCK = threading.Lock()
 _LATEST_CATALOG_DIAGNOSTIC: dict[str, Any] | None = None
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
+_NATIVE_CBM_REQUEST_TIMEOUT_SECONDS = 60.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
+_PUBLIC_MCP_NAME = "LiquidAIty"
+_PUBLIC_MCP_DESCRIPTION = (
+    "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
+    "ThinkGraph, KnowGraph, and supported agent runtimes."
+)
 _ACTIVE_EXECUTION_RECEIPT: ContextVar[dict[str, Any] | None] = ContextVar(
     "mcp_execution_receipt", default=None
 )
@@ -400,177 +406,6 @@ def _typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any
     }
 
 
-def _tool_execution_contract(name: str, annotations: Any = None) -> dict[str, Any]:
-    """Classify the canonical catalog without duplicating its membership."""
-    annotation_payload = (
-        annotations.model_dump(exclude_none=True)
-        if hasattr(annotations, "model_dump")
-        else dict(annotations or {})
-    )
-    graphiti_database_reads = {
-        "graphiti.get_status",
-        "graphiti.get_episodes",
-        "graphiti.get_episode_entities",
-        "graphiti.get_entity_edge",
-        "graphiti.search_memory_facts",
-        "graphiti.search_nodes",
-    }
-    engraphis_context_operations = {
-        "engraphis.answer",
-        "engraphis.proactive_context",
-        "engraphis.recall",
-        "engraphis.recall_context",
-        "engraphis.recall_grounded",
-    }
-    read_only = (
-        bool(annotation_payload.get("readOnlyHint"))
-        or name in _READ_ONLY_TOOLS
-        or name == "web_search"
-        or name in graphiti_database_reads
-        or name in engraphis_context_operations
-    )
-    open_world = bool(annotation_payload.get("openWorldHint"))
-    if name.startswith("cbm."):
-        read_only = name.removeprefix("cbm.") not in {
-            "index_repository", "delete_project", "manage_adr", "ingest_traces"
-        }
-    destructive = bool(annotation_payload.get("destructiveHint"))
-    if destructive or name in {
-        "cbm.delete_project",
-        "engraphis.forget",
-        "graphiti.clear_graph",
-        "graphiti.delete_entity_edge",
-        "graphiti.delete_episode",
-    }:
-        risk = "destructive"
-    elif name in {"run_mag_one", "card.run_assistant_agent"}:
-        risk = "runtime-launching"
-    elif name in {"engraphis.index_repo", "cbm.index_repository"} or name.startswith("graphiti.add_"):
-        risk = "background"
-    elif open_world:
-        risk = "paid/provider-backed"
-    elif (
-        name.startswith("graphiti.")
-        and name not in graphiti_database_reads
-    ) or name == "web_search":
-        risk = "paid/provider-backed"
-    elif read_only:
-        risk = "safe read"
-    else:
-        risk = "deterministic write"
-
-    if name.startswith("graphiti."):
-        compute = "database_read" if name in graphiti_database_reads else "mixed"
-    elif name.startswith("engraphis."):
-        compute = (
-            "mixed"
-            if open_world
-            else "local_embedding"
-            if name in engraphis_context_operations
-            else "database_read" if read_only else "database_write"
-        )
-    elif name.startswith("cbm."):
-        compute = "database_read" if read_only else "database_write"
-    elif name in {"main.context", "coder.status"}:
-        compute = "deterministic"
-    elif name == "web_search":
-        compute = "mixed"
-    elif read_only:
-        compute = "database_read"
-    else:
-        compute = "database_write"
-    return {
-        "risk": risk,
-        "compute": compute,
-        "readOnly": read_only,
-        "destructive": risk == "destructive",
-        "openWorld": open_world or risk in {"paid/provider-backed", "background"},
-    }
-
-
-def _tool_capability_metadata(
-    name: str,
-    execution: dict[str, str],
-) -> dict[str, Any]:
-    """Describe how one canonical MCP tool belongs in the card editor.
-
-    This is generated metadata on the existing catalog entry, not a second tool
-    registry. Context records and visual projections are deliberately not represented as
-    tools here; this metadata describes only callable operations.
-    """
-    if name.startswith("engraphis."):
-        graph_authority = "engraphis"
-        authority_class = "project_reasoning"
-    elif name.startswith("graphiti."):
-        graph_authority = "graphiti"
-        authority_class = "knowledge_provenance"
-    elif name.startswith("cbm."):
-        graph_authority = "cbm"
-        authority_class = "repository_structure"
-    elif name.startswith("hermes.memory_"):
-        graph_authority = "agentgraph"
-        authority_class = "agent_memory"
-    else:
-        graph_authority = None
-        authority_class = "application"
-
-    card_assignable = name != "main.context"
-    graph_tool_runtime_bindings = {
-        "cbm": ["local_coder"],
-        "engraphis": ["main_chat"],
-        "graphiti": ["hermes_steward"],
-    }.get(str(graph_authority), [])
-    assignable_runtime_bindings = (
-        []
-        if not card_assignable
-        else graph_tool_runtime_bindings
-        if graph_authority in {"cbm", "engraphis", "graphiti"}
-        else ["main_chat"]
-        if name in _MAIN_ONLY_TOOLS
-        else ["hermes_steward"]
-        if name in _HERMES_ONLY_TOOLS
-        else ["main_chat", "hermes_steward"]
-    )
-    surface = "knowledge" if graph_authority else "tools"
-    if not card_assignable:
-        surface = "system"
-
-    compute = execution["compute"]
-    latency = (
-        "slow"
-        if compute in {"local_embedding", "api_embedding", "api_llm", "mixed"}
-        else "medium"
-        if compute == "database_write"
-        else "fast"
-    )
-    provider_possible = compute in {"api_embedding", "api_llm", "mixed"} or execution["risk"] == "paid/provider-backed"
-    return {
-        "surface": surface,
-        "capabilityType": "callable_tool",
-        "graphAuthority": graph_authority,
-        "authorityClass": authority_class,
-        "runtimeCompatibility": ["harness_mcp"],
-        # This is the execution host's caller contract projected for the card
-        # editor. The frontend must not infer assignment from graph authority.
-        "assignableRuntimeBindings": assignable_runtime_bindings,
-        "assignableRuntimeTypes": [],
-        "cardAssignable": card_assignable,
-        "latency": latency,
-        "providerPossible": provider_possible,
-        # Discovery proves the capability is catalogued, not that every native
-        # dependency is currently healthy. Calls and receipts remain authoritative.
-        "health": "unknown",
-        "recommendedUse": (
-            "Operate on or retrieve from the card's graph-backed knowledge."
-            if graph_authority
-            else "Perform an explicit task action."
-        ),
-        "verification": "execution_receipt",
-        "approvalRequired": execution["risk"] != "safe read",
-        "deprecated": False,
-    }
-
-
 def _observe_provider_call(
     *,
     compute: str,
@@ -764,7 +599,10 @@ class AgentRuntimeServer(Server):
         )
 
 
-server = AgentRuntimeServer("agent-runtime")
+server = AgentRuntimeServer(
+    _PUBLIC_MCP_NAME,
+    instructions=_PUBLIC_MCP_DESCRIPTION,
+)
 
 _NATIVE_ENGRAPHIS_MCP: Any | None = None
 _NATIVE_ENGRAPHIS_TOOLS: tuple[Tool, ...] | None = None
@@ -780,8 +618,6 @@ _NATIVE_GRAPHITI_MODULE: Any | None = None
 _NATIVE_GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_GRAPHITI_NAMES: frozenset[str] = frozenset()
 _NATIVE_GRAPHITI_UNAVAILABLE: dict[str, Any] | None = None
-_TOOL_EXECUTION_CONTRACTS: dict[str, dict[str, str]] = {}
-
 _NATIVE_PREFIXES = {
     "cbm": "cbm.",
     "engraphis": "engraphis.",
@@ -799,6 +635,14 @@ def _namespace_native_tools(provider: str, tools: list[Tool]) -> list[Tool]:
         if provider == "engraphis":
             native_name = native_name.removeprefix("engraphis_")
         payload["name"] = prefix + native_name
+        meta = dict(payload.get("_meta") or {})
+        meta["liquidaitySource"] = {
+            "sourceId": provider,
+            "namespace": provider,
+            "nativeName": tool.name,
+            "connectionKind": "external-mcp",
+        }
+        payload["_meta"] = meta
         if provider == "graphiti" and native_name == "get_episodes":
             schema = copy.deepcopy(payload.get("inputSchema") or {})
             properties = schema.setdefault("properties", {})
@@ -824,6 +668,20 @@ def _namespace_native_tools(provider: str, tools: list[Tool]) -> list[Tool]:
             payload["inputSchema"] = schema
         result.append(Tool.model_validate(payload))
     return result
+
+
+def _bind_repo_tool_source(tool: Tool) -> Tool:
+    """Attach factual connection identity to a repo-owned MCP declaration."""
+    payload = tool.model_dump(by_alias=True, exclude_none=True)
+    meta = dict(payload.get("_meta") or {})
+    meta["liquidaitySource"] = {
+        "sourceId": "main_mcp",
+        "namespace": "main",
+        "nativeName": tool.name,
+        "connectionKind": "external-mcp",
+    }
+    payload["_meta"] = meta
+    return Tool.model_validate(payload)
 
 
 @server.list_resources()
@@ -1371,7 +1229,7 @@ class _NativeStdioMcpClient:
                     "params": params,
                 }
             )
-            deadline = time.monotonic() + 30.0
+            deadline = time.monotonic() + _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -1866,6 +1724,7 @@ async def list_tools() -> list[Tool]:
             },
         ),
     ]
+    tools = [_bind_repo_tool_source(tool) for tool in tools]
     for tool in tools:
         tool.inputSchema.setdefault("additionalProperties", False)
     allowlist = _configured_tool_allowlist()
@@ -1886,12 +1745,6 @@ async def list_tools() -> list[Tool]:
     if len(names) != len(set(names)):
         duplicates = sorted({name for name in names if names.count(name) > 1})
         raise RuntimeError("federated_duplicate_tool_name:" + ",".join(duplicates))
-    tools = [_bind_tool_execution_contract(tool) for tool in tools]
-    _TOOL_EXECUTION_CONTRACTS.clear()
-    _TOOL_EXECUTION_CONTRACTS.update({
-        tool.name: dict((tool.meta or {}).get("runtimeExecution") or {})
-        for tool in tools
-    })
     context = _authenticated_main_context()
     if context is None:
         published = tools
@@ -1918,12 +1771,6 @@ async def list_tools() -> list[Tool]:
     return published
 
 
-_READ_ONLY_TOOLS = {
-    "main.context",
-    "coder.status",
-    "mag_one.describe_connected_agents",
-    "canvas.inspect",
-}
 _SERVER_OWNED_ARGUMENTS = {
     "projectId",
     "deckId",
@@ -1937,73 +1784,6 @@ _SERVER_OWNED_ARGUMENTS = {
     "_callerCardId",
     "_callerRuntimeBinding",
 }
-_MAIN_ONLY_TOOLS = {
-    "run_mag_one",
-}
-_HERMES_ONLY_TOOLS = {
-    "write_mag_one_instructions",
-}
-
-def _tool_access_metadata(name: str, execution: dict[str, str]) -> dict[str, Any]:
-    """Attach the one public OAuth grant to the canonical Tool registration."""
-    risk = execution["risk"]
-    owner = next(
-        (
-            owner
-            for prefix, owner in (
-                ("engraphis.", "engraphis"),
-                ("graphiti.", "graphiti"),
-                ("cbm.", "cbm"),
-            )
-            if name.startswith(prefix)
-        ),
-        "project_runtime",
-    )
-    code_index_family = {
-        "engraphis.index_repo",
-        "engraphis.search_code",
-        "engraphis.code_path",
-        "engraphis.code_impact",
-        "engraphis.export_code_graph",
-    }
-    job_class = (
-        "admin_job"
-        if risk == "destructive"
-        else "fast_context"
-        if risk == "safe read" and execution["compute"] in {"deterministic", "database_read"}
-        else "agent_job"
-    )
-    return {
-        "owner": owner,
-        "scopes": list(OAUTH_SCOPES),
-        "risk": risk,
-        "compute": execution["compute"],
-        "authorityStatus": (
-            "approximate_vendor_tool"
-            if name in code_index_family
-            else "canonical"
-        ),
-        "jobClass": job_class,
-    }
-
-
-def _bind_tool_execution_contract(tool: Tool) -> Tool:
-    payload = tool.model_dump(by_alias=True, exclude_none=True)
-    meta = dict(payload.get("_meta") or {})
-    execution = _tool_execution_contract(
-        tool.name, tool.annotations
-    )
-    annotations = dict(payload.get("annotations") or {})
-    annotations["readOnlyHint"] = execution["readOnly"]
-    annotations["destructiveHint"] = execution["destructive"]
-    annotations.setdefault("idempotentHint", execution["readOnly"])
-    annotations.setdefault("openWorldHint", execution["openWorld"])
-    payload["annotations"] = annotations
-    meta["runtimeExecution"] = execution
-    meta["runtimeCapability"] = _tool_capability_metadata(tool.name, execution)
-    meta["runtimeAccess"] = _tool_access_metadata(tool.name, execution)
-    payload["_meta"] = meta
-    return Tool.model_validate(payload)
 
 
 def _enforce_tool_caller(
@@ -2012,13 +1792,9 @@ def _enforce_tool_caller(
     *,
     authenticated_external: bool = False,
 ) -> str | None:
-    expected = (
-        "main_chat"
-        if name in _MAIN_ONLY_TOOLS
-        else "hermes_steward"
-        if name in _HERMES_ONLY_TOOLS
-        else None
-    )
+    from app.python_models.idd import required_tool_caller_runtime_binding
+
+    expected = required_tool_caller_runtime_binding(name)
     card_id = str(args.pop("_callerCardId", "") or "").strip()
     binding = str(args.pop("_callerRuntimeBinding", "") or "").strip()
     if authenticated_external and not binding:
@@ -2222,7 +1998,9 @@ async def _dispatch_tool(
             if name == "card.run_assistant_agent":
                 args["originatingAgentId"] = str(context["mainCardId"])
                 args["originatingRunId"] = str(context["parentRunId"])
-            if name in _MAIN_ONLY_TOOLS or name in _HERMES_ONLY_TOOLS:
+            from app.python_models.idd import required_tool_caller_runtime_binding
+
+            if required_tool_caller_runtime_binding(name) is not None:
                 args["_callerCardId"] = str(context["mainCardId"])
                 args["_callerRuntimeBinding"] = str(
                     context.get("callerRuntimeBinding") or "main_chat"
@@ -2339,17 +2117,11 @@ def _tool_result_category(result: Any) -> str:
 
 
 def _execution_receipt(name: str) -> dict[str, Any]:
-    contract = _TOOL_EXECUTION_CONTRACTS.get(name) or _tool_execution_contract(name)
-    known = name in _ALLOWED_KEYS or any(
-        name.startswith(prefix) for prefix in _NATIVE_PREFIXES.values()
-    )
     return {
         "schema": "agent-runtime.execution-receipt.v1",
         "tool": name,
         "correlationId": f"mcp:{uuid4()}",
         "operationPhase": "dispatch",
-        "compute": contract["compute"] if known else "unknown",
-        "risk": contract["risk"] if known else "unknown",
         "local": True,
         "startedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "state": "running",
@@ -2573,7 +2345,7 @@ async def _run_streamable_http() -> None:
             resource_url=resource_url,
             authorization_servers=[AnyHttpUrl(config_values.issuer_url)],
             scopes_supported=list(OAUTH_SCOPES),
-            resource_name="Main MCP",
+            resource_name=_PUBLIC_MCP_NAME,
         )
         routes = [
             Route(

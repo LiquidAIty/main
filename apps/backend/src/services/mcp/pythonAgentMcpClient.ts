@@ -83,30 +83,18 @@ export async function closePythonAgentMcpClient(): Promise<void> {
 
 export type PythonMcpToolResult = { ok: boolean; [key: string]: unknown };
 
-export type PythonMcpCapabilityMetadata = {
-  surface: 'knowledge' | 'tools' | 'system';
-  capabilityType: 'callable_tool';
-  graphAuthority: 'engraphis' | 'graphiti' | 'cbm' | 'agentgraph' | null;
-  authorityClass: string;
-  runtimeCompatibility: string[];
-  assignableRuntimeBindings: string[];
-  assignableRuntimeTypes: string[];
-  cardAssignable: boolean;
-  latency: 'fast' | 'medium' | 'slow';
-  providerPossible: boolean;
-  health: string;
-  recommendedUse: string;
-  verification: string;
-  approvalRequired: boolean;
-  deprecated: boolean;
-};
-
 export type PythonMcpToolDescriptor = {
   name: string;
   title?: string;
   description?: string;
+  sourceId: string;
+  namespace: string;
+  nativeName: string;
+  connectionKind: string;
   inputSchema: Record<string, unknown>;
-  capability: PythonMcpCapabilityMetadata;
+  outputSchema?: Record<string, unknown>;
+  annotations?: Record<string, unknown>;
+  securitySchemes?: Record<string, unknown>[];
 };
 
 /** The repository-owned stdio server used by both the persistent Harness
@@ -148,22 +136,48 @@ export async function callPythonAgentMcpTool(
   return parsed as PythonMcpToolResult;
 }
 
-/** Read the generated card-facing projection of the canonical MCP catalog. */
+/** Read factual live MCP contracts for mechanical ingestion by LiquidAIty.idd. */
 export async function listPythonAgentMcpCatalog(): Promise<PythonMcpToolDescriptor[]> {
   const client = await getClient();
   const result = await client.listTools();
   return (result.tools || [])
     .map((tool) => {
-      const capability = (tool._meta as Record<string, unknown> | undefined)?.runtimeCapability;
-      if (!capability || typeof capability !== 'object' || Array.isArray(capability)) {
-        throw new Error(`python_agent_mcp_capability_metadata_missing: ${tool.name}`);
+      const metadata = (tool._meta || {}) as Record<string, unknown>;
+      const source = metadata.liquidaitySource;
+      if (!source || typeof source !== 'object' || Array.isArray(source)) {
+        throw new Error(`python_agent_mcp_source_metadata_missing: ${tool.name}`);
       }
+      const nativeSource = source as Record<string, unknown>;
+      const sourceId = String(nativeSource.sourceId || '').trim();
+      const namespace = String(nativeSource.namespace || '').trim();
+      const nativeName = String(nativeSource.nativeName || '').trim();
+      const connectionKind = String(nativeSource.connectionKind || '').trim();
+      if (!sourceId || !namespace || !nativeName || !connectionKind) {
+        throw new Error(`python_agent_mcp_source_metadata_invalid: ${tool.name}`);
+      }
+      const raw = tool as typeof tool & {
+        outputSchema?: unknown;
+        annotations?: unknown;
+        securitySchemes?: unknown;
+      };
       return {
         name: tool.name,
         ...(tool.title ? { title: tool.title } : {}),
         ...(tool.description ? { description: tool.description } : {}),
+        sourceId,
+        namespace,
+        nativeName,
+        connectionKind,
         inputSchema: tool.inputSchema as Record<string, unknown>,
-        capability: capability as PythonMcpCapabilityMetadata,
+        ...(raw.outputSchema && typeof raw.outputSchema === 'object' && !Array.isArray(raw.outputSchema)
+          ? { outputSchema: raw.outputSchema as Record<string, unknown> }
+          : {}),
+        ...(raw.annotations && typeof raw.annotations === 'object' && !Array.isArray(raw.annotations)
+          ? { annotations: raw.annotations as Record<string, unknown> }
+          : {}),
+        ...(Array.isArray(raw.securitySchemes)
+          ? { securitySchemes: raw.securitySchemes as Record<string, unknown>[] }
+          : {}),
       };
     })
     .sort((left, right) => left.name.localeCompare(right.name));

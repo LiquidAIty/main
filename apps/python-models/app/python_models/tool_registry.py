@@ -695,140 +695,24 @@ def build_default_tool_registry() -> ToolRegistry:
 DEFAULT_TOOL_REGISTRY = build_default_tool_registry()
 
 
-# ---------------------------------------------------------------------------
-# Read-only capability manifest (the registry is the single source of truth).
-# Surfaced to the frontend so the existing Mag One card Tools surface can render
-# real capability metadata — never a hardcoded frontend-only tool list. It
-# exposes display metadata only: no endpoints, keys, source paths, or DB config.
-# ---------------------------------------------------------------------------
-
-# Per-tool display metadata. Anything not listed falls back to safe defaults
-# derived from the registered ToolSpec.
-_TOOL_DISPLAY_METADATA: dict[str, dict[str, Any]] = {
-    "run_local_coder": {
-        "displayName": "Local Coder",
-        "kind": "agent",
-        "sourceId": "local_coder",
-        "namespace": "coder",
-        "executionAuthority": "local_coder",
-        "agentCompatibility": ["magentic_one", "assistant_agent"],
-        "assignableRuntimeBindings": ["local_coder"],
-        "assignableRuntimeTypes": [],
-    },
-    "find_recent_sec_filing_signals": {
-        "displayName": "SEC Filing Signals",
-        "sourceId": "worldsignals",
-        "namespace": "trading",
-        "executionAuthority": "worldsignals",
-        "agentCompatibility": ["magentic_one", "assistant_agent"],
-        "assignableRuntimeBindings": ["trading_agent"],
-        "assignableRuntimeTypes": [],
-    },
-    "get_market_snapshot": {
-        "displayName": "Alpaca Market Snapshot",
-        "sourceId": "trading_data",
-        "namespace": "trading",
-        "executionAuthority": "python_autogen",
-        "agentCompatibility": ["magentic_one", "assistant_agent"],
-        "assignableRuntimeBindings": ["trading_agent"],
-        "assignableRuntimeTypes": [],
-    },
-    "get_historical_bars": {
-        "displayName": "Alpaca Historical Bars",
-        "sourceId": "trading_data",
-        "namespace": "trading",
-        "executionAuthority": "python_autogen",
-        "agentCompatibility": ["magentic_one", "assistant_agent"],
-        "assignableRuntimeBindings": ["trading_agent"],
-        "assignableRuntimeTypes": [],
-    },
-    "get_paper_account_readiness": {
-        "displayName": "Alpaca Paper Account Readiness",
-        "sourceId": "trading_data",
-        "namespace": "trading",
-        "executionAuthority": "python_autogen",
-        "agentCompatibility": ["magentic_one", "assistant_agent"],
-        "assignableRuntimeBindings": ["trading_agent"],
-        "assignableRuntimeTypes": [],
-    },
-    "web_search": {
-        "sourceId": "autogen",
-        "namespace": "web",
-        "executionAuthority": "python_autogen",
-        "agentCompatibility": ["magentic_one", "assistant_agent"],
-        "assignableRuntimeBindings": ["research_agent"],
-        "assignableRuntimeTypes": [],
-    },
-    "calculator": {
-        "displayName": "Calculator",
-        "agentCompatibility": ["magentic_one", "assistant_agent"],
-    },
-    "current_datetime": {
-        "displayName": "Current Date/Time",
-        "agentCompatibility": ["magentic_one", "assistant_agent"],
-    },
-}
-
-
-def _summarize_input_schema(input_schema: dict[str, Any]) -> str:
-    """Compact, safe summary of a tool's inputs (names only, no values/secrets)."""
-    if not isinstance(input_schema, dict):
-        return ""
-    properties = input_schema.get("properties")
-    if not isinstance(properties, dict) or not properties:
-        return ""
-    required = [name for name in input_schema.get("required", []) if isinstance(name, str)]
-    optional = [name for name in properties if name not in required]
-    parts: list[str] = []
-    if required:
-        parts.append(", ".join(required) + " (required)")
-    if optional:
-        parts.append(", ".join(optional))
-    return "; ".join(parts)
-
-
 def tool_manifest(registry: ToolRegistry | None = None) -> list[dict[str, Any]]:
-    """Read-only capability manifest built from the live registry.
-
-    This is the private Python/AutoGen publication into the federated
-    reference registry. It is not the externally published ChatGPT MCP catalog.
-    """
+    """Publish factual live contracts from the private Python tool registry."""
     registry = registry or DEFAULT_TOOL_REGISTRY
     manifest: list[dict[str, Any]] = []
     for name in registry.known_names():
         spec = registry.spec(name)
         if spec is None or not spec.enabled:
             continue
-        meta = _TOOL_DISPLAY_METADATA.get(name, {})
-        agent_compatibility = list(meta.get("agentCompatibility", ["magentic_one"]))
-        source_id = str(meta.get("sourceId", "worldsignals" if name.startswith("worldsignals.") else "autogen"))
-        assignable_runtime_bindings = list(meta.get("assignableRuntimeBindings", []))
-        assignable_runtime_types = list(
-            meta.get("assignableRuntimeTypes", agent_compatibility)
-        )
-        if name.startswith("worldsignals."):
-            assignable_runtime_bindings = ["worldsignals_agent"]
-            assignable_runtime_types = []
         manifest.append({
-            "id": spec.name,
-            "kind": meta.get("kind", "tool"),
-            "sourceId": source_id,
-            "namespace": meta.get("namespace", "worldsignals" if name.startswith("worldsignals.") else "autogen"),
-            "displayName": meta.get("displayName", spec.name),
+            "name": spec.name,
+            "nativeName": spec.name,
+            "kind": "tool",
+            "sourceId": "python_runtime",
+            "namespace": "python",
+            "connectionKind": "private-runtime",
             "description": spec.description,
-            "agentCompatibility": agent_compatibility,
-            "publication": {"externalMcp": False},
-            "execution": {
-                "authority": meta.get("executionAuthority", source_id),
-                "nativeName": spec.name,
-            },
-            "capability": {
-                "runtimeCompatibility": ["autogen"],
-                "assignableRuntimeBindings": assignable_runtime_bindings,
-                "assignableRuntimeTypes": assignable_runtime_types,
-                "cardAssignable": True,
-            },
+            "enabled": spec.enabled,
             "inputSchema": spec.inputSchema,
-            "inputSchemaSummary": _summarize_input_schema(spec.inputSchema),
+            "outputSchema": spec.outputSchema,
         })
     return manifest

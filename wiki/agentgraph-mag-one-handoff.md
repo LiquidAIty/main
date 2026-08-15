@@ -53,11 +53,12 @@ Git history contains no completed earlier IDF/IDD system to restore:
 - registered-query/GraphView machinery mixed typed query ideas with another registry and assignment
   control layer.
 - the explicit IDF/IDD product law entered canonical documentation in `fe6daa9d` on 2026-08-10.
-- the former `toolInputDataDictionary.ts` logic is now `toolCatalogProjection.ts`, a live projection of
-  native catalogs only; it is not the IDD and does not own tools.
+- live MCP and private Python registry contracts are now mechanically ingested into `LiquidAIty.idd`;
+  `toolCatalogProjection.ts` only indexes/searches the already-materialized IDD records and owns no
+  tool meaning, compatibility, or permission vocabulary.
 
 Reuse the exact saved-card contract, exact instruction bodies, typed parameter validation/read-only
-query ideas, and live tool catalog projection. Do not restore the old packet, manifest, registry,
+query ideas, and IDD-owned live tool materialization. Do not restore the old packet, manifest, registry,
 GraphView, receiver, claim, or assignment systems under new names.
 
 ## Intended runtime path

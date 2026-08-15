@@ -41,9 +41,9 @@ import {
 } from '../services/autogen/autogenOrchestratorClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 import {
-  buildToolCatalogProjection,
+  indexToolCatalogReferences,
   searchToolCatalogReferences,
-  type ToolCatalogSource,
+  type ToolCatalogReference,
 } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
 
@@ -85,28 +85,22 @@ router.get('/input-data-dictionary/tools', async (req, res) => {
     if (!Array.isArray(privateRuntimeManifest?.tools)) {
       throw new Error('python_runtime_tool_manifest_invalid');
     }
-    const catalog = buildToolCatalogProjection([
-      ...canonicalMcpTools.map((tool) => ({
-        ...tool,
-        sourceId: 'main_mcp',
-        kind: 'tool',
-        publication: { externalMcp: true },
-        execution: { authority: 'main_mcp', nativeName: tool.name },
-      })),
-      ...privateRuntimeManifest.tools as ToolCatalogSource[],
-    ]);
     const materialized = await requestPythonRailsJson('/idd/tools/materialize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ references: catalog.references }),
+      body: JSON.stringify({
+        tools: [
+          ...canonicalMcpTools,
+          ...privateRuntimeManifest.tools,
+        ],
+      }),
     }) as { references?: unknown };
     if (!Array.isArray(materialized?.references)) {
       throw new Error('input_data_dictionary_tool_catalog_invalid');
     }
-    const validatedCatalog = {
-      ...catalog,
-      references: materialized.references as typeof catalog.references,
-    };
+    const catalog = indexToolCatalogReferences(
+      materialized.references as ToolCatalogReference[],
+    );
     const selectedIds = Array.isArray(req.query.selectedIds)
       ? req.query.selectedIds.map(String)
       : typeof req.query.selectedIds === 'string'
@@ -114,7 +108,7 @@ router.get('/input-data-dictionary/tools', async (req, res) => {
         : [];
     return res.json({
       ok: true,
-      ...searchToolCatalogReferences(validatedCatalog, {
+      ...searchToolCatalogReferences(catalog, {
         query: typeof req.query.query === 'string' ? req.query.query : undefined,
         namespace: typeof req.query.namespace === 'string' ? req.query.namespace : undefined,
         selectedIds,

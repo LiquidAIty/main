@@ -57,42 +57,24 @@ def test_duplicate_registry_identity_is_rejected():
 
 def test_manifest_is_registry_backed_no_duplicate_entries():
     manifest = tool_manifest()
-    ids = [m["id"] for m in manifest]
+    ids = [m["name"] for m in manifest]
     assert ids == sorted(set(ids))  # one entry per registered tool, deduped
     assert "retrieve_knowgraph_context" not in ids
 
 
-def test_manifest_publishes_card_runtime_compatibility_from_python_authority():
-    manifest = {entry["id"]: entry for entry in tool_manifest()}
+def test_manifest_publishes_only_factual_private_runtime_contracts():
+    manifest = {entry["name"]: entry for entry in tool_manifest()}
     coder = manifest["run_local_coder"]
-    assert coder["capability"] == {
-        "runtimeCompatibility": ["autogen"],
-        "assignableRuntimeBindings": ["local_coder"],
-        "assignableRuntimeTypes": [],
-        "cardAssignable": True,
-    }
-    assert coder["kind"] == "agent"
-    assert coder["sourceId"] == "local_coder"
-    assert coder["publication"] == {"externalMcp": False}
-    assert coder["execution"] == {
-        "authority": "local_coder",
-        "nativeName": "run_local_coder",
-    }
+    assert coder["kind"] == "tool"
+    assert coder["sourceId"] == "python_runtime"
+    assert coder["namespace"] == "python"
+    assert coder["nativeName"] == "run_local_coder"
+    assert coder["connectionKind"] == "private-runtime"
+    assert coder["enabled"] is True
     assert coder["inputSchema"]["type"] == "object"
-    calculator = manifest["calculator"]
-    assert calculator["capability"]["assignableRuntimeTypes"] == [
-        "magentic_one",
-        "assistant_agent",
-    ]
-    assert manifest["web_search"]["capability"]["assignableRuntimeBindings"] == [
-        "research_agent"
-    ]
-    assert manifest["worldsignals.command"]["capability"]["assignableRuntimeBindings"] == [
-        "worldsignals_agent"
-    ]
-    assert manifest["get_market_snapshot"]["capability"]["assignableRuntimeBindings"] == [
-        "trading_agent"
-    ]
+    assert coder["outputSchema"]
+    assert "capability" not in coder
+    assert "agentCompatibility" not in coder
 
 
 def test_manifest_exposes_no_secrets_endpoints_or_db_config():
