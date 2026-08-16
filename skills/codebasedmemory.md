@@ -304,7 +304,7 @@ visible failure, direct recovery, and no need for the user to supervise the mach
 - **index_status / detect_changes**: Accept project name string, never filesystem path.
 - **Python functions**: trace_path does not resolve them. Verify via source reads + rg.
 - **Route nodes**: file_path is empty. Read route files directly for handler mapping.
-- **Protected dirs**: localcoder/, worldsignal/, autogen-main/, Kronos-main/,
+- **Protected dirs**: localcoder/, worldsignal/, Kronos-main/,
   services/esn_rls/, and EDGAR caches are off-limits for cleanup. Verify index coverage rather
   than assuming these vendored/protected boundaries are indexed.
 - **search_code**: Working in the installed 0.9.0 build. Use it for indexed code text; use `rg` for

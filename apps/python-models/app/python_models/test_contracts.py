@@ -24,6 +24,8 @@ def test_response_carries_native_run_messages_without_ledger_interception():
     res = OrchestratorRunResponse(
         ok=True,
         session=_session(),
+        runId="run:contract",
+        idfId="idf:contract",
         finalResponseText="full ledger text with NONCE_123",
         autogenMessages=[AutoGenMessage(source="x", type="TextMessage", content="hi")],
     )

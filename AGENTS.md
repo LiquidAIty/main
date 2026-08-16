@@ -339,7 +339,7 @@ persistence readback, and real runtime evidence win when they disagree with grap
 
 ## Vendored source modification law
 
-Treat `Hermes/`, `localcoder/`, `autogen-main/`, `worldsignal/`, `Kronos-main/`, and other explicitly
+Treat `Hermes/`, `localcoder/`, `worldsignal/`, `Kronos-main/`, and other explicitly
 vendored or imported runtimes as controlled upstream forks, not ordinary LiquidAIty cleanup targets.
 Before a nontrivial vendor edit, the active CoderPacket must record:
 

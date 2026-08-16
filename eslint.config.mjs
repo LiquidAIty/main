@@ -15,7 +15,6 @@ export default [
       // The lint gate measures the code we maintain, nothing else.
       'localcoder/**',
       'client/src/vendor/**',
-      'autogen-main/**',
       'Kronos-main/**',
       'vendor/**',
       'worldsignal/**',

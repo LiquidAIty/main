@@ -147,7 +147,7 @@ eligibility; and the native orchestrator owns its private Task and Progress Ledg
 
 Keep:
 
-- `MagenticOneGroupChat` and the vendored AutoGen line;
+- `MagenticOneGroupChat` from the exact released AutoGen `0.7.5` package line;
 - saved worker-card selection;
 - parent/child execution and job-folder returns;
 - native private Task and Progress Ledgers, with no app-authored copy or projection;
@@ -691,7 +691,7 @@ proven dead. The actual source, data, tests, and adapter boundaries are protecte
   process/session ownership, security boundaries, and Python/gRPC bridges.
 - Python rails: AutoGen/Mag One, single-card agents, tool execution, graph/data rails, and specialist
   computation.
-- Vendored runtimes: `Hermes/`, `localcoder/`, `autogen-main/`, `worldsignal/`, and `Kronos-main`
+- Vendored runtimes: `Hermes/`, `localcoder/`, `worldsignal/`, and `Kronos-main`
   retain their upstream boundaries and are not ordinary cleanup targets.
 
 ## Repository ownership and CBM project boundaries
@@ -706,7 +706,7 @@ because they exist.
 | Hermes | `C:\Projects\LiquidAIty\main\Hermes` | `C-Projects-Hermes` | On demand only for explicit Hermes work. |
 | OpenClaude/LocalCoder | `C:\Projects\LiquidAIty\main\localcoder` | `C-Projects-LocalCoder` | On demand only for explicit LocalCoder work. |
 
-Other significant imported roots—`autogen-main/`, `worldsignal/`, `engraphis-main/`, `Kronos-main/`,
+Other significant imported roots—`worldsignal/`, `engraphis-main/`, `Kronos-main/`,
 `defog-sqlcoder/`, `neo4j-text2cypher/`, and `client/src/vendor/codebase-memory-ui/`—remain excluded
 from the core graph. Give one of them a dedicated CBM project only when an active task enters that
 ownership boundary. Do not create a standing index swarm or combine vendor and core graphs.

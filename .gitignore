@@ -99,7 +99,6 @@ apps/backend/env
 /apps/backend/.data/
 
 
-autogen-main/
 /neo4j-text2cypher/
 /defog-sqlcoder/
 

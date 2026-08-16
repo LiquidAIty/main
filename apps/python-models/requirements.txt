@@ -22,14 +22,9 @@ python-multipart==0.0.32
 PyJWT[crypto]==2.13.0
 # Python-owned AgentGraph assignments and run records use the same PostgreSQL store.
 psycopg[binary]==3.*
-# LiquidAIty AutoGen target: the 0.7.5 line, source-installed editable from the
-# in-repo root reference at autogen-main/. autogen-agentchat is REQUIRED (the real
-# MagenticOneGroupChat / MagenticOneOrchestrator live there). 0.7.5 is needed for
-# the MCP path used later; the old 0.4.4 line is retired.
-# Install with:
-#   uv pip install -e ../../autogen-main/python/packages/autogen-core \
-#                  -e ../../autogen-main/python/packages/autogen-agentchat \
-#                  -e "../../autogen-main/python/packages/autogen-ext[openai]"
--e ../../autogen-main/python/packages/autogen-core
--e ../../autogen-main/python/packages/autogen-agentchat
-../../autogen-main/python/packages/autogen-ext[openai]
+# LiquidAIty has one tracked Mag One product path. It uses the released AutoGen
+# 0.7.5 libraries as dependencies; the temporary full-repo reference checkout
+# must never be required by a runnable LiquidAIty checkout.
+autogen-core==0.7.5
+autogen-agentchat==0.7.5
+autogen-ext[magentic-one,openai]==0.7.5
