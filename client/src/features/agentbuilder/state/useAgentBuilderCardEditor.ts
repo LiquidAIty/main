@@ -95,6 +95,7 @@ export default function useAgentBuilderCardEditor({
           : '',
       access_mode:
         runtimeOptions.accessMode === 'chatgpt-account'
+        || runtimeOptions.accessMode === 'coder-oauth'
         || runtimeOptions.accessMode === 'openai-api'
         || runtimeOptions.accessMode === 'openrouter-api'
           ? runtimeOptions.accessMode
@@ -146,6 +147,7 @@ export default function useAgentBuilderCardEditor({
         const nextModel = String(nextConfig.model_key || '').trim() || null;
         const nextAccessMode =
           nextConfig.access_mode === 'chatgpt-account'
+          || nextConfig.access_mode === 'coder-oauth'
           || nextConfig.access_mode === 'openai-api'
           || nextConfig.access_mode === 'openrouter-api'
             ? nextConfig.access_mode

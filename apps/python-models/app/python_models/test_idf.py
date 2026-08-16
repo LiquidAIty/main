@@ -10,6 +10,7 @@ CARD_CONTEXT = {
     "runtimeType": "main_chat",
     "runtimeBinding": "main_chat",
     "provider": "openai",
+    "accessMode": "chatgpt-account",
     "modelKey": "saved-model",
     "providerModelId": "saved-model",
     "executionMode": "single",
@@ -93,3 +94,53 @@ def test_idf_errors_do_not_echo_model_input_or_secret_shaped_text() -> None:
         assert secret not in str(error)
     else:
         raise AssertionError("invalid reference authority was accepted")
+
+
+def test_coding_job_starts_as_one_hash_bound_draft() -> None:
+    coder_context = {
+        **CARD_CONTEXT,
+        "cardId": "card_local_coder",
+        "title": "Coder",
+        "runtimeType": "assistant_agent",
+        "runtimeBinding": "local_coder",
+        "accessMode": "coder-oauth",
+    }
+    job_context = {
+        "objective": "Add one focused regression test.",
+        "planExcerpt": "Inspect, edit, test, report.",
+        "contextSummary": "Use the current checkout.",
+        "codeAnchors": ["apps/backend/src/coder"],
+        "cbmQueries": ["search_graph LocalCoderAdapter"],
+        "guardrails": ["Preserve unrelated changes."],
+        "allowedFiles": ["apps/backend/src/coder/**"],
+        "forbiddenWork": ["No provider fallback."],
+        "proofRequired": ["Run the focused test."],
+        "reportFormat": "CoderReport",
+        "stopConditions": ["Stop after proof."],
+        "writeMode": "edit",
+    }
+
+    document = assemble_input_data_file(
+        project_id="project-1",
+        deck_id="deck-builder",
+        conversation_id="coder-review",
+        run_id="coder:1",
+        originating_card_id="card_local_coder",
+        system_text="Saved Coder prompt",
+        user_text=job_context["objective"],
+        card_context=coder_context,
+        purpose="coding_job",
+        approval_status="draft",
+        version=3,
+        job_context=job_context,
+        idf_id="idf:coder-test",
+        created_at="2026-08-15T00:00:00Z",
+    )
+
+    assert document["purpose"] == "coding_job"
+    assert document["approvalStatus"] == "draft"
+    assert document["version"] == 3
+    assert document["approvedSha256"] is None
+    assert document["jobContext"] == job_context
+    assert "Add one focused regression test." in document["modelInputMarkdown"]
+    assert len(document["contentSha256"]) == 64

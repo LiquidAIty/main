@@ -344,7 +344,7 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeType: 'assistant_agent',
       runtimeOptions: {
         provider: LOCAL_CODER_CONTROLLER_PROVIDER,
-        accessMode: 'chatgpt-account',
+        accessMode: 'coder-oauth',
         modelKey: LOCAL_CODER_CONTROLLER_MODEL_KEY,
         tools: [...LOCAL_CODER_CONTROLLER_TOOLS],
       },

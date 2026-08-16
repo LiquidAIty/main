@@ -119,12 +119,12 @@ export type LocalCoderRuntimeDiagnostics = {
   provider: string;
   model: string;
   reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | null;
-  authTransportClass: 'chatgpt_account_app_server' | 'openai_api_key' | 'openrouter_api_key';
+  authTransportClass: 'coder_oauth' | 'openai_api_key' | 'openrouter_api_key';
   grantedMcpTools: string[];
   sessionId: string | null;
   permissionMode: LocalCoderPermissionMode;
   timeoutMs: number;
-  promptDelivery: 'argv' | 'hermes_acp';
+  promptDelivery: 'argv';
   promptLength: number;
   stdinClosed: true;
   mcpMode: 'production' | 'disabled';
@@ -468,8 +468,8 @@ function createRuntimeDiagnostics(
     model,
     reasoningEffort: packet.reasoningEffort ?? null,
     authTransportClass:
-      packet.accessMode === 'chatgpt-account'
-        ? 'chatgpt_account_app_server'
+      packet.accessMode === 'coder-oauth'
+        ? 'coder_oauth'
         : packet.accessMode === 'openrouter-api'
           ? 'openrouter_api_key'
           : 'openai_api_key',
@@ -896,17 +896,6 @@ export class LocalCoderAdapter {
       };
     }
 
-    if (packet.accessMode === 'chatgpt-account') {
-      return {
-        report: buildBlockedReport(
-          packet.id,
-          'localcoder_chatgpt_account_model_transport_unavailable: Hermes Codex app-server is an agent runtime, not a narrow LocalCoder model transport',
-          'Implement the Hermes-owned model-client adapter at LocalCoder’s existing provider seam before retrying.',
-        ),
-        runtimeDiagnostics,
-      };
-    }
-
     const runtime = this.discoverRuntime();
     if (!runtime.ready) {
       return {
@@ -961,6 +950,10 @@ export class LocalCoderAdapter {
     } else if (packet.accessMode === 'openai-api') {
       childEnv.OPENAI_API_KEY = String(this.env.OPENAI_API_KEY || '');
       childEnv.OPENAI_BASE_URL = String(this.env.OPENAI_BASE_URL || 'https://api.openai.com/v1');
+      childEnv.CLAUDE_CODE_USE_OPENAI = '1';
+    } else if (packet.accessMode === 'coder-oauth') {
+      delete childEnv.OPENAI_API_KEY;
+      childEnv.OPENAI_BASE_URL = 'https://chatgpt.com/backend-api/codex';
       childEnv.CLAUDE_CODE_USE_OPENAI = '1';
     } else {
       throw new Error('localcoder_access_mode_missing_or_invalid');

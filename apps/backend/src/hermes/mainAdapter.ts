@@ -47,16 +47,26 @@ export type HermesRuntimeConfig = {
   directSubagents: { cardId: string; title: string; runtimeBinding: string }[];
 };
 
-export type CardAccessMode = 'chatgpt-account' | 'openai-api' | 'openrouter-api';
+export type CardAccessMode = 'chatgpt-account' | 'coder-oauth' | 'openai-api' | 'openrouter-api';
 
 export function resolveCardAccessMode(card: any, provider: string): CardAccessMode {
   const accessMode = String(card?.runtimeOptions?.accessMode || '').trim();
   if (
     accessMode !== 'chatgpt-account'
+    && accessMode !== 'coder-oauth'
     && accessMode !== 'openai-api'
     && accessMode !== 'openrouter-api'
   ) {
     throw new Error(`card_access_mode_missing_or_invalid: cardId=${String(card?.id || '')}`);
+  }
+  const runtimeBinding = String(card?.runtimeBinding || '').trim();
+  if (accessMode === 'coder-oauth' && runtimeBinding !== 'local_coder') {
+    throw new Error(
+      `card_coder_oauth_requires_local_coder: cardId=${String(card?.id || '')} runtimeBinding=${runtimeBinding}`,
+    );
+  }
+  if (runtimeBinding === 'local_coder' && accessMode === 'chatgpt-account') {
+    throw new Error(`local_coder_requires_explicit_coder_oauth_or_api: cardId=${String(card?.id || '')}`);
   }
   const expectedProvider = accessMode === 'openrouter-api' ? 'openrouter' : 'openai';
   if (provider !== expectedProvider) {

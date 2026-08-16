@@ -32,6 +32,7 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   // --- OpenRouter (curated defaults, all confirmed in the live catalog) ---
   "or-google-gemini-2.5-pro": { label: "OpenRouter Gemini 2.5 Pro", provider: "openrouter", id: "google/gemini-2.5-pro", context: 1000000 },
   "or-deepseek-chat": { label: "OpenRouter DeepSeek Chat", provider: "openrouter", id: "deepseek/deepseek-chat", context: 65536 },
+  "deepseek/deepseek-v4-pro-0813": { label: "OpenRouter DeepSeek V4 Pro 0813", provider: "openrouter", id: "deepseek/deepseek-v4-pro-0813" },
   "deepseek/deepseek-v4-flash-0731": { label: "OpenRouter DeepSeek V4 Flash 0731", provider: "openrouter", id: "deepseek/deepseek-v4-flash-0731" },
   "z-ai/glm-5.2": { label: "OpenRouter Z.ai GLM 5.2", provider: "openrouter", id: "z-ai/glm-5.2", context: 1000000 }
 };

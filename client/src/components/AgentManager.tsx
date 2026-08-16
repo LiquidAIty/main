@@ -199,7 +199,7 @@ export type AgentManagerLocalConfig = {
   runtime_options?: AgentCardRuntimeOptions | null;
   parent_graph_id?: string | null;
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | '' | null;
-  access_mode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | '' | null;
+  access_mode?: 'chatgpt-account' | 'coder-oauth' | 'openai-api' | 'openrouter-api' | '' | null;
   model_key?: string | null;
   reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
   temperature?: number | null;
@@ -328,7 +328,7 @@ export function buildActiveAgentManagerLocalConfig(input: {
   runtimeBinding: RuntimeBinding | '';
   executionMode: 'single' | 'auto-kanban';
   provider: 'openai' | 'openrouter' | '';
-  accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | '';
+  accessMode: 'chatgpt-account' | 'coder-oauth' | 'openai-api' | 'openrouter-api' | '';
   modelKey: string;
   reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | '';
   temperature: number | '';
@@ -400,7 +400,7 @@ export function AgentManager({
   const [cardSubtextDraft, setCardSubtextDraft] = useState(cardSubtext);
   const [provider, setProvider] = useState<'openai' | 'openrouter' | ''>('');
   const [accessMode, setAccessMode] = useState<
-    'chatgpt-account' | 'openai-api' | 'openrouter-api' | ''
+    'chatgpt-account' | 'coder-oauth' | 'openai-api' | 'openrouter-api' | ''
   >('');
   const [modelKey, setModelKey] = useState('');
   const [reasoningEffort, setReasoningEffort] = useState<
@@ -496,6 +496,7 @@ export function AgentManager({
     );
     setAccessMode(
       localConfig.access_mode === 'chatgpt-account'
+      || localConfig.access_mode === 'coder-oauth'
       || localConfig.access_mode === 'openai-api'
       || localConfig.access_mode === 'openrouter-api'
         ? localConfig.access_mode
@@ -725,6 +726,11 @@ export function AgentManager({
   const maxTurnsField = editorField('maxTurns');
   const providerOptions = (providerField?.options || []).filter(
     (option) => (modelsByProvider[option.value] || []).length > 0,
+  );
+  const accessModeOptions = (accessModeField?.options || []).filter((option) =>
+    runtimeBinding === 'local_coder'
+      ? option.value !== 'chatgpt-account'
+      : option.value !== 'coder-oauth',
   );
   const canChooseExecutionMode = Boolean(executionModeField) && canChooseCardExecutionMode(
     runtimeBinding,
@@ -1099,7 +1105,7 @@ export function AgentManager({
                 }}
               >
                 <option value="">Select access mode</option>
-                {(accessModeField?.options || []).map((option) => (
+                {accessModeOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>

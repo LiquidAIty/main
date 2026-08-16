@@ -29,6 +29,7 @@ function packet(repoPath: string): CoderPacket {
     reportFormat: 'CoderReport JSON',
     stopConditions: ['Stop after one job.'],
     modelProvider: 'openai',
+    accessMode: 'coder-oauth',
     providerModelId: 'gpt-5.6-luna',
     reasoningEffort: 'medium',
     mcpTools: ['cbm.search_graph'],
@@ -254,6 +255,7 @@ describe('LocalCoderAdapter', () => {
     const report = await adapter.run({
       ...packet(root),
       modelProvider: 'openrouter',
+      accessMode: 'openrouter-api',
       providerModelId: 'deepseek/deepseek-v4-flash-0731',
     });
     expect(report.status).toBe('succeeded');
@@ -534,6 +536,7 @@ describe('LocalCoderAdapter', () => {
     const report = await adapter.run({
       ...packet(root),
       modelProvider: 'openrouter',
+      accessMode: 'openrouter-api',
       providerModelId: 'deepseek/deepseek-v4-flash-0731',
     });
     expect(report.status).toBe('blocked');
@@ -741,7 +744,7 @@ describe('LocalCoderService structural edit-scope gate', () => {
       provider: 'openai',
       model: 'gpt-5.6-luna',
       reasoningEffort: 'medium' as const,
-      authTransportClass: 'openai_account_oauth' as const,
+      authTransportClass: 'coder_oauth' as const,
       grantedMcpTools: ['mcp__main__search_graph'],
       sessionId: null,
       permissionMode: 'plan' as const,
@@ -763,6 +766,10 @@ describe('LocalCoderService structural edit-scope gate', () => {
       runtimeStage: 'process_timeout' as const,
       warningLines: ['warning'],
       validCoderReportReturned: false,
+      providerThreadId: null,
+      providerTurnId: null,
+      providerAuthMode: null,
+      providerPlanType: null,
     };
     const service = new LocalCoderService(
       {

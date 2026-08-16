@@ -23,6 +23,7 @@ const main = {
   runtimeType: 'assistant_agent',
   runtimeOptions: {
     provider: 'openai',
+    accessMode: 'chatgpt-account',
     modelKey: 'gpt-5.6-luna',
     executionMode: 'single',
     tools: ['engraphis.recall', 'web_search'],
@@ -102,6 +103,7 @@ describe('Hermes saved-card runtime resolution', () => {
       runtimeBinding: 'hermes_steward',
       runtimeOptions: {
         provider: 'openai',
+        accessMode: 'chatgpt-account',
         modelKey: 'gpt-5.6-luna',
         profile: 'legacy-profile-selector-must-not-win',
         executionMode: 'auto-kanban',
@@ -139,6 +141,21 @@ describe('Hermes saved-card runtime resolution', () => {
         executionMode: 'auto-kanban',
       },
     })).toThrow('main_execution_mode_must_be_single');
+  });
+
+  it('confines coder OAuth to the saved LocalCoder runtime binding', () => {
+    expect(() => resolveHermesCardRuntimeConfig({
+      ...main,
+      runtimeOptions: { ...main.runtimeOptions, accessMode: 'coder-oauth' },
+    })).toThrow('card_coder_oauth_requires_local_coder');
+
+    const coder = resolveHermesCardRuntimeConfig({
+      ...main,
+      id: 'card_local_coder',
+      runtimeBinding: 'local_coder',
+      runtimeOptions: { ...main.runtimeOptions, accessMode: 'coder-oauth' },
+    });
+    expect(coder.accessMode).toBe('coder-oauth');
   });
 
   it('isolates runtime homes by stable card id, not mutable card configuration', () => {

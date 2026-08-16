@@ -27,7 +27,7 @@ export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'in
 export type AgentCardRuntimeOptions = {
   // 'local_openai_compatible' = a local SLM served over an OpenAI-compatible endpoint.
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | null;
-  accessMode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | null;
+  accessMode?: 'chatgpt-account' | 'coder-oauth' | 'openai-api' | 'openrouter-api' | null;
   modelKey?: string | null;
   reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
   temperature?: number | null;

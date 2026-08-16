@@ -712,7 +712,7 @@ required = false
 name = "accessMode"
 type = "string"
 required = true
-values = ["chatgpt-account", "openai-api", "openrouter-api"]
+values = ["chatgpt-account", "coder-oauth", "openai-api", "openrouter-api"]
 
 [[records.fields]]
 name = "modelKey"
@@ -983,6 +983,10 @@ help = "Select account transport or an explicit API credential mode; credentials
 [[editorFields.options]]
 value = "chatgpt-account"
 label = "ChatGPT account"
+
+[[editorFields.options]]
+value = "coder-oauth"
+label = "Coder OAuth"
 
 [[editorFields.options]]
 value = "openai-api"

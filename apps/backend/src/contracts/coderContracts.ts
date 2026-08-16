@@ -27,7 +27,7 @@ const coderPacketSchema = z.object({
   // The model-facing run_local_coder tool does not expose these controls.
   modelProvider: z.enum(['openai', 'openrouter']).optional(),
   providerModelId: nonEmptyText.optional(),
-  accessMode: z.enum(['chatgpt-account', 'openai-api', 'openrouter-api']).optional(),
+  accessMode: z.enum(['coder-oauth', 'openai-api', 'openrouter-api']).optional(),
   cardId: nonEmptyText.optional(),
   cardTitle: nonEmptyText.optional(),
   cardPrompt: z.string().optional(),
