@@ -78,6 +78,15 @@ type SecretValueSource = Partial<{
 
 const GITHUB_COPILOT_BASE = 'https://api.githubcopilot.com'
 const GITHUB_429_MAX_RETRIES = 3
+
+export function hasExplicitCodexCredentialStore(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return Boolean(
+    String(env.CODEX_HOME ?? '').trim()
+    || String(env.CODEX_AUTH_JSON_PATH ?? '').trim(),
+  )
+}
 const GITHUB_429_BASE_DELAY_SEC = 1
 const GITHUB_429_MAX_DELAY_SEC = 32
 const GEMINI_API_HOST = 'generativelanguage.googleapis.com'
@@ -1246,18 +1255,23 @@ class OpenAIShimMessages {
     }
 
     if (request.transport === 'codex_responses' && !isGithubMode) {
-      const refreshResult = await refreshCodexAccessTokenIfNeeded().catch(
-        async error => {
-          logForDebugging(
-            `[codex] access token refresh failed before request: ${error instanceof Error ? error.message : String(error)}`,
-            { level: 'warn' },
+      // An explicit standard Codex credential-store reference is authoritative.
+      // Codex owns refresh/persistence there; do not also refresh OpenClaude's
+      // private secure-storage credential when that unused fallback cannot win.
+      const refreshResult = hasExplicitCodexCredentialStore()
+        ? { refreshed: false, credentials: {} }
+        : await refreshCodexAccessTokenIfNeeded().catch(
+            async error => {
+              logForDebugging(
+                `[codex] access token refresh failed before request: ${error instanceof Error ? error.message : String(error)}`,
+                { level: 'warn' },
+              )
+              return {
+                refreshed: false,
+                credentials: await readCodexCredentialsAsync(),
+              }
+            },
           )
-          return {
-            refreshed: false,
-            credentials: await readCodexCredentialsAsync(),
-          }
-        },
-      )
       const credentials = resolveRuntimeCodexCredentials({
         storedCredentials: refreshResult.credentials,
       })

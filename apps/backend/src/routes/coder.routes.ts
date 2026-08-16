@@ -19,6 +19,7 @@ import {
   deriveHermesSessionKey,
   resolveMainHermesRuntimeConfig,
   resolveHermesCardRuntimeConfig,
+  requestHermesCodexAccount,
   startHermesTurn,
   type HermesSessionEvent,
   type HermesTurnHandle,
@@ -390,6 +391,111 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
 // One stable native Hermes conversation per saved Main card and product
 // conversation. OpenClaude remains the separate Coder/terminal runtime.
 const activeHermesTurns = new Map<string, HermesTurnHandle>();
+
+function codexTransportResult(value: Record<string, unknown>): Record<string, any> {
+  const result = value.result;
+  return result && typeof result === 'object' ? result as Record<string, any> : {};
+}
+
+router.get('/main/codex-account', async (req, res) => {
+  try {
+    const projectId = String(req.query.projectId || '').trim();
+    if (!projectId) {
+      return res.status(400).json({ ok: false, error: 'projectId_required' });
+    }
+    const runtimeConfig = await resolveMainHermesRuntimeConfig(projectId);
+    if (!runtimeConfig) {
+      return res.status(424).json({ ok: false, error: 'main_hermes_card_not_runnable' });
+    }
+    if (runtimeConfig.accessMode !== 'chatgpt-account') {
+      return res.json({
+        ok: true,
+        accessMode: runtimeConfig.accessMode,
+        account: null,
+        rateLimits: null,
+        notifications: [],
+      });
+    }
+    const accountEnvelope = await requestHermesCodexAccount(
+      runtimeConfig.profile,
+      'account/read',
+      { refreshToken: false },
+    );
+    const accountResponse = codexTransportResult(accountEnvelope);
+    const account = accountResponse.account && typeof accountResponse.account === 'object'
+      ? accountResponse.account as Record<string, unknown>
+      : null;
+    if (account && account.type !== 'chatgpt') {
+      return res.status(409).json({ ok: false, error: 'codex_chatgpt_account_required' });
+    }
+    const rateEnvelope = account
+      ? await requestHermesCodexAccount(runtimeConfig.profile, 'account/rateLimits/read')
+      : null;
+    return res.json({
+      ok: true,
+      accessMode: runtimeConfig.accessMode,
+      account,
+      requiresOpenaiAuth: Boolean(accountResponse.requiresOpenaiAuth),
+      rateLimits: rateEnvelope ? codexTransportResult(rateEnvelope) : null,
+      notifications: [
+        ...(Array.isArray(accountEnvelope.notifications) ? accountEnvelope.notifications : []),
+        ...(Array.isArray(rateEnvelope?.notifications) ? rateEnvelope.notifications : []),
+      ],
+    });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'codex_account_read_failed',
+    });
+  }
+});
+
+router.post('/main/codex-account', async (req, res) => {
+  try {
+    const projectId = String(req.body?.projectId || '').trim();
+    const action = String(req.body?.action || '').trim();
+    if (!projectId || !['login', 'logout'].includes(action)) {
+      return res.status(400).json({ ok: false, error: 'projectId_and_valid_action_required' });
+    }
+    const runtimeConfig = await resolveMainHermesRuntimeConfig(projectId);
+    if (!runtimeConfig) {
+      return res.status(424).json({ ok: false, error: 'main_hermes_card_not_runnable' });
+    }
+    if (runtimeConfig.accessMode !== 'chatgpt-account') {
+      return res.status(409).json({ ok: false, error: 'main_chatgpt_account_mode_required' });
+    }
+    if (action === 'logout') {
+      const envelope = await requestHermesCodexAccount(runtimeConfig.profile, 'account/logout');
+      return res.json({ ok: true, action, ...codexTransportResult(envelope) });
+    }
+
+    const currentEnvelope = await requestHermesCodexAccount(runtimeConfig.profile, 'account/read');
+    const current = codexTransportResult(currentEnvelope);
+    if (current.account?.type === 'chatgpt') {
+      return res.json({ ok: true, action, alreadyAuthenticated: true, account: current.account });
+    }
+    const loginType = String(req.body?.loginType || 'chatgpt').trim();
+    if (!['chatgpt', 'chatgptDeviceCode'].includes(loginType)) {
+      return res.status(400).json({ ok: false, error: 'codex_login_type_not_allowed' });
+    }
+    const envelope = await requestHermesCodexAccount(
+      runtimeConfig.profile,
+      'account/login/start',
+      { type: loginType },
+    );
+    return res.json({
+      ok: true,
+      action,
+      ...codexTransportResult(envelope),
+      notifications: Array.isArray(envelope.notifications) ? envelope.notifications : [],
+    });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'codex_account_action_failed',
+    });
+  }
+});
 
 router.post('/main/session/chat', async (req, res) => {
   const projectId = String(req.body?.projectId || '');

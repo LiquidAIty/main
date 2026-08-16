@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import dotenv from 'dotenv';
 
@@ -41,6 +42,60 @@ function resolveFileBackedConfig(env: NodeJS.ProcessEnv): void {
   }
 }
 
+/**
+ * Resolve the one server-owned Codex credential-store directory.
+ *
+ * Both Hermes' app-server transport and OpenClaude/LocalCoder receive this
+ * directory reference. Token material remains owned by Codex in auth.json and
+ * is never copied into LiquidAIty persistence or browser state.
+ */
+export function resolveServerCodexHome(
+  env: NodeJS.ProcessEnv = process.env,
+  homeDirectory = os.homedir(),
+): string {
+  const configured = String(env.CODEX_HOME || '').trim();
+  const legacyHermesReference = String(env.HERMES_CODEX_HOME || '').trim();
+  if (
+    configured
+    && legacyHermesReference
+    && path.resolve(configured) !== path.resolve(legacyHermesReference)
+  ) {
+    throw new Error('codex_home_authority_conflict');
+  }
+  return path.resolve(configured || legacyHermesReference || path.join(homeDirectory, '.codex'));
+}
+
+/** Resolve the native Codex executable used for stdio app-server transport. */
+export function resolveServerCodexExecutable(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const configured = String(env.CODEX_BIN || env.HERMES_CODEX_BIN || '').trim();
+  if (configured) return path.resolve(configured);
+
+  if (process.platform === 'win32') {
+    const architecture = process.arch === 'arm64' ? 'aarch64-pc-windows-msvc' : 'x86_64-pc-windows-msvc';
+    const packageName = process.arch === 'arm64' ? 'codex-win32-arm64' : 'codex-win32-x64';
+    for (const entry of String(env.PATH || '').split(path.delimiter).filter(Boolean)) {
+      const candidate = path.join(
+        entry,
+        'node_modules',
+        '@openai',
+        'codex',
+        'node_modules',
+        '@openai',
+        packageName,
+        'vendor',
+        architecture,
+        'codex',
+        'codex.exe',
+      );
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+
+  return 'codex';
+}
+
 export function loadBackendEnvironment(
   env: NodeJS.ProcessEnv = process.env,
   cwd = process.cwd(),
@@ -63,6 +118,10 @@ export function loadBackendEnvironment(
 
   // Also support *_FILE references declared by the optional local dotenv file.
   resolveFileBackedConfig(env);
+
+  // Materialize the default as explicit process configuration so every
+  // supervised child consumes the same Codex credential-store reference.
+  env.CODEX_HOME = resolveServerCodexHome(env);
 
   for (const variable of REQUIRED_CONFIG) {
     if (!String(env[variable] ?? '').trim()) {

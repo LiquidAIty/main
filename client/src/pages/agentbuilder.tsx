@@ -1089,6 +1089,9 @@ export default function AgentBuilder(): React.ReactElement {
           knowledgeProjectId={projectId}
           colors={C}
           busy={nativeSessionBusy}
+          mainAccessMode={
+            String((deck.nodes.find((node) => node.runtimeBinding === 'main_chat')?.runtimeOptions as any)?.accessMode || '')
+          }
           coderCardId={
             deck.nodes.find((node) => node.runtimeBinding === 'local_coder')?.id || null
           }

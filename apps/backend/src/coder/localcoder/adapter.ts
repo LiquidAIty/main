@@ -11,6 +11,7 @@ import {
   buildOpenClaudeJobArgs,
   parseOpenClaudeCoderReport,
 } from '../execution/coderRuntimeContract';
+import { resolveServerCodexHome } from '../../config/env';
 
 export type ProcessResult = {
   started: boolean;
@@ -953,6 +954,8 @@ export class LocalCoderAdapter {
       childEnv.CLAUDE_CODE_USE_OPENAI = '1';
     } else if (packet.accessMode === 'coder-oauth') {
       delete childEnv.OPENAI_API_KEY;
+      delete childEnv.CODEX_AUTH_JSON_PATH;
+      childEnv.CODEX_HOME = resolveServerCodexHome(this.env);
       childEnv.OPENAI_BASE_URL = 'https://chatgpt.com/backend-api/codex';
       childEnv.CLAUDE_CODE_USE_OPENAI = '1';
     } else {

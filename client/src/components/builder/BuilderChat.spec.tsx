@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import BuilderChat from './BuilderChat';
 
@@ -15,7 +15,17 @@ const colors = {
 };
 
 describe('BuilderChat', () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
   it('states and enforces the real in-flight chat state', () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      ok: true,
+      accessMode: 'chatgpt-account',
+      account: null,
+    }), { status: 200 })));
     const onSend = vi.fn();
     render(
       <BuilderChat
@@ -33,5 +43,27 @@ describe('BuilderChat', () => {
     expect((send as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(send);
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('renders managed ChatGPT account state on the existing Main chat surface', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      ok: true,
+      accessMode: 'chatgpt-account',
+      account: { type: 'chatgpt', email: 'owner@example.com', planType: 'pro' },
+      rateLimits: { rateLimits: { primary: { usedPercent: 12 } } },
+    }), { status: 200 })));
+
+    render(
+      <BuilderChat
+        messages={[]}
+        onSend={vi.fn()}
+        knowledgeProjectId="project-1"
+        mainAccessMode="chatgpt-account"
+        colors={colors}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('main-codex-account').textContent).toContain('owner@example.com'));
+    expect(screen.getByTestId('main-codex-account').textContent).toContain('12% used');
   });
 });

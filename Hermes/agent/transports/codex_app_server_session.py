@@ -285,7 +285,7 @@ class CodexAppServerSession:
         client_factory: Optional[Callable[..., CodexAppServerClient]] = None,
     ) -> None:
         self._cwd = cwd or os.getcwd()
-        self._codex_bin = codex_bin
+        self._codex_bin = os.environ.get("HERMES_CODEX_BIN") or codex_bin
         self._codex_home = codex_home or os.environ.get("HERMES_CODEX_HOME")
         self._model = str(model or "").strip() or None
         self._permission_profile = (

@@ -187,6 +187,8 @@ describe('LocalCoderAdapter', () => {
         PATH: '',
         LOCALCODER_COMMAND: `node ${script}`,
         OPENCLAUDE_COMMAND: 'node /should/not/win.mjs',
+        CODEX_HOME: path.join(root, '.codex'),
+        CODEX_AUTH_JSON_PATH: path.join(root, 'competing-auth.json'),
         OPENAI_API_KEY: 'key',
         OPENAI_MODEL: 'gpt-5.6-luna',
       },
@@ -208,6 +210,8 @@ describe('LocalCoderAdapter', () => {
     ]));
     expect(usedArgs[usedArgs.indexOf('--provider') + 1]).toBe('openai');
     expect(usedEnv.OPENAI_API_KEY).toBeUndefined();
+    expect(usedEnv.CODEX_HOME).toBe(path.join(root, '.codex'));
+    expect(usedEnv.CODEX_AUTH_JSON_PATH).toBeUndefined();
     expect(usedEnv.OPENAI_BASE_URL).toBe('https://chatgpt.com/backend-api/codex');
     expect(usedEnv.CLAUDE_CODE_USE_OPENAI).toBe('1');
     expect(report.rawOutput).toContain('occ-test-session');

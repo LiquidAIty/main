@@ -126,6 +126,13 @@ def make_session(client: FakeClient, **kwargs) -> CodexAppServerSession:
     )
 
 
+def test_session_uses_supervisor_resolved_native_codex_binary(monkeypatch):
+    client = FakeClient()
+    monkeypatch.setenv("HERMES_CODEX_BIN", "/tools/native-codex")
+    session = make_session(client)
+    assert session._codex_bin == "/tools/native-codex"
+
+
 # ---- choice mapping ----
 
 class TestApprovalChoiceMapping:
@@ -895,4 +902,3 @@ class TestClassifyOAuthFailure:
         assert _classify_oauth_failure() is None
         assert _classify_oauth_failure("") is None
         assert _classify_oauth_failure("", None) is None  # type: ignore[arg-type]
-

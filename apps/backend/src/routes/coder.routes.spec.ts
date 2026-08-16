@@ -105,6 +105,25 @@ const chatSessionMocks = vi.hoisted(() => {
     getConversationMessages: vi.fn(async () => []),
     listConversations: vi.fn(async () => []),
     lastCancel: vi.fn(),
+    requestHermesCodexAccount: vi.fn(async (profile: string, method: string) => {
+      expect(profile).toBe('default');
+      if (method === 'account/read') {
+        return {
+          result: {
+            account: { type: 'chatgpt', email: 'owner@example.com', planType: 'pro' },
+            requiresOpenaiAuth: true,
+          },
+          notifications: [{ method: 'account/updated', params: { authMode: 'chatgpt' } }],
+        };
+      }
+      if (method === 'account/rateLimits/read') {
+        return {
+          result: { rateLimits: { primary: { usedPercent: 12 } } },
+          notifications: [],
+        };
+      }
+      return { result: {}, notifications: [] };
+    }),
     startHermesTurn: vi.fn(),
     resolveMainHermesRuntimeConfig: vi.fn(async () => ({
       cardId: 'card_main_chat',
@@ -114,6 +133,8 @@ const chatSessionMocks = vi.hoisted(() => {
       provider: 'openai',
       modelKey: 'gpt-5.6-luna',
       providerModelId: 'gpt-5.6-luna',
+      accessMode: 'chatgpt-account',
+      runtimeBinding: 'main_chat',
       executionMode: 'single',
       tools: ['card.run_assistant_agent'],
       coderCardIds: ['card_local_coder'],
@@ -196,6 +217,8 @@ vi.mock('../conversations/store', () => ({
 vi.mock('../hermes/mainAdapter', () => ({
   deriveHermesSessionKey: (projectId: string, conversationId: string, cardId: string) => `${projectId}:${conversationId}:${cardId}`,
   resolveMainHermesRuntimeConfig: chatSessionMocks.resolveMainHermesRuntimeConfig,
+  resolveHermesCardRuntimeConfig: vi.fn((card: any) => card.runtimeOptions || {}),
+  requestHermesCodexAccount: chatSessionMocks.requestHermesCodexAccount,
   startHermesTurn: chatSessionMocks.startHermesTurn,
 }));
 
@@ -228,6 +251,27 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 describe('coder routes', () => {
+  it('reads the managed ChatGPT account and rate limits through Hermes transport', async () => {
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/main/codex-account?projectId=project-1`);
+      const body = await response.json() as any;
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        ok: true,
+        accessMode: 'chatgpt-account',
+        account: { type: 'chatgpt', email: 'owner@example.com', planType: 'pro' },
+        rateLimits: { rateLimits: { primary: { usedPercent: 12 } } },
+      });
+      expect(chatSessionMocks.requestHermesCodexAccount).toHaveBeenCalledWith(
+        'default',
+        'account/read',
+        { refreshToken: false },
+      );
+    } finally {
+      await closeServer(server);
+    }
+  });
   // Force a deterministic blocked state via a broken explicit command so these
   // route tests never spawn a real coder process, regardless of whether the
   // vendored runtime is built or API keys are exported on the test machine.

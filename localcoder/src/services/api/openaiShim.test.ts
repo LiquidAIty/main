@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { createOpenAIShimClient } from './openaiShim.ts'
+import { createOpenAIShimClient, hasExplicitCodexCredentialStore } from './openaiShim.ts'
 
 type FetchType = typeof globalThis.fetch
 
@@ -23,6 +23,12 @@ const originalEnv = {
 }
 
 const originalFetch = globalThis.fetch
+
+test('an explicit CODEX_HOME is the sole runtime credential-store authority', () => {
+  expect(hasExplicitCodexCredentialStore({ CODEX_HOME: 'C:/shared-codex' })).toBe(true)
+  expect(hasExplicitCodexCredentialStore({ CODEX_AUTH_JSON_PATH: 'C:/shared-codex/auth.json' })).toBe(true)
+  expect(hasExplicitCodexCredentialStore({})).toBe(false)
+})
 
 function restoreEnv(key: string, value: string | undefined): void {
   if (value === undefined) {

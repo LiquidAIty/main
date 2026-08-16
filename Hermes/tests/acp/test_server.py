@@ -58,6 +58,61 @@ def agent(mock_manager):
 
 
 @pytest.mark.asyncio
+async def test_codex_account_extension_uses_official_transport_without_starting_a_thread(
+    agent, monkeypatch
+):
+    client = MagicMock()
+    client.is_alive.return_value = True
+    client.request.return_value = {
+        "account": {
+            "type": "chatgpt",
+            "email": "owner@example.com",
+            "planType": "pro",
+        },
+        "requiresOpenaiAuth": True,
+    }
+    client.take_notification.side_effect = [
+        {"method": "account/updated", "params": {"authMode": "chatgpt"}},
+        None,
+        None,
+    ]
+    factory = MagicMock(return_value=client)
+    monkeypatch.setattr(
+        "agent.transports.codex_app_server.CodexAppServerClient",
+        factory,
+    )
+    monkeypatch.setenv("HERMES_CODEX_HOME", "/shared/codex")
+    monkeypatch.setenv("HERMES_CODEX_BIN", "/tools/codex")
+
+    response = await agent.ext_method(
+        "liquidaity/codex-account",
+        {"method": "account/read", "params": {"refreshToken": True}},
+    )
+
+    factory.assert_called_once_with(
+        codex_bin="/tools/codex",
+        codex_home="/shared/codex",
+    )
+    client.request.assert_called_once_with(
+        "account/read",
+        {"refreshToken": False},
+        timeout=15,
+    )
+    assert response["result"]["account"]["type"] == "chatgpt"
+    assert response["notifications"][0]["method"] == "account/updated"
+    assert all(call.args[0] != "thread/start" for call in client.request.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_codex_account_extension_rejects_non_chatgpt_login_types(agent):
+    with pytest.raises(ValueError, match="codex_account_login_type_not_allowed"):
+        await agent.ext_method(
+            "liquidaity/codex-account",
+            {"method": "account/login/start", "params": {"type": "apiKey"}},
+        )
+
+
+@pytest.mark.asyncio
 async def test_new_session_exposes_edit_approvals_as_modes_not_config_options(agent):
     resp = await agent.new_session(cwd="/tmp")
 

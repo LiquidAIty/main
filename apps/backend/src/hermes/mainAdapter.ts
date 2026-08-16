@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { resolveServerCodexExecutable, resolveServerCodexHome } from '../config/env';
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
 import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../coder/workspaceRoot';
@@ -48,6 +48,12 @@ export type HermesRuntimeConfig = {
 };
 
 export type CardAccessMode = 'chatgpt-account' | 'coder-oauth' | 'openai-api' | 'openrouter-api';
+
+export type CodexAccountTransportMethod =
+  | 'account/read'
+  | 'account/login/start'
+  | 'account/logout'
+  | 'account/rateLimits/read';
 
 export function resolveCardAccessMode(card: any, provider: string): CardAccessMode {
   const accessMode = String(card?.runtimeOptions?.accessMode || '').trim();
@@ -292,6 +298,7 @@ class AcpProcess {
 
   constructor(profile: string) {
     const install = resolveHermesInstall();
+    const codexHome = resolveServerCodexHome();
     this.executable = install.executable;
     this.profileHome = resolveHermesCardRuntimeHome(install.root, profile);
     mkdirSync(this.profileHome, { recursive: true });
@@ -300,11 +307,9 @@ class AcpProcess {
       env: {
         ...process.env,
         HERMES_HOME: this.profileHome,
-        HERMES_CODEX_HOME: String(
-          process.env.HERMES_CODEX_HOME
-          || process.env.CODEX_HOME
-          || path.join(os.homedir(), '.codex'),
-        ),
+        CODEX_HOME: codexHome,
+        HERMES_CODEX_HOME: codexHome,
+        HERMES_CODEX_BIN: resolveServerCodexExecutable(),
         HERMES_ACP_SKIP_CONFIGURED_MCP: '1',
       },
       windowsHide: true,
@@ -355,6 +360,15 @@ class AcpProcess {
 
   private notify(method: string, params: Record<string, unknown>): void {
     this.send({ jsonrpc: '2.0', method, params });
+  }
+
+  async requestCodexAccount(
+    method: CodexAccountTransportMethod,
+    params: Record<string, unknown> = {},
+  ): Promise<Record<string, unknown>> {
+    await this.ready;
+    const result = await this.request('_liquidaity/codex-account', { method, params });
+    return result && typeof result === 'object' ? result : {};
   }
 
   private consumeStdout(chunk: string): void {
@@ -681,6 +695,14 @@ export async function startHermesTurn(
   onEvent: (event: HermesSessionEvent) => void,
 ): Promise<HermesTurnHandle> {
   return processForProfile(args.profile).startTurn(args, onEvent);
+}
+
+export async function requestHermesCodexAccount(
+  profile: string,
+  method: CodexAccountTransportMethod,
+  params: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  return processForProfile(profile).requestCodexAccount(method, params);
 }
 
 export function closeHermesRuntimes(): void {

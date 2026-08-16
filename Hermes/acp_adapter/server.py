@@ -9,6 +9,7 @@ import contextvars
 import json
 import logging
 import os
+import threading
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -681,6 +682,8 @@ class HermesACPAgent(acp.Agent):
         super().__init__()
         self.session_manager = session_manager or SessionManager()
         self._conn: Optional[acp.Client] = None
+        self._codex_account_client: Any | None = None
+        self._codex_account_lock = threading.Lock()
 
     # ---- Connection lifecycle -----------------------------------------------
 
@@ -688,6 +691,89 @@ class HermesACPAgent(acp.Agent):
         """Store the client connection for sending session updates."""
         self._conn = conn
         logger.info("ACP client connected")
+
+    def close(self) -> None:
+        """Close the transport-only Codex account client, if it was opened."""
+        with self._codex_account_lock:
+            client = self._codex_account_client
+            self._codex_account_client = None
+        if client is not None:
+            client.close()
+
+    def _codex_account_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Proxy the bounded official account protocol without starting a thread/turn."""
+        allowed_methods = {
+            "account/read",
+            "account/login/start",
+            "account/logout",
+            "account/rateLimits/read",
+        }
+        if method not in allowed_methods:
+            raise ValueError(f"codex_account_method_not_allowed:{method}")
+
+        request_params: dict[str, Any]
+        if method == "account/read":
+            request_params = {"refreshToken": False}
+        elif method == "account/login/start":
+            login_type = str(params.get("type") or "").strip()
+            if login_type not in {"chatgpt", "chatgptDeviceCode"}:
+                raise ValueError("codex_account_login_type_not_allowed")
+            request_params = {"type": login_type}
+        else:
+            request_params = {}
+
+        with self._codex_account_lock:
+            client = self._codex_account_client
+            if client is None or not client.is_alive():
+                from agent.transports.codex_app_server import CodexAppServerClient
+
+                client = CodexAppServerClient(
+                    codex_bin=os.environ.get("HERMES_CODEX_BIN", "codex"),
+                    codex_home=os.environ.get("HERMES_CODEX_HOME")
+                    or os.environ.get("CODEX_HOME"),
+                )
+                client.initialize(
+                    client_name="liquidaity-hermes-account",
+                    client_title="LiquidAIty Hermes Account",
+                    client_version="1.0.0",
+                )
+                self._codex_account_client = client
+
+            notifications: list[dict[str, Any]] = []
+
+            def drain_account_notifications() -> None:
+                while True:
+                    notification = client.take_notification()
+                    if notification is None:
+                        return
+                    if notification.get("method") in {
+                        "account/login/completed",
+                        "account/updated",
+                        "account/rateLimits/updated",
+                    }:
+                        notifications.append(notification)
+
+            drain_account_notifications()
+            result = client.request(method, request_params, timeout=15)
+            drain_account_notifications()
+
+        if method == "account/read":
+            account = result.get("account") if isinstance(result, dict) else None
+            if isinstance(account, dict) and account.get("type") != "chatgpt":
+                raise ValueError("codex_chatgpt_account_required")
+
+        return {"result": result, "notifications": notifications}
+
+    async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        if method != "liquidaity/codex-account":
+            raise ValueError(f"unsupported_hermes_extension:{method}")
+        codex_method = str(params.get("method") or "").strip()
+        codex_params = params.get("params")
+        return await asyncio.to_thread(
+            self._codex_account_request,
+            codex_method,
+            codex_params if isinstance(codex_params, dict) else {},
+        )
 
 
     def _session_modes(self, state: SessionState) -> SessionModeState:

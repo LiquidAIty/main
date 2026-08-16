@@ -19,6 +19,8 @@ for (const variable of [
   'CONFIG_TEST_VALUE_FILE',
   'CONFIG_PROBE_VARIABLE',
   'CONFIG_EXPECTED_VALUE',
+  'CODEX_HOME',
+  'HERMES_CODEX_HOME',
 ]) {
   delete inheritedEnv[variable];
 }
@@ -106,6 +108,30 @@ describe('backend runtime configuration boundary', () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe('CONFIG_MATCH');
+  });
+
+  it('materializes one explicit server-owned CODEX_HOME reference', () => {
+    const codexHome = path.join(workspace(), 'shared-codex-home');
+    const result = runConfig(workspace(), {
+      DATABASE_URL: 'postgresql://runtime-injected.invalid/app',
+      CODEX_HOME: codexHome,
+      CONFIG_PROBE_VARIABLE: 'CODEX_HOME',
+      CONFIG_EXPECTED_VALUE: path.resolve(codexHome),
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('CONFIG_MATCH');
+  });
+
+  it('fails closed when CODEX_HOME references conflict', () => {
+    const result = runConfig(workspace(), {
+      DATABASE_URL: 'postgresql://runtime-injected.invalid/app',
+      CODEX_HOME: 'C:/codex/one',
+      HERMES_CODEX_HOME: 'C:/codex/two',
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain('codex_home_authority_conflict');
   });
 
   it('names the missing mandatory variable instead of requiring an env file', () => {
