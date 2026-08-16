@@ -9,12 +9,6 @@ import {
   safeJson,
 } from "./requestGuards";
 
-function isAdminProjectCard(card: any): boolean {
-  return [card?.name, card?.code].some(
-    (value) => String(value ?? "").trim().toUpperCase() === "ADMIN",
-  );
-}
-
 export function useBuilderProjects({
   projectsApi,
   workspaceView,
@@ -53,7 +47,7 @@ export function useBuilderProjects({
     [activeProject],
   );
 
-  const refreshProjects = useCallback(async (reason?: string, preferredAssistId?: string) => {
+  const refreshProjects = useCallback(async (reason?: string, preferredProjectId?: string) => {
     const seq = ++refreshSeq.current;
     const requestType = "projects-refresh";
     const requestSeq = nextRequestSequence(requestType);
@@ -104,31 +98,20 @@ export function useBuilderProjects({
           typeof card?.id === "string" &&
           (card?.project_type === "assist" || card?.project_type === "agent"),
       );
-      const assistCards = cards.filter((card: any) => card.project_type === "assist");
-      const adminAssistCard =
-        assistCards.find((card: any) => String(card?.name ?? "").trim() === "ADMIN") ??
-        assistCards.find((card: any) => String(card?.code ?? "").trim() === "ADMIN") ??
-        assistCards.find((card: any) => isAdminProjectCard(card)) ??
-        null;
-      const canonicalDeckAssist =
-        assistCards.find((card: any) => String(card?.code ?? '').trim().toLowerCase() === 'agent-builder') ??
-        null;
       setProjects(cards);
 
       const search = new URLSearchParams(window.location.search);
       const urlId = search.get("projectId") || "";
-      const urlIdValid = urlId && assistCards.some((card: any) => card.id === urlId);
-      const currentAssistId = preferredAssistId || activeProject || "";
-      const hasCurrentAssist = currentAssistId && assistCards.some((card: any) => card.id === currentAssistId);
-      const nextAssistId =
+      const urlIdValid = urlId && cards.some((card: any) => card.id === urlId);
+      const currentProjectId = preferredProjectId || activeProject || "";
+      const hasCurrentProject = currentProjectId && cards.some((card: any) => card.id === currentProjectId);
+      const nextProjectId =
         (urlIdValid ? urlId : "") ||
-        (hasCurrentAssist ? currentAssistId : "") ||
-        canonicalDeckAssist?.id ||
-        adminAssistCard?.id ||
-        assistCards[0]?.id ||
+        (hasCurrentProject ? currentProjectId : "") ||
+        cards[0]?.id ||
         "";
-      if (nextAssistId) {
-        setActiveProjectWithUrl(nextAssistId);
+      if (nextProjectId) {
+        setActiveProjectWithUrl(nextProjectId);
       } else {
         setActiveProjectWithUrl("");
       }
@@ -140,10 +123,7 @@ export function useBuilderProjects({
     }
   }, [activeProject, projectsApi, setActiveProjectWithUrl, workspaceView]);
 
-  const assistProjects = useMemo(
-    () => projects.filter((project: any) => project.project_type === "assist"),
-    [projects],
-  );
+  const builderProjects = useMemo(() => projects, [projects]);
 
   useEffect(() => {
     if (mountRefreshRanRef.current) return;
@@ -172,7 +152,7 @@ export function useBuilderProjects({
 
   return {
     activeProject,
-    assistProjects,
+    builderProjects,
     projectsError,
     setProjectsError,
     setActiveProjectWithUrl,

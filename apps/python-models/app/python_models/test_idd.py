@@ -21,14 +21,14 @@ def test_literal_idd_is_the_only_loaded_rule_catalog() -> None:
     assert dictionary["dictionary"]["idfFormat"] == "mixed-markdown"
     assert dictionary["dictionary"]["unknownIslands"] == "inert"
     assert {item["name"] for item in dictionary["records"]} == {
-        "card-context", "model-option", "tool-catalog-reference",
+        "card-context", "coder-packet", "model-option", "tool-catalog-reference",
     }
     assert {item["name"] for item in dictionary["catalogs"]} == {
         "configured-models", "native-tools",
     }
     assert {item["name"] for item in dictionary["editorFields"]} == {
         "executionMode", "provider", "modelKey", "reasoningEffort",
-        "temperature", "maxTokens", "maxTurns", "tools",
+        "temperature", "maxTokens", "maxTurns", "tools", "accessMode",
     }
     assert {item["name"] for item in dictionary["islands"]} == {
         "SYSTEM", "CARD", "SQL", "CYPHER", "MCP", "SCRIPT", "JSON",
@@ -106,6 +106,7 @@ def test_idd_errors_never_echo_values() -> None:
                 "title": "Research",
                 "prompt": secret,
                 "runtimeType": "assistant_agent",
+                "accessMode": "chatgpt-account",
                 "executionMode": secret,
             },
         )
@@ -188,7 +189,7 @@ def test_live_mcp_contract_is_ingested_into_the_one_permanent_idd_vocabulary() -
 
 def test_explicit_tool_permissions_come_from_the_idd() -> None:
     assert required_tool_caller_runtime_binding("run_mag_one") == "main_chat"
-    assert required_tool_caller_runtime_binding("write_mag_one_instructions") == "hermes_steward"
+    assert required_tool_caller_runtime_binding("write_mag_one_instructions") is None
     assert required_tool_caller_runtime_binding("cbm.search_graph") is None
 
 

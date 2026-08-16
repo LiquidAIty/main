@@ -66,11 +66,11 @@ def test_execution_receipt_observes_the_actual_provider_client_boundary():
 def test_caller_enforcement_reads_explicit_idd_permissions():
     import mcp_host
 
-    args = {"_callerCardId": "card-hermes", "_callerRuntimeBinding": "hermes_steward"}
-    assert mcp_host._enforce_tool_caller("write_mag_one_instructions", args) is None
-    denied = {"_callerCardId": "card-main", "_callerRuntimeBinding": "main_chat"}
-    assert mcp_host._enforce_tool_caller("write_mag_one_instructions", denied) == (
-        "tool_caller_not_authorized: write_mag_one_instructions requires hermes_steward"
+    allowed = {"_callerCardId": "card-main", "_callerRuntimeBinding": "main_chat"}
+    assert mcp_host._enforce_tool_caller("run_mag_one", allowed) is None
+    denied = {"_callerCardId": "card-hermes", "_callerRuntimeBinding": "hermes_steward"}
+    assert mcp_host._enforce_tool_caller("run_mag_one", denied) == (
+        "tool_caller_not_authorized: run_mag_one requires main_chat"
     )
     unrestricted: dict[str, str] = {}
     assert mcp_host._enforce_tool_caller("cbm.search_graph", unrestricted) is None
@@ -310,20 +310,10 @@ def test_trusted_hermes_stdio_context_enforces_main_and_helper_tool_roles(monkey
 
     assert mcp_host._trusted_stdio_main_context() == helper_context
     assert mcp_host._enforce_tool_caller(
-        "write_mag_one_instructions",
-        {"_callerCardId": "card_hermes_steward", "_callerRuntimeBinding": "hermes_steward"},
-        authenticated_external=True,
-    ) is None
-    assert mcp_host._enforce_tool_caller(
         "run_mag_one",
         {"_callerCardId": "card_hermes_steward", "_callerRuntimeBinding": "hermes_steward"},
         authenticated_external=True,
     ) == "tool_caller_not_authorized: run_mag_one requires main_chat"
-    assert mcp_host._enforce_tool_caller(
-        "write_mag_one_instructions",
-        {"_callerCardId": "card_main_chat", "_callerRuntimeBinding": "main_chat"},
-        authenticated_external=True,
-    ) == "tool_caller_not_authorized: write_mag_one_instructions requires hermes_steward"
 
 
 def test_authenticated_connection_reaches_read_only_handler_without_context_injection(
@@ -588,8 +578,8 @@ async def check():
     by_name = {tool.name: tool for tool in tools}
     assert set(by_name['card.run_assistant_agent'].inputSchema['required']) == {'cardId', 'input'}
     assert 'instructionId' not in by_name['card.run_assistant_agent'].inputSchema['properties']
-    assert set(by_name['write_mag_one_instructions'].inputSchema['properties']) == {'instructions'}
-    assert by_name['run_mag_one'].inputSchema['required'] == ['idfId', 'projectId', 'deckId']
+    assert 'write_mag_one_instructions' not in by_name
+    assert by_name['run_mag_one'].inputSchema['required'] == ['instructions', 'projectId', 'deckId']
     assert 'minProperties' not in str(by_name['card.update_configuration'].inputSchema)
     reasoning_schema = by_name['card.update_configuration'].inputSchema['properties']['updates']['properties']['reasoningEffort']
     assert reasoning_schema == {
@@ -649,40 +639,13 @@ def test_catalog_identity_covers_the_complete_frozen_tool_descriptor():
     assert mcp_host._catalog_identity([original])[1] != mcp_host._catalog_identity([changed])[1]
 
 
-def test_mag_one_instruction_authoring_persists_the_exact_idf(monkeypatch):
-    import asyncio
-    import json
+def test_mag_one_prompt_store_is_removed_from_the_active_catalog():
     import mcp_host
-    from app.python_models import idf
 
-    captured = []
-    monkeypatch.setattr(mcp_host, "_native_engraphis_tools", lambda: asyncio.sleep(0, result=[]))
-    monkeypatch.setattr(
-        idf,
-        "create_input_data_file",
-        lambda **kwargs: (
-            captured.append(kwargs)
-            or {"ok": True, "idf": {"idfId": "idf:one"}}
-        ),
-    )
-
-    result = asyncio.run(
-        mcp_host.call_tool(
-            "write_mag_one_instructions",
-            {
-                "_callerCardId": "card_hermes",
-                "_callerRuntimeBinding": "hermes_steward",
-                "projectId": "project-1",
-                "deckId": "deck_builder",
-                "conversationId": "main",
-                "instructions": "Approved task.",
-            },
-        )
-    )
-
-    assert json.loads(result[0].text)["idf"]["idfId"] == "idf:one"
-    assert captured[0]["user_text"] == "Approved task."
-    assert captured[0]["originating_card_id"] == "card_hermes"
+    assert "write_mag_one_instructions" not in mcp_host._ALLOWED_KEYS
+    assert mcp_host._ALLOWED_KEYS["run_mag_one"] == {
+        "projectId", "deckId", "instructions", "conversationId",
+    }
 
 
 def test_native_engraphis_registry_is_initialized_once_without_schema_adaptation():

@@ -419,11 +419,9 @@ export function deriveLocalCoderPermissionMode(packet: CoderPacket): LocalCoderP
 
 export function buildCoderPrompt(packet: CoderPacket): string {
   return [
-    'Execute the exact approved LiquidAIty IDF revision below as the complete spec and task.',
+    'Execute the exact transient LiquidAIty coding communication below as the complete spec and task.',
     'Use repository tools and return only the requested structured CoderReport.',
     'Do not claim success without actual edits and proof. Stop at the packet stop conditions.',
-    `Approved IDF: ${packet.approvedIdfId || 'unbound'} v${packet.approvedIdfVersion || 'unbound'} sha256=${packet.approvedIdfContentSha256 || 'unbound'}`,
-    packet.approvedIdfModelInputMarkdown || '',
     'Trusted execution envelope:',
     JSON.stringify(packet, null, 2),
   ].filter(Boolean).join('\n\n');

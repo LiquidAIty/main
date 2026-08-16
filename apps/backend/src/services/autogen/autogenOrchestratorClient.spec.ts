@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  createInputDataFileOnPython,
   orchestrateWithAutoGen,
   projectLiveThinkGraph,
 } from './autogenOrchestratorClient';
@@ -76,37 +75,6 @@ describe('autogenOrchestratorClient', () => {
       expect.objectContaining({
         method: 'POST',
       }),
-    );
-  });
-
-  it('persists one canonical IDF through Python rails', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      text: async () => JSON.stringify({
-        ok: true,
-        idf: { idfId: 'idf:child' },
-      }),
-    });
-    vi.stubGlobal('fetch', fetchMock as any);
-    const payload = {
-      projectId: 'p1',
-      deckId: 'deck_builder',
-      conversationId: 'conversation:one',
-      runId: 'child',
-      originatingCardId: 'card_research',
-      systemText: 'Saved prompt.',
-      userText: 'Exact input.',
-      cardContext: {
-        cardId: 'card_research', title: 'Research', prompt: 'Saved prompt.',
-        runtimeType: 'assistant_agent',
-      },
-    };
-
-    await createInputDataFileOnPython(payload);
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://python-rails:8001/idf/documents',
-      expect.objectContaining({ method: 'POST', body: JSON.stringify(payload) }),
     );
   });
 

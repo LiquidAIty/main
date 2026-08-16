@@ -33,10 +33,6 @@ const coderPacketSchema = z.object({
   cardPrompt: z.string().optional(),
   cardProfile: nonEmptyText.optional(),
   modelKey: nonEmptyText.optional(),
-  approvedIdfId: nonEmptyText.optional(),
-  approvedIdfVersion: z.number().int().positive().optional(),
-  approvedIdfContentSha256: nonEmptyText.optional(),
-  approvedIdfModelInputMarkdown: nonEmptyText.optional(),
   nativeTools: textList.optional(),
   skills: textList.optional(),
   toolsets: textList.optional(),
@@ -45,21 +41,6 @@ const coderPacketSchema = z.object({
   // adapter and are not arguments exposed to the model-facing tool.
   reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
   mcpTools: textList.optional(),
-}).strict();
-
-const coderJobContextSchema = coderPacketSchema.pick({
-  objective: true,
-  planExcerpt: true,
-  contextSummary: true,
-  codeAnchors: true,
-  cbmQueries: true,
-  guardrails: true,
-  allowedFiles: true,
-  forbiddenWork: true,
-  proofRequired: true,
-  reportFormat: true,
-  stopConditions: true,
-  writeMode: true,
 }).strict();
 
 const coderReportStatusSchema = z.enum([
@@ -98,7 +79,6 @@ export const coderReportSchema = z.object({
 }).strict();
 
 export type CoderPacket = z.infer<typeof coderPacketSchema>;
-export type CoderJobContext = z.infer<typeof coderJobContextSchema>;
 export type CoderReport = z.infer<typeof coderReportSchema>;
 
 // Direct saved-Coder result retained for historical reads. The active full
@@ -277,10 +257,6 @@ export const coderReportJsonSchema = {
 
 export function parseCoderPacket(value: unknown): CoderPacket {
   return coderPacketSchema.parse(value);
-}
-
-export function parseCoderJobContext(value: unknown): CoderJobContext {
-  return coderJobContextSchema.parse(value);
 }
 
 export function parseCoderReport(value: unknown): CoderReport {

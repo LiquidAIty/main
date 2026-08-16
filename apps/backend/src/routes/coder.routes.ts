@@ -9,41 +9,26 @@ import {
   openClaudeConsoleSessionManager,
   type ConsoleMode,
 } from '../coder/openclaude/console/consoleSession';
-import { runConfiguredCard } from '../cards/runtime';
+import { describeConnectedAgents } from '../coder/openclaude/mcp/mainAgentFlow';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 import {
-  describeConnectedAgents,
-  runMagOne,
-} from '../coder/openclaude/mcp/mainAgentFlow';
-import {
   deriveHermesSessionKey,
-  resolveMainHermesRuntimeConfig,
-  resolveHermesCardRuntimeConfig,
   requestHermesCodexAccount,
   startHermesTurn,
   type HermesSessionEvent,
   type HermesTurnHandle,
 } from '../hermes/mainAdapter';
 import {
-  beginConversationRun,
-  cancelConversationRun,
-  completeConversationRun,
-  failConversationRun,
-  getConversationRunReceipt,
   getConversationMessages,
   listConversations,
-  markConversationRunRunning,
 } from '../conversations/store';
 import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/harnessTrace';
 // The app's one canonical Agent Canvas deck id, defined once on the deck store.
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantStore';
 import {
-  createInputDataFileOnPython,
-  approveInputDataFileOnPython,
-  fetchInputDataFile,
   requestPythonRailsJson,
-  reviseInputDataFileOnPython,
+  runSingleCardWithAutoGen,
 } from '../services/autogen/autogenOrchestratorClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 import {
@@ -52,7 +37,6 @@ import {
   type ToolCatalogReference,
 } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
-import { parseCoderJobContext } from '../contracts/coderContracts';
 
 const router = Router();
 
@@ -182,13 +166,9 @@ router.post('/mcp-bridge/external_main_context', async (req, res) => {
 
 router.post('/mcp-bridge/describe_connected_agents', async (req, res) => {
   try {
-    // Blank deckId defaults to the ONE canonical Agent Canvas deck — the same
-    // convention run_configured_card already follows. A present-but-wrong
-    // deckId still fails honestly (no silent correction).
-    const result = await describeConnectedAgents({
-      projectId: String(req.body?.projectId || ''),
-      deckId: String(req.body?.deckId || BUILDER_DECK_ID),
-    });
+    const projectId = String(req.body?.projectId || '').trim();
+    const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
+    const result = await describeConnectedAgents({ projectId, deckId });
     return res.json({ ok: true, ...result });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'describe_connected_agents_failed' });
@@ -208,32 +188,6 @@ router.post('/mcp-bridge/coder_status', async (_req, res) => {
     recentSessions: sessions.slice(-10),
     authority: 'openclaude_console_session_manager',
   });
-});
-
-router.post('/mcp-bridge/run_mag_one', async (req, res) => {
-  try {
-    const idfId = String(req.body?.idfId || '').trim();
-    const deckId = String(req.body?.deckId || BUILDER_DECK_ID);
-    const result = await runMagOne({
-      ...(req.body || {}),
-      idfId,
-      projectId: String(req.body?.projectId || ''),
-      deckId,
-    });
-    return res.json({
-      ok: result.status !== 'failed',
-      result: {
-        status: result.status,
-        runId: result.runId,
-        idfId: result.idfId,
-        conversationId: result.conversationId,
-        connectedParticipants: result.connectedParticipants,
-        failure: result.failure,
-      },
-    });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'run_mag_one_failed' });
-  }
 });
 
 async function resolveCodingCard(projectId: string, deckId: string, cardId: string): Promise<any> {
@@ -280,165 +234,186 @@ router.post('/mcp-bridge/coder_steer', async (req, res) => {
   }
 });
 
-// run_configured_card: thin transport for the card.run_assistant_agent MCP tool.
-// Saved card identity/prompt/model/tools only — runConfiguredCard structurally
-// rejects every extra key, so no browser/MCP-supplied override can reach the run.
+async function startPreparedHermesTransport(args: {
+  prepared: any;
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  parentRunId?: string;
+  workingDirectory?: string;
+  onEvent: (event: HermesSessionEvent) => void;
+}): Promise<HermesTurnHandle> {
+  const transport = args.prepared?.hermesTransport;
+  const context = transport?.cardContext || {};
+  const profile = String(transport?.profile || '').trim();
+  if (args.prepared?.runtimeOwner !== 'hermes' || !profile) {
+    throw new Error('prepared_hermes_transport_invalid');
+  }
+  return startHermesTurn({
+    cardId: String(context.cardId || ''),
+    title: String(context.title || ''),
+    runtimeBinding: String(context.runtimeBinding || ''),
+    prompt: String(transport.systemPrompt || ''),
+    profile,
+    provider: String(context.provider || ''),
+    modelKey: String(context.modelKey || ''),
+    providerModelId: String(context.providerModelId || ''),
+    accessMode: context.accessMode,
+    executionMode: context.executionMode === 'auto-kanban' ? 'auto-kanban' : 'single',
+    tools: Array.isArray(context.tools) ? context.tools : [],
+    nativeTools: Array.isArray(context.nativeTools) ? context.nativeTools : [],
+    skills: Array.isArray(context.skills) ? context.skills : [],
+    toolsets: Array.isArray(context.toolsets) ? context.toolsets : [],
+    mcpConnectionIds: Array.isArray(context.mcpConnectionIds) ? context.mcpConnectionIds : [],
+    coderCardIds: Array.isArray(context.coderCardIds) ? context.coderCardIds : [],
+    directSubagents: Array.isArray(context.directSubagents) ? context.directSubagents : [],
+    savedCardRuntime: context.savedCardRuntime || {
+      provider: String(context.provider || ''),
+      modelKey: String(context.modelKey || ''),
+      providerModelId: String(context.providerModelId || ''),
+    },
+    profileSnapshot: context.profileSnapshot || null,
+    profileConflicts: Array.isArray(context.profileConflicts) ? context.profileConflicts : [],
+    profileConflictResolution: context.profileConflictResolution === 'card' ? 'card' : 'hermes',
+    sessionKey: deriveHermesSessionKey(
+      args.projectId,
+      args.conversationId,
+      String(context.cardId || ''),
+    ),
+    projectId: args.projectId,
+    deckId: args.deckId,
+    conversationId: args.conversationId,
+    parentRunId: args.parentRunId || args.conversationId,
+    message: String(transport.message || ''),
+    ...(args.workingDirectory ? { workingDirectory: args.workingDirectory } : {}),
+  }, args.onEvent);
+}
+
+// Thin configured-Card transport. Python owns Card/AGE/IDD validation,
+// transient IDF materialization, runtime-owner selection, and prompt-free run
+// persistence. This route only forwards preview data or moves the accepted
+// bytes through the already-canonical Hermes ACP / Python AutoGen transports.
 router.post('/mcp-bridge/run_configured_card', async (req, res) => {
   const body = req.body || {};
-  const action = body.action === 'materialize' ? 'materialize' : 'execute';
+  const action = body.action === 'materialize' || body.action === 'preview' ? 'preview' : 'execute';
   const projectId = String(body.projectId || '').trim();
   const deckId = String(body.deckId || BUILDER_DECK_ID).trim();
   const cardId = String(body.cardId || '').trim();
   const correlationId = String(body.correlationId || '').trim();
   const conversationId = String(body.conversationId || '').trim() || 'main';
-  const parentRunId = String(body.parentRunId || '').trim();
+  const originatingRunId = String(body.originatingRunId || body.parentRunId || '').trim();
   const senderCardId = String(body.senderCardId || '').trim();
   const input = String(body.input || '').trim();
   if (!projectId || !deckId || !cardId || !correlationId || !input) {
     return res.status(400).json({ ok: false, error: 'card_run_args_incomplete' });
   }
 
+  const transientRequest = {
+    projectId,
+    deckId,
+    cardId,
+    assignment: input,
+    senderCardId: senderCardId || undefined,
+    originatingRunId: originatingRunId || undefined,
+    conversationId,
+    contextMarkdown: typeof body.contextMarkdown === 'string' ? body.contextMarkdown : '',
+    nativeReferences: Array.isArray(body.nativeReferences) ? body.nativeReferences : [],
+    tools: Array.isArray(body.tools) ? body.tools : undefined,
+    outputRequirements: typeof body.outputRequirements === 'string' ? body.outputRequirements : '',
+  };
+
   try {
-    if (senderCardId) {
-      const saved = await getDeckDocument(projectId, deckId);
-      const nodes = Array.isArray((saved?.deck as any)?.nodes) ? (saved!.deck as any).nodes : [];
-      const edges = Array.isArray((saved?.deck as any)?.edges) ? (saved!.deck as any).edges : [];
-      const senderExists = nodes.some((node: any) => String(node?.id || '') === senderCardId);
-      const authorized = edges.some((edge: any) => (
-        String(edge?.source || '') === senderCardId
-        && String(edge?.target || '') === cardId
-        && String(edge?.edgeType || '') === 'flow'
-      ));
-      if (!senderExists || !authorized) {
-        return res.status(403).json({ ok: false, error: 'card_invocation_edge_authority_required' });
-      }
-    }
-    const materialized = await runConfiguredCard({
-      projectId,
-      deckId,
-      cardId,
-      correlationId,
-      input,
-      conversationId,
-      parentRunId,
-      materializeOnly: true,
-      ...(String(body.idfId || '').trim()
-        ? {
-            idfId: String(body.idfId).trim(),
-            idfVersion: Number(body.idfVersion),
-            idfContentSha256: String(body.idfContentSha256 || '').trim(),
-          }
-        : {}),
-    });
-    if (materialized.status !== 'materialized' || !materialized.idf) {
-      return res.status(409).json({ ok: false, result: materialized });
+    if (action === 'preview') {
+      const preview = await requestPythonRailsJson('/domain/cards/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(transientRequest),
+      });
+      return res.json({ ok: true, result: { status: 'previewed', invocation: preview } });
     }
 
-    try {
-      await beginConversationRun({
+    const exactIdf = String(body.exactIdf || '').trim();
+    const cardRevisionId = String(body.cardRevisionId || '').trim();
+    if (!exactIdf || !cardRevisionId) {
+      return res.status(400).json({ ok: false, error: 'exact_inspector_invocation_required' });
+    }
+    const prepared = await requestPythonRailsJson('/domain/runs/begin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...transientRequest,
+        exactIdf,
+        cardRevisionId,
         runId: correlationId,
-        projectId,
-        deckId,
-        cardId,
-        conversationId,
-        runtime: 'configured_card',
-        sessionId: `configured:${deckId}:${cardId}:${conversationId}`,
-        userContent: input,
-        senderCardId: senderCardId || null,
-        parentRunId: parentRunId || null,
-        invocation: {
-          idfId: materialized.idf.idfId,
-          version: materialized.idf.version,
-          contentSha256: materialized.idf.contentSha256,
+        correlationId,
+      }),
+    }) as any;
+
+    let output = '';
+    let transport: Record<string, unknown> | null = null;
+    try {
+      if (prepared.runtimeOwner === 'hermes') {
+        const handle = await startPreparedHermesTransport({
+          prepared,
+          projectId,
+          deckId,
+          conversationId,
+          parentRunId: originatingRunId,
+          onEvent: () => undefined,
+        });
+        const response = await handle.done;
+        output = response.finalText;
+        transport = response.transport;
+      } else if (
+        prepared.runtimeOwner === 'autogen'
+        || prepared.runtimeOwner === 'coder'
+        || prepared.runtimeOwner === 'mag_one'
+      ) {
+        if (!prepared.nativeRuntimeRequest) throw new Error('native_runtime_request_missing');
+        const response = await runSingleCardWithAutoGen(prepared.nativeRuntimeRequest);
+        if (!response.ok) throw new Error(response.error || 'single_card_run_failed');
+        output = String(response.finalResponseText || '');
+      } else {
+        throw new Error(`configured_card_runtime_owner_unsupported:${String(prepared.runtimeOwner || '')}`);
+      }
+      const finished = await requestPythonRailsJson('/domain/runs/finish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          runId: correlationId,
+          state: 'completed',
+          providerThreadRef: transport?.threadId || null,
+          providerTurnRef: transport?.turnId || null,
+        }),
+      }) as any;
+      return res.json({
+        ok: true,
+        result: {
+          status: 'completed',
+          correlationId,
+          cardId,
+          runtimeOwner: prepared.runtimeOwner,
+          cardRevisionId: prepared.cardRevisionId,
+          output,
+          transport,
+          receipt: finished.receipt || null,
         },
       });
     } catch (error) {
-      if (!String(error instanceof Error ? error.message : error).startsWith('agent_run_already_exists:')) {
-        return res.status(503).json({
-          ok: false,
-          error: 'conversation_persistence_unavailable',
-          correlationId,
-        });
-      }
-    }
-
-    if (action === 'materialize') {
-      const receipt = await getConversationRunReceipt(correlationId);
-      return res.json({ ok: true, result: { ...materialized, receipt, lineage: receipt.ageLineage } });
-    }
-
-    await markConversationRunRunning({
-      runId: correlationId,
-      invokingCardId: materialized.cardId,
-      runtime: materialized.runtime || 'configured_card',
-      provider: materialized.provider || '',
-      modelKey: materialized.modelKey || '',
-      providerModelId: materialized.providerModelId || '',
-      accessMode: materialized.accessMode || '',
-      idfId: materialized.idf.idfId,
-      idfVersion: materialized.idf.version,
-      idfContentSha256: materialized.idf.contentSha256,
-    });
-
-    // The runtime receives the exact immutable revision that was just inspected;
-    // it may not silently rematerialize from mutable Card state here.
-    const result = await runConfiguredCard({
-      projectId,
-      deckId,
-      cardId,
-      correlationId,
-      input,
-      conversationId,
-      parentRunId,
-      idfId: materialized.idf.idfId,
-      idfVersion: materialized.idf.version,
-      idfContentSha256: materialized.idf.contentSha256,
-    });
-    try {
-      if (result.status === 'completed') {
-        await completeConversationRun({
+      const message = error instanceof Error ? error.message : 'configured_card_transport_failed';
+      await requestPythonRailsJson('/domain/runs/finish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           runId: correlationId,
-          assistantContent: result.output,
-          usage: result.usage,
-          transport: result.transport || undefined,
-          resultArtifact: {
-            idfId: result.idf?.idfId || null,
-            idfVersion: result.idf?.version || null,
-            idfContentSha256: result.idf?.contentSha256 || null,
-            providerInput: result.providerInput,
-            nativeRunResult: result.nativeRunResult,
-          },
-        });
-      } else if (result.status !== 'submitted') {
-        await failConversationRun(
-          correlationId,
-          result.error || `configured_card_${result.status}`,
-          result.error || result.status,
-        );
-      }
-    } catch {
-      await failConversationRun(
-        correlationId,
-        'configured_card_persistence_failed',
-        'configured card result could not be persisted',
-      ).catch(() => undefined);
-      return res.status(503).json({
-        ok: false,
-        error: 'configured_card_persistence_failed',
-        correlationId,
-      });
+          state: 'failed',
+          errorCode: 'configured_card_transport_failed',
+          errorSummary: message,
+        }),
+      }).catch(() => undefined);
+      throw error;
     }
-    const receipt = await getConversationRunReceipt(correlationId);
-    return res.json({
-      ok: result.status === 'completed' || result.status === 'submitted',
-      result: { ...result, receipt, lineage: receipt.ageLineage },
-    });
   } catch (error) {
-    await failConversationRun(
-      correlationId,
-      'run_configured_card_failed',
-      error instanceof Error ? error.message : 'run_configured_card_failed',
-    ).catch(() => undefined);
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'run_configured_card_failed' });
   }
 });
@@ -453,16 +428,33 @@ function codexTransportResult(value: Record<string, unknown>): Record<string, an
   return result && typeof result === 'object' ? result as Record<string, any> : {};
 }
 
+async function readPreparedMainCardContext(
+  projectId: string,
+  deckId: string,
+): Promise<Record<string, any>> {
+  const prepared = await requestPythonRailsJson('/domain/main/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      projectId,
+      deckId,
+      assignment: 'Inspect the saved Main runtime configuration without executing a model.',
+    }),
+  }) as any;
+  if (prepared.runtimeOwner !== 'hermes' || !prepared.cardContext) {
+    throw new Error('main_hermes_card_not_runnable');
+  }
+  return prepared.cardContext;
+}
+
 router.get('/main/codex-account', async (req, res) => {
   try {
     const projectId = String(req.query.projectId || '').trim();
     if (!projectId) {
       return res.status(400).json({ ok: false, error: 'projectId_required' });
     }
-    const runtimeConfig = await resolveMainHermesRuntimeConfig(projectId);
-    if (!runtimeConfig) {
-      return res.status(424).json({ ok: false, error: 'main_hermes_card_not_runnable' });
-    }
+    const deckId = String(req.query.deckId || BUILDER_DECK_ID).trim();
+    const runtimeConfig = await readPreparedMainCardContext(projectId, deckId);
     if (runtimeConfig.accessMode !== 'chatgpt-account') {
       return res.json({
         ok: true,
@@ -513,10 +505,8 @@ router.post('/main/codex-account', async (req, res) => {
     if (!projectId || !['login', 'logout'].includes(action)) {
       return res.status(400).json({ ok: false, error: 'projectId_and_valid_action_required' });
     }
-    const runtimeConfig = await resolveMainHermesRuntimeConfig(projectId);
-    if (!runtimeConfig) {
-      return res.status(424).json({ ok: false, error: 'main_hermes_card_not_runnable' });
-    }
+    const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
+    const runtimeConfig = await readPreparedMainCardContext(projectId, deckId);
     if (runtimeConfig.accessMode !== 'chatgpt-account') {
       return res.status(409).json({ ok: false, error: 'main_chatgpt_account_mode_required' });
     }
@@ -555,71 +545,60 @@ router.post('/main/codex-account', async (req, res) => {
 
 router.post('/main/session/chat', async (req, res) => {
   const projectId = String(req.body?.projectId || '');
+  const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
   const conversationId = String(req.body?.conversationId || 'default');
   const message = String(req.body?.message || '');
   const workingDirectory = String(req.body?.workingDirectory || '').trim() || undefined;
   if (!projectId || !message) {
     return res.status(400).json({ ok: false, error: 'projectId_and_message_required' });
   }
-  const runtimeConfig = await resolveMainHermesRuntimeConfig(projectId);
-  if (!runtimeConfig) {
-    return res.status(424).json({ ok: false, error: 'main_hermes_card_not_runnable' });
-  }
-  const sessionId = deriveHermesSessionKey(projectId, conversationId, runtimeConfig.cardId);
   // One correlation id per turn for the concise backend trace. This does NOT change
   // the SSE stream or browser behavior — it only makes the real Harness events
   // (already flowing to the browser) legible in the backend dev terminal.
   const correlationId = `req_${randomUUID().slice(0, 8)}`;
+  let prepared: any;
   try {
-    await beginConversationRun({
-      runId: correlationId,
-      projectId,
-      deckId: BUILDER_DECK_ID,
-      cardId: runtimeConfig.cardId,
-      conversationId,
-      runtime: 'hermes',
-      sessionId,
-      userContent: message,
+    const preview = await requestPythonRailsJson('/domain/main/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        deckId,
+        assignment: message,
+        conversationId,
+      }),
+    }) as any;
+    prepared = await requestPythonRailsJson('/domain/runs/begin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        deckId,
+        cardId: preview.cardContext?.cardId,
+        assignment: message,
+        conversationId,
+        exactIdf: preview.exactIdf,
+        cardRevisionId: preview.cardRevisionId,
+        runId: correlationId,
+        correlationId,
+      }),
     });
   } catch (error) {
-    const reason = error instanceof Error ? error.message : 'conversation_run_begin_failed';
+    const reason = error instanceof Error ? error.message : 'main_domain_preparation_failed';
     logHarnessTrace(
       `[harness] request rejected corr=${correlationId} reason=${redactTrace(reason)}`,
     );
     return res.status(503).json({
       ok: false,
-      error: 'conversation_persistence_unavailable',
+      error: 'main_domain_preparation_failed',
       correlationId,
     });
   }
-  let idf;
-  try {
-    idf = (await createInputDataFileOnPython({
-      projectId,
-      deckId: BUILDER_DECK_ID,
-      conversationId,
-      runId: correlationId,
-      originatingCardId: runtimeConfig.cardId,
-      systemText: runtimeConfig.prompt,
-      userText: message,
-      cardContext: {
-        ...runtimeConfig,
-        runtimeType: 'main_chat',
-      },
-    })).idf;
-  } catch {
-    await failConversationRun(
-      correlationId,
-      'idf_persistence_failed',
-      'canonical input persistence failed before runtime launch',
-    ).catch(() => undefined);
-    return res.status(503).json({
-      ok: false,
-      error: 'idf_persistence_failed',
-      correlationId,
-    });
+  if (prepared.runtimeOwner !== 'hermes' || !prepared.hermesTransport?.cardContext) {
+    return res.status(424).json({ ok: false, error: 'main_hermes_card_not_runnable' });
   }
-  const idfRuntimeConfig = idf.cardContext as typeof runtimeConfig;
+  const mainCardId = String(prepared.hermesTransport.cardContext.cardId || '');
+  const sessionId = deriveHermesSessionKey(projectId, conversationId, mainCardId);
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -638,58 +617,40 @@ router.post('/main/session/chat', async (req, res) => {
     }
   };
   writeSse('session', { sessionId });
-  logHarnessTrace(`[hermes] request received ${`corr=${correlationId}`} project=${projectId} profile=${idfRuntimeConfig.profile}`);
+  logHarnessTrace(`[hermes] request received ${`corr=${correlationId}`} project=${projectId} profile=${prepared.hermesTransport.profile}`);
   let turnFinished = false;
   let runCancelled = false;
   let terminalDoneEvent: Extract<HermesSessionEvent, { kind: 'done' }> | null = null;
   try {
-    const handle = await startHermesTurn({
-      ...idfRuntimeConfig,
-      prompt: idf.systemText,
-      sessionKey: sessionId,
+    const handle = await startPreparedHermesTransport({
+      prepared,
       projectId,
+      deckId,
       conversationId,
       parentRunId: correlationId,
-      message: idf.modelInputMarkdown,
       workingDirectory,
-    }, async (event) => {
-      if (turnFinished) return;
-      if (event.kind === 'done') {
-        terminalDoneEvent = event;
-        return;
-      }
-      // Backend trace of the REAL event (only when it carries lifecycle signal),
-      // then the unchanged SSE forward to the browser.
-      const traceLine = formatHarnessTrace(event, correlationId);
-      if (traceLine) logHarnessTrace(traceLine);
-      writeSse(event.kind, event);
+      onEvent: async (event) => {
+        if (turnFinished) return;
+        if (event.kind === 'done') {
+          terminalDoneEvent = event;
+          return;
+        }
+        const traceLine = formatHarnessTrace(event, correlationId);
+        if (traceLine) logHarnessTrace(traceLine);
+        writeSse(event.kind, event);
+      },
     });
-    try {
-      await markConversationRunRunning({
-        runId: correlationId,
-        invokingCardId: handle.resolved.cardId,
-        runtime: 'hermes',
-        provider: handle.resolved.provider,
-        modelKey: handle.resolved.modelKey,
-        providerModelId: handle.resolved.providerModelId,
-        accessMode: idfRuntimeConfig.accessMode,
-        idfId: idf.idfId,
-        idfVersion: idf.version,
-        idfContentSha256: idf.contentSha256,
-      });
-    } catch (error) {
-      handle.cancel();
-      throw new Error(
-        `harness_run_persistence_failed:${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
     activeHermesTurns.set(sessionId, handle);
     req.on('close', () => {
       if (turnFinished) return;
       runCancelled = true;
       handle.cancel();
       activeHermesTurns.delete(sessionId);
-      void cancelConversationRun(correlationId).catch((error) => {
+      void requestPythonRailsJson('/domain/runs/finish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId: correlationId, state: 'cancelled' }),
+      }).catch((error) => {
         logHarnessTrace(
           `[harness] run cancellation persistence failed corr=${correlationId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
         );
@@ -697,11 +658,18 @@ router.post('/main/session/chat', async (req, res) => {
     });
     const { finalText, usage, transport } = await handle.done;
     try {
-      await completeConversationRun({
-        runId: correlationId,
-        assistantContent: String(finalText || ''),
-        usage,
-        transport,
+      await requestPythonRailsJson('/domain/runs/finish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          runId: correlationId,
+          state: 'completed',
+          providerThreadRef: transport?.threadId || null,
+          providerTurnRef: transport?.turnId || null,
+          providerInputTokens: usage.providerInputTokens,
+          providerOutputTokens: usage.providerOutputTokens,
+          totalCostUsd: usage.totalCostUsd,
+        }),
       });
     } catch (error) {
       throw new Error(
@@ -720,13 +688,18 @@ router.post('/main/session/chat', async (req, res) => {
     turnFinished = true;
     const reason = error instanceof Error ? error.message : 'hermes_turn_failed';
     if (!runCancelled) {
-      await failConversationRun(
-        correlationId,
-        reason.startsWith('harness_run_persistence_failed')
-          ? 'harness_run_persistence_failed'
-          : 'harness_turn_failed',
-        reason,
-      ).catch((persistenceError) => {
+      await requestPythonRailsJson('/domain/runs/finish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          runId: correlationId,
+          state: 'failed',
+          errorCode: reason.startsWith('harness_run_persistence_failed')
+            ? 'harness_run_persistence_failed'
+            : 'harness_turn_failed',
+          errorSummary: reason,
+        }),
+      }).catch((persistenceError) => {
         logHarnessTrace(
           `[harness] failure persistence failed corr=${correlationId} reason=${redactTrace(persistenceError instanceof Error ? persistenceError.message : String(persistenceError))}`,
         );
@@ -755,8 +728,13 @@ router.post('/main/session/chat', async (req, res) => {
 
 router.post('/main/session/answer', async (req, res) => {
   const projectId = String(req.body?.projectId || '');
-  const runtimeConfig = await resolveMainHermesRuntimeConfig(projectId);
-  if (!runtimeConfig) return res.status(404).json({ ok: false, error: 'main_hermes_card_not_runnable' });
+  const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
+  let runtimeConfig: Record<string, any>;
+  try {
+    runtimeConfig = await readPreparedMainCardContext(projectId, deckId);
+  } catch {
+    return res.status(404).json({ ok: false, error: 'main_hermes_card_not_runnable' });
+  }
   const sessionId = deriveHermesSessionKey(
     projectId,
     String(req.body?.conversationId || 'default'),
@@ -954,194 +932,22 @@ router.get('/localcoder/status', async (req, res) => {
   });
 });
 
-function unavailableUsage() {
-  return {
-    providerInputTokens: null,
-    providerOutputTokens: null,
-    totalCostUsd: null,
-    usageAvailable: false,
-    usageSource: 'coder_report_only',
-    contextBreakdownJson: '',
-  };
-}
-
-async function resolveCoderIdfCardContext(projectId: string, cardId: string) {
-  const card = await resolveCodingCard(projectId, BUILDER_DECK_ID, cardId);
-  const config = resolveHermesCardRuntimeConfig(card, []);
-  return { ...config, runtimeType: 'assistant_agent' };
-}
-
-router.post('/idf/coder/drafts', async (req, res) => {
-  try {
-    const projectId = String(req.body?.projectId || '').trim();
-    const cardId = String(req.body?.cardId || '').trim();
-    const conversationId = String(req.body?.conversationId || 'coder-review').trim();
-    if (!projectId || !cardId) {
-      return res.status(400).json({ ok: false, error: 'projectId_and_cardId_required' });
-    }
-    const jobContext = parseCoderJobContext(req.body?.jobContext);
-    const cardContext = await resolveCoderIdfCardContext(projectId, cardId);
-    const runId = `coder_${randomUUID()}`;
-    const result = await createInputDataFileOnPython({
-      projectId,
-      deckId: BUILDER_DECK_ID,
-      conversationId,
-      runId,
-      originatingCardId: cardId,
-      systemText: cardContext.prompt,
-      userText: jobContext.objective,
-      cardContext,
-      purpose: 'coding_job',
-      approvalStatus: 'draft',
-      jobContext,
-    });
-    return res.status(201).json(result);
-  } catch (error) {
-    if (error instanceof ZodError) {
-      return res.status(400).json({ ok: false, error: 'invalid_coder_job_context', issues: error.issues });
-    }
-    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : 'idf_draft_failed' });
-  }
-});
-
-router.post('/idf/coder/:idfId/revisions', async (req, res) => {
-  try {
-    const projectId = String(req.body?.projectId || '').trim();
-    const idfId = String(req.params.idfId || '').trim();
-    const existing = (await fetchInputDataFile({ projectId, idfId })).idf;
-    const jobContext = parseCoderJobContext(req.body?.jobContext);
-    const cardContext = await resolveCoderIdfCardContext(projectId, existing.originatingCardId);
-    const result = await reviseInputDataFileOnPython({
-      idfId,
-      projectId,
-      expectedVersion: Number(req.body?.expectedVersion),
-      expectedSha256: String(req.body?.expectedSha256 || ''),
-      jobContext,
-      cardContext,
-      systemText: cardContext.prompt,
-      userText: jobContext.objective,
-    });
-    return res.json(result);
-  } catch (error) {
-    if (error instanceof ZodError) {
-      return res.status(400).json({ ok: false, error: 'invalid_coder_job_context', issues: error.issues });
-    }
-    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : 'idf_revision_failed' });
-  }
-});
-
-router.post('/idf/coder/:idfId/approve', async (req, res) => {
-  try {
-    const result = await approveInputDataFileOnPython({
-      idfId: String(req.params.idfId || '').trim(),
-      projectId: String(req.body?.projectId || '').trim(),
-      expectedVersion: Number(req.body?.expectedVersion),
-      expectedSha256: String(req.body?.expectedSha256 || ''),
-    });
-    return res.json(result);
-  } catch (error) {
-    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : 'idf_approval_failed' });
-  }
-});
-
+// LocalCoder/OpenClaude remains the sole coding runtime. Its Python-owned
+// callers pass a transient logical CoderPacket; this narrow process boundary
+// injects only the server-trusted repository root and process correlation id.
+// It does not persist or reconstruct an IDF, conversation, result, or receipt.
 router.post('/localcoder/run', async (req, res) => {
-  let runId = '';
   try {
-    const projectId = String(req.body?.projectId || '').trim();
-    const idfId = String(req.body?.idfId || '').trim();
-    const expectedVersion = Number(req.body?.version);
-    const expectedSha256 = String(req.body?.contentSha256 || '').trim();
-    if (!projectId || !idfId || !Number.isInteger(expectedVersion) || !expectedSha256) {
-      return res.status(400).json({ ok: false, error: 'approved_idf_reference_required' });
-    }
-    const idf = (await fetchInputDataFile({ projectId, idfId })).idf;
-    if (
-      idf.purpose !== 'coding_job'
-      || idf.approvalStatus !== 'approved'
-      || idf.version !== expectedVersion
-      || idf.contentSha256 !== expectedSha256
-      || idf.approvedSha256 !== expectedSha256
-    ) {
-      return res.status(409).json({ ok: false, error: 'exact_approved_idf_revision_required' });
-    }
-    const currentCard = await resolveCodingCard(projectId, idf.deckId, idf.originatingCardId);
-    if (!currentCard) throw new Error('approved_idf_coder_card_unavailable');
-    const cardContext = idf.cardContext as Record<string, any>;
-    const jobContext = parseCoderJobContext(idf.jobContext);
-    runId = idf.runId;
+    const supplied = req.body?.coderPacket && typeof req.body.coderPacket === 'object'
+      ? req.body.coderPacket
+      : req.body;
+    const runId = `coder_${randomUUID()}`;
     const coderPacket = {
-      ...jobContext,
+      ...(supplied || {}),
       id: runId,
-      projectId,
       repoPath: resolveRepoRoot(),
-      modelProvider: cardContext.provider,
-      providerModelId: cardContext.providerModelId,
-      accessMode: cardContext.accessMode,
-      reasoningEffort: cardContext.runtimeOptions?.reasoningEffort || undefined,
-      mcpTools: Array.isArray(cardContext.tools)
-        ? cardContext.tools.filter((tool: unknown) => tool !== 'run_local_coder')
-        : [],
-      cardId: idf.originatingCardId,
-      cardTitle: cardContext.title,
-      cardPrompt: idf.systemText,
-      cardProfile: cardContext.profile,
-      modelKey: cardContext.modelKey,
-      approvedIdfId: idf.idfId,
-      approvedIdfVersion: idf.version,
-      approvedIdfContentSha256: idf.contentSha256,
-      approvedIdfModelInputMarkdown: idf.modelInputMarkdown,
-      nativeTools: cardContext.nativeTools || [],
-      skills: cardContext.skills || [],
-      toolsets: cardContext.toolsets || [],
-      mcpConnectionIds: cardContext.mcpConnectionIds || [],
     };
-    await beginConversationRun({
-      runId,
-      projectId,
-      deckId: idf.deckId,
-      cardId: idf.originatingCardId,
-      conversationId: idf.conversationId,
-      runtime: 'local_coder',
-      sessionId: `approved-idf:${idf.idfId}`,
-      userContent: idf.contentMarkdown,
-    });
-    await markConversationRunRunning({
-      runId,
-      invokingCardId: idf.originatingCardId,
-      runtime: 'local_coder',
-      provider: String(cardContext.provider),
-      modelKey: String(cardContext.modelKey),
-      providerModelId: String(cardContext.providerModelId),
-      accessMode: String(cardContext.accessMode),
-      idfId: idf.idfId,
-      idfVersion: idf.version,
-      idfContentSha256: idf.contentSha256,
-    });
     const result = await localCoderService.run(coderPacket);
-    await completeConversationRun({
-      runId,
-      assistantContent: JSON.stringify(result.report, null, 2),
-      usage: unavailableUsage(),
-      transport: result.runtimeDiagnostics ? {
-        threadId: result.runtimeDiagnostics.providerThreadId,
-        turnId: result.runtimeDiagnostics.providerTurnId,
-        authMode: result.runtimeDiagnostics.providerAuthMode,
-        planType: result.runtimeDiagnostics.providerPlanType,
-      } : undefined,
-      resultArtifact: {
-        artifactType: 'CoderReport',
-        cardId: idf.originatingCardId,
-        provider: cardContext.provider,
-        model: cardContext.providerModelId,
-        accessMode: cardContext.accessMode,
-        correlationId: runId,
-        idfId: idf.idfId,
-        idfVersion: idf.version,
-        idfContentSha256: idf.contentSha256,
-        report: result.report,
-        comparison: result.comparison,
-      },
-    });
     const reportOk = result.report.status === 'succeeded' || result.report.status === 'partial';
     const statusCode =
       result.report.status === 'blocked'
@@ -1154,13 +960,6 @@ router.post('/localcoder/run', async (req, res) => {
       ...result,
     });
   } catch (error) {
-    if (runId) {
-      await failConversationRun(
-        runId,
-        'localcoder_run_failed',
-        error instanceof Error ? error.message : 'localcoder_run_failed',
-      ).catch(() => undefined);
-    }
     if (error instanceof ZodError) {
       return res.status(400).json({
         ok: false,

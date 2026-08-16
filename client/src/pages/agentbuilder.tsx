@@ -247,7 +247,7 @@ export default function AgentBuilder(): React.ReactElement {
   const {
     activeProject,
     canvasProjectId,
-    assistProjects,
+    builderProjects,
     projectsError,
     setProjectsError,
     setActiveProjectWithUrl,
@@ -391,6 +391,7 @@ export default function AgentBuilder(): React.ReactElement {
     setMessages,
   } = useAgentBuilderMainChat({
     canvasProjectId,
+    deckId: BUILDER_DECK_ID,
     conversationId,
     initialMessages: EMPTY_PROJECT_MESSAGES,
     workspaceView,
@@ -616,14 +617,15 @@ export default function AgentBuilder(): React.ReactElement {
       !canvasProjectId ||
       standaloneTestBusy ||
       standaloneTestUnavailableReason ||
-      !standaloneTestResult?.idf ||
-      standaloneTestResult.idf.userText !== standaloneTestPrompt.trim()
+      !standaloneTestResult?.invocation ||
+      standaloneTestResult.invocation.assignment !== standaloneTestPrompt.trim()
     ) {
       return;
     }
     const input = standaloneTestPrompt.trim();
     if (!input) return;
-    const correlationId = standaloneTestResult.idf.runId;
+    const invocation = standaloneTestResult.invocation;
+    const correlationId = `card-run-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
     standaloneTestRequestRef.current = correlationId;
     setStandaloneTestBusy(true);
     setStandaloneTestResult(null);
@@ -641,9 +643,8 @@ export default function AgentBuilder(): React.ReactElement {
           input,
           conversationId,
           senderCardId: standaloneTestSenderCardId,
-          idfId: standaloneTestResult.idf.idfId,
-          idfVersion: standaloneTestResult.idf.version,
-          idfContentSha256: standaloneTestResult.idf.contentSha256,
+          exactIdf: invocation.exactIdf,
+          cardRevisionId: invocation.cardRevisionId,
         }),
       });
       const payload = await response.json().catch(() => null);
@@ -668,10 +669,8 @@ export default function AgentBuilder(): React.ReactElement {
           runtimeType: result.runtimeType
             ? String(result.runtimeType)
             : selectedCard.runtimeType || null,
-          idf: result.idf || null,
-          providerInput: result.providerInput || null,
+          invocation,
           receipt: result.receipt || null,
-          lineage: Array.isArray(result.lineage) ? result.lineage : [],
         });
         setDeckStatusMessage(
           result.error
@@ -739,25 +738,30 @@ export default function AgentBuilder(): React.ReactElement {
       });
       const payload = await response.json().catch(() => null);
       const result = payload?.result;
-      if (!response.ok || !result?.idf) {
+      if (!response.ok || !result?.invocation) {
         throw new Error(String(payload?.error || result?.error || `card_materialize_http_${response.status}`));
       }
       if (standaloneTestRequestRef.current === correlationId) {
         setStandaloneTestResult({
-          status: String(result.status || 'materialized'),
+          status: String(result.status || 'previewed'),
           output: String(result.output || ''),
           error: result.error ? String(result.error) : null,
           toolCallCount: typeof result.toolCallCount === 'number' ? result.toolCallCount : null,
-          tools: Array.isArray(result.tools) ? result.tools.map(String) : [],
-          provider: result.provider ? String(result.provider) : selectedCard.runtimeOptions?.provider || null,
-          model: result.providerModelId ? String(result.providerModelId) : selectedCard.runtimeOptions?.modelKey || null,
-          runtimeType: result.runtimeType ? String(result.runtimeType) : selectedCard.runtimeType || null,
-          idf: result.idf,
-          providerInput: result.providerInput || null,
-          receipt: result.receipt || null,
-          lineage: Array.isArray(result.lineage) ? result.lineage : [],
+          tools: Array.isArray(result.invocation.cardContext?.tools)
+            ? result.invocation.cardContext.tools.map(String)
+            : [],
+          provider: result.invocation.cardContext?.provider
+            ? String(result.invocation.cardContext.provider)
+            : selectedCard.runtimeOptions?.provider || null,
+          model: result.invocation.cardContext?.providerModelId
+            ? String(result.invocation.cardContext.providerModelId)
+            : selectedCard.runtimeOptions?.modelKey || null,
+          runtimeType: result.invocation.cardContext?.runtimeType
+            ? String(result.invocation.cardContext.runtimeType)
+            : selectedCard.runtimeType || null,
+          invocation: result.invocation,
         });
-        setDeckStatusMessage(`${selectedCard.title} IDF materialized and persisted.`);
+        setDeckStatusMessage(`${selectedCard.title} IDF previewed in memory. Nothing was persisted or executed.`);
       }
     } catch (error) {
       if (standaloneTestRequestRef.current === correlationId) {
@@ -998,8 +1002,7 @@ export default function AgentBuilder(): React.ReactElement {
             color: GRAPH_THEME.drawer.inputMuted,
           })}
         >
-          Select an Assist project for system agents or an Agent workspace for
-          Agent Builder config.
+          Select a Project to open its Agent Builder configuration.
         </div>
       );
     }
@@ -1047,6 +1050,16 @@ export default function AgentBuilder(): React.ReactElement {
                       setStandaloneTestPrompt(value);
                       setStandaloneTestResult(null);
                     }}
+                    onChangeMaterializedIdf={(value) => {
+                      setStandaloneTestResult((current) =>
+                        current?.invocation
+                          ? {
+                              ...current,
+                              invocation: { ...current.invocation, exactIdf: value },
+                            }
+                          : current,
+                      );
+                    }}
                     onMaterializeCard={() => {
                       void materializeStandaloneCard();
                     }}
@@ -1056,8 +1069,8 @@ export default function AgentBuilder(): React.ReactElement {
                     runBusy={standaloneTestBusy}
                     runDisabled={
                       !showStandaloneTestControls ||
-                      !standaloneTestResult?.idf ||
-                      standaloneTestResult.idf.userText !== standaloneTestPrompt.trim()
+                      !standaloneTestResult?.invocation ||
+                      standaloneTestResult.invocation.assignment !== standaloneTestPrompt.trim()
                     }
                     runResult={standaloneTestResult}
                     saveDeckStatusMessage={deckStatusMessage}
@@ -1558,7 +1571,7 @@ export default function AgentBuilder(): React.ReactElement {
         colors={C}
         initialDeck={INITIAL_DECK}
         open={openDrawer === 'navigation'}
-        projects={assistProjects}
+        projects={builderProjects}
         projectsApi={PROJECTS_API}
         projectsError={projectsError}
         onClose={() => setOpenDrawer(null)}

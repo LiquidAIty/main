@@ -15,7 +15,7 @@ export default function useAgentBuilderProject({
 }: UseAgentBuilderProjectArgs) {
   const {
     activeProject,
-    assistProjects,
+    builderProjects,
     projectsError,
     setProjectsError,
     setActiveProjectWithUrl,
@@ -45,7 +45,7 @@ export default function useAgentBuilderProject({
 
   return {
     activeProject,
-    assistProjects,
+    builderProjects,
     projectsError,
     setProjectsError,
     setActiveProjectWithUrl,

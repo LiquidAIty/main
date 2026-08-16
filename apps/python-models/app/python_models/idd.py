@@ -38,6 +38,7 @@ def load_input_data_dictionary() -> dict[str, Any]:
     records = document.get("records")
     editor_fields = document.get("editorFields")
     islands = document.get("islands")
+    relationships = document.get("relationships")
     if not isinstance(metadata, dict) or metadata.get("name") != "LiquidAIty":
         raise IddValidationError("idd_metadata_invalid")
     if not isinstance(records, list) or not records:
@@ -48,6 +49,29 @@ def load_input_data_dictionary() -> dict[str, Any]:
         raise IddValidationError("idd_editor_fields_invalid")
     if not isinstance(islands, list) or not islands:
         raise IddValidationError("idd_islands_invalid")
+    if not isinstance(relationships, list) or not relationships:
+        raise IddValidationError("idd_relationships_invalid")
+
+    relationship_names: set[str] = set()
+    relationship_values: set[str] = set()
+    for definition in relationships:
+        if not isinstance(definition, dict):
+            raise IddValidationError("idd_relationship_invalid")
+        name = definition.get("name")
+        canvas_value = definition.get("canvasValue")
+        if (
+            not isinstance(name, str)
+            or not name
+            or name in relationship_names
+            or not isinstance(canvas_value, str)
+            or not canvas_value
+            or canvas_value in relationship_values
+            or not isinstance(definition.get("authority"), str)
+            or not isinstance(definition.get("direction"), str)
+        ):
+            raise IddValidationError("idd_relationship_invalid")
+        relationship_names.add(name)
+        relationship_values.add(canvas_value)
 
     record_names: set[str] = set()
     for definition in records:

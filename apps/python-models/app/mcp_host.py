@@ -9,7 +9,7 @@ env vars, no .env, no per-turn spawn, no fallback host.
 Exposes this application tool surface plus the dynamically discovered native
 Engraphis, Codebase Memory, and official Graphiti MCP registries:
   * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
-  * run_mag_one                      (Main-only approved canonical IDF)
+  * run_mag_one                      (Main-only transient Mag One mission)
   * web_search                       (real Tavily search; Search Agent only by grant)
   * canvas.inspect / card.update_configuration / canvas.upsert_wire /
     card.run_assistant_agent         (user-directed Harness control surface;
@@ -1581,8 +1581,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="run_mag_one",
             description=(
-                "Main Chat only: submit one existing canonical Input Data File identity to "
-                "native MagenticOneGroupChat. "
+                "Main Chat only: materialize one transient mission for the AGE-connected "
+                "Magentic-One Card and invoke native MagenticOneGroupChat. "
                 "The backend resolves the live worker roster from blue SIDE connections; never type "
                 "a roster. Execute only on an explicit user request — Hermes never launches Mag One."
             ),
@@ -1591,27 +1591,10 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "projectId": {"type": "string"},
                     "deckId": {"type": "string"},
-                    "idfId": {"type": "string"},
+                    "instructions": {"type": "string"},
                     "conversationId": {"type": "string"},
                 },
-                "required": ["idfId", "projectId", "deckId"],
-            },
-        ),
-        Tool(
-            name="write_mag_one_instructions",
-            description=(
-                "Hermes Run Plan preparation: persist the exact proposed Mag One task as "
-                "a canonical PostgreSQL Input Data File. Main owns presentation, review, and approval; "
-                "creating the IDF never starts Mag One. Returns the stable idfId "
-                "for Main to pass to run_mag_one."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "instructions": {"type": "string"},
-                },
-                "required": ["instructions"],
-                "additionalProperties": False,
+                "required": ["instructions", "projectId", "deckId"],
             },
         ),
         Tool(
@@ -1891,13 +1874,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "main.context": set(),
     "coder.status": set(),
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
-    "run_mag_one": {"projectId", "deckId", "idfId", "conversationId"},
-    "write_mag_one_instructions": {
-        "projectId",
-        "deckId",
-        "conversationId",
-        "instructions",
-    },
+    "run_mag_one": {"projectId", "deckId", "instructions", "conversationId"},
     "canvas.inspect": {"projectId", "deckId"},
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
@@ -1917,7 +1894,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
 _BRIDGE_PATHS: dict[str, str] = {
     "coder.status": "coder_status",
     "mag_one.describe_connected_agents": "describe_connected_agents",
-    "run_mag_one": "run_mag_one",
 }
 
 # Control tools dispatch to the Python control-plane handlers (app/control_plane.py).
@@ -2058,23 +2034,40 @@ async def _dispatch_tool(
                 text=json.dumps({"ok": False, "error": f"tool_arguments_rejected: {','.join(sorted(extra))}"}),
             )
         ]
-    if name == "write_mag_one_instructions":
-        from app.python_models import idf
+    if name == "run_mag_one":
+        from app.python_models.card_domain import (
+            CardDomainError,
+            materialize_magentic_invocation,
+        )
 
         try:
-            result = await asyncio.to_thread(
-                idf.create_input_data_file,
-                project_id=str(args.get("projectId") or ""),
-                deck_id=str(args.get("deckId") or ""),
-                conversation_id=str(args.get("conversationId") or ""),
-                run_id=f"idf-preparation:{uuid4().hex[:20]}",
-                originating_card_id=caller_card_id,
-                system_text="",
-                user_text=str(args.get("instructions") or ""),
+            instructions = str(args.get("instructions") or "").strip()
+            preview = await asyncio.to_thread(
+                materialize_magentic_invocation,
+                {
+                    "projectId": str(args.get("projectId") or ""),
+                    "deckId": str(args.get("deckId") or ""),
+                    "senderCardId": caller_card_id,
+                    "assignment": instructions,
+                },
             )
-            return [TextContent(type="text", text=json.dumps(result))]
-        except idf.InputDataFileError:
-            return [TextContent(type="text", text=json.dumps({"ok": False, "error": "idf_persistence_failed"}))]
+            return await _bridge(
+                "run_configured_card",
+                {
+                    "action": "execute",
+                    "projectId": preview["projectId"],
+                    "deckId": preview["deckId"],
+                    "cardId": preview["cardContext"]["cardId"],
+                    "senderCardId": caller_card_id,
+                    "correlationId": f"mag_one:{uuid4()}",
+                    "conversationId": str(args.get("conversationId") or "main"),
+                    "input": instructions,
+                    "exactIdf": preview["exactIdf"],
+                    "cardRevisionId": preview["cardRevisionId"],
+                },
+            )
+        except CardDomainError as err:
+            return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
     if name == "main.context":
         if context is None:
             return [

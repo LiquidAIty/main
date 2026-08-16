@@ -82,9 +82,9 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       'The runtime supplies trusted saved-card and run identity. Never invent a card result, graph write, source, code change, or tool execution.',
       '',
       'Start Magentic-One only after explicit user approval of the exact run instruction. The saved bus topology supplies workers; never invent a roster.',
-      'For deep Magentic-One preparation, delegate to the saved Hermes steward, present its exact proposed input for review/editing, and pass only the returned stable idfId to run_mag_one after approval.',
+      'For Magentic-One, inspect the saved roster, present the exact mission for review/editing, then pass that transient instruction to run_mag_one after approval.',
       'After Magentic-One, pass its native result and referenced native IDs to the saved Hermes steward only when intentional memory/KnowGraph reconciliation is useful. Never dump raw orchestration transcripts into memory.',
-      'A missing or unreadable IDF or native result fails closed. Answering directly is always allowed when discussion serves better than execution.',
+      'A rejected transient invocation or missing native result fails closed. Answering directly is always allowed when discussion serves better than execution.',
     ].join('\n'),
   },
   {
@@ -95,7 +95,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       goal: [
         'Assist Main with progressive KnowGraph/Graphiti research and run preparation using your saved card instructions, memory scope, skills, and grants.',
-        'Before Magentic-One, inspect the connected worker capabilities, research only as needed, and persist one exact proposed instruction with write_mag_one_instructions for Main to review.',
+        'Before Magentic-One, inspect the connected worker capabilities and help Main refine one exact transient mission for review.',
         'After Magentic-One, inspect only the supplied native result and references, reconcile useful sourced outcomes intentionally, and return concise continuation context to Main.',
       ].join('\n'),
       constraints: [
@@ -103,12 +103,12 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Progressive research starts from sourced KnowGraph records and preserves provenance.',
         'Do not invent sources, graph writes, tool results, worker results, or Kanban activity.',
         'Your direct execution remains one real persistent saved-card session. Kanban is an execution mode on an ordinary card, not your identity.',
-        'Creating a Magentic-One IDF never launches it; Main alone presents, edits, approves, and runs it.',
+        'Main alone presents, edits, approves, and runs the transient Magentic-One mission.',
         'Do not indiscriminately copy Magentic-One transcripts into memory or KnowGraph.',
       ].join('\n'),
       ioSchema: [
         'Input: one bounded assignment from the user, Main, or an approved orchestrator.',
-        'Output: one normalized specialist result with evidence, uncertainty, blockers, and the stable idfId or native result references when applicable.',
+        'Output: one normalized specialist result with evidence, uncertainty, blockers, and native result references when applicable.',
       ].join('\n'),
       memoryPolicy: [
         'This card stable ID owns its isolated runtime session, memory state, and materialized skills.',

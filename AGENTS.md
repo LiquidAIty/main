@@ -526,16 +526,17 @@ project, trace, or render ledger artifacts in LiquidAIty.
 ThinkGraph = SQLite/Engraphis project reasoning and operational knowledge
 KnowGraph  = Neo4j/Graphiti sourced knowledge and provenance
 CodeGraph  = native CBM repository structure
-AgentGraph = PostgreSQL dynamic graph-aware context used to assemble the next IDF
-AGE        = optional meta-knowledge about IDFs, executions, references, consumption, and production
+AgentGraph = transient selection/hydration used to assemble the next IDF; not a separate durable store
+AGE        = durable Card topology plus prompt-free execution relationships and telemetry
 ```
 
 One authority and one writer per graph.
 
 - Pass pointers, native IDs, bounded Context Selections, and provenance—not copied subgraphs.
-- AgentGraph may reference native authorities for context hydration; it does not absorb their data.
-- AGE may relate stable native IDs, IDFs, cards/models, runs, and results. It observes; it never
-  authorizes a runtime, chooses a card, or owns native runtime lifecycle.
+- Transient graph selection may reference native authorities for context hydration; it does not absorb
+  or archive their data.
+- AGE owns accepted Card relationship edits and may observe stable run/reference/artifact IDs. It never
+  stores raw IDFs, authorizes a runtime, chooses a card, or owns native runtime lifecycle.
 - The UI never writes graph meaning directly.
 - TypeScript never performs semantic graph merges.
 - Files/skills describe how-to; graphs store what-is. Do not smear SkillsGraph into KnowGraph.
@@ -565,12 +566,12 @@ knowledge movement.
 
 ## IDF and IDD law
 
-IDF is the actual assembled model-context document. It contains the concrete saved-card context and
-the instantiated dynamic AgentGraph prompt/query/script/reference content selected for one model call,
-including bounded resolved native data when required. The versioned IDF is stored in PostgreSQL and the
-same document—not a reconstructed receipt, envelope, manifest, or telemetry record—is transported to
-the actual model/runtime call. Runtime adapters may format it mechanically; they must not independently
-invent conflicting context semantics.
+IDF is the actual transient assembled model-context document for one communication. It contains the
+concrete saved-card context and the instantiated dynamic prompt/query/script/reference content selected
+for that call, including bounded resolved native data when required. Python rails materializes it in
+memory; the exact Inspector-visible document—not a reconstructed receipt, envelope, manifest, or
+telemetry record—is transported to the actual model/runtime call and discarded afterward. Runtime
+adapters may format it mechanically; they must not independently invent conflicting context semantics.
 
 IDD is the Input Data Dictionary: the one literal repo-root `LiquidAIty.idd` catalog of rules for
 constructing, validating, rendering, and editing structured input where structure is useful. Python
@@ -586,8 +587,8 @@ assignment-coupled or duplicate experiments. The broader IDF/IDD law entered can
 `fe6daa9d` on 2026-08-10. The old TypeScript `toolInputDataDictionary.ts` name was removed. Live MCP and
 private Python registry contracts now feed the literal IDD mechanically; `toolCatalogProjection.ts`
 only indexes/searches the resulting IDD records and owns no vocabulary or semantic metadata. The IDD,
-Markdown assembler, PostgreSQL persistence, Hermes
-consumers, and AutoGen equality guard are CURRENT. Typed SQL/Cypher/script execution, selected live-schema
+transient Markdown assembler, relational Card domain, Inspector preview, Hermes transport, and AutoGen
+equality guard are CURRENT. Typed SQL/Cypher/script execution, selected live-schema
 materialization into each IDF, the full editor, and optional AGE observation remain TARGET / INCOMPLETE.
 
 Authority is:
@@ -625,10 +626,11 @@ saved topology
 Callers provide task input and stable references, not alternate card definitions. Missing cards,
 models, grants, runtimes, or authorities fail honestly. No model/provider/tool fallback.
 
-AgentGraph carries the instantiated dynamic prompt/query/script/reference content that evolves the
-next IDF. PostgreSQL persists that context; optional AGE meta-knowledge may relate what an execution
-read, referenced, produced, or derived. Neither replaces saved-card configuration or native runtime
-truth.
+The underlying Project graphs remain durable in their native owners. A caller selects bounded
+references/context for one invocation; that selection and the materialized IDF remain transient.
+PostgreSQL persists stable Card state, prompt-free run status, and explicit artifact metadata. AGE owns
+saved Card relationships and may observe prompt-free execution identities. Neither replaces saved-card
+configuration or native runtime truth.
 
 ---
 

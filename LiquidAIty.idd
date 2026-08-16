@@ -12,6 +12,27 @@ idfFormat = "mixed-markdown"
 islandStyle = "bracketed-native-language"
 unknownIslands = "inert"
 
+# Relationship vocabulary. React Flow authors the instances and Python rails
+# validates them before AGE persists them. These declarations are not seeds and
+# do not create or infer any relationship.
+[[relationships]]
+name = "FLOW"
+canvasValue = "flow"
+authority = "AGE"
+direction = "source-to-target"
+
+[[relationships]]
+name = "MAGENTIC_OPTION"
+canvasValue = "magentic_option"
+authority = "AGE"
+direction = "source-to-target"
+
+[[relationships]]
+name = "MAGENTIC_CONTROL"
+canvasValue = "magentic_control"
+authority = "AGE"
+direction = "source-to-target"
+
 [dictionary.markdown]
 looseTextDefault = true
 commonContent = [
@@ -139,18 +160,10 @@ required = ["projectId"]
 [[toolGroups.tools]]
 name = "run_mag_one"
 displayName = "Run Magentic-One"
-description = "Submit one approved canonical IDF identity to native Magentic-One."
-parameters = ["projectId", "deckId", "idfId", "conversationId"]
-required = ["idfId", "projectId", "deckId"]
+description = "Materialize one transient mission for the AGE-connected Mag One Card and invoke its native runtime."
+parameters = ["projectId", "deckId", "instructions", "conversationId"]
+required = ["instructions", "projectId", "deckId"]
 requiredCallerRuntimeBinding = "main_chat"
-
-[[toolGroups.tools]]
-name = "write_mag_one_instructions"
-displayName = "Write Mag One instructions"
-description = "Persist proposed Mag One instructions as an IDF without starting a run."
-parameters = ["instructions"]
-required = ["instructions"]
-requiredCallerRuntimeBinding = "hermes_steward"
 
 [[toolGroups.tools]]
 name = "canvas.inspect"
@@ -671,7 +684,7 @@ required = []
 [[records]]
 name = "card-context"
 allowUnknownFields = false
-description = "Exact resolved saved-card/runtime snapshot persisted with the IDF."
+description = "Transient resolved saved-card/runtime projection inside one in-memory IDF."
 
 [[records.fields]]
 name = "cardId"
@@ -814,7 +827,7 @@ required = false
 [[records]]
 name = "coder-packet"
 allowUnknownFields = false
-description = "User-reviewable dynamic coding job fields embedded in an immutable IDF revision."
+description = "User-reviewable dynamic coding fields embedded in one transient outer IDF."
 
 [[records.fields]]
 name = "objective"

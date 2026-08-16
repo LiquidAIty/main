@@ -429,8 +429,8 @@ Hermes = general/research runtime
   - profile-routed durable Kanban fleet
 
 Shared external authorities
-  - PostgreSQL: saved cards, IDD definitions, actual IDFs, and dynamic AgentGraph context
-  - AGE: optional meta-knowledge about IDFs, runs, references, consumption, and production
+  - PostgreSQL: stable Project/Deck/Card revisions, prompt-free Runs, and explicit artifacts
+  - AGE: accepted Card topology plus prompt-free run/reference/artifact relationships
   - Engraphis/ThinkGraph: project reasoning and recall
   - Graphiti/KnowGraph: sourced domain knowledge and provenance
   - CBM/CodeGraph: repository structure, symbols, relationships, and bounded source discovery
@@ -589,35 +589,35 @@ and the deployed service never downloads CBM at runtime.
 It selects and renders the current ThinkGraph, KnowGraph, and CodeGraph surfaces without becoming a
 fourth data authority.
 
-### AgentGraph and optional AGE meta-knowledge
+### AgentGraph and AGE
 
-AgentGraph is dynamic graph-aware context persisted in PostgreSQL and used to evolve the next IDF. It
-contains instantiated prompt/query/script/reference content, not card authority, a scheduler, or a
-parallel runtime lifecycle. It may point to native graph records and may include bounded resolved data
-needed by the model call; it does not absorb or rewrite native graph authorities.
+There is no separate persisted prompt/context aggregate called AgentGraph. Durable Project knowledge
+remains in ThinkGraph, KnowGraph, and CodeGraph. The caller selects bounded native references and
+hydrates current context for one invocation; that selection is transient.
 
-Apache AGE is an optional meta-knowledge projection over stable IDs. It may relate an IDF, card/model,
-native run, result, and native graph references with relationships such as `REFERENCES`, `READ_BY`,
-`CONSUMED_BY`, `MADE_BY`, or `PRODUCED`. Those edges describe what happened. AGE never selects a card,
-grants permission, claims work, schedules a runtime, or decides whether Hermes, Mag One, or Coder may
-succeed.
+Apache AGE is the durable authority for user-authored Card topology (`FLOW`, `MAGENTIC_OPTION`, and
+`MAGENTIC_CONTROL`) and stores prompt-free operational relationships/telemetry. Topology mutations are
+required and fail closed; execution telemetry is best-effort. AGE never selects a Card, expands grants,
+stores raw IDFs, schedules a runtime, or decides whether Hermes, Mag One, or Coder may succeed.
 
 ## Input Data File and Input Data Dictionary
 
-The **Input Data File (IDF)** is the actual versioned model-context document stored in PostgreSQL. The
-same assembled document reaches the actual model/runtime call; it is not a receipt, manifest, trace,
-assignment, or post-run reconstruction. Runtime adapters may mechanically format transport framing but
-must not assemble separate competing meanings.
+The **Input Data File (IDF)** is the actual transient model-context document for one communication.
+Python rails materializes it in memory from stable Card state plus the current assignment, selected
+context/tools, constraints, and output contract. The exact Inspector-visible document reaches the
+actual model/runtime call and is then discarded. It is not a durable identity, assignment, receipt,
+manifest, trace, or post-run reconstruction. Runtime adapters may mechanically format transport
+framing but must not assemble separate competing meanings.
 
 An IDF may contain concrete bounded material and references to heterogeneous native authorities:
 
 ```txt
 IDF
-  identity: project, native run, version, originating card, timestamps
+  identity: Project, Deck, Card revision, and current correlation
   stable card context: exact saved prompt/profile/model/grants needed by the call
   dynamic context: instantiated AgentGraph prompt/query/script/reference content
   flexible text: bounded user/agent-authored context
-  relational references: conversation/message/card/deck IDs
+  current references: Project/Deck/Card and selected native IDs
   typed operations: exact native-tool calls plus first-class parameterized SQL/Cypher query definitions
     with authority, language, mode, limits, typed parameters, and required card capability
   Engraphis references: recalled memory IDs and support/provenance metadata
@@ -633,25 +633,25 @@ typed query/script forms, parameter types/defaults/limits, output shapes, and ex
 permissions/capabilities. It does not infer risk, compatibility, runtime meaning, or graph authority.
 IDD definitions are not injected into model context. Natural-language IDF content stays flexible.
 
-The repo-root `LiquidAIty.idd` file owns IDD definitions. PostgreSQL owns instantiated values, IDF
-versions, and the actual durable Markdown model input. Engraphis owns project reasoning and recall.
-Graphiti/KnowGraph owns sourced knowledge and provenance. CBM owns code structure. AGE only relates
-stable IDs when the meta graph is useful.
+The repo-root `LiquidAIty.idd` file owns IDD definitions. PostgreSQL owns stable Deck/Card revisions,
+prompt-free Run status, and explicit artifact metadata. Engraphis owns project reasoning and recall.
+Graphiti/KnowGraph owns sourced knowledge and provenance. CBM owns code structure. AGE owns Card
+relationships and prompt-free execution observations.
 
 The intended research flow is:
 
 ```txt
 user chat + uploaded/selected data
 → visualize and inspect the data
-→ use IDD rules to construct and validate one actual IDF in PostgreSQL
+→ use IDD rules to construct and validate one transient IDF in Python memory
 → retrieve bounded Engraphis context
-→ instantiate selected dynamic AgentGraph context into the same IDF version
+→ instantiate selected current context into that IDF
 → Main or the real Hermes adapter sends that actual IDF to the model/runtime call
 → Hermes uses the exact prompt + recalled context to disambiguate research
 → source retrieval and processing
 → Graphiti ingests authoritative episodes into KnowGraph with provenance
 → result references and proof return to the native run/originating card
-→ optional AGE meta-knowledge relates what was referenced, consumed, and produced
+→ AGE relates prompt-free run/reference/artifact identities
 ```
 
 For coding work the same envelope carries CBM pointers instead of dumping source. The receiving coder
@@ -661,8 +661,9 @@ Verified Git archaeology found no complete earlier implementation to restore: `C
 production caller; `unified_context.py` / `DeliveredContextManifest` rebuilt assignment-coupled graph
 projections; AGE `AgentContext` and the registered-query/GraphView path mixed context with runtime
 control. The explicit IDF/IDD law arrived in `fe6daa9d`. Current source now has one literal
-`LiquidAIty.idd`, a generic Python interpreter, a mixed-language loose-Markdown PostgreSQL IDF assembler, persisted
-card-context consumption by Hermes, and an exact IDF/card-runtime equality guard on Python rails.
+`LiquidAIty.idd`, a generic Python interpreter, a mixed-language loose-Markdown transient IDF
+assembler, relational Card revisions, Inspector preview/editing, and an exact IDF/Card-runtime
+authority guard on Python rails.
 Live MCP discovery and the private Python registry are mechanically ingested into that same IDD;
 `toolCatalogProjection.ts` only indexes/searches its materialized records. The full editor, selected
 tool-schema materialization into each IDF, generic capability-gated parameterized SQL/Cypher and bounded-script
@@ -810,8 +811,8 @@ cost.
 
 - Persisted ADMIN Hermes/graph cards and edges; source template presence is not database recovery.
 - Full Main → actual Hermes → approved Mag One end-to-end proof.
-- Full Main → PostgreSQL IDF/AgentGraph context → Hermes/Mag One/Coder consumer proof.
-- A complete IDD-driven input editor/validation boundary and actual IDF assembler/consumer flow.
+- Full Main → transient Inspector IDF → Hermes/Mag One/Coder real-provider consumer proof.
+- Generic capability-gated typed SQL/Cypher/script execution through the IDD boundary.
 - Runtime Observatory and RunManifest; both are intentionally absent.
 
 These states must remain explicit. Do not hide them with placeholders, fake success, generic model

@@ -38,6 +38,7 @@ export class SessionStreamError extends Error {
 
 export async function streamSession(args: {
   projectId: string;
+  deckId?: string;
   conversationId: string;
   message: string;
   onEvent: (event: NativeSessionEvent) => void;
@@ -49,6 +50,7 @@ export async function streamSession(args: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       projectId: args.projectId,
+      deckId: args.deckId,
       conversationId: args.conversationId,
       message: args.message,
     }),
@@ -109,8 +111,8 @@ export async function streamSession(args: {
 }
 
 /**
- * Load the durable project-scoped transcript for a conversation (persisted by
- * the backend `conversations/store.ts`). Returns turns in append order. A
+ * Load legacy project-scoped transcript rows when they exist. New MVP turns
+ * remain in the current UI session and are not appended to this store. A
  * A valid fresh conversation resolves to an empty array. Transport, persistence,
  * and malformed-response failures remain visible to the caller.
  */

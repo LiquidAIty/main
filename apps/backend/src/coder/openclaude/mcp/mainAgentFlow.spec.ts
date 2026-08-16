@@ -1,194 +1,50 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { describeConnectedAgents, runMagOne } from './mainAgentFlow';
+import { describeConnectedAgents } from './mainAgentFlow';
 
-const nodes = [
-  {
-    id: 'card_main_chat',
-    kind: 'agent',
-    runtimeType: 'assistant_agent',
-    runtimeBinding: 'main_chat',
-  },
-  {
-    id: 'card_mag_one',
-    kind: 'agent',
-    runtimeType: 'magentic_one',
-  },
-  {
-    id: 'card_worker',
-    kind: 'agent',
-    title: 'Worker',
-    runtimeType: 'assistant_agent',
-    runtimeOptions: { tools: ['web_search'] },
-  },
-];
-const edges = [
-  { id: 'control', source: 'card_main_chat', target: 'card_mag_one', edgeType: 'magentic_control' },
-  { id: 'worker', source: 'card_mag_one', target: 'card_worker', edgeType: 'magentic_option' },
-];
-
-function deps(runCard = vi.fn()) {
-  return {
-    loadDeck: vi.fn(async () => ({ deck: { nodes, edges } })) as any,
-    runCard: runCard as any,
-    fetchIdf: vi.fn(async () => ({ ok: true, idf: {
-      idfId: 'idf:abc', projectId: 'project-1', deckId: 'deck-1',
-      conversationId: 'main', runId: 'prepared:one', originatingCardId: 'card_main_chat',
-      version: 1, systemText: '', userText: 'Approved task.',
-      dynamicContextMarkdown: '', nativeReferences: [],
-      modelInputMarkdown: 'Approved task.', contentMarkdown: 'Approved task.',
-      cardContext: null, contentSha256: 'hash', createdAt: 'now',
-    } })) as any,
-    resolveWorkerReadiness: vi.fn(async (cards: any[]) => cards.map((card) => ({
-      card,
-      connected: true as const,
-      executionReady: true,
-      readinessState: 'ready' as const,
-      readinessReason: null,
-    }))),
-  };
-}
-
-describe('canonical-IDF Mag One flow', () => {
-  it('describes only bus-connected saved worker cards', async () => {
-    const result = await describeConnectedAgents(
-      { projectId: 'project-1', deckId: 'deck-1' },
-      deps(),
-    );
-    expect(result.orchestratorCardId).toBe('card_mag_one');
-    expect(result.connectedAgents.map((agent) => agent.cardId)).toEqual(['card_worker']);
-    expect(result.connectedAgents[0]).toMatchObject({
-      connected: true,
-      executionReady: true,
-      readinessState: 'ready',
-      readinessReason: null,
-    });
-  });
-
-  it('lists an explicit blue-connected staged card while keeping it out of execution', async () => {
-    const trading = {
-      id: 'card_trading_workbench',
-      kind: 'agent',
-      title: 'Trading Agent',
-      runtimeType: 'assistant_agent',
-      parentGraphId: 'workbench_trading',
-      runtimeOptions: { modelKey: 'deepseek/deepseek-v4-flash-0731', provider: 'openrouter' },
-    };
-    const stagedNodes = [...nodes, trading];
-    const stagedEdges = [
-      ...edges,
-      { id: 'trading', source: 'card_trading_workbench', target: 'card_mag_one', edgeType: 'magentic_option' },
-    ];
-    const result = await describeConnectedAgents(
-      { projectId: 'project-1', deckId: 'deck-1' },
-      {
-        loadDeck: vi.fn(async () => ({ deck: { nodes: stagedNodes, edges: stagedEdges } })) as any,
-        resolveWorkerReadiness: vi.fn(async (cards: any[]) => cards.map((card) => ({
-          card,
-          connected: true as const,
-          executionReady: card.id !== trading.id,
-          readinessState: card.id === trading.id ? 'staged_runtime_missing' as const : 'ready' as const,
-          readinessReason: card.id === trading.id ? 'trading_runtime_adapter_missing' : null,
-        }))),
-      },
-    );
-
-    expect(result.connectedAgents.map((agent) => agent.cardId)).toEqual([
-      'card_worker',
-      'card_trading_workbench',
-    ]);
-    expect(result.connectedAgents[1]).toMatchObject({
-      connected: true,
-      executionReady: false,
-      readinessState: 'staged_runtime_missing',
-      readinessReason: 'trading_runtime_adapter_missing',
-    });
-  });
-
-  it('transports the exact persisted IDF to the Python-owned runtime', async () => {
-    const runCard = vi.fn(
-      async (_card: any, _taskText: string, _context: any) => ({
-      status: 'success',
-      output: 'done',
-      nativeRunResult: { runId: 'native:run-1', idfId: 'idf:abc' },
-      }),
-    );
-    const result = await runMagOne(
-      {
-        projectId: 'project-1',
-        deckId: 'deck-1',
-        conversationId: 'main',
-        idfId: 'idf:abc',
-      },
-      deps(runCard),
-    );
-    expect(runCard).toHaveBeenCalledOnce();
-    const [card, taskText, context] = runCard.mock.calls[0];
-    expect(card.id).toBe('card_mag_one');
-    expect(taskText).toBe('Approved task.');
-    expect(context.idf.idfId).toBe('idf:abc');
-    expect(JSON.stringify(context)).not.toContain('prompt.md');
-    expect(JSON.stringify(context)).not.toContain('workspaceRoot');
-    expect(result.idfId).toBe('idf:abc');
-  });
-
-  it('keeps a saved Local Coder card in the Mag One roster with its canonical runtime binding', async () => {
-    const localCoder = {
-      id: 'card_local_coder',
-      kind: 'agent',
-      title: 'Local Coder',
-      runtimeType: 'assistant_agent',
-      runtimeBinding: 'local_coder',
-      runtimeOptions: {
-        provider: 'openai',
-        modelKey: 'gpt-5.6-luna',
-        tools: ['run_local_coder'],
-      },
-    };
-    const coderNodes = [...nodes, localCoder];
-    const coderEdges = [
-      ...edges,
-      { id: 'coder', source: 'card_mag_one', target: localCoder.id, edgeType: 'magentic_option' },
-    ];
-    const runCard = vi.fn(
-      async (_card: any, _taskText: string, _context: any) => ({
-        status: 'success',
-        output: 'done',
-      }),
-    );
-
-    const result = await runMagOne(
-      { projectId: 'project-1', deckId: 'deck-1', idfId: 'idf:abc' },
-      {
-        ...deps(runCard),
-        loadDeck: vi.fn(async () => ({ deck: { nodes: coderNodes, edges: coderEdges } })) as any,
-      },
-    );
-
-    expect(result.connectedParticipants).toContain(localCoder.id);
-    expect(runCard).toHaveBeenCalledOnce();
-    const [, , context] = runCard.mock.calls[0]!;
-    expect(context.allCards).toContainEqual(localCoder);
-  });
-
-  it('fails before runtime when the stable IDF identity is absent', async () => {
-    await expect(
-      runMagOne(
-        { projectId: 'project-1', deckId: 'deck-1', idfId: '' },
-        deps(),
-      ),
-    ).rejects.toThrow('run_mag_one_missing_identity');
-  });
-
-  it('requires exactly one saved Main controller edge', async () => {
-    const loadDeck = vi.fn(async () => ({
-      deck: { nodes, edges: edges.filter((edge) => edge.id !== 'control') },
+describe('Python-owned Mag One roster transport', () => {
+  it('forwards exact Project/Deck identity and returns the Python result', async () => {
+    const request = vi.fn(async () => ({
+      ok: true,
+      projectId: 'project-1',
+      deckId: 'deck-1',
+      orchestratorCardId: 'card_magentic',
+      connectedAgents: [{
+        cardId: 'card_worker',
+        title: 'Worker',
+        model: { modelKey: 'model-1', provider: 'openai' },
+        tools: [],
+        connected: true,
+        executionReady: true,
+        readinessState: 'ready',
+        readinessReason: null,
+      }],
     }));
+
+    const result = await describeConnectedAgents(
+      { projectId: 'project-1', deckId: 'deck-1' },
+      request as any,
+    );
+
+    expect(request).toHaveBeenCalledWith(
+      '/domain/mag-one/project-1/deck-1/agents',
+      { method: 'GET' },
+    );
+    expect(result.connectedAgents.map((agent) => agent.cardId)).toEqual(['card_worker']);
+  });
+
+  it('fails before transport when Project or Deck identity is absent', async () => {
     await expect(
-      runMagOne(
-        { projectId: 'project-1', deckId: 'deck-1', idfId: 'idf:abc' },
-        { loadDeck: loadDeck as any, runCard: vi.fn() as any },
+      describeConnectedAgents({ projectId: '', deckId: 'deck-1' }, vi.fn() as any),
+    ).rejects.toThrow('projectId_and_deckId_required');
+  });
+
+  it('rejects a malformed Python response', async () => {
+    await expect(
+      describeConnectedAgents(
+        { projectId: 'project-1', deckId: 'deck-1' },
+        vi.fn(async () => ({ ok: true, connectedAgents: [] })) as any,
       ),
-    ).rejects.toThrow('run_mag_one_main_control_not_authorized');
+    ).rejects.toThrow('mag_one_connected_agents_response_invalid');
   });
 });

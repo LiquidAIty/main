@@ -85,7 +85,7 @@ router.post('/', async (req, res) => {
   if (!name || typeof name !== 'string') {
     return res.status(400).json({ ok: false, error: 'name is required' });
   }
-  const projectType = project_type === 'assist' || project_type === 'agent' ? project_type : 'assist';
+  const projectType = project_type === 'assist' || project_type === 'agent' ? project_type : 'agent';
   try {
     const ownerUserId = await resolveProjectOwnerUserId(req, res);
     if (!ownerUserId) {

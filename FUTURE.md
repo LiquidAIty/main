@@ -44,10 +44,10 @@ part of the active research loop until its own pass wires it in.
   `@playwright/test`. One spec for a parked surface; grow or cut in a dedicated pass.
 - **Auth on Prisma, app state on raw Postgres, graphs in their own stores** — login/signup →
   `auth/userService` + `auth/sessionStore` → `services/database.ts` (Prisma) is the correct, deliberate
-  split: Prisma owns auth/session; raw Postgres owns project/deck/conversation app state;
+  split: Prisma owns auth/session; raw Postgres owns stable Project/Deck/Card and prompt-free Run state;
   SQLite/Engraphis owns ThinkGraph; Neo4j owns KnowGraph; CBM owns CodeGraph; repo-root
-  `LiquidAIty.idd` owns IDD definitions; PostgreSQL owns actual IDFs and dynamic AgentGraph context;
-  Apache AGE is optional meta-knowledge. This split is deliberate.
+  `LiquidAIty.idd` owns IDD definitions; Python materializes transient IDFs; Apache AGE owns Card
+  relationships and prompt-free telemetry. This split is deliberate.
 - **Hermes runtime/UI** — Main and ordinary Hermes-backed saved cards use the repo-owned persistent
   Hermes boundary. Preserve saved prompt/profile/model/tool authority, stable card identity across
   `single` and `auto-kanban`, distinct sessions, and the separate Hermes terminal. The saved
@@ -190,18 +190,18 @@ No model statement becomes KnowGraph fact without source provenance.
 skills to systems/files/tasks/proof-commands/traps/success/failure. A skill is created/updated only
 after real work produced proof worth preserving.
 
-## IDF Context Policy (target; implementation incomplete)
+## IDF Context Policy
 
-The PostgreSQL IDF is the actual controlled document sent to a model/agent. A normal turn receives only
-the relevant bounded slice: saved-card context, current exact input, active conversation-branch tail,
-selected reply anchor, scoped ThinkGraph, scoped KnowGraph evidence, scoped CodeGraph/CBM when code
-matters, relevant skills, and linked prior runs/artifacts/reviews. Dynamic AgentGraph content is
-instantiated into that same IDF version; it is not another packet or manifest.
+The transient IDF is the actual controlled document sent to a model/agent. A normal turn receives only
+the relevant bounded slice: stable saved-card context, current exact input, scoped ThinkGraph,
+KnowGraph, and CodeGraph references/data when useful, relevant skills, and explicit artifact pointers.
+Python rails materializes that document in memory; it is not a PostgreSQL archive, assignment identity,
+packet, or manifest.
 
 IDD supplies the structural rules, catalogs, field definitions, constraints, and typed operation forms
 used to construct/edit/validate the IDF. IDD definitions are not sent to the model. Optional AGE
-meta-knowledge may relate the IDF, run, card/model, native references, and produced results, but never
-authorizes or schedules execution.
+meta-knowledge may relate prompt-free run, Card, native reference, and artifact identities, but never
+stores the raw IDF or authorizes or schedules execution.
 
 Excluded by default: entire chat history, retired unrelated messages, entire user graph, raw hidden
 reasoning, raw tool payloads, secrets, unverified model claims, unrelated skills, whole repositories.
@@ -225,7 +225,7 @@ The system states honest emptiness when grounded context is unavailable.
 
 ```txt
 user request or selected Plan step
-→ bounded actual PostgreSQL IDF assembled under IDD rules
+→ bounded transient IDF assembled under IDD rules
 → Plan creation/revision or approved-step mission
 → agent work
 → real artifacts/evidence

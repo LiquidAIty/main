@@ -15,6 +15,7 @@ export type AgentBuilderChatMessage = {
 
 type UseAgentBuilderMainChatArgs = {
   canvasProjectId: string;
+  deckId: string;
   conversationId: string;
   initialMessages: AgentBuilderChatMessage[];
   workspaceView: string;
@@ -61,6 +62,7 @@ function notifyObserver<T>(observer: ((value: T) => void) | undefined, value: T)
 
 export default function useAgentBuilderMainChat({
   canvasProjectId,
+  deckId,
   conversationId,
   initialMessages,
   onUserTurnStarted,
@@ -164,6 +166,7 @@ export default function useAgentBuilderMainChat({
       try {
         const { finalText } = await streamSession({
           projectId: canvasProjectId,
+          deckId,
           conversationId,
           message: trimmed,
           onEvent: (event) => {
@@ -225,6 +228,7 @@ export default function useAgentBuilderMainChat({
     [
       canvasProjectId,
       conversationId,
+      deckId,
       nativeSessionBusy,
       onNativeTurnEvent,
       onTurnFinished,

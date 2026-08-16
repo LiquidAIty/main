@@ -12,6 +12,19 @@ from app.python_models.alpaca_market_data import (
     get_paper_account_readiness,
 )
 from app.python_models.autogen_orchestrator import orchestrate_runtime
+from app.python_models.card_domain import (
+    CardDomainError,
+    begin_prompt_free_run,
+    describe_magentic_agents,
+    finish_prompt_free_run,
+    list_decks,
+    load_deck,
+    materialize_main_invocation,
+    materialize_invocation,
+    record_explicit_artifact,
+    save_deck,
+    validate_exact_invocation,
+)
 from app.python_models.idd import (
     IddValidationError,
     materialize_card_editor,
@@ -91,6 +104,104 @@ def idd_tools_materialize(payload: dict[str, Any]):
         raise HTTPException(status_code=400, detail=str(err)) from err
 
 
+# ---------------------------------------------------------------------------
+# Stable Card/deck authority and transient communication preparation.
+# These internal rails endpoints never persist prompts, IDFs, provider bodies,
+# selected context, or ordinary model output.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/domain/decks/{project_id}/{deck_id}")
+def domain_deck_read(project_id: str, deck_id: str):
+    try:
+        return {"ok": True, **load_deck(project_id, deck_id)}
+    except CardDomainError as err:
+        status = 404 if str(err) in {"project_not_found", "deck_not_found"} else 409
+        raise HTTPException(status_code=status, detail=str(err)) from err
+
+
+@app.get("/domain/decks/{project_id}")
+def domain_deck_list(project_id: str):
+    try:
+        return {"ok": True, **list_decks(project_id)}
+    except CardDomainError as err:
+        status = 404 if str(err) == "project_not_found" else 409
+        raise HTTPException(status_code=status, detail=str(err)) from err
+
+
+@app.put("/domain/decks/{project_id}/{deck_id}")
+def domain_deck_write(project_id: str, deck_id: str, payload: dict[str, Any]):
+    try:
+        document = payload.get("document")
+        if not isinstance(document, dict):
+            raise CardDomainError("deck_document_invalid")
+        return {"ok": True, **save_deck(
+            project_id,
+            deck_id,
+            document,
+            str(payload.get("expectedRevision") or "").strip() or None,
+        )}
+    except CardDomainError as err:
+        status = 409 if str(err) == "deck_conflict" else 400
+        raise HTTPException(status_code=status, detail=str(err)) from err
+
+
+@app.post("/domain/cards/preview")
+def domain_card_preview(payload: dict[str, Any]):
+    try:
+        return materialize_invocation(payload)
+    except (CardDomainError, IddValidationError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
+@app.post("/domain/main/preview")
+def domain_main_preview(payload: dict[str, Any]):
+    try:
+        return materialize_main_invocation(payload)
+    except (CardDomainError, IddValidationError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
+@app.get("/domain/mag-one/{project_id}/{deck_id}/agents")
+def domain_mag_one_agents(project_id: str, deck_id: str):
+    try:
+        return {"ok": True, **describe_magentic_agents(project_id, deck_id)}
+    except (CardDomainError, IddValidationError) as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/domain/cards/validate-dispatch")
+def domain_card_validate_dispatch(payload: dict[str, Any]):
+    try:
+        return validate_exact_invocation(payload)
+    except (CardDomainError, IddValidationError) as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/domain/runs/begin")
+def domain_run_begin(payload: dict[str, Any]):
+    try:
+        return begin_prompt_free_run(payload)
+    except (CardDomainError, IddValidationError) as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/domain/runs/finish")
+def domain_run_finish(payload: dict[str, Any]):
+    try:
+        return finish_prompt_free_run(payload)
+    except CardDomainError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/domain/artifacts")
+def domain_artifact_record(payload: dict[str, Any]):
+    try:
+        return record_explicit_artifact(payload)
+    except CardDomainError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
 @app.post("/autogen/orchestrate")
 async def autogen_orchestrate(req: RuntimeRequest):
     try:
@@ -132,49 +243,9 @@ def thinkgraph_live_projection(payload: dict[str, Any]):
         raise HTTPException(status_code=400, detail=str(err)) from err
 
 
-@app.post("/idf/documents")
-def idf_create(payload: dict[str, Any]):
-    """Validate, persist, and return the actual Markdown model input."""
-    from app.python_models.idf import InputDataFileError, create_input_data_file
-
-    try:
-        return create_input_data_file(
-            project_id=str(payload.get("projectId") or ""),
-            deck_id=str(payload.get("deckId") or ""),
-            conversation_id=str(payload.get("conversationId") or ""),
-            run_id=str(payload.get("runId") or ""),
-            originating_card_id=str(payload.get("originatingCardId") or ""),
-            system_text=payload.get("systemText") if isinstance(payload.get("systemText"), str) else "",
-            user_text=payload.get("userText"),
-            card_context=payload.get("cardContext"),
-            dynamic_context_markdown=(
-                payload.get("dynamicContextMarkdown")
-                if isinstance(payload.get("dynamicContextMarkdown"), str)
-                else ""
-            ),
-            native_references=payload.get("nativeReferences"),
-            purpose=str(payload.get("purpose") or "conversation"),
-            approval_status=(
-                str(payload.get("approvalStatus"))
-                if payload.get("approvalStatus") is not None
-                else None
-            ),
-            version=payload.get("version", 1),
-            job_context=payload.get("jobContext"),
-            supersedes_idf_id=(
-                str(payload.get("supersedesIdfId"))
-                if payload.get("supersedesIdfId") is not None
-                else None
-            ),
-        )
-    except InputDataFileError as err:
-        raise HTTPException(status_code=400, detail=str(err)) from err
-    except Exception as err:
-        raise HTTPException(status_code=500, detail="idf_persistence_failed") from err
-
-
 @app.get("/idf/documents/{idf_id:path}")
 def idf_read(idf_id: str, projectId: str):
+    """Legacy read-only access. No current invocation path writes this store."""
     from app.python_models.idf import InputDataFileError, read_input_data_file
 
     try:
@@ -183,45 +254,6 @@ def idf_read(idf_id: str, projectId: str):
         raise HTTPException(status_code=404, detail=str(err)) from err
     except Exception as err:
         raise HTTPException(status_code=500, detail="idf_read_failed") from err
-
-
-@app.post("/idf/documents/{idf_id:path}/revisions")
-def idf_revise(idf_id: str, payload: dict[str, Any]):
-    from app.python_models.idf import InputDataFileError, revise_input_data_file
-
-    try:
-        return revise_input_data_file(
-            project_id=str(payload.get("projectId") or ""),
-            idf_id=idf_id,
-            expected_version=payload.get("expectedVersion"),
-            expected_sha256=str(payload.get("expectedSha256") or ""),
-            job_context=payload.get("jobContext"),
-            card_context=payload.get("cardContext"),
-            system_text=payload.get("systemText") if isinstance(payload.get("systemText"), str) else "",
-            user_text=payload.get("userText"),
-        )
-    except InputDataFileError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-    except Exception as err:
-        raise HTTPException(status_code=500, detail="idf_revision_failed") from err
-
-
-@app.post("/idf/documents/{idf_id:path}/approve")
-def idf_approve(idf_id: str, payload: dict[str, Any]):
-    from app.python_models.idf import InputDataFileError, approve_input_data_file
-
-    try:
-        return approve_input_data_file(
-            project_id=str(payload.get("projectId") or ""),
-            idf_id=idf_id,
-            expected_version=payload.get("expectedVersion"),
-            expected_sha256=str(payload.get("expectedSha256") or ""),
-        )
-    except InputDataFileError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-    except Exception as err:
-        raise HTTPException(status_code=500, detail="idf_approval_failed") from err
-
 
 @app.post("/autogen/run_card")
 async def autogen_run_card(req: RuntimeRequest):

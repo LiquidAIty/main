@@ -3,10 +3,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { resolveServerCodexExecutable, resolveServerCodexHome } from '../config/env';
-import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
-import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
 import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../coder/workspaceRoot';
-import { resolveModel } from '../llm/models.config';
 import { resolveSavedMcpConnections } from './mcpConnections';
 
 export type HermesTurnUsage = {
@@ -59,37 +56,10 @@ export type CodexAccountTransportMethod =
   | 'account/logout'
   | 'account/rateLimits/read';
 
-export function resolveCardAccessMode(card: any, provider: string): CardAccessMode {
-  const accessMode = String(card?.runtimeOptions?.accessMode || '').trim();
-  if (
-    accessMode !== 'chatgpt-account'
-    && accessMode !== 'coder-oauth'
-    && accessMode !== 'openai-api'
-    && accessMode !== 'openrouter-api'
-  ) {
-    throw new Error(`card_access_mode_missing_or_invalid: cardId=${String(card?.id || '')}`);
-  }
-  const runtimeBinding = String(card?.runtimeBinding || '').trim();
-  if (accessMode === 'coder-oauth' && runtimeBinding !== 'local_coder') {
-    throw new Error(
-      `card_coder_oauth_requires_local_coder: cardId=${String(card?.id || '')} runtimeBinding=${runtimeBinding}`,
-    );
-  }
-  if (runtimeBinding === 'local_coder' && accessMode === 'chatgpt-account') {
-    throw new Error(`local_coder_requires_explicit_coder_oauth_or_api: cardId=${String(card?.id || '')}`);
-  }
-  const expectedProvider = accessMode === 'openrouter-api' ? 'openrouter' : 'openai';
-  if (provider !== expectedProvider) {
-    throw new Error(
-      `card_access_mode_provider_mismatch: cardId=${String(card?.id || '')} accessMode=${accessMode} provider=${provider}`,
-    );
-  }
-  return accessMode;
-}
-
 export type HermesTurnArgs = HermesRuntimeConfig & {
   sessionKey: string;
   projectId: string;
+  deckId: string;
   conversationId: string;
   parentRunId: string;
   message: string;
@@ -133,13 +103,6 @@ function safeProfile(value: unknown): string {
   return profile;
 }
 
-function savedStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((entry) => String(entry || '').trim())
-    .filter((entry, index, all) => Boolean(entry) && all.indexOf(entry) === index);
-}
-
 function resolveHermesInstall(): { root: string; executable: string } {
   const root = path.join(resolveRepoRoot(), 'Hermes');
   const executable = path.join(root, 'venv', 'Scripts', 'hermes-acp.exe');
@@ -157,172 +120,6 @@ export function providerForHermes(provider: string, accessMode?: CardAccessMode)
   const normalized = String(provider || '').trim().toLowerCase();
   if (normalized === 'openai' && accessMode === 'chatgpt-account') return 'openai-codex';
   return normalized;
-}
-
-function resolveSavedCardModel(card: any): {
-  provider: string;
-  modelKey: string;
-  providerModelId: string;
-} {
-  const modelKey = String(card?.runtimeOptions?.modelKey || '').trim();
-  if (!modelKey) throw new Error(`card_model_config_missing: cardId=${String(card?.id || '')}`);
-  const resolved = resolveModel(modelKey);
-  const savedProvider = String(card?.runtimeOptions?.provider || '').trim().toLowerCase();
-  if (savedProvider && savedProvider !== resolved.provider) {
-    throw new Error(
-      `card_model_config_mismatch: cardId=${String(card?.id || '')} uiProvider=${savedProvider} registryProvider=${resolved.provider}`,
-    );
-  }
-  return { provider: resolved.provider, modelKey, providerModelId: resolved.id };
-}
-
-export function resolveDirectHermesSubagents(
-  parentCardId: string,
-  nodes: any[],
-  edges: any[],
-): { cardId: string; title: string; runtimeBinding: string }[] {
-  const byId = new Map(nodes.map((node) => [String(node?.id || ''), node]));
-  const children = new Map<string, { cardId: string; title: string; runtimeBinding: string }>();
-  for (const edge of edges) {
-    if (
-      String(edge?.source || '') !== parentCardId ||
-      String(edge?.target || '') === parentCardId ||
-      String(edge?.edgeType || '').trim().toLowerCase() !== 'flow'
-    ) continue;
-    const node: any = byId.get(String(edge?.target || ''));
-    if (
-      !node ||
-      node.enabled === false ||
-      node?.runtimeOptions?.enabled === false ||
-      String(node?.parentGraphId || '').trim() ||
-      String(node?.runtimeType || '').trim() !== 'assistant_agent'
-    ) continue;
-    const id = String(node.id || '').trim();
-    const binding = resolveRuntimeBinding(node?.runtimeBinding);
-    if (id && binding) {
-      children.set(id, {
-        cardId: id,
-        title: String(node?.title || id),
-        runtimeBinding: binding,
-      });
-    }
-  }
-  return [...children.values()];
-}
-
-export function resolveHermesCardRuntimeConfig(
-  card: any,
-  directSubagents: { cardId: string; title: string; runtimeBinding: string }[] = [],
-): HermesRuntimeConfig {
-  const savedModel = resolveSavedCardModel(card);
-  const profile = safeProfile(card?.runtimeOptions?.profile || card?.id);
-  const rawSnapshot = card?.runtimeOptions?.profileSnapshot;
-  const profileModel = String(rawSnapshot?.model || '').trim();
-  const profileGateway = String(rawSnapshot?.gateway || '').trim().toLowerCase();
-  const profileSnapshot = rawSnapshot && typeof rawSnapshot === 'object'
-    ? {
-        name: safeProfile(rawSnapshot.name || profile),
-        model: profileModel === '—' || profileModel === '-' ? '' : profileModel,
-        gateway: profileGateway === 'stopped' || profileGateway === 'running' || profileGateway === '—' || profileGateway === '-'
-          ? ''
-          : profileGateway,
-      }
-    : null;
-  const profileConflictResolution = card?.runtimeOptions?.profileConflictResolution === 'card'
-    ? 'card'
-    : 'hermes';
-  const profileConflicts: string[] = [];
-  const profileProvider = profileSnapshot?.gateway === 'openrouter'
-    ? 'openrouter'
-    : profileSnapshot?.gateway === 'openai' || profileSnapshot?.gateway === 'openai-codex'
-      ? 'openai'
-      : '';
-  if (profileSnapshot?.gateway && !profileProvider) {
-    profileConflicts.push(`profile_gateway_unresolved:${profileSnapshot.gateway}`);
-  } else if (profileProvider && profileProvider !== savedModel.provider) {
-    profileConflicts.push(`profile_provider_conflict:${profileProvider}:${savedModel.provider}`);
-  }
-  if (
-    profileSnapshot?.model
-    && profileSnapshot.model !== savedModel.providerModelId
-    && profileSnapshot.model !== savedModel.modelKey
-  ) {
-    profileConflicts.push(`profile_model_conflict:${profileSnapshot.model}:${savedModel.providerModelId}`);
-  }
-  if (
-    profileConflictResolution === 'hermes'
-    && profileConflicts.some((conflict) => !conflict.startsWith('profile_model_conflict:'))
-  ) {
-    throw new Error(`hermes_profile_conflict_unresolved:${profileConflicts.join(',')}`);
-  }
-  const model = profileConflictResolution === 'hermes' && profileSnapshot?.model
-    ? {
-        provider: savedModel.provider,
-        modelKey: `hermes-profile:${profile}`,
-        providerModelId: profileSnapshot.model,
-      }
-    : savedModel;
-  const accessMode = resolveCardAccessMode(card, model.provider);
-  const runtimeBinding = resolveRuntimeBinding(card?.runtimeBinding);
-  if (!runtimeBinding) {
-    throw new Error('hermes_runtime_binding_required');
-  }
-  const requestedExecutionMode =
-    card?.runtimeOptions?.executionMode === 'auto-kanban' ? 'auto-kanban' : 'single';
-  if (runtimeBinding === 'main_chat' && requestedExecutionMode !== 'single') {
-    throw new Error('main_execution_mode_must_be_single');
-  }
-  const coderCardIds = directSubagents
-    .filter((child) => child.runtimeBinding === 'local_coder')
-    .map((child) => child.cardId);
-  return {
-    cardId: String(card?.id || ''),
-    title: String(card?.title || card?.id || ''),
-    runtimeBinding,
-    prompt: [
-      String(card?.prompt || '').trim(),
-      directSubagents.length > 0
-        ? [
-            '[DIRECT_SUBAGENTS]',
-            ...directSubagents.map(
-              (child) => `${child.cardId} | ${child.title} | ${child.runtimeBinding}`,
-            ),
-            'Invoke only these saved cards through card.run_assistant_agent, and only for a bounded assignment appropriate to that saved role.',
-          ].join('\n')
-        : '',
-      coderCardIds.length > 0
-        ? [
-            '[RUNTIME_CONTEXT]',
-            `The saved Coder subagent card ids are: ${coderCardIds.join(', ')}.`,
-            'For an agreed bounded coding task, call card.run_assistant_agent with that saved cardId and the exact task input.',
-            'Coder returns the existing bounded CoderReport contract. Do not invent a code result.',
-          ].join('\n')
-        : '',
-    ].filter(Boolean).join('\n\n'),
-    // The selected Hermes profile is an explicit saved Card reference. When an
-    // older Card has no reference, its stable Card id remains the compatible
-    // one-profile-per-Card identity; no runtime import or semantic matching occurs.
-    profile,
-    provider: model.provider,
-    modelKey: model.modelKey,
-    providerModelId: model.providerModelId,
-    accessMode,
-    executionMode: requestedExecutionMode,
-    tools: [
-      ...savedStringList(card?.runtimeOptions?.tools),
-      ...(directSubagents.length > 0 ? ['card.run_assistant_agent'] : []),
-    ].filter((tool, index, all) => tool !== 'web_search' && all.indexOf(tool) === index),
-    nativeTools: savedStringList(card?.runtimeOptions?.nativeTools),
-    skills: savedStringList(card?.runtimeOptions?.skills),
-    toolsets: savedStringList(card?.runtimeOptions?.toolsets),
-    mcpConnectionIds: savedStringList(card?.runtimeOptions?.mcpConnectionIds),
-    coderCardIds,
-    directSubagents,
-    savedCardRuntime: savedModel,
-    profileSnapshot,
-    profileConflicts,
-    profileConflictResolution,
-  };
 }
 
 function textContent(update: any): string {
@@ -577,7 +374,7 @@ class AcpProcess {
           name: 'MCP_TRUSTED_MAIN_CONTEXT',
           value: JSON.stringify({
             projectId: args.projectId,
-            deckId: BUILDER_DECK_ID,
+            deckId: args.deckId,
             conversationId: args.conversationId,
             parentRunId: args.parentRunId,
             mainCardId: args.cardId,
@@ -731,19 +528,6 @@ function processForProfile(profile: string): AcpProcess {
 
 export function deriveHermesSessionKey(projectId: string, conversationId: string, cardId: string): string {
   return `hermes:${projectId}:${conversationId}:${cardId}`;
-}
-
-export async function resolveMainHermesRuntimeConfig(projectId: string): Promise<HermesRuntimeConfig | null> {
-  const doc = await getDeckDocument(projectId, BUILDER_DECK_ID);
-  const nodes = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
-  const matches = nodes.filter((node: any) => resolveRuntimeBinding(node?.runtimeBinding) === 'main_chat');
-  if (matches.length !== 1) return null;
-  const card = matches[0];
-  const edges = Array.isArray((doc?.deck as any)?.edges) ? (doc!.deck as any).edges : [];
-  return resolveHermesCardRuntimeConfig(
-    card,
-    resolveDirectHermesSubagents(String(card.id || ''), nodes, edges),
-  );
 }
 
 export async function startHermesTurn(

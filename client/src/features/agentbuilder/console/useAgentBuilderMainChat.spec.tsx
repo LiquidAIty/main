@@ -44,6 +44,7 @@ describe('Main chat live observation callbacks', () => {
     });
     const { result } = renderHook(() => useAgentBuilderMainChat({
       canvasProjectId: 'project-1',
+      deckId: 'deck_builder',
       conversationId: 'main',
       initialMessages: [],
       workspaceView: 'chat',

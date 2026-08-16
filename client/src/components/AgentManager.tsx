@@ -178,6 +178,7 @@ interface AgentManagerProps {
   }) => void;
   promptTestInput?: string;
   onChangePromptTestInput?: (value: string) => void;
+  onChangeMaterializedIdf?: (value: string) => void;
   onRunCard?: () => void;
   onMaterializeCard?: () => void;
   runBusy?: boolean;
@@ -222,22 +223,19 @@ export type StandaloneCardTestResult = {
   provider?: string | null;
   model?: string | null;
   runtimeType?: string | null;
-  idf?: {
-    idfId: string;
-    runId: string;
-    version: number;
-    contentSha256: string;
-    systemText: string;
-    userText: string;
-    modelInputMarkdown: string;
-    contentMarkdown: string;
-    cardContext: Record<string, unknown> | null;
-    dynamicContextMarkdown: string;
-    nativeReferences: Array<Record<string, unknown>>;
+  invocation?: {
+    ephemeral: true;
+    assignment: string;
+    cardRevisionId: string;
+    cardRevision: number;
+    cardRevisionSha256: string;
+    runtimeOwner: string;
+    exactIdf: string;
+    cardContext: Record<string, unknown>;
+    runtimeFacet: Record<string, unknown>;
+    providerProjection: Record<string, unknown>;
   } | null;
-  providerInput?: Record<string, unknown> | null;
   receipt?: Record<string, unknown> | null;
-  lineage?: Array<Record<string, unknown>>;
 };
 
 type SaveCardStatus = 'idle' | 'saving' | 'saved' | 'failed';
@@ -392,6 +390,7 @@ export function AgentManager({
   activeTab,
   promptTestInput,
   onChangePromptTestInput,
+  onChangeMaterializedIdf,
   onRunCard,
   onMaterializeCard,
   runBusy = false,
@@ -1689,7 +1688,7 @@ export function AgentManager({
               disabled={runBusy || !String(promptTestInput || '').trim()}
               data-testid="agent-manager-materialize"
             >
-              {runBusy ? 'Working…' : 'Materialize IDF'}
+              {runBusy ? 'Working…' : 'Preview IDF'}
             </button>
             <button
               type="button"
@@ -1734,30 +1733,47 @@ export function AgentManager({
                 Tools granted: {runResult.tools.join(', ')}
               </div>
             ) : null}
-            {runResult.idf ? (
+            {runResult.invocation ? (
               <>
                 <div style={{ color: '#8FC8D1' }}>
-                  IDF {runResult.idf.idfId} · v{runResult.idf.version} · sha256 {runResult.idf.contentSha256}
+                  Transient IDF · Card revision {runResult.invocation.cardRevision} · {runResult.invocation.runtimeOwner}
                 </div>
                 <details open>
-                  <summary style={{ cursor: 'pointer', color: '#D5E4E8' }}>Exact materialized IDF</summary>
-                  <pre style={{ margin: 0, padding: 8, background: '#1B1B1B', color: '#D9E4E8', borderRadius: 6, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 360, overflowY: 'auto' }}>
-                    {runResult.idf.contentMarkdown}
-                  </pre>
+                  <summary style={{ cursor: 'pointer', color: '#D5E4E8' }}>Exact in-memory IDF</summary>
+                  <textarea
+                    aria-label="Exact temporary IDF"
+                    value={runResult.invocation.exactIdf}
+                    onChange={(event) => onChangeMaterializedIdf?.(event.target.value)}
+                    rows={18}
+                    style={{
+                      width: '100%',
+                      margin: 0,
+                      padding: 8,
+                      background: '#1B1B1B',
+                      color: '#D9E4E8',
+                      border: '1px solid #3A4A4F',
+                      borderRadius: 6,
+                      whiteSpace: 'pre-wrap',
+                      overflowWrap: 'anywhere',
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      resize: 'vertical',
+                    }}
+                  />
                 </details>
                 <details>
                   <summary style={{ cursor: 'pointer', color: '#D5E4E8' }}>Provider wire fields and tool grants</summary>
                   <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#B8C8CD' }}>
-                    {JSON.stringify(runResult.providerInput || {}, null, 2)}
+                    {JSON.stringify(runResult.invocation.providerProjection || {}, null, 2)}
                   </pre>
                 </details>
               </>
             ) : null}
             {runResult.receipt ? (
               <details>
-                <summary style={{ cursor: 'pointer', color: '#D5E4E8' }}>Durable receipt, artifacts, and AGE lineage</summary>
+                <summary style={{ cursor: 'pointer', color: '#D5E4E8' }}>Prompt-free run receipt</summary>
                 <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#B8C8CD' }}>
-                  {JSON.stringify({ receipt: runResult.receipt, lineage: runResult.lineage || [] }, null, 2)}
+                  {JSON.stringify(runResult.receipt, null, 2)}
                 </pre>
               </details>
             ) : null}

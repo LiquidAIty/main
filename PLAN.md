@@ -109,8 +109,8 @@ user question or selected data
 → research or reasoning produces proposed entities and relationships
 → accepted knowledge is written by the native graph owner
 → new nodes and edges settle into the durable graph
-→ the next PostgreSQL IDF records the selected dynamic context
-→ optional AGE meta-knowledge records what the execution referenced, consumed, or produced
+→ Python materializes the next transient IDF from stable Card state and selected context
+→ prompt-free AGE telemetry records what the execution referenced, consumed, or produced
 → future work can retrieve and extend the accumulated knowledge
 ```
 
@@ -250,15 +250,15 @@ Microsoft AutoGen/Magentic-One remains on Python rails. Connected `magentic_opti
 eligible workers. The runtime retains its private native Task and Progress Ledgers. LiquidAIty does
 not inspect, reconstruct, rewrite, or visualize those private ledgers.
 
-The helper may prepare a bounded exact Mag One mission in dynamic AgentGraph context, Main may review
-and approve it, and the one existing `run_mag_one` authority launches native Magentic-One. AgentGraph
-does not claim, authorize, schedule, or translate the run.
+Main may prepare, inspect, and approve one bounded transient Mag One mission; the existing
+`run_mag_one` authority materializes it against the AGE-connected orchestrator Card and launches native
+Magentic-One. No prompt store claims, authorizes, schedules, or translates the run.
 
 ---
 
 ## Graph authorities
 
-One writer owns each graph. UI components, telemetry, IDF, and AgentGraph carry pointers and lineage;
+One writer owns each graph. UI components, telemetry, and transient IDFs carry pointers and lineage;
 they do not merge or copy native authorities.
 
 | Authority | Storage/runtime | Owns | Does not own |
@@ -266,8 +266,8 @@ they do not merge or copy native authorities.
 | ThinkGraph | SQLite / Engraphis through Python rails | project reasoning, conversation-linked operational knowledge, jobs, proof, blockers, next steps | sourced external knowledge, code structure, agent topology |
 | KnowGraph | Neo4j / Graphiti and Python research | sourced entities, relationships, episodes, temporal facts, citations, provenance | task orchestration, UI state, code structure |
 | CodeGraph | CBM | repository files, symbols, calls, imports, routes, structural relationships, index state | product knowledge, native agent runs, source edits |
-| AgentGraph | PostgreSQL relational context records | instantiated dynamic prompt/query/script/reference content used to evolve the next IDF | runtime authorization, saved topology, copies of native graphs, private Magentic ledgers |
-| AGE meta graph | Apache AGE in PostgreSQL | optional IDF/run/card/model/native-reference consumption, production, and derivation relationships | runtime permission, card selection, Hermes/Mag One/Coder lifecycle |
+| Invocation selection | transient Python memory | current prompt/query/script/reference selection used to assemble one IDF | durable knowledge, runtime authorization, saved topology, archives |
+| AGE graph | Apache AGE in PostgreSQL | accepted Card topology plus prompt-free run/reference/artifact relationships and telemetry | raw IDFs/prompts, runtime permission, card selection, native lifecycle |
 | Telemetry | existing runtime event stream plus bounded append-only activity storage where required | high-volume transient read/select/send/open/traverse/write activity | durable knowledge meaning or another graph authority |
 
 References across authorities are allowed only as provenance and hydration pointers. No graph writes
@@ -312,10 +312,11 @@ query alone because the graph may change between delivery and consumption.
 
 ## IDF and IDD — actual model input and its input rules
 
-IDF is the actual assembled model-context document stored in PostgreSQL and transported to the actual
-model call. It combines stable saved-card context with instantiated dynamic AgentGraph content and
-bounded resolved native data. It is not an abstract artifact, assignment, receipt, context envelope,
-or post-run reconstruction. Normal prose remains flexible; explicit typed islands may carry:
+IDF is the actual assembled model-context document materialized transiently by Python rails and
+transported to the actual model call. It combines stable relational Card context with the current
+dynamic assignment, selected graph references/context, and bounded resolved native data. It is not a
+durable assignment, receipt, context envelope, or post-run reconstruction. The exact Inspector-visible
+bytes are sent and then discarded. Normal prose remains flexible; explicit typed islands may carry:
 
 ```text
 idf-imports
@@ -375,15 +376,14 @@ Do not persist machine-specific absolute paths as portable product identity.
 - `LiquidAIty.idd` is now the one literal rule catalog. Its generic Python interpreter validates the
   current structured card snapshot and the bracketed native-language island vocabulary. Ordinary
   Markdown remains the default; JSON is used only for bounded exact structured values where useful.
-- PostgreSQL stores the exact rendered Markdown IDF. Main and ordinary Hermes consume the card snapshot,
-  system text, and model input returned from persistence. AutoGen single-card and Mag One payloads carry
-  that same card snapshot, and Python rails rejects a separately supplied runtime config that differs.
+- Python renders the exact transient Markdown IDF shown by the Inspector. Main/Hermes and AutoGen
+  receive those in-memory bytes, and Python rails rejects protected Card/runtime edits that differ.
 - Live MCP discovery and the private Python registry now feed their factual names, schemas, annotations,
   security metadata, source identity, and availability into the literal IDD materializer. The backend
   `toolCatalogProjection.ts` file only indexes and searches the already-materialized IDD records; it
   does not infer, merge, or classify tool meaning or compatibility.
-- Typed SQL/Cypher/script/view/result execution, live selected-schema materialization into IDF, the full
-  editor, and optional AGE observation remain **TARGET / INCOMPLETE**. Their schemas must follow proven
+- Typed SQL/Cypher/script/view/result execution and live selected-schema materialization into IDF remain
+  **TARGET / INCOMPLETE**. Their schemas must follow proven
   Python execution contracts, not be invented ahead of them.
 
 ---

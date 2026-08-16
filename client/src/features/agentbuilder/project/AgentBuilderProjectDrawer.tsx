@@ -80,7 +80,7 @@ export default function AgentBuilderProjectDrawer({
         body: JSON.stringify({
           name,
           code,
-          project_type: 'assist',
+          project_type: 'agent',
         }),
       });
       if (!response.ok) {
