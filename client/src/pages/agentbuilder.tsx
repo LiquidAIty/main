@@ -192,7 +192,7 @@ class CardEditorErrorBoundary extends React.Component<
 }
 
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Capabilities', 'Runtime'] as const;
+const BUILDER_NODE_TABS = ['Invocation', 'Prompt', 'Knowledge', 'Capabilities', 'Runtime'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
@@ -573,6 +573,8 @@ export default function AgentBuilder(): React.ReactElement {
   const [standaloneTestPrompt, setStandaloneTestPrompt] = useState('');
   const [standaloneTestBusy, setStandaloneTestBusy] = useState(false);
   const [standaloneTestResult, setStandaloneTestResult] = useState<StandaloneCardTestResult | null>(null);
+  const [standaloneTestSenderCardId, setStandaloneTestSenderCardId] = useState<string | null>(null);
+  const pendingInvocationRef = useRef<{ cardId: string; assignment: string; senderCardId: string | null } | null>(null);
   const standaloneTestRequestRef = useRef<string | null>(null);
   const standaloneTestUnavailableReason = useMemo(
     () => getStandaloneCardUnavailableReason(selectedCard),
@@ -580,10 +582,30 @@ export default function AgentBuilder(): React.ReactElement {
   );
   const showStandaloneTestControls =
     Boolean(selectedCard) && selectedCard?.runtimeBinding !== 'main_chat';
+  const mainInvocationTargets = useMemo(() => {
+    const mainCard = deck.nodes.find((node) => node.runtimeBinding === 'main_chat');
+    if (!mainCard) return [];
+    const allowed = new Set(
+      deck.edges
+        .filter((edge) => edge.source === mainCard.id && edge.edgeType === 'flow')
+        .map((edge) => edge.target),
+    );
+    return deck.nodes
+      .filter((node) => allowed.has(node.id) && (node as AgentCardInstance & { enabled?: boolean }).enabled !== false)
+      .map((node) => ({ cardId: node.id, title: node.title }));
+  }, [deck.edges, deck.nodes]);
 
   useEffect(() => {
+    const pending = pendingInvocationRef.current;
     standaloneTestRequestRef.current = null;
-    setStandaloneTestPrompt('');
+    if (pending?.cardId === selectedCardId) {
+      setStandaloneTestPrompt(pending.assignment);
+      setStandaloneTestSenderCardId(pending.senderCardId);
+      pendingInvocationRef.current = null;
+    } else {
+      setStandaloneTestPrompt('');
+      setStandaloneTestSenderCardId(null);
+    }
     setStandaloneTestBusy(false);
     setStandaloneTestResult(null);
   }, [selectedCardId]);
@@ -593,13 +615,15 @@ export default function AgentBuilder(): React.ReactElement {
       !selectedCard ||
       !canvasProjectId ||
       standaloneTestBusy ||
-      standaloneTestUnavailableReason
+      standaloneTestUnavailableReason ||
+      !standaloneTestResult?.idf ||
+      standaloneTestResult.idf.userText !== standaloneTestPrompt.trim()
     ) {
       return;
     }
     const input = standaloneTestPrompt.trim();
     if (!input) return;
-    const correlationId = `card-test-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    const correlationId = standaloneTestResult.idf.runId;
     standaloneTestRequestRef.current = correlationId;
     setStandaloneTestBusy(true);
     setStandaloneTestResult(null);
@@ -609,12 +633,17 @@ export default function AgentBuilder(): React.ReactElement {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          action: 'execute',
           projectId: canvasProjectId,
           deckId: BUILDER_DECK_ID,
           cardId: selectedCard.id,
           correlationId,
           input,
           conversationId,
+          senderCardId: standaloneTestSenderCardId,
+          idfId: standaloneTestResult.idf.idfId,
+          idfVersion: standaloneTestResult.idf.version,
+          idfContentSha256: standaloneTestResult.idf.contentSha256,
         }),
       });
       const payload = await response.json().catch(() => null);
@@ -639,6 +668,10 @@ export default function AgentBuilder(): React.ReactElement {
           runtimeType: result.runtimeType
             ? String(result.runtimeType)
             : selectedCard.runtimeType || null,
+          idf: result.idf || null,
+          providerInput: result.providerInput || null,
+          receipt: result.receipt || null,
+          lineage: Array.isArray(result.lineage) ? result.lineage : [],
         });
         setDeckStatusMessage(
           result.error
@@ -675,8 +708,72 @@ export default function AgentBuilder(): React.ReactElement {
     selectedCard,
     standaloneTestBusy,
     standaloneTestPrompt,
+    standaloneTestResult,
+    standaloneTestSenderCardId,
     standaloneTestUnavailableReason,
   ]);
+
+  const materializeStandaloneCard = useCallback(async () => {
+    if (!selectedCard || !canvasProjectId || standaloneTestBusy || standaloneTestUnavailableReason) return;
+    const input = standaloneTestPrompt.trim();
+    if (!input) return;
+    const correlationId = `card-invocation-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    standaloneTestRequestRef.current = correlationId;
+    setStandaloneTestBusy(true);
+    setStandaloneTestResult(null);
+    try {
+      const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'materialize',
+          projectId: canvasProjectId,
+          deckId: BUILDER_DECK_ID,
+          cardId: selectedCard.id,
+          correlationId,
+          input,
+          conversationId,
+          senderCardId: standaloneTestSenderCardId,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      const result = payload?.result;
+      if (!response.ok || !result?.idf) {
+        throw new Error(String(payload?.error || result?.error || `card_materialize_http_${response.status}`));
+      }
+      if (standaloneTestRequestRef.current === correlationId) {
+        setStandaloneTestResult({
+          status: String(result.status || 'materialized'),
+          output: String(result.output || ''),
+          error: result.error ? String(result.error) : null,
+          toolCallCount: typeof result.toolCallCount === 'number' ? result.toolCallCount : null,
+          tools: Array.isArray(result.tools) ? result.tools.map(String) : [],
+          provider: result.provider ? String(result.provider) : selectedCard.runtimeOptions?.provider || null,
+          model: result.providerModelId ? String(result.providerModelId) : selectedCard.runtimeOptions?.modelKey || null,
+          runtimeType: result.runtimeType ? String(result.runtimeType) : selectedCard.runtimeType || null,
+          idf: result.idf,
+          providerInput: result.providerInput || null,
+          receipt: result.receipt || null,
+          lineage: Array.isArray(result.lineage) ? result.lineage : [],
+        });
+        setDeckStatusMessage(`${selectedCard.title} IDF materialized and persisted.`);
+      }
+    } catch (error) {
+      if (standaloneTestRequestRef.current === correlationId) {
+        setStandaloneTestResult({
+          status: 'failed', output: '', error: error instanceof Error ? error.message : String(error),
+          toolCallCount: null, tools: [], provider: selectedCard.runtimeOptions?.provider || null,
+          model: selectedCard.runtimeOptions?.modelKey || null, runtimeType: selectedCard.runtimeType || null,
+        });
+      }
+    } finally {
+      if (standaloneTestRequestRef.current === correlationId) {
+        standaloneTestRequestRef.current = null;
+        setStandaloneTestBusy(false);
+      }
+    }
+  }, [canvasProjectId, conversationId, selectedCard, standaloneTestBusy, standaloneTestPrompt, standaloneTestSenderCardId, standaloneTestUnavailableReason]);
   const builderTabs = useMemo(() => {
     if (selectedCard) return [...BUILDER_NODE_TABS];
     return [...BUILDER_PROJECT_TABS];
@@ -750,7 +847,7 @@ export default function AgentBuilder(): React.ReactElement {
     }));
     setInspectorDrawerOpen(true);
     if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) {
-      setTab('Prompt');
+      setTab('Invocation');
     }
     setDeckStatusMessage(
       `Added ${nextNode.title} to the canvas. Open its editor to configure it.`,
@@ -772,6 +869,7 @@ export default function AgentBuilder(): React.ReactElement {
     (cardId: string | null) => {
       recordUiOnlyAction('node-selection');
       setSelectedCardId(cardId);
+      setStandaloneTestSenderCardId(null);
       const selectedNode = cardId
         ? deck.nodes.find((node) => node.id === cardId) || null
         : null;
@@ -789,9 +887,7 @@ export default function AgentBuilder(): React.ReactElement {
           nonce: (current?.nonce || 0) + 1,
         }));
         setSelectedEdgeId(null);
-        if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) {
-          setTab('Prompt');
-        }
+        setTab('Invocation');
       } else {
         setBuilderCanvasFocusRequest((current) => ({
           kind: 'deck',
@@ -911,6 +1007,7 @@ export default function AgentBuilder(): React.ReactElement {
     const renderEditorContent = () => {
       if (selectedCard && selectedCardConfig) {
         if (
+          tab === 'Invocation' ||
           tab === 'Prompt' ||
           tab === 'Knowledge' ||
           tab === 'Capabilities' ||
@@ -946,12 +1043,22 @@ export default function AgentBuilder(): React.ReactElement {
                     onChangeCardSubtext={handleUpdateSelectedCardSubtext}
                     localConfig={selectedCardConfig}
                     promptTestInput={standaloneTestPrompt}
-                    onChangePromptTestInput={setStandaloneTestPrompt}
+                    onChangePromptTestInput={(value) => {
+                      setStandaloneTestPrompt(value);
+                      setStandaloneTestResult(null);
+                    }}
+                    onMaterializeCard={() => {
+                      void materializeStandaloneCard();
+                    }}
                     onRunCard={() => {
                       void runStandaloneCardTest();
                     }}
                     runBusy={standaloneTestBusy}
-                    runDisabled={!showStandaloneTestControls}
+                    runDisabled={
+                      !showStandaloneTestControls ||
+                      !standaloneTestResult?.idf ||
+                      standaloneTestResult.idf.userText !== standaloneTestPrompt.trim()
+                    }
                     runResult={standaloneTestResult}
                     saveDeckStatusMessage={deckStatusMessage}
                     openDeckRevision={deckRevision}
@@ -1092,9 +1199,21 @@ export default function AgentBuilder(): React.ReactElement {
           mainAccessMode={
             String((deck.nodes.find((node) => node.runtimeBinding === 'main_chat')?.runtimeOptions as any)?.accessMode || '')
           }
-          coderCardId={
-            deck.nodes.find((node) => node.runtimeBinding === 'local_coder')?.id || null
-          }
+          invocationTargets={mainInvocationTargets}
+          onInspectInvocation={(cardId, assignment) => {
+            const mainCardId = deck.nodes.find((node) => node.runtimeBinding === 'main_chat')?.id || null;
+            pendingInvocationRef.current = { cardId, assignment, senderCardId: mainCardId };
+            setSelectedCardId(cardId);
+            setSelectedEdgeId(null);
+            setStandaloneTestResult(null);
+            setTab('Invocation');
+            setInspectorDrawerOpen(true);
+            setBuilderCanvasFocusRequest((current) => ({
+              kind: 'card',
+              cardId,
+              nonce: (current?.nonce || 0) + 1,
+            }));
+          }}
         />
       </div>
     );

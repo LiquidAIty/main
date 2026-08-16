@@ -1,4 +1,4 @@
-# LiquidAIty Input Data Dictionary
+# LiquidAIty Input Data Definition
 #
 # One repository-owned catalog for the structured records and mixed-language
 # islands that may appear inside a LiquidAIty IDF. The file uses TOML syntax so
@@ -704,6 +704,27 @@ type = "string"
 required = false
 
 [[records.fields]]
+name = "savedCardRuntime"
+type = "object"
+required = false
+
+[[records.fields]]
+name = "profileSnapshot"
+type = "object"
+required = false
+
+[[records.fields]]
+name = "profileConflicts"
+type = "string-array"
+required = false
+
+[[records.fields]]
+name = "profileConflictResolution"
+type = "string"
+required = false
+values = ["hermes", "card"]
+
+[[records.fields]]
 name = "provider"
 type = "string"
 required = false
@@ -733,6 +754,11 @@ values = ["single", "auto-kanban"]
 [[records.fields]]
 name = "tools"
 type = "string-array"
+required = false
+
+[[records.fields]]
+name = "toolDefinitions"
+type = "object-array"
 required = false
 
 [[records.fields]]

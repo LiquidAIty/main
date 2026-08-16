@@ -110,6 +110,9 @@ export function useBuilderProjects({
         assistCards.find((card: any) => String(card?.code ?? "").trim() === "ADMIN") ??
         assistCards.find((card: any) => isAdminProjectCard(card)) ??
         null;
+      const canonicalDeckAssist =
+        assistCards.find((card: any) => String(card?.code ?? '').trim().toLowerCase() === 'agent-builder') ??
+        null;
       setProjects(cards);
 
       const search = new URLSearchParams(window.location.search);
@@ -120,6 +123,7 @@ export function useBuilderProjects({
       const nextAssistId =
         (urlIdValid ? urlId : "") ||
         (hasCurrentAssist ? currentAssistId : "") ||
+        canonicalDeckAssist?.id ||
         adminAssistCard?.id ||
         assistCards[0]?.id ||
         "";

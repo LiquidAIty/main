@@ -1,3 +1,10 @@
+import { listPythonAgentMcpCatalog } from '../mcp/pythonAgentMcpClient';
+import {
+  indexToolCatalogReferences,
+  resolveToolCatalogDefinitions,
+  type ToolCatalogReference,
+} from '../../cards/toolCatalogProjection';
+
 type AutoGenOrchestratorSession = {
   sessionId: string;
   projectId: string;
@@ -250,10 +257,38 @@ export async function createInputDataFileOnPython(payload: {
   jobContext?: Record<string, unknown>;
   supersedesIdfId?: string;
 }): Promise<{ ok: true; idf: import('../../contracts/runtimeContracts').InputDataFile }> {
+  const selectedToolIds = Array.isArray(payload.cardContext.tools)
+    ? payload.cardContext.tools
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+    : [];
+  let cardContext = payload.cardContext;
+  if (selectedToolIds.length > 0) {
+    const [canonicalMcpTools, privateRuntimeManifest] = await Promise.all([
+      listPythonAgentMcpCatalog(),
+      requestPythonRailsJson('/tools/manifest', { method: 'GET' }) as Promise<{ tools?: unknown }>,
+    ]);
+    if (!Array.isArray(privateRuntimeManifest.tools)) {
+      throw new Error('python_runtime_tool_manifest_invalid');
+    }
+    const materialized = await requestPythonRailsJson('/idd/tools/materialize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tools: [...canonicalMcpTools, ...privateRuntimeManifest.tools] }),
+    }) as { references?: unknown };
+    if (!Array.isArray(materialized.references)) {
+      throw new Error('input_data_definition_tool_catalog_invalid');
+    }
+    const toolDefinitions = resolveToolCatalogDefinitions(
+      indexToolCatalogReferences(materialized.references as ToolCatalogReference[]),
+      selectedToolIds,
+    );
+    cardContext = { ...cardContext, toolDefinitions };
+  }
   return requestPythonRailsJson('/idf/documents', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, cardContext }),
   }) as Promise<{ ok: true; idf: import('../../contracts/runtimeContracts').InputDataFile }>;
 }
 

@@ -27,14 +27,25 @@ const planningMocks = vi.hoisted(() => ({
 }));
 
 const runtimeMocks = vi.hoisted(() => ({
-  runConfiguredCard: vi.fn(async () => ({
-    status: 'completed' as const,
+  runConfiguredCard: vi.fn(async (args: any) => ({
+    status: args?.materializeOnly ? 'materialized' as const : 'completed' as const,
     cardId: 'card_saved_worker',
     runtime: 'hermes' as const,
     provider: 'openai',
     modelKey: 'gpt-5.6-luna',
     providerModelId: 'gpt-5.6-luna',
     output: 'ok',
+    accessMode: 'chatgpt-account',
+    idfVersion: 1,
+    idfContentSha256: 'sha-1',
+    idf: {
+      idfId: 'idf-1', projectId: args.projectId, deckId: args.deckId,
+      conversationId: args.conversationId || 'main', runId: args.correlationId,
+      originatingCardId: args.cardId, version: 1, contentSha256: 'sha-1',
+      userText: args.input, systemText: 'saved prompt', modelInputMarkdown: args.input,
+      contentMarkdown: '# IDF', cardContext: {}, dynamicContextMarkdown: '', nativeReferences: [],
+    },
+    providerInput: {},
     usage: {
       providerInputTokens: null,
       providerOutputTokens: null,
@@ -104,6 +115,11 @@ const chatSessionMocks = vi.hoisted(() => {
     cancelConversationRun: vi.fn(async () => undefined),
     getConversationMessages: vi.fn(async () => []),
     listConversations: vi.fn(async () => []),
+    getConversationRunReceipt: vi.fn(async (runId: string) => ({
+      correlationId: runId,
+      state: 'completed',
+      ageLineage: [{ assignment: { correlationId: runId } }],
+    })),
     lastCancel: vi.fn(),
     requestHermesCodexAccount: vi.fn(async (profile: string, method: string) => {
       expect(profile).toBe('default');
@@ -212,6 +228,7 @@ vi.mock('../conversations/store', () => ({
   cancelConversationRun: chatSessionMocks.cancelConversationRun,
   getConversationMessages: chatSessionMocks.getConversationMessages,
   listConversations: chatSessionMocks.listConversations,
+  getConversationRunReceipt: chatSessionMocks.getConversationRunReceipt,
 }));
 
 vi.mock('../hermes/mainAdapter', () => ({
@@ -443,12 +460,25 @@ describe('coder routes', () => {
     chatSessionMocks.completeConversationRun.mockClear();
     chatSessionMocks.failConversationRun.mockClear();
     runtimeMocks.runConfiguredCard.mockResolvedValueOnce({
+      status: 'materialized',
+      cardId: 'card_worker', runtime: 'hermes_kanban', provider: 'openai',
+      modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna', accessMode: 'chatgpt-account',
+      output: '', usage: chatSessionMocks.usage, tools: [],
+      idfVersion: 1, idfContentSha256: 'sha-worker',
+      idf: { idfId: 'idf-worker', projectId: 'project-1', deckId: 'deck_builder', conversationId: 'conv-1', runId: 'corr-1', originatingCardId: 'card_worker', version: 1, contentSha256: 'sha-worker', userText: 'Use the stored handoff.' },
+      providerInput: {},
+    } as any).mockResolvedValueOnce({
       status: 'submitted',
       cardId: 'card_worker',
       runtime: 'hermes_kanban',
       provider: 'openai',
       modelKey: 'gpt-5.6-luna',
       providerModelId: 'gpt-5.6-luna',
+      accessMode: 'chatgpt-account',
+      idfVersion: 1,
+      idfContentSha256: 'sha-worker',
+      idf: { idfId: 'idf-worker', version: 1, contentSha256: 'sha-worker' },
+      providerInput: {},
       output: '',
       usage: chatSessionMocks.usage,
       hermesKanban: {
@@ -483,7 +513,7 @@ describe('coder routes', () => {
           },
         },
       });
-      expect(runtimeMocks.runConfiguredCard).toHaveBeenCalledWith({
+      expect(runtimeMocks.runConfiguredCard).toHaveBeenNthCalledWith(1, {
         projectId: 'project-1',
         deckId: 'deck_builder',
         cardId: 'card_worker',
@@ -491,8 +521,14 @@ describe('coder routes', () => {
         conversationId: 'conv-1',
         parentRunId: 'req_1234abcd',
         input: 'Use the stored handoff.',
+        materializeOnly: true,
       });
-      expect(chatSessionMocks.beginConversationRun).toHaveBeenCalledWith({
+      expect(runtimeMocks.runConfiguredCard).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        idfId: 'idf-worker',
+        idfVersion: 1,
+        idfContentSha256: 'sha-worker',
+      }));
+      expect(chatSessionMocks.beginConversationRun).toHaveBeenCalledWith(expect.objectContaining({
         runId: 'corr-1',
         projectId: 'project-1',
         deckId: 'deck_builder',
@@ -501,15 +537,18 @@ describe('coder routes', () => {
         runtime: 'configured_card',
         sessionId: 'configured:deck_builder:card_worker:conv-1',
         userContent: 'Use the stored handoff.',
-      });
-      expect(chatSessionMocks.markConversationRunRunning).toHaveBeenCalledWith({
+        invocation: { idfId: 'idf-worker', version: 1, contentSha256: 'sha-worker' },
+      }));
+      expect(chatSessionMocks.markConversationRunRunning).toHaveBeenCalledWith(expect.objectContaining({
         runId: 'corr-1',
         invokingCardId: 'card_worker',
         runtime: 'hermes_kanban',
         provider: 'openai',
         modelKey: 'gpt-5.6-luna',
         providerModelId: 'gpt-5.6-luna',
-      });
+        accessMode: 'chatgpt-account',
+        idfId: 'idf-worker',
+      }));
       expect(chatSessionMocks.completeConversationRun).not.toHaveBeenCalled();
       expect(chatSessionMocks.failConversationRun).not.toHaveBeenCalled();
     } finally {
@@ -524,12 +563,23 @@ describe('coder routes', () => {
     chatSessionMocks.completeConversationRun.mockClear();
     chatSessionMocks.failConversationRun.mockClear();
     runtimeMocks.runConfiguredCard.mockResolvedValueOnce({
+      status: 'materialized', cardId: 'card_main_chat', runtime: 'hermes', provider: 'openai',
+      modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna', accessMode: 'chatgpt-account',
+      output: '', usage: chatSessionMocks.usage, tools: [], idfVersion: 1, idfContentSha256: 'sha-main',
+      idf: { idfId: 'idf-main', projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main', runId: 'corr-main-1', originatingCardId: 'card_main_chat', version: 1, contentSha256: 'sha-main', userText: 'Use saved Main.' },
+      providerInput: {},
+    } as any).mockResolvedValueOnce({
       status: 'completed',
       cardId: 'card_main_chat',
       runtime: 'hermes',
       provider: 'openai',
       modelKey: 'gpt-5.6-luna',
       providerModelId: 'gpt-5.6-luna',
+      accessMode: 'chatgpt-account',
+      idfVersion: 1,
+      idfContentSha256: 'sha-main',
+      idf: { idfId: 'idf-main', version: 1, contentSha256: 'sha-main' },
+      providerInput: {},
       output: 'Saved Main reply.',
       usage: chatSessionMocks.usage,
     } as any);
@@ -558,19 +608,20 @@ describe('coder routes', () => {
         runtime: 'configured_card',
         userContent: 'Use saved Main.',
       }));
-      expect(chatSessionMocks.markConversationRunRunning).toHaveBeenCalledWith({
+      expect(chatSessionMocks.markConversationRunRunning).toHaveBeenCalledWith(expect.objectContaining({
         runId: 'corr-main-1',
         invokingCardId: 'card_main_chat',
         runtime: 'hermes',
         provider: 'openai',
         modelKey: 'gpt-5.6-luna',
         providerModelId: 'gpt-5.6-luna',
-      });
-      expect(chatSessionMocks.completeConversationRun).toHaveBeenCalledWith({
+        idfId: 'idf-main',
+      }));
+      expect(chatSessionMocks.completeConversationRun).toHaveBeenCalledWith(expect.objectContaining({
         runId: 'corr-main-1',
         assistantContent: 'Saved Main reply.',
         usage: chatSessionMocks.usage,
-      });
+      }));
       expect(chatSessionMocks.failConversationRun).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);

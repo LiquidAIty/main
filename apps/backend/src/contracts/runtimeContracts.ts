@@ -25,6 +25,17 @@ export type InputDataFile = {
   createdAt: string;
 };
 
+export type ProviderInvocationInput = {
+  systemPrompt: string;
+  message: string;
+  enabledTools: string[];
+  enabledToolsets: string[];
+  skills: string[];
+  mcpToolAllowlist: string[];
+  toolDefinitions: Array<Record<string, unknown>>;
+  mcpConnectionIds: string[];
+};
+
 export type NativeRunResult = {
   runId: string;
   idfId: string;

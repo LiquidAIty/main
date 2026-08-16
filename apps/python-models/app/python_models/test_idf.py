@@ -15,6 +15,15 @@ CARD_CONTEXT = {
     "providerModelId": "saved-model",
     "executionMode": "single",
     "tools": ["graphiti.search_nodes"],
+    "toolDefinitions": [
+        {
+            "canonicalId": "graphiti.search_nodes",
+            "kind": "tool",
+            "sourceIds": ["graphiti"],
+            "availability": "available",
+            "contracts": [{"name": "graphiti.search_nodes", "inputSchema": {"type": "object"}}],
+        }
+    ],
 }
 
 
@@ -51,6 +60,8 @@ def test_idf_is_the_exact_validated_model_input() -> None:
     assert "[CARD]" in document["contentMarkdown"]
     assert "name: Main" in document["contentMarkdown"]
     assert "[JSON]" in document["contentMarkdown"]
+    assert '"canonicalId": "graphiti.search_nodes"' in document["contentMarkdown"]
+    assert '"type": "resolved-card-invocation"' in document["contentMarkdown"]
     assert document["cardContext"] == CARD_CONTEXT
     assert len(document["contentSha256"]) == 64
 

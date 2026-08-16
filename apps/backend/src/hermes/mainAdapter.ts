@@ -45,6 +45,10 @@ export type HermesRuntimeConfig = {
   mcpConnectionIds: string[];
   coderCardIds: string[];
   directSubagents: { cardId: string; title: string; runtimeBinding: string }[];
+  savedCardRuntime: { provider: string; modelKey: string; providerModelId: string };
+  profileSnapshot: { name: string; model: string; gateway: string } | null;
+  profileConflicts: string[];
+  profileConflictResolution: 'hermes' | 'card';
 };
 
 export type CardAccessMode = 'chatgpt-account' | 'coder-oauth' | 'openai-api' | 'openrouter-api';
@@ -210,7 +214,54 @@ export function resolveHermesCardRuntimeConfig(
   card: any,
   directSubagents: { cardId: string; title: string; runtimeBinding: string }[] = [],
 ): HermesRuntimeConfig {
-  const model = resolveSavedCardModel(card);
+  const savedModel = resolveSavedCardModel(card);
+  const profile = safeProfile(card?.runtimeOptions?.profile || card?.id);
+  const rawSnapshot = card?.runtimeOptions?.profileSnapshot;
+  const profileModel = String(rawSnapshot?.model || '').trim();
+  const profileGateway = String(rawSnapshot?.gateway || '').trim().toLowerCase();
+  const profileSnapshot = rawSnapshot && typeof rawSnapshot === 'object'
+    ? {
+        name: safeProfile(rawSnapshot.name || profile),
+        model: profileModel === '—' || profileModel === '-' ? '' : profileModel,
+        gateway: profileGateway === 'stopped' || profileGateway === 'running' || profileGateway === '—' || profileGateway === '-'
+          ? ''
+          : profileGateway,
+      }
+    : null;
+  const profileConflictResolution = card?.runtimeOptions?.profileConflictResolution === 'card'
+    ? 'card'
+    : 'hermes';
+  const profileConflicts: string[] = [];
+  const profileProvider = profileSnapshot?.gateway === 'openrouter'
+    ? 'openrouter'
+    : profileSnapshot?.gateway === 'openai' || profileSnapshot?.gateway === 'openai-codex'
+      ? 'openai'
+      : '';
+  if (profileSnapshot?.gateway && !profileProvider) {
+    profileConflicts.push(`profile_gateway_unresolved:${profileSnapshot.gateway}`);
+  } else if (profileProvider && profileProvider !== savedModel.provider) {
+    profileConflicts.push(`profile_provider_conflict:${profileProvider}:${savedModel.provider}`);
+  }
+  if (
+    profileSnapshot?.model
+    && profileSnapshot.model !== savedModel.providerModelId
+    && profileSnapshot.model !== savedModel.modelKey
+  ) {
+    profileConflicts.push(`profile_model_conflict:${profileSnapshot.model}:${savedModel.providerModelId}`);
+  }
+  if (
+    profileConflictResolution === 'hermes'
+    && profileConflicts.some((conflict) => !conflict.startsWith('profile_model_conflict:'))
+  ) {
+    throw new Error(`hermes_profile_conflict_unresolved:${profileConflicts.join(',')}`);
+  }
+  const model = profileConflictResolution === 'hermes' && profileSnapshot?.model
+    ? {
+        provider: savedModel.provider,
+        modelKey: `hermes-profile:${profile}`,
+        providerModelId: profileSnapshot.model,
+      }
+    : savedModel;
   const accessMode = resolveCardAccessMode(card, model.provider);
   const runtimeBinding = resolveRuntimeBinding(card?.runtimeBinding);
   if (!runtimeBinding) {
@@ -248,9 +299,10 @@ export function resolveHermesCardRuntimeConfig(
           ].join('\n')
         : '',
     ].filter(Boolean).join('\n\n'),
-    // The saved LiquidAIty card is the profile authority. A separate selectable
-    // Hermes profile would create a second agent identity/configuration owner.
-    profile: safeProfile(card?.id),
+    // The selected Hermes profile is an explicit saved Card reference. When an
+    // older Card has no reference, its stable Card id remains the compatible
+    // one-profile-per-Card identity; no runtime import or semantic matching occurs.
+    profile,
     provider: model.provider,
     modelKey: model.modelKey,
     providerModelId: model.providerModelId,
@@ -266,6 +318,10 @@ export function resolveHermesCardRuntimeConfig(
     mcpConnectionIds: savedStringList(card?.runtimeOptions?.mcpConnectionIds),
     coderCardIds,
     directSubagents,
+    savedCardRuntime: savedModel,
+    profileSnapshot,
+    profileConflicts,
+    profileConflictResolution,
   };
 }
 

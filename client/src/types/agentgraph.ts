@@ -42,8 +42,10 @@ export type AgentCardRuntimeOptions = {
   toolsets?: string[] | null;
   /** References to globally configured MCP connections; never credentials. */
   mcpConnectionIds?: string[] | null;
-  /** @deprecated Read-only compatibility. Stable card id owns runtime identity. */
+  /** Explicit persisted reference to an adopted Hermes profile. */
   profile?: string | null;
+  profileSnapshot?: { name: string; model?: string | null; gateway?: string | null } | null;
+  profileConflictResolution?: 'hermes' | 'card' | null;
   executionMode?: 'single' | 'auto-kanban' | null;
 };
 

@@ -11,6 +11,7 @@ vi.mock('../decks/store', () => ({
 }));
 vi.mock('../services/autogen/autogenOrchestratorClient', () => ({
   createInputDataFileOnPython: vi.fn(),
+  fetchInputDataFile: vi.fn(),
   orchestrateWithAutoGen: vi.fn(),
   runSingleCardWithAutoGen: vi.fn(),
 }));
@@ -63,6 +64,7 @@ vi.mock('../hermes/mainAdapter', () => ({
 import { getDeckDocument } from '../decks/store';
 import {
   createInputDataFileOnPython,
+  fetchInputDataFile,
   runSingleCardWithAutoGen,
 } from '../services/autogen/autogenOrchestratorClient';
 import { startHermesTurn } from '../hermes/mainAdapter';
@@ -75,6 +77,7 @@ import { runConfiguredCard } from './runtime';
 const mockGetDeck = getDeckDocument as unknown as ReturnType<typeof vi.fn>;
 const mockRunCard = runSingleCardWithAutoGen as unknown as ReturnType<typeof vi.fn>;
 const mockCreateIdf = createInputDataFileOnPython as unknown as ReturnType<typeof vi.fn>;
+const mockFetchIdf = fetchInputDataFile as unknown as ReturnType<typeof vi.fn>;
 const mockStartHermes = startHermesTurn as unknown as ReturnType<typeof vi.fn>;
 const mockRunHermesKanban = runHermesKanbanCardTask as unknown as ReturnType<typeof vi.fn>;
 const mockWaitHermesKanban = waitForHermesKanbanCardTask as unknown as ReturnType<typeof vi.fn>;
@@ -135,6 +138,7 @@ beforeEach(() => {
   mockGetDeck.mockReset();
   mockRunCard.mockReset();
   mockCreateIdf.mockReset();
+  mockFetchIdf.mockReset();
   mockStartHermes.mockReset();
   mockRunHermesKanban.mockReset();
   mockWaitHermesKanban.mockReset();
@@ -167,6 +171,26 @@ beforeEach(() => {
 });
 
 describe('runConfiguredCard — server-trusted single-card runtime', () => {
+  it('materializes one inspectable IDF without starting the saved Card runtime', async () => {
+    mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
+
+    const result = await runConfiguredCard({ ...ARGS, materializeOnly: true });
+
+    expect(result).toMatchObject({
+      status: 'materialized',
+      correlationId: 'corr-123',
+      idf: { idfId: 'idf:corr-123', runId: 'corr-123', contentSha256: 'hash' },
+      providerInput: {
+        systemPrompt: AGENT_CARD.prompt,
+        message: ARGS.input,
+        toolDefinitions: [],
+      },
+    });
+    expect(mockStartHermes).not.toHaveBeenCalled();
+    expect(mockRunHermesKanban).not.toHaveBeenCalled();
+    expect(mockRunCard).not.toHaveBeenCalled();
+  });
+
   it('returns not_found for a nonexistent card', async () => {
     mockGetDeck.mockResolvedValue(deckWith([]));
     const result = await runConfiguredCard(ARGS);

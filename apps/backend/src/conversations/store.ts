@@ -91,6 +91,32 @@ export type BeginConversationRunInput = {
   runtime: string;
   sessionId: string;
   userContent: string;
+  senderCardId?: string | null;
+  parentRunId?: string | null;
+  invocation?: {
+    idfId: string;
+    version: number;
+    contentSha256: string;
+  } | null;
+};
+
+export type ConversationRunReceipt = {
+  correlationId: string;
+  state: string;
+  cardId: string;
+  runtime: string;
+  provider: string | null;
+  modelKey: string | null;
+  providerModelId: string | null;
+  accessMode: string | null;
+  idfId: string | null;
+  idfVersion: number | null;
+  idfContentSha256: string | null;
+  resultArtifact: Record<string, unknown> | null;
+  assignment: Record<string, unknown> | null;
+  result: Record<string, unknown> | null;
+  references: Array<Record<string, unknown>>;
+  ageLineage: Array<Record<string, unknown>>;
 };
 
 function projectLookup(projectId: string, parameterIndex = 1): { clause: string; value: string } {
@@ -169,6 +195,41 @@ async function resolveProjectId(client: Pick<PoolClient, 'query'>, projectId: st
   );
   if (!result.rows.length) throw new Error('project_not_found');
   return String(result.rows[0].id);
+}
+
+async function queryAge(
+  client: Pick<PoolClient, 'query'>,
+  statement: string,
+  parameters: Record<string, unknown>,
+): Promise<Array<Record<string, unknown>>> {
+  const result = await client.query(
+    `SELECT observed::text AS observed
+     FROM ag_catalog.cypher('agentgraph', $age$${statement}$age$, $1)
+       AS (observed agtype)`,
+    [JSON.stringify(parameters)],
+  );
+  return result.rows.map((row) => {
+    const raw = String(row.observed || '{}');
+    try {
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return { raw };
+    }
+  });
+}
+
+async function observeAge(
+  statement: string,
+  parameters: Record<string, unknown>,
+): Promise<Array<Record<string, unknown>>> {
+  try {
+    return await queryAge(pool, statement, parameters);
+  } catch {
+    // AGE is an observer. A telemetry outage must not become execution or
+    // persistence authority for the conversation, IDF, run, or result.
+    console.warn('[age-observer] invocation lineage unavailable');
+    return [];
+  }
 }
 
 async function appendMessageWithClient(
@@ -257,7 +318,7 @@ async function getRunForUpdate(client: PoolClient, runId: string): Promise<Recor
 export async function beginConversationRun(
   input: BeginConversationRunInput,
 ): Promise<{ runId: string; userMessage: ConversationMessage }> {
-  return withTransaction(async (client) => {
+  const begun = await withTransaction(async (client) => {
     const projectId = await resolveProjectId(client, input.projectId);
     const duplicate = await client.query(
       `SELECT correlation_id FROM ${RUNS_TABLE} WHERE correlation_id = $1 LIMIT 1`,
@@ -296,8 +357,73 @@ export async function beginConversationRun(
         userMessage.messageId,
       ],
     );
-    return { runId: input.runId, userMessage };
+    if (input.invocation) {
+      const assignmentId = `assignment:${input.runId}`;
+      await client.query(
+        `INSERT INTO ag_catalog.agent_assignments (
+           assignment_id, project_id, correlation_id, deck_id, conversation_id,
+           sender_card_id, receiver_card_id, parent_run_id, state
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending')
+         ON CONFLICT (project_id, correlation_id) DO NOTHING`,
+        [
+          assignmentId,
+          projectId,
+          input.runId,
+          input.deckId,
+          input.conversationId,
+          input.senderCardId || null,
+          input.cardId,
+          input.parentRunId || null,
+        ],
+      );
+      await client.query(
+        `INSERT INTO ag_catalog.agent_context_references
+           (assignment_id, reference_id, reference_type, required)
+         VALUES ($1,$2,'idf',TRUE)
+         ON CONFLICT DO NOTHING`,
+        [assignmentId, input.invocation.idfId],
+      );
+    }
+    return {
+      runId: input.runId,
+      userMessage,
+      ageObservation: input.invocation
+        ? {
+            assignmentId: `assignment:${input.runId}`,
+            correlationId: input.runId,
+            projectId,
+            deckId: input.deckId,
+            conversationId: input.conversationId,
+            senderCardId: input.senderCardId || '',
+            receiverCardId: input.cardId,
+            idfId: input.invocation.idfId,
+            idfVersion: input.invocation.version,
+            idfContentSha256: input.invocation.contentSha256,
+            observedAt: new Date().toISOString(),
+          }
+        : null,
+    };
   });
+  if (begun.ageObservation) {
+    await observeAge(
+      `MERGE (assignment:Assignment {assignmentId: $assignmentId})
+       SET assignment.correlationId = $correlationId,
+           assignment.projectId = $projectId,
+           assignment.deckId = $deckId,
+           assignment.conversationId = $conversationId,
+           assignment.senderCardId = $senderCardId,
+           assignment.receiverCardId = $receiverCardId,
+           assignment.state = 'pending',
+           assignment.materializedAt = $observedAt
+       MERGE (idf:InputDataFile {idfId: $idfId})
+       SET idf.version = $idfVersion,
+           idf.contentSha256 = $idfContentSha256
+       MERGE (assignment)-[:USES_IDF]->(idf)
+       RETURN properties(assignment)`,
+      begun.ageObservation,
+    );
+  }
+  return { runId: begun.runId, userMessage: begun.userMessage };
 }
 
 export async function markConversationRunRunning(input: {
@@ -343,6 +469,26 @@ export async function markConversationRunRunning(input: {
     ],
   );
   if (!result.rows.length) throw new Error(`agent_run_transition_conflict:${input.runId}:running`);
+  await pool.query(
+    `UPDATE ag_catalog.agent_assignments
+     SET state='running', started_at=COALESCE(started_at,NOW()), updated_at=NOW()
+     WHERE correlation_id=$1`,
+    [input.runId],
+  );
+  await observeAge(
+    `MATCH (assignment:Assignment {correlationId: $correlationId})
+     SET assignment.state='running', assignment.dispatchedAt=$observedAt,
+         assignment.runtime=$runtime, assignment.provider=$provider,
+         assignment.model=$providerModelId
+     RETURN properties(assignment)`,
+    {
+      correlationId: input.runId,
+      observedAt: new Date().toISOString(),
+      runtime: input.runtime,
+      provider: input.provider,
+      providerModelId: input.providerModelId,
+    },
+  );
 }
 
 export async function completeConversationRun(input: {
@@ -357,10 +503,13 @@ export async function completeConversationRun(input: {
   };
   resultArtifact?: Record<string, unknown> | null;
 }): Promise<{ resultMessageId: string | null }> {
-  return withTransaction(async (client) => {
+  const completed = await withTransaction(async (client) => {
     const run = await getRunForUpdate(client, input.runId);
     if (run.state === 'completed') {
-      return { resultMessageId: run.result_message_id == null ? null : String(run.result_message_id) };
+      return {
+        resultMessageId: run.result_message_id == null ? null : String(run.result_message_id),
+        ageObservation: null,
+      };
     }
     if (run.state !== 'running') {
       throw new Error(`agent_run_transition_conflict:${input.runId}:completed_from_${run.state}`);
@@ -411,8 +560,62 @@ export async function completeConversationRun(input: {
         input.resultArtifact ? JSON.stringify(input.resultArtifact) : null,
       ],
     );
-    return { resultMessageId };
+    const assignment = await client.query<{ assignment_id: string }>(
+      `SELECT assignment_id
+       FROM ag_catalog.agent_assignments
+       WHERE project_id=$1 AND correlation_id=$2`,
+      [String(run.project_id), input.runId],
+    );
+    if (assignment.rows.length) {
+      const assignmentId = assignment.rows[0].assignment_id;
+      const resultId = `result:${input.runId}`;
+      await client.query(
+        `UPDATE ag_catalog.agent_assignments
+         SET state='completed', completed_at=NOW(), updated_at=NOW()
+         WHERE project_id=$1 AND correlation_id=$2`,
+        [String(run.project_id), input.runId],
+      );
+      await client.query(
+        `INSERT INTO ag_catalog.agent_results
+           (result_id, assignment_id, project_id, correlation_id, status, output, summary, tool_evidence)
+         VALUES ($1,$2,$3,$4,'completed',$5,$6,$7::jsonb)
+         ON CONFLICT (assignment_id) DO UPDATE
+         SET status='completed', output=EXCLUDED.output, summary=EXCLUDED.summary,
+             tool_evidence=EXCLUDED.tool_evidence`,
+        [
+          resultId,
+          assignmentId,
+          String(run.project_id),
+          input.runId,
+          input.assistantContent,
+          input.assistantContent.slice(0, 500),
+          JSON.stringify([]),
+        ],
+      );
+      return {
+        resultMessageId,
+        ageObservation: {
+          correlationId: input.runId,
+          resultId,
+          observedAt: new Date().toISOString(),
+        },
+      };
+    }
+    return { resultMessageId, ageObservation: null };
   });
+  if (completed.ageObservation) {
+    await observeAge(
+      `MATCH (assignment:Assignment {correlationId: $correlationId})
+       SET assignment.state='completed', assignment.completedAt=$observedAt
+       MERGE (result:Result {resultId: $resultId})
+       SET result.status='completed', result.correlationId=$correlationId,
+           result.createdAt=$observedAt
+       MERGE (assignment)-[:PRODUCED]->(result)
+       RETURN properties(assignment)`,
+      completed.ageObservation,
+    );
+  }
+  return { resultMessageId: completed.resultMessageId };
 }
 
 export async function failConversationRun(
@@ -441,6 +644,65 @@ export async function failConversationRun(
       throw new Error(`agent_run_transition_conflict:${runId}:failed`);
     }
   }
+  await pool.query(
+    `UPDATE ag_catalog.agent_assignments
+     SET state='failed', completed_at=NOW(), updated_at=NOW()
+     WHERE correlation_id=$1`,
+    [runId],
+  );
+  await observeAge(
+    `MATCH (assignment:Assignment {correlationId: $correlationId})
+     SET assignment.state='failed', assignment.completedAt=$observedAt,
+         assignment.errorCode=$errorCode
+     RETURN properties(assignment)`,
+    { correlationId: runId, observedAt: new Date().toISOString(), errorCode },
+  );
+}
+
+export async function getConversationRunReceipt(runId: string): Promise<ConversationRunReceipt> {
+  const runResult = await pool.query(
+    `SELECT * FROM ${RUNS_TABLE} WHERE correlation_id=$1 LIMIT 1`,
+    [runId],
+  );
+  if (!runResult.rows.length) throw new Error(`agent_run_not_found:${runId}`);
+  const run = runResult.rows[0];
+  const assignmentResult = await pool.query(
+    `SELECT * FROM ag_catalog.agent_assignments WHERE correlation_id=$1 LIMIT 1`,
+    [runId],
+  );
+  const assignment = assignmentResult.rows[0] || null;
+  const resultResult = assignment
+    ? await pool.query(`SELECT * FROM ag_catalog.agent_results WHERE assignment_id=$1 LIMIT 1`, [assignment.assignment_id])
+    : { rows: [] as any[] };
+  const referencesResult = assignment
+    ? await pool.query(`SELECT * FROM ag_catalog.agent_context_references WHERE assignment_id=$1 ORDER BY created_at`, [assignment.assignment_id])
+    : { rows: [] as any[] };
+  const ageLineage = await observeAge(
+    `MATCH (assignment:Assignment {correlationId: $correlationId})
+     OPTIONAL MATCH (assignment)-[relationship]->(related)
+     RETURN {assignment: properties(assignment), relationship: type(relationship), related: properties(related)}`,
+    { correlationId: runId },
+  );
+  return {
+    correlationId: String(run.correlation_id),
+    state: String(run.state),
+    cardId: String(run.card_id),
+    runtime: String(run.runtime),
+    provider: run.provider == null ? null : String(run.provider),
+    modelKey: run.model_key == null ? null : String(run.model_key),
+    providerModelId: run.provider_model_id == null ? null : String(run.provider_model_id),
+    accessMode: run.access_mode == null ? null : String(run.access_mode),
+    idfId: run.idf_id == null ? null : String(run.idf_id),
+    idfVersion: run.idf_version == null ? null : Number(run.idf_version),
+    idfContentSha256: run.idf_content_sha256 == null ? null : String(run.idf_content_sha256),
+    resultArtifact: run.result_artifact_json && typeof run.result_artifact_json === 'object'
+      ? run.result_artifact_json as Record<string, unknown>
+      : null,
+    assignment,
+    result: resultResult.rows[0] || null,
+    references: referencesResult.rows,
+    ageLineage,
+  };
 }
 
 export async function cancelConversationRun(runId: string, reason = 'client_cancel'): Promise<void> {
@@ -466,6 +728,19 @@ export async function cancelConversationRun(runId: string, reason = 'client_canc
       throw new Error(`agent_run_transition_conflict:${runId}:cancelled`);
     }
   }
+  await pool.query(
+    `UPDATE ag_catalog.agent_assignments
+     SET state='cancelled', cancelled_at=NOW(), completed_at=NOW(), updated_at=NOW()
+     WHERE correlation_id=$1`,
+    [runId],
+  );
+  await observeAge(
+    `MATCH (assignment:Assignment {correlationId: $correlationId})
+     SET assignment.state='cancelled', assignment.completedAt=$observedAt,
+         assignment.errorCode=$reason
+     RETURN properties(assignment)`,
+    { correlationId: runId, observedAt: new Date().toISOString(), reason },
+  );
 }
 
 export async function listConversations(projectId: string): Promise<ProjectConversation[]> {

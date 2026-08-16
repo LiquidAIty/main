@@ -1,6 +1,6 @@
 """PostgreSQL persistence and transport for one assembled Input Data File.
 
-This module does not define the Input Data Dictionary. It accepts already
+This module does not define the Input Data Definition. It accepts already
 selected context fields, performs only mechanical shape checks, renders the
 stored document, and persists the exact value supplied to runtime adapters.
 """
@@ -149,6 +149,13 @@ def render_content_markdown(
         sections.append(f"[SYSTEM]\n{system_text}\n[/SYSTEM]")
     sections.extend([
         "[CARD]\n" + _render_card_context(card_context) + "\n[/CARD]",
+        "## Resolved Invocation Configuration",
+        "[JSON]\n" + json.dumps(
+            {"type": "resolved-card-invocation", "cardContext": card_context},
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+        ) + "\n[/JSON]",
     ])
     if dynamic_context_markdown:
         sections.extend(["## Dynamic AgentGraph Context", dynamic_context_markdown])

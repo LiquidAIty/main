@@ -105,7 +105,7 @@ describe('Hermes saved-card runtime resolution', () => {
         provider: 'openai',
         accessMode: 'chatgpt-account',
         modelKey: 'gpt-5.6-luna',
-        profile: 'legacy-profile-selector-must-not-win',
+        profile: 'kanban-research',
         executionMode: 'auto-kanban',
         tools: ['graphiti.search_nodes'],
       },
@@ -113,14 +113,14 @@ describe('Hermes saved-card runtime resolution', () => {
 
     expect(config).toMatchObject({
       cardId: 'card_hermes_steward',
-      profile: 'card_hermes_steward',
+      profile: 'kanban-research',
       runtimeBinding: 'hermes_steward',
       executionMode: 'auto-kanban',
       tools: ['graphiti.search_nodes'],
     });
   });
 
-  it('uses the stable saved card id as runtime profile identity', () => {
+  it('uses the explicit persisted Hermes profile identity', () => {
     const config = resolveHermesCardRuntimeConfig({
       ...main,
       id: 'card_luna',
@@ -130,7 +130,53 @@ describe('Hermes saved-card runtime resolution', () => {
       },
     });
 
-    expect(config.profile).toBe('card_luna');
+    expect(config.profile).toBe('shared-selector-is-not-authority');
+  });
+
+  it('does not reinterpret native profile status placeholders as provider configuration', () => {
+    const config = resolveHermesCardRuntimeConfig({
+      ...main,
+      runtimeOptions: {
+        ...main.runtimeOptions,
+        profile: 'default',
+        profileSnapshot: { name: 'default', model: '—', gateway: 'stopped' },
+      },
+    });
+
+    expect(config.profileSnapshot).toEqual({ name: 'default', model: '', gateway: '' });
+    expect(config.profileConflicts).toEqual([]);
+    expect(config.providerModelId).toBe('gpt-5.6-luna');
+  });
+
+  it('uses a persisted Hermes profile model by default while retaining the saved Card snapshot', () => {
+    const config = resolveHermesCardRuntimeConfig({
+      ...main,
+      runtimeOptions: {
+        ...main.runtimeOptions,
+        profile: 'research',
+        profileSnapshot: { name: 'research', model: 'gpt-5.6-sol', gateway: 'openai' },
+      },
+    });
+    expect(config.providerModelId).toBe('gpt-5.6-sol');
+    expect(config.profileConflictResolution).toBe('hermes');
+    expect(config.profileConflicts).toEqual([
+      'profile_model_conflict:gpt-5.6-sol:gpt-5.6-luna',
+    ]);
+    expect(config.savedCardRuntime.providerModelId).toBe('gpt-5.6-luna');
+  });
+
+  it('persists an explicit Card override for a visible Hermes model conflict', () => {
+    const config = resolveHermesCardRuntimeConfig({
+      ...main,
+      runtimeOptions: {
+        ...main.runtimeOptions,
+        profile: 'research',
+        profileSnapshot: { name: 'research', model: 'gpt-5.6-sol', gateway: 'openai' },
+        profileConflictResolution: 'card',
+      },
+    });
+    expect(config.providerModelId).toBe('gpt-5.6-luna');
+    expect(config.profileConflictResolution).toBe('card');
   });
 
   it('rejects auto-kanban on Main at the runtime boundary', () => {

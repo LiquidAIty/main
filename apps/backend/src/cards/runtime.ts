@@ -1,12 +1,14 @@
 import {
   CardRunResult,
+  InputDataFile,
   NativeRunResult,
+  ProviderInvocationInput,
   PythonAutoGenPayloadShape,
 } from '../contracts/runtimeContracts';
 import {
   createInputDataFileOnPython,
+  fetchInputDataFile,
   orchestrateWithAutoGen,
-  requestPythonRailsJson,
   runSingleCardWithAutoGen,
 } from '../services/autogen/autogenOrchestratorClient';
 import { getDeckDocument } from '../decks/store';
@@ -31,7 +33,6 @@ import {
   waitForHermesKanbanCardTask,
   type HermesKanbanCardTaskResult,
 } from '../routes/hermesKanban.routes';
-
 function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
   const provider = String(value ?? '').trim().toLowerCase();
   if (provider === 'openai' || provider === 'openrouter') return provider;
@@ -504,7 +505,19 @@ export function buildPythonAutoGenCardRuntimePayload(
 // resolveAutoGenParticipantTools /
 // serializeCardParticipant). No fallback model, no substitute card, no plain completion.
 
-const SINGLE_CARD_RUN_ARG_KEYS = ['projectId', 'deckId', 'cardId', 'correlationId', 'input', 'conversationId', 'parentRunId'] as const;
+const SINGLE_CARD_RUN_ARG_KEYS = [
+  'projectId',
+  'deckId',
+  'cardId',
+  'correlationId',
+  'input',
+  'conversationId',
+  'parentRunId',
+  'materializeOnly',
+  'idfId',
+  'idfVersion',
+  'idfContentSha256',
+] as const;
 
 export type ConfiguredCardRunArgs = {
   projectId: string;
@@ -517,10 +530,14 @@ export type ConfiguredCardRunArgs = {
    * minting below — never fabricated. */
   conversationId?: string;
   parentRunId?: string;
+  materializeOnly?: boolean;
+  idfId?: string;
+  idfVersion?: number;
+  idfContentSha256?: string;
 };
 
 export type ConfiguredCardRunResult = {
-  status: 'submitted' | 'completed' | 'failed' | 'disabled' | 'not_found' | 'not_runnable';
+  status: 'materialized' | 'submitted' | 'completed' | 'failed' | 'disabled' | 'not_found' | 'not_runnable';
   correlationId: string;
   cardId: string;
   runtimeType: string | null;
@@ -531,6 +548,8 @@ export type ConfiguredCardRunResult = {
   accessMode: string | null;
   idfVersion: number | null;
   idfContentSha256: string | null;
+  idf: InputDataFile | null;
+  providerInput: ProviderInvocationInput | null;
   transport: {
     threadId: string | null;
     turnId: string | null;
@@ -548,6 +567,85 @@ export type ConfiguredCardRunResult = {
   hermesKanban: HermesKanbanCardTaskResult | null;
   usage: HermesTurnUsage;
 };
+
+function providerInvocationInput(idf: InputDataFile): ProviderInvocationInput {
+  const context = (idf.cardContext || {}) as Record<string, unknown>;
+  const list = (value: unknown): string[] =>
+    Array.isArray(value) ? value.map((entry) => String(entry || '').trim()).filter(Boolean) : [];
+  return {
+    systemPrompt: idf.systemText,
+    message: idf.modelInputMarkdown,
+    enabledTools: list(context.nativeTools),
+    enabledToolsets: list(context.toolsets),
+    skills: list(context.skills),
+    mcpToolAllowlist: list(context.tools).filter((name) => name !== 'web_search'),
+    toolDefinitions: Array.isArray(context.toolDefinitions)
+      ? context.toolDefinitions.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object')
+      : [],
+    mcpConnectionIds: list(context.mcpConnectionIds),
+  };
+}
+
+async function fetchExactConfiguredCardIdf(
+  args: ConfiguredCardRunArgs,
+  expected: {
+    projectId: string;
+    deckId: string;
+    conversationId: string;
+    correlationId: string;
+    cardId: string;
+  },
+): Promise<InputDataFile> {
+  const idfId = String(args.idfId || '').trim();
+  const idfVersion = Number(args.idfVersion);
+  const idfContentSha256 = String(args.idfContentSha256 || '').trim();
+  if (!idfId || !Number.isInteger(idfVersion) || idfVersion < 1 || !idfContentSha256) {
+    throw new Error('configured_card_idf_identity_incomplete');
+  }
+  const idf = (await fetchInputDataFile({ projectId: expected.projectId, idfId })).idf;
+  if (
+    idf.projectId !== expected.projectId
+    || idf.deckId !== expected.deckId
+    || idf.conversationId !== expected.conversationId
+    || idf.runId !== expected.correlationId
+    || idf.originatingCardId !== expected.cardId
+    || idf.version !== idfVersion
+    || idf.contentSha256 !== idfContentSha256
+    || idf.userText !== String(args.input || '').trim()
+  ) {
+    throw new Error('configured_card_idf_identity_mismatch');
+  }
+  return idf;
+}
+
+function assertCurrentCardStillAuthorizesIdf(
+  current: Record<string, unknown>,
+  stored: Record<string, unknown> | null,
+): void {
+  if (!stored) throw new Error('configured_card_idf_card_context_missing');
+  const protectedFields = [
+    'cardId', 'runtimeType', 'runtimeBinding', 'profile', 'provider', 'modelKey',
+    'providerModelId', 'accessMode', 'executionMode', 'tools', 'nativeTools',
+    'skills', 'toolsets', 'mcpConnectionIds', 'directSubagents',
+    'profileConflictResolution',
+  ];
+  const canonical = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, entry]) => [key, canonical(entry)]),
+      );
+    }
+    return value ?? null;
+  };
+  for (const field of protectedFields) {
+    if (JSON.stringify(canonical(current[field])) !== JSON.stringify(canonical(stored[field]))) {
+      throw new Error(`configured_card_idf_card_configuration_changed:${field}`);
+    }
+  }
+}
 
 export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<ConfiguredCardRunResult> {
   const startedAt = new Date().toISOString();
@@ -568,6 +666,8 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       accessMode: null,
       idfVersion: null,
       idfContentSha256: null,
+      idf: null,
+      providerInput: null,
       transport: null,
       tools: [],
       output: '',
@@ -642,31 +742,36 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       });
     }
 
-    let idf;
+    let idf: InputDataFile;
     try {
-      idf = (await createInputDataFileOnPython({
-        projectId,
-        deckId,
-        conversationId,
-        runId: correlationId,
-        originatingCardId: cardId,
-        systemText: config.prompt,
-        userText: input,
-        cardContext: {
-          ...config,
-          runtimeType,
-        },
-      })).idf;
-    } catch {
+      idf = args.idfId
+        ? await fetchExactConfiguredCardIdf(args, { projectId, deckId, conversationId, correlationId, cardId })
+        : (await createInputDataFileOnPython({
+            projectId,
+            deckId,
+            conversationId,
+            runId: correlationId,
+            originatingCardId: cardId,
+            systemText: config.prompt,
+            userText: input,
+            cardContext: {
+              ...config,
+              runtimeType,
+            },
+          })).idf;
+    } catch (error: any) {
       return done({
         status: 'failed',
         runtimeType,
         tools: config.tools,
-        error: 'idf_persistence_failed',
+        error: String(error?.message || 'idf_persistence_failed'),
       });
     }
 
     const idfConfig = idf.cardContext as typeof config;
+    if (args.idfId) {
+      assertCurrentCardStillAuthorizesIdf({ ...config, runtimeType }, idf.cardContext);
+    }
     const runtimeIdentity = {
       provider: idfConfig.provider,
       modelKey: idfConfig.modelKey,
@@ -674,7 +779,19 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       accessMode: idfConfig.accessMode,
       idfVersion: idf.version,
       idfContentSha256: idf.contentSha256,
+      idf,
+      providerInput: providerInvocationInput(idf),
     };
+    if (args.materializeOnly === true) {
+      return done({
+        status: 'materialized',
+        runtimeType,
+        runtime: idfConfig.executionMode === 'auto-kanban' ? 'hermes_kanban' : 'hermes',
+        ...runtimeIdentity,
+        tools: idfConfig.tools,
+        nativeRunResult: { runId: correlationId, idfId: idf.idfId },
+      });
+    }
     if (idfConfig.executionMode === 'auto-kanban') {
       try {
         let hermesKanban = await runHermesKanbanCardTask({
@@ -781,23 +898,26 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     accessMode: resolveCardAccessMode(effectiveCard, model.provider),
     modelKey: String(effectiveCard.runtimeOptions?.modelKey || ''),
     providerModelId: model.providerModelId,
+    tools: Array.isArray((participant as any).tools) ? (participant as any).tools : [],
     runtimeOptions: { deckId },
     participants: [participant],
   };
-  let idf;
+  let idf: InputDataFile;
   try {
-    idf = (await createInputDataFileOnPython({
-      projectId,
-      deckId,
-      conversationId,
-      runId: correlationId,
-      originatingCardId: cardId,
-      systemText: cardRuntime.prompt,
-      userText: input,
-      cardContext: cardRuntime,
-    })).idf;
-  } catch {
-    return done({ status: 'failed', runtimeType, error: 'idf_persistence_failed' });
+    idf = args.idfId
+      ? await fetchExactConfiguredCardIdf(args, { projectId, deckId, conversationId, correlationId, cardId })
+      : (await createInputDataFileOnPython({
+          projectId,
+          deckId,
+          conversationId,
+          runId: correlationId,
+          originatingCardId: cardId,
+          systemText: cardRuntime.prompt,
+          userText: input,
+          cardContext: cardRuntime,
+        })).idf;
+  } catch (error: any) {
+    return done({ status: 'failed', runtimeType, error: String(error?.message || 'idf_persistence_failed') });
   }
 
   const payload = {
@@ -817,6 +937,31 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     idf,
     cardRuntime: idf.cardContext,
   };
+
+  if (args.idfId) {
+    assertCurrentCardStillAuthorizesIdf(cardRuntime, idf.cardContext);
+  }
+
+  if (args.materializeOnly === true) {
+    const tools = Array.isArray((participant as any).tools)
+      ? ((participant as any).tools as string[])
+      : [];
+    return done({
+      status: 'materialized',
+      runtimeType,
+      runtime: 'local_coder',
+      provider: model.provider,
+      modelKey: String(effectiveCard.runtimeOptions?.modelKey || ''),
+      providerModelId: model.providerModelId,
+      accessMode: cardRuntime.accessMode,
+      idfVersion: idf.version,
+      idfContentSha256: idf.contentSha256,
+      idf,
+      providerInput: providerInvocationInput(idf),
+      tools,
+      nativeRunResult: { runId: correlationId, idfId: idf.idfId },
+    });
+  }
 
   logHarnessTrace(
     `[agent] card ${cardId} invoking-python binding=${resolvedBinding || 'none'} ` +
@@ -838,6 +983,8 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         accessMode: cardRuntime.accessMode,
         idfVersion: idf.version,
         idfContentSha256: idf.contentSha256,
+        idf,
+        providerInput: providerInvocationInput(idf),
         tools,
         error: String(response.error || 'single_card_run_failed'),
         nativeRunResult: { runId: response.runId || correlationId, idfId: idf.idfId },
@@ -851,6 +998,11 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         provider: model.provider,
         modelKey: String(effectiveCard.runtimeOptions?.modelKey || ''),
         providerModelId: model.providerModelId,
+        accessMode: cardRuntime.accessMode,
+        idfVersion: idf.version,
+        idfContentSha256: idf.contentSha256,
+        idf,
+        providerInput: providerInvocationInput(idf),
         tools,
         error: 'runtime_idf_identity_mismatch',
         nativeRunResult: { runId: response.runId || correlationId, idfId: idf.idfId },
@@ -866,6 +1018,8 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       accessMode: cardRuntime.accessMode,
       idfVersion: idf.version,
       idfContentSha256: idf.contentSha256,
+      idf,
+      providerInput: providerInvocationInput(idf),
       tools,
       output: String(response.finalResponseText || ''),
       nativeRunResult: {
@@ -882,6 +1036,11 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       provider: model.provider,
       modelKey: String(effectiveCard.runtimeOptions?.modelKey || ''),
       providerModelId: model.providerModelId,
+      accessMode: cardRuntime.accessMode,
+      idfVersion: idf.version,
+      idfContentSha256: idf.contentSha256,
+      idf,
+      providerInput: providerInvocationInput(idf),
       error: String(error?.message || 'single_card_transport_failed'),
       nativeRunResult: { runId: correlationId, idfId: idf.idfId },
     });

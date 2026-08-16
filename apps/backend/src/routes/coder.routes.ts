@@ -29,6 +29,7 @@ import {
   cancelConversationRun,
   completeConversationRun,
   failConversationRun,
+  getConversationRunReceipt,
   getConversationMessages,
   listConversations,
   markConversationRunRunning,
@@ -284,40 +285,103 @@ router.post('/mcp-bridge/coder_steer', async (req, res) => {
 // rejects every extra key, so no browser/MCP-supplied override can reach the run.
 router.post('/mcp-bridge/run_configured_card', async (req, res) => {
   const body = req.body || {};
+  const action = body.action === 'materialize' ? 'materialize' : 'execute';
   const projectId = String(body.projectId || '').trim();
   const deckId = String(body.deckId || BUILDER_DECK_ID).trim();
   const cardId = String(body.cardId || '').trim();
   const correlationId = String(body.correlationId || '').trim();
   const conversationId = String(body.conversationId || '').trim() || 'main';
   const parentRunId = String(body.parentRunId || '').trim();
+  const senderCardId = String(body.senderCardId || '').trim();
   const input = String(body.input || '').trim();
   if (!projectId || !deckId || !cardId || !correlationId || !input) {
     return res.status(400).json({ ok: false, error: 'card_run_args_incomplete' });
   }
 
   try {
-    await beginConversationRun({
-      runId: correlationId,
+    if (senderCardId) {
+      const saved = await getDeckDocument(projectId, deckId);
+      const nodes = Array.isArray((saved?.deck as any)?.nodes) ? (saved!.deck as any).nodes : [];
+      const edges = Array.isArray((saved?.deck as any)?.edges) ? (saved!.deck as any).edges : [];
+      const senderExists = nodes.some((node: any) => String(node?.id || '') === senderCardId);
+      const authorized = edges.some((edge: any) => (
+        String(edge?.source || '') === senderCardId
+        && String(edge?.target || '') === cardId
+        && String(edge?.edgeType || '') === 'flow'
+      ));
+      if (!senderExists || !authorized) {
+        return res.status(403).json({ ok: false, error: 'card_invocation_edge_authority_required' });
+      }
+    }
+    const materialized = await runConfiguredCard({
       projectId,
       deckId,
       cardId,
-      conversationId,
-      runtime: 'configured_card',
-      sessionId: `configured:${deckId}:${cardId}:${conversationId}`,
-      userContent: input,
-    });
-  } catch {
-    return res.status(503).json({
-      ok: false,
-      error: 'conversation_persistence_unavailable',
       correlationId,
+      input,
+      conversationId,
+      parentRunId,
+      materializeOnly: true,
+      ...(String(body.idfId || '').trim()
+        ? {
+            idfId: String(body.idfId).trim(),
+            idfVersion: Number(body.idfVersion),
+            idfContentSha256: String(body.idfContentSha256 || '').trim(),
+          }
+        : {}),
     });
-  }
+    if (materialized.status !== 'materialized' || !materialized.idf) {
+      return res.status(409).json({ ok: false, result: materialized });
+    }
 
-  try {
-    // conversationId is a structural reference to the real live conversation
-    // (the Harness injects it server-side for doorway calls). Card-specific authority is minted inside
-    // runConfiguredCard itself — never accepted from the caller.
+    try {
+      await beginConversationRun({
+        runId: correlationId,
+        projectId,
+        deckId,
+        cardId,
+        conversationId,
+        runtime: 'configured_card',
+        sessionId: `configured:${deckId}:${cardId}:${conversationId}`,
+        userContent: input,
+        senderCardId: senderCardId || null,
+        parentRunId: parentRunId || null,
+        invocation: {
+          idfId: materialized.idf.idfId,
+          version: materialized.idf.version,
+          contentSha256: materialized.idf.contentSha256,
+        },
+      });
+    } catch (error) {
+      if (!String(error instanceof Error ? error.message : error).startsWith('agent_run_already_exists:')) {
+        return res.status(503).json({
+          ok: false,
+          error: 'conversation_persistence_unavailable',
+          correlationId,
+        });
+      }
+    }
+
+    if (action === 'materialize') {
+      const receipt = await getConversationRunReceipt(correlationId);
+      return res.json({ ok: true, result: { ...materialized, receipt, lineage: receipt.ageLineage } });
+    }
+
+    await markConversationRunRunning({
+      runId: correlationId,
+      invokingCardId: materialized.cardId,
+      runtime: materialized.runtime || 'configured_card',
+      provider: materialized.provider || '',
+      modelKey: materialized.modelKey || '',
+      providerModelId: materialized.providerModelId || '',
+      accessMode: materialized.accessMode || '',
+      idfId: materialized.idf.idfId,
+      idfVersion: materialized.idf.version,
+      idfContentSha256: materialized.idf.contentSha256,
+    });
+
+    // The runtime receives the exact immutable revision that was just inspected;
+    // it may not silently rematerialize from mutable Card state here.
     const result = await runConfiguredCard({
       projectId,
       deckId,
@@ -326,33 +390,24 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       input,
       conversationId,
       parentRunId,
+      idfId: materialized.idf.idfId,
+      idfVersion: materialized.idf.version,
+      idfContentSha256: materialized.idf.contentSha256,
     });
     try {
-      if (
-        result.runtime
-        && result.provider
-        && result.modelKey
-        && result.providerModelId
-      ) {
-        await markConversationRunRunning({
-          runId: correlationId,
-          invokingCardId: result.cardId,
-          runtime: result.runtime,
-          provider: result.provider,
-          modelKey: result.modelKey,
-          providerModelId: result.providerModelId,
-          accessMode: result.accessMode || '',
-          idfId: result.nativeRunResult?.idfId || '',
-          idfVersion: result.idfVersion || 1,
-          idfContentSha256: result.idfContentSha256 || '',
-        });
-      }
       if (result.status === 'completed') {
         await completeConversationRun({
           runId: correlationId,
           assistantContent: result.output,
           usage: result.usage,
           transport: result.transport || undefined,
+          resultArtifact: {
+            idfId: result.idf?.idfId || null,
+            idfVersion: result.idf?.version || null,
+            idfContentSha256: result.idf?.contentSha256 || null,
+            providerInput: result.providerInput,
+            nativeRunResult: result.nativeRunResult,
+          },
         });
       } else if (result.status !== 'submitted') {
         await failConversationRun(
@@ -373,9 +428,10 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         correlationId,
       });
     }
+    const receipt = await getConversationRunReceipt(correlationId);
     return res.json({
       ok: result.status === 'completed' || result.status === 'submitted',
-      result,
+      result: { ...result, receipt, lineage: receipt.ageLineage },
     });
   } catch (error) {
     await failConversationRun(

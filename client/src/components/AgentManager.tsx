@@ -179,6 +179,7 @@ interface AgentManagerProps {
   promptTestInput?: string;
   onChangePromptTestInput?: (value: string) => void;
   onRunCard?: () => void;
+  onMaterializeCard?: () => void;
   runBusy?: boolean;
   runDisabled?: boolean;
   runResult?: StandaloneCardTestResult | null;
@@ -221,6 +222,22 @@ export type StandaloneCardTestResult = {
   provider?: string | null;
   model?: string | null;
   runtimeType?: string | null;
+  idf?: {
+    idfId: string;
+    runId: string;
+    version: number;
+    contentSha256: string;
+    systemText: string;
+    userText: string;
+    modelInputMarkdown: string;
+    contentMarkdown: string;
+    cardContext: Record<string, unknown> | null;
+    dynamicContextMarkdown: string;
+    nativeReferences: Array<Record<string, unknown>>;
+  } | null;
+  providerInput?: Record<string, unknown> | null;
+  receipt?: Record<string, unknown> | null;
+  lineage?: Array<Record<string, unknown>>;
 };
 
 type SaveCardStatus = 'idle' | 'saving' | 'saved' | 'failed';
@@ -376,6 +393,7 @@ export function AgentManager({
   promptTestInput,
   onChangePromptTestInput,
   onRunCard,
+  onMaterializeCard,
   runBusy = false,
   runDisabled = false,
   runResult = null,
@@ -403,6 +421,9 @@ export function AgentManager({
     'chatgpt-account' | 'coder-oauth' | 'openai-api' | 'openrouter-api' | ''
   >('');
   const [modelKey, setModelKey] = useState('');
+  const [hermesProfile, setHermesProfile] = useState('');
+  const [hermesProfiles, setHermesProfiles] = useState<Array<{ name: string; model?: string; gateway?: string }>>([]);
+  const [profileConflictResolution, setProfileConflictResolution] = useState<'hermes' | 'card'>('hermes');
   const [reasoningEffort, setReasoningEffort] = useState<
     'low' | 'medium' | 'high' | 'xhigh' | ''
   >('');
@@ -503,6 +524,8 @@ export function AgentManager({
         : '',
     );
     setModelKey(localConfig.model_key || '');
+    setHermesProfile(String(localConfig.runtime_options?.profile || cardId || ''));
+    setProfileConflictResolution(localConfig.runtime_options?.profileConflictResolution === 'card' ? 'card' : 'hermes');
     setReasoningEffort(localConfig.reasoning_effort || '');
     setTemperature(typeof localConfig.temperature === 'number' ? localConfig.temperature : '');
     setMaxTokens(typeof localConfig.max_tokens === 'number' ? localConfig.max_tokens : '');
@@ -536,6 +559,31 @@ export function AgentManager({
     );
   }, [isLocalConfigMode, localConfig]);
 
+  useEffect(() => {
+    if (!isLocalConfigMode || runtimeBinding === 'local_coder') return;
+    let active = true;
+    void fetch('/api/hermes-kanban/profiles')
+      .then((response) => response.json())
+      .then((payload) => {
+        if (!active || payload?.ok !== true || !Array.isArray(payload?.data)) return;
+        setHermesProfiles(payload.data
+          .filter((entry: any) => typeof entry?.name === 'string' && entry.name.trim())
+          .map((entry: any) => {
+            const rawModel = String(entry.model || '').trim();
+            const rawGateway = String(entry.gateway || '').trim().toLowerCase();
+            return {
+              name: entry.name.trim(),
+              model: rawModel === '—' || rawModel === '-' ? '' : rawModel,
+              gateway: ['stopped', 'running', '—', '-'].includes(rawGateway) ? '' : rawGateway,
+            };
+          }));
+      })
+      .catch(() => {
+        if (active) setHermesProfiles([]);
+      });
+    return () => { active = false; };
+  }, [isLocalConfigMode, runtimeBinding]);
+
   const markDraftDirty = () => {
     draftDirtyRef.current = true;
   };
@@ -562,6 +610,12 @@ export function AgentManager({
     const payload = {
       ...localConfig,
       ...editedConfig,
+      runtime_options: {
+        ...(localConfig.runtime_options || {}),
+        profile: hermesProfile || cardId || null,
+        profileSnapshot: hermesProfiles.find((profile) => profile.name === hermesProfile) || null,
+        profileConflictResolution,
+      },
       provider:
         provider ||
         (localConfig.provider === 'local_openai_compatible'
@@ -608,6 +662,10 @@ export function AgentManager({
     skillsText,
     toolsetsText,
     mcpConnectionIdsText,
+    hermesProfile,
+    hermesProfiles,
+    profileConflictResolution,
+    cardId,
   ]);
 
   const saveRevisionAtStartRef = useRef<string | null>(null);
@@ -686,6 +744,12 @@ export function AgentManager({
     void onSaveLocalConfig({
       ...localConfig,
       ...editedConfig,
+      runtime_options: {
+        ...(localConfig.runtime_options || {}),
+        profile: hermesProfile || cardId || null,
+        profileSnapshot: hermesProfiles.find((profile) => profile.name === hermesProfile) || null,
+        profileConflictResolution,
+      },
       provider:
         provider ||
         (localConfig.provider === 'local_openai_compatible'
@@ -712,6 +776,10 @@ export function AgentManager({
     skillsText,
     toolsetsText,
     mcpConnectionIdsText,
+    hermesProfile,
+    hermesProfiles,
+    profileConflictResolution,
+    cardId,
   ]);
 
   const availableModels = provider ? modelsByProvider[provider] || [] : [];
@@ -822,6 +890,28 @@ export function AgentManager({
   ]);
 
   const sectionBody = (() => {
+    if (activeTab === 'Invocation') {
+      return (
+        <div data-testid="agent-manager-invocation" style={{ display: 'grid', gap: 10 }}>
+          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
+            Complete Card invocation
+          </div>
+          <div style={{ color: '#9FB2B8', fontSize: 11.5, lineHeight: 1.5 }}>
+            <div>Card: {cardId} · {cardName || 'Untitled'}</div>
+            <div>Runtime: {localConfig?.runtime_binding || 'unconfigured'} · {localConfig?.runtime_type || 'assistant_agent'}</div>
+            <div>Provider: {localConfig?.provider || 'unconfigured'} · {localConfig?.model_key || 'unconfigured'} · {localConfig?.access_mode || 'unconfigured'}</div>
+            <div>Skills: {Array.isArray(localConfig?.skills) && localConfig.skills.length ? localConfig.skills.map(String).join(', ') : 'none'}</div>
+            <div>Tools: {Array.isArray(localConfig?.tools) && localConfig.tools.length ? localConfig.tools.map(String).join(', ') : 'none'}</div>
+          </div>
+          <details>
+            <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>Stable Card prompt</summary>
+            <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#B8C8CD', fontSize: 11 }}>
+              {String(localConfig?.prompt_template || '')}
+            </pre>
+          </details>
+        </div>
+      );
+    }
     if (activeTab === 'Prompt') {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1017,13 +1107,61 @@ export function AgentManager({
       if (!runtimeDictionaryReady) {
         return (
           <div role="alert" style={{ color: '#FFA2A2', fontSize: 12 }}>
-            Input Data Dictionary unavailable. Runtime choices cannot be edited safely.
+            Input Data Definition unavailable. Runtime choices cannot be edited safely.
           </div>
         );
       }
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {runtimeBinding !== 'local_coder' ? (
+              <div>
+                <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                  Hermes profile
+                </label>
+                <select
+                  data-testid="agent-hermes-profile"
+                  value={hermesProfile}
+                  onChange={(event) => {
+                    setHermesProfile(event.target.value);
+                    markDraftDirty();
+                  }}
+                >
+                  <option value={cardId}>{cardId} (Card identity)</option>
+                  {hermesProfiles.filter((profile) => profile.name !== cardId).map((profile) => (
+                    <option key={profile.name} value={profile.name}>
+                      {profile.name}{profile.model ? ` · ${profile.model}` : ''}{profile.gateway ? ` · ${profile.gateway}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <div style={{ color: '#80969F', fontSize: 10, marginTop: 4 }}>
+                  Saved reference only. Profile tools cannot exceed this Card's grants.
+                </div>
+                {(() => {
+                  const selectedProfile = hermesProfiles.find((profile) => profile.name === hermesProfile);
+                  const conflict = selectedProfile?.model
+                    && selectedProfile.model !== modelKey
+                    && !availableModels.some((model) => model.key === modelKey && model.label.includes(selectedProfile.model || ''));
+                  return conflict ? (
+                    <div data-testid="agent-hermes-profile-conflict" style={{ marginTop: 6, padding: 6, border: '1px solid #775F32', borderRadius: 6, color: '#FFD38A', fontSize: 10.5 }}>
+                      Hermes model {selectedProfile.model} conflicts with saved runtime model {modelKey || 'unset'}.
+                      <select
+                        aria-label="Hermes profile conflict resolution"
+                        value={profileConflictResolution}
+                        onChange={(event) => {
+                          setProfileConflictResolution(event.target.value === 'card' ? 'card' : 'hermes');
+                          markDraftDirty();
+                        }}
+                        style={{ marginTop: 5, width: '100%' }}
+                      >
+                        <option value="hermes">Hermes wins (default)</option>
+                        <option value="card">Persist Card runtime override</option>
+                      </select>
+                    </div>
+                  ) : null;
+                })()}
+              </div>
+            ) : null}
             {canChooseExecutionMode ? (
               <div>
                 <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
@@ -1231,7 +1369,7 @@ export function AgentManager({
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-            Input Data Dictionary · Tools
+            Input Data Definition · Tools
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
             <input
@@ -1525,10 +1663,10 @@ export function AgentManager({
           ) : null}
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Run input</label>
+        {activeTab === 'Invocation' ? <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <label style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Dynamic assignment</label>
           <textarea
-            aria-label="Run input"
+            aria-label="Dynamic assignment"
             value={promptTestInput || ''}
             onChange={(event) => onChangePromptTestInput?.(event.target.value)}
             rows={5}
@@ -1544,7 +1682,15 @@ export function AgentManager({
               resize: 'vertical',
             }}
           />
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button
+              type="button"
+              onClick={onMaterializeCard}
+              disabled={runBusy || !String(promptTestInput || '').trim()}
+              data-testid="agent-manager-materialize"
+            >
+              {runBusy ? 'Working…' : 'Materialize IDF'}
+            </button>
             <button
               type="button"
               onClick={onRunCard}
@@ -1568,9 +1714,9 @@ export function AgentManager({
               {runBusy ? 'Running…' : 'Run'}
             </button>
           </div>
-        </div>
+        </div> : null}
 
-        {runResult ? (
+        {activeTab === 'Invocation' && runResult ? (
           <div
             data-testid="agent-manager-run-result"
             style={{ display: 'grid', gap: 6, fontSize: 11.5 }}
@@ -1587,6 +1733,33 @@ export function AgentManager({
               <div style={{ color: '#80969F' }}>
                 Tools granted: {runResult.tools.join(', ')}
               </div>
+            ) : null}
+            {runResult.idf ? (
+              <>
+                <div style={{ color: '#8FC8D1' }}>
+                  IDF {runResult.idf.idfId} · v{runResult.idf.version} · sha256 {runResult.idf.contentSha256}
+                </div>
+                <details open>
+                  <summary style={{ cursor: 'pointer', color: '#D5E4E8' }}>Exact materialized IDF</summary>
+                  <pre style={{ margin: 0, padding: 8, background: '#1B1B1B', color: '#D9E4E8', borderRadius: 6, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 360, overflowY: 'auto' }}>
+                    {runResult.idf.contentMarkdown}
+                  </pre>
+                </details>
+                <details>
+                  <summary style={{ cursor: 'pointer', color: '#D5E4E8' }}>Provider wire fields and tool grants</summary>
+                  <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#B8C8CD' }}>
+                    {JSON.stringify(runResult.providerInput || {}, null, 2)}
+                  </pre>
+                </details>
+              </>
+            ) : null}
+            {runResult.receipt ? (
+              <details>
+                <summary style={{ cursor: 'pointer', color: '#D5E4E8' }}>Durable receipt, artifacts, and AGE lineage</summary>
+                <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#B8C8CD' }}>
+                  {JSON.stringify({ receipt: runResult.receipt, lineage: runResult.lineage || [] }, null, 2)}
+                </pre>
+              </details>
             ) : null}
             {runResult.toolCallCount !== undefined && runResult.toolCallCount !== null ? (
               <div style={{ color: '#80969F' }}>Tool calls: {runResult.toolCallCount}</div>
