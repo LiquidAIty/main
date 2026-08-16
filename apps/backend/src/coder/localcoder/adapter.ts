@@ -119,12 +119,12 @@ export type LocalCoderRuntimeDiagnostics = {
   provider: string;
   model: string;
   reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | null;
-  authTransportClass: 'openai_account_oauth' | 'openrouter_api_key';
+  authTransportClass: 'chatgpt_account_app_server' | 'openai_api_key' | 'openrouter_api_key';
   grantedMcpTools: string[];
   sessionId: string | null;
   permissionMode: LocalCoderPermissionMode;
   timeoutMs: number;
-  promptDelivery: 'argv';
+  promptDelivery: 'argv' | 'hermes_acp';
   promptLength: number;
   stdinClosed: true;
   mcpMode: 'production' | 'disabled';
@@ -141,6 +141,10 @@ export type LocalCoderRuntimeDiagnostics = {
   runtimeStage: LocalCoderRuntimeStage;
   warningLines: string[];
   validCoderReportReturned: boolean;
+  providerThreadId: string | null;
+  providerTurnId: string | null;
+  providerAuthMode: string | null;
+  providerPlanType: string | null;
 };
 
 const EXPLICIT_ENV_NAMES = [
@@ -414,11 +418,14 @@ export function deriveLocalCoderPermissionMode(packet: CoderPacket): LocalCoderP
 
 export function buildCoderPrompt(packet: CoderPacket): string {
   return [
-    'Execute this LiquidAIty CoderPacket as the complete spec and task.',
+    'Execute the exact approved LiquidAIty IDF revision below as the complete spec and task.',
     'Use repository tools and return only the requested structured CoderReport.',
     'Do not claim success without actual edits and proof. Stop at the packet stop conditions.',
+    `Approved IDF: ${packet.approvedIdfId || 'unbound'} v${packet.approvedIdfVersion || 'unbound'} sha256=${packet.approvedIdfContentSha256 || 'unbound'}`,
+    packet.approvedIdfModelInputMarkdown || '',
+    'Trusted execution envelope:',
     JSON.stringify(packet, null, 2),
-  ].join('\n\n');
+  ].filter(Boolean).join('\n\n');
 }
 
 function parseLocalCoderOutput(
@@ -461,7 +468,11 @@ function createRuntimeDiagnostics(
     model,
     reasoningEffort: packet.reasoningEffort ?? null,
     authTransportClass:
-      packet.modelProvider === 'openrouter' ? 'openrouter_api_key' : 'openai_account_oauth',
+      packet.accessMode === 'chatgpt-account'
+        ? 'chatgpt_account_app_server'
+        : packet.accessMode === 'openrouter-api'
+          ? 'openrouter_api_key'
+          : 'openai_api_key',
     grantedMcpTools: (packet.mcpTools ?? []).map(toOpenClaudeMcpToolName),
     sessionId: null,
     permissionMode: deriveLocalCoderPermissionMode(packet),
@@ -483,6 +494,10 @@ function createRuntimeDiagnostics(
     runtimeStage: 'preflight',
     warningLines: [],
     validCoderReportReturned: false,
+    providerThreadId: null,
+    providerTurnId: null,
+    providerAuthMode: null,
+    providerPlanType: null,
   };
 }
 
@@ -701,8 +716,17 @@ export class LocalCoderAdapter {
     const missing: string[] = [];
     if (!packet) return missing;
     const provider = String(packet?.modelProvider || 'openai').trim().toLowerCase();
-    if (provider === 'openrouter' && !String(this.env.OPENROUTER_API_KEY || '').trim()) {
+    if (packet.accessMode === 'openrouter-api' && !String(this.env.OPENROUTER_API_KEY || '').trim()) {
       missing.push('localcoder_env_missing: OPENROUTER_API_KEY');
+    }
+    if (packet.accessMode === 'openai-api' && !String(this.env.OPENAI_API_KEY || '').trim()) {
+      missing.push('localcoder_env_missing: OPENAI_API_KEY');
+    }
+    if (packet.accessMode && (
+      (packet.accessMode === 'openrouter-api' && provider !== 'openrouter')
+      || (packet.accessMode !== 'openrouter-api' && provider !== 'openai')
+    )) {
+      missing.push('localcoder_access_mode_provider_mismatch');
     }
     if (!String(packet.providerModelId || '').trim()) {
       missing.push('localcoder_model_missing: providerModelId');
@@ -872,6 +896,17 @@ export class LocalCoderAdapter {
       };
     }
 
+    if (packet.accessMode === 'chatgpt-account') {
+      return {
+        report: buildBlockedReport(
+          packet.id,
+          'localcoder_chatgpt_account_model_transport_unavailable: Hermes Codex app-server is an agent runtime, not a narrow LocalCoder model transport',
+          'Implement the Hermes-owned model-client adapter at LocalCoder’s existing provider seam before retrying.',
+        ),
+        runtimeDiagnostics,
+      };
+    }
+
     const runtime = this.discoverRuntime();
     if (!runtime.ready) {
       return {
@@ -917,16 +952,18 @@ export class LocalCoderAdapter {
       ...this.env,
       OPENAI_MODEL: String(packet.providerModelId),
     };
-    if (packet.modelProvider === 'openrouter') {
+    if (packet.accessMode === 'openrouter-api') {
       childEnv.OPENAI_API_KEY = String(this.env.OPENROUTER_API_KEY || '');
       childEnv.OPENAI_BASE_URL = String(
         this.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
       );
       childEnv.CLAUDE_CODE_USE_OPENAI = '1';
-    } else {
-      delete childEnv.OPENAI_API_KEY;
-      childEnv.OPENAI_BASE_URL = 'https://chatgpt.com/backend-api/codex';
+    } else if (packet.accessMode === 'openai-api') {
+      childEnv.OPENAI_API_KEY = String(this.env.OPENAI_API_KEY || '');
+      childEnv.OPENAI_BASE_URL = String(this.env.OPENAI_BASE_URL || 'https://api.openai.com/v1');
       childEnv.CLAUDE_CODE_USE_OPENAI = '1';
+    } else {
+      throw new Error('localcoder_access_mode_missing_or_invalid');
     }
     const result = await this.runProcess(
       runtime.command,

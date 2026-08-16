@@ -27,10 +27,39 @@ const coderPacketSchema = z.object({
   // The model-facing run_local_coder tool does not expose these controls.
   modelProvider: z.enum(['openai', 'openrouter']).optional(),
   providerModelId: nonEmptyText.optional(),
+  accessMode: z.enum(['chatgpt-account', 'openai-api', 'openrouter-api']).optional(),
+  cardId: nonEmptyText.optional(),
+  cardTitle: nonEmptyText.optional(),
+  cardPrompt: z.string().optional(),
+  cardProfile: nonEmptyText.optional(),
+  modelKey: nonEmptyText.optional(),
+  approvedIdfId: nonEmptyText.optional(),
+  approvedIdfVersion: z.number().int().positive().optional(),
+  approvedIdfContentSha256: nonEmptyText.optional(),
+  approvedIdfModelInputMarkdown: nonEmptyText.optional(),
+  nativeTools: textList.optional(),
+  skills: textList.optional(),
+  toolsets: textList.optional(),
+  mcpConnectionIds: textList.optional(),
   // Trusted saved-card controls. These are bound by the configured-card
   // adapter and are not arguments exposed to the model-facing tool.
   reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
   mcpTools: textList.optional(),
+}).strict();
+
+const coderJobContextSchema = coderPacketSchema.pick({
+  objective: true,
+  planExcerpt: true,
+  contextSummary: true,
+  codeAnchors: true,
+  cbmQueries: true,
+  guardrails: true,
+  allowedFiles: true,
+  forbiddenWork: true,
+  proofRequired: true,
+  reportFormat: true,
+  stopConditions: true,
+  writeMode: true,
 }).strict();
 
 const coderReportStatusSchema = z.enum([
@@ -69,6 +98,7 @@ export const coderReportSchema = z.object({
 }).strict();
 
 export type CoderPacket = z.infer<typeof coderPacketSchema>;
+export type CoderJobContext = z.infer<typeof coderJobContextSchema>;
 export type CoderReport = z.infer<typeof coderReportSchema>;
 
 // Direct saved-Coder result retained for historical reads. The active full
@@ -247,6 +277,10 @@ export const coderReportJsonSchema = {
 
 export function parseCoderPacket(value: unknown): CoderPacket {
   return coderPacketSchema.parse(value);
+}
+
+export function parseCoderJobContext(value: unknown): CoderJobContext {
+  return coderJobContextSchema.parse(value);
 }
 
 export function parseCoderReport(value: unknown): CoderReport {

@@ -277,6 +277,7 @@ class CodexAppServerSession:
         cwd: Optional[str] = None,
         codex_bin: str = "codex",
         codex_home: Optional[str] = None,
+        model: Optional[str] = None,
         permission_profile: Optional[str] = None,
         approval_callback: Optional[Callable[..., str]] = None,
         on_event: Optional[Callable[[dict], None]] = None,
@@ -285,7 +286,8 @@ class CodexAppServerSession:
     ) -> None:
         self._cwd = cwd or os.getcwd()
         self._codex_bin = codex_bin
-        self._codex_home = codex_home
+        self._codex_home = codex_home or os.environ.get("HERMES_CODEX_HOME")
+        self._model = str(model or "").strip() or None
         self._permission_profile = (
             permission_profile or _HERMES_TO_CODEX_PERMISSION_PROFILE.get(
                 os.environ.get("HERMES_TERMINAL_SECURITY_MODE", "auto"),
@@ -301,6 +303,8 @@ class CodexAppServerSession:
         self._thread_id: Optional[str] = None
         self._interrupt_event = threading.Event()
         self._active_turn_id: Optional[str] = None
+        self.auth_mode: Optional[str] = None
+        self.plan_type: Optional[str] = None
         self._active_turn_lock = threading.Lock()
         # Pending file-change items, keyed by item id. Populated on
         # item/started for fileChange items; consumed by the approval
@@ -320,13 +324,35 @@ class CodexAppServerSession:
             return self._thread_id
         if self._client is None:
             self._client = self._client_factory(
-                codex_bin=self._codex_bin, codex_home=self._codex_home
+                codex_bin=self._codex_bin,
+                codex_home=self._codex_home,
+                extra_args=["-c", 'sandbox_mode="read-only"'],
             )
         self._client.initialize(
             client_name="hermes",
             client_title="Hermes Agent",
             client_version=_get_hermes_version(),
         )
+        account = self._client.request(
+            "account/read", {"refreshToken": False}, timeout=10
+        )
+        account_info = account.get("account") if isinstance(account, dict) else None
+        self.auth_mode = (
+            str(account_info.get("type") or "").strip()
+            if isinstance(account_info, dict)
+            else None
+        )
+        self.plan_type = (
+            str(account_info.get("planType") or "").strip() or None
+            if isinstance(account_info, dict)
+            else None
+        )
+        if self.auth_mode != "chatgpt":
+            raise CodexAppServerError(
+                code=-32001,
+                message="hermes_chatgpt_account_auth_required",
+                data={"authMode": self.auth_mode},
+            )
         # Permission selection is intentionally NOT sent on thread/start.
         # Two reasons (live-tested against codex 0.130.0):
         #   1. `thread/start.permissions` is gated behind the experimentalApi
@@ -343,6 +369,8 @@ class CodexAppServerSession:
         # Users who want a write-capable profile configure it in their
         # ~/.codex/config.toml the same way they would for any codex usage.
         params: dict[str, Any] = {"cwd": self._cwd}
+        if self._model:
+            params["model"] = self._model
         result = self._client.request("thread/start", params, timeout=15)
         # Cross-fill thread.id/sessionId — different codex versions have
         # serialized this under either key. Mirrors openclaw beta.8's

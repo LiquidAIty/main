@@ -153,6 +153,19 @@ def idf_create(payload: dict[str, Any]):
                 else ""
             ),
             native_references=payload.get("nativeReferences"),
+            purpose=str(payload.get("purpose") or "conversation"),
+            approval_status=(
+                str(payload.get("approvalStatus"))
+                if payload.get("approvalStatus") is not None
+                else None
+            ),
+            version=payload.get("version", 1),
+            job_context=payload.get("jobContext"),
+            supersedes_idf_id=(
+                str(payload.get("supersedesIdfId"))
+                if payload.get("supersedesIdfId") is not None
+                else None
+            ),
         )
     except InputDataFileError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
@@ -170,6 +183,44 @@ def idf_read(idf_id: str, projectId: str):
         raise HTTPException(status_code=404, detail=str(err)) from err
     except Exception as err:
         raise HTTPException(status_code=500, detail="idf_read_failed") from err
+
+
+@app.post("/idf/documents/{idf_id:path}/revisions")
+def idf_revise(idf_id: str, payload: dict[str, Any]):
+    from app.python_models.idf import InputDataFileError, revise_input_data_file
+
+    try:
+        return revise_input_data_file(
+            project_id=str(payload.get("projectId") or ""),
+            idf_id=idf_id,
+            expected_version=payload.get("expectedVersion"),
+            expected_sha256=str(payload.get("expectedSha256") or ""),
+            job_context=payload.get("jobContext"),
+            card_context=payload.get("cardContext"),
+            system_text=payload.get("systemText") if isinstance(payload.get("systemText"), str) else "",
+            user_text=payload.get("userText"),
+        )
+    except InputDataFileError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail="idf_revision_failed") from err
+
+
+@app.post("/idf/documents/{idf_id:path}/approve")
+def idf_approve(idf_id: str, payload: dict[str, Any]):
+    from app.python_models.idf import InputDataFileError, approve_input_data_file
+
+    try:
+        return approve_input_data_file(
+            project_id=str(payload.get("projectId") or ""),
+            idf_id=idf_id,
+            expected_version=payload.get("expectedVersion"),
+            expected_sha256=str(payload.get("expectedSha256") or ""),
+        )
+    except InputDataFileError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail="idf_approval_failed") from err
 
 
 @app.post("/autogen/run_card")

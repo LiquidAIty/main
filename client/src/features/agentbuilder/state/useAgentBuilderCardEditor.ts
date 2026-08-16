@@ -93,6 +93,12 @@ export default function useAgentBuilderCardEditor({
         resolvedProvider === 'local_openai_compatible'
           ? resolvedProvider
           : '',
+      access_mode:
+        runtimeOptions.accessMode === 'chatgpt-account'
+        || runtimeOptions.accessMode === 'openai-api'
+        || runtimeOptions.accessMode === 'openrouter-api'
+          ? runtimeOptions.accessMode
+          : '',
       model_key: runtimeOptions.modelKey ?? effectiveAgent?.model ?? null,
       reasoning_effort: runtimeOptions.reasoningEffort ?? null,
       temperature:
@@ -138,6 +144,12 @@ export default function useAgentBuilderCardEditor({
             ? nextConfig.provider
             : null;
         const nextModel = String(nextConfig.model_key || '').trim() || null;
+        const nextAccessMode =
+          nextConfig.access_mode === 'chatgpt-account'
+          || nextConfig.access_mode === 'openai-api'
+          || nextConfig.access_mode === 'openrouter-api'
+            ? nextConfig.access_mode
+            : null;
         const nextReasoningEffort =
           nextConfig.reasoning_effort === 'low' ||
           nextConfig.reasoning_effort === 'medium' ||
@@ -161,6 +173,7 @@ export default function useAgentBuilderCardEditor({
         const nextRuntimeOptions = normalizeRuntimeOptions({
           ...(nextConfig.runtime_options || {}),
           provider: nextProvider,
+          accessMode: nextAccessMode,
           modelKey: nextModel,
           reasoningEffort: nextReasoningEffort,
           temperature: nextTemperature,

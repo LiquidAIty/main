@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
@@ -35,6 +36,7 @@ export type HermesRuntimeConfig = {
   provider: string;
   modelKey: string;
   providerModelId: string;
+  accessMode: CardAccessMode;
   executionMode: 'single' | 'auto-kanban';
   tools: string[];
   nativeTools: string[];
@@ -44,6 +46,26 @@ export type HermesRuntimeConfig = {
   coderCardIds: string[];
   directSubagents: { cardId: string; title: string; runtimeBinding: string }[];
 };
+
+export type CardAccessMode = 'chatgpt-account' | 'openai-api' | 'openrouter-api';
+
+export function resolveCardAccessMode(card: any, provider: string): CardAccessMode {
+  const accessMode = String(card?.runtimeOptions?.accessMode || '').trim();
+  if (
+    accessMode !== 'chatgpt-account'
+    && accessMode !== 'openai-api'
+    && accessMode !== 'openrouter-api'
+  ) {
+    throw new Error(`card_access_mode_missing_or_invalid: cardId=${String(card?.id || '')}`);
+  }
+  const expectedProvider = accessMode === 'openrouter-api' ? 'openrouter' : 'openai';
+  if (provider !== expectedProvider) {
+    throw new Error(
+      `card_access_mode_provider_mismatch: cardId=${String(card?.id || '')} accessMode=${accessMode} provider=${provider}`,
+    );
+  }
+  return accessMode;
+}
 
 export type HermesTurnArgs = HermesRuntimeConfig & {
   sessionKey: string;
@@ -57,7 +79,16 @@ export type HermesTurnArgs = HermesRuntimeConfig & {
 export type HermesTurnHandle = {
   answer(promptId: string, reply: string): void;
   cancel(): void;
-  done: Promise<{ finalText: string; usage: HermesTurnUsage }>;
+  done: Promise<{
+    finalText: string;
+    usage: HermesTurnUsage;
+    transport: {
+      threadId: string | null;
+      turnId: string | null;
+      authMode: string | null;
+      planType: string | null;
+    };
+  }>;
   resolved: { cardId: string; provider: string; modelKey: string; providerModelId: string };
   runtime: { executable: string; pid: number | null; profileHome: string; transport: 'acp-stdio' };
 };
@@ -102,9 +133,9 @@ export function resolveHermesCardRuntimeHome(root: string, cardId: string): stri
   return path.join(root, '.hermes', 'profiles', safeProfile(cardId));
 }
 
-export function providerForHermes(provider: string): string {
+export function providerForHermes(provider: string, accessMode?: CardAccessMode): string {
   const normalized = String(provider || '').trim().toLowerCase();
-  if (normalized === 'openai') return 'openai-codex';
+  if (normalized === 'openai' && accessMode === 'chatgpt-account') return 'openai-codex';
   return normalized;
 }
 
@@ -164,6 +195,7 @@ export function resolveHermesCardRuntimeConfig(
   directSubagents: { cardId: string; title: string; runtimeBinding: string }[] = [],
 ): HermesRuntimeConfig {
   const model = resolveSavedCardModel(card);
+  const accessMode = resolveCardAccessMode(card, model.provider);
   const runtimeBinding = resolveRuntimeBinding(card?.runtimeBinding);
   if (!runtimeBinding) {
     throw new Error('hermes_runtime_binding_required');
@@ -206,6 +238,7 @@ export function resolveHermesCardRuntimeConfig(
     provider: model.provider,
     modelKey: model.modelKey,
     providerModelId: model.providerModelId,
+    accessMode,
     executionMode: requestedExecutionMode,
     tools: [
       ...savedStringList(card?.runtimeOptions?.tools),
@@ -257,6 +290,11 @@ class AcpProcess {
       env: {
         ...process.env,
         HERMES_HOME: this.profileHome,
+        HERMES_CODEX_HOME: String(
+          process.env.HERMES_CODEX_HOME
+          || process.env.CODEX_HOME
+          || path.join(os.homedir(), '.codex'),
+        ),
         HERMES_ACP_SKIP_CONFIGURED_MCP: '1',
       },
       windowsHide: true,
@@ -475,6 +513,7 @@ class AcpProcess {
     const cwd = this.sessionCwd(args.sessionKey, args.workingDirectory);
     const sessionConfig = {
       systemPrompt: args.prompt,
+      accessMode: args.accessMode,
       enabledTools: args.nativeTools,
       enabledToolsets: args.toolsets,
       skills: args.skills,
@@ -519,7 +558,7 @@ class AcpProcess {
     }
     const sessionId = await this.resolveSession(args);
     if (this.turns.has(sessionId)) throw new Error('hermes_session_turn_already_running');
-    const modelChoice = `${providerForHermes(args.provider)}:${args.providerModelId}`;
+    const modelChoice = `${providerForHermes(args.provider, args.accessMode)}:${args.providerModelId}`;
     if (this.configuredModelBySession.get(sessionId) !== modelChoice) {
       await this.request('session/set_model', { sessionId, modelId: modelChoice });
       this.configuredModelBySession.set(sessionId, modelChoice);
@@ -548,7 +587,17 @@ class AcpProcess {
       if (result?.stopReason === 'cancelled') throw new Error('hermes_turn_cancelled');
       if (result?.stopReason === 'refusal') throw new Error('hermes_turn_refused');
       onEvent({ kind: 'done', fullText: active.fullText, usage });
-      return { finalText: active.fullText, usage };
+      const meta = result?._meta?.liquidaity || {};
+      return {
+        finalText: active.fullText,
+        usage,
+        transport: {
+          threadId: typeof meta.codexThreadId === 'string' ? meta.codexThreadId : null,
+          turnId: typeof meta.codexTurnId === 'string' ? meta.codexTurnId : null,
+          authMode: typeof meta.authMode === 'string' ? meta.authMode : null,
+          planType: typeof meta.planType === 'string' ? meta.planType : null,
+        },
+      };
     }).catch((error) => {
       const normalized = error instanceof Error ? error : new Error(String(error));
       onEvent({ kind: 'error', message: normalized.message, code: 'hermes_turn_failed' });

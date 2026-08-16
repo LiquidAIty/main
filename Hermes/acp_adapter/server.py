@@ -256,6 +256,16 @@ def _external_session_string_list(
     return result
 
 
+def _external_session_access_mode(kwargs: dict[str, Any]) -> str | None:
+    config = kwargs.get("sessionConfig")
+    if not isinstance(config, dict) or "accessMode" not in config:
+        return None
+    value = str(config.get("accessMode") or "").strip()
+    if value not in {"chatgpt-account", "openai-api", "openrouter-api"}:
+        raise ValueError("acp_session_config_invalid: field=accessMode")
+    return value
+
+
 def _resource_display_name(uri: str, name: str | None = None, title: str | None = None) -> str:
     """Human-readable attachment name for prompt context."""
     raw_name = (name or "").strip()
@@ -1066,11 +1076,14 @@ class HermesACPAgent(acp.Agent):
         self, state: SessionState, kwargs: dict[str, Any]
     ) -> None:
         """Materialize saved-card prompt, skills, and capability grants once."""
+        access_mode = _external_session_access_mode(kwargs)
         skills = _external_session_string_list(kwargs, "skills")
         enabled_tools = _external_session_string_list(kwargs, "enabledTools")
         enabled_toolsets = _external_session_string_list(kwargs, "enabledToolsets")
 
         prompt_parts = [_external_session_system_prompt(kwargs)]
+        if access_mode is not None:
+            state.external_access_mode = access_mode
         if skills is not None:
             state.external_skills = skills
             if skills:
@@ -2209,7 +2222,21 @@ class HermesACPAgent(acp.Agent):
         await self._send_usage_update(state)
 
         stop_reason = "cancelled" if cancelled else "end_turn"
-        return PromptResponse(stop_reason=stop_reason, usage=usage)
+        transport_meta = None
+        if result.get("codex_thread_id") or result.get("codex_turn_id"):
+            transport_meta = {
+                "liquidaity": {
+                    "codexThreadId": result.get("codex_thread_id"),
+                    "codexTurnId": result.get("codex_turn_id"),
+                    "authMode": result.get("codex_auth_mode"),
+                    "planType": result.get("codex_plan_type"),
+                }
+            }
+        return PromptResponse(
+            stop_reason=stop_reason,
+            usage=usage,
+            field_meta=transport_meta,
+        )
 
     # ---- Slash commands (headless) -------------------------------------------
 
@@ -2590,6 +2617,15 @@ class HermesACPAgent(acp.Agent):
             provider_changed = bool(current_provider and requested_provider != current_provider)
             current_base_url = None if provider_changed else getattr(state.agent, "base_url", None)
             current_api_mode = None if provider_changed else getattr(state.agent, "api_mode", None)
+            access_mode = getattr(state, "external_access_mode", None)
+            expected_provider = "openrouter" if access_mode == "openrouter-api" else "openai"
+            normalized_provider = "openai" if requested_provider == "openai-codex" else requested_provider
+            if access_mode and normalized_provider != expected_provider:
+                raise ValueError(
+                    f"acp_access_mode_provider_mismatch:{access_mode}:{requested_provider}"
+                )
+            if access_mode == "chatgpt-account":
+                current_api_mode = "codex_app_server"
             state.agent = self.session_manager._make_agent(
                 session_id=session_id,
                 cwd=state.cwd,

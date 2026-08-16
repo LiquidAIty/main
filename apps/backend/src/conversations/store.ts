@@ -307,6 +307,10 @@ export async function markConversationRunRunning(input: {
   provider: string;
   modelKey: string;
   providerModelId: string;
+  accessMode: string;
+  idfId: string;
+  idfVersion: number;
+  idfContentSha256: string;
 }): Promise<void> {
   const result = await pool.query(
     `UPDATE ${RUNS_TABLE}
@@ -316,7 +320,11 @@ export async function markConversationRunRunning(input: {
          runtime = $3,
          provider = $4,
          model_key = $5,
-         provider_model_id = $6,
+          provider_model_id = $6,
+          access_mode = $7,
+          idf_id = $8,
+          idf_version = $9,
+          idf_content_sha256 = $10,
          started_at = COALESCE(started_at, NOW()),
          updated_at = NOW()
      WHERE correlation_id = $1 AND state = 'pending'
@@ -328,6 +336,10 @@ export async function markConversationRunRunning(input: {
       input.provider,
       input.modelKey,
       input.providerModelId,
+      input.accessMode,
+      input.idfId,
+      input.idfVersion,
+      input.idfContentSha256,
     ],
   );
   if (!result.rows.length) throw new Error(`agent_run_transition_conflict:${input.runId}:running`);
@@ -337,6 +349,13 @@ export async function completeConversationRun(input: {
   runId: string;
   assistantContent: string;
   usage: ConversationRunUsage;
+  transport?: {
+    threadId?: string | null;
+    turnId?: string | null;
+    authMode?: string | null;
+    planType?: string | null;
+  };
+  resultArtifact?: Record<string, unknown> | null;
 }): Promise<{ resultMessageId: string | null }> {
   return withTransaction(async (client) => {
     const run = await getRunForUpdate(client, input.runId);
@@ -367,7 +386,12 @@ export async function completeConversationRun(input: {
            total_cost_usd = $5,
            usage_available = $6,
            usage_source = $7,
-           context_breakdown_json = $8,
+            context_breakdown_json = $8,
+            provider_thread_id = $9,
+            provider_turn_id = $10,
+            provider_auth_mode = $11,
+            provider_plan_type = $12,
+            result_artifact_json = $13::jsonb,
            completed_at = NOW(),
            updated_at = NOW()
        WHERE correlation_id = $1`,
@@ -380,6 +404,11 @@ export async function completeConversationRun(input: {
         input.usage.usageAvailable,
         input.usage.usageSource,
         input.usage.contextBreakdownJson,
+        input.transport?.threadId ?? null,
+        input.transport?.turnId ?? null,
+        input.transport?.authMode ?? null,
+        input.transport?.planType ?? null,
+        input.resultArtifact ? JSON.stringify(input.resultArtifact) : null,
       ],
     );
     return { resultMessageId };

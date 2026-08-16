@@ -72,6 +72,7 @@ class CardRuntimeConfig(BaseModel):
     executionMode: Literal["single", "auto-kanban"] | None = None
     prompt: str = ""
     provider: str | None = None
+    accessMode: Literal["chatgpt-account", "openai-api", "openrouter-api"]
     modelKey: str | None = None
     providerModelId: str | None = None
     runtimeOptions: dict = Field(default_factory=dict)
@@ -89,6 +90,7 @@ class CardRuntimeParticipant(BaseModel):
     tools: list[str] = Field(default_factory=list)
     prompt: str = ""
     provider: RequiredRuntimeString
+    accessMode: Literal["chatgpt-account", "openai-api", "openrouter-api"]
     providerModelId: RequiredRuntimeString
     reasoningEffort: Literal["low", "medium", "high", "xhigh"] | None = None
     # Local Coder only: exact MCP capabilities selected on the saved card.

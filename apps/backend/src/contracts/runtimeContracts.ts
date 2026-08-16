@@ -8,6 +8,12 @@ export type InputDataFile = {
   runId: string;
   originatingCardId: string;
   version: number;
+  purpose: 'conversation' | 'coding_job';
+  approvalStatus: 'not_required' | 'draft' | 'approved' | 'superseded';
+  approvedAt: string | null;
+  approvedSha256: string | null;
+  supersedesIdfId: string | null;
+  jobContext: Record<string, unknown> | null;
   systemText: string;
   userText: string;
   cardContext: Record<string, unknown> | null;
@@ -34,6 +40,15 @@ export type CardRunResult = {
   runtimeBinding?: string | null;
   runtimeType?: string | null;
   nativeRunResult?: NativeRunResult | null;
+  accessMode?: string;
+  idfVersion?: number;
+  idfContentSha256?: string;
+  transport?: {
+    threadId: string | null;
+    turnId: string | null;
+    authMode: string | null;
+    planType: string | null;
+  };
 };
 
 export type PythonAutoGenPayloadShape = {

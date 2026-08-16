@@ -244,11 +244,48 @@ export async function createInputDataFileOnPython(payload: {
     nativeId: string;
     required: boolean;
   }>;
+  purpose?: 'conversation' | 'coding_job';
+  approvalStatus?: 'not_required' | 'draft';
+  version?: number;
+  jobContext?: Record<string, unknown>;
+  supersedesIdfId?: string;
 }): Promise<{ ok: true; idf: import('../../contracts/runtimeContracts').InputDataFile }> {
   return requestPythonRailsJson('/idf/documents', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+  }) as Promise<{ ok: true; idf: import('../../contracts/runtimeContracts').InputDataFile }>;
+}
+
+export async function reviseInputDataFileOnPython(params: {
+  idfId: string;
+  projectId: string;
+  expectedVersion: number;
+  expectedSha256: string;
+  jobContext: Record<string, unknown>;
+  cardContext: Record<string, unknown>;
+  systemText: string;
+  userText: string;
+}): Promise<{ ok: true; idf: import('../../contracts/runtimeContracts').InputDataFile }> {
+  const { idfId, ...body } = params;
+  return requestPythonRailsJson(`/idf/documents/${encodeURIComponent(idfId)}/revisions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }) as Promise<{ ok: true; idf: import('../../contracts/runtimeContracts').InputDataFile }>;
+}
+
+export async function approveInputDataFileOnPython(params: {
+  idfId: string;
+  projectId: string;
+  expectedVersion: number;
+  expectedSha256: string;
+}): Promise<{ ok: true; idf: import('../../contracts/runtimeContracts').InputDataFile }> {
+  const { idfId, ...body } = params;
+  return requestPythonRailsJson(`/idf/documents/${encodeURIComponent(idfId)}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   }) as Promise<{ ok: true; idf: import('../../contracts/runtimeContracts').InputDataFile }>;
 }
 

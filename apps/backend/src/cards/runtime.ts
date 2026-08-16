@@ -20,6 +20,7 @@ import {
 import {
   deriveHermesSessionKey,
   providerForHermes,
+  resolveCardAccessMode,
   resolveDirectHermesSubagents,
   resolveHermesCardRuntimeConfig,
   startHermesTurn,
@@ -379,6 +380,7 @@ export function resolveAutoGenParticipantTools(card: any): string[] {
 export function serializeCardParticipant(head: any): Record<string, unknown> {
   head = normalizeLocalCoderControllerCard(head);
   const model = resolveCardModelStrict(head);
+  const accessMode = resolveCardAccessMode(head, model.provider);
   const runtimeBinding = resolveCardBinding(head);
   const runtimeType = resolveCardRuntimeType(head);
   const selectedTools = resolveAutoGenParticipantTools(head);
@@ -395,6 +397,7 @@ export function serializeCardParticipant(head: any): Record<string, unknown> {
     prompt: String(head.prompt || ''),
     tools: selectedTools,
     provider: model.provider,
+    accessMode,
     providerModelId: model.providerModelId,
     reasoningEffort: cleanReasoningEffort(head.runtimeOptions?.reasoningEffort),
     ...(innerMcpTools.length > 0 ? { innerMcpTools } : {}),
@@ -525,6 +528,15 @@ export type ConfiguredCardRunResult = {
   provider: string | null;
   modelKey: string | null;
   providerModelId: string | null;
+  accessMode: string | null;
+  idfVersion: number | null;
+  idfContentSha256: string | null;
+  transport: {
+    threadId: string | null;
+    turnId: string | null;
+    authMode: string | null;
+    planType: string | null;
+  } | null;
   tools: string[];
   output: string;
   error: string | null;
@@ -553,6 +565,10 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       provider: null,
       modelKey: null,
       providerModelId: null,
+      accessMode: null,
+      idfVersion: null,
+      idfContentSha256: null,
+      transport: null,
       tools: [],
       output: '',
       error: null,
@@ -655,6 +671,9 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       provider: idfConfig.provider,
       modelKey: idfConfig.modelKey,
       providerModelId: idfConfig.providerModelId,
+      accessMode: idfConfig.accessMode,
+      idfVersion: idf.version,
+      idfContentSha256: idf.contentSha256,
     };
     if (idfConfig.executionMode === 'auto-kanban') {
       try {
@@ -666,7 +685,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
           title: idfConfig.title,
           prompt: idf.systemText,
           profile: idfConfig.profile,
-          provider: providerForHermes(idfConfig.provider),
+          provider: providerForHermes(idfConfig.provider, idfConfig.accessMode),
           providerModelId: idfConfig.providerModelId,
           skills: idfConfig.skills,
           input: idf.modelInputMarkdown,
@@ -722,6 +741,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         output: response.finalText,
         nativeRunResult: { runId: correlationId, idfId: idf.idfId },
         usage: response.usage || UNAVAILABLE_RUN_USAGE,
+        transport: response.transport,
       });
     } catch (error: any) {
       return done({
@@ -758,6 +778,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     runtimeBinding: resolvedBinding,
     prompt: String((participant as any).prompt || ''),
     provider: model.provider,
+    accessMode: resolveCardAccessMode(effectiveCard, model.provider),
     modelKey: String(effectiveCard.runtimeOptions?.modelKey || ''),
     providerModelId: model.providerModelId,
     runtimeOptions: { deckId },
@@ -814,6 +835,9 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         provider: model.provider,
         modelKey: String(effectiveCard.runtimeOptions?.modelKey || ''),
         providerModelId: model.providerModelId,
+        accessMode: cardRuntime.accessMode,
+        idfVersion: idf.version,
+        idfContentSha256: idf.contentSha256,
         tools,
         error: String(response.error || 'single_card_run_failed'),
         nativeRunResult: { runId: response.runId || correlationId, idfId: idf.idfId },
@@ -839,6 +863,9 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       provider: model.provider,
       modelKey: String(effectiveCard.runtimeOptions?.modelKey || ''),
       providerModelId: model.providerModelId,
+      accessMode: cardRuntime.accessMode,
+      idfVersion: idf.version,
+      idfContentSha256: idf.contentSha256,
       tools,
       output: String(response.finalResponseText || ''),
       nativeRunResult: {

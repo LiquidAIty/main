@@ -682,6 +682,7 @@ def run_codex_app_server_turn(
         # Supersedes the narrower item/started-only bridge from #38835.
         agent._codex_session = CodexAppServerSession(
             cwd=cwd,
+            model=getattr(agent, "model", None),
             approval_callback=approval_callback,
             request_routing=_ServerRequestRouting(
                 auto_approve_exec=auto_approve_requests,
@@ -716,10 +717,7 @@ def run_codex_app_server_turn(
         if _user_interrupted:
             agent.clear_interrupt()
         return {
-            "final_response": (
-                f"Codex app-server turn failed: {exc}. "
-                f"Fall back to default runtime with `/codex-runtime auto`."
-            ),
+            "final_response": f"Codex app-server turn failed: {exc}.",
             "messages": messages,
             "api_calls": 0,
             "completed": False,
@@ -886,6 +884,8 @@ def run_codex_app_server_turn(
         "agent_persisted": True,
         "codex_thread_id": turn.thread_id,
         "codex_turn_id": turn.turn_id,
+        "codex_auth_mode": getattr(agent._codex_session, "auth_mode", None),
+        "codex_plan_type": getattr(agent._codex_session, "plan_type", None),
         **usage_result,
     }
 

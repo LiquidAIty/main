@@ -672,8 +672,8 @@ class SessionManager:
                     "args": list(runtime.get("args") or []),
                 }
             )
-        except Exception:
-            logger.debug("ACP session falling back to default provider resolution", exc_info=True)
+        except Exception as exc:
+            raise RuntimeError("acp_provider_resolution_failed") from exc
 
         _register_task_cwd(session_id, cwd)
 

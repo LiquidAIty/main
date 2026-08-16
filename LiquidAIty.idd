@@ -709,6 +709,12 @@ type = "string"
 required = false
 
 [[records.fields]]
+name = "accessMode"
+type = "string"
+required = true
+values = ["chatgpt-account", "openai-api", "openrouter-api"]
+
+[[records.fields]]
 name = "modelKey"
 type = "string"
 required = false
@@ -778,6 +784,72 @@ required = false
 name = "magentic"
 type = "object"
 required = false
+
+[[records]]
+name = "coder-packet"
+allowUnknownFields = false
+description = "User-reviewable dynamic coding job fields embedded in an immutable IDF revision."
+
+[[records.fields]]
+name = "objective"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "planExcerpt"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "contextSummary"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "codeAnchors"
+type = "string-array"
+required = true
+
+[[records.fields]]
+name = "cbmQueries"
+type = "string-array"
+required = true
+
+[[records.fields]]
+name = "guardrails"
+type = "string-array"
+required = true
+
+[[records.fields]]
+name = "allowedFiles"
+type = "string-array"
+required = true
+
+[[records.fields]]
+name = "forbiddenWork"
+type = "string-array"
+required = true
+
+[[records.fields]]
+name = "proofRequired"
+type = "string-array"
+required = true
+
+[[records.fields]]
+name = "reportFormat"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "stopConditions"
+type = "string-array"
+required = true
+
+[[records.fields]]
+name = "writeMode"
+type = "string"
+required = true
+values = ["read-only", "edit"]
 
 [[records]]
 name = "model-option"
@@ -899,6 +971,26 @@ label = "OpenAI Account"
 [[editorFields.options]]
 value = "openrouter"
 label = "OpenRouter"
+
+[[editorFields]]
+name = "accessMode"
+label = "Access mode"
+path = "runtimeOptions.accessMode"
+control = "select"
+allowUnset = false
+help = "Select account transport or an explicit API credential mode; credentials remain centrally owned."
+
+[[editorFields.options]]
+value = "chatgpt-account"
+label = "ChatGPT account"
+
+[[editorFields.options]]
+value = "openai-api"
+label = "OpenAI API"
+
+[[editorFields.options]]
+value = "openrouter-api"
+label = "OpenRouter API"
 
 [[editorFields]]
 name = "modelKey"

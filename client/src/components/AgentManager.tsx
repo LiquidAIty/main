@@ -199,6 +199,7 @@ export type AgentManagerLocalConfig = {
   runtime_options?: AgentCardRuntimeOptions | null;
   parent_graph_id?: string | null;
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | '' | null;
+  access_mode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | '' | null;
   model_key?: string | null;
   reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
   temperature?: number | null;
@@ -327,6 +328,7 @@ export function buildActiveAgentManagerLocalConfig(input: {
   runtimeBinding: RuntimeBinding | '';
   executionMode: 'single' | 'auto-kanban';
   provider: 'openai' | 'openrouter' | '';
+  accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | '';
   modelKey: string;
   reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | '';
   temperature: number | '';
@@ -343,6 +345,7 @@ export function buildActiveAgentManagerLocalConfig(input: {
     execution_mode:
       input.runtimeBinding === 'main_chat' ? 'single' : input.executionMode,
     provider: input.provider,
+    access_mode: input.accessMode,
     model_key: input.modelKey || null,
     reasoning_effort: input.reasoningEffort || null,
     temperature: typeof input.temperature === 'number' ? input.temperature : null,
@@ -396,6 +399,9 @@ export function AgentManager({
   const [cardNameDraft, setCardNameDraft] = useState(cardName);
   const [cardSubtextDraft, setCardSubtextDraft] = useState(cardSubtext);
   const [provider, setProvider] = useState<'openai' | 'openrouter' | ''>('');
+  const [accessMode, setAccessMode] = useState<
+    'chatgpt-account' | 'openai-api' | 'openrouter-api' | ''
+  >('');
   const [modelKey, setModelKey] = useState('');
   const [reasoningEffort, setReasoningEffort] = useState<
     'low' | 'medium' | 'high' | 'xhigh' | ''
@@ -488,6 +494,13 @@ export function AgentManager({
         ? localConfig.provider
         : '',
     );
+    setAccessMode(
+      localConfig.access_mode === 'chatgpt-account'
+      || localConfig.access_mode === 'openai-api'
+      || localConfig.access_mode === 'openrouter-api'
+        ? localConfig.access_mode
+        : '',
+    );
     setModelKey(localConfig.model_key || '');
     setReasoningEffort(localConfig.reasoning_effort || '');
     setTemperature(typeof localConfig.temperature === 'number' ? localConfig.temperature : '');
@@ -533,6 +546,7 @@ export function AgentManager({
       runtimeBinding,
       executionMode,
       provider,
+      accessMode,
       modelKey,
       reasoningEffort,
       temperature,
@@ -580,6 +594,7 @@ export function AgentManager({
     runtimeBinding,
     executionMode,
     provider,
+    accessMode,
     modelKey,
     reasoningEffort,
     temperature,
@@ -655,6 +670,7 @@ export function AgentManager({
       runtimeBinding,
       executionMode,
       provider,
+      accessMode,
       modelKey,
       reasoningEffort,
       temperature,
@@ -682,6 +698,7 @@ export function AgentManager({
     runtimeBinding,
     executionMode,
     provider,
+    accessMode,
     modelKey,
     reasoningEffort,
     temperature,
@@ -700,6 +717,7 @@ export function AgentManager({
   const editorField = (name: string) => cardEditorFields.find((field) => field.name === name);
   const executionModeField = editorField('executionMode');
   const providerField = editorField('provider');
+  const accessModeField = editorField('accessMode');
   const modelKeyField = editorField('modelKey');
   const reasoningEffortField = editorField('reasoningEffort');
   const temperatureField = editorField('temperature');
@@ -715,6 +733,7 @@ export function AgentManager({
     && !(executionModeField?.blockedRuntimeTypes || []).includes(String(localConfig?.runtime_type || ''));
   const runtimeDictionaryReady = Boolean(
     providerField
+    && accessModeField
     && modelKeyField
     && reasoningEffortField
     && temperatureField
@@ -1054,6 +1073,33 @@ export function AgentManager({
               >
                 <option value="">Unset</option>
                 {providerOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                {accessModeField?.label}
+              </label>
+              <select
+                data-testid="agent-access-mode"
+                value={accessMode}
+                onChange={(event) => {
+                  setAccessMode(event.target.value as typeof accessMode);
+                  markDraftDirty();
+                }}
+                style={{
+                  width: '100%',
+                  padding: 8,
+                  background: '#2B2B2B',
+                  color: '#FFF',
+                  border: '1px solid #3A3A3A',
+                  borderRadius: 8,
+                }}
+              >
+                <option value="">Select access mode</option>
+                {(accessModeField?.options || []).map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>

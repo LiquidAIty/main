@@ -18,6 +18,7 @@ import {
 import {
   deriveHermesSessionKey,
   resolveMainHermesRuntimeConfig,
+  resolveHermesCardRuntimeConfig,
   startHermesTurn,
   type HermesSessionEvent,
   type HermesTurnHandle,
@@ -37,7 +38,10 @@ import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantStore';
 import {
   createInputDataFileOnPython,
+  approveInputDataFileOnPython,
+  fetchInputDataFile,
   requestPythonRailsJson,
+  reviseInputDataFileOnPython,
 } from '../services/autogen/autogenOrchestratorClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 import {
@@ -46,6 +50,7 @@ import {
   type ToolCatalogReference,
 } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
+import { parseCoderJobContext } from '../contracts/coderContracts';
 
 const router = Router();
 
@@ -335,6 +340,10 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
           provider: result.provider,
           modelKey: result.modelKey,
           providerModelId: result.providerModelId,
+          accessMode: result.accessMode || '',
+          idfId: result.nativeRunResult?.idfId || '',
+          idfVersion: result.idfVersion || 1,
+          idfContentSha256: result.idfContentSha256 || '',
         });
       }
       if (result.status === 'completed') {
@@ -342,6 +351,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
           runId: correlationId,
           assistantContent: result.output,
           usage: result.usage,
+          transport: result.transport || undefined,
         });
       } else if (result.status !== 'submitted') {
         await failConversationRun(
@@ -500,6 +510,10 @@ router.post('/main/session/chat', async (req, res) => {
         provider: handle.resolved.provider,
         modelKey: handle.resolved.modelKey,
         providerModelId: handle.resolved.providerModelId,
+        accessMode: idfRuntimeConfig.accessMode,
+        idfId: idf.idfId,
+        idfVersion: idf.version,
+        idfContentSha256: idf.contentSha256,
       });
     } catch (error) {
       handle.cancel();
@@ -519,12 +533,13 @@ router.post('/main/session/chat', async (req, res) => {
         );
       });
     });
-    const { finalText, usage } = await handle.done;
+    const { finalText, usage, transport } = await handle.done;
     try {
       await completeConversationRun({
         runId: correlationId,
         assistantContent: String(finalText || ''),
         usage,
+        transport,
       });
     } catch (error) {
       throw new Error(
@@ -777,21 +792,194 @@ router.get('/localcoder/status', async (req, res) => {
   });
 });
 
-router.post('/localcoder/run', async (req, res) => {
+function unavailableUsage() {
+  return {
+    providerInputTokens: null,
+    providerOutputTokens: null,
+    totalCostUsd: null,
+    usageAvailable: false,
+    usageSource: 'coder_report_only',
+    contextBreakdownJson: '',
+  };
+}
+
+async function resolveCoderIdfCardContext(projectId: string, cardId: string) {
+  const card = await resolveCodingCard(projectId, BUILDER_DECK_ID, cardId);
+  const config = resolveHermesCardRuntimeConfig(card, []);
+  return { ...config, runtimeType: 'assistant_agent' };
+}
+
+router.post('/idf/coder/drafts', async (req, res) => {
   try {
-    // The coder's filesystem root is server-owned and trusted. The caller
-    // supplies only the bounded logical task;
-    // it cannot choose the filesystem root or mint the run identity.
-    const incoming = (req.body?.coderPacket ?? req.body ?? {}) as Record<string, unknown>;
+    const projectId = String(req.body?.projectId || '').trim();
+    const cardId = String(req.body?.cardId || '').trim();
+    const conversationId = String(req.body?.conversationId || 'coder-review').trim();
+    if (!projectId || !cardId) {
+      return res.status(400).json({ ok: false, error: 'projectId_and_cardId_required' });
+    }
+    const jobContext = parseCoderJobContext(req.body?.jobContext);
+    const cardContext = await resolveCoderIdfCardContext(projectId, cardId);
+    const runId = `coder_${randomUUID()}`;
+    const result = await createInputDataFileOnPython({
+      projectId,
+      deckId: BUILDER_DECK_ID,
+      conversationId,
+      runId,
+      originatingCardId: cardId,
+      systemText: cardContext.prompt,
+      userText: jobContext.objective,
+      cardContext,
+      purpose: 'coding_job',
+      approvalStatus: 'draft',
+      jobContext,
+    });
+    return res.status(201).json(result);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return res.status(400).json({ ok: false, error: 'invalid_coder_job_context', issues: error.issues });
+    }
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : 'idf_draft_failed' });
+  }
+});
+
+router.post('/idf/coder/:idfId/revisions', async (req, res) => {
+  try {
+    const projectId = String(req.body?.projectId || '').trim();
+    const idfId = String(req.params.idfId || '').trim();
+    const existing = (await fetchInputDataFile({ projectId, idfId })).idf;
+    const jobContext = parseCoderJobContext(req.body?.jobContext);
+    const cardContext = await resolveCoderIdfCardContext(projectId, existing.originatingCardId);
+    const result = await reviseInputDataFileOnPython({
+      idfId,
+      projectId,
+      expectedVersion: Number(req.body?.expectedVersion),
+      expectedSha256: String(req.body?.expectedSha256 || ''),
+      jobContext,
+      cardContext,
+      systemText: cardContext.prompt,
+      userText: jobContext.objective,
+    });
+    return res.json(result);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return res.status(400).json({ ok: false, error: 'invalid_coder_job_context', issues: error.issues });
+    }
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : 'idf_revision_failed' });
+  }
+});
+
+router.post('/idf/coder/:idfId/approve', async (req, res) => {
+  try {
+    const result = await approveInputDataFileOnPython({
+      idfId: String(req.params.idfId || '').trim(),
+      projectId: String(req.body?.projectId || '').trim(),
+      expectedVersion: Number(req.body?.expectedVersion),
+      expectedSha256: String(req.body?.expectedSha256 || ''),
+    });
+    return res.json(result);
+  } catch (error) {
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : 'idf_approval_failed' });
+  }
+});
+
+router.post('/localcoder/run', async (req, res) => {
+  let runId = '';
+  try {
+    const projectId = String(req.body?.projectId || '').trim();
+    const idfId = String(req.body?.idfId || '').trim();
+    const expectedVersion = Number(req.body?.version);
+    const expectedSha256 = String(req.body?.contentSha256 || '').trim();
+    if (!projectId || !idfId || !Number.isInteger(expectedVersion) || !expectedSha256) {
+      return res.status(400).json({ ok: false, error: 'approved_idf_reference_required' });
+    }
+    const idf = (await fetchInputDataFile({ projectId, idfId })).idf;
+    if (
+      idf.purpose !== 'coding_job'
+      || idf.approvalStatus !== 'approved'
+      || idf.version !== expectedVersion
+      || idf.contentSha256 !== expectedSha256
+      || idf.approvedSha256 !== expectedSha256
+    ) {
+      return res.status(409).json({ ok: false, error: 'exact_approved_idf_revision_required' });
+    }
+    const currentCard = await resolveCodingCard(projectId, idf.deckId, idf.originatingCardId);
+    if (!currentCard) throw new Error('approved_idf_coder_card_unavailable');
+    const cardContext = idf.cardContext as Record<string, any>;
+    const jobContext = parseCoderJobContext(idf.jobContext);
+    runId = idf.runId;
     const coderPacket = {
-      ...incoming,
-      id:
-        typeof incoming.id === 'string' && incoming.id.trim()
-          ? incoming.id
-          : `coder_${randomUUID()}`,
+      ...jobContext,
+      id: runId,
+      projectId,
       repoPath: resolveRepoRoot(),
+      modelProvider: cardContext.provider,
+      providerModelId: cardContext.providerModelId,
+      accessMode: cardContext.accessMode,
+      reasoningEffort: cardContext.runtimeOptions?.reasoningEffort || undefined,
+      mcpTools: Array.isArray(cardContext.tools)
+        ? cardContext.tools.filter((tool: unknown) => tool !== 'run_local_coder')
+        : [],
+      cardId: idf.originatingCardId,
+      cardTitle: cardContext.title,
+      cardPrompt: idf.systemText,
+      cardProfile: cardContext.profile,
+      modelKey: cardContext.modelKey,
+      approvedIdfId: idf.idfId,
+      approvedIdfVersion: idf.version,
+      approvedIdfContentSha256: idf.contentSha256,
+      approvedIdfModelInputMarkdown: idf.modelInputMarkdown,
+      nativeTools: cardContext.nativeTools || [],
+      skills: cardContext.skills || [],
+      toolsets: cardContext.toolsets || [],
+      mcpConnectionIds: cardContext.mcpConnectionIds || [],
     };
+    await beginConversationRun({
+      runId,
+      projectId,
+      deckId: idf.deckId,
+      cardId: idf.originatingCardId,
+      conversationId: idf.conversationId,
+      runtime: 'local_coder',
+      sessionId: `approved-idf:${idf.idfId}`,
+      userContent: idf.contentMarkdown,
+    });
+    await markConversationRunRunning({
+      runId,
+      invokingCardId: idf.originatingCardId,
+      runtime: 'local_coder',
+      provider: String(cardContext.provider),
+      modelKey: String(cardContext.modelKey),
+      providerModelId: String(cardContext.providerModelId),
+      accessMode: String(cardContext.accessMode),
+      idfId: idf.idfId,
+      idfVersion: idf.version,
+      idfContentSha256: idf.contentSha256,
+    });
     const result = await localCoderService.run(coderPacket);
+    await completeConversationRun({
+      runId,
+      assistantContent: JSON.stringify(result.report, null, 2),
+      usage: unavailableUsage(),
+      transport: result.runtimeDiagnostics ? {
+        threadId: result.runtimeDiagnostics.providerThreadId,
+        turnId: result.runtimeDiagnostics.providerTurnId,
+        authMode: result.runtimeDiagnostics.providerAuthMode,
+        planType: result.runtimeDiagnostics.providerPlanType,
+      } : undefined,
+      resultArtifact: {
+        artifactType: 'CoderReport',
+        cardId: idf.originatingCardId,
+        provider: cardContext.provider,
+        model: cardContext.providerModelId,
+        accessMode: cardContext.accessMode,
+        correlationId: runId,
+        idfId: idf.idfId,
+        idfVersion: idf.version,
+        idfContentSha256: idf.contentSha256,
+        report: result.report,
+        comparison: result.comparison,
+      },
+    });
     const reportOk = result.report.status === 'succeeded' || result.report.status === 'partial';
     const statusCode =
       result.report.status === 'blocked'
@@ -804,6 +992,13 @@ router.post('/localcoder/run', async (req, res) => {
       ...result,
     });
   } catch (error) {
+    if (runId) {
+      await failConversationRun(
+        runId,
+        'localcoder_run_failed',
+        error instanceof Error ? error.message : 'localcoder_run_failed',
+      ).catch(() => undefined);
+    }
     if (error instanceof ZodError) {
       return res.status(400).json({
         ok: false,

@@ -30,6 +30,7 @@ export default function BuilderChat({
   knowledgeProjectId,
   colors,
   busy = false,
+  coderCardId,
 }: {
   messages: { role: "assistant" | "user"; text: string }[];
   onSend: (t: string) => void;
@@ -37,9 +38,113 @@ export default function BuilderChat({
   colors: BuilderChatColors;
   /** The real SSE turn is still open; prevent a second send and state it plainly. */
   busy?: boolean;
+  coderCardId?: string | null;
 }) {
   const [v, setV] = useState("");
+  const [showCoderReview, setShowCoderReview] = useState(false);
+  const [coderJobText, setCoderJobText] = useState("");
+  const [coderIdf, setCoderIdf] = useState<any>(null);
+  const [coderBusy, setCoderBusy] = useState(false);
+  const [coderError, setCoderError] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
+
+  const coderRequest = async (path: string, body: Record<string, unknown>) => {
+    setCoderBusy(true);
+    setCoderError("");
+    try {
+      const response = await fetch(`/api/coder${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json();
+      if (!response.ok || payload?.ok !== true) {
+        throw new Error(String(payload?.error || `coder_request_failed_${response.status}`));
+      }
+      return payload;
+    } catch (error) {
+      setCoderError(error instanceof Error ? error.message : String(error));
+      return null;
+    } finally {
+      setCoderBusy(false);
+    }
+  };
+
+  const prepareCoderDraft = async () => {
+    const objective = v.trim();
+    if (!objective || !coderCardId) return;
+    const jobContext = {
+      objective,
+      planExcerpt: objective,
+      contextSummary: "Use the current LiquidAIty checkout and saved Coder Card authority.",
+      codeAnchors: [],
+      cbmQueries: ["Resolve the requested structural slice with canonical Codebase Memory first."],
+      guardrails: ["Preserve unrelated changes.", "Do not commit or push."],
+      allowedFiles: ["Only files required by the approved objective."],
+      forbiddenWork: ["No unrelated cleanup.", "No hidden provider fallback."],
+      proofRequired: ["Run focused tests and typecheck the touched production boundary."],
+      reportFormat: "LiquidAIty CoderReport",
+      stopConditions: ["Stop if an irreversible product decision is required."],
+      writeMode: "edit",
+    };
+    const payload = await coderRequest("/idf/coder/drafts", {
+      projectId: knowledgeProjectId,
+      cardId: coderCardId,
+      conversationId: "builder-coder-review",
+      jobContext,
+    });
+    if (payload?.idf) {
+      setCoderIdf(payload.idf);
+      setCoderJobText(JSON.stringify(payload.idf.jobContext, null, 2));
+      setShowCoderReview(true);
+    }
+  };
+
+  const reviseCoderDraft = async () => {
+    if (!coderIdf) return;
+    let jobContext: Record<string, unknown>;
+    try {
+      jobContext = JSON.parse(coderJobText);
+    } catch {
+      setCoderError("Coder job fields must be valid JSON.");
+      return;
+    }
+    const payload = await coderRequest(`/idf/coder/${encodeURIComponent(coderIdf.idfId)}/revisions`, {
+      projectId: knowledgeProjectId,
+      expectedVersion: coderIdf.version,
+      expectedSha256: coderIdf.contentSha256,
+      jobContext,
+    });
+    if (payload?.idf) {
+      setCoderIdf(payload.idf);
+      setCoderJobText(JSON.stringify(payload.idf.jobContext, null, 2));
+    }
+  };
+
+  const approveCoderDraft = async () => {
+    if (!coderIdf) return;
+    const payload = await coderRequest(`/idf/coder/${encodeURIComponent(coderIdf.idfId)}/approve`, {
+      projectId: knowledgeProjectId,
+      expectedVersion: coderIdf.version,
+      expectedSha256: coderIdf.contentSha256,
+    });
+    if (payload?.idf) setCoderIdf(payload.idf);
+  };
+
+  const runApprovedCoderDraft = async () => {
+    if (!coderIdf || coderIdf.approvalStatus !== "approved") return;
+    const payload = await coderRequest("/localcoder/run", {
+      projectId: knowledgeProjectId,
+      idfId: coderIdf.idfId,
+      version: coderIdf.version,
+      contentSha256: coderIdf.contentSha256,
+    });
+    if (payload?.report) {
+      onSend(`Coder result (${coderIdf.idfId} v${coderIdf.version}):\n${JSON.stringify(payload.report, null, 2)}`);
+      setShowCoderReview(false);
+      setCoderIdf(null);
+    }
+  };
 
   // Keep the latest message (and the active turn's inline work) in view — scroll
   // on new messages and as the active assistant reply streams in.
@@ -141,6 +246,46 @@ export default function BuilderChat({
         </div>
       </div>
       <div className="px-4 pb-4">
+        {showCoderReview && coderIdf ? (
+          <div
+            data-testid="coder-idf-review"
+            style={{
+              marginBottom: 8,
+              padding: 10,
+              borderRadius: 12,
+              background: colors.panel,
+              border: `1px solid ${colors.border}`,
+              color: colors.text,
+              fontSize: 12,
+            }}
+          >
+            <div style={{ marginBottom: 6 }}>
+              Coder IDF v{coderIdf.version} · {coderIdf.approvalStatus} · sha256 {String(coderIdf.contentSha256).slice(0, 16)}…
+            </div>
+            <div style={{ marginBottom: 6, color: colors.neutral }}>
+              Card {coderIdf.cardContext?.cardId} · {coderIdf.cardContext?.provider}/{coderIdf.cardContext?.providerModelId} · {coderIdf.cardContext?.accessMode}
+            </div>
+            <textarea
+              aria-label="Coder job fields"
+              value={coderJobText}
+              disabled={coderBusy || coderIdf.approvalStatus === "approved"}
+              onChange={(event) => setCoderJobText(event.target.value)}
+              style={{ width: "100%", minHeight: 150, resize: "vertical", background: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 8, padding: 8, fontFamily: "monospace", fontSize: 11 }}
+            />
+            {coderError ? <div role="alert" style={{ color: "#FFA2A2", marginTop: 6 }}>{coderError}</div> : null}
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              {coderIdf.approvalStatus === "draft" ? (
+                <>
+                  <button disabled={coderBusy} onClick={reviseCoderDraft}>Save revision</button>
+                  <button disabled={coderBusy} onClick={approveCoderDraft}>Approve exact hash</button>
+                </>
+              ) : (
+                <button disabled={coderBusy} onClick={runApprovedCoderDraft}>Run approved Coder</button>
+              )}
+              <button disabled={coderBusy} onClick={() => setShowCoderReview(false)}>Close</button>
+            </div>
+          </div>
+        ) : null}
         <div
           className="flex items-center gap-2"
           style={{
@@ -156,6 +301,15 @@ export default function BuilderChat({
             disabled={!knowledgeProjectId}
             appearance="chat-inline"
           />
+          <button
+            type="button"
+            disabled={busy || coderBusy || !coderCardId || !v.trim()}
+            onClick={prepareCoderDraft}
+            title="Prepare an immutable Coder IDF for review"
+            style={{ color: colors.text, background: "transparent", border: `1px solid ${colors.border}`, borderRadius: 8, padding: "6px 8px", fontSize: 11 }}
+          >
+            Coder job
+          </button>
           <input
             value={v}
             onChange={(e) => setV(e.target.value)}

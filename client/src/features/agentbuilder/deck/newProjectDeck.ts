@@ -299,6 +299,7 @@ export const INITIAL_DECK: DeckDocument = {
       // No ordinary web search is granted.
       runtimeOptions: {
         provider: DEFAULT_CARD_PROVIDER,
+        accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
         executionMode: 'single',
         tools: [...MAIN_CHAT_CONTROLLER_TOOLS],
@@ -321,6 +322,7 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeType: 'magentic_one',
       runtimeOptions: {
         provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
+        accessMode: 'openrouter-api',
         modelKey: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
         maxTurns: 2,
       },
@@ -342,6 +344,7 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeType: 'assistant_agent',
       runtimeOptions: {
         provider: LOCAL_CODER_CONTROLLER_PROVIDER,
+        accessMode: 'chatgpt-account',
         modelKey: LOCAL_CODER_CONTROLLER_MODEL_KEY,
         tools: [...LOCAL_CODER_CONTROLLER_TOOLS],
       },
@@ -365,6 +368,7 @@ export const INITIAL_DECK: DeckDocument = {
         tools: [...HERMES_CARD_TOOLS],
         modelKey: DEFAULT_CARD_MODEL_KEY,
         provider: DEFAULT_CARD_PROVIDER,
+        accessMode: 'chatgpt-account',
         executionMode: 'auto-kanban',
       },
       parentGraphId: null,
@@ -386,6 +390,7 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeOptions: {
         modelKey: DEFAULT_CARD_MODEL_KEY,
         provider: DEFAULT_CARD_PROVIDER,
+        accessMode: 'chatgpt-account',
         executionMode: 'single',
       },
       parentGraphId: 'workbench_trading',
@@ -419,6 +424,7 @@ export const INITIAL_DECK: DeckDocument = {
         ],
         modelKey: DEFAULT_CARD_MODEL_KEY,
         provider: DEFAULT_CARD_PROVIDER,
+        accessMode: 'chatgpt-account',
         executionMode: 'single',
       },
       parentGraphId: null,
