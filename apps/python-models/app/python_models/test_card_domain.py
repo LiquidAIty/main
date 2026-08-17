@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import copy
-import json
-
 import pytest
 
 from app.python_models import card_domain
@@ -237,53 +234,140 @@ def test_coder_transport_preserves_exact_idf_and_python_owned_permission() -> No
     assert "id" not in packet
 
 
-def test_exact_idf_allows_dynamic_edits_but_protects_card_authority() -> None:
-    context = {
-        "cardId": "card-one",
-        "title": "One",
-        "prompt": "stable",
-        "runtimeType": "assistant_agent",
-        "runtimeBinding": "research_agent",
-        "provider": "openrouter",
-        "modelKey": "model",
-        "providerModelId": "model",
-        "accessMode": "openrouter-api",
-        "executionMode": "single",
-        "tools": [],
+def _destination_fixture(monkeypatch: pytest.MonkeyPatch) -> dict:
+    sender = _agent("sender")
+    hermes = _agent("hermes", prompt="Hermes saved prompt", runtimeBinding="research_agent")
+    hermes["runtimeOptions"] = {
+        **hermes["runtimeOptions"],
+        "profile": "research",
+        "profileSnapshot": {
+            "name": "research",
+            "model": "deepseek/deepseek-v4-flash-0731",
+            "gateway": "openrouter",
+        },
+        "profileConflictResolution": "card",
+        "tools": ["calculator"],
     }
-    preview = {
-        "cardContext": context,
-        "providerProjection": {"systemPrompt": "stable system"},
+    autogen = _agent("autogen", prompt="AutoGen saved prompt")
+    autogen["runtimeOptions"] = {
+        **autogen["runtimeOptions"],
+        "tools": ["current_datetime"],
     }
-    edited = render_content_markdown(
-        system_text="stable system",
-        user_text="edited temporary assignment",
-        card_context=context,
-        dynamic_context_markdown="temporary context",
-        native_references=[],
-    )
-    card_domain._validate_exact_idf(preview, edited)
-
-    with pytest.raises(card_domain.CardDomainError, match="exact_idf_stable_prompt_changed"):
-        card_domain._validate_exact_idf(
-            preview,
-            edited.replace("stable system", "changed system", 1),
-        )
-
-    changed_context = copy.deepcopy(context)
-    changed_context["tools"] = ["ungranted.tool"]
-    changed = render_content_markdown(
-        system_text="stable system",
-        user_text="edited temporary assignment",
-        card_context=changed_context,
-        dynamic_context_markdown="temporary context",
-        native_references=[],
-    )
-    with pytest.raises(card_domain.CardDomainError, match="exact_idf_card_authority_changed"):
-        card_domain._validate_exact_idf(preview, changed)
+    for number, card in enumerate((sender, hermes, autogen), start=1):
+        card["_cardRevisionId"] = f"revision-{number}"
+        card["_cardRevision"] = number
+        card["_cardRevisionSha256"] = f"sha-{number}"
+    loaded = {
+        "projectId": "00000000-0000-0000-0000-000000000001",
+        "deck": {
+            "nodes": [sender, hermes, autogen],
+            "edges": [
+                {"id": "flow-hermes", "source": "sender", "target": "hermes", "edgeType": "flow"},
+                {"id": "flow-autogen", "source": "sender", "target": "autogen", "edgeType": "flow"},
+            ],
+        },
+    }
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda _project, _deck: loaded)
+    return loaded
 
 
-def test_native_reference_uses_the_idd_shape_and_preserves_provenance() -> None:
+def _destination_payload(card_id: str) -> dict:
+    return {
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardId": card_id,
+        "senderCardId": "sender",
+        "assignment": "Use every declaration in this IDF.",
+        "contextMarkdown": (
+            "[MCP]\nname=calculator\n[/MCP]\n\n"
+            "[JSON]\n"
+            '{"type":"task-data","value":{"recipientCardId":"not-authority","runtime":"not-authority"}}'
+            "\n[/JSON]"
+        ),
+        "nativeReferences": [{
+            "authority": "KnowGraph",
+            "nativeId": "episode:one",
+            "reason": "selected evidence",
+            "asOf": "2026-08-17T00:00:00Z",
+            "required": True,
+        }],
+        "outputRequirements": "Return the declared result.",
+    }
+
+
+def test_same_exact_idf_is_destination_independent_for_different_authorized_cards(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _destination_fixture(monkeypatch)
+    hermes_preview = card_domain.materialize_invocation(_destination_payload("hermes"))
+    assert hermes_preview["cardContext"]["cardId"] == "hermes"
+    assert hermes_preview["providerProjection"]["systemPrompt"] == "Hermes saved prompt"
+    assert hermes_preview["providerProjection"]["enabledTools"] == ["calculator"]
+    exact = hermes_preview["exactIdf"]
+    assert "[MCP]\nname=calculator\n[/MCP]" in exact
+    assert '"recipientCardId":"not-authority"' in exact
+    assert '"type": "serialized-card"' in exact
+    assert '"cardId": "hermes"' in exact
+    assert "flow-hermes" not in exact
+    assert "flow-autogen" not in exact
+
+    hermes_validated = card_domain.validate_exact_invocation({
+        **_destination_payload("hermes"),
+        "cardRevisionId": "revision-2",
+        "exactIdf": exact,
+    })
+    autogen_validated = card_domain.validate_exact_invocation({
+        **_destination_payload("autogen"),
+        "cardRevisionId": "revision-3",
+        "exactIdf": exact,
+    })
+    assert hermes_validated["exactIdf"] == exact
+    assert autogen_validated["exactIdf"] == exact
+    assert autogen_validated["providerProjection"]["message"] == exact
+    assert autogen_validated["cardContext"]["cardId"] == "autogen"
+    assert autogen_validated["runtimeOwner"] == "autogen"
+
+
+def test_idf_text_cannot_choose_recipient_runtime_or_create_a_flow_edge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loaded = _destination_fixture(monkeypatch)
+    exact = card_domain.materialize_invocation(_destination_payload("hermes"))["exactIdf"]
+    loaded["deck"]["edges"] = [
+        edge for edge in loaded["deck"]["edges"] if edge["target"] != "autogen"
+    ]
+    with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
+        card_domain.validate_exact_invocation({
+            **_destination_payload("autogen"),
+            "cardRevisionId": "revision-3",
+            "exactIdf": exact,
+        })
+    assert all(edge["target"] != "autogen" for edge in loaded["deck"]["edges"])
+
+    validated = card_domain.validate_exact_invocation({
+        **_destination_payload("hermes"),
+        "cardRevisionId": "revision-2",
+        "exactIdf": exact,
+    })
+    assert validated["cardContext"]["cardId"] == "hermes"
+    assert validated["runtimeOwner"] == "hermes"
+
+
+def test_idf_tool_text_does_not_expand_external_runtime_grants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _destination_fixture(monkeypatch)
+    exact = card_domain.materialize_invocation(_destination_payload("hermes"))["exactIdf"]
+    validated = card_domain.validate_exact_invocation({
+        **_destination_payload("hermes"),
+        "cardRevisionId": "revision-2",
+        "exactIdf": exact.replace("name=calculator", "name=current_datetime"),
+    })
+    assert "name=current_datetime" in validated["exactIdf"]
+    assert validated["providerProjection"]["enabledTools"] == ["calculator"]
+
+
+def test_native_reference_uses_the_idd_shape_provenance_and_hard_bounds() -> None:
     reference = {
         "authority": "KnowGraph",
         "nativeId": "episode:one",
@@ -299,162 +383,131 @@ def test_native_reference_uses_the_idd_shape_and_preserves_provenance() -> None:
             "asOf": "2026-08-16T12:00:00Z",
             "required": True,
         }])
+    with pytest.raises(card_domain.CardDomainError, match="native_reference_limit_exceeded"):
+        card_domain._normalized_native_references(
+            [{**reference, "nativeId": f"episode:{index}"} for index in range(33)]
+        )
+    with pytest.raises(card_domain.CardDomainError, match="native_reference_text_limit_exceeded"):
+        card_domain._normalized_native_references([{**reference, "reason": "x" * 66_000}])
 
 
-def test_main_idf_contains_bounded_native_project_context_without_copying_graphs(
+def test_main_materialization_contains_the_saved_card_without_routing_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     main = _agent("main", runtimeBinding="main_chat")
     main["runtimeOptions"] = {
-        "provider": "openai",
-        "modelKey": "gpt-5.6-luna",
-        "providerModelId": "gpt-5.6-luna",
-        "accessMode": "chatgpt-account",
-        "executionMode": "single",
+        **main["runtimeOptions"],
         "profile": "default",
         "profileSnapshot": {
             "name": "default",
-            "model": "gpt-5.6-luna",
-            "gateway": "openai-codex",
+            "model": "deepseek/deepseek-v4-flash-0731",
+            "gateway": "openrouter",
         },
         "profileConflictResolution": "card",
-        "hermesFacet": {"profileHomeRef": "hermes-profile:default"},
-        "tools": ["engraphis.recall", "canvas.inspect", "run_mag_one"],
+        "tools": ["canvas.inspect"],
     }
-    coder = _agent("coder", runtimeBinding="local_coder")
-    coder["runtimeOptions"] = {
-        **coder["runtimeOptions"],
-        "tools": ["cbm.search_graph", "run_local_coder"],
-    }
-    helper = _agent("helper", runtimeBinding="hermes_steward")
-    helper["runtimeOptions"] = {
-        **helper["runtimeOptions"],
-        "tools": ["graphiti.search_nodes"],
-    }
-    magentic = _agent("mag", runtimeType="magentic_one", runtimeBinding=None)
-    for number, card in enumerate((main, coder, helper, magentic), start=1):
-        card["_cardRevisionId"] = f"revision-{number}"
-        card["_cardRevision"] = number
-        card["_cardRevisionSha256"] = f"sha-{number}"
-    edges = [
-        {"id": "flow-helper", "source": "main", "target": "helper", "edgeType": "flow"},
-        {"id": "flow-coder", "source": "main", "target": "coder", "edgeType": "flow"},
-        {"id": "control-mag", "source": "main", "target": "mag", "edgeType": "magentic_control"},
-        {
-            "id": "option-coder",
-            "source": "coder",
-            "target": "mag",
-            "edgeType": "magentic_option",
-            "targetHandle": "bus-in-1",
-        },
-    ]
+    main["_cardRevisionId"] = "main-revision"
+    main["_cardRevision"] = 1
+    main["_cardRevisionSha256"] = "main-sha"
     monkeypatch.setattr(
         card_domain,
         "_load_deck_internal",
         lambda _project, _deck: {
             "projectId": "00000000-0000-0000-0000-000000000001",
-            "project": {
-                "id": "00000000-0000-0000-0000-000000000001",
-                "name": "Documentation Project",
-                "code": "docs",
-                "type": "agent",
-                "status": "active",
-            },
-            "deck": {
-                "id": "deck-one",
-                "name": "Documentation Deck",
-                "workspaceRoot": "C:/Projects/LiquidAIty/main",
-                "nodes": [main, coder, helper, magentic],
-                "edges": edges,
-            },
-            "meta": {"deckRevision": "deck-revision-one", "deckSavedAt": "2026-08-17T00:00:00Z"},
+            "deck": {"nodes": [main], "edges": []},
         },
     )
-
     preview = card_domain.materialize_main_invocation({
-        "projectId": "docs",
+        "projectId": "project-one",
         "deckId": "deck-one",
-        "conversationId": "conversation-one",
-        "parentRunId": "run-parent",
-        "assignment": "Document the exact bounded context path.",
-        "nativeReferences": [{
-            "authority": "KnowGraph",
-            "nativeId": "episode-one",
-            "reason": "selected sourced fact",
-            "asOf": "2026-08-17T00:00:00Z",
-            "required": True,
-        }],
+        "assignment": "Reason over the supplied IDF.",
     })
-
-    manifest = preview["projectContextManifest"]
-    assert manifest["identity"] == {
-        "project": {
-            "id": "00000000-0000-0000-0000-000000000001",
-            "name": "Documentation Project",
-            "code": "docs",
-            "type": "agent",
-            "status": "active",
-        },
-        "deck": {
-            "id": "deck-one",
-            "name": "Documentation Deck",
-            "revision": "deck-revision-one",
-            "savedAt": "2026-08-17T00:00:00Z",
-        },
-        "mainCard": {
-            "id": "main",
-            "revisionId": "revision-1",
-            "revision": 1,
-            "revisionSha256": "sha-1",
-        },
-        "conversationId": "conversation-one",
-        "parentRunId": "run-parent",
-    }
-    assert manifest["agentTopology"]["directFlowTargets"] == [
-        {"cardId": "helper", "title": "helper", "runtimeBinding": "hermes_steward"},
-        {"cardId": "coder", "title": "coder", "runtimeBinding": "local_coder"},
-    ]
-    assert manifest["agentTopology"]["magenticControlTargetIds"] == ["mag"]
-    assert manifest["agentTopology"]["magenticOptionRelationships"] == [edges[3]]
-    layers = {item["authority"]: item for item in manifest["authorityLayers"]}
-    assert layers["ThinkGraph"]["availability"] == "direct_tool_grant"
-    assert layers["KnowGraph"]["viaCardIds"] == ["helper"]
-    assert layers["KnowGraph"]["selectedReferences"][0]["nativeId"] == "episode-one"
-    assert layers["CodeGraph"]["viaCardIds"] == ["coder"]
-    assert layers["CodeGraph"]["nativeIdentity"]["state"] == "query_at_use_time"
-    assert layers["AgentGraph"]["provenance"]["deckRevision"] == "deck-revision-one"
-    assert layers["HermesContinuity"]["nativeIdentity"]["profileHomeRef"] == "hermes-profile:default"
-    assert all("prompt" not in json.dumps(layer).lower() for layer in manifest["authorityLayers"])
-    islands = validate_idf_islands(preview["exactIdf"])
-    rendered_manifests = [
-        json.loads(item["content"])
-        for item in islands["JSON"]
-        if json.loads(item["content"]).get("type") == "project-context-manifest"
-    ]
-    assert rendered_manifests == [manifest]
+    assert "main-revision" not in preview["exactIdf"]
+    assert '"cardId": "main"' in preview["exactIdf"]
+    assert "canvas.inspect" in preview["exactIdf"]
+    assert "directSubagents" not in preview["exactIdf"]
+    assert preview["providerProjection"]["enabledTools"] == ["canvas.inspect"]
 
 
-def test_saved_idf_inspection_reads_the_exact_body_without_rebuilding_it() -> None:
-    context = {
-        "cardId": "card-one",
-        "title": "One",
-        "prompt": "stable",
+def test_saved_idf_inspection_reads_exact_non_directional_body_without_routing() -> None:
+    card_context = {
+        "cardId": "portable",
+        "title": "Portable",
+        "prompt": "Portable instructions.",
         "runtimeType": "assistant_agent",
         "runtimeBinding": "research_agent",
-        "provider": "openrouter",
-        "modelKey": "model",
-        "providerModelId": "model",
         "accessMode": "openrouter-api",
-        "tools": [],
+        "provider": "openrouter",
+        "providerModelId": "model-one",
+        "tools": ["calculator"],
     }
     exact = render_content_markdown(
-        system_text="stable system",
+        system_text="Portable instructions.",
         user_text="repeatable assignment",
-        card_context=context,
-        dynamic_context_markdown="",
+        card_context=card_context,
+        dynamic_context_markdown="[KNOWN_CONTEXT]\nselected fact\n[/KNOWN_CONTEXT]",
         native_references=[],
     )
     inspection = card_domain._inspect_saved_idf(exact)
     assert inspection["assignment"] == "repeatable assignment"
-    assert inspection["cardContext"] == context
+    assert inspection["instructionText"] == "Portable instructions."
+    assert inspection["cardContext"] == card_context
+    assert inspection["runtimeOwner"] == "autogen"
     assert inspection["providerProjection"]["message"] == exact
+
+
+def test_age_runtime_telemetry_preserves_run_card_and_artifact_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[tuple[str, dict]] = []
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(
+        card_domain,
+        "_age_rows",
+        lambda _cursor, query, params, _columns: statements.append((query, params)) or [],
+    )
+    prepared = {
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardContext": {"cardId": "card-one", "tools": ["calculator"]},
+    }
+    assert card_domain._observe_run_start(
+        prepared,
+        {},
+        run_id="run-one",
+        correlation_id="correlation-one",
+    ) is True
+    assert any("EXECUTED_BY" in query for query, _params in statements)
+
+    statements.clear()
+    assert card_domain._observe_run_finish("run-one", "completed") is True
+    assert len(statements) == 1
+    assert "SET run.state=$state" in statements[0][0]
+
+    statements.clear()
+    assert card_domain._observe_artifact(
+        "run-one",
+        "artifact-one",
+        "report",
+        "artifact://report-one",
+    ) is True
+    assert len(statements) == 1
+    assert "PRODUCED_ARTIFACT" in statements[0][0]

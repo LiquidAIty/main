@@ -19,6 +19,28 @@ class InputDataFileError(ValueError):
     """Typed failure while reading a legacy IDF row."""
 
 
+_NON_DIRECTIONAL_CARD_FIELDS = {
+    "cardId", "title", "prompt", "runtimeType", "runtimeBinding", "profile",
+    "savedCardRuntime", "profileSnapshot", "profileConflicts",
+    "profileConflictResolution", "provider", "accessMode", "modelKey",
+    "providerModelId", "executionMode", "tools", "toolDefinitions",
+    "nativeTools", "skills", "toolsets", "mcpConnectionIds", "coderCardIds",
+    "runtimeOptions",
+}
+
+
+def _serialized_card(card_context: dict[str, Any]) -> dict[str, Any]:
+    """Keep the working Card while excluding topology and recipient state."""
+    serialized = {
+        key: value for key, value in card_context.items()
+        if key in _NON_DIRECTIONAL_CARD_FIELDS
+    }
+    try:
+        return validate_record("card-context", serialized)
+    except IddValidationError as error:
+        raise InputDataFileError(str(error)) from error
+
+
 def _render_card_context(card_context: dict[str, Any]) -> str:
     lines = [
         f"id: {card_context['cardId']}",
@@ -56,35 +78,25 @@ def render_content_markdown(
     card_context: dict[str, Any],
     dynamic_context_markdown: str,
     native_references: list[dict[str, Any]],
-    project_context_manifest: dict[str, Any] | None = None,
     job_context: dict[str, Any] | None = None,
 ) -> str:
-    """Mechanically render one transient IDD-shaped invocation."""
+    """Render one self-contained Card plus context without a destination map."""
     sections = ["# LiquidAIty Input Data File"]
     if system_text:
         sections.append(f"[SYSTEM]\n{system_text}\n[/SYSTEM]")
+    serialized_card = _serialized_card(card_context)
     sections.extend([
-        "[CARD]\n" + _render_card_context(card_context) + "\n[/CARD]",
-        "## Resolved Invocation Configuration",
+        "[CARD]\n" + _render_card_context(serialized_card) + "\n[/CARD]",
+        "## Serialized Working Card",
         "[JSON]\n" + json.dumps(
-            {"type": "resolved-card-invocation", "cardContext": card_context},
+            {"type": "serialized-card", "card": serialized_card},
             ensure_ascii=False,
             sort_keys=True,
             indent=2,
         ) + "\n[/JSON]",
     ])
-    if project_context_manifest is not None:
-        sections.extend([
-            "## Project Context Manifest",
-            "[JSON]\n" + json.dumps(
-                project_context_manifest,
-                ensure_ascii=False,
-                sort_keys=True,
-                indent=2,
-            ) + "\n[/JSON]",
-        ])
     if dynamic_context_markdown:
-        sections.extend(["## Dynamic AgentGraph Context", dynamic_context_markdown])
+        sections.extend(["## Dynamic Context", dynamic_context_markdown])
     if native_references:
         sections.extend(["## Native Imports", _native_reference_island(native_references)])
     if job_context is not None:

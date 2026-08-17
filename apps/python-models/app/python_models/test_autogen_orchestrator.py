@@ -71,6 +71,7 @@ def test_orchestrate_requires_saved_card_runtime():
     card_context = {
         "cardId": "card:one", "title": "One", "prompt": "",
         "runtimeType": "magentic_one",
+        "accessMode": "openrouter-api",
     }
     content = render_content_markdown(
         system_text="", user_text="hi", card_context=card_context,

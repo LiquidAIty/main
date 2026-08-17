@@ -1701,9 +1701,9 @@ export function AgentManager({
         </div>
 
         {activeTab === 'Invocation' ? <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Dynamic assignment</label>
+          <label style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Dynamic context / input</label>
           <textarea
-            aria-label="Dynamic assignment"
+            aria-label="Dynamic context / input"
             value={promptTestInput || ''}
             onChange={(event) => onChangePromptTestInput?.(event.target.value)}
             rows={5}
@@ -1719,6 +1719,9 @@ export function AgentManager({
               resize: 'vertical',
             }}
           />
+          <div style={{ color: '#80969F', fontSize: 10.5 }}>
+            Materialize combines this input with the saved Card. The exact visible IDF below is sent unchanged.
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8 }}>
             <select
               aria-label="Saved IDF revision"
