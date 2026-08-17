@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from typing import Annotated, List, Optional
 
 from pydantic import Field
@@ -38,6 +39,10 @@ except ImportError:  # pragma: no cover - exercised only without the optional de
     )
 
 from engraphis.config import settings
+from engraphis.backends.embedder_st import (
+    LocalEmbeddingModelUnavailable,
+    embedding_runtime_status,
+)
 from engraphis.service import MemoryService, ValidationError
 
 logger = logging.getLogger("engraphis.mcp")
@@ -68,6 +73,7 @@ work and report the exact memory failure once instead of fabricating memory stat
 mcp = FastMCP("engraphis_mcp", instructions=_SESSION_PROTOCOL, log_level="WARNING")
 
 _service: Optional[MemoryService] = None
+_service_lock = threading.RLock()
 
 
 def set_service(svc: MemoryService) -> None:
@@ -77,19 +83,23 @@ def set_service(svc: MemoryService) -> None:
     problem ``scripts/mcp_server_http.py`` was written to avoid). When not injected,
     :func:`service` lazily builds a local service (standalone stdio/HTTP MCP)."""
     global _service
-    _service = svc
+    with _service_lock:
+        _service = svc
 
 
 def service() -> MemoryService:
-    """Lazily build the service so server startup is instant (model loads on first use)."""
+    """Build the store once; its configured semantic embedder remains cold."""
     global _service
     if _service is None:
-        _service = MemoryService.create(
-            settings.db_path,
-            embed_model=settings.embed_model or None,
-            allowed_workspaces=settings.allowed_workspaces,
-            extractor=settings.extractor,
-        )
+        with _service_lock:
+            if _service is None:
+                _service = MemoryService.create(
+                    settings.db_path,
+                    embed_model=settings.embed_model or None,
+                    embed_dim=settings.embed_dim or 384,
+                    allowed_workspaces=settings.allowed_workspaces,
+                    extractor=settings.extractor,
+                )
     return _service
 
 
@@ -99,6 +109,8 @@ def _ok(payload: dict) -> str:
 
 def _err(exc: Exception) -> str:
     """Actionable, safe error string (never leaks internals)."""
+    if isinstance(exc, LocalEmbeddingModelUnavailable):
+        return "Error: local_embedding_model_unavailable"
     if isinstance(exc, ValidationError):
         return f"Error: {exc}"
     logger.error("MCP tool operation failed (%s)", type(exc).__name__)
@@ -1254,7 +1266,12 @@ def engraphis_stats(
         str: JSON ``{"memories","by_type","workspaces","sessions","schema_version"}``.
     """
     try:
-        return _ok(service().stats(workspace=workspace))
+        payload = service().stats(workspace=workspace)
+        payload["semanticEmbedding"] = embedding_runtime_status(
+            settings.embed_model or None,
+            settings.embed_dim or 384,
+        )
+        return _ok(payload)
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 

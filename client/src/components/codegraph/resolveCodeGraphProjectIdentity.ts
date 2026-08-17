@@ -36,7 +36,7 @@ export const CANONICAL_CBM_PROJECT_NAME = 'C-Projects-main';
 
 let nextRpcId = 1;
 
-async function callCbmTool<T = unknown>(
+export async function callCbmTool<T = unknown>(
   name: string,
   args: Record<string, unknown> = {},
 ): Promise<T> {

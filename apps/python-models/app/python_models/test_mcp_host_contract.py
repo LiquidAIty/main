@@ -791,29 +791,47 @@ def test_native_engraphis_uses_the_cached_local_embedding_model(monkeypatch):
     import mcp_host
 
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
     mcp_host._load_native_engraphis_mcp()
     assert os.environ["HF_HUB_OFFLINE"] == "1"
+    assert os.environ["TRANSFORMERS_OFFLINE"] == "1"
 
 
-def test_native_engraphis_warmup_builds_the_service_off_the_host_loop(monkeypatch):
+def test_native_engraphis_catalog_discovery_never_constructs_memory_or_embedder(
+        monkeypatch):
     import asyncio
+    import engraphis.mcp_server as engraphis_mcp
+    import engraphis.backends.embedder_st as embedder_st
+    import engraphis.core.engine as engraphis_engine
     import mcp_host
 
-    host_thread = threading.get_ident()
-    service_threads = []
+    constructions = []
+    monkeypatch.setattr(
+        engraphis_mcp.MemoryService,
+        "create",
+        lambda *args, **kwargs: constructions.append("memory_service"),
+    )
+    monkeypatch.setattr(
+        embedder_st,
+        "_construct_local_sentence_transformer",
+        lambda *args, **kwargs: constructions.append("sentence_transformer"),
+    )
+    monkeypatch.setattr(
+        engraphis_engine,
+        "get_embedder",
+        lambda *args, **kwargs: constructions.append("embedder"),
+    )
+    monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_MCP", None)
+    monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_TOOLS", None)
+    monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_NAMES", frozenset())
 
-    def service():
-        service_threads.append(threading.get_ident())
+    asyncio.run(mcp_host._initialize_native_engraphis())
 
-    monkeypatch.setattr(mcp_host, "_load_native_engraphis_service", lambda: service)
-
-    asyncio.run(mcp_host._warm_native_engraphis())
-
-    assert len(service_threads) == 1
-    assert service_threads[0] != host_thread
+    assert len(mcp_host._NATIVE_ENGRAPHIS_TOOLS or ()) == 31
+    assert constructions == []
 
 
-def test_native_engraphis_warmup_isolated_from_calls_until_ready(monkeypatch):
+def test_native_engraphis_nonsemantic_dispatch_has_no_global_embedding_gate(monkeypatch):
     import asyncio
     import mcp_host
 
@@ -830,9 +848,6 @@ def test_native_engraphis_warmup_isolated_from_calls_until_ready(monkeypatch):
         return None
 
     async def check():
-        release = asyncio.Event()
-        warmup = asyncio.create_task(release.wait())
-        monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_WARMUP_TASK", warmup)
         monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
         monkeypatch.setattr(
             mcp_host,
@@ -841,20 +856,6 @@ def test_native_engraphis_warmup_isolated_from_calls_until_ready(monkeypatch):
         )
         monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
 
-        initializing = await mcp_host.call_tool("engraphis.stats", {})
-        payload = json.loads(initializing.content[0].text)
-        assert initializing.isError is True
-        assert payload == {
-            "ok": False,
-            "error": "dependency_initializing",
-            "failureCode": "dependency_initializing",
-            "errorCategory": "DEPENDENCY_UNAVAILABLE",
-            "retryable": True,
-            "dependency": "engraphis",
-        }
-
-        release.set()
-        await warmup
         ready = await mcp_host.call_tool("engraphis.stats", {})
         assert ready.content[0] is native_result
 
@@ -870,9 +871,6 @@ def test_streamable_http_discovers_catalogs_before_accepting_requests(monkeypatc
     async def initialized_engraphis():
         events.append("engraphis_registry")
 
-    def started_engraphis_warmup():
-        events.append("engraphis_warmup_started")
-
     async def initialized_graphiti():
         events.append("graphiti_registry")
 
@@ -885,7 +883,6 @@ def test_streamable_http_discovers_catalogs_before_accepting_requests(monkeypatc
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
     monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized_engraphis)
-    monkeypatch.setattr(mcp_host, "_start_native_engraphis_warmup", started_engraphis_warmup)
     monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialized_graphiti)
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", initialized_cbm)
     monkeypatch.setattr(mcp_host, "_run_streamable_http", run_http)
@@ -894,7 +891,6 @@ def test_streamable_http_discovers_catalogs_before_accepting_requests(monkeypatc
 
     assert events == [
         "engraphis_registry",
-        "engraphis_warmup_started",
         "graphiti_registry",
         "cbm_registry",
         "http",
@@ -910,9 +906,6 @@ def test_stdio_accepts_protocol_before_catalog_provider_initialization(monkeypat
     async def initialized_engraphis():
         events.append("engraphis_registry")
 
-    def started_engraphis_warmup():
-        events.append("engraphis_warmup_started")
-
     async def initialized_graphiti():
         events.append("graphiti_registry")
 
@@ -921,13 +914,12 @@ def test_stdio_accepts_protocol_before_catalog_provider_initialization(monkeypat
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "stdio")
     monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized_engraphis)
-    monkeypatch.setattr(mcp_host, "_start_native_engraphis_warmup", started_engraphis_warmup)
     monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialized_graphiti)
     monkeypatch.setattr(mcp_host, "_run_stdio", run_stdio)
 
     asyncio.run(mcp_host.main())
 
-    assert events == ["engraphis_warmup_started", "stdio"]
+    assert events == ["stdio"]
 
 
 def test_native_engraphis_hung_call_does_not_block_later_native_dispatch(monkeypatch):
@@ -1579,11 +1571,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         return None
 
     monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialize_engraphis)
-    monkeypatch.setattr(
-        mcp_host,
-        "_native_engraphis_readiness_failure",
-        lambda: None,
-    )
     monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
 
     def call_native_cbm(name, arguments):
@@ -1912,6 +1899,8 @@ def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(m
 
 def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp(monkeypatch):
     import asyncio
+    import engraphis.backends.embedder_st as embedder_st
+    import engraphis.mcp_server as engraphis_mcp
     import httpx
     import mcp_host
 
@@ -1935,11 +1924,20 @@ def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp(monkeypatch):
     monkeypatch.setattr(mcp_host, "AUTH0_REQUIRED_SCOPE", "liquidaity.main")
     monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", True)
     monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
-    monkeypatch.setattr(mcp_host, "_start_native_engraphis_warmup", lambda: None)
     monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialized)
     monkeypatch.setattr(mcp_host, "_native_engraphis_tools", empty_catalog)
     monkeypatch.setattr(mcp_host, "_native_graphiti_tools", empty_catalog)
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", empty_catalog)
+    monkeypatch.setattr(
+        engraphis_mcp.MemoryService,
+        "create",
+        lambda *args, **kwargs: pytest.fail("OAuth readiness constructed MemoryService"),
+    )
+    monkeypatch.setattr(
+        embedder_st,
+        "_construct_local_sentence_transformer",
+        lambda *args, **kwargs: pytest.fail("OAuth readiness constructed embedder"),
+    )
 
     async def check():
         server_task = asyncio.create_task(mcp_host.main())

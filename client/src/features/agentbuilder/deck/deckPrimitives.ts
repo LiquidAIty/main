@@ -90,6 +90,7 @@ export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'engraphis.ingest_postgres_schema',
   'engraphis.consolidate',
   'canvas.inspect',
+  'agentgraph.inspect',
   'mag_one.describe_connected_agents',
   'run_mag_one',
 ] as const;
@@ -104,6 +105,8 @@ export const HERMES_CARD_TOOLS = [
   'graphiti.get_status',
   'graphiti.add_memory',
   'graphiti.add_triplet',
+  'agentgraph.inspect',
+  'write_mag_one_instructions',
 ] as const;
 
 export type AgentExecutionMode = NonNullable<AgentCardRuntimeOptions['executionMode']>;

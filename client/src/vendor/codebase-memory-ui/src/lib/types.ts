@@ -10,6 +10,14 @@ export interface GraphNode {
   file_path?: string;
   size: number;
   color: string;
+  native_id?: string;
+  canonical_id?: string;
+  authority?: string;
+  actor_card_id?: string;
+  actor_color?: string;
+  tool_name?: string;
+  properties?: Record<string, unknown>;
+  provenance?: Record<string, unknown>;
 }
 
 export interface GraphEdge {

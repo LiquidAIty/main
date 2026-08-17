@@ -19,10 +19,17 @@ import { GraphNavigationControls, GraphPaperBackground } from "../../../../compo
 
 interface GraphTabProps {
   project: string | null;
+  attentionData?: GraphData;
+  onExpand?: (node: GraphNode) => Promise<void>;
 }
 
-export function GraphTab({ project }: GraphTabProps) {
-  const { data, loading, error, fetchOverview } = useGraphData();
+export function GraphTab({ project, attentionData, onExpand }: GraphTabProps) {
+  const loaded = useGraphData();
+  const attentionControlled = attentionData !== undefined;
+  const data = attentionControlled ? attentionData : loaded.data;
+  const loading = attentionControlled ? false : loaded.loading;
+  const error = attentionControlled ? null : loaded.error;
+  const fetchOverview = loaded.fetchOverview;
   const [highlightedIds, setHighlightedIds] = useState<Set<number> | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
@@ -30,6 +37,8 @@ export function GraphTab({ project }: GraphTabProps) {
   const [cameraCommand, setCameraCommand] = useState<CameraCommand>(null);
   const [showLabels, setShowLabels] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [expanding, setExpanding] = useState(false);
+  const [expandError, setExpandError] = useState<string | null>(null);
   const initiallyFittedProject = useRef<string | null>(null);
   const graphHostRef = useRef<HTMLDivElement | null>(null);
 
@@ -52,7 +61,7 @@ export function GraphTab({ project }: GraphTabProps) {
 
     const nodes = data.nodes
       .filter((n) => enabledLabels.has(n.label))
-      .map((n) => ({ ...n, color: colorForLabel(n.label) }));
+      .map((n) => ({ ...n, color: n.actor_color || n.color || colorForLabel(n.label) }));
     const nodeIds = new Set(nodes.map((n) => n.id));
     const edges = data.edges.filter(
       (e) =>
@@ -85,12 +94,12 @@ export function GraphTab({ project }: GraphTabProps) {
   }, [data, project]);
 
   useEffect(() => {
-    if (project) {
+    if (project && !attentionControlled) {
       fetchOverview(project);
       setHighlightedIds(null);
       setSelectedPath(null);
     }
-  }, [project, fetchOverview]);
+  }, [attentionControlled, project, fetchOverview]);
 
   const handleSelectPath = useCallback(
     (path: string, nodeIds: Set<number>) => {
@@ -207,16 +216,18 @@ export function GraphTab({ project }: GraphTabProps) {
     );
   }
 
-  if (!data || !filteredData || filteredData.nodes.length === 0) {
+  if (!data || !filteredData || (!attentionControlled && filteredData.nodes.length === 0)) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
           <p className="text-white/30 text-sm mb-3">
-            {data && filteredData?.nodes.length === 0
-              ? "All nodes filtered out"
-              : "No nodes in this project"}
+            {attentionControlled
+              ? "No CodeGraph data viewed in this attention scope yet."
+              : data && filteredData?.nodes.length === 0
+                ? "All nodes filtered out"
+                : "No nodes in this project"}
           </p>
-          {data && filteredData?.nodes.length === 0 && (
+          {!attentionControlled && data && filteredData?.nodes.length === 0 && (
             <Button size="sm" onClick={enableAll}>
               Reset Filters
             </Button>
@@ -264,6 +275,11 @@ export function GraphTab({ project }: GraphTabProps) {
           onZoomOut={() => setCameraCommand({ action: "zoom_out", token: Date.now() })}
           onFit={() => setCameraTarget(computeCameraTarget(filteredData.nodes, new Set(filteredData.nodes.map((node) => node.id))))}
         />
+        {attentionControlled && filteredData.nodes.length === 0 ? (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-sm text-white/30">
+            No CodeGraph data viewed in this attention scope yet.
+          </div>
+        ) : null}
         {loading ? <div className="absolute bottom-4 left-32 text-[10px] text-white/45">Refreshing…</div> : null}
         {error ? <div className="absolute bottom-4 left-32 text-[10px] text-red-300">Refresh failed · current graph retained</div> : null}
       </div>
@@ -298,9 +314,35 @@ export function GraphTab({ project }: GraphTabProps) {
                 }}
                 onNavigate={handleNavigateToNode}
               />
+              <div className="px-4 pb-3 space-y-3">
+                <div className="rounded-md border border-white/10 bg-white/[0.02] p-3 text-[11px] text-white/55">
+                  <p className="font-semibold text-white/75">Native attention</p>
+                  <p>{selectedNode.native_id || selectedNode.name}</p>
+                  <p>{selectedNode.actor_card_id || 'unknown card'} · {selectedNode.tool_name || 'native CBM read'}</p>
+                  {selectedNode.properties ? <pre className="mt-2 whitespace-pre-wrap break-all text-[10px] text-white/40">{JSON.stringify(selectedNode.properties, null, 2)}</pre> : null}
+                </div>
+                {onExpand ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    disabled={expanding}
+                    onClick={() => {
+                      setExpandError(null);
+                      setExpanding(true);
+                      void onExpand(selectedNode)
+                        .catch((nextError) => setExpandError(nextError instanceof Error ? nextError.message : String(nextError)))
+                        .finally(() => setExpanding(false));
+                    }}
+                  >
+                    {expanding ? 'Expanding…' : 'Expand from native CodeGraph'}
+                  </Button>
+                ) : null}
+                {expandError ? <p className="text-[10px] text-red-300">{expandError}</p> : null}
+              </div>
             </>
           ) : <div className="text-[11px] text-white/35">Select a repository node to inspect its identity and relationships.</div>}
-          <Button variant="outline" size="sm" className="mt-3 w-full" onClick={() => fetchOverview(project)} disabled={loading}>{loading ? "Refreshing…" : "Refresh graph"}</Button>
+          {!attentionControlled ? <Button variant="outline" size="sm" className="mt-3 w-full" onClick={() => fetchOverview(project)} disabled={loading}>{loading ? "Refreshing…" : "Refresh graph"}</Button> : null}
         </GlassInspectorSection>
         <GlassInspectorSection title="Node, edge & display filters" signal={`${filteredData.nodes.length.toLocaleString()} nodes`} defaultOpen={false}>
           <FilterPanel

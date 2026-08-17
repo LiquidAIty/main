@@ -801,6 +801,44 @@ describe('coder routes', () => {
   });
 
   describe('/main/session/chat', () => {
+    it('adds the saved invoking Card identity to native tool results already on the SSE stream', async () => {
+      chatSessionMocks.startHermesTurn.mockImplementationOnce(async (_params: unknown, onEvent: (event: any) => void) => {
+        onEvent({
+          kind: 'tool_result',
+          toolName: 'cbm.search_graph',
+          toolUseId: 'tool-1',
+          output: '{"results":[]}',
+          isError: false,
+        });
+        return {
+          done: Promise.resolve({ finalText: 'Done.', usage: chatSessionMocks.usage }),
+          cancel: chatSessionMocks.lastCancel,
+          answer: vi.fn(),
+          resolved: {
+            cardId: 'card_main_chat',
+            provider: 'openai',
+            modelKey: 'gpt-5.6-luna',
+            providerModelId: 'gpt-5.6-luna',
+          },
+        };
+      });
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'attention', message: 'inspect' }),
+        });
+        const body = await response.text();
+
+        expect(response.status).toBe(200);
+        expect(body).toContain('event: tool_result');
+        expect(body).toContain('"invokingCardId":"card_main_chat"');
+      } finally {
+        await closeServer(server);
+      }
+    });
+
     it('uses Python-owned prompt-free run lifecycle without a post-chat graph handoff', async () => {
       orchestratorMocks.requestPythonRailsJson.mockClear();
       chatSessionMocks.startHermesTurn.mockClear();

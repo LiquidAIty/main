@@ -657,9 +657,12 @@ router.post('/main/session/chat', async (req, res) => {
           terminalDoneEvent = event;
           return;
         }
-        const traceLine = formatHarnessTrace(event, correlationId);
+        const scopedEvent = event.kind === 'tool_start' || event.kind === 'tool_result'
+          ? { ...event, invokingCardId: mainCardId }
+          : event;
+        const traceLine = formatHarnessTrace(scopedEvent, correlationId);
         if (traceLine) logHarnessTrace(traceLine);
-        writeSse(event.kind, event);
+        writeSse(scopedEvent.kind, scopedEvent);
       },
     });
     activeHermesTurns.set(sessionId, handle);

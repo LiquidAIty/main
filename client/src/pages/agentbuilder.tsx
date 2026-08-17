@@ -36,7 +36,7 @@ import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuild
 import AgentBuilderProjectDrawer from '../features/agentbuilder/project/AgentBuilderProjectDrawer';
 import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
-import useAgentBuilderThinkGraphProjection from '../features/agentbuilder/state/useAgentBuilderThinkGraphProjection';
+import useAgentBuilderGraphAttention from '../features/agentbuilder/state/useAgentBuilderGraphAttention';
 import TradingUI from './tradingui';
 import { resolveDeckWorkspaceRoot } from '../features/agentbuilder/state/deckWorkspaceRoot';
 import {
@@ -355,11 +355,7 @@ export default function AgentBuilder(): React.ReactElement {
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
     useState<KnowledgeSurfaceKind>('knowgraph');
   const conversationId = 'main';
-  const thinkGraphProjection = useAgentBuilderThinkGraphProjection({
-    activeProject,
-    knowledgeGraphKind,
-    workspaceView,
-  });
+  const graphAttention = useAgentBuilderGraphAttention({ projectId: activeProject });
 
   // CodeGraph repository identity is resolved from the authoritative CBM index.
   // The canonical ready project wins over stale same-root validation indexes.
@@ -397,9 +393,9 @@ export default function AgentBuilder(): React.ReactElement {
     conversationId,
     initialMessages: EMPTY_PROJECT_MESSAGES,
     workspaceView,
-    onUserTurnStarted: thinkGraphProjection.startLiveTurn,
-    onNativeTurnEvent: thinkGraphProjection.observeLiveTurnEvent,
-    onTurnFinished: thinkGraphProjection.finishLiveTurn,
+    onUserTurnStarted: graphAttention.startAttentionScope,
+    onNativeTurnEvent: graphAttention.observeNativeTurnEvent,
+    onTurnFinished: graphAttention.finishAttentionScope,
   });
   const [stateLoaded, setStateLoaded] = useState(false);
 
@@ -1540,16 +1536,20 @@ export default function AgentBuilder(): React.ReactElement {
       <div style={getSurfaceShellStyle(minHeight <= 320)}>
         <KnowledgeSurfaceErrorBoundary key={`knowledge-${knowledgeGraphKind}`}>
           <KnowledgeGraphFramework
-            projectId={activeProject || null}
             codeGraphProjectName={codeGraphProjectName || null}
-              codeGraphProjectError={codeGraphProjectError}
-              kind={knowledgeGraphKind}
-              minHeight={minHeight}
-              surfaceRole={surfaceRole}
-              thinkGraphProjection={thinkGraphProjection.projection}
-              thinkGraphStatus={thinkGraphProjection.status}
-              thinkGraphError={thinkGraphProjection.error}
-              onKindChange={setKnowledgeGraphKind}
+            codeGraphProjectError={codeGraphProjectError}
+            kind={knowledgeGraphKind}
+            minHeight={minHeight}
+            surfaceRole={surfaceRole}
+            attentionProjections={graphAttention.projections}
+            attentionErrors={graphAttention.errors}
+            onExpandAttentionNode={(authority, node) => graphAttention.expandNode({
+              authority,
+              node,
+              projectId: activeProject,
+              codeGraphProject: codeGraphProjectName || null,
+            })}
+            onKindChange={setKnowledgeGraphKind}
           />
         </KnowledgeSurfaceErrorBoundary>
       </div>

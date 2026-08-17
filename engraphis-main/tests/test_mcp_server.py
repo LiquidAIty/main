@@ -26,6 +26,49 @@ def test_unexpected_tool_failure_does_not_leak_exception_text():
     assert "SECRET" not in output and "private" not in output
 
 
+def test_local_embedding_unavailable_has_a_precise_safe_error():
+    from engraphis.backends.embedder_st import LocalEmbeddingModelUnavailable
+    from engraphis.mcp_server import _err
+
+    assert _err(LocalEmbeddingModelUnavailable()) == (
+        "Error: local_embedding_model_unavailable"
+    )
+
+
+def test_stats_reports_cold_semantic_state_without_constructing_model(
+        monkeypatch, tmp_path):
+    import engraphis.backends.embedder_st as embedder_st
+    import engraphis.mcp_server as srv
+
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    (model_path / "modules.json").write_text("{}", encoding="utf-8")
+    (model_path / "config.json").write_text("{}", encoding="utf-8")
+    (model_path / "model.safetensors").write_bytes(b"local-test-model")
+    embedder_st._reset_embedding_runtime_for_tests()
+    monkeypatch.setattr(srv, "_service", None)
+    monkeypatch.setattr(srv.settings, "db_path", ":memory:")
+    monkeypatch.setattr(srv.settings, "embed_model", str(model_path))
+    monkeypatch.setattr(srv.settings, "embed_dim", 384)
+    monkeypatch.setattr(
+        embedder_st,
+        "_construct_local_sentence_transformer",
+        lambda *args, **kwargs: pytest.fail("stats initialized the embedder"),
+    )
+
+    payload = json.loads(srv.engraphis_stats())
+
+    assert payload["semanticEmbedding"] == {
+        "state": "cold",
+        "model": str(model_path),
+        "dimension": 384,
+        "localPath": "",
+        "initializations": 0,
+        "error": "",
+    }
+    srv.service().store.close()
+
+
 def _module_with_memory_db(monkeypatch):
     import engraphis.mcp_server as srv
     from engraphis.service import MemoryService

@@ -25,28 +25,29 @@ const GRAPH_AUTHORITIES: readonly KnowledgeSurfaceKind[] = [
 ];
 
 type Props = {
-  projectId: string | null;
   codeGraphProjectName: string | null;
   codeGraphProjectError: string | null;
   kind: KnowledgeSurfaceKind;
   minHeight?: number;
   surfaceRole?: 'large' | 'companion';
-  thinkGraphProjection: import('./NativeAuthorityGraphSurface').GraphProjectionV1 | null;
-  thinkGraphStatus: 'idle' | 'loading' | 'ready' | 'error';
-  thinkGraphError: string | null;
+  attentionProjections: Record<KnowledgeSurfaceKind, import('./NativeAuthorityGraphSurface').GraphProjectionV1>;
+  attentionErrors: Partial<Record<KnowledgeSurfaceKind, string>>;
+  onExpandAttentionNode: (
+    authority: KnowledgeSurfaceKind,
+    node: import('./NativeAuthorityGraphSurface').GraphProjectionNode,
+  ) => Promise<void>;
   onKindChange: (kind: KnowledgeSurfaceKind) => void;
 };
 
 export default function KnowledgeGraphFramework({
-  projectId,
   codeGraphProjectName,
   codeGraphProjectError,
   kind,
   minHeight = 280,
   surfaceRole = minHeight > 320 ? 'large' : 'companion',
-  thinkGraphProjection,
-  thinkGraphStatus,
-  thinkGraphError,
+  attentionProjections,
+  attentionErrors,
+  onExpandAttentionNode,
   onKindChange,
 }: Props) {
   return (
@@ -114,17 +115,26 @@ export default function KnowledgeGraphFramework({
               {codeGraphProjectError}
             </div>
           ) : (
-            <NativeCodeGraphSurface project={codeGraphProjectName} />
+            <NativeCodeGraphSurface
+              project={codeGraphProjectName}
+              projection={attentionProjections.codegraph}
+              onExpand={(node) => onExpandAttentionNode('codegraph', node)}
+            />
           )
         ) : kind === 'thinkgraph' ? (
           <NativeThinkGraphSurface
-            projection={thinkGraphProjection}
-            status={thinkGraphStatus}
-            error={thinkGraphError}
+            projection={attentionProjections.thinkgraph}
+            status={attentionErrors.thinkgraph ? 'error' : 'ready'}
+            error={attentionErrors.thinkgraph || null}
             authority="thinkgraph"
+            onExpand={(node) => onExpandAttentionNode('thinkgraph', node)}
           />
         ) : kind === 'knowgraph' ? (
-          <NativeKnowGraphSurface projectId={projectId ?? ''} />
+          <NativeKnowGraphSurface
+            projection={attentionProjections.knowgraph}
+            error={attentionErrors.knowgraph || null}
+            onExpand={(node) => onExpandAttentionNode('knowgraph', node)}
+          />
         ) : null}
       </Suspense>
     </div>

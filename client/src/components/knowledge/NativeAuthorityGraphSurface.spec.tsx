@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../vendor/codebase-memory-ui/src/components/GraphTab', () => ({
-  GraphTab: ({ project }: { project: string | null }) => <div data-testid="cbm-graph-tab">{project}</div>,
+  GraphTab: ({ project, attentionData }: { project: string | null; attentionData?: { nodes: unknown[] } }) => <div data-testid="cbm-graph-tab">{project}:{attentionData?.nodes.length ?? 'native'}</div>,
 }));
 
 const forceGraphMocks = vi.hoisted(() => ({ instances: [] as any[] }));
@@ -13,7 +13,7 @@ vi.mock('force-graph', () => ({ default: function ForceGraphMock() {
   const instance: any = {
     data: { nodes: [], links: [] },
     backgroundColor() { return this; }, cooldownTime() { return this; }, warmupTicks() { return this; },
-    nodeRelSize() { return this; }, autoPauseRedraw() { return this; }, onNodeClick() { return this; },
+    nodeRelSize() { return this; }, autoPauseRedraw() { return this; }, onNodeClick(handler: unknown) { this.nodeClick = handler; return this; },
     onNodeHover() { return this; }, nodeCanvasObject() { return this; }, nodePointerAreaPaint() { return this; },
     linkColor() { return this; }, linkWidth() { return this; }, linkDirectionalArrowLength() { return this; },
     linkDirectionalArrowRelPos() { return this; }, linkCanvasObjectMode() { return this; }, linkCanvasObject() { return this; },
@@ -41,45 +41,42 @@ afterEach(() => {
 });
 
 describe('native authority graph surfaces', () => {
-  it('mounts the real CBM GraphTab with the resolved repository identity', () => {
-    render(<NativeCodeGraphSurface project="C-Projects-main" />);
-    expect(screen.getByTestId('cbm-graph-tab').textContent).toBe('C-Projects-main');
+  const empty = (authority: 'thinkgraph' | 'knowgraph' | 'codegraph') => ({
+    schemaVersion: `${authority}.attention.projection.v1`,
+    authority,
+    projectId: 'project-1',
+    nodes: [],
+    edges: [],
   });
 
-  it('loads the native Graphiti projection for KnowGraph without the removed analysis API', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ nodes: [], relationships: [] }),
-    });
+  it('mounts the real CBM GraphTab with the resolved repository identity', () => {
+    render(<NativeCodeGraphSurface project="C-Projects-main" projection={empty('codegraph')} onExpand={vi.fn()} />);
+    expect(screen.getByTestId('cbm-graph-tab').textContent).toBe('C-Projects-main:0');
+  });
+
+  it('starts KnowGraph empty without loading the complete Neo4j graph', async () => {
+    const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-
-    render(<NativeKnowGraphSurface projectId="project-1" />);
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/knowgraph/graph?projectId=project-1',
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    ));
+    render(<NativeKnowGraphSurface projection={empty('knowgraph')} error={null} onExpand={vi.fn()} />);
     await waitFor(() => expect(screen.getByTestId('native-knowgraph-surface')).toBeTruthy());
     expect(screen.getByRole('button', { name: 'Open KnowGraph Inspector' })).toBeTruthy();
-
-    window.dispatchEvent(new Event('knowledge:refresh'));
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-
-    window.dispatchEvent(new Event('knowgraph:refresh'));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('No KnowGraph data viewed in this attention scope yet.')).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('shows the exact CodeGraph project-resolution failure instead of mounting an arbitrary index', () => {
     const { container } = render(
       <KnowledgeGraphFramework
-        projectId="p"
         codeGraphProjectName={null}
         codeGraphProjectError="CBM project identity is ambiguous: C-Projects-main-a, C-Projects-main-b"
         kind="codegraph"
-        thinkGraphProjection={null}
-        thinkGraphStatus="idle"
-        thinkGraphError={null}
+        attentionProjections={{
+          thinkgraph: empty('thinkgraph'),
+          knowgraph: empty('knowgraph'),
+          codegraph: empty('codegraph'),
+        }}
+        attentionErrors={{}}
+        onExpandAttentionNode={vi.fn()}
         onKindChange={vi.fn()}
       />,
     );
@@ -92,15 +89,15 @@ describe('native authority graph surfaces', () => {
 
   it('reuses surviving node objects and reheats only when topology grows', async () => {
     const first = {
-      schemaVersion: 'thinkgraph.merged.presentation.v1',
+      schemaVersion: 'thinkgraph.attention.projection.v1',
       authority: 'thinkgraph',
       projectId: 'project-1',
       nodes: [{
-        id: 'tg-live:one',
+        id: 'mem-one',
         label: 'build',
         mentionCount: 1,
         currentState: 'active',
-        properties: { transient: true, persisted: false, source: 'user' },
+        properties: { attentionActive: true, attentionActorColor: '#37ADAA', attentionActorCardId: 'card_main_chat' },
       }],
       edges: [],
     };
@@ -114,6 +111,10 @@ describe('native authority graph surfaces', () => {
     const graph = forceGraphMocks.instances.at(-1);
     await waitFor(() => expect(graph.data.nodes).toHaveLength(1));
     const survivingNode = graph.data.nodes[0];
+    expect(survivingNode.attentionActorColor).toBe('#37ADAA');
+    act(() => graph.nodeClick(survivingNode));
+    expect(screen.getByTestId('thinkgraph-node-inspector').textContent).toContain('mem-one');
+    expect(screen.getByText('card_main_chat')).toBeTruthy();
     survivingNode.x = 42;
     const initialReheats = graph.d3ReheatSimulation.mock.calls.length;
 
@@ -140,18 +141,18 @@ describe('native authority graph surfaces', () => {
             first.nodes[0],
             {
               ...first.nodes[0],
-              id: 'tg-live:two',
+              id: 'mem-two',
               label: 'tests',
-              properties: { transient: true, persisted: false, source: 'assistant' },
+              properties: { attentionActive: true, attentionActorColor: '#37ADAA', attentionActorCardId: 'card_main_chat' },
             },
           ],
           edges: [{
-            id: 'tg-live:edge',
-            source: 'tg-live:one',
-            target: 'tg-live:two',
-            predicate: 'answer-near',
+            id: 'memory-edge',
+            source: 'mem-one',
+            target: 'mem-two',
+            predicate: 'related',
             mentionCount: 1,
-            properties: { persisted: false, observational: true },
+            properties: { attentionActorColor: '#37ADAA', attentionActorCardId: 'card_main_chat' },
           }],
         }}
         status="ready"

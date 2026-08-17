@@ -5,12 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   fetchThinkGraphProjection: vi.fn(),
-  projectLiveThinkGraph: vi.fn(),
+  fetchThinkGraphNeighborhood: vi.fn(),
 }));
 
 vi.mock('../services/autogen/pythonRailsClient', () => ({
   fetchThinkGraphProjection: mocks.fetchThinkGraphProjection,
-  projectLiveThinkGraph: mocks.projectLiveThinkGraph,
+  fetchThinkGraphNeighborhood: mocks.fetchThinkGraphNeighborhood,
 }));
 
 import router from './thinkgraph.routes';
@@ -35,64 +35,33 @@ async function closeServer(server: Server): Promise<void> {
 afterEach(() => {
   vi.restoreAllMocks();
   mocks.fetchThinkGraphProjection.mockReset();
-  mocks.projectLiveThinkGraph.mockReset();
+  mocks.fetchThinkGraphNeighborhood.mockReset();
 });
 
-describe('ThinkGraph live projection transport', () => {
-  it('passes one bounded current-turn request to Python rails unchanged', async () => {
-    mocks.projectLiveThinkGraph.mockResolvedValue({
-      schemaVersion: 'thinkgraph.live.projection.v1',
-      projectId: 'project-1',
-      nodes: [],
-      edges: [],
+describe('ThinkGraph native read transport', () => {
+  it('passes one exact native memory identity to the Engraphis neighborhood reader', async () => {
+    mocks.fetchThinkGraphNeighborhood.mockResolvedValue({
+      centerId: 'mem-1',
+      nodes: [{ id: 'mem-1' }, { id: 'mem-2' }],
+      edges: [{ id: 'edge-1', source: 'mem-1', target: 'mem-2' }],
     });
     const { server, baseUrl } = await createApiServer();
     try {
-      const payload = {
-        projectId: 'project-1',
-        conversationId: 'main',
-        runId: 'turn-1',
-        observedAt: '2026-08-09T12:00:00.000Z',
-        state: 'active',
-        streams: [{
-          source: 'reasoning',
-          sourceId: 'reasoning-1',
-          text: 'bounded native reasoning text',
-        }],
-        maxNodes: 24,
-        maxEdges: 40,
-      };
-      const response = await fetch(`${baseUrl}/live-projection`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
+      const response = await fetch(`${baseUrl}/neighborhood?projectId=project-1&canonicalId=mem-1`);
       expect(response.status).toBe(200);
-      expect(mocks.projectLiveThinkGraph).toHaveBeenCalledWith(payload);
+      expect(mocks.fetchThinkGraphNeighborhood).toHaveBeenCalledWith('project-1', 'mem-1');
+      expect(await response.json()).toMatchObject({ centerId: 'mem-1' });
     } finally {
       await closeServer(server);
     }
   });
 
-  it('rejects unknown source types before Python rails', async () => {
+  it('rejects an expansion without both native identities', async () => {
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/live-projection`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: 'project-1',
-          conversationId: 'main',
-          runId: 'turn-1',
-          observedAt: '2026-08-09T12:00:00.000Z',
-          state: 'active',
-          streams: [{ source: 'invented', sourceId: 'x', text: 'text' }],
-        }),
-      });
-
+      const response = await fetch(`${baseUrl}/neighborhood?projectId=project-1`);
       expect(response.status).toBe(400);
-      expect(mocks.projectLiveThinkGraph).not.toHaveBeenCalled();
+      expect(mocks.fetchThinkGraphNeighborhood).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }

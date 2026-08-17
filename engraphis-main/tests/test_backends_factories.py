@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 
 from engraphis.backends.embedder_deterministic import DeterministicEmbedder
-from engraphis.backends.embedder_st import get_embedder
+from engraphis.backends.embedder_st import (
+    LazyLocalSentenceTransformerEmbedder,
+    LocalEmbeddingModelUnavailable,
+    get_embedder,
+)
 from engraphis.backends.reranker import IdentityReranker, get_reranker
 from engraphis.backends.vector_numpy import NumpyVectorIndex
 from engraphis.backends.vector_sqlitevec import get_vector_index
@@ -34,31 +38,27 @@ def _force_load_failure(monkeypatch, module, attr: str) -> None:
     monkeypatch.setattr(module, attr, _raise)
 
 
-def test_embedder_factory_falls_back_offline(monkeypatch):
+def test_embedder_factory_never_falls_back_from_a_configured_real_model(
+        monkeypatch, tmp_path):
     import engraphis.backends.embedder_st as embedder_st
 
     assert isinstance(get_embedder(None, 128), DeterministicEmbedder)
-    # An unresolvable model name must not crash — it falls back.
-    _force_load_failure(monkeypatch, embedder_st, "SentenceTransformerEmbedder")
-    assert isinstance(get_embedder("definitely-not-a-real-model-xyz", 128), DeterministicEmbedder)
+    monkeypatch.setenv("HUGGINGFACE_HUB_CACHE", str(tmp_path))
+    embedder_st._reset_embedding_runtime_for_tests()
+    configured = get_embedder("definitely-not-a-real-model-xyz", 128)
+
+    assert isinstance(configured, LazyLocalSentenceTransformerEmbedder)
+    with pytest.raises(LocalEmbeddingModelUnavailable, match="local_embedding_model_unavailable"):
+        configured.embed(["semantic query"])
 
 
-def test_embedder_factory_forwards_an_immutable_model_revision(monkeypatch):
-    import engraphis.backends.embedder_st as embedder_st
-
-    captured = {}
-
-    class _PinnedEmbedder:
-        dim = 128
-
-        def __init__(self, model_name, *, revision=None):
-            captured.update(model_name=model_name, revision=revision)
-
-    monkeypatch.setattr(embedder_st, "SentenceTransformerEmbedder", _PinnedEmbedder)
+def test_embedder_factory_forwards_an_immutable_model_revision():
     result = get_embedder("Qwen/example", 128, revision="a" * 40)
 
-    assert isinstance(result, _PinnedEmbedder)
-    assert captured == {"model_name": "Qwen/example", "revision": "a" * 40}
+    assert isinstance(result, LazyLocalSentenceTransformerEmbedder)
+    assert result.model_name == "Qwen/example"
+    assert result.revision == "a" * 40
+    assert result.dim == 128
 
 
 def test_deterministic_embedder_preserves_legacy_feature_hash_mapping():

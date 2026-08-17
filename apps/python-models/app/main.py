@@ -34,7 +34,6 @@ from app.python_models.idd import (
 )
 from app.python_models.orchestration_contracts import RuntimeRequest
 from app.python_models.tool_registry import tool_manifest
-from app.python_models.thinkgraph_live_projection import project_live_thinkgraph
 
 app = FastAPI()
 
@@ -253,13 +252,19 @@ def thinkgraph_projection(
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
-@app.post("/thinkgraph/live-projection")
-def thinkgraph_live_projection(payload: dict[str, Any]):
-    """Return transient lexical observations; never read or write Engraphis."""
+@app.get("/thinkgraph/neighborhood")
+def thinkgraph_neighborhood(projectId: str, canonicalId: str):
+    """Read the exact Engraphis neighborhood of one native memory."""
+    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+
+    project_id = str(projectId or "").strip()
+    canonical_id = str(canonicalId or "").strip()
+    if not project_id or not canonical_id:
+        raise HTTPException(status_code=400, detail="projectId and canonicalId required")
     try:
-        return project_live_thinkgraph(payload)
-    except ValueError as err:
-        raise HTTPException(status_code=400, detail=str(err)) from err
+        return get_thinkgraph().neighborhood(project_id, canonical_id)
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
 
 
 @app.get("/idf/documents/{idf_id:path}")

@@ -416,9 +416,10 @@ async function queryKnowGraphExpand(
     const centerResult = await session.run(
       `
         MATCH (n)
-        WHERE elementId(n) = $nodeId
+        WHERE (elementId(n) = $nodeId OR toString(n.uuid) = $nodeId)
           AND toString(n.group_id) IN $projectScopeIds
-        RETURN elementId(n) AS node_id, labels(n) AS node_labels, properties(n) AS node_props
+        RETURN coalesce(toString(n.uuid), elementId(n)) AS node_id,
+          labels(n) AS node_labels, properties(n) AS node_props
         LIMIT 1
       `,
       { nodeId: rawNodeId, projectScopeIds },
@@ -435,7 +436,7 @@ async function queryKnowGraphExpand(
     const relResult = await session.run(
       `
         MATCH (center)
-        WHERE elementId(center) = $nodeId
+        WHERE (elementId(center) = $nodeId OR toString(center.uuid) = $nodeId)
           AND toString(center.group_id) IN $projectScopeIds
         MATCH (a)-[r]-(b)
         WHERE (a = center OR b = center)
@@ -444,13 +445,13 @@ async function queryKnowGraphExpand(
           AND toString(r.group_id) IN $projectScopeIds
           AND ${notSkillNode('a')} AND ${notSkillNode('b')}
         RETURN DISTINCT
-          elementId(r) AS rel_id,
+          coalesce(toString(r.uuid), elementId(r)) AS rel_id,
           type(r) AS rel_type,
           properties(r) AS rel_props,
-          elementId(a) AS from_id,
+          coalesce(toString(a.uuid), elementId(a)) AS from_id,
           labels(a) AS from_labels,
           properties(a) AS from_props,
-          elementId(b) AS to_id,
+          coalesce(toString(b.uuid), elementId(b)) AS to_id,
           labels(b) AS to_labels,
           properties(b) AS to_props
         LIMIT toInteger($limit)

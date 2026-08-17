@@ -207,30 +207,11 @@ export async function fetchThinkGraphProjection(
   return requestPythonRailsJson(`/thinkgraph/projection?${query.toString()}`, { method: 'GET' });
 }
 
-export type LiveThinkGraphSource = 'user' | 'assistant' | 'reasoning' | 'tool';
-
-export type LiveThinkGraphProjectionRequest = {
-  projectId: string;
-  conversationId: string;
-  runId: string;
-  observedAt: string;
-  state: 'active' | 'settled';
-  streams: Array<{
-    source: LiveThinkGraphSource;
-    sourceId: string;
-    text: string;
-  }>;
-  maxNodes?: number;
-  maxEdges?: number;
-};
-
-/** Transport one bounded current-turn observation request to the pure Python projector. */
-export async function projectLiveThinkGraph(
-  payload: LiveThinkGraphProjectionRequest,
+/** Read one bounded native Engraphis neighborhood without reshaping it in TypeScript. */
+export async function fetchThinkGraphNeighborhood(
+  projectId: string,
+  canonicalId: string,
 ): Promise<unknown> {
-  return requestPythonRailsJson('/thinkgraph/live-projection', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  const query = new URLSearchParams({ projectId, canonicalId });
+  return requestPythonRailsJson(`/thinkgraph/neighborhood?${query.toString()}`, { method: 'GET' });
 }

@@ -87,14 +87,16 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(mainTools).toEqual(expect.arrayContaining([
       'engraphis.recall',
       'canvas.inspect',
+      'agentgraph.inspect',
     ]));
     expect(mainTools).not.toContain('web_search');
     expect(hermesTools).toEqual(expect.arrayContaining([
       'graphiti.search_nodes',
       'graphiti.add_memory',
       'graphiti.add_triplet',
+      'agentgraph.inspect',
+      'write_mag_one_instructions',
     ]));
-    expect(hermesTools).not.toContain('agentgraph.inspect');
     expect(hermesTools).not.toEqual(expect.arrayContaining(['web_search', 'run_mag_one']));
     expect(byId.has('card_research_agent')).toBe(false);
     const hermesPrompt = byId.get('card_hermes_steward')?.prompt ?? '';

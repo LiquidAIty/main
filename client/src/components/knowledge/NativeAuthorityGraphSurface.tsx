@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph from 'force-graph';
 import { forceCollide, forceX, forceY } from 'd3-force';
 
 import { GraphTab as CbmGraphTab } from '../../vendor/codebase-memory-ui/src/components/GraphTab';
+import type { GraphData } from '../../vendor/codebase-memory-ui/src/lib/types';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import './nativeAuthorityGraphSurface.css';
@@ -10,7 +11,7 @@ import './nativeAuthorityGraphSurface.css';
 type GraphAuthority = 'thinkgraph' | 'knowgraph' | 'codegraph' | 'agentgraph';
 
 // The server-owned graph projection contract rendered by the native surfaces.
-type GraphProjectionNode = {
+export type GraphProjectionNode = {
   id: string;
   canonicalId?: string;
   label: string;
@@ -48,7 +49,7 @@ type GraphProjectionNode = {
   retrievalReason?: string;
 };
 
-type GraphProjectionEdge = {
+export type GraphProjectionEdge = {
   id: string;
   source: string;
   target: string;
@@ -73,119 +74,82 @@ export type GraphProjectionV1 = {
   edges: GraphProjectionEdge[];
 };
 
-type KnowGraphPayload = {
-  nodes?: Array<{
-    id: string;
-    label?: string;
-    type?: string;
-    properties?: Record<string, unknown>;
-  }>;
-  relationships?: Array<{
-    id: string;
-    from: string;
-    to: string;
-    type?: string;
-    properties?: Record<string, unknown>;
-  }>;
-};
-
-function toKnowGraphProjection(payload: KnowGraphPayload, projectId: string): GraphProjectionV1 {
-  const nodes = Array.isArray(payload.nodes) ? payload.nodes : [];
-  const relationships = Array.isArray(payload.relationships) ? payload.relationships : [];
-  return {
-    schemaVersion: 'knowgraph.graphiti.projection.v1',
-    authority: 'knowgraph',
-    projectId,
-    counts: { nodes: nodes.length, edges: relationships.length },
-    nodes: nodes.map((node) => ({
-      id: String(node.id),
-      canonicalId: String(node.properties?.uuid || node.id),
-      label: String(node.label || node.properties?.name || node.id),
-      type: String(node.type || 'Entity'),
-      authority: 'knowgraph',
-      mentionCount: 0,
-      properties: node.properties || {},
-      provenance: {
-        groupId: node.properties?.group_id,
-        sourceEpisodeId: node.properties?.source_episode_id,
-      },
-    })),
-    edges: relationships.map((relationship) => ({
-      id: String(relationship.id),
-      source: String(relationship.from),
-      target: String(relationship.to),
-      predicate: String(relationship.type || 'RELATES_TO'),
-      mentionCount: 0,
-      properties: relationship.properties || {},
-      provenance: {
-        groupId: relationship.properties?.group_id,
-        episodes: relationship.properties?.episodes,
-      },
-      validFrom: String(relationship.properties?.valid_at || ''),
-      validTo: relationship.properties?.invalid_at
-        ? String(relationship.properties.invalid_at)
-        : null,
-    })),
-  };
-}
-
-export function NativeKnowGraphSurface({ projectId }: { projectId: string }) {
-  const [projection, setProjection] = useState<GraphProjectionV1 | null>(null);
-  const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async (signal?: AbortSignal) => {
-    if (!projectId) {
-      setProjection(null);
-      setStatus('ready');
-      setError(null);
-      return;
-    }
-    setStatus('loading');
-    setError(null);
-    try {
-      const response = await fetch(`/api/knowgraph/graph?projectId=${encodeURIComponent(projectId)}`, { signal });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(String(payload?.error?.message || payload?.error || `HTTP ${response.status}`));
-      }
-      if (signal?.aborted) return;
-      setProjection(toKnowGraphProjection(payload || {}, projectId));
-      setStatus('ready');
-    } catch (nextError: any) {
-      if (signal?.aborted || nextError?.name === 'AbortError') return;
-      setProjection(null);
-      setStatus('error');
-      setError(String(nextError?.message || nextError));
-    }
-  }, [projectId]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
-
-  useEffect(() => {
-    const refresh = () => void load();
-    window.addEventListener('knowgraph:refresh', refresh);
-    return () => window.removeEventListener('knowgraph:refresh', refresh);
-  }, [load]);
-
+export function NativeKnowGraphSurface({
+  projection,
+  error,
+  onExpand,
+}: {
+  projection: GraphProjectionV1;
+  error: string | null;
+  onExpand: (node: GraphProjectionNode) => Promise<void>;
+}) {
   return (
     <NativeGraphProjectionSurface
       projection={projection}
-      status={status}
+      status={error ? 'error' : 'ready'}
       error={error}
       authority="knowgraph"
+      onExpand={onExpand}
     />
   );
 }
 
-export function NativeCodeGraphSurface({ project }: { project: string | null }) {
+function toCodeGraphData(projection: GraphProjectionV1): GraphData {
+  const indexById = new Map(projection.nodes.map((node, index) => [node.id, index + 1]));
+  const count = Math.max(1, projection.nodes.length);
+  const nodes = projection.nodes.map((node, index) => {
+    const y = 1 - (2 * (index + 0.5)) / count;
+    const radial = Math.sqrt(Math.max(0, 1 - y * y));
+    const angle = index * Math.PI * (3 - Math.sqrt(5));
+    const properties = node.properties || {};
+    return {
+      id: index + 1,
+      x: Math.cos(angle) * radial * 180,
+      y: y * 180,
+      z: Math.sin(angle) * radial * 180,
+      label: String(node.type || 'Symbol'),
+      name: String(node.label || node.title || node.id),
+      file_path: typeof properties.file_path === 'string' ? properties.file_path : undefined,
+      size: 10,
+      color: String(properties.attentionActorColor || '#37ADAA'),
+      native_id: node.id,
+      canonical_id: node.canonicalId || node.id,
+      authority: 'codegraph',
+      actor_card_id: typeof properties.attentionActorCardId === 'string' ? properties.attentionActorCardId : undefined,
+      actor_color: typeof properties.attentionActorColor === 'string' ? properties.attentionActorColor : undefined,
+      tool_name: typeof properties.attentionToolName === 'string' ? properties.attentionToolName : undefined,
+      properties,
+      provenance: node.provenance,
+    };
+  });
+  const edges = projection.edges.flatMap((edge) => {
+    const source = indexById.get(edge.source);
+    const target = indexById.get(edge.target);
+    return source && target ? [{ source, target, type: edge.predicate }] : [];
+  });
+  return { nodes, edges, total_nodes: nodes.length };
+}
+
+export function NativeCodeGraphSurface({
+  project,
+  projection,
+  onExpand,
+}: {
+  project: string | null;
+  projection: GraphProjectionV1;
+  onExpand: (node: GraphProjectionNode) => Promise<void>;
+}) {
+  const attentionData = useMemo(() => toCodeGraphData(projection), [projection]);
   return (
     <div data-testid="native-codegraph-surface" className="cbm-native-surface h-full w-full min-h-0 bg-background text-foreground">
-      <CbmGraphTab project={project} />
+      <CbmGraphTab
+        project={project}
+        attentionData={attentionData}
+        onExpand={async (node) => {
+          const native = projection.nodes.find((candidate) => candidate.id === node.native_id);
+          if (native) await onExpand(native);
+        }}
+      />
     </div>
   );
 }
@@ -206,6 +170,10 @@ type NativeNode = {
   degree: number;
   val: number;
   properties: Record<string, unknown>;
+  attentionActorCardId?: string;
+  attentionActorColor?: string;
+  attentionToolName?: string;
+  attentionActive: boolean;
   source?: 'user' | 'assistant' | 'reasoning' | 'tool';
   transient: boolean;
   presentationLayer?: string;
@@ -223,6 +191,7 @@ type NativeLink = {
   target: string | NativeNode;
   label: string;
   transient: boolean;
+  attentionActorColor?: string;
 };
 
 const TYPE_COLORS: Record<string, string> = {
@@ -257,11 +226,13 @@ export function NativeGraphProjectionSurface({
   status,
   error,
   authority = 'thinkgraph',
+  onExpand,
 }: {
   projection: GraphProjectionV1 | null;
   status: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
   authority?: GraphAuthority;
+  onExpand?: (node: GraphProjectionNode) => Promise<void>;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
@@ -280,6 +251,7 @@ export function NativeGraphProjectionSurface({
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<NativeNode | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [expanding, setExpanding] = useState(false);
   const [settings, setSettings] = useState({
     font: 10,
     labelDensity: 8,
@@ -317,6 +289,16 @@ export function NativeGraphProjectionSurface({
         degree: degree.get(node.id) || 0,
         val: 1 + (degree.get(node.id) || 0),
         properties: node.properties || {},
+        attentionActorCardId: typeof node.properties?.attentionActorCardId === 'string'
+          ? node.properties.attentionActorCardId
+          : undefined,
+        attentionActorColor: typeof node.properties?.attentionActorColor === 'string'
+          ? node.properties.attentionActorColor
+          : undefined,
+        attentionToolName: typeof node.properties?.attentionToolName === 'string'
+          ? node.properties.attentionToolName
+          : undefined,
+        attentionActive: node.properties?.attentionActive === true,
         source: ['user', 'assistant', 'reasoning', 'tool'].includes(String(node.properties?.source))
           ? node.properties?.source as NativeNode['source']
           : undefined,
@@ -325,7 +307,7 @@ export function NativeGraphProjectionSurface({
           ? node.properties.presentationLayer
           : undefined,
       }))
-      .filter((node) => !hideIsolated || node.degree > 0 || node.transient);
+      .filter((node) => !hideIsolated || node.degree > 0 || node.transient || node.attentionActive);
     const ids = new Set(nodeDescriptions.map((node) => node.id));
     const linkDescriptions: NativeLink[] = edges
       .filter((edge) => ids.has(edge.source) && ids.has(edge.target))
@@ -335,6 +317,9 @@ export function NativeGraphProjectionSurface({
         target: edge.target,
         label: edge.predicate,
         transient: edge.properties?.persisted === false,
+        attentionActorColor: typeof edge.properties?.attentionActorColor === 'string'
+          ? edge.properties.attentionActorColor
+          : undefined,
       }));
 
     const nextNodes = new Map<string, NativeNode>();
@@ -361,6 +346,7 @@ export function NativeGraphProjectionSurface({
       if (endpointId(existing.target) !== description.target) existing.target = description.target;
       existing.label = description.label;
       existing.transient = description.transient;
+      existing.attentionActorColor = description.attentionActorColor;
       nextLinks.set(existing.id, existing);
       return existing;
     });
@@ -443,9 +429,10 @@ export function NativeGraphProjectionSurface({
         context.globalAlpha = attentionAlpha * (isNeighbor ? 1 : 0.12);
         context.beginPath();
         context.arc(node.x || 0, node.y || 0, radius, 0, Math.PI * 2);
-        context.fillStyle = node.transient && node.source
+        context.fillStyle = node.attentionActorColor
+          || (node.transient && node.source
           ? LIVE_SOURCE_COLORS[node.source]
-          : TYPE_COLORS[node.etype] || DEFAULT_TYPE_COLOR;
+          : TYPE_COLORS[node.etype] || DEFAULT_TYPE_COLOR);
         context.fill();
         if (connectedFocus && node.id === focused) {
           context.lineWidth = 1.6;
@@ -466,7 +453,9 @@ export function NativeGraphProjectionSurface({
         const connected = focused && (endpointId(link.source) === focused || endpointId(link.target) === focused);
         const defaultAlpha = link.transient ? 0.68 : hasTransient ? 0.1 : Math.min(0.72, 0.16 + 0.18 * settings.linkWidth);
         const alpha = focused ? (connected ? 0.92 : 0.05) : defaultAlpha;
-        return link.transient
+        return link.attentionActorColor
+          ? link.attentionActorColor
+          : link.transient
           ? `rgba(145,211,209,${alpha})`
           : `rgba(112,154,160,${alpha})`;
       })
@@ -513,9 +502,10 @@ export function NativeGraphProjectionSurface({
           context.globalAlpha = node.transient
             ? node.currentState === 'settled' ? 0.58 : 1
             : hasTransient ? 0.28 : 1;
-          context.fillStyle = node.transient && node.source
+          context.fillStyle = node.attentionActorColor
+            || (node.transient && node.source
             ? LIVE_SOURCE_COLORS[node.source]
-            : '#d8d8e2';
+            : '#d8d8e2');
           context.fillText(node.label, node.x, y);
           context.globalAlpha = 1;
         }
@@ -603,7 +593,7 @@ export function NativeGraphProjectionSurface({
         />
         {status === 'loading' && !projection ? <div className="engraphis-native-empty">Loading graph…</div> : null}
         {status === 'error' ? <div className="engraphis-native-empty">Graph failed: {error}</div> : null}
-        {status === 'ready' && allNodes === 0 ? <div className="engraphis-native-empty">No entities in this project yet.</div> : null}
+        {status === 'ready' && allNodes === 0 ? <div className="engraphis-native-empty">No {surfaceLabel} data viewed in this attention scope yet.</div> : null}
       </div>
       <RightGlassDrawer
         isOpen={inspectorOpen}
@@ -623,10 +613,15 @@ export function NativeGraphProjectionSurface({
       >
       <div className="engraphis-native-controls">
         {selected ? <section data-testid={`${authority}-node-inspector`}><h3>Identity</h3><h4>{selected.fullLabel}</h4><p>{selected.authority} · {selected.etype} · {selected.degree} connections</p><p>{selected.canonicalId}{selected.currentState ? ` · ${selected.currentState}` : ''}{selected.trustState ? ` · ${selected.trustState}` : ''}{selected.qualityState ? ` · ${selected.qualityState}` : ''}</p>{selected.codeGraphRef ? <p>CodeGraph: {selected.codeGraphRef}</p> : null}{selected.knowGraphRef ? <p>KnowGraph: {selected.knowGraphRef}</p> : null}</section> : null}
+        {selected?.attentionActorCardId ? <section><h3>Attention</h3><p><i style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', marginRight: 6, background: selected.attentionActorColor || DEFAULT_TYPE_COLOR }} />{selected.attentionActorCardId}</p><p>{selected.attentionToolName}</p>{onExpand ? <button disabled={expanding} onClick={() => {
+          const native = projection?.nodes.find((node) => node.id === selected.id);
+          if (!native) return;
+          setExpanding(true);
+          void onExpand(native).finally(() => setExpanding(false));
+        }}>{expanding ? 'Expanding…' : `Expand from native ${surfaceLabel}`}</button> : null}</section> : null}
         <section>
           <h3>Controls</h3>
           <div className="engraphis-native-actions">
-            <button onClick={() => window.dispatchEvent(new Event(`${authority}:refresh`))}>Refresh</button>
             <button onClick={() => graphRef.current?.d3ReheatSimulation()}>Reheat</button>
           </div>
           <label><input type="checkbox" checked={hideIsolated} onChange={(event) => setHideIsolated(event.target.checked)} /> Hide unconnected entities</label>

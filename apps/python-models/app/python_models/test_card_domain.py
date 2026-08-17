@@ -394,6 +394,25 @@ def test_native_reference_uses_the_idd_shape_provenance_and_hard_bounds() -> Non
 def test_main_materialization_contains_the_saved_card_without_routing_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import engraphis.backends.embedder_st as embedder_st
+    import engraphis.core.engine as engraphis_engine
+    import engraphis.mcp_server as engraphis_mcp
+
+    monkeypatch.setattr(
+        embedder_st,
+        "_construct_local_sentence_transformer",
+        lambda *args, **kwargs: pytest.fail("IDF materialization initialized Engraphis"),
+    )
+    monkeypatch.setattr(
+        engraphis_engine,
+        "get_embedder",
+        lambda *args, **kwargs: pytest.fail("IDF materialization constructed embedder"),
+    )
+    monkeypatch.setattr(
+        engraphis_mcp.MemoryService,
+        "create",
+        lambda *args, **kwargs: pytest.fail("IDF materialization opened Engraphis"),
+    )
     main = _agent("main", runtimeBinding="main_chat")
     main["runtimeOptions"] = {
         **main["runtimeOptions"],
