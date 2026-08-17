@@ -46,8 +46,9 @@ part of the active research loop until its own pass wires it in.
   `auth/userService` + `auth/sessionStore` → `services/database.ts` (Prisma) is the correct, deliberate
   split: Prisma owns auth/session; raw Postgres owns stable Project/Deck/Card and prompt-free Run state;
   SQLite/Engraphis owns ThinkGraph; Neo4j owns KnowGraph; CBM owns CodeGraph; repo-root
-  `LiquidAIty.idd` owns IDD definitions; Python materializes transient IDFs; Apache AGE owns Card
-  relationships and prompt-free telemetry. This split is deliberate.
+  `LiquidAIty.idd` owns IDD definitions; Python materializes IDFs; AgentGraph is implemented on Apache
+  AGE/PostgreSQL and owns Card relationships, delegation/parent-run lineage, and prompt-free telemetry.
+  This split is deliberate.
 - **Hermes runtime/UI** — Main and ordinary Hermes-backed saved cards use the repo-owned persistent
   Hermes boundary. Preserve saved prompt/profile/model/tool authority, stable card identity across
   `single` and `auto-kanban`, distinct sessions, and the separate Hermes terminal. The saved
@@ -65,9 +66,9 @@ part of the active research loop until its own pass wires it in.
 - **Object-aware chat (partially wired, not residue)** — graph selection can now attach bounded
   selected graph-object references to Main Chat/Harness context. Propagation through actual Hermes
   and approved Mag One execution is not proven. Do not remove inspector/selection code as dead.
-- **Deck/conversation JSONB is app persistence for canvas/card/deck state only** — not AutoGen memory,
-  not ThinkGraph, not KnowGraph, not CodeGraph. Not scheduled for replacement in cleanup passes; report
-  only if it causes a real bug.
+- **Stable Deck/Card state is relational PostgreSQL; React Flow relationships are AgentGraph/AGE** —
+  bounded presentation/runtime extension JSONB remains flexible supporting data, not Card, IDF, graph,
+  conversation, Run, result, or receipt authority.
 - **Deferred maintenance** — dependency security upgrades; eslint warnings on owned code; production
   orchestration beyond the packaged pinned Linux CBM `codegraph` service. Keep one persistent
   CodeGraph volume and never run multiple independent daemons against the same cache root.
@@ -192,11 +193,13 @@ after real work produced proof worth preserving.
 
 ## IDF Context Policy
 
-The transient IDF is the actual controlled document sent to a model/agent. A normal turn receives only
+The IDF is the actual controlled document sent to a model/agent. A normal turn receives only
 the relevant bounded slice: stable saved-card context, current exact input, scoped ThinkGraph,
 KnowGraph, and CodeGraph references/data when useful, relevant skills, and explicit artifact pointers.
-Python rails materializes that document in memory; it is not a PostgreSQL archive, assignment identity,
-packet, or manifest.
+Python rails materializes that document in memory and discards it by default. The user may explicitly
+save the exact Markdown as a repeatable immutable PostgreSQL revision; provider envelopes, outputs,
+transcripts, and separate selected-context bundles remain excluded. Future retention/compression or
+external large-body policy requires measured storage evidence rather than an arbitrary size ceiling.
 
 IDD supplies the structural rules, catalogs, field definitions, constraints, and typed operation forms
 used to construct/edit/validate the IDF. IDD definitions are not sent to the model. Optional AGE

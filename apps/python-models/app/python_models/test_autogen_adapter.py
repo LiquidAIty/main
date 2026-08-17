@@ -43,17 +43,19 @@ def _context() -> RuntimeRequest:
     participants = [
         CardRuntimeParticipant(
             cardId="research", title="Research Agent", runtimeType="assistant_agent",
-            runtimeBinding="hermes_steward", provider="openrouter", providerModelId=MODEL,
+            runtimeBinding="hermes_steward", provider="openrouter",
+            accessMode="openrouter-api", providerModelId=MODEL,
         ),
         CardRuntimeParticipant(
             cardId="coder", title="Coder", runtimeType="assistant_agent",
-            runtimeBinding="local_coder", provider="openrouter", providerModelId=MODEL,
+            runtimeBinding="local_coder", provider="openrouter",
+            accessMode="openrouter-api", providerModelId=MODEL,
         ),
     ]
     card_runtime = CardRuntimeConfig(
         cardId="mag:card", title="Mag One", runtimeType="magentic_one",
         prompt="saved orchestrator system", provider="openrouter",
-        modelKey=MODEL, providerModelId=MODEL,
+        accessMode="openrouter-api", modelKey=MODEL, providerModelId=MODEL,
         runtimeOptions={"deckId": "d"}, participants=participants,
     )
     idf = _transient_idf(

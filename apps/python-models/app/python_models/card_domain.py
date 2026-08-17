@@ -11,14 +11,16 @@ import json
 from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from psycopg.rows import dict_row
 
 from app.python_models.idd import (
+    IDD_PATH,
     IddValidationError,
     load_input_data_dictionary,
     materialize_tool_catalog,
+    validate_record,
     validate_idf_islands,
 )
 from app.python_models.idf import render_content_markdown
@@ -983,10 +985,14 @@ def _normalized_native_references(value: Any) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for item in value:
-        if not isinstance(item, dict) or set(item) - {"authority", "nativeId", "required"}:
+        if not isinstance(item, dict):
             raise CardDomainError("native_reference_invalid")
-        authority = _required_text(item.get("authority"), "native_reference_authority")
-        native_id = _required_text(item.get("nativeId"), "native_reference_id")
+        try:
+            reference = validate_record("native-reference", item)
+        except IddValidationError as error:
+            raise CardDomainError(str(error)) from error
+        authority = _required_text(reference.get("authority"), "native_reference_authority")
+        native_id = _required_text(reference.get("nativeId"), "native_reference_id")
         identity = (authority, native_id)
         if identity in seen:
             raise CardDomainError("native_reference_duplicate")
@@ -994,7 +1000,9 @@ def _normalized_native_references(value: Any) -> list[dict[str, Any]]:
         normalized.append({
             "authority": authority,
             "nativeId": native_id,
-            "required": item.get("required") is True,
+            "reason": _required_text(reference.get("reason"), "native_reference_reason"),
+            "asOf": _required_text(reference.get("asOf"), "native_reference_as_of"),
+            "required": reference.get("required") is True,
         })
     return normalized
 
@@ -1330,10 +1338,276 @@ def _validate_exact_idf(preview: dict[str, Any], exact_idf: str) -> None:
         raise CardDomainError("exact_idf_card_authority_changed")
 
 
+def _uuid(value: Any, field: str) -> UUID:
+    try:
+        return UUID(_required_text(value, field))
+    except (TypeError, ValueError, AttributeError) as error:
+        raise CardDomainError(f"{field}_invalid") from error
+
+
+def _idd_identity() -> tuple[int, str]:
+    document = load_input_data_dictionary()
+    metadata = document.get("dictionary") if isinstance(document, dict) else None
+    version = metadata.get("version") if isinstance(metadata, dict) else None
+    if not isinstance(version, int) or version < 1:
+        raise CardDomainError("idd_version_invalid")
+    try:
+        digest = sha256(IDD_PATH.read_bytes()).hexdigest()
+    except OSError as error:
+        raise CardDomainError("idd_load_failed") from error
+    return version, digest
+
+
+def _saved_idf_payload(row: dict[str, Any], *, include_content: bool) -> dict[str, Any]:
+    payload = {
+        "idfId": str(row["idf_id"]),
+        "revision": int(row["revision"]),
+        "projectId": str(row["project_id"]),
+        "deckId": str(row["deck_id"]),
+        "targetCardId": str(row["target_card_id"]),
+        "targetCardRevisionId": str(row["target_card_revision_id"]),
+        "targetCardRevision": int(row["target_card_revision_number"]),
+        "targetCardRevisionSha256": str(row["target_card_revision_sha256"]),
+        "iddVersion": int(row["idd_version"]),
+        "iddSha256": str(row["idd_sha256"]),
+        "contentSha256": str(row["content_sha256"]),
+        "state": str(row["state"]),
+        "provenanceKind": str(row["provenance_kind"]),
+        "createdAt": row["created_at"].isoformat(),
+    }
+    if include_content:
+        payload["contentMarkdown"] = str(row["content_markdown"])
+    return payload
+
+
+def _inspect_saved_idf(content: str) -> dict[str, Any]:
+    """Mechanically expose fields already present in the exact saved body."""
+    islands = validate_idf_islands(content)
+    input_marker = "\n\n## Current Input\n\n"
+    assignment = content.split(input_marker, 1)[1] if input_marker in content else ""
+    system_values = [island["content"] for island in islands.get("SYSTEM", [])]
+    contexts: list[dict[str, Any]] = []
+    for island in islands.get("JSON", []):
+        value = json.loads(island["content"])
+        if value.get("type") == "resolved-card-invocation" and isinstance(value.get("cardContext"), dict):
+            contexts.append(value["cardContext"])
+    if not assignment.strip() or len(contexts) != 1 or len(system_values) > 1:
+        raise CardDomainError("saved_idf_structure_invalid")
+    context = contexts[0]
+    runtime_owner = (
+        "mag_one" if context.get("runtimeType") == "magentic_one"
+        else "hermes" if context.get("profile")
+        else "coder" if context.get("runtimeBinding") == "local_coder"
+        else "autogen"
+    )
+    system_prompt = system_values[0] if system_values else ""
+    return {
+        "assignment": assignment,
+        "cardContext": context,
+        "runtimeOwner": runtime_owner,
+        "providerProjection": {
+            "systemPrompt": system_prompt,
+            "message": content,
+            "toolDefinitions": context.get("toolDefinitions") or [],
+            "enabledTools": context.get("tools") or [],
+        },
+    }
+
+
+def save_idf_revision(payload: dict[str, Any]) -> dict[str, Any]:
+    """Persist one explicit immutable IDF revision after current Card validation."""
+    prepared = validate_exact_invocation(payload)
+    content = prepared["exactIdf"]
+    provenance = str(payload.get("provenanceKind") or "inspector").strip()
+    if provenance not in {"inspector", "main", "agent", "import"}:
+        raise CardDomainError("saved_idf_provenance_invalid")
+    requested_id = payload.get("idfId")
+    idf_id = _uuid(requested_id, "idf_id") if requested_id else uuid4()
+    idd_version, idd_sha = _idd_identity()
+    content_sha = _sha(content)
+    project_id = UUID(prepared["projectId"])
+    deck_id = prepared["deckId"]
+    card_id = prepared["cardContext"]["cardId"]
+    card_revision_id = UUID(prepared["cardRevisionId"])
+
+    with connect_postgres(autocommit=False) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                SELECT idf_id, project_id, deck_id, target_card_id,
+                       head_revision, state
+                FROM ag_catalog.saved_idfs
+                WHERE idf_id=%s
+                FOR UPDATE
+                """,
+                (idf_id,),
+            )
+            identity = cursor.fetchone()
+            if identity is None:
+                revision = 1
+                cursor.execute(
+                    """
+                    INSERT INTO ag_catalog.saved_idfs (
+                      idf_id, project_id, deck_id, target_card_id,
+                      head_revision, state
+                    ) VALUES (%s,%s,%s,%s,1,'saved')
+                    """,
+                    (idf_id, project_id, deck_id, card_id),
+                )
+            else:
+                if (
+                    str(identity["project_id"]) != str(project_id)
+                    or identity["deck_id"] != deck_id
+                    or identity["target_card_id"] != card_id
+                ):
+                    raise CardDomainError("saved_idf_identity_mismatch")
+                if identity["state"] != "saved":
+                    raise CardDomainError("saved_idf_not_active")
+                revision = int(identity["head_revision"]) + 1
+                cursor.execute(
+                    """
+                    UPDATE ag_catalog.saved_idfs
+                    SET head_revision=%s, updated_at=NOW()
+                    WHERE idf_id=%s
+                    """,
+                    (revision, idf_id),
+                )
+            cursor.execute(
+                """
+                INSERT INTO ag_catalog.saved_idf_revisions (
+                  idf_id, revision, project_id, deck_id, target_card_id,
+                  target_card_revision_id, idd_version, idd_sha256,
+                  content_markdown, content_sha256, provenance_kind
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING idf_id, revision, project_id, deck_id,
+                          target_card_id, target_card_revision_id, idd_version,
+                          idd_sha256, content_markdown, content_sha256,
+                          provenance_kind, created_at
+                """,
+                (
+                    idf_id, revision, project_id, deck_id, card_id,
+                    card_revision_id, idd_version, idd_sha, content,
+                    content_sha, provenance,
+                ),
+            )
+            row = dict(cursor.fetchone())
+            row["state"] = "saved"
+            row["target_card_revision_number"] = prepared["cardRevision"]
+            row["target_card_revision_sha256"] = prepared["cardRevisionSha256"]
+    return {
+        "ok": True,
+        "savedIdf": _saved_idf_payload(row, include_content=True),
+        "inspection": _inspect_saved_idf(content),
+    }
+
+
+def list_saved_idfs(project_ref: str, deck_id: str, card_id: str | None = None) -> dict[str, Any]:
+    """List bounded metadata; exact bodies load only on explicit selection."""
+    project_ref = _required_text(project_ref, "project_id")
+    deck_id = _required_text(deck_id, "deck_id")
+    card_id = str(card_id or "").strip()
+    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        project = _resolve_project(cursor, project_ref)
+        cursor.execute(
+            """
+            SELECT identity.idf_id, revision.revision, revision.project_id,
+                   revision.deck_id, revision.target_card_id,
+                   revision.target_card_revision_id, revision.idd_version,
+                   revision.idd_sha256, revision.content_sha256,
+                   revision.provenance_kind, revision.created_at,
+                   identity.state, card_revision.revision_number AS target_card_revision_number,
+                   card_revision.revision_sha256 AS target_card_revision_sha256
+            FROM ag_catalog.saved_idfs identity
+            JOIN ag_catalog.saved_idf_revisions revision
+              ON revision.idf_id=identity.idf_id
+            JOIN ag_catalog.agent_card_revisions card_revision
+              ON card_revision.revision_id=revision.target_card_revision_id
+            WHERE identity.project_id=%s AND identity.deck_id=%s
+              AND (%s='' OR identity.target_card_id=%s)
+            ORDER BY identity.updated_at DESC, identity.idf_id, revision.revision DESC
+            LIMIT 100
+            """,
+            (project["id"], deck_id, card_id, card_id),
+        )
+        rows = [
+            _saved_idf_payload(dict(row), include_content=False)
+            for row in cursor.fetchall()
+        ]
+    return {"ok": True, "projectId": str(project["id"]), "deckId": deck_id, "savedIdfs": rows}
+
+
+def load_saved_idf_revision(
+    project_ref: str,
+    idf_ref: str,
+    revision: int | None = None,
+) -> dict[str, Any]:
+    project_ref = _required_text(project_ref, "project_id")
+    idf_id = _uuid(idf_ref, "idf_id")
+    if revision is not None and (not isinstance(revision, int) or revision < 1):
+        raise CardDomainError("idf_revision_invalid")
+    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        project = _resolve_project(cursor, project_ref)
+        cursor.execute(
+            """
+            SELECT revision.idf_id, revision.revision, revision.project_id,
+                   revision.deck_id, revision.target_card_id,
+                   revision.target_card_revision_id, revision.idd_version,
+                   revision.idd_sha256, revision.content_markdown,
+                   revision.content_sha256, revision.provenance_kind,
+                   revision.created_at, identity.state,
+                   card_revision.revision_number AS target_card_revision_number,
+                   card_revision.revision_sha256 AS target_card_revision_sha256
+            FROM ag_catalog.saved_idfs identity
+            JOIN ag_catalog.saved_idf_revisions revision
+              ON revision.idf_id=identity.idf_id
+             AND revision.revision=COALESCE(%s, identity.head_revision)
+            JOIN ag_catalog.agent_card_revisions card_revision
+              ON card_revision.revision_id=revision.target_card_revision_id
+            WHERE identity.idf_id=%s AND identity.project_id=%s
+            """,
+            (revision, idf_id, project["id"]),
+        )
+        row = cursor.fetchone()
+    if row is None:
+        raise CardDomainError("saved_idf_not_found")
+    materialized = dict(row)
+    if _sha(str(materialized["content_markdown"])) != materialized["content_sha256"]:
+        raise CardDomainError("saved_idf_hash_mismatch")
+    return {
+        "ok": True,
+        "savedIdf": _saved_idf_payload(materialized, include_content=True),
+        "inspection": _inspect_saved_idf(str(materialized["content_markdown"])),
+    }
+
+
+def _saved_idf_run_reference(
+    payload: dict[str, Any],
+    prepared: dict[str, Any],
+) -> tuple[UUID | None, int | None]:
+    idf_ref = str(payload.get("savedIdfId") or "").strip()
+    revision_value = payload.get("savedIdfRevision")
+    if not idf_ref and revision_value is None:
+        return None, None
+    if not idf_ref or not isinstance(revision_value, int) or revision_value < 1:
+        raise CardDomainError("saved_idf_run_reference_invalid")
+    idf_id = _uuid(idf_ref, "saved_idf_id")
+    loaded = load_saved_idf_revision(prepared["projectId"], str(idf_id), revision_value)["savedIdf"]
+    if (
+        loaded["deckId"] != prepared["deckId"]
+        or loaded["targetCardId"] != prepared["cardContext"]["cardId"]
+        or loaded["targetCardRevisionId"] != prepared["cardRevisionId"]
+        or loaded["contentMarkdown"] != prepared["exactIdf"]
+        or loaded["contentSha256"] != _sha(prepared["exactIdf"])
+    ):
+        raise CardDomainError("saved_idf_run_content_mismatch")
+    return idf_id, revision_value
+
+
 def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
     prepared = validate_exact_invocation(payload)
     run_id = _required_text(payload.get("runId"), "run_id")
     correlation_id = _required_text(payload.get("correlationId"), "correlation_id")
+    saved_idf_id, saved_idf_revision = _saved_idf_run_reference(payload, prepared)
     context = prepared["cardContext"]
     owner = prepared["runtimeOwner"]
     native_runtime_request = None
@@ -1443,14 +1717,15 @@ def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
             INSERT INTO ag_catalog.agent_runs (
               run_id, project_id, deck_id, target_card_revision_id, runtime_type,
               provider, model_key, provider_model_id, access_mode, correlation_id,
-              state, started_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
+              saved_idf_id, saved_idf_revision, state, started_at
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
             """,
             (
                 run_id, prepared["projectId"], prepared["deckId"],
                 prepared["cardRevisionId"], context["runtimeType"], context.get("provider"),
                 context.get("modelKey"), context.get("providerModelId"),
                 context.get("accessMode"), correlation_id,
+                saved_idf_id, saved_idf_revision,
             ),
         )
     telemetry_written = _observe_run_start(
@@ -1463,6 +1738,10 @@ def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
         **prepared,
         "runId": run_id,
         "correlationId": correlation_id,
+        "savedIdf": (
+            {"idfId": str(saved_idf_id), "revision": saved_idf_revision}
+            if saved_idf_id is not None else None
+        ),
         "telemetryWritten": telemetry_written,
         "nativeRuntimeRequest": native_runtime_request,
         "hermesTransport": {
@@ -1604,7 +1883,8 @@ def finish_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
                    access_mode, correlation_id, provider_thread_ref,
                    provider_turn_ref, state, started_at, finished_at,
                    error_code, error_summary, provider_input_tokens,
-                   provider_output_tokens, total_cost_usd
+                   provider_output_tokens, total_cost_usd,
+                   saved_idf_id, saved_idf_revision
             FROM ag_catalog.agent_runs WHERE run_id=%s
             """,
             (run_id,),

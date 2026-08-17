@@ -181,6 +181,14 @@ interface AgentManagerProps {
   onChangeMaterializedIdf?: (value: string) => void;
   onRunCard?: () => void;
   onMaterializeCard?: () => void;
+  onSaveIdf?: () => void;
+  onSaveAndRunIdf?: () => void;
+  onExportIdf?: () => void;
+  onLoadSavedIdf?: () => void;
+  onChangeSavedIdfKey?: (value: string) => void;
+  savedIdfKey?: string;
+  savedIdfs?: SavedIdfSummary[];
+  savedIdfBusy?: boolean;
   runBusy?: boolean;
   runDisabled?: boolean;
   runResult?: StandaloneCardTestResult | null;
@@ -224,7 +232,7 @@ export type StandaloneCardTestResult = {
   model?: string | null;
   runtimeType?: string | null;
   invocation?: {
-    ephemeral: true;
+    ephemeral: boolean;
     assignment: string;
     cardRevisionId: string;
     cardRevision: number;
@@ -234,8 +242,27 @@ export type StandaloneCardTestResult = {
     cardContext: Record<string, unknown>;
     runtimeFacet: Record<string, unknown>;
     providerProjection: Record<string, unknown>;
+    savedIdf?: SavedIdfSummary | null;
   } | null;
   receipt?: Record<string, unknown> | null;
+};
+
+export type SavedIdfSummary = {
+  idfId: string;
+  revision: number;
+  projectId: string;
+  deckId: string;
+  targetCardId: string;
+  targetCardRevisionId: string;
+  targetCardRevision: number;
+  targetCardRevisionSha256: string;
+  iddVersion: number;
+  iddSha256: string;
+  contentSha256: string;
+  state: string;
+  provenanceKind: string;
+  createdAt: string;
+  contentMarkdown?: string;
 };
 
 type SaveCardStatus = 'idle' | 'saving' | 'saved' | 'failed';
@@ -393,6 +420,14 @@ export function AgentManager({
   onChangeMaterializedIdf,
   onRunCard,
   onMaterializeCard,
+  onSaveIdf,
+  onSaveAndRunIdf,
+  onExportIdf,
+  onLoadSavedIdf,
+  onChangeSavedIdfKey,
+  savedIdfKey = '',
+  savedIdfs = [],
+  savedIdfBusy = false,
   runBusy = false,
   runDisabled = false,
   runResult = null,
@@ -1650,8 +1685,11 @@ export function AgentManager({
               fontWeight: 600,
             }}
           >
-            {saveCardStatus === 'saving' ? 'Saving…' : saveCardStatus === 'saved' ? 'Saved' : 'Save'}
+            {saveCardStatus === 'saving' ? 'Saving…' : saveCardStatus === 'saved' ? 'Saved' : 'Save Card Version'}
           </button>
+          <span style={{ color: '#80969F', fontSize: 10.5 }}>
+            Stable Card fields only; the dynamic assignment and IDF are not copied into the Card.
+          </span>
           {saveCardStatus === 'failed' && saveCardErrorMessage ? (
             <span role="alert" data-testid="agent-manager-save-error" style={{ color: '#FFA2A2', fontSize: 11.5 }}>
               {saveCardErrorMessage}
@@ -1681,14 +1719,37 @@ export function AgentManager({
               resize: 'vertical',
             }}
           />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8 }}>
+            <select
+              aria-label="Saved IDF revision"
+              value={savedIdfKey}
+              onChange={(event) => onChangeSavedIdfKey?.(event.target.value)}
+              disabled={savedIdfBusy || savedIdfs.length === 0}
+            >
+              <option value="">{savedIdfs.length ? 'Select saved IDF' : 'No saved IDFs for this Card'}</option>
+              {savedIdfs.map((saved) => (
+                <option key={`${saved.idfId}:${saved.revision}`} value={`${saved.idfId}:${saved.revision}`}>
+                  {saved.idfId.slice(0, 8)} · revision {saved.revision} · {saved.createdAt.slice(0, 10)}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={onLoadSavedIdf}
+              disabled={savedIdfBusy || !savedIdfKey}
+              data-testid="agent-manager-load-idf"
+            >
+              {savedIdfBusy ? 'Working…' : 'Load IDF'}
+            </button>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
             <button
               type="button"
               onClick={onMaterializeCard}
               disabled={runBusy || !String(promptTestInput || '').trim()}
               data-testid="agent-manager-materialize"
             >
-              {runBusy ? 'Working…' : 'Preview IDF'}
+              {runBusy ? 'Working…' : 'Materialize IDF'}
             </button>
             <button
               type="button"
@@ -1710,7 +1771,31 @@ export function AgentManager({
                 fontWeight: 600,
               }}
             >
-              {runBusy ? 'Running…' : 'Run'}
+              {runBusy ? 'Running…' : 'Run transient'}
+            </button>
+            <button
+              type="button"
+              onClick={onSaveIdf}
+              disabled={savedIdfBusy || runBusy || !runResult?.invocation}
+              data-testid="agent-manager-save-idf"
+            >
+              Save IDF
+            </button>
+            <button
+              type="button"
+              onClick={onSaveAndRunIdf}
+              disabled={savedIdfBusy || runBusy || !runResult?.invocation}
+              data-testid="agent-manager-save-run-idf"
+            >
+              Save &amp; Run
+            </button>
+            <button
+              type="button"
+              onClick={onExportIdf}
+              disabled={!runResult?.invocation?.exactIdf}
+              data-testid="agent-manager-export-idf"
+            >
+              Export .idf
             </button>
           </div>
         </div> : null}
@@ -1736,7 +1821,10 @@ export function AgentManager({
             {runResult.invocation ? (
               <>
                 <div style={{ color: '#8FC8D1' }}>
-                  Transient IDF · Card revision {runResult.invocation.cardRevision} · {runResult.invocation.runtimeOwner}
+                  {runResult.invocation.savedIdf
+                    ? `Saved IDF ${runResult.invocation.savedIdf.idfId} · revision ${runResult.invocation.savedIdf.revision}`
+                    : 'Transient IDF'}
+                  {' · '}Card revision {runResult.invocation.cardRevision} · {runResult.invocation.runtimeOwner}
                 </div>
                 <details open>
                   <summary style={{ cursor: 'pointer', color: '#D5E4E8' }}>Exact in-memory IDF</summary>

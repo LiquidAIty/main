@@ -37,6 +37,8 @@ def test_transient_renderer_preserves_exact_system_context_and_assignment() -> N
         native_references=[{
             "authority": "KnowGraph",
             "nativeId": "node-one",
+            "reason": "answer the selected question",
+            "asOf": "2026-08-14T00:00:00Z",
             "required": True,
         }],
     )

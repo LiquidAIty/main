@@ -171,6 +171,44 @@ const orchestratorMocks = vi.hoisted(() => ({
     if (endpoint === '/domain/runs/finish') {
       return { receipt: { runId: body.runId, state: body.state } };
     }
+    if (endpoint === '/domain/idfs/save') {
+      return {
+        ok: true,
+        savedIdf: {
+          idfId: '11111111-1111-4111-8111-111111111111',
+          revision: 1,
+          projectId: body.projectId,
+          deckId: body.deckId,
+          targetCardId: body.cardId,
+          targetCardRevisionId: body.cardRevisionId,
+          contentMarkdown: body.exactIdf,
+          contentSha256: 'a'.repeat(64),
+        },
+      };
+    }
+    if (endpoint.startsWith('/domain/idfs/project-1/revision/')) {
+      return {
+        ok: true,
+        savedIdf: {
+          idfId: '11111111-1111-4111-8111-111111111111',
+          revision: 1,
+          contentMarkdown: '# IDF\n\nRepeatable input.',
+        },
+        inspection: { assignment: 'Repeatable input.' },
+      };
+    }
+    if (endpoint.startsWith('/domain/idfs/project-1/deck_builder')) {
+      return {
+        ok: true,
+        projectId: 'project-1',
+        deckId: 'deck_builder',
+        savedIdfs: [{
+          idfId: '11111111-1111-4111-8111-111111111111',
+          revision: 1,
+          targetCardId: 'card_worker',
+        }],
+      };
+    }
     return {};
   }),
 }));
@@ -486,6 +524,48 @@ describe('coder routes', () => {
         ([endpoint]) => endpoint === '/domain/runs/begin',
       );
       expect(beginCall?.[1]?.body).toContain('"exactIdf":"# IDF\\n\\nUse saved Main."');
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('forwards explicit saved-IDF writes and reads only to Python rails', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const saveResponse = await fetch(`${baseUrl}/mcp-bridge/idfs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'card_worker',
+          assignment: 'Repeatable input.',
+          cardRevisionId: 'revision:card_worker',
+          exactIdf: '# IDF\n\nRepeatable input.',
+        }),
+      });
+      expect(saveResponse.status).toBe(200);
+      await expect(saveResponse.json()).resolves.toMatchObject({
+        ok: true,
+        savedIdf: { revision: 1, targetCardId: 'card_worker' },
+      });
+      expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledWith(
+        '/domain/idfs/save',
+        expect.objectContaining({ body: expect.stringContaining('Repeatable input.') }),
+      );
+
+      const listResponse = await fetch(
+        `${baseUrl}/mcp-bridge/idfs?projectId=project-1&deckId=deck_builder&cardId=card_worker`,
+      );
+      expect(listResponse.status).toBe(200);
+      await expect(listResponse.json()).resolves.toMatchObject({
+        savedIdfs: [{ revision: 1, targetCardId: 'card_worker' }],
+      });
+      expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledWith(
+        '/domain/idfs/project-1/deck_builder?cardId=card_worker',
+        { method: 'GET' },
+      );
     } finally {
       await closeServer(server);
     }

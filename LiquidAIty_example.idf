@@ -13,20 +13,21 @@ model: selected-at-runtime
 tools: inherited from saved card grants
 [/CARD]
 
-The current task is to determine why the canonical context reaching a model may differ from the context that was assembled earlier. Start with CodeGraph and current source before broad search.
+The current task is to verify that a user-explicit saved IDF revision contains the exact communication shown in the Card Inspector, while ordinary Card runs remain transient. Start with CodeGraph and current source before broad search.
 
-The first question is whether the current IDF storage record actually contains the same context that reaches the provider. Check it directly:
+The first question is whether the explicit saved revision contains the expected exact Markdown and hash. Check only the saved-IDF library, not the historical prompt-delivery tables:
 
 [SQL]
 SELECT
-    id,
-    card_id,
+    idf_id,
+    revision,
+    target_card_revision_id,
     content_markdown,
-    structured_context,
+    content_sha256,
     created_at
-FROM input_data_files
-WHERE card_id = :card_id
-ORDER BY created_at DESC
+FROM ag_catalog.saved_idf_revisions
+WHERE idf_id = :idf_id
+ORDER BY revision DESC
 LIMIT 5;
 [/SQL]
 
@@ -34,7 +35,7 @@ Use that result as context, not as a separate workflow. If the stored record poi
 
 [CYPHER]
 MATCH (a)-[r]->(b)
-WHERE a.name IN ['materializeInputDataFile', 'runConfiguredCard']
+WHERE a.name IN ['materialize_invocation', 'validate_exact_invocation', 'begin_prompt_free_run', 'save_idf_revision']
 RETURN a.name AS source, type(r) AS relation, b.name AS target
 LIMIT 50;
 [/CYPHER]
@@ -44,7 +45,7 @@ If the graph result is incomplete, query the real CodeGraph tool:
 [MCP]
 tool: cbm.search_graph
 arguments:
-  query: materializeInputDataFile
+  query: materialize_invocation
   limit: 20
 [/MCP]
 
@@ -71,12 +72,15 @@ A graph reference can remain structured when exact identity matters:
 
 [JSON]
 {
-  "type": "graph-reference",
-  "authority": "CodeGraph",
+  "type": "native-references",
   "references": [
-    "materializeInputDataFile",
-    "runConfiguredCard",
-    "MagenticOneGroupChat"
+    {
+      "authority": "CodeGraph",
+      "nativeId": "python_models.card_domain.materialize_invocation",
+      "reason": "verify the current materialization owner",
+      "asOf": "current indexed repository revision",
+      "required": true
+    }
   ]
 }
 [/JSON]
@@ -87,9 +91,8 @@ For example, while explaining a finding, a sentence may be interrupted by a dire
 
 [SQL]
 SELECT content_markdown
-FROM input_data_files
-WHERE card_id = :card_id
-ORDER BY created_at DESC
+FROM ag_catalog.saved_idf_revisions
+WHERE idf_id = :idf_id AND revision = :revision
 LIMIT 1;
 [/SQL]
 
@@ -109,10 +112,11 @@ Then continue in plain language with the evidence.
 [SEARCH_TERMS]
 canonical IDF
 provider request
-modelInputMarkdown
-graph materialization
-claim_assignment
-runConfiguredCard
+saved_idf_revisions
+materialize_invocation
+validate_exact_invocation
+begin_prompt_free_run
+save_idf_revision
 MagenticOneGroupChat
 [/SEARCH_TERMS]
 
@@ -122,14 +126,16 @@ MagenticOneGroupChat
 - Outside bounded islands, text/Markdown is preferred.
 - Inside bounded islands, use the language that best fits the operation.
 - JSON, SQL, Cypher, MCP, and Python/script islands are all valid categories when supported by the current runtime and grants.
-- PostgreSQL persists the canonical IDF.
+- Ordinary IDFs are transient by default.
+- PostgreSQL persists an exact IDF only after an explicit Save IDF action.
+- Saved IDF revisions do not archive provider envelopes, results, or transcripts.
 - AGE records observational provenance and meta-knowledge.
 - Native graph and runtime systems remain authoritative for their own execution/data.
 [/KNOWN_CONTEXT]
 
 [RETURN]
 Return:
-1. the exact persisted-IDF -> provider-request path;
+1. the exact transient or explicitly saved IDF -> provider-request path;
 2. any competing context owner;
 3. the CodeGraph evidence;
 4. the SQL/graph/tool results summarized in plain language;

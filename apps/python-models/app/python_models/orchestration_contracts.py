@@ -120,6 +120,8 @@ class AutoGenMessage(BaseModel):
 class NativeReference(BaseModel):
     authority: RequiredRuntimeString
     nativeId: RequiredRuntimeString
+    reason: RequiredRuntimeString
+    asOf: RequiredRuntimeString
     required: bool = False
 
 

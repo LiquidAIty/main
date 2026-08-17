@@ -8,24 +8,23 @@ proof_level: cbm_anchor_verified_and_source_verified
 cbm:
   project_identity: C-Projects-LiquidAIty-main
   index_root: C:/Projects/LiquidAIty/main
-  full_index_nodes: 3395
-  full_index_edges: 9902
+  full_index_nodes: 3640
+  full_index_edges: 7688
   freshness: ready
 
 roots:
   files:
     - apps/backend/src/decks/store.ts
-    - apps/backend/src/cards/runtime.ts
     - apps/backend/src/routes/decks.routes.ts
     - apps/backend/src/routes/coder.routes.ts
-    - apps/backend/src/services/mcp/pythonAgentMcpClient.ts
+    - apps/python-models/app/python_models/card_domain.py
     - apps/python-models/app/control_plane.py
     - client/src/features/agentbuilder/canvas/AgentCanvasPane.tsx
     - client/src/features/agentbuilder/rail/railVisibility.ts
   symbols:
-    - getDeckDocument / getV3ProjectBlob / saveDeckDocument / writeV3ProjectBlobCas
-    - parseDeckDocument / parseProjectBlob
-    - resolvedMagenticOptions / buildBusConnectedCardIds / canvas_inspect
+    - getDeckDocument / saveDeckDocument
+    - load_deck / save_deck / describe_magentic_agents
+    - buildBusConnectedCardIds / canvas_inspect
     - AgentCanvasPane
   tests:
     - agentbuilder.topology.spec.ts
@@ -36,22 +35,22 @@ roots:
 
 ## What this is
 
-The Agent Canvas's persisted deck is the single source of truth for all card
-configurations, tool assignments, model selections, positions, and bus edges.
+The Agent Canvas edits one Project-owned Deck. Relational PostgreSQL owns Deck,
+Card revision, grant, facet, membership, and React Flow layout state. AgentGraph/AGE owns
+the accepted user-authored Card relationships.
 The "bus" is a `magentic_option` edge that connects orchestrator (Mag One) and
 Main Chat to worker cards. Frontend and backend read the same deck edges to
 determine which cards participate in multi-agent work.
 
 ## What the user/agent experiences
 
-**Canvas editing**: user adds cards (nodes with positions), draws bus edges, sets
-tools/models. Changes persist via `saveDeckDocument` → `writeV3ProjectBlobCas` (CAS).
+**Canvas editing**: user adds Cards, draws edges, and sets tools/models. Changes
+travel through thin TypeScript Deck transport to Python `save_deck`; relational
+Card/layout writes and required AgentGraph/AGE topology writes succeed together or fail.
 
-**Reload/readback**: `getV3ProjectBlob` reads the PostgreSQL JSONB record and
-validates only the deck envelope and required node/edge identities. It does not
-rebuild cards, choose models, normalize tools, synthesize edges, or repair saved
-state. Card positions, edges, prompt templates, and unknown future fields survive
-reload exactly; malformed state fails clearly.
+**Reload/readback**: Python reconstructs `nodes[]` from relational Card/layout
+authority and `edges[]` from AgentGraph/AGE. It does not infer, seed, normalize, or recreate
+relationships from Card profiles, Hermes, AutoGen, or startup templates.
 
 **Selected-card inspector**: clicking a card in `AgentCanvasPane` selects the
 saved card already loaded from the deck. It does not maintain a second runtime identity.
@@ -69,16 +68,16 @@ connect cards to the bus. The Main Chat prompt states: "You are not a worker."
 ## How it works
 
 ```
-DB: agent_io_schema (JSONB, CAS via writeV3ProjectBlobCas)
-  → getV3ProjectBlob → parseProjectBlob (structural validation, no rewriting)
+DB: relational Project → agent_decks → agent_cards/revisions/grants/facets/layout
+AgentGraph/AGE: FLOW / MAGENTIC_OPTION / MAGENTIC_CONTROL relationship instances
+  → Python load_deck reconstructs the unchanged Deck transport document
   → getDeckDocument(projectId, deckId)
-  → saveDeckDocument(projectId, exact deck) → writeV3ProjectBlobCas
+  → saveDeckDocument(projectId, exact deck) → Python save_deck
 
 Deck routes: GET /:projectId/decks, GET/PUT /:projectId/decks/:deckId [decks.routes.ts]
 
-Bus (backend): resolvedMagenticOptions(orchestratorId, nodes, edges) [runtime.ts]
-  → resolves the card at the opposite endpoint of each 'magentic_option' edge
-  → CBM-path-proven (callers: describeConnectedAgents, runCardWithContract)
+Bus (Python): describe_magentic_agents(projectId, deckId) [card_domain.py]
+  → resolves exact enabled assistant Cards at AgentGraph/AGE `magentic_option` edges
 
 Bus (client): buildBusConnectedCardIds(nodes, edges) [railVisibility.ts]
   → derives presentation visibility from persisted magentic_option connectivity
@@ -89,13 +88,13 @@ Main Chat control edge: the persisted deck uses source='card_main_chat',
 
 ## Must not break
 
-1. Deck is sole authority — runtime reads from `getDeckDocument`/`canvas_inspect`,
-   never from browser in-memory state.
+1. PostgreSQL stable Card state plus AgentGraph/AGE topology are the authorities; runtime
+   reads the reconstructed Deck through Python, never browser-only state.
 2. Bus discovery is edge-driven — only `magentic_option` edges. Execution readiness
    is a separate structural/runtime validation; neither is inferred from prompt text.
 3. Persistence validates structure but never repairs, normalizes, or invents saved
    cards, edges, models, tools, positions, or presentation fields.
-4. Deck persistence is CAS — concurrent saves retry rather than silent overwrite.
+4. Deck persistence uses expected revision and rejects stale concurrent saves.
 5. `canvas_inspect` is read-only — never mutates deck state.
 
 ## Start in CBM

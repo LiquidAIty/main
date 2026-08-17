@@ -325,7 +325,8 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
         "cardId": card_id,
         "correlationId": correlation_id,
         **({"conversationId": conversation_id} if conversation_id else {}),
-        **({"parentRunId": originating_run_id} if originating_run_id else {}),
+        **({"senderCardId": originating_agent_id} if originating_agent_id else {}),
+        **({"originatingRunId": originating_run_id} if originating_run_id else {}),
         "input": instruction,
     }
 

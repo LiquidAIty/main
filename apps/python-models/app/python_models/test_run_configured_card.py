@@ -20,7 +20,11 @@ MODEL = "deepseek/deepseek-v4-flash-0731"
 
 
 def _transient_idf(*, card_context: dict, user_text: str) -> InputDataFile:
-    references = [{"authority": "knowgraph", "nativeId": "node:1", "required": True}]
+    references = [{
+        "authority": "knowgraph", "nativeId": "node:1",
+        "reason": "bounded runtime context", "asOf": "2026-08-14T00:00:00Z",
+        "required": True,
+    }]
     content = render_content_markdown(
         system_text="saved system",
         user_text=user_text,
@@ -44,11 +48,11 @@ def _context(*, user_text: str = "run", runtime_type: str = "assistant_agent",
              orchestrator: str = "assistant_agent") -> RuntimeRequest:
     card = CardRuntimeConfig(
         cardId="card:one", title="One", runtimeType=runtime_type,
-        prompt="saved system",
+        prompt="saved system", accessMode="openrouter-api",
         participants=participants if participants is not None else [
             CardRuntimeParticipant(
                 cardId="card:one", title="One", runtimeType="assistant_agent",
-                provider="openrouter", providerModelId=MODEL,
+                provider="openrouter", accessMode="openrouter-api", providerModelId=MODEL,
             )
         ],
     )

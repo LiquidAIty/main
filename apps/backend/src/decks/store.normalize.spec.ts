@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -16,7 +17,9 @@ describe('thin Deck transport boundary', () => {
   });
 
   it('contains no TypeScript database or legacy JSONB authority', () => {
-    const source = readFileSync(new URL('./store.ts', import.meta.url), 'utf8');
+    const workspacePath = resolve(process.cwd(), 'src/decks/store.ts');
+    const repositoryPath = resolve(process.cwd(), 'apps/backend/src/decks/store.ts');
+    const source = readFileSync(existsSync(workspacePath) ? workspacePath : repositoryPath, 'utf8');
     expect(source).toContain('requestPythonRailsJson');
     expect(source).toContain('/domain/decks/');
     expect(source).not.toContain("../db/pool");

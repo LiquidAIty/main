@@ -18,11 +18,14 @@ from app.python_models.card_domain import (
     describe_magentic_agents,
     finish_prompt_free_run,
     list_decks,
+    list_saved_idfs,
     load_deck,
+    load_saved_idf_revision,
     materialize_main_invocation,
     materialize_invocation,
     record_explicit_artifact,
     save_deck,
+    save_idf_revision,
     validate_exact_invocation,
 )
 from app.python_models.idd import (
@@ -174,6 +177,32 @@ def domain_mag_one_agents(project_id: str, deck_id: str):
 def domain_card_validate_dispatch(payload: dict[str, Any]):
     try:
         return validate_exact_invocation(payload)
+    except (CardDomainError, IddValidationError) as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.get("/domain/idfs/{project_id}/{deck_id}")
+def domain_saved_idf_list(project_id: str, deck_id: str, cardId: str | None = None):
+    try:
+        return list_saved_idfs(project_id, deck_id, cardId)
+    except CardDomainError as err:
+        status = 404 if str(err) == "project_not_found" else 409
+        raise HTTPException(status_code=status, detail=str(err)) from err
+
+
+@app.get("/domain/idfs/{project_id}/revision/{idf_id}")
+def domain_saved_idf_read(project_id: str, idf_id: str, revision: int | None = None):
+    try:
+        return load_saved_idf_revision(project_id, idf_id, revision)
+    except CardDomainError as err:
+        status = 404 if str(err) in {"project_not_found", "saved_idf_not_found"} else 409
+        raise HTTPException(status_code=status, detail=str(err)) from err
+
+
+@app.post("/domain/idfs/save")
+def domain_saved_idf_save(payload: dict[str, Any]):
+    try:
+        return save_idf_revision(payload)
     except (CardDomainError, IddValidationError) as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 

@@ -79,19 +79,18 @@ describe('AgentManager active builder config', () => {
     expect(ordinary.execution_mode).toBe('auto-kanban');
   });
 
-  it('restores the canonical Save and Run actions without the regressed Run Test', () => {
+  it('separates stable Card versions from transient and explicitly saved IDFs', () => {
     const filePath = path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx');
     const source = readFileSync(filePath, 'utf8');
 
-    // Restored first-class card editor contract: Save and Run are separate,
-    // exact-label, production actions.
     expect(source).toContain("data-testid=\"agent-manager-save\"");
     expect(source).toContain("data-testid=\"agent-manager-run\"");
-    expect(source).toContain("'Save'");
-    expect(source).toContain("'Run'");
-    // The regressed half-state is gone: no Run Test, no Save Card substitute.
+    expect(source).toContain('Save Card Version');
+    expect(source).toContain('Run transient');
+    expect(source).toContain('data-testid="agent-manager-save-idf"');
+    expect(source).toContain('data-testid="agent-manager-save-run-idf"');
+    expect(source).toContain('data-testid="agent-manager-export-idf"');
     expect(source).not.toContain('Run Test');
-    expect(source).not.toContain('Save Card');
   });
 
   it('keeps the card identity fields without adding another persistence path', () => {

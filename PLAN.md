@@ -46,7 +46,7 @@ Microsoft AutoGen / Magentic-One on Python rails
   = native multi-agent team orchestration behind connected saved cards
 
 Graph authorities
-  = ThinkGraph, KnowGraph, CodeGraph, and AgentGraph, each with one owner
+  = ThinkGraph, KnowGraph, CodeGraph, and AgentGraph-on-Apache-AGE, each with one owner
 ```
 
 OpenClaude remains valuable and protected as the Coder. Main now executes through one thin repo-owned
@@ -266,13 +266,12 @@ they do not merge or copy native authorities.
 | ThinkGraph | SQLite / Engraphis through Python rails | project reasoning, conversation-linked operational knowledge, jobs, proof, blockers, next steps | sourced external knowledge, code structure, agent topology |
 | KnowGraph | Neo4j / Graphiti and Python research | sourced entities, relationships, episodes, temporal facts, citations, provenance | task orchestration, UI state, code structure |
 | CodeGraph | CBM | repository files, symbols, calls, imports, routes, structural relationships, index state | product knowledge, native agent runs, source edits |
-| Invocation selection | transient Python memory | current prompt/query/script/reference selection used to assemble one IDF | durable knowledge, runtime authorization, saved topology, archives |
-| AGE graph | Apache AGE in PostgreSQL | accepted Card topology plus prompt-free run/reference/artifact relationships and telemetry | raw IDFs/prompts, runtime permission, card selection, native lifecycle |
-| Telemetry | existing runtime event stream plus bounded append-only activity storage where required | high-volume transient read/select/send/open/traverse/write activity | durable knowledge meaning or another graph authority |
+| AgentGraph | Apache AGE in PostgreSQL | accepted Card topology, delegation, parent-run and run/reference/artifact relationships, and execution telemetry | raw IDFs/prompts, runtime permission, card selection, native lifecycle |
 
-References across authorities are allowed only as provenance and hydration pointers. No graph writes
-another graph’s records. An IDF may contain bounded resolved material and native IDs needed for one
-model call; AGE may relate those IDs without absorbing the referenced subgraph.
+Invocation selection is transient Python memory, not another graph. References across authorities are
+allowed only as provenance and hydration pointers. No graph writes another graph’s records. An IDF may
+contain bounded resolved material and native IDs needed for one model call; AgentGraph/AGE may relate
+those IDs without absorbing the referenced subgraph.
 
 ---
 
@@ -312,11 +311,13 @@ query alone because the graph may change between delivery and consumption.
 
 ## IDF and IDD — actual model input and its input rules
 
-IDF is the actual assembled model-context document materialized transiently by Python rails and
-transported to the actual model call. It combines stable relational Card context with the current
-dynamic assignment, selected graph references/context, and bounded resolved native data. It is not a
-durable assignment, receipt, context envelope, or post-run reconstruction. The exact Inspector-visible
-bytes are sent and then discarded. Normal prose remains flexible; explicit typed islands may carry:
+IDF is the actual assembled model-context document materialized by Python rails and transported to the
+actual model call. It combines stable relational Card context with the current dynamic assignment,
+selected graph references/context, and bounded resolved native data. The default path is transient:
+the exact Inspector-visible bytes are sent and discarded. An explicit Save IDF action stores only
+that canonical UTF-8 Markdown body plus relational identity/revision/hash/provenance metadata; it does
+not archive provider envelopes, responses, transcripts, or separate context bundles. Normal prose
+remains flexible; explicit typed islands may carry:
 
 ```text
 idf-imports
@@ -365,7 +366,7 @@ contentHash/version: immutable operation identity
 
 Do not persist machine-specific absolute paths as portable product identity.
 
-### Verified implementation state (2026-08-14)
+### Verified implementation state (2026-08-16)
 
 - Git contains no completed historical PostgreSQL IDF assembler or shared model-consumer path.
 - `ContextPack` (June 24–July 5) had no production caller.
@@ -376,8 +377,10 @@ Do not persist machine-specific absolute paths as portable product identity.
 - `LiquidAIty.idd` is now the one literal rule catalog. Its generic Python interpreter validates the
   current structured card snapshot and the bracketed native-language island vocabulary. Ordinary
   Markdown remains the default; JSON is used only for bounded exact structured values where useful.
-- Python renders the exact transient Markdown IDF shown by the Inspector. Main/Hermes and AutoGen
-  receive those in-memory bytes, and Python rails rejects protected Card/runtime edits that differ.
+- Python renders the exact Markdown IDF shown by the Inspector. Main/Hermes and AutoGen receive those
+  in-memory bytes, and Python rails rejects protected Card/runtime edits that differ. Run remains
+  no-save by default; explicit saved IDFs use immutable PostgreSQL revisions and can be loaded or
+  exported as `.idf` text.
 - Live MCP discovery and the private Python registry now feed their factual names, schemas, annotations,
   security metadata, source identity, and availability into the literal IDD materializer. The backend
   `toolCatalogProjection.ts` file only indexes and searches the already-materialized IDD records; it
@@ -598,7 +601,7 @@ user question + selected visual context
 → future questions retrieve and extend the accumulated KnowGraph
 ```
 
-KnowGraph is not copied into AgentGraph. Engraphis does not write KnowGraph. The UI does not write
+KnowGraph is not copied into AgentGraph/AGE. Engraphis does not write KnowGraph. The UI does not write
 either graph directly. Research without citations cannot be displayed as accepted sourced knowledge.
 
 ---
@@ -678,7 +681,7 @@ explicitly replaces it and proves equivalence before deletion.
   readable.
 - The ReactFlow Agent Canvas remains the control plane.
 - The 2D native force graph and durable native graph projections remain usable.
-- ThinkGraph, KnowGraph, CodeGraph, and AgentGraph retain one writer each.
+- ThinkGraph, KnowGraph, CodeGraph, and AgentGraph/AGE retain one writer each.
 - The OpenClaude persistent terminal and Local Coder/CoderReport path remain working.
 - Microsoft AutoGen/Magentic-One remains native and unmodified at its private ledger boundary.
 - The single Python MCP host remains the sole LiquidAIty MCP authority.
@@ -700,7 +703,7 @@ Regression Ratio target for every implementation phase: **0.000**.
 - Adding a second MCP host, model client, graph database, event bus, planner, or agent framework.
 - Visualizing hidden chain-of-thought.
 - Creating graph nodes by parsing streamed prose and calling that graph consumption.
-- Copying native graph records into AgentGraph or IDF.
+- Copying native graph records into AgentGraph/AGE or IDF.
 - Treating a beautiful 2D/3D graph explorer as product function without selection, context loading,
   handoff, consumption, and knowledge growth.
 - Recreating private Magentic-One Task/Progress Ledgers.

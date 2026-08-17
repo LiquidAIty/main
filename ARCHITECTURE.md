@@ -589,25 +589,27 @@ and the deployed service never downloads CBM at runtime.
 It selects and renders the current ThinkGraph, KnowGraph, and CodeGraph surfaces without becoming a
 fourth data authority.
 
-### AgentGraph and AGE
+### AgentGraph on Apache AGE
 
-There is no separate persisted prompt/context aggregate called AgentGraph. Durable Project knowledge
-remains in ThinkGraph, KnowGraph, and CodeGraph. The caller selects bounded native references and
-hydrates current context for one invocation; that selection is transient.
+AgentGraph is LiquidAIty's agent-relationship and execution graph implemented on Apache AGE/PostgreSQL.
+It is not separate from AGE, and there is no additional persisted next-invocation graph. Durable
+Project knowledge remains in ThinkGraph, KnowGraph, and CodeGraph. The caller selects bounded native
+references and hydrates current context for one invocation; that selection is transient.
 
-Apache AGE is the durable authority for user-authored Card topology (`FLOW`, `MAGENTIC_OPTION`, and
-`MAGENTIC_CONTROL`) and stores prompt-free operational relationships/telemetry. Topology mutations are
-required and fail closed; execution telemetry is best-effort. AGE never selects a Card, expands grants,
+AgentGraph/AGE is the durable authority for user-authored Card topology (`FLOW`, `MAGENTIC_OPTION`, and
+`MAGENTIC_CONTROL`), delegation, parent-run relationships, and prompt-free operational telemetry.
+Topology mutations are required and fail closed; execution telemetry is best-effort. It never selects a Card, expands grants,
 stores raw IDFs, schedules a runtime, or decides whether Hermes, Mag One, or Coder may succeed.
 
 ## Input Data File and Input Data Dictionary
 
-The **Input Data File (IDF)** is the actual transient model-context document for one communication.
+The **Input Data File (IDF)** is the actual model-context document for one communication.
 Python rails materializes it in memory from stable Card state plus the current assignment, selected
-context/tools, constraints, and output contract. The exact Inspector-visible document reaches the
-actual model/runtime call and is then discarded. It is not a durable identity, assignment, receipt,
-manifest, trace, or post-run reconstruction. Runtime adapters may mechanically format transport
-framing but must not assemble separate competing meanings.
+context/tools, constraints, and output contract. By default, the exact Inspector-visible document
+reaches the actual model/runtime call and is discarded. An explicit Save IDF action may instead store
+that exact UTF-8 Markdown body as an immutable relational revision for repeat use; it does not store a
+provider envelope, selected-context side table, response, transcript, or receipt. Runtime adapters may
+mechanically format transport framing but must not assemble separate competing meanings.
 
 An IDF may contain concrete bounded material and references to heterogeneous native authorities:
 
@@ -615,7 +617,7 @@ An IDF may contain concrete bounded material and references to heterogeneous nat
 IDF
   identity: Project, Deck, Card revision, and current correlation
   stable card context: exact saved prompt/profile/model/grants needed by the call
-  dynamic context: instantiated AgentGraph prompt/query/script/reference content
+  dynamic context: selected prompt/query/script/reference content and bounded native graph data
   flexible text: bounded user/agent-authored context
   current references: Project/Deck/Card and selected native IDs
   typed operations: exact native-tool calls plus first-class parameterized SQL/Cypher query definitions
@@ -634,7 +636,8 @@ permissions/capabilities. It does not infer risk, compatibility, runtime meaning
 IDD definitions are not injected into model context. Natural-language IDF content stays flexible.
 
 The repo-root `LiquidAIty.idd` file owns IDD definitions. PostgreSQL owns stable Deck/Card revisions,
-prompt-free Run status, and explicit artifact metadata. Engraphis owns project reasoning and recall.
+explicit saved-IDF identities/revisions, prompt-free Run status, and explicit artifact metadata.
+Engraphis owns project reasoning and recall.
 Graphiti/KnowGraph owns sourced knowledge and provenance. CBM owns code structure. AGE owns Card
 relationships and prompt-free execution observations.
 
@@ -643,7 +646,8 @@ The intended research flow is:
 ```txt
 user chat + uploaded/selected data
 → visualize and inspect the data
-→ use IDD rules to construct and validate one transient IDF in Python memory
+→ use IDD rules to construct and validate one IDF in Python memory
+→ optionally save that exact body as an immutable revision; default remains no-save
 → retrieve bounded Engraphis context
 → instantiate selected current context into that IDF
 → Main or the real Hermes adapter sends that actual IDF to the model/runtime call
@@ -661,12 +665,12 @@ Verified Git archaeology found no complete earlier implementation to restore: `C
 production caller; `unified_context.py` / `DeliveredContextManifest` rebuilt assignment-coupled graph
 projections; AGE `AgentContext` and the registered-query/GraphView path mixed context with runtime
 control. The explicit IDF/IDD law arrived in `fe6daa9d`. Current source now has one literal
-`LiquidAIty.idd`, a generic Python interpreter, a mixed-language loose-Markdown transient IDF
-assembler, relational Card revisions, Inspector preview/editing, and an exact IDF/Card-runtime
-authority guard on Python rails.
+`LiquidAIty.idd`, a generic Python interpreter, a mixed-language loose-Markdown IDF assembler,
+relational Card and optional saved-IDF revisions, Inspector materialize/run/save/load/export controls,
+and an exact IDF/Card-runtime authority guard on Python rails.
 Live MCP discovery and the private Python registry are mechanically ingested into that same IDD;
-`toolCatalogProjection.ts` only indexes/searches its materialized records. The full editor, selected
-tool-schema materialization into each IDF, generic capability-gated parameterized SQL/Cypher and bounded-script
+`toolCatalogProjection.ts` only indexes/searches its materialized records. Selected tool-schema
+materialization is current. Generic capability-gated parameterized SQL/Cypher and bounded-script
 execution, result islands, optional AGE observation, and full Coder outer-boundary proof remain
 TARGET / INCOMPLETE.
 

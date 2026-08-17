@@ -825,6 +825,36 @@ type = "object"
 required = false
 
 [[records]]
+name = "native-reference"
+allowUnknownFields = false
+description = "One transient pointer to native graph data selected for an IDF. The native graph remains authority."
+
+[[records.fields]]
+name = "authority"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "nativeId"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "reason"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "asOf"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "required"
+type = "boolean"
+required = true
+
+[[records]]
 name = "coder-packet"
 allowUnknownFields = false
 description = "User-reviewable dynamic coding fields embedded in one transient outer IDF."

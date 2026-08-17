@@ -188,7 +188,8 @@ class TestRunAssistantAgent:
             "input": "Find one primary source.",
         }))
 
-        assert calls[0][2]["parentRunId"] == "main-turn-1"
+        assert calls[0][2]["originatingRunId"] == "main-turn-1"
+        assert calls[0][2]["senderCardId"] == "card_hermes_steward"
         assert calls[0][2]["input"] == "Find one primary source."
         assert response["result"]["status"] == "completed"
 

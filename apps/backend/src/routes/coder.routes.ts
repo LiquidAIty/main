@@ -346,6 +346,8 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         cardRevisionId,
         runId: correlationId,
         correlationId,
+        savedIdfId: typeof body.savedIdfId === 'string' ? body.savedIdfId : undefined,
+        savedIdfRevision: Number.isInteger(body.savedIdfRevision) ? body.savedIdfRevision : undefined,
       }),
     }) as any;
 
@@ -394,6 +396,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
           cardId,
           runtimeOwner: prepared.runtimeOwner,
           cardRevisionId: prepared.cardRevisionId,
+          savedIdf: prepared.savedIdf || null,
           output,
           transport,
           receipt: finished.receipt || null,
@@ -415,6 +418,51 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     }
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'run_configured_card_failed' });
+  }
+});
+
+// Thin explicit saved-IDF transport. Python rails validates the exact Card
+// authority, hashes the UTF-8 body, versions it, and owns every SQL write.
+router.get('/mcp-bridge/idfs', async (req, res) => {
+  const projectId = String(req.query.projectId || '').trim();
+  const deckId = String(req.query.deckId || '').trim();
+  const cardId = String(req.query.cardId || '').trim();
+  const idfId = String(req.query.idfId || '').trim();
+  const revision = Number(req.query.revision);
+  if (!projectId) return res.status(400).json({ ok: false, error: 'project_id_required' });
+  try {
+    const endpoint = idfId
+      ? `/domain/idfs/${encodeURIComponent(projectId)}/revision/${encodeURIComponent(idfId)}${Number.isInteger(revision) && revision > 0 ? `?revision=${revision}` : ''}`
+      : `/domain/idfs/${encodeURIComponent(projectId)}/${encodeURIComponent(deckId)}${cardId ? `?cardId=${encodeURIComponent(cardId)}` : ''}`;
+    if (!idfId && !deckId) return res.status(400).json({ ok: false, error: 'deck_id_required' });
+    const result = await requestPythonRailsJson(endpoint, { method: 'GET' });
+    return res.json(result);
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'saved_idf_read_failed' });
+  }
+});
+
+router.post('/mcp-bridge/idfs', async (req, res) => {
+  const body = req.body || {};
+  if (
+    !String(body.projectId || '').trim()
+    || !String(body.deckId || '').trim()
+    || !String(body.cardId || '').trim()
+    || !String(body.assignment || '').trim()
+    || !String(body.cardRevisionId || '').trim()
+    || !String(body.exactIdf || '').trim()
+  ) {
+    return res.status(400).json({ ok: false, error: 'saved_idf_args_incomplete' });
+  }
+  try {
+    const result = await requestPythonRailsJson('/domain/idfs/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return res.json(result);
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'saved_idf_save_failed' });
   }
 });
 

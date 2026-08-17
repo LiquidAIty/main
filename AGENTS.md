@@ -526,16 +526,16 @@ project, trace, or render ledger artifacts in LiquidAIty.
 ThinkGraph = SQLite/Engraphis project reasoning and operational knowledge
 KnowGraph  = Neo4j/Graphiti sourced knowledge and provenance
 CodeGraph  = native CBM repository structure
-AgentGraph = transient selection/hydration used to assemble the next IDF; not a separate durable store
-AGE        = durable Card topology plus prompt-free execution relationships and telemetry
+AgentGraph = LiquidAIty Card relationships, delegation, parent-run lineage, and execution telemetry,
+             implemented on Apache AGE/PostgreSQL
 ```
 
 One authority and one writer per graph.
 
 - Pass pointers, native IDs, bounded Context Selections, and provenance—not copied subgraphs.
-- Transient graph selection may reference native authorities for context hydration; it does not absorb
-  or archive their data.
-- AGE owns accepted Card relationship edits and may observe stable run/reference/artifact IDs. It never
+- Transient context selection may reference native authorities for IDF hydration; it is not another graph
+  and does not absorb or archive their data.
+- AgentGraph/AGE owns accepted Card relationship edits and may observe stable run/reference/artifact IDs. It never
   stores raw IDFs, authorizes a runtime, chooses a card, or owns native runtime lifecycle.
 - The UI never writes graph meaning directly.
 - TypeScript never performs semantic graph merges.

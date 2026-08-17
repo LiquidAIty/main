@@ -18,7 +18,13 @@ export type InputDataFile = {
   userText: string;
   cardContext: Record<string, unknown> | null;
   dynamicContextMarkdown: string;
-  nativeReferences: Array<{ authority: string; nativeId: string; required: boolean }>;
+  nativeReferences: Array<{
+    authority: string;
+    nativeId: string;
+    reason: string;
+    asOf: string;
+    required: boolean;
+  }>;
   modelInputMarkdown: string;
   contentMarkdown: string;
   contentSha256: string;

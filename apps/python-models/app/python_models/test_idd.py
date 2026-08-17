@@ -21,7 +21,8 @@ def test_literal_idd_is_the_only_loaded_rule_catalog() -> None:
     assert dictionary["dictionary"]["idfFormat"] == "mixed-markdown"
     assert dictionary["dictionary"]["unknownIslands"] == "inert"
     assert {item["name"] for item in dictionary["records"]} == {
-        "card-context", "coder-packet", "model-option", "tool-catalog-reference",
+        "card-context", "coder-packet", "model-option", "native-reference",
+        "tool-catalog-reference",
     }
     assert {item["name"] for item in dictionary["catalogs"]} == {
         "configured-models", "native-tools",
@@ -67,7 +68,8 @@ role: planning, research, memory
 [/CARD]
 
 [SQL]
-SELECT content_markdown FROM input_data_files WHERE card_id = :card_id;
+SELECT content_markdown FROM ag_catalog.saved_idf_revisions
+WHERE idf_id = :idf_id AND revision = :revision;
 [/SQL]
 
 Continue the sentence after the query result.
@@ -77,7 +79,7 @@ result = unique[:25]
 [/SCRIPT]
 
 [JSON]
-{"type":"graph-reference","authority":"CodeGraph"}
+{"type":"native-references","references":[{"authority":"CodeGraph","nativeId":"symbol:one","reason":"verify ownership","asOf":"current","required":true}]}
 [/JSON]
 """
 

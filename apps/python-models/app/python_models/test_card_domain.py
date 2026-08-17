@@ -142,3 +142,47 @@ def test_exact_idf_allows_dynamic_edits_but_protects_card_authority() -> None:
     )
     with pytest.raises(card_domain.CardDomainError, match="exact_idf_card_authority_changed"):
         card_domain._validate_exact_idf(preview, changed)
+
+
+def test_native_reference_uses_the_idd_shape_and_preserves_provenance() -> None:
+    reference = {
+        "authority": "KnowGraph",
+        "nativeId": "episode:one",
+        "reason": "selected evidence for this invocation",
+        "asOf": "2026-08-16T12:00:00Z",
+        "required": True,
+    }
+    assert card_domain._normalized_native_references([reference]) == [reference]
+    with pytest.raises(card_domain.CardDomainError, match="idd_record_field_required:native-reference.reason"):
+        card_domain._normalized_native_references([{
+            "authority": "KnowGraph",
+            "nativeId": "episode:one",
+            "asOf": "2026-08-16T12:00:00Z",
+            "required": True,
+        }])
+
+
+def test_saved_idf_inspection_reads_the_exact_body_without_rebuilding_it() -> None:
+    context = {
+        "cardId": "card-one",
+        "title": "One",
+        "prompt": "stable",
+        "runtimeType": "assistant_agent",
+        "runtimeBinding": "research_agent",
+        "provider": "openrouter",
+        "modelKey": "model",
+        "providerModelId": "model",
+        "accessMode": "openrouter-api",
+        "tools": [],
+    }
+    exact = render_content_markdown(
+        system_text="stable system",
+        user_text="repeatable assignment",
+        card_context=context,
+        dynamic_context_markdown="",
+        native_references=[],
+    )
+    inspection = card_domain._inspect_saved_idf(exact)
+    assert inspection["assignment"] == "repeatable assignment"
+    assert inspection["cardContext"] == context
+    assert inspection["providerProjection"]["message"] == exact
