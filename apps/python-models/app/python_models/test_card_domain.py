@@ -303,7 +303,7 @@ def test_same_exact_idf_is_destination_independent_for_different_authorized_card
     assert hermes_preview["cardContext"]["cardId"] == "hermes"
     assert hermes_preview["providerProjection"]["systemPrompt"] == "Hermes saved prompt"
     assert hermes_preview["providerProjection"]["enabledTools"] == ["calculator"]
-    exact = hermes_preview["exactIdf"]
+    exact = "\n" + hermes_preview["exactIdf"] + "\n "
     assert "[MCP]\nname=calculator\n[/MCP]" in exact
     assert '"recipientCardId":"not-authority"' in exact
     assert '"type": "serialized-card"' in exact
@@ -488,14 +488,39 @@ def test_age_runtime_telemetry_preserves_run_card_and_artifact_lineage(
         "projectId": "project-one",
         "deckId": "deck-one",
         "cardContext": {"cardId": "card-one", "tools": ["calculator"]},
+        "idfInspection": {
+            "nativeReferences": [{
+                "authority": "KnowGraph",
+                "nativeId": "episode:exact",
+                "reason": "present in the edited exact IDF",
+                "asOf": "2026-08-17T00:00:00Z",
+                "required": True,
+            }],
+        },
     }
     assert card_domain._observe_run_start(
         prepared,
-        {},
+        {
+            "nativeReferences": [{
+                "authority": "KnowGraph",
+                "nativeId": "episode:stale-request",
+                "reason": "must not drive telemetry",
+                "asOf": "2026-08-17T00:00:00Z",
+                "required": True,
+            }],
+        },
         run_id="run-one",
         correlation_id="correlation-one",
     ) is True
     assert any("EXECUTED_BY" in query for query, _params in statements)
+    assert any("USED_TOOL" in query for query, _params in statements)
+    native_use = [
+        (query, params) for query, params in statements
+        if "[edge:USED]" in query
+    ]
+    assert len(native_use) == 1
+    assert native_use[0][1]["nativeId"] == "episode:exact"
+    assert all(params.get("nativeId") != "episode:stale-request" for _query, params in statements)
 
     statements.clear()
     assert card_domain._observe_run_finish("run-one", "completed") is True

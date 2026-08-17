@@ -499,6 +499,7 @@ describe('coder routes', () => {
   it('executes only the exact Inspector invocation accepted by Python rails', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.startHermesTurn.mockClear();
+    const exactIdf = '\n# IDF\n\nUse saved Main.\n ';
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
@@ -512,7 +513,7 @@ describe('coder routes', () => {
           conversationId: 'main',
           input: 'Use saved Main.',
           action: 'execute',
-          exactIdf: '# IDF\n\nUse saved Main.',
+          exactIdf,
           cardRevisionId: 'revision:card_main_chat',
         }),
       });
@@ -528,12 +529,12 @@ describe('coder routes', () => {
       });
       expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1);
       expect(chatSessionMocks.startHermesTurn.mock.calls[0][0]).toMatchObject({
-        message: '# IDF\n\nUse saved Main.',
+        message: exactIdf,
       });
       const beginCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
         ([endpoint]) => endpoint === '/domain/runs/begin',
       );
-      expect(beginCall?.[1]?.body).toContain('"exactIdf":"# IDF\\n\\nUse saved Main."');
+      expect(JSON.parse(String(beginCall?.[1]?.body || '{}')).exactIdf).toBe(exactIdf);
     } finally {
       await closeServer(server);
     }
@@ -616,6 +617,7 @@ describe('coder routes', () => {
 
   it('forwards explicit saved-IDF writes and reads only to Python rails', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
+    const exactIdf = '\n# IDF\n\nRepeatable input.\n ';
     const { server, baseUrl } = await createApiServer();
     try {
       const saveResponse = await fetch(`${baseUrl}/mcp-bridge/idfs`, {
@@ -627,7 +629,7 @@ describe('coder routes', () => {
           cardId: 'card_worker',
           assignment: 'Repeatable input.',
           cardRevisionId: 'revision:card_worker',
-          exactIdf: '# IDF\n\nRepeatable input.',
+          exactIdf,
         }),
       });
       expect(saveResponse.status).toBe(200);
@@ -635,10 +637,10 @@ describe('coder routes', () => {
         ok: true,
         savedIdf: { revision: 1, targetCardId: 'card_worker' },
       });
-      expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledWith(
-        '/domain/idfs/save',
-        expect.objectContaining({ body: expect.stringContaining('Repeatable input.') }),
+      const saveCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+        ([endpoint]) => endpoint === '/domain/idfs/save',
       );
+      expect(JSON.parse(String(saveCall?.[1]?.body || '{}')).exactIdf).toBe(exactIdf);
 
       const listResponse = await fetch(
         `${baseUrl}/mcp-bridge/idfs?projectId=project-1&deckId=deck_builder&cardId=card_worker`,

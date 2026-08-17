@@ -291,9 +291,9 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       return res.json({ ok: true, result: { status: 'previewed', invocation: preview } });
     }
 
-    const exactIdf = String(body.exactIdf || '').trim();
+    const exactIdf = typeof body.exactIdf === 'string' ? body.exactIdf : '';
     const cardRevisionId = String(body.cardRevisionId || '').trim();
-    if (!exactIdf || !cardRevisionId) {
+    if (!exactIdf.trim() || !cardRevisionId) {
       return res.status(400).json({ ok: false, error: 'exact_inspector_invocation_required' });
     }
     const prepared = await requestPythonRailsJson('/domain/runs/begin', {

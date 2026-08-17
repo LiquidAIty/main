@@ -1215,7 +1215,10 @@ def _autogen_participant(card: dict[str, Any], known_tools: set[str]) -> dict[st
 
 
 def validate_exact_invocation(payload: dict[str, Any]) -> dict[str, Any]:
-    exact_idf = _required_text(payload.get("exactIdf"), "exact_idf")
+    exact_idf_value = payload.get("exactIdf")
+    if not isinstance(exact_idf_value, str) or not exact_idf_value.strip():
+        raise CardDomainError("exact_idf_required")
+    exact_idf = exact_idf_value
     expected_revision = _required_text(payload.get("cardRevisionId"), "card_revision_id")
     preview = materialize_invocation(payload)
     if preview["cardRevisionId"] != expected_revision:
@@ -1829,6 +1832,30 @@ def _observe_run_start(
                     RETURN properties(edge)
                     """,
                     {"runId": run_id, "toolId": tool_id},
+                    "value agtype",
+                )
+            idf_inspection = prepared.get("idfInspection")
+            exact_references = (
+                idf_inspection.get("nativeReferences")
+                if isinstance(idf_inspection, dict)
+                else []
+            )
+            for reference in _normalized_native_references(exact_references):
+                _age_rows(
+                    cursor,
+                    """
+                    MATCH (run:Run {runId: $runId})
+                    MERGE (native:NativeReference {
+                      authority: $authority, nativeId: $nativeId
+                    })
+                    MERGE (run)-[edge:USED]->(native)
+                    RETURN properties(edge)
+                    """,
+                    {
+                        "runId": run_id,
+                        "authority": reference["authority"],
+                        "nativeId": reference["nativeId"],
+                    },
                     "value agtype",
                 )
         return True
