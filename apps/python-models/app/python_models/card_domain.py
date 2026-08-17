@@ -108,7 +108,7 @@ def _string_list(value: Any, field: str) -> list[str]:
 def _resolve_project(cursor: Any, project_id: str) -> dict[str, Any]:
     cursor.execute(
         """
-        SELECT id, code, project_type
+        SELECT id, name, code, project_type, status
         FROM ag_catalog.projects
         WHERE id::text = %s OR code = %s
         ORDER BY CASE WHEN id::text = %s THEN 0 ELSE 1 END
@@ -592,6 +592,13 @@ def _load_deck_with_cursor(
     templates = [{"id": row["template_id"], "content": row["content"]} for row in cursor.fetchall()]
     return {
         "projectId": project_id,
+        "project": {
+            "id": project_id,
+            "name": project.get("name"),
+            "code": project.get("code"),
+            "type": project.get("project_type"),
+            "status": project.get("status"),
+        },
         "deck": {
             "id": deck_row["deck_id"], "name": deck_row["name"],
             "version": int(deck_row["document_version"]),
@@ -902,6 +909,227 @@ def _normalized_native_references(value: Any) -> list[dict[str, Any]]:
     return normalized
 
 
+_PROJECT_CONTEXT_CARD_LIMIT = 64
+_PROJECT_CONTEXT_RELATIONSHIP_LIMIT = 128
+_PROJECT_CONTEXT_CAPABILITY_LIMIT = 64
+
+
+def _bounded_capabilities(card: dict[str, Any]) -> dict[str, list[str]]:
+    options = _json_object(card.get("runtimeOptions"), "runtime_options")
+    return {
+        field: _string_list(options.get(field), field)[:_PROJECT_CONTEXT_CAPABILITY_LIMIT]
+        for field in ("tools", "nativeTools", "skills", "toolsets", "mcpConnectionIds")
+    }
+
+
+def _project_context_manifest(
+    *,
+    loaded: dict[str, Any],
+    main_card: dict[str, Any],
+    card_context: dict[str, Any],
+    payload: dict[str, Any],
+    native_references: list[dict[str, Any]],
+    output_requirements: str,
+) -> dict[str, Any]:
+    """Project bounded native identities and retrieval handles into Main's IDF."""
+    project_id = str(loaded["projectId"])
+    deck = loaded["deck"]
+    meta = loaded.get("meta") if isinstance(loaded.get("meta"), dict) else {}
+    project = loaded.get("project") if isinstance(loaded.get("project"), dict) else {}
+    cards = {
+        str(card["id"]): card
+        for card in deck["nodes"][:_PROJECT_CONTEXT_CARD_LIMIT]
+    }
+    relationships = [
+        {
+            key: edge[key]
+            for key in ("id", "source", "target", "edgeType", "sourceHandle", "targetHandle", "enabled")
+            if key in edge
+        }
+        for edge in deck["edges"][:_PROJECT_CONTEXT_RELATIONSHIP_LIMIT]
+    ]
+    connected_ids = {
+        endpoint
+        for edge in relationships
+        for endpoint in (str(edge.get("source") or ""), str(edge.get("target") or ""))
+        if endpoint
+    }
+    connected_cards = []
+    for card_id in sorted(connected_ids):
+        card = cards.get(card_id)
+        if card is None:
+            continue
+        options = _json_object(card.get("runtimeOptions"), "runtime_options")
+        provider = str(options.get("provider") or "").strip()
+        model = str(options.get("providerModelId") or options.get("modelKey") or "").strip()
+        configured = bool(provider and model)
+        connected_cards.append({
+            "cardId": card_id,
+            "title": str(card.get("title") or card_id),
+            "runtimeType": str(card.get("runtimeType") or ""),
+            "runtimeBinding": str(card.get("runtimeBinding") or "") or None,
+            "enabled": _card_enabled(card),
+            "savedStatus": str(card.get("status") or "") or None,
+            "readinessState": (
+                "disabled" if not _card_enabled(card)
+                else "saved_configuration_present_runtime_unproven" if configured
+                else "saved_configuration_incomplete"
+            ),
+            "capabilities": _bounded_capabilities(card),
+        })
+
+    main_id = str(main_card["id"])
+    flow_targets = _direct_subagents(main_id, cards, deck["edges"])
+    controlled_ids = {
+        str(edge.get("target") or "")
+        for edge in relationships
+        if edge.get("source") == main_id
+        and edge.get("edgeType") == "magentic_control"
+        and edge.get("enabled") is not False
+    }
+    magentic_options = [
+        edge
+        for edge in relationships
+        if edge.get("edgeType") == "magentic_option"
+        and ({str(edge.get("source") or ""), str(edge.get("target") or "")} & controlled_ids)
+    ]
+
+    main_tools = list(card_context.get("tools") or [])
+    delegated_cards = [cards[target["cardId"]] for target in flow_targets if target["cardId"] in cards]
+
+    def retrieval_tools(prefix: str, candidates: list[dict[str, Any]]) -> list[str]:
+        names: list[str] = []
+        for candidate in candidates:
+            for name in _bounded_capabilities(candidate)["tools"]:
+                if name.startswith(prefix) and name not in names:
+                    names.append(name)
+        return names[:_PROJECT_CONTEXT_CAPABILITY_LIMIT]
+
+    selected_by_authority: dict[str, list[dict[str, Any]]] = {}
+    for reference in native_references:
+        selected_by_authority.setdefault(str(reference["authority"]), []).append(reference)
+
+    options = _json_object(main_card.get("runtimeOptions"), "runtime_options")
+    hermes_facet = options.get("hermesFacet") if isinstance(options.get("hermesFacet"), dict) else {}
+    workspace_root = str(deck.get("workspaceRoot") or "") or None
+    authority_layers = [
+        {
+            "authority": "ThinkGraph",
+            "nativeIdentity": {"projectId": project_id, "workspaceRoot": workspace_root},
+            "selectedReferences": selected_by_authority.get("ThinkGraph", []),
+            "retrievalTools": [name for name in main_tools if name.startswith("engraphis.")],
+            "availability": "direct_tool_grant" if any(name.startswith("engraphis.") for name in main_tools) else "not_granted",
+            "omitted": "Native ThinkGraph records are not copied into the initial IDF unless explicitly selected.",
+        },
+        {
+            "authority": "KnowGraph",
+            "nativeIdentity": {"projectId": project_id},
+            "selectedReferences": selected_by_authority.get("KnowGraph", []),
+            "retrievalTools": retrieval_tools("graphiti.", delegated_cards),
+            "availability": "delegated_saved_flow" if retrieval_tools("graphiti.", delegated_cards) else "not_granted",
+            "viaCardIds": [
+                card["id"] for card in delegated_cards
+                if retrieval_tools("graphiti.", [card])
+            ],
+            "omitted": "Native KnowGraph facts and episodes remain in Graphiti until explicitly read.",
+        },
+        {
+            "authority": "CodeGraph",
+            "nativeIdentity": {
+                "project": "C-Projects-LiquidAIty-main",
+                "root": workspace_root,
+                "state": "query_at_use_time",
+            },
+            "selectedReferences": selected_by_authority.get("CodeGraph", []),
+            "retrievalTools": retrieval_tools("cbm.", delegated_cards),
+            "availability": "delegated_saved_flow" if retrieval_tools("cbm.", delegated_cards) else "not_granted",
+            "viaCardIds": [
+                card["id"] for card in delegated_cards
+                if retrieval_tools("cbm.", [card])
+            ],
+            "omitted": "CBM graph data and freshness are queried at use time rather than copied into each IDF.",
+        },
+        {
+            "authority": "AgentGraph",
+            "nativeIdentity": {"projectId": project_id, "deckId": str(deck["id"])},
+            "selectedReferences": selected_by_authority.get("AgentGraph", []),
+            "retrievalTools": [name for name in main_tools if name == "canvas.inspect"],
+            "availability": "manifest_projection_and_direct_tool" if "canvas.inspect" in main_tools else "manifest_projection_only",
+            "provenance": {"deckRevision": meta.get("deckRevision"), "deckSavedAt": meta.get("deckSavedAt")},
+            "omitted": "Only bounded Card and relationship identities are projected; AGE remains authority.",
+        },
+        {
+            "authority": "HermesContinuity",
+            "nativeIdentity": {
+                "profile": str(options.get("profile") or "") or None,
+                "profileHomeRef": str(hermes_facet.get("profileHomeRef") or "") or None,
+                "sessionReference": {
+                    "projectId": project_id,
+                    "conversationId": str(payload.get("conversationId") or "") or None,
+                    "cardId": main_id,
+                },
+            },
+            "selectedReferences": selected_by_authority.get("HermesContinuity", []),
+            "retrievalTools": [],
+            "availability": "native_profile_reference",
+            "omitted": "Hermes private memory is not copied; no continuity summary was selected for this invocation.",
+        },
+    ]
+    manifest = {
+        "type": "project-context-manifest",
+        "identity": {
+            "project": {
+                "id": project_id,
+                "name": project.get("name") or project.get("code") or project_id,
+                "code": project.get("code"),
+                "type": project.get("type"),
+                "status": project.get("status"),
+            },
+            "deck": {
+                "id": str(deck["id"]),
+                "name": str(deck.get("name") or deck["id"]),
+                "revision": meta.get("deckRevision"),
+                "savedAt": meta.get("deckSavedAt"),
+            },
+            "mainCard": {
+                "id": main_id,
+                "revisionId": str(main_card.get("_cardRevisionId") or "") or None,
+                "revision": main_card.get("_cardRevision"),
+                "revisionSha256": main_card.get("_cardRevisionSha256"),
+            },
+            "conversationId": str(payload.get("conversationId") or "") or None,
+            "parentRunId": str(payload.get("parentRunId") or "") or None,
+        },
+        "agentTopology": {
+            "connectedCards": connected_cards,
+            "directFlowTargets": flow_targets,
+            "magenticControlTargetIds": sorted(controlled_ids),
+            "magenticOptionRelationships": magentic_options,
+            "relationships": relationships,
+        },
+        "authorityLayers": authority_layers,
+        "toolsAndLimits": {
+            "grantedTools": main_tools,
+            "delegationTargetIds": [target["cardId"] for target in flow_targets],
+            "outputExpectations": output_requirements or None,
+            "explicitNativeReferences": native_references,
+            "limits": {
+                "cards": _PROJECT_CONTEXT_CARD_LIMIT,
+                "relationships": _PROJECT_CONTEXT_RELATIONSHIP_LIMIT,
+                "capabilitiesPerCard": _PROJECT_CONTEXT_CAPABILITY_LIMIT,
+            },
+            "truncated": {
+                "cards": len(deck["nodes"]) > _PROJECT_CONTEXT_CARD_LIMIT,
+                "relationships": len(deck["edges"]) > _PROJECT_CONTEXT_RELATIONSHIP_LIMIT,
+            },
+        },
+    }
+    try:
+        return validate_record("project-context-manifest", manifest)
+    except IddValidationError as error:
+        raise CardDomainError(str(error)) from error
+
+
 def _resolve_hermes_profile(
     options: dict[str, Any],
     provider: str,
@@ -1044,6 +1272,18 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         raise CardDomainError(f"configured_tool_unknown:{unknown_tools[0]}")
     tool_definitions = [by_id[name] for name in effective_tools]
     card_context["toolDefinitions"] = tool_definitions
+    project_context_manifest = (
+        _project_context_manifest(
+            loaded=loaded,
+            main_card=card,
+            card_context=card_context,
+            payload=payload,
+            native_references=references,
+            output_requirements=output_requirements,
+        )
+        if str(card.get("runtimeBinding") or "") == "main_chat"
+        else None
+    )
     dynamic_sections = dynamic_context
     if output_requirements:
         dynamic_sections = (dynamic_sections + "\n\n" if dynamic_sections else "") + f"[RETURN]\n{output_requirements}\n[/RETURN]"
@@ -1053,6 +1293,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         card_context=card_context,
         dynamic_context_markdown=dynamic_sections,
         native_references=references,
+        project_context_manifest=project_context_manifest,
     )
     validate_idf_islands(exact_idf)
     return {
@@ -1067,6 +1308,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         "assignment": assignment,
         "cardContext": card_context,
         "runtimeFacet": {"owner": owner, "instructions": facet_instructions},
+        "projectContextManifest": project_context_manifest,
         "exactIdf": exact_idf,
         "providerProjection": {
             "systemPrompt": system_text,

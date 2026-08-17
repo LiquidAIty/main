@@ -825,6 +825,37 @@ type = "object"
 required = false
 
 [[records]]
+name = "project-context-manifest"
+allowUnknownFields = false
+description = "Bounded transient Project identity, saved AgentGraph topology, and native authority retrieval references for Main."
+
+[[records.fields]]
+name = "type"
+type = "string"
+required = true
+values = ["project-context-manifest"]
+
+[[records.fields]]
+name = "identity"
+type = "object"
+required = true
+
+[[records.fields]]
+name = "agentTopology"
+type = "object"
+required = true
+
+[[records.fields]]
+name = "authorityLayers"
+type = "object-array"
+required = true
+
+[[records.fields]]
+name = "toolsAndLimits"
+type = "object"
+required = true
+
+[[records]]
 name = "native-reference"
 allowUnknownFields = false
 description = "One transient pointer to native graph data selected for an IDF. The native graph remains authority."

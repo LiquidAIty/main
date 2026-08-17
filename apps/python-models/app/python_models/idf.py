@@ -56,6 +56,7 @@ def render_content_markdown(
     card_context: dict[str, Any],
     dynamic_context_markdown: str,
     native_references: list[dict[str, Any]],
+    project_context_manifest: dict[str, Any] | None = None,
     job_context: dict[str, Any] | None = None,
 ) -> str:
     """Mechanically render one transient IDD-shaped invocation."""
@@ -72,6 +73,16 @@ def render_content_markdown(
             indent=2,
         ) + "\n[/JSON]",
     ])
+    if project_context_manifest is not None:
+        sections.extend([
+            "## Project Context Manifest",
+            "[JSON]\n" + json.dumps(
+                project_context_manifest,
+                ensure_ascii=False,
+                sort_keys=True,
+                indent=2,
+            ) + "\n[/JSON]",
+        ])
     if dynamic_context_markdown:
         sections.extend(["## Dynamic AgentGraph Context", dynamic_context_markdown])
     if native_references:

@@ -48,3 +48,34 @@ def test_transient_renderer_preserves_exact_system_context_and_assignment() -> N
     assert "temporary context" in rendered
     assert '"cardId": "card-one"' in rendered
     assert '"nativeId": "node-one"' in rendered
+
+
+def test_transient_renderer_preserves_the_bounded_project_context_manifest() -> None:
+    manifest = {
+        "type": "project-context-manifest",
+        "identity": {"project": {"id": "project-one"}},
+        "agentTopology": {"relationships": []},
+        "authorityLayers": [{
+            "authority": "CodeGraph",
+            "nativeIdentity": {"project": "C-Projects-LiquidAIty-main"},
+            "selectedReferences": [],
+        }],
+        "toolsAndLimits": {"grantedTools": [], "limits": {"cards": 64}},
+    }
+    rendered = idf.render_content_markdown(
+        system_text="stable system",
+        user_text="temporary assignment",
+        card_context={
+            "cardId": "card-one",
+            "title": "One",
+            "runtimeType": "assistant_agent",
+            "accessMode": "chatgpt-account",
+        },
+        dynamic_context_markdown="",
+        native_references=[],
+        project_context_manifest=manifest,
+    )
+    islands = validate_idf_islands(rendered)
+    assert "## Project Context Manifest" in rendered
+    assert any('"type": "project-context-manifest"' in item["content"] for item in islands["JSON"])
+    assert "temporary assignment" in rendered
