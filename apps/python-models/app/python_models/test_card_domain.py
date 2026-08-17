@@ -81,6 +81,110 @@ def test_direct_subagents_keep_only_enabled_top_level_assistant_flow_targets() -
     }]
 
 
+def _delegation_preview(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    edges: list[dict[str, object]],
+    target: dict | None = None,
+) -> dict:
+    parent = _agent("parent")
+    parent["runtimeOptions"] = {
+        **parent["runtimeOptions"],
+        "tools": ["calculator"],
+    }
+    child = target or _agent("child", runtimeBinding="local_coder")
+    for number, card in enumerate((parent, child), start=1):
+        card["_cardRevisionId"] = f"revision-{number}"
+        card["_cardRevision"] = 1
+        card["_cardRevisionSha256"] = f"sha-{number}"
+    monkeypatch.setattr(
+        card_domain,
+        "_load_deck_internal",
+        lambda _project, _deck: {
+            "projectId": "00000000-0000-0000-0000-000000000001",
+            "deck": {"nodes": [parent, child], "edges": edges},
+        },
+    )
+    return card_domain.materialize_invocation({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardId": "parent",
+        "assignment": "delegate only across the saved FLOW relationship",
+    })
+
+
+def test_enabled_flow_edge_materializes_bounded_delegation_tool_and_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preview = _delegation_preview(
+        monkeypatch,
+        edges=[{"source": "parent", "target": "child", "edgeType": "flow"}],
+    )
+    assert preview["cardContext"]["tools"] == ["calculator", "card.run_assistant_agent"]
+    assert preview["providerProjection"]["enabledTools"] == [
+        "calculator",
+        "card.run_assistant_agent",
+    ]
+    assert preview["cardContext"]["directSubagents"] == [{
+        "cardId": "child",
+        "title": "child",
+        "runtimeBinding": "local_coder",
+    }]
+
+
+def test_no_flow_edge_materializes_no_delegation_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preview = _delegation_preview(monkeypatch, edges=[])
+    assert preview["cardContext"]["tools"] == ["calculator"]
+    assert preview["providerProjection"]["enabledTools"] == ["calculator"]
+    assert preview["cardContext"]["directSubagents"] == []
+
+
+def test_disabled_flow_edge_materializes_no_delegation_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preview = _delegation_preview(
+        monkeypatch,
+        edges=[{
+            "source": "parent",
+            "target": "child",
+            "edgeType": "flow",
+            "enabled": False,
+        }],
+    )
+    assert "card.run_assistant_agent" not in preview["cardContext"]["tools"]
+    assert "card.run_assistant_agent" not in preview["providerProjection"]["enabledTools"]
+    assert preview["cardContext"]["directSubagents"] == []
+
+
+def test_disabled_missing_or_invalid_flow_target_is_not_eligible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    edge = [{"source": "parent", "target": "child", "edgeType": "flow"}]
+    disabled = _agent("child", runtimeBinding="local_coder")
+    disabled["runtimeOptions"] = {**disabled["runtimeOptions"], "enabled": False}
+    assert _delegation_preview(
+        monkeypatch,
+        edges=edge,
+        target=disabled,
+    )["cardContext"]["directSubagents"] == []
+
+    invalid = _agent("child", runtimeType="magentic_one")
+    assert _delegation_preview(
+        monkeypatch,
+        edges=edge,
+        target=invalid,
+    )["cardContext"]["directSubagents"] == []
+
+    missing = _delegation_preview(
+        monkeypatch,
+        edges=[{"source": "parent", "target": "missing", "edgeType": "flow"}],
+    )
+    assert missing["cardContext"]["directSubagents"] == []
+    assert "card.run_assistant_agent" not in missing["cardContext"]["tools"]
+
+
 def test_stable_card_keeps_common_hermes_and_autogen_prompts_separate() -> None:
     card = _agent("dual")
     card["runtimeOptions"] = {
@@ -96,6 +200,39 @@ def test_stable_card_keeps_common_hermes_and_autogen_prompts_separate() -> None:
     assert stable["basePrompt"] == "common prompt"
     assert stable["hermesFacet"]["instructions"] == "Hermes instructions"
     assert stable["autogenFacet"]["systemMessage"] == "AutoGen instructions"
+
+
+def test_coder_transport_preserves_exact_idf_and_python_owned_permission() -> None:
+    prepared = {
+        "projectId": "project-one",
+        "exactIdf": "# LiquidAIty IDF\n\nExact Coder job.",
+        "cardContext": {
+            "cardId": "card_coder",
+            "title": "Coder",
+            "prompt": "Return a CoderReport.",
+            "provider": "openai",
+            "modelKey": "gpt-5.6-luna",
+            "providerModelId": "gpt-5.6-luna",
+            "accessMode": "coder-oauth",
+            "tools": ["cbm.search_graph", "run_local_coder"],
+            "nativeTools": [],
+            "skills": [],
+            "toolsets": [],
+            "mcpConnectionIds": [],
+            "runtimeOptions": {"writeMode": "edit", "reasoningEffort": "high"},
+        },
+    }
+    transport = card_domain._coder_transport(
+        prepared,
+        {"assignment": "Exact Coder job."},
+    )
+    packet = transport["coderPacket"]
+    assert transport["exactIdf"] == prepared["exactIdf"]
+    assert packet["exactIdf"] == prepared["exactIdf"]
+    assert packet["writeMode"] == "edit"
+    assert packet["mcpTools"] == ["cbm.search_graph"]
+    assert "repoPath" not in packet
+    assert "id" not in packet
 
 
 def test_exact_idf_allows_dynamic_edits_but_protects_card_authority() -> None:

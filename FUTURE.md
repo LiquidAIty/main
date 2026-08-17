@@ -31,7 +31,9 @@ part of the active research loop until its own pass wires it in.
 - **Coder / LocalCoder / OpenClaude (working boundaries, incomplete placement/integration)** —
   vendored `localcoder/` supplies the persistent gRPC Harness used by Main Chat; the persistent
   OpenClaude console owns the real PTY/session lifecycle; and `card_local_coder` plus
-  `run_local_coder` provide the bounded one-shot coding path. These are separate useful surfaces,
+  the configured-card exact-IDF transport plus `run_local_coder` provide bounded one-shot coding
+  paths. Direct Card execution no longer inserts an AutoGen prompt controller before LocalCoder.
+  These are separate useful surfaces,
   not abandoned alternatives. The Code Console is currently a right-side overlay and still needs to
   occupy the intended under-chat slot; Hermes belongs in its own terminal/UI when its real runtime is
   integrated.
@@ -201,8 +203,10 @@ save the exact Markdown as a repeatable immutable PostgreSQL revision; provider 
 transcripts, and separate selected-context bundles remain excluded. Future retention/compression or
 external large-body policy requires measured storage evidence rather than an arbitrary size ceiling.
 
-IDD supplies the structural rules, catalogs, field definitions, constraints, and typed operation forms
-used to construct/edit/validate the IDF. IDD definitions are not sent to the model. Optional AGE
+IDD is the repo-native declaration language for structural rules, catalogs, named variables and
+bindings, field definitions, constraints, and typed operation forms used to construct/edit/validate
+the IDF. Python interprets it without a copied catalog. An IDF instantiates only the declarations it
+uses; IDD definitions are not sent wholesale to the model. AgentGraph/AGE
 meta-knowledge may relate prompt-free run, Card, native reference, and artifact identities, but never
 stores the raw IDF or authorizes or schedules execution.
 
@@ -277,7 +281,7 @@ contradicted/competing · unknown · model-interpretation. Never present generat
 requested outcomes, constraints, open questions, run/review links. 3. Wire user-scoped KnowGraph
 source-backed retrieval + explicit Plan-step links. 4. Feed scoped ThinkGraph + KnowGraph into the live
 actual IDF consumed by the model call. 5. Prove a fresh turn uses real graph context without full chat
-history and that the stored IDF matches what reached the runtime.
+history and, when Save IDF was explicitly selected, that the saved revision matches what reached the runtime.
 
 ### Batch B — Contextual Capabilities
 1. CodeGraph/CBM scoped retrieval for code steps. 2. Deliberate SkillsGraph retrieval. 3. Extend Context

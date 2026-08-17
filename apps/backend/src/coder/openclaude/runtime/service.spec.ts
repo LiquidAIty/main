@@ -2,24 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { OpenClaudeRuntimeService } from './service';
 import { resolveOpenClaudeProviderTarget } from '../provider/providerTarget';
 
-// The `terminal mode never reports used` case was deleted with the dead `run()`
-// surface it existed to pin: it only asserted that a permanent-failure stub kept
-// returning its permanent failure.
 describe('OpenClaude terminal launch metadata', () => {
   const adapter = {
     getInstallInfo: () => ({
       rootPath: 'localcoder',
       installed: true,
-      headlessEntrypoint: 'headless',
       terminalEntrypoint: 'terminal',
     }),
-    isRepoConnected: () => true,
     getBackendEnvPath: () => '.env',
     buildBackendOwnedTerminalLaunchCommand: () => 'powershell launch.ps1',
   };
 
   it('does not silently select a provider or model', () => {
-    expect(() => resolveOpenClaudeProviderTarget({ task: 'x' })).toThrow(
+    expect(() => resolveOpenClaudeProviderTarget({})).toThrow(
       'openclaude_model_key_required',
     );
   });

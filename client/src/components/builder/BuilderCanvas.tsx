@@ -241,10 +241,9 @@ function normalizeRuntimeType(value: unknown): AgentCardRuntimeType {
   return 'assistant_agent';
 }
 
-// The dedicated top control input on the Mag One bus card. Mirrors the
-// backend's MAG_ONE_CONTROL_HANDLE (cards/runtime.ts): an edge into this
-// handle is the Control plug (submit the finalized prompt), every other bus
-// connection is a Worker plug (eligibility only, never invocation).
+// The dedicated saved top control input on the Mag One bus card. An edge into
+// this handle is the Control plug; every other bus connection is a Worker plug
+// (eligibility only, never invocation).
 const MAG_ONE_CONTROL_HANDLE = 'task-bus-top';
 
 /** Classify a user-drawn connection into the REAL runtime edge types:

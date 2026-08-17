@@ -210,9 +210,6 @@ export function getStandaloneCardUnavailableReason(
   card: AgentCardInstance | null,
 ): string | null {
   if (!card) return 'Select a saved card before testing.';
-  if (card.runtimeType === 'magentic_one') {
-    return 'Magentic-One requires its saved team topology and is not a standalone card.';
-  }
   if (card.runtimeBinding === 'main_chat') {
     return 'Main uses the persistent Harness conversation and is not tested as an isolated card.';
   }
@@ -222,7 +219,7 @@ export function getStandaloneCardUnavailableReason(
   if (card.runtimeBinding === 'worldsignals_agent') {
     return 'WorldSignals Agent is a workspace gateway and is not runnable by itself.';
   }
-  if (card.runtimeType !== 'assistant_agent') {
+  if (card.runtimeType !== 'assistant_agent' && card.runtimeType !== 'magentic_one') {
     return `Standalone testing is unavailable for runtime ${card.runtimeType || 'unconfigured'}.`;
   }
   return null;
@@ -589,6 +586,8 @@ export default function AgentBuilder(): React.ReactElement {
     () => getStandaloneCardUnavailableReason(selectedCard),
     [selectedCard],
   );
+  // Main's ordinary Chat input + Send control is its only invocation composer.
+  // The Inspector can display Main, but must not expose a second self-test input.
   const showStandaloneTestControls =
     Boolean(selectedCard) && selectedCard?.runtimeBinding !== 'main_chat';
   const mainInvocationTargets = useMemo(() => {
@@ -596,7 +595,11 @@ export default function AgentBuilder(): React.ReactElement {
     if (!mainCard) return [];
     const allowed = new Set(
       deck.edges
-        .filter((edge) => edge.source === mainCard.id && edge.edgeType === 'flow')
+        .filter((edge) => (
+          edge.source === mainCard.id
+          && edge.edgeType === 'flow'
+          && (edge as typeof edge & { enabled?: boolean }).enabled !== false
+        ))
         .map((edge) => edge.target),
     );
     return deck.nodes

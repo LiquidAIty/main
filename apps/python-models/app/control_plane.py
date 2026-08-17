@@ -331,11 +331,30 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
     }
 
     try:
+        preview_response = await asyncio.to_thread(
+            _backend_json,
+            "POST",
+            "/api/coder/mcp-bridge/run_configured_card",
+            {**payload, "action": "materialize"},
+        )
+        preview_result = preview_response.get("result") if isinstance(preview_response, dict) else None
+        invocation = preview_result.get("invocation") if isinstance(preview_result, dict) else None
+        exact_idf = invocation.get("exactIdf") if isinstance(invocation, dict) else None
+        card_revision_id = invocation.get("cardRevisionId") if isinstance(invocation, dict) else None
+        if not isinstance(exact_idf, str) or not exact_idf.strip():
+            raise ControlPlaneError("configured_card_materialization_missing_exact_idf")
+        if not isinstance(card_revision_id, str) or not card_revision_id.strip():
+            raise ControlPlaneError("configured_card_materialization_missing_revision")
         response = await asyncio.to_thread(
             _backend_json,
             "POST",
             "/api/coder/mcp-bridge/run_configured_card",
-            payload,
+            {
+                **payload,
+                "action": "execute",
+                "exactIdf": exact_idf,
+                "cardRevisionId": card_revision_id,
+            },
         )
     except Exception:
         raise

@@ -11,7 +11,7 @@ from app.python_models.alpaca_market_data import (
     get_market_snapshot,
     get_paper_account_readiness,
 )
-from app.python_models.autogen_orchestrator import orchestrate_runtime
+from app.python_models.autogen_orchestrator import dispatch_configured_runtime
 from app.python_models.card_domain import (
     CardDomainError,
     begin_prompt_free_run,
@@ -26,14 +26,12 @@ from app.python_models.card_domain import (
     record_explicit_artifact,
     save_deck,
     save_idf_revision,
-    validate_exact_invocation,
 )
 from app.python_models.idd import (
     IddValidationError,
     materialize_card_editor,
     materialize_tool_catalog,
 )
-from app.python_models.magentic_agentchat import run_configured_card
 from app.python_models.orchestration_contracts import RuntimeRequest
 from app.python_models.tool_registry import tool_manifest
 from app.python_models.thinkgraph_live_projection import project_live_thinkgraph
@@ -173,14 +171,6 @@ def domain_mag_one_agents(project_id: str, deck_id: str):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
-@app.post("/domain/cards/validate-dispatch")
-def domain_card_validate_dispatch(payload: dict[str, Any]):
-    try:
-        return validate_exact_invocation(payload)
-    except (CardDomainError, IddValidationError) as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
 @app.get("/domain/idfs/{project_id}/{deck_id}")
 def domain_saved_idf_list(project_id: str, deck_id: str, cardId: str | None = None):
     try:
@@ -231,10 +221,10 @@ def domain_artifact_record(payload: dict[str, Any]):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
-@app.post("/autogen/orchestrate")
-async def autogen_orchestrate(req: RuntimeRequest):
+@app.post("/autogen/dispatch")
+async def autogen_dispatch(req: RuntimeRequest):
     try:
-        return await orchestrate_runtime(req)
+        return await dispatch_configured_runtime(req)
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err
 
@@ -283,15 +273,3 @@ def idf_read(idf_id: str, projectId: str):
         raise HTTPException(status_code=404, detail=str(err)) from err
     except Exception as err:
         raise HTTPException(status_code=500, detail="idf_read_failed") from err
-
-@app.post("/autogen/run_card")
-async def autogen_run_card(req: RuntimeRequest):
-    """Run ONE configured canvas card as a single AssistantAgent.
-
-    Not an orchestrator: exactly one participant, no team, no Task Ledger.
-    Reuses the same participant construction as the Mag One path.
-    """
-    try:
-        return await run_configured_card(req)
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err)) from err

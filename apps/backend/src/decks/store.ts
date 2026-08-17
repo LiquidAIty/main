@@ -1,7 +1,7 @@
 // Thin HTTP transport to the Python-owned stable Card/deck domain.
 // TypeScript deliberately owns no SQL, JSONB deck aggregate, Card revision,
 // relationship authority, or topology mutation in this module.
-import { requestPythonRailsJson } from '../services/autogen/autogenOrchestratorClient';
+import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
 import type { DeckDocument, V3ProjectBlob } from '../types';
 
 /** The deck currently opened by the Agent Builder view. Projects may own more. */
@@ -135,14 +135,4 @@ export async function saveDeckDocument(
     },
   );
   return parseDeckResponse(response);
-}
-
-export async function deleteDeckDocument(
-  _projectId: string,
-  _deckId: string,
-): Promise<{ deleted: boolean }> {
-  // A stable Project Deck is not deleted through a generic transport
-  // endpoint. A future explicit domain operation must define preservation and
-  // AGE topology cleanup before this can be enabled.
-  throw new Error('canonical_deck_deletion_not_supported');
 }

@@ -2,8 +2,8 @@
 id: feature.main-chat-hermes-controller
 title: Main Chat / Hermes Controller
 kind: feature
-status: working
-proof_level: source_tests_and_live_runtime
+status: partial
+proof_level: source_wired_runtime_unproven
 
 cbm:
   project_identity: C-Projects-LiquidAIty-main
@@ -20,10 +20,9 @@ roots:
     - client/src/features/agentbuilder/deck/newProjectDeck.ts
   symbols:
     - resolveMainHermesRuntimeConfig
-    - resolveHermesCardRuntimeConfig
     - deriveHermesSessionKey
     - startHermesTurn
-    - runConfiguredCard
+    - startPreparedHermesTransport
     - resolvedMagenticOptions
   routes:
     - POST /api/coder/main/session/chat
@@ -36,7 +35,8 @@ roots:
 
 ## What this is
 
-Main Chat executes through one persistent repo-owned Hermes ACP process. The saved `main_chat` card
+Main Chat is source-wired through one persistent repo-owned Hermes ACP process. The complete loaded
+six-service runtime and visible Main execution remain unproven. The saved `main_chat` card
 owns its prompt, profile, provider/model, tool grants, and topology. A stable project/conversation/card
 key selects the Hermes session; the backend preserves SSE, durable transcript/run persistence,
 permissions, cancellation, and honest failures.
@@ -68,7 +68,8 @@ browser → POST /api/coder/main/session/chat
 ```
 
 The saved `card_hermes_steward` planning/memory/KnowGraph helper enters the same ACP adapter through
-`runConfiguredCard`, but uses its own saved policy, memory, and session key. It is an ordinary
+the configured-card transport route and `startPreparedHermesTransport`, but uses its own saved policy,
+memory, and session key. It is an ordinary
 Hermes-backed card that may save `single` or `auto-kanban`; it is not the Kanban identity, generic
 AutoGen, or another Main transcript.
 
@@ -90,7 +91,7 @@ search_graph(project="C-Projects-LiquidAIty-main", query="resolveMainHermesRunti
 search_graph(project="C-Projects-LiquidAIty-main", query="startHermesTurn")
 trace_path(project="C-Projects-LiquidAIty-main", function_name="startHermesTurn",
            mode="calls", direction="inbound", depth=2)
-search_graph(project="C-Projects-LiquidAIty-main", query="runConfiguredCard")
+search_graph(project="C-Projects-LiquidAIty-main", query="startPreparedHermesTransport")
 ```
 
 ## Valid proof

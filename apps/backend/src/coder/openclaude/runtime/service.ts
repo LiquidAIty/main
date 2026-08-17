@@ -1,28 +1,16 @@
 import { OpenClaudeAdapter } from '../adapter';
 import type {
-  OpenClaudeRunRequest,
+  OpenClaudeProviderTargetInput,
   OpenClaudeTerminalLaunchResult,
 } from '../contracts';
 import { resolveOpenClaudeProviderTarget } from '../provider/providerTarget';
 
-/**
- * Terminal LAUNCH METADATA only — this class does not execute the coder.
- *
- * Removed: `run()` plus its `runOpenClaudeHeadless` / `runOpenClaudeTerminal`
- * wrappers. Both wrappers hardcoded `ok:false` (`coder_packet_required_use_
- * localcoder_run` / `terminal_launch_not_executed_use_localcoder_run`), and
- * `run()` had zero live callers — only its own spec. It was the residue of the
- * split between the real interactive Console PTY and bounded LocalCoder jobs,
- * and a permanently-failing `run()`
- * with `DEFAULT_MODE='headless'` reads like a headless execution path exists.
- * It does not. This service owns launch metadata for the interactive terminal;
- * `LocalCoderService` owns bounded saved-card execution through OpenClaude.
- */
+/** Interactive OpenClaude terminal launch metadata; never a Coder executor. */
 export class OpenClaudeRuntimeService {
   constructor(private readonly adapter = new OpenClaudeAdapter()) {}
 
   getTerminalLaunch(
-    request: Partial<OpenClaudeRunRequest> = {},
+    request: OpenClaudeProviderTargetInput = {},
   ): OpenClaudeTerminalLaunchResult {
     const install = this.adapter.getInstallInfo();
     if (!install.installed) {
@@ -44,8 +32,6 @@ export class OpenClaudeRuntimeService {
     let target: ReturnType<typeof resolveOpenClaudeProviderTarget>;
     try {
       target = resolveOpenClaudeProviderTarget({
-        task: '',
-        mode: 'terminal',
         modelKey: request.modelKey,
         provider: request.provider,
         providerModelId: request.providerModelId,

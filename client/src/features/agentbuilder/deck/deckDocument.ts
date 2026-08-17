@@ -17,15 +17,6 @@ import {
   INITIAL_PROMPT_TEMPLATES,
 } from './newProjectDeck';
 
-function isLocalCoderControllerCard(card: AgentCardInstance | null | undefined): boolean {
-  if (!card) return false;
-  return (
-    safeText(card.id).trim().toLowerCase() === 'card_local_coder' ||
-    safeText(card.runtimeBinding).trim().toLowerCase() === 'local_coder' ||
-    safeText(card.templateId).trim().toLowerCase() === 'template_local_coder'
-  );
-}
-
 /**
  * The canonical hex-plus "Add New Agent" mutation: creates exactly one new
  * editable Assistant Agent card using the current deck schema and templates,
@@ -103,7 +94,9 @@ export function buildQuickAddAssistCard(
 export function resolveLocalCoderControllerConsoleConfig(
   deck: Pick<DeckDocument, 'nodes'>,
 ): { provider: string; model: string } {
-  const card = deck.nodes.find(isLocalCoderControllerCard) || null;
+  const card = deck.nodes.find(
+    (node) => safeText(node.runtimeBinding).trim().toLowerCase() === 'local_coder',
+  ) || null;
   const runtimeOptions = normalizeRuntimeOptions(card?.runtimeOptions) ?? {};
   // The saved card is the only runtime authority. Missing values remain empty
   // so the terminal fails honestly instead of selecting an unseen model.
@@ -146,13 +139,7 @@ export function readDeckDocument(
     if (typeof edge.source !== 'string' || !edge.source) throw new Error('deck_edge_source_invalid');
     if (typeof edge.target !== 'string' || !edge.target) throw new Error('deck_edge_target_invalid');
   }
-  const deck = cloneDeckDocument(value) as DeckDocument;
-  deck.nodes = deck.nodes.map((node) =>
-    isLocalCoderControllerCard(node)
-      ? { ...node, runtimeBinding: 'local_coder', runtimeType: 'assistant_agent' }
-      : node,
-  );
-  return deck;
+  return cloneDeckDocument(value) as DeckDocument;
 }
 
 export function resolveProjectDeckPayload(

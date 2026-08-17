@@ -418,6 +418,7 @@ export function deriveLocalCoderPermissionMode(packet: CoderPacket): LocalCoderP
 }
 
 export function buildCoderPrompt(packet: CoderPacket): string {
+  if (packet.exactIdf) return packet.exactIdf;
   return [
     'Execute the exact transient LiquidAIty coding communication below as the complete spec and task.',
     'Use repository tools and return only the requested structured CoderReport.',

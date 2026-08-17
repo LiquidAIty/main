@@ -108,7 +108,7 @@ def _string_list(value: Any, field: str) -> list[str]:
 def _resolve_project(cursor: Any, project_id: str) -> dict[str, Any]:
     cursor.execute(
         """
-        SELECT id, code, project_type, agent_io_schema
+        SELECT id, code, project_type
         FROM ag_catalog.projects
         WHERE id::text = %s OR code = %s
         ORDER BY CASE WHEN id::text = %s THEN 0 ELSE 1 END
@@ -463,112 +463,6 @@ def _insert_revision(
             ),
         )
     return revision_id
-
-
-def cutover_legacy_deck(project_ref: str, deck_id: str) -> dict[str, Any]:
-    """One explicit, idempotent cutover. Never called during application startup."""
-    with connect_postgres(autocommit=False) as connection:
-        with connection.cursor(row_factory=dict_row) as cursor:
-            project = _resolve_project(cursor, project_ref)
-            project_id = str(project["id"])
-            cursor.execute(
-                "SELECT 1 FROM ag_catalog.agent_decks WHERE project_id=%s AND deck_id=%s",
-                (project_id, deck_id),
-            )
-            if cursor.fetchone() is not None:
-                connection.rollback()
-                return {"ok": True, "changed": False, "projectId": project_id, "deckId": deck_id}
-            schema = project.get("agent_io_schema") or {}
-            state = schema.get("v3_state") if isinstance(schema, dict) else None
-            decks = state.get("decks") if isinstance(state, dict) else None
-            deck = decks.get(deck_id) if isinstance(decks, dict) else None
-            meta = state.get("meta") if isinstance(state, dict) else None
-            deck_meta = ((meta or {}).get("decks") or {}).get(deck_id) if isinstance(meta, dict) else None
-            if not isinstance(deck, dict) or not isinstance(deck_meta, dict):
-                raise CardDomainError("legacy_deck_not_found")
-
-            cursor.execute(
-                """
-                INSERT INTO ag_catalog.deck_legacy_snapshots (
-                  project_id, deck_id, source_revision, snapshot_json
-                ) VALUES (%s,%s,%s,%s::jsonb)
-                ON CONFLICT (project_id, deck_id, source_revision) DO NOTHING
-                """,
-                (
-                    project_id,
-                    deck_id,
-                    _required_text(deck_meta.get("revision"), "deck_revision"),
-                    _canonical_json(deck),
-                ),
-            )
-
-            cursor.execute(
-                """
-                INSERT INTO ag_catalog.agent_decks (
-                  project_id, deck_id, name, workspace_root, document_version, revision, saved_at
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s)
-                """,
-                (
-                    project_id, deck_id, _required_text(deck.get("name"), "deck_name"),
-                    deck.get("workspaceRoot"), int(deck.get("version") or 1),
-                    _required_text(deck_meta.get("revision"), "deck_revision"),
-                    deck_meta.get("savedAt") or _now(),
-                ),
-            )
-            for ordinal, template in enumerate(deck.get("promptTemplates") or []):
-                cursor.execute(
-                    """
-                    INSERT INTO ag_catalog.deck_prompt_templates
-                      (project_id, deck_id, template_id, ordinal, content)
-                    VALUES (%s,%s,%s,%s,%s)
-                    """,
-                    (
-                        project_id, deck_id, _required_text(template.get("id"), "template_id"),
-                        ordinal, str(template.get("content") or ""),
-                    ),
-                )
-            node_ids = {_required_text(card.get("id"), "card_id") for card in deck.get("nodes") or []}
-            for ordinal, card in enumerate(deck.get("nodes") or []):
-                card_id = _required_text(card.get("id"), "card_id")
-                cursor.execute(
-                    "INSERT INTO ag_catalog.agent_cards (project_id, deck_id, card_id) VALUES (%s,%s,%s)",
-                    (project_id, deck_id, card_id),
-                )
-                revision_id = _insert_revision(cursor, project_id, deck_id, card, 1)
-                cursor.execute(
-                    "UPDATE ag_catalog.agent_cards SET current_revision_id=%s WHERE project_id=%s AND deck_id=%s AND card_id=%s",
-                    (revision_id, project_id, deck_id, card_id),
-                )
-                position = _json_object(card.get("position"), "card_position")
-                cursor.execute(
-                    """
-                    INSERT INTO ag_catalog.deck_card_memberships (
-                      project_id, deck_id, card_id, ordinal, position_x, position_y,
-                      parent_graph_id, display_status, presentation_config
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
-                    """,
-                    (
-                        project_id, deck_id, card_id, ordinal,
-                        float(position.get("x") or 0), float(position.get("y") or 0),
-                        card.get("parentGraphId"), card.get("status"),
-                        _canonical_json(_stable_card(card)["presentationProperties"]),
-                    ),
-                )
-                _ensure_age_card(cursor, project_id, deck_id, card_id)
-            for ordinal, edge in enumerate(deck.get("edges") or []):
-                core = _edge_core(edge)
-                if core["source"] not in node_ids or core["target"] not in node_ids:
-                    raise CardDomainError(f"edge_endpoint_missing:{core['id']}")
-                _upsert_age_edge(cursor, project_id, deck_id, edge, ordinal)
-        connection.commit()
-    return {
-        "ok": True,
-        "changed": True,
-        "projectId": project_id,
-        "deckId": deck_id,
-        "cards": len(deck.get("nodes") or []),
-        "edges": len(deck.get("edges") or []),
-    }
 
 
 def _load_deck_with_cursor(
@@ -959,6 +853,7 @@ def _direct_subagents(
         if (
             edge.get("source") != card_id
             or edge.get("edgeType") != "flow"
+            or edge.get("enabled") is False
             or target_id == card_id
             or target_id in seen
             or target is None
@@ -1067,6 +962,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
             edge["source"] == sender_id
             and edge["target"] == card_id
             and edge["edgeType"] == required_edge
+            and edge.get("enabled") is not False
             for edge in loaded["deck"]["edges"]
         )
         if sender_id not in cards or not authorized:
@@ -1097,6 +993,17 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         if owner == "hermes"
         else None
     )
+    runtime_options = {
+        "reasoningEffort": options.get("reasoningEffort"),
+        "temperature": options.get("temperature"),
+        "maxTokens": options.get("maxTokens"),
+        "maxTurns": options.get("maxTurns"),
+    }
+    if owner == "coder":
+        write_mode = str(options.get("writeMode") or "read-only")
+        if write_mode not in {"read-only", "edit"}:
+            raise CardDomainError("coder_write_mode_invalid")
+        runtime_options["writeMode"] = write_mode
     card_context = {
         "cardId": card_id, "title": card["title"], "prompt": common_prompt,
         "runtimeType": card["runtimeType"], "accessMode": str(options.get("accessMode") or ""),
@@ -1112,17 +1019,12 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         "mcpConnectionIds": _string_list(options.get("mcpConnectionIds"), "mcp_connection_ids"),
         "coderCardIds": _string_list(options.get("coderCards"), "coder_cards"),
         "directSubagents": _direct_subagents(card_id, cards, loaded["deck"]["edges"]),
-        "runtimeOptions": {
-            "reasoningEffort": options.get("reasoningEffort"),
-            "temperature": options.get("temperature"),
-            "maxTokens": options.get("maxTokens"),
-            "maxTurns": options.get("maxTurns"),
-        },
+        "runtimeOptions": runtime_options,
     }
     if card_context["directSubagents"] and "card.run_assistant_agent" not in card_context["tools"]:
-        # The saved FLOW relationships are the second authority ceiling for
-        # direct delegation. Exposing the one mechanical delegation tool does
-        # not grant access to any Card outside those exact relationships.
+        # A saved, enabled FLOW relationship is the complete bounded grant for
+        # delegation to that exact connected target. It grants no ordinary
+        # tool and cannot expand the target Card's own capability ceiling.
         card_context["tools"].append("card.run_assistant_agent")
     if profile_config:
         card_context.update(profile_config)
@@ -1603,6 +1505,58 @@ def _saved_idf_run_reference(
     return idf_id, revision_value
 
 
+def _coder_transport(prepared: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """Build process metadata while preserving the exact IDF as Coder input."""
+    context = prepared["cardContext"]
+    assignment = _required_text(payload.get("assignment"), "assignment")
+    runtime_options = context.get("runtimeOptions") or {}
+    write_mode = str(runtime_options.get("writeMode") or "read-only")
+    try:
+        packet = validate_record("coder-packet", {
+            "objective": assignment,
+            "planExcerpt": assignment,
+            "contextSummary": "The exact Inspector-visible IDF is the complete outer Coder job.",
+            "codeAnchors": [],
+            "cbmQueries": [],
+            "guardrails": [],
+            "allowedFiles": [],
+            "forbiddenWork": [],
+            "proofRequired": [],
+            "reportFormat": "CoderReport JSON",
+            "stopConditions": [],
+            "writeMode": write_mode,
+        })
+    except IddValidationError as error:
+        raise CardDomainError(str(error)) from error
+    coder_packet = {
+            **packet,
+            "projectId": prepared["projectId"],
+            "exactIdf": prepared["exactIdf"],
+            "modelProvider": context.get("provider"),
+            "providerModelId": context.get("providerModelId") or context.get("modelKey"),
+            "modelKey": context.get("modelKey"),
+            "accessMode": context.get("accessMode"),
+            "cardId": context.get("cardId"),
+            "cardTitle": context.get("title"),
+            "cardPrompt": context.get("prompt") or "",
+            "nativeTools": list(context.get("nativeTools") or []),
+            "skills": list(context.get("skills") or []),
+            "toolsets": list(context.get("toolsets") or []),
+            "mcpConnectionIds": list(context.get("mcpConnectionIds") or []),
+            "reasoningEffort": runtime_options.get("reasoningEffort"),
+            "mcpTools": [
+                tool for tool in list(context.get("tools") or [])
+                if tool != "run_local_coder"
+            ],
+    }
+    return {
+        "exactIdf": prepared["exactIdf"],
+        "coderPacket": {
+            key: value for key, value in coder_packet.items() if value is not None
+        },
+    }
+
+
 def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
     prepared = validate_exact_invocation(payload)
     run_id = _required_text(payload.get("runId"), "run_id")
@@ -1611,7 +1565,7 @@ def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
     context = prepared["cardContext"]
     owner = prepared["runtimeOwner"]
     native_runtime_request = None
-    if owner in {"autogen", "coder", "mag_one"}:
+    if owner in {"autogen", "mag_one"}:
         selected_tools = list(context.get("tools") or [])
         exact_idf = prepared["exactIdf"]
         if owner == "mag_one":
@@ -1636,8 +1590,8 @@ def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
             if not participants:
                 raise CardDomainError("magentic_runtime_no_connected_participants")
         else:
-            participant_tools = ["run_local_coder"] if owner == "coder" else selected_tools
-            inner_tools = [tool for tool in selected_tools if tool != "run_local_coder"] if owner == "coder" else []
+            participant_tools = selected_tools
+            inner_tools: list[str] = []
             participants = [{
                 "cardId": context["cardId"],
                 "title": context["title"],
@@ -1744,6 +1698,7 @@ def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
         ),
         "telemetryWritten": telemetry_written,
         "nativeRuntimeRequest": native_runtime_request,
+        "coderTransport": _coder_transport(prepared, payload) if owner == "coder" else None,
         "hermesTransport": {
             "profile": context.get("profile"),
             "systemPrompt": prepared["providerProjection"]["systemPrompt"],

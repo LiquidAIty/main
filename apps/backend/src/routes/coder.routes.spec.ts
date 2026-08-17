@@ -112,6 +112,12 @@ const mcpClientMocks = vi.hoisted(() => ({
 }));
 
 const orchestratorMocks = vi.hoisted(() => ({
+  dispatchConfiguredRuntime: vi.fn(async (): Promise<any> => ({
+    ok: true,
+    runId: 'run-mag-one',
+    idfId: 'transient:run-mag-one',
+    finalResponseText: 'Native Mag One response.',
+  })),
   requestPythonRailsJson: vi.fn(async (endpoint: string, init?: RequestInit): Promise<any> => {
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
     if (endpoint === '/tools/manifest') return { tools: [] };
@@ -153,7 +159,7 @@ const orchestratorMocks = vi.hoisted(() => ({
         hermesTransport: {
           profile: 'default',
           systemPrompt: 'Saved prompt',
-          message: body.assignment,
+          message: body.exactIdf,
           cardContext: {
             cardId: body.cardId,
             title: body.cardId === 'card_main_chat' ? 'Main' : 'Worker',
@@ -242,7 +248,7 @@ vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
   listPythonAgentMcpCatalog: mcpClientMocks.listPythonAgentMcpCatalog,
 }));
 
-vi.mock('../services/autogen/autogenOrchestratorClient', () => orchestratorMocks);
+vi.mock('../services/autogen/pythonRailsClient', () => orchestratorMocks);
 
 vi.mock('../db/pool', () => ({
   pool: { query: dbMocks.query },
@@ -466,7 +472,7 @@ describe('coder routes', () => {
           conversationId: 'conv-1',
           parentRunId: 'req_1234abcd',
           input: 'Use the stored handoff.',
-          action: 'preview',
+          action: 'materialize',
         }),
       });
       expect(response.status).toBe(200);
@@ -505,6 +511,7 @@ describe('coder routes', () => {
           correlationId: 'corr-main-1',
           conversationId: 'main',
           input: 'Use saved Main.',
+          action: 'execute',
           exactIdf: '# IDF\n\nUse saved Main.',
           cardRevisionId: 'revision:card_main_chat',
         }),
@@ -520,10 +527,88 @@ describe('coder routes', () => {
         },
       });
       expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1);
+      expect(chatSessionMocks.startHermesTurn.mock.calls[0][0]).toMatchObject({
+        message: '# IDF\n\nUse saved Main.',
+      });
       const beginCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
         ([endpoint]) => endpoint === '/domain/runs/begin',
       );
       expect(beginCall?.[1]?.body).toContain('"exactIdf":"# IDF\\n\\nUse saved Main."');
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('sends the exact Python-prepared outer mission to native Mag One', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.dispatchConfiguredRuntime.mockClear();
+    const nativeRuntimeRequest = {
+      session: {
+        sessionId: 'deck_builder:card_magentic:corr-mag-1',
+        projectId: 'project-1',
+        turnId: 'corr-mag-1',
+        runId: 'corr-mag-1',
+        route: 'deck_runtime',
+        orchestrator: 'magentic_one',
+        modelProvider: 'openrouter',
+        modelKey: 'deepseek/deepseek-v4-pro-0813',
+        providerModelId: 'deepseek/deepseek-v4-pro-0813',
+        startedAt: '2026-08-17T00:00:00Z',
+      },
+      idf: {
+        idfId: 'transient:corr-mag-1',
+        projectId: 'project-1',
+        deckId: 'deck_builder',
+        conversationId: 'main',
+        runId: 'corr-mag-1',
+        originatingCardId: 'card_magentic',
+        version: 1,
+        systemText: 'Saved Mag One prompt',
+        userText: 'Coordinate the mission.',
+        cardContext: {},
+        dynamicContextMarkdown: '',
+        nativeReferences: [],
+        modelInputMarkdown: '# IDF\n\nCoordinate the mission.',
+        contentMarkdown: '# IDF\n\nCoordinate the mission.',
+        contentSha256: 'a'.repeat(64),
+        createdAt: '2026-08-17T00:00:00Z',
+      },
+      cardRuntime: {},
+    };
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/domain/runs/begin');
+      return {
+        runtimeOwner: 'mag_one',
+        cardRevisionId: 'revision:card_magentic',
+        nativeRuntimeRequest,
+      };
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'card_magentic',
+          correlationId: 'corr-mag-1',
+          conversationId: 'main',
+          input: 'Coordinate the mission.',
+          action: 'execute',
+          exactIdf: '# IDF\n\nCoordinate the mission.',
+          cardRevisionId: 'revision:card_magentic',
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect(orchestratorMocks.dispatchConfiguredRuntime).toHaveBeenCalledWith(nativeRuntimeRequest);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        result: {
+          runtimeOwner: 'mag_one',
+          output: 'Native Mag One response.',
+        },
+      });
     } finally {
       await closeServer(server);
     }
@@ -733,7 +818,7 @@ describe('coder routes', () => {
         expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1);
         expect(chatSessionMocks.startHermesTurn.mock.calls[0][0]).toMatchObject({
           sessionKey: 'project-1:main:card_main_chat',
-          message: 'hello',
+          message: '# IDF\n\nhello',
           profile: 'default',
         });
         const railsCalls = orchestratorMocks.requestPythonRailsJson.mock.calls;

@@ -40,7 +40,8 @@ Never collapse CURRENT and TARGET into one claim.
 
 ### CURRENT
 
-- Main Chat currently runs through the persistent OpenClaude-derived gRPC Harness.
+- Main Chat is source-wired through the persistent repo-owned Hermes ACP adapter, but the complete
+  loaded six-service runtime and user-visible Main execution remain unproven.
 - The saved Hermes doorway currently becomes a generic inherited-context Harness agent; that is not
   proof that repo-owned Hermes executed.
 - A Hermes console manager and Hermes/Kanban surfaces exist, but real Main-to-Hermes execution is not
@@ -573,10 +574,12 @@ memory; the exact Inspector-visible document—not a reconstructed receipt, enve
 telemetry record—is transported to the actual model/runtime call and discarded afterward. Runtime
 adapters may format it mechanically; they must not independently invent conflicting context semantics.
 
-IDD is the Input Data Dictionary: the one literal repo-root `LiquidAIty.idd` catalog of rules for
-constructing, validating, rendering, and editing structured input where structure is useful. Python
-rails interprets that file mechanically; TypeScript and Python must not contain a copied competing
-dictionary. IDD definitions help create an IDF but are not appended to the model payload. IDF remains
+IDD is the Input Data Dictionary: the one literal repo-root `LiquidAIty.idd` native declaration
+language for constructing, validating, rendering, and editing structured input where structure is
+useful. It may declare named variables, types/defaults/constraints, tools, native operations, and
+output forms. Python rails interprets that file mechanically; TypeScript and Python must not contain a
+copied competing dictionary. An IDF instantiates only the declarations used by that communication;
+the entire IDD is not appended to the model payload. IDF remains
 loose Markdown for prompts, current input, search terms, handoffs, summaries, and ordinary context;
 only explicitly cataloged bracketed native-language islands are typed.
 
@@ -588,8 +591,10 @@ assignment-coupled or duplicate experiments. The broader IDF/IDD law entered can
 private Python registry contracts now feed the literal IDD mechanically; `toolCatalogProjection.ts`
 only indexes/searches the resulting IDD records and owns no vocabulary or semantic metadata. The IDD,
 transient Markdown assembler, relational Card domain, Inspector preview, Hermes transport, and AutoGen
-equality guard are CURRENT. Typed SQL/Cypher/script execution, selected live-schema
-materialization into each IDF, the full editor, and optional AGE observation remain TARGET / INCOMPLETE.
+equality guard are CURRENT. General named-variable declaration/instantiation, typed SQL/Cypher/script
+execution, selected live-schema
+materialization into each IDF, the full editor, and additional AgentGraph/AGE execution observation
+remain TARGET / INCOMPLETE.
 
 Authority is:
 

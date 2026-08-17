@@ -1,20 +1,9 @@
-export type OpenClaudeMode = 'headless' | 'terminal';
-export type OpenClaudeAccess = 'read' | 'patch' | 'test';
-export type OpenClaudeState = 'idle' | 'running' | 'error';
-
 export type OpenClaudeProvider = 'openai' | 'openrouter';
 
-export type OpenClaudeRunRequest = {
-  task: string;
-  mode?: OpenClaudeMode;
-  access?: OpenClaudeAccess;
-  systemPrompt?: string;
+export type OpenClaudeProviderTargetInput = {
   modelKey?: string;
   provider?: OpenClaudeProvider;
   providerModelId?: string;
-  temperature?: number;
-  maxTokens?: number;
-  terminalSteering?: boolean;
 };
 
 export type OpenClaudeTerminalLaunchResult = {

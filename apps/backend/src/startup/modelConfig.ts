@@ -1,25 +1,15 @@
 import { pool } from '../db/pool';
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
-import { resolveModel } from '../llm/models.config';
 import type { AgentCardInstance } from '../types';
 
 // The REAL runtime authority for every agent's provider/model is the saved
 // Agent Canvas deck (Python-owned relational Deck/Card domain → deck_builder),
-// resolved per-card from runtimeOptions by cards/runtime.ts. This boot banner reads the deck so it
-// reflects real routing: graph services (Engraphis/Graphiti/Neo4j) never
+// resolved by the runtime owner. This boot banner reads saved values only so it
+// reflects configured routing: graph services (Engraphis/Graphiti/Neo4j) never
 // appear as agents, and each card shows its own saved provider/model.
 
 function derivePrintableProvider(card: AgentCardInstance): string {
-  const modelKey = String(card.runtimeOptions?.modelKey || '').trim();
   const savedProvider = String(card.runtimeOptions?.provider || '').trim();
-  if (modelKey) {
-    if (modelKey.includes('/')) return savedProvider || 'openrouter';
-    try {
-      return resolveModel(modelKey).provider;
-    } catch {
-      // Unknown key: trust the card's own saved provider if it set one.
-    }
-  }
   return savedProvider || '(unset)';
 }
 

@@ -32,8 +32,9 @@ any inherited prompt, and any pattern you observe in surrounding code.
 
    **The ONLY system is:** saved ReactFlow agent cards and topology + ordinary card-owned Hermes
    single/Kanban execution + native AutoGen/Mag One for connected production teams + the contained
-   OpenClaude/LocalCoder specialist. Storage authority: **PostgreSQL = saved-card plus IDF/IDD and
-   dynamic AgentGraph context substrate**; **AGE = optional meta-knowledge, never runtime control**;
+   OpenClaude/LocalCoder specialist. Storage authority: **PostgreSQL = saved-card state, explicit
+   saved-IDF revisions, prompt-free runs, and artifact metadata**; **AgentGraph = LiquidAIty's
+   relationship and execution graph implemented on Apache AGE/PostgreSQL, never runtime control**;
    **KnowGraph = Python + Neo4j**; **ThinkGraph = SQL/SQLite Engraphis through bounded Python tools**;
    **CodeGraph = CBM**. Therefore any TS that ingests, extracts, chunks, plans, scores, researches,
    interprets model meaning, or runs an agent/tool framework is poison. Delete it.
@@ -177,8 +178,9 @@ The items below are the major deletion events. Every one "worked" before it was 
   - Do not restore `ContextPack`, `unified_context.py`, `DeliveredContextManifest`, registered-query
     registries, GraphViews, or assignment authorization merely because they once rendered model text.
     Reuse only individually proven validation/parameterization ideas at the one IDD/IDF boundary.
-  Lesson: IDF is the actual PostgreSQL-stored assembled model-context document; IDD describes valid
-  input. AGE may describe consumption/production, but no assignment, receiver, claim, or AGE write may
+  Lesson: IDF is the exact transient assembled model-context document by default; an explicit Save IDF
+  action may preserve an immutable revision. IDD describes valid input. AgentGraph/AGE may describe
+  consumption/production, but no assignment, receiver, claim, or graph write may
   authorize or fail Hermes, Mag One, or Coder.
 
 - **2026-06-01 through 2026-07-05 (full audit from git log) — running tally from the actual commit
@@ -236,7 +238,8 @@ The items below are the major deletion events. Every one "worked" before it was 
   every piece has a live importer. If you scaffold, wire it now or don't write it.
 
 - **Do not revive GraphView or prompt-packet projection.** Native graph references may be instantiated
-  inside an IDF and related by optional AGE meta-knowledge. A separate projection/manifest/context-pack
+  inside a transient IDF and related by prompt-free AgentGraph/AGE lineage. A separate
+  projection/manifest/context-pack
   authority is a second prompt system. References point to native authorities; bounded resolved data
   enters the actual IDF only when the model call needs it.
 

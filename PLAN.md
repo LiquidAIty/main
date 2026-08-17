@@ -130,7 +130,9 @@ today’s runtime.
 
 ### CURRENT — Main Chat
 
-- Main Chat uses a persistent repo-owned Hermes ACP process and stable conversation/card session key.
+- Main Chat is source-wired to a persistent repo-owned Hermes ACP process and stable
+  conversation/card session key. Focused source tests exist, but the complete loaded six-service
+  runtime and visible Main execution remain unproven.
 - The client and backend stream text, reasoning signals exposed by the provider, tool starts, tool
   results, permissions, progress, completion, and errors.
 - The saved `main_chat` card supplies prompt, model, and grants.
@@ -329,13 +331,15 @@ idf-view
 idf-result
 ```
 
-IDD is the one repo-root `LiquidAIty.idd` file. It defines rules used to validate, render, edit, and
-construct structured values; it is not included in the model payload. Python rails interprets the
-file without embedding a second dictionary. It covers:
+IDD is the one repo-root `LiquidAIty.idd` native declaration-language file. It defines rules used to
+validate, render, edit, and construct structured values; it is not included in the model payload.
+Python rails interprets the file without embedding a second dictionary. An IDF instantiates only the
+declarations it uses. IDD covers:
 
 - card fields and model/provider/catalog/list choices;
 - tool schemas and valid graph-reference/query/script forms;
 - required and optional parameters, types, defaults, constraints, and limits;
+- named variables and their invocation-time bindings;
 - legal authority and connection identity;
 - stored repo-relative operation paths and content hashes;
 - output/result shape;
@@ -385,7 +389,7 @@ Do not persist machine-specific absolute paths as portable product identity.
   security metadata, source identity, and availability into the literal IDD materializer. The backend
   `toolCatalogProjection.ts` file only indexes and searches the already-materialized IDD records; it
   does not infer, merge, or classify tool meaning or compatibility.
-- Typed SQL/Cypher/script/view/result execution and live selected-schema materialization into IDF remain
+- General named-variable declaration/instantiation, typed SQL/Cypher/script/view/result execution, and live selected-schema materialization into IDF remain
   **TARGET / INCOMPLETE**. Their schemas must follow proven
   Python execution contracts, not be invented ahead of them.
 
@@ -597,7 +601,7 @@ user question + selected visual context
 → Graphiti writes authoritative episodes/entities/relationships to KnowGraph
 → UI reveals candidate and accepted knowledge progressively
 → the next IDF incorporates the accepted dynamic context
-→ optional AGE meta-knowledge relates the run/result to native provenance references
+→ AgentGraph/AGE relates prompt-free run/result identities to native provenance references
 → future questions retrieve and extend the accumulated KnowGraph
 ```
 
@@ -613,12 +617,12 @@ The coding loop remains:
 ```text
 Main/Hermes or Magentic-One identifies bounded code work
 → Context Selection contains CBM project/file/symbol/route pointers
-→ reviewed CoderPacket is created
+→ the Card Inspector exposes the exact outer IDF; CoderPacket remains transport/permission metadata
 → saved OpenClaude Coder card or interactive terminal executes
 → Coder uses native CBM first, then direct source and focused tests
 → structured CoderReport returns
 → the result is stored against the native run and originating card
-→ optional AGE meta-knowledge records result/reference lineage
+→ AgentGraph/AGE records prompt-free result/reference lineage
 → reusable proven lesson may become one skill
 ```
 

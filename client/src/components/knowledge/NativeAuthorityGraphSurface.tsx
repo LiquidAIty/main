@@ -42,7 +42,6 @@ type GraphProjectionNode = {
   codeGraphRef?: string;
   knowGraphRef?: string;
   artifactRef?: string;
-  promptRef?: string;
   trustState?: string;
   qualityState?: string;
   productionPath?: string;

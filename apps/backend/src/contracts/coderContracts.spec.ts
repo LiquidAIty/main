@@ -28,6 +28,11 @@ describe('coder contracts', () => {
     expect(parseCoderPacket(packet)).toEqual(packet);
   });
 
+  it('retains the exact optional outer IDF on a configured Coder packet', () => {
+    const exactIdf = '# LiquidAIty IDF\n\nExact outer Coder job.';
+    expect(parseCoderPacket({ ...packet, exactIdf }).exactIdf).toBe(exactIdf);
+  });
+
   it('rejects an incomplete CoderPacket', () => {
     expect(() => parseCoderPacket({ id: 'packet-1' })).toThrow();
   });

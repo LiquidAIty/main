@@ -8,9 +8,7 @@ proof_level: cbm_anchor_verified_and_source_verified
 cbm:
   project_identity: C-Projects-LiquidAIty-main
   index_root: C:/Projects/LiquidAIty/main
-  full_index_nodes: 3640
-  full_index_edges: 7688
-  freshness: ready
+  freshness: task_entry_live_counts_recorded_elsewhere
 
 roots:
   files:

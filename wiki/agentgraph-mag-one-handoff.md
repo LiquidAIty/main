@@ -64,7 +64,8 @@ writer.
 3. AGE topology writes fail closed; prompt-free execution telemetry is best-effort.
 4. Native Mag One remains `MagenticOneGroupChat`; private ledgers are not persisted or reconstructed.
 5. OpenClaude/LocalCoder remains the sole Coder and owns repository/process/test/CoderReport behavior.
-6. No provider/model/tool fallback and no raw prompt, IDF, context, response, or transcript archive.
+6. No provider/model/tool fallback and no automatic raw prompt, IDF, context, response, or transcript
+   archive. Only an explicit Save IDF action may preserve the exact canonical IDF revision.
 
 ## Valid proof
 

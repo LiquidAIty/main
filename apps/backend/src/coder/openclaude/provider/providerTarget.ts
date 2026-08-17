@@ -1,7 +1,7 @@
 import { resolveModel } from '../../../llm/models.config';
-import type { OpenClaudeRunRequest } from '../contracts';
+import type { OpenClaudeProviderTargetInput } from '../contracts';
 
-export function resolveOpenClaudeProviderTarget(request: OpenClaudeRunRequest): {
+export function resolveOpenClaudeProviderTarget(request: OpenClaudeProviderTargetInput): {
   modelKey: string;
   provider: 'openai' | 'openrouter';
   providerModelId: string;

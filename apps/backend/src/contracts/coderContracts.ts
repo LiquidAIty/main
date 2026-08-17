@@ -20,6 +20,9 @@ const coderPacketSchema = z.object({
   proofRequired: textList,
   reportFormat: nonEmptyText,
   stopConditions: textList,
+  // When Python rails dispatches a configured Coder Card, this is the exact
+  // Inspector-visible outer IDF. The process adapter must pass it unchanged.
+  exactIdf: nonEmptyText.optional(),
   // Declares whether the coder may edit files. Optional: when absent, the
   // adapter derives a conservative mode from the packet's no-edit language.
   writeMode: coderWriteModeSchema.optional(),

@@ -6,6 +6,7 @@ import type { CoderPacket } from '../../contracts/coderContracts';
 import type { LocalCoderCbmScopeGateResult } from '../../services/graphContext/cbmScopeGate';
 import {
   LocalCoderAdapter,
+  buildCoderPrompt,
   deriveLocalCoderPermissionMode,
   resolveLocalCoderWorkspaceRoot,
   toOpenClaudeMcpToolName,
@@ -35,6 +36,11 @@ function packet(repoPath: string): CoderPacket {
     mcpTools: ['cbm.search_graph'],
   };
 }
+
+it('passes a Python-materialized outer IDF to OpenClaude without rebuilding a prompt', () => {
+  const exactIdf = '# LiquidAIty IDF\n\nExact outer Coder job.';
+  expect(buildCoderPrompt({ ...packet('C:/repo'), exactIdf })).toBe(exactIdf);
+});
 
 function structuredStdout(): string {
   return JSON.stringify({

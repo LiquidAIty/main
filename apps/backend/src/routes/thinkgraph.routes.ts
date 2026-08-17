@@ -5,7 +5,7 @@ import {
   projectLiveThinkGraph,
   type LiveThinkGraphProjectionRequest,
   type LiveThinkGraphSource,
-} from '../services/autogen/autogenOrchestratorClient';
+} from '../services/autogen/pythonRailsClient';
 
 const router = Router();
 

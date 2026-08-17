@@ -13,8 +13,9 @@ parallel runtime, second host, second registry, or direct-DB side path.
 
 ```
 canvas card (deck_builder)            ← identity, prompt, model, enabled, tools (source of truth)
-  → runConfiguredCard (backend)      ← server-trusted resolution: ids in, config resolved, overrides rejected
-  → /autogen/run_card (Python)       ← run_configured_card: ONE saved participant identity
+  → /api/coder/mcp-bridge/run_configured_card (backend transport)
+                                    ← ids and exact prepared bytes forwarded; overrides rejected
+  → /autogen/dispatch (Python)       ← Python selects the saved AssistantAgent or Mag One runtime
                                       (AssistantAgent or typed runtime adapter)
   → card tools (tool_registry)       ← FunctionTools resolved by saved grants, never invented model args
   → mcp-bridge endpoints (backend)   ← transport to the single store authority
@@ -24,8 +25,10 @@ canvas card (deck_builder)            ← identity, prompt, model, enabled, tool
 ## Rules
 
 - **Authority is saved-card configuration plus explicit runtime input.** The saved card owns the
-  capability ceiling; the current IDF instantiates valid values/references under IDD rules. AgentGraph
-  context and optional AGE observations never claim or authorize a native run.
+  capability ceiling; the current IDF instantiates valid values/references under IDD rules.
+  One saved enabled `FLOW` relationship authorizes only the source Card's bounded delegation to that
+  exact connected target and mechanically exposes the standard delegation transport. It grants no
+  ordinary tool or target permission. Other AgentGraph/AGE observations do not authorize a runtime.
 - **The model supplies only the permitted operation payload body** (e.g. the patch). Project/card/run
   identity can never be overridden from model arguments.
 - **No fallback anywhere**: missing model config, unknown tool, disabled card, rails
@@ -37,8 +40,9 @@ canvas card (deck_builder)            ← identity, prompt, model, enabled, tool
 - **MCP host = thin stdio transport** (`apps/python-models/app/mcp_host.py`, official
   `mcp` SDK) bridging to `/api/coder/mcp-bridge/*`. No product logic in the host;
   structural argument allow-lists reject smuggled prompts/models/patches.
-- **Canonical model context = actual stored IDF.** Runtime-specific adapters may mechanically frame
-  it, but may not rebuild another context packet or append IDD definitions to the prompt.
+- **Canonical model context = the exact transient Inspector-visible IDF.** Runtime-specific adapters
+  may mechanically frame it, but may not rebuild another context packet or append IDD definitions to
+  the prompt. Only an explicit Save IDF action stores an immutable revision.
 
 ## Runtime split
 

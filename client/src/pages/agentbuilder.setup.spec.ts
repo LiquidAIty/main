@@ -7,6 +7,7 @@ import type { AgentCardInstance, DeckDocument, RuntimeBinding } from '../types/a
 import { INITIAL_DECK } from '../features/agentbuilder/deck/newProjectDeck';
 import {
   readDeckDocument,
+  resolveLocalCoderControllerConsoleConfig,
   resolveProjectDeckLoadResult,
   resolveProjectDeckPayload,
 } from '../features/agentbuilder/deck/deckDocument';
@@ -42,6 +43,22 @@ function createDeck(nodes: AgentCardInstance[]): DeckDocument {
 }
 
 describe('agentbuilder authoring flow', () => {
+  it('does not manufacture LocalCoder authority from a Card id or template', () => {
+    const deck = createDeck([
+      createCard('card_local_coder', 'assistant_agent', {
+        templateId: 'template_local_coder',
+        runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.6-luna' },
+      }),
+    ]);
+
+    const loaded = readDeckDocument(deck);
+    expect(loaded.nodes[0]?.runtimeBinding).toBeNull();
+    expect(resolveLocalCoderControllerConsoleConfig(loaded)).toEqual({
+      provider: '',
+      model: '',
+    });
+  });
+
   it('ships the default example using the real magentic-led agent graph', () => {
     expect(INITIAL_DECK.nodes.map((node) => node.title)).toEqual([
       'Main Chat',

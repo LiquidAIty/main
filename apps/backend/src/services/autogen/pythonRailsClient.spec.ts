@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  orchestrateWithAutoGen,
+  describeConnectedAgents,
+  dispatchConfiguredRuntime,
   projectLiveThinkGraph,
-} from './autogenOrchestratorClient';
+} from './pythonRailsClient';
 import type { InputDataFile } from '../../contracts/runtimeContracts';
 
 function testIdf(userText: string): InputDataFile {
@@ -15,12 +16,6 @@ function testIdf(userText: string): InputDataFile {
     runId: 'test-run',
     originatingCardId: 'card_magentic',
     version: 1,
-    purpose: 'conversation',
-    approvalStatus: 'not_required',
-    approvedAt: null,
-    approvedSha256: null,
-    supersedesIdfId: null,
-    jobContext: null,
     systemText: 'Saved prompt.',
     userText,
     cardContext: { cardId: 'card_magentic' },
@@ -33,7 +28,7 @@ function testIdf(userText: string): InputDataFile {
   };
 }
 
-describe('autogenOrchestratorClient', () => {
+describe('pythonRailsClient', () => {
   const envSnapshot = { ...process.env };
 
   beforeEach(() => {
@@ -47,14 +42,14 @@ describe('autogenOrchestratorClient', () => {
     vi.restoreAllMocks();
   });
 
-  it('posts to autogen orchestrate endpoint and returns payload', async () => {
+  it('posts one prepared request to the Python configured-runtime dispatcher', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       text: async () => JSON.stringify({ ok: true, finalResponseText: 'from Python rails' }),
     });
     vi.stubGlobal('fetch', fetchMock as any);
 
-    const result = await orchestrateWithAutoGen({
+    const result = await dispatchConfiguredRuntime({
       session: {
         sessionId: 's1',
         projectId: 'p1',
@@ -71,24 +66,66 @@ describe('autogenOrchestratorClient', () => {
 
     expect(result.finalResponseText).toBe('from Python rails');
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://python-rails:8001/autogen/orchestrate',
+      'http://python-rails:8001/autogen/dispatch',
       expect.objectContaining({
         method: 'POST',
       }),
     );
   });
 
-  it('throws explicit sidecar http error details', async () => {
+  it('forwards exact Project/Deck identity for the Python-owned Mag One roster', async () => {
+    const request = vi.fn(async () => ({
+      ok: true,
+      projectId: 'project-1',
+      deckId: 'deck-1',
+      orchestratorCardId: 'card_magentic',
+      connectedAgents: [{
+        cardId: 'card_worker',
+        title: 'Worker',
+        model: { modelKey: 'model-1', provider: 'openai' },
+        tools: [],
+        connected: true,
+        executionReady: true,
+        readinessState: 'ready',
+        readinessReason: null,
+      }],
+    }));
+
+    const result = await describeConnectedAgents(
+      { projectId: 'project-1', deckId: 'deck-1' },
+      request as any,
+    );
+
+    expect(request).toHaveBeenCalledWith(
+      '/domain/mag-one/project-1/deck-1/agents',
+      { method: 'GET' },
+    );
+    expect(result.connectedAgents.map((agent) => agent.cardId)).toEqual(['card_worker']);
+  });
+
+  it('rejects missing Mag One roster identity and malformed Python responses', async () => {
+    await expect(
+      describeConnectedAgents({ projectId: '', deckId: 'deck-1' }, vi.fn() as any),
+    ).rejects.toThrow('projectId_and_deckId_required');
+    await expect(
+      describeConnectedAgents(
+        { projectId: 'project-1', deckId: 'deck-1' },
+        vi.fn(async () => ({ ok: true, connectedAgents: [] })) as any,
+      ),
+    ).rejects.toThrow('mag_one_connected_agents_response_invalid');
+  });
+
+  it('throws explicit Python rails HTTP error details', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
       statusText: 'Internal Server Error',
-      text: async () => JSON.stringify({ detail: 'card_runtime_sidecar_disabled' }),
+      text: async () => JSON.stringify({ detail: 'configured_runtime_unavailable' }),
     });
     vi.stubGlobal('fetch', fetchMock as any);
 
     await expect(
-      orchestrateWithAutoGen({
+      dispatchConfiguredRuntime({
         session: {
           sessionId: 's1',
           projectId: 'p1',
@@ -102,7 +139,7 @@ describe('autogenOrchestratorClient', () => {
         },
         idf: testIdf('run this'),
       }),
-    ).rejects.toThrow('autogen_orchestrator_http_500:card_runtime_sidecar_disabled');
+    ).rejects.toThrow('autogen_dispatch_http_500:configured_runtime_unavailable');
   });
 
   it('preserves an exact Python rails failure instead of rewriting it as missing output', async () => {
@@ -118,7 +155,7 @@ describe('autogenOrchestratorClient', () => {
     vi.stubGlobal('fetch', fetchMock as any);
 
     await expect(
-      orchestrateWithAutoGen({
+      dispatchConfiguredRuntime({
         session: {
           sessionId: 's1',
           projectId: 'p1',
@@ -143,7 +180,7 @@ describe('autogenOrchestratorClient', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(connectionError) as any);
 
     await expect(
-      orchestrateWithAutoGen({
+      dispatchConfiguredRuntime({
         session: {
           sessionId: 's1',
           projectId: 'p1',

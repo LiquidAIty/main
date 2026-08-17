@@ -10,8 +10,7 @@ export default defineConfig({
     // vitest.workspace.ts). Three projects, nothing else is ever collected:
     //   client  — inline below; owns ONLY client/src specs. Vendored repos
     //             (localcoder, worldsignal, src/vendor),
-    //             e2e/playwright (a Playwright runner), and stale Claude
-    //             worktrees under .claude are full repo copies / foreign
+    //             e2e/playwright (a Playwright runner), and other foreign
     //             runners that used to produce hundreds of phantom failures.
     //   backend — apps/backend/vitest.config.ts
     //   scripts — scripts/vitest.config.ts

@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import {
-  deleteDeckDocument,
   getDeckDocument,
   getV3ProjectBlob,
   saveDeckDocument,
@@ -89,19 +88,6 @@ router.put('/:projectId/decks/:deckId', async (req, res) => {
             ? 409
           : 500;
     return res.status(status).json({ ok: false, error: err?.message || 'deck_save_failed' });
-  }
-});
-
-router.delete('/:projectId/decks/:deckId', async (req, res) => {
-  try {
-    const result = await deleteDeckDocument(req.params.projectId, req.params.deckId);
-    if (!result.deleted) {
-      return res.status(404).json({ ok: false, error: 'deck_not_found' });
-    }
-    return res.json({ ok: true, deleted: req.params.deckId });
-  } catch (err: any) {
-    const status = err?.message === 'project_not_found' ? 404 : 500;
-    return res.status(status).json({ ok: false, error: err?.message || 'deck_delete_failed' });
   }
 });
 

@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   projectLiveThinkGraph: vi.fn(),
 }));
 
-vi.mock('../services/autogen/autogenOrchestratorClient', () => ({
+vi.mock('../services/autogen/pythonRailsClient', () => ({
   fetchThinkGraphProjection: mocks.fetchThinkGraphProjection,
   projectLiveThinkGraph: mocks.projectLiveThinkGraph,
 }));

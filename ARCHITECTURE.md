@@ -20,8 +20,8 @@ runtime responses, durable job artifacts, and direct inspection of the real auth
 ## Runtime topology
 
 `npm run dev`, `npm run dev:fresh`, and `npm run dev:all` converge on one visible foreground
-launcher for the core local application. It stops prior application port listeners without touching
-the database containers, then starts and shuts down the four core processes together:
+launcher for the local application. It stops prior application port listeners without touching
+the database containers, then starts and shuts down all six supervised services together:
 
 | Process | Port | Owner | Start command |
 | --- | ---: | --- | --- |
@@ -29,13 +29,13 @@ the database containers, then starts and shuts down the four core processes toge
 | Express backend | 4000 | `apps/backend/` | `npm run dev:fresh` |
 | Graphiti ingestion API | 8001 | `services/knowgraph/` | `npm run dev:fresh` |
 | Python rails | 8003 | `apps/python-models/` | `npm run dev:fresh` |
-| Authenticated GPT plugin MCP | 8765 | `apps/python-models/` | optional `npm run dev:public` |
-| Public MCP tunnel | public URL | local ngrok | optional `npm run dev:public` |
+| Authenticated GPT plugin MCP | 8765 | `apps/python-models/` | `npm run dev:fresh` |
+| Public MCP tunnel | public URL | local ngrok | `npm run dev:fresh` |
 
 PostgreSQL normally listens on 5433 and owns projects, saved decks, and conversations.
 Neo4j normally listens on 7474/7687 and owns KnowGraph. ThinkGraph is SQLite/Engraphis. CodeGraph is
-the CBM index. Public MCP/OAuth/ngrok operation is an explicit optional integration path and is not a
-prerequisite for ordinary local development.
+the CBM index. The root `dev:fresh` command owns MCP/OAuth/ngrok alongside the four application
+services; do not launch those children separately while the supervised tree is running.
 
 ## Current working workflow
 
@@ -82,25 +82,30 @@ Primary landmarks:
 ### Local Coder card
 
 Local Coder is a separate bounded coding path. The `card_local_coder` saved card selects its
-provider/model/tool configuration. Python `run_local_coder` calls
-`/api/coder/localcoder/run`; the backend injects the trusted filesystem root and run identity; the
-LocalCoder service invokes the configured OpenClaude CLI; and success requires a validated
-CoderReport.
+provider/model/tool/write ceiling. Python materializes the exact Inspector-visible IDF and returns a
+narrow Coder transport; the backend injects only the trusted filesystem root and run identity; and
+`buildCoderPrompt` passes that exact IDF unchanged to the configured OpenClaude CLI. CoderPacket fields
+remain process/permission/report metadata, not a second model-context document. Success requires a
+validated CoderReport.
 
 The two current callers converge before execution; the preserved Mag One participant contract joins
 the same path when that later test is intentionally run:
 
 ```txt
-Coder card Run ─┐
-Main → generic connected-card subagent doorway ─┼→ runConfiguredCard / runCardWithContract
-Mag One (later compatibility test) ─────────────┘  → Python typed runtime participant
-                                                     → model-bound run_local_coder
-                                                     → /api/coder/localcoder/run
-                                                     → LocalCoderService → LocalCoderAdapter
+Coder card Run or Main → saved FLOW target
+→ POST /api/coder/mcp-bridge/run_configured_card
+→ Python exact IDF validation + coderTransport
+→ LocalCoderService → LocalCoderAdapter → exact IDF
+
+Configured AssistantAgent or Mag One Card
+→ the same configured-card route
+→ one /autogen/dispatch transport
+→ Python selects run_configured_card or native MagenticOneGroupChat
 ```
 
-Main's Hermes adapter resolves the saved Main→Coder flow and exposes the existing configured-card
-runner only for that direct saved child. There is no separate Coder-specific execution engine.
+An outer Coder invocation uses the configured-card route, Python materialization, and the exact IDF
+as LocalCoder process input. `LocalCoderService` remains the one bounded Coder job owner; no AutoGen
+controller or second Coder execution engine sits in front of it.
 
 OpenRouter cards use OpenClaude's OpenAI-compatible dialect with the saved provider model (for
 example DeepSeek) and the OpenRouter endpoint/key. OpenAI Account cards use the same supported
@@ -112,7 +117,7 @@ Primary landmarks:
 
 - `apps/backend/src/coder/localcoder/adapter.ts`
 - `apps/backend/src/coder/localcoder/service.ts`
-- `apps/backend/src/cards/localCoderController.ts`
+- `apps/python-models/app/python_models/card_domain.py`
 - `apps/python-models/app/python_models/tool_registry.py`
 - `client/src/features/agentbuilder/deck/newProjectDeck.ts`
 - `repo-intake/localcoder-boundary.md`
@@ -122,9 +127,11 @@ is a fallback for the other, and neither should be replaced with another generic
 
 ## Cards, prompts, bindings, edges, and decks
 
-The saved deck document is runtime authority. A card carries its stable ID, template, prompt,
-`runtimeType`, optional `runtimeBinding`, provider/model options, tool grants, and other typed runtime
-options. Edges carry source/target IDs, handles, and an edge type.
+Relational Card revisions are stable runtime authority. Python reconstructs the deck-shaped UI
+projection from those Cards, relational layout/membership, and AgentGraph/AGE relationships. A Card
+carries its stable ID, template, prompt, `runtimeType`, optional `runtimeBinding`, provider/model
+options, tool grants, and other typed runtime options. AGE edges carry source/target IDs, handles, and
+an IDD-defined relationship type.
 
 Important edge meanings:
 
@@ -629,11 +636,14 @@ IDF
   run input: the current exact user/task content and explicit output/proof requirements
 ```
 
-The **Input Data Dictionary (IDD)** defines the structural rules used to construct, edit, render, and
-validate valid input: card fields, provider/model/catalog lists, tool schemas, graph-reference and
-typed query/script forms, parameter types/defaults/limits, output shapes, and explicitly declared
-permissions/capabilities. It does not infer risk, compatibility, runtime meaning, or graph authority.
-IDD definitions are not injected into model context. Natural-language IDF content stays flexible.
+The **Input Data Dictionary (IDD)** is LiquidAIty's native declaration language. It defines the
+structural rules used to construct, edit, render, and validate valid input: named variables and their
+bindings, card fields, provider/model/catalog lists, tool schemas, graph-reference and typed
+query/script forms, parameter types/defaults/limits, output shapes, and explicitly declared
+permissions/capabilities. Python is its parser, validator, and execution rail; Python does not own a
+second hardcoded dictionary. It does not infer risk, compatibility, runtime meaning, or graph
+authority. An IDF instantiates the declarations it uses; the entire IDD is not injected into model
+context. Natural-language IDF content stays flexible.
 
 The repo-root `LiquidAIty.idd` file owns IDD definitions. PostgreSQL owns stable Deck/Card revisions,
 explicit saved-IDF identities/revisions, prompt-free Run status, and explicit artifact metadata.
@@ -670,9 +680,9 @@ relational Card and optional saved-IDF revisions, Inspector materialize/run/save
 and an exact IDF/Card-runtime authority guard on Python rails.
 Live MCP discovery and the private Python registry are mechanically ingested into that same IDD;
 `toolCatalogProjection.ts` only indexes/searches its materialized records. Selected tool-schema
-materialization is current. Generic capability-gated parameterized SQL/Cypher and bounded-script
-execution, result islands, optional AGE observation, and full Coder outer-boundary proof remain
-TARGET / INCOMPLETE.
+materialization is current. General named-variable instantiation, generic capability-gated parameterized SQL/Cypher, and bounded-script
+execution, result islands, additional AgentGraph/AGE observation, and loaded real-runtime Coder proof
+remain TARGET / INCOMPLETE. The exact outer-IDF Coder boundary has source and focused-test proof only.
 
 ## Trading and retained specialists
 

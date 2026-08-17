@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import { ZodError } from 'zod';
-import type { OpenClaudeRunRequest } from '../coder/openclaude/contracts';
+import type { OpenClaudeProviderTargetInput } from '../coder/openclaude/contracts';
 import { openClaudeRuntimeService } from '../coder/openclaude/runtime/service';
 import { localCoderService } from '../coder/localcoder/service';
 import {
@@ -9,7 +9,6 @@ import {
   openClaudeConsoleSessionManager,
   type ConsoleMode,
 } from '../coder/openclaude/console/consoleSession';
-import { describeConnectedAgents } from '../coder/openclaude/mcp/mainAgentFlow';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 import {
   deriveHermesSessionKey,
@@ -27,9 +26,10 @@ import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/ha
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantStore';
 import {
+  describeConnectedAgents,
+  dispatchConfiguredRuntime,
   requestPythonRailsJson,
-  runSingleCardWithAutoGen,
-} from '../services/autogen/autogenOrchestratorClient';
+} from '../services/autogen/pythonRailsClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 import {
   indexToolCatalogReferences,
@@ -126,9 +126,9 @@ router.get('/input-data-dictionary/tools', async (req, res) => {
 // ── Main MCP bridge (SDK-free) ─────────────────────────────────────────────
 // Internal JSON endpoints that run the proven MCP handlers server-side, where
 // the backend already owns deck state + the Python transport. These import NO
-// MCP SDK (mainAgentFlow.ts is SDK-free), so they are safe in the Nx serve
-// graph. The separate MCP host process (which DOES use the SDK) bridges MCP tool
-// / resource calls to these endpoints — single authority, no duplicated state.
+// MCP SDK, so they are safe in the Nx serve graph. The separate MCP host
+// process bridges MCP tool/resource calls to these endpoints without owning
+// another domain store.
 router.post('/mcp-bridge/external_main_context', async (req, res) => {
   const issuer = String(req.body?.issuer || '').trim();
   const subject = String(req.body?.subject || '').trim();
@@ -190,50 +190,6 @@ router.post('/mcp-bridge/coder_status', async (_req, res) => {
   });
 });
 
-async function resolveCodingCard(projectId: string, deckId: string, cardId: string): Promise<any> {
-  const { deck } = await getDeckDocument(projectId, deckId);
-  const card = (deck?.nodes || []).find((node: any) => String(node?.id || '') === cardId);
-  if (!card) throw new Error(`coder_card_not_found:${cardId}`);
-  const system = card.runtimeType === 'assistant_agent' && card.runtimeBinding === 'local_coder';
-  if (!system) throw new Error(`coder_card_runtime_unsupported:${cardId}`);
-  return card;
-}
-
-router.post('/mcp-bridge/coder_stop', async (req, res) => {
-  try {
-    const projectId = String(req.body?.projectId || '').trim();
-    const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
-    const cardId = String(req.body?.cardId || '').trim();
-    await resolveCodingCard(projectId, deckId, cardId);
-    const session = openClaudeConsoleSessionManager.findRunningForCard(cardId);
-    if (!session) return res.status(409).json({ ok: false, error: 'openclaude_card_no_active_session' });
-    const stopped = session.stop();
-    return res.status(stopped ? 200 : 409).json({ ok: stopped, cardId, session: session.info });
-  } catch (error) {
-    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-router.post('/mcp-bridge/coder_steer', async (req, res) => {
-  try {
-    const projectId = String(req.body?.projectId || '').trim();
-    const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
-    const cardId = String(req.body?.cardId || '').trim();
-    const input = String(req.body?.input || '').trim();
-    if (!input) return res.status(400).json({ ok: false, error: 'steer_input_required' });
-    await resolveCodingCard(projectId, deckId, cardId);
-    const session = openClaudeConsoleSessionManager.findRunningForCard(cardId);
-    if (!session) return res.status(409).json({ ok: false, error: 'openclaude_card_no_active_session' });
-    if (!session.info.interactiveSupported || session.info.transportMode !== 'pty') {
-      return res.status(409).json({ ok: false, error: 'openclaude_card_steer_unsupported_noninteractive' });
-    }
-    const delivered = session.submitLine(input);
-    return res.status(delivered ? 200 : 409).json({ ok: delivered, cardId, session: session.info });
-  } catch (error) {
-    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
 async function startPreparedHermesTransport(args: {
   prepared: any;
   projectId: string;
@@ -291,11 +247,14 @@ async function startPreparedHermesTransport(args: {
 
 // Thin configured-Card transport. Python owns Card/AGE/IDD validation,
 // transient IDF materialization, runtime-owner selection, and prompt-free run
-// persistence. This route only forwards preview data or moves the accepted
+// persistence. This route only forwards materialization data or moves the accepted
 // bytes through the already-canonical Hermes ACP / Python AutoGen transports.
 router.post('/mcp-bridge/run_configured_card', async (req, res) => {
   const body = req.body || {};
-  const action = body.action === 'materialize' || body.action === 'preview' ? 'preview' : 'execute';
+  const action = body.action;
+  if (action !== 'materialize' && action !== 'execute') {
+    return res.status(400).json({ ok: false, error: 'configured_card_action_invalid' });
+  }
   const projectId = String(body.projectId || '').trim();
   const deckId = String(body.deckId || BUILDER_DECK_ID).trim();
   const cardId = String(body.cardId || '').trim();
@@ -323,7 +282,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
   };
 
   try {
-    if (action === 'preview') {
+    if (action === 'materialize') {
       const preview = await requestPythonRailsJson('/domain/cards/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -366,14 +325,29 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         const response = await handle.done;
         output = response.finalText;
         transport = response.transport;
-      } else if (
-        prepared.runtimeOwner === 'autogen'
-        || prepared.runtimeOwner === 'coder'
-        || prepared.runtimeOwner === 'mag_one'
-      ) {
-        if (!prepared.nativeRuntimeRequest) throw new Error('native_runtime_request_missing');
-        const response = await runSingleCardWithAutoGen(prepared.nativeRuntimeRequest);
-        if (!response.ok) throw new Error(response.error || 'single_card_run_failed');
+      } else if (prepared.coderTransport?.coderPacket) {
+        const coderPacket = prepared.coderTransport.coderPacket as Record<string, unknown>;
+        if (String(coderPacket.exactIdf || '') !== exactIdf) {
+          throw new Error('coder_transport_exact_idf_mismatch');
+        }
+        const coderResult = await localCoderService.run({
+          ...coderPacket,
+          id: correlationId,
+          repoPath: resolveRepoRoot(),
+        });
+        output = JSON.stringify(coderResult.report, null, 2);
+        transport = {
+          report: coderResult.report,
+          comparison: coderResult.comparison,
+          cbmScopeGate: coderResult.cbmScopeGate,
+          runtimeDiagnostics: coderResult.runtimeDiagnostics,
+        };
+        if (!['succeeded', 'partial'].includes(coderResult.report.status)) {
+          throw new Error(`local_coder_${coderResult.report.status}:${coderResult.report.summary}`);
+        }
+      } else if (prepared.nativeRuntimeRequest) {
+        const response = await dispatchConfiguredRuntime(prepared.nativeRuntimeRequest);
+        if (!response.ok) throw new Error(response.error || 'configured_runtime_failed');
         output = String(response.finalResponseText || '');
       } else {
         throw new Error(`configured_card_runtime_owner_unsupported:${String(prepared.runtimeOwner || '')}`);
@@ -848,9 +822,8 @@ function parseConsoleMode(value: unknown): ConsoleMode {
 
 router.get('/openclaude/terminal/launch', (req, res) => {
   const launch = openClaudeRuntimeService.getTerminalLaunch({
-    mode: 'terminal',
     modelKey: typeof req.query.modelKey === 'string' ? req.query.modelKey : undefined,
-    provider: typeof req.query.provider === 'string' ? (req.query.provider as OpenClaudeRunRequest['provider']) : undefined,
+    provider: typeof req.query.provider === 'string' ? (req.query.provider as OpenClaudeProviderTargetInput['provider']) : undefined,
     providerModelId:
       typeof req.query.providerModelId === 'string' ? req.query.providerModelId : undefined,
   });

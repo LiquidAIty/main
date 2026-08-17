@@ -300,7 +300,7 @@ visible failure, direct recovery, and no need for the user to supervise the mach
 
 ## LiquidAIty-Specific Patterns
 
-- **trace_path parameter**: Use simple function names (`runConfiguredCard`), never qualified. The `name` field from search_graph is correct.
+- **trace_path parameter**: Use simple function names (`materialize_invocation`), never qualified. The `name` field from search_graph is correct.
 - **index_status / detect_changes**: Accept project name string, never filesystem path.
 - **Python functions**: trace_path does not resolve them. Verify via source reads + rg.
 - **Route nodes**: file_path is empty. Read route files directly for handler mapping.
@@ -343,7 +343,8 @@ CBM: search_graph for target symbols → note file_paths
 rg: search ONLY those files (not the whole repo)
 → cuts rg scope from 500+ files to 5-15 files
 ```
-Example: trace_path on runConfiguredCard identified 30 callee files — rg only those, not all 473.
+Example: trace_path on `materialize_invocation` identifies its bounded caller/callee slice — search
+only that slice before using focused residue search.
 
 ### Pattern 4: Post-Grep Adjacency Verification
 ```
