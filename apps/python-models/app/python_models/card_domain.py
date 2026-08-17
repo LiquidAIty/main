@@ -178,6 +178,50 @@ def _edge_core(edge: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _validated_deck_collections(
+    document: dict[str, Any],
+    deck_id: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Validate one complete user-authored Deck document before any write."""
+    if not isinstance(document, dict) or document.get("id") != deck_id:
+        raise CardDomainError("deck_document_invalid")
+    nodes = document.get("nodes")
+    edges = document.get("edges")
+    templates = document.get("promptTemplates")
+    if not isinstance(nodes, list) or not isinstance(edges, list) or not isinstance(templates, list):
+        raise CardDomainError("deck_document_invalid")
+
+    node_ids: set[str] = set()
+    for node in nodes:
+        if not isinstance(node, dict):
+            raise CardDomainError("deck_document_invalid")
+        card_id = _required_text(node.get("id"), "card_id")
+        if card_id in node_ids:
+            raise CardDomainError(f"card_id_duplicate:{card_id}")
+        node_ids.add(card_id)
+
+    edge_ids: set[str] = set()
+    for edge in edges:
+        if not isinstance(edge, dict):
+            raise CardDomainError("deck_document_invalid")
+        core = _edge_core(edge)
+        if core["id"] in edge_ids:
+            raise CardDomainError(f"edge_id_duplicate:{core['id']}")
+        edge_ids.add(core["id"])
+        if core["source"] not in node_ids or core["target"] not in node_ids:
+            raise CardDomainError(f"edge_endpoint_missing:{core['id']}")
+
+    template_ids: set[str] = set()
+    for template in templates:
+        if not isinstance(template, dict):
+            raise CardDomainError("deck_document_invalid")
+        template_id = _required_text(template.get("id"), "template_id")
+        if template_id in template_ids:
+            raise CardDomainError(f"template_id_duplicate:{template_id}")
+        template_ids.add(template_id)
+    return nodes, edges, templates
+
+
 def _upsert_age_edge(
     cursor: Any,
     project_id: str,
@@ -712,16 +756,81 @@ def save_deck(
     document: dict[str, Any],
     expected_revision: str | None,
 ) -> dict[str, Any]:
-    if not isinstance(document, dict) or document.get("id") != deck_id:
-        raise CardDomainError("deck_document_invalid")
-    incoming_nodes = document.get("nodes")
-    incoming_edges = document.get("edges")
-    if not isinstance(incoming_nodes, list) or not isinstance(incoming_edges, list):
-        raise CardDomainError("deck_document_invalid")
+    incoming_nodes, incoming_edges, incoming_templates = _validated_deck_collections(
+        document,
+        deck_id,
+    )
     with connect_postgres(autocommit=False) as connection:
         with connection.cursor(row_factory=dict_row) as cursor:
+            project = _resolve_project(cursor, project_ref)
+            project_id = str(project["id"])
+            cursor.execute(
+                "SELECT 1 FROM ag_catalog.agent_decks WHERE project_id=%s AND deck_id=%s FOR UPDATE",
+                (project_id, deck_id),
+            )
+            if cursor.fetchone() is None:
+                if expected_revision:
+                    raise CardDomainError("deck_conflict")
+                revision = str(uuid4())
+                saved_at = _now()
+                cursor.execute(
+                    """
+                    INSERT INTO ag_catalog.agent_decks (
+                      project_id, deck_id, name, workspace_root, document_version,
+                      revision, saved_at, updated_at
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (
+                        project_id, deck_id, _required_text(document.get("name"), "deck_name"),
+                        document.get("workspaceRoot"), int(document.get("version") or 1),
+                        revision, saved_at, saved_at,
+                    ),
+                )
+                for ordinal, template in enumerate(incoming_templates):
+                    cursor.execute(
+                        """
+                        INSERT INTO ag_catalog.deck_prompt_templates
+                          (project_id, deck_id, template_id, ordinal, content)
+                        VALUES (%s,%s,%s,%s,%s)
+                        """,
+                        (
+                            project_id, deck_id, template["id"], ordinal,
+                            str(template.get("content") or ""),
+                        ),
+                    )
+                for ordinal, node in enumerate(incoming_nodes):
+                    card_id = node["id"]
+                    cursor.execute(
+                        "INSERT INTO ag_catalog.agent_cards (project_id, deck_id, card_id) VALUES (%s,%s,%s)",
+                        (project_id, deck_id, card_id),
+                    )
+                    revision_id = _insert_revision(cursor, project_id, deck_id, node, 1)
+                    cursor.execute(
+                        "UPDATE ag_catalog.agent_cards SET current_revision_id=%s WHERE project_id=%s AND deck_id=%s AND card_id=%s",
+                        (revision_id, project_id, deck_id, card_id),
+                    )
+                    position = _json_object(node.get("position"), "card_position")
+                    cursor.execute(
+                        """
+                        INSERT INTO ag_catalog.deck_card_memberships (
+                          project_id, deck_id, card_id, ordinal, position_x, position_y,
+                          parent_graph_id, display_status, presentation_config
+                        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+                        """,
+                        (
+                            project_id, deck_id, card_id, ordinal,
+                            float(position.get("x") or 0), float(position.get("y") or 0),
+                            node.get("parentGraphId"), node.get("status"),
+                            _canonical_json(_stable_card(node)["presentationProperties"]),
+                        ),
+                    )
+                    _ensure_age_card(cursor, project_id, deck_id, card_id)
+                for ordinal, edge in enumerate(incoming_edges):
+                    _upsert_age_edge(cursor, project_id, deck_id, edge, ordinal)
+                connection.commit()
+                return load_deck(project_id, deck_id)
+
             current = _load_deck_with_cursor(cursor, project_ref, deck_id, include_internal=True)
-            project_id = current["projectId"]
             if expected_revision and current["meta"]["deckRevision"] != expected_revision:
                 raise CardDomainError("deck_conflict")
             current_by_id = {node["id"]: node for node in current["deck"]["nodes"]}
@@ -787,7 +896,7 @@ def save_deck(
                 "DELETE FROM ag_catalog.deck_prompt_templates WHERE project_id=%s AND deck_id=%s",
                 (project_id, deck_id),
             )
-            for ordinal, template in enumerate(document.get("promptTemplates") or []):
+            for ordinal, template in enumerate(incoming_templates):
                 cursor.execute(
                     """
                     INSERT INTO ag_catalog.deck_prompt_templates
@@ -826,6 +935,44 @@ def _runtime_owner(card: dict[str, Any]) -> str:
     if card.get("runtimeType") == "assistant_agent":
         return "autogen"
     raise CardDomainError("card_runtime_owner_unavailable")
+
+
+def _card_enabled(card: dict[str, Any]) -> bool:
+    options = card.get("runtimeOptions")
+    option_enabled = options.get("enabled") if isinstance(options, dict) else None
+    return card.get("enabled") is not False and option_enabled is not False
+
+
+def _direct_subagents(
+    card_id: str,
+    cards: dict[str, dict[str, Any]],
+    edges: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Project exact eligible FLOW targets without inventing Card authority."""
+    direct: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for edge in edges:
+        target_id = str(edge.get("target") or "")
+        target = cards.get(target_id)
+        if (
+            edge.get("source") != card_id
+            or edge.get("edgeType") != "flow"
+            or target_id == card_id
+            or target_id in seen
+            or target is None
+            or target.get("kind") != "agent"
+            or target.get("runtimeType") != "assistant_agent"
+            or str(target.get("parentGraphId") or "").strip()
+            or not _card_enabled(target)
+        ):
+            continue
+        seen.add(target_id)
+        direct.append({
+            "cardId": target_id,
+            "title": str(target.get("title") or target_id),
+            "runtimeBinding": str(target.get("runtimeBinding") or ""),
+        })
+    return direct
 
 
 def _normalized_native_references(value: Any) -> list[dict[str, Any]]:
@@ -903,7 +1050,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     card = cards.get(card_id)
     if card is None:
         raise CardDomainError("card_not_found")
-    if card.get("enabled") is False:
+    if not _card_enabled(card):
         raise CardDomainError("card_disabled")
     sender_id = str(payload.get("senderCardId") or "").strip()
     if sender_id:
@@ -956,17 +1103,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         "toolsets": _string_list(options.get("toolsets"), "toolsets"),
         "mcpConnectionIds": _string_list(options.get("mcpConnectionIds"), "mcp_connection_ids"),
         "coderCardIds": _string_list(options.get("coderCards"), "coder_cards"),
-        "directSubagents": [
-            {
-                "cardId": edge["target"],
-                "title": cards[edge["target"]]["title"],
-                "runtimeBinding": str(cards[edge["target"]].get("runtimeBinding") or ""),
-            }
-            for edge in loaded["deck"]["edges"]
-            if edge["source"] == card_id
-            and edge["edgeType"] == "flow"
-            and edge["target"] in cards
-        ],
+        "directSubagents": _direct_subagents(card_id, cards, loaded["deck"]["edges"]),
         "runtimeOptions": {
             "reasoningEffort": options.get("reasoningEffort"),
             "temperature": options.get("temperature"),
@@ -1090,7 +1227,7 @@ def describe_magentic_agents(project_ref: str, deck_id: str) -> dict[str, Any]:
             continue
         card_id = edge["target"] if edge["source"] == orchestrator["id"] else edge["source"]
         card = cards.get(card_id)
-        if card is None or card_id in seen or card.get("enabled") is False:
+        if card is None or card_id in seen or not _card_enabled(card):
             continue
         if card.get("runtimeType") != "assistant_agent" or card.get("runtimeBinding") in {"main_chat", "hermes_steward"}:
             continue
@@ -1165,24 +1302,7 @@ def validate_exact_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     preview = materialize_invocation(payload)
     if preview["cardRevisionId"] != expected_revision:
         raise CardDomainError("card_revision_changed")
-    # Stable Card/facet/tool authority must remain byte-for-byte identical.
-    # Dynamic prose may be edited, so validate islands and stable protected
-    # sections rather than rematerializing the dynamic assignment.
-    validate_idf_islands(exact_idf)
-    expected_system = f"[SYSTEM]\n{preview['providerProjection']['systemPrompt']}\n[/SYSTEM]"
-    if expected_system not in exact_idf:
-        raise CardDomainError("exact_idf_stable_prompt_changed")
-    expected_context = _canonical_json(preview["cardContext"])
-    if expected_context not in exact_idf.replace("\n", ""):
-        # The rendered JSON is pretty printed; compare its parsed island below.
-        islands = validate_idf_islands(exact_idf)
-        contexts = []
-        for island in islands.get("JSON", []):
-            value = json.loads(island["content"])
-            if value.get("type") == "resolved-card-invocation":
-                contexts.append(value.get("cardContext"))
-        if contexts != [preview["cardContext"]]:
-            raise CardDomainError("exact_idf_card_authority_changed")
+    _validate_exact_idf(preview, exact_idf)
     return {
         **preview,
         "exactIdf": exact_idf,
@@ -1192,6 +1312,22 @@ def validate_exact_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         },
         "validatedForDispatch": True,
     }
+
+
+def _validate_exact_idf(preview: dict[str, Any], exact_idf: str) -> None:
+    """Protect stable Card authority while allowing temporary prose edits."""
+    islands = validate_idf_islands(exact_idf)
+    expected_system = str(preview["providerProjection"]["systemPrompt"])
+    system_values = [island["content"] for island in islands.get("SYSTEM", [])]
+    if system_values != ([expected_system] if expected_system else []):
+        raise CardDomainError("exact_idf_stable_prompt_changed")
+    contexts = []
+    for island in islands.get("JSON", []):
+        value = json.loads(island["content"])
+        if value.get("type") == "resolved-card-invocation":
+            contexts.append(value.get("cardContext"))
+    if contexts != [preview["cardContext"]]:
+        raise CardDomainError("exact_idf_card_authority_changed")
 
 
 def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1218,7 +1354,7 @@ def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
                     and worker_id not in worker_ids
                     and worker.get("runtimeType") == "assistant_agent"
                     and worker.get("runtimeBinding") not in {"main_chat", "hermes_steward"}
-                    and worker.get("enabled") is not False
+                    and _card_enabled(worker)
                 ):
                     worker_ids.append(worker_id)
             known_tools = {item["canonicalId"] for item in materialize_tool_catalog(tool_manifest())}

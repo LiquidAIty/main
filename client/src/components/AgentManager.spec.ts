@@ -231,7 +231,7 @@ describe('AgentManager active builder config', () => {
     expect(
       buildInputDictionarySelectedRows(
         [{
-          canonicalId: 'write_mag_one_instructions',
+          canonicalId: 'retired.tool',
           sourceIds: ['main_mcp'],
           availability: 'disabled',
         }],
@@ -239,7 +239,7 @@ describe('AgentManager active builder config', () => {
       ),
     ).toEqual([
       expect.objectContaining({
-        name: 'write_mag_one_instructions',
+        name: 'retired.tool',
         availability: 'disabled',
       }),
     ]);

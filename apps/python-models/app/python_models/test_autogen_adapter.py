@@ -1,13 +1,14 @@
 """Focused native Magentic-One/IDF adapter coverage. No provider calls."""
 
 import asyncio
+from hashlib import sha256
 from types import SimpleNamespace
 
 import pytest
 
 from app.python_models import magentic_agentchat as mac
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
-from app.python_models.idf import assemble_input_data_file
+from app.python_models.idf import render_content_markdown
 from app.python_models.orchestration_contracts import (
     CardRuntimeConfig,
     CardRuntimeParticipant,
@@ -17,6 +18,25 @@ from app.python_models.orchestration_contracts import (
 )
 
 MODEL = "deepseek/deepseek-v4-flash-0731"
+
+
+def _transient_idf(*, card_context: dict, system_text: str, user_text: str) -> InputDataFile:
+    content = render_content_markdown(
+        system_text=system_text,
+        user_text=user_text,
+        card_context=card_context,
+        dynamic_context_markdown="native context",
+        native_references=[],
+    )
+    return InputDataFile(
+        idfId="idf:mag", projectId="p", deckId="d", conversationId="c",
+        runId="mag:one", originatingCardId="mag:card", version=1,
+        systemText=system_text, userText=user_text, cardContext=card_context,
+        dynamicContextMarkdown="native context", nativeReferences=[],
+        modelInputMarkdown=content, contentMarkdown=content,
+        contentSha256=sha256(content.encode("utf-8")).hexdigest(),
+        createdAt="2026-08-14T00:00:00Z",
+    )
 
 
 def _context() -> RuntimeRequest:
@@ -36,13 +56,11 @@ def _context() -> RuntimeRequest:
         modelKey=MODEL, providerModelId=MODEL,
         runtimeOptions={"deckId": "d"}, participants=participants,
     )
-    idf = InputDataFile.model_validate(assemble_input_data_file(
-        project_id="p", deck_id="d", conversation_id="c", run_id="mag:one",
-        originating_card_id="mag:card", system_text="saved orchestrator system",
-        user_text="approved task", dynamic_context_markdown="native context",
+    idf = _transient_idf(
         card_context=card_runtime.model_dump(exclude_none=True),
-        idf_id="idf:mag", created_at="2026-08-14T00:00:00Z",
-    ))
+        system_text="saved orchestrator system",
+        user_text="approved task",
+    )
     return RuntimeRequest(
         session=ProjectSession(
             sessionId="s", projectId="p", turnId="t", runId="mag:one", route="r",

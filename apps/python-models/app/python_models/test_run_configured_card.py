@@ -1,12 +1,13 @@
 """Focused canonical-IDF single-card runtime coverage. No provider calls."""
 
 import asyncio
+from hashlib import sha256
 from types import SimpleNamespace
 
 import pytest
 
 from app.python_models import magentic_agentchat as mac
-from app.python_models.idf import assemble_input_data_file
+from app.python_models.idf import render_content_markdown
 from app.python_models.orchestration_contracts import (
     CardRuntimeConfig,
     CardRuntimeParticipant,
@@ -16,6 +17,26 @@ from app.python_models.orchestration_contracts import (
 )
 
 MODEL = "deepseek/deepseek-v4-flash-0731"
+
+
+def _transient_idf(*, card_context: dict, user_text: str) -> InputDataFile:
+    references = [{"authority": "knowgraph", "nativeId": "node:1", "required": True}]
+    content = render_content_markdown(
+        system_text="saved system",
+        user_text=user_text,
+        card_context=card_context,
+        dynamic_context_markdown="bounded context",
+        native_references=references,
+    )
+    return InputDataFile(
+        idfId="idf:one", projectId="p", deckId="d", conversationId="c",
+        runId="run:one", originatingCardId="card:one", version=1,
+        systemText="saved system", userText=user_text, cardContext=card_context,
+        dynamicContextMarkdown="bounded context", nativeReferences=references,
+        modelInputMarkdown=content, contentMarkdown=content,
+        contentSha256=sha256(content.encode("utf-8")).hexdigest(),
+        createdAt="2026-08-14T00:00:00Z",
+    )
 
 
 def _context(*, user_text: str = "run", runtime_type: str = "assistant_agent",
@@ -31,14 +52,10 @@ def _context(*, user_text: str = "run", runtime_type: str = "assistant_agent",
             )
         ],
     )
-    document = InputDataFile.model_validate(assemble_input_data_file(
-        project_id="p", deck_id="d", conversation_id="c", run_id="run:one",
-        originating_card_id="card:one", system_text="saved system",
-        user_text=user_text, dynamic_context_markdown="bounded context",
+    document = _transient_idf(
         card_context=card.model_dump(exclude_none=True),
-        native_references=[{"authority": "knowgraph", "nativeId": "node:1", "required": True}],
-        idf_id="idf:one", created_at="2026-08-14T00:00:00Z",
-    ))
+        user_text=user_text,
+    )
     return RuntimeRequest(
         session=ProjectSession(
             sessionId="s", projectId="p", turnId="turn:one", runId="run:one",

@@ -4,7 +4,7 @@ import { resolveModel } from '../llm/models.config';
 import type { AgentCardInstance } from '../types';
 
 // The REAL runtime authority for every agent's provider/model is the saved
-// Agent Canvas deck (project agent_io_schema → v3_state → decks[deck_builder]),
+// Agent Canvas deck (Python-owned relational Deck/Card domain → deck_builder),
 // resolved per-card from runtimeOptions by cards/runtime.ts. This boot banner reads the deck so it
 // reflects real routing: graph services (Engraphis/Graphiti/Neo4j) never
 // appear as agents, and each card shows its own saved provider/model.

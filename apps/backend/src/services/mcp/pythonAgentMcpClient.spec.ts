@@ -35,8 +35,8 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'main.context',
       'run_mag_one',
       'web_search',
-      'write_mag_one_instructions',
     ]));
+    expect(names).not.toContain('write_mag_one_instructions');
     expect(names).not.toContain('agentgraph.inspect');
     // Obsolete model-facing graph and agent-fabric wrappers are all gone.
     expect(names).not.toContain('thinkgraph.process_conversation_pair');
