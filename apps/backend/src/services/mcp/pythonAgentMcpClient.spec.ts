@@ -19,6 +19,7 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
   it('federates the three complete native catalogs with the Main control surface', async () => {
     const names = await listPythonAgentMcpTools();
     expect(new Set(names).size).toBe(names.length);
+    expect(names).toHaveLength(70);
     expect(names).toEqual(expect.arrayContaining([
       'canvas.inspect',
       'canvas.upsert_wire',
@@ -31,13 +32,13 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'engraphis.stats',
       'graphiti.search_nodes',
       'graphiti.get_status',
+      'agentgraph.inspect',
       'mag_one.describe_connected_agents',
       'main.context',
       'run_mag_one',
+      'write_mag_one_instructions',
       'web_search',
     ]));
-    expect(names).not.toContain('write_mag_one_instructions');
-    expect(names).not.toContain('agentgraph.inspect');
     // Obsolete model-facing graph and agent-fabric wrappers are all gone.
     expect(names).not.toContain('thinkgraph.process_conversation_pair');
     expect(names).not.toContain('thinkgraph.apply_live_patch');

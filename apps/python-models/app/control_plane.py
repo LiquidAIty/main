@@ -2,6 +2,7 @@
 
 The minimum user-directed MCP control surface over ACTUAL saved state:
 
+  * agentgraph.inspect         — bounded current Card/AGE authority and telemetry
   * canvas.inspect             — bounded saved deck view
   * card.update_configuration  — strict allowlist edits of persisted card config
   * canvas.upsert_wire         — supported wire types only (flow / magentic_option)
@@ -138,6 +139,21 @@ def resolve_saved_card_reference(
             if str(value).strip()
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# agentgraph.inspect
+# ---------------------------------------------------------------------------
+
+
+async def agentgraph_inspect(args: dict[str, Any]) -> dict[str, Any]:
+    _require(args, "projectId", "deckId")
+    from app.python_models.card_domain import CardDomainError, inspect_agentgraph
+
+    try:
+        return await asyncio.to_thread(inspect_agentgraph, args)
+    except CardDomainError as error:
+        raise ControlPlaneError(str(error)) from error
 
 
 # ---------------------------------------------------------------------------

@@ -611,6 +611,225 @@ def load_deck(project_ref: str, deck_id: str) -> dict[str, Any]:
         return _load_deck_with_cursor(cursor, project_ref, deck_id)
 
 
+def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
+    """Read bounded current Card authority and identity-only AGE telemetry."""
+    project_ref = _required_text(payload.get("projectId"), "project_id")
+    deck_id = _required_text(payload.get("deckId"), "deck_id")
+    run_id = str(payload.get("runId") or "").strip()
+    assignment_id = str(payload.get("assignmentId") or "").strip()
+    raw_limit = payload.get("limit", 20)
+    if isinstance(raw_limit, bool) or not isinstance(raw_limit, int) or not 1 <= raw_limit <= 50:
+        raise CardDomainError("agentgraph_limit_invalid")
+    limit = raw_limit
+    edge_limit = min(1000, limit * 20)
+
+    with connect_postgres(autocommit=False) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SET TRANSACTION READ ONLY")
+            loaded = _load_deck_with_cursor(cursor, project_ref, deck_id)
+            project_id = loaded["projectId"]
+            run_filter = "AND run.runId = $runId" if run_id else ""
+            run_rows = _age_rows(
+                cursor,
+                f"""
+                MATCH (run:Run {{projectId: $projectId, deckId: $deckId}})
+                      -[:EXECUTED_BY]->
+                      (card:Card {{projectId: $projectId, deckId: $deckId}})
+                WHERE true {run_filter}
+                RETURN properties(run), card.cardId
+                ORDER BY run.runId DESC
+                LIMIT {limit}
+                """,
+                {"projectId": project_id, "deckId": deck_id, "runId": run_id},
+                "run agtype, card_id agtype",
+            )
+            runs: dict[str, dict[str, Any]] = {}
+            for row in run_rows:
+                properties = row.get("run") if isinstance(row.get("run"), dict) else {}
+                current_run_id = str(properties.get("runId") or "")
+                if not current_run_id:
+                    continue
+                runs[current_run_id] = {
+                    "runId": current_run_id,
+                    "correlationId": str(properties.get("correlationId") or ""),
+                    "state": str(properties.get("state") or "unknown"),
+                    "cardId": str(row.get("card_id") or ""),
+                    "assignedFromCardIds": [],
+                    "parentRunIds": [],
+                    "childRunIds": [],
+                    "usedTools": [],
+                    "nativeReferences": [],
+                    "viewedNativeReferences": [],
+                    "artifacts": [],
+                }
+
+            run_ids = list(runs)
+            if run_ids:
+                telemetry_queries = {
+                    "assignments": (
+                        """
+                        MATCH (sender:Card {projectId: $projectId, deckId: $deckId})
+                              -[edge:ASSIGNED_TO]->
+                              (target:Card {projectId: $projectId, deckId: $deckId})
+                        WHERE edge.runId IN $runIds
+                        RETURN edge.runId, sender.cardId, target.cardId
+                        """,
+                        "run_id agtype, sender_card_id agtype, target_card_id agtype",
+                    ),
+                    "lineage": (
+                        """
+                        MATCH (parent:Run {projectId: $projectId, deckId: $deckId})
+                              -[:CHILD_RUN]->
+                              (child:Run {projectId: $projectId, deckId: $deckId})
+                        WHERE parent.runId IN $runIds OR child.runId IN $runIds
+                        RETURN parent.runId, child.runId
+                        """,
+                        "parent_run_id agtype, child_run_id agtype",
+                    ),
+                    "tools": (
+                        """
+                        MATCH (run:Run {projectId: $projectId, deckId: $deckId})
+                              -[:USED_TOOL]->(tool:Tool)
+                        WHERE run.runId IN $runIds
+                        RETURN run.runId, tool.toolId
+                        """,
+                        "run_id agtype, tool_id agtype",
+                    ),
+                    "used": (
+                        """
+                        MATCH (run:Run {projectId: $projectId, deckId: $deckId})
+                              -[:USED]->(native:NativeReference)
+                        WHERE run.runId IN $runIds
+                        RETURN run.runId, native.authority, native.nativeId
+                        """,
+                        "run_id agtype, authority agtype, native_id agtype",
+                    ),
+                    "viewed": (
+                        """
+                        MATCH (run:Run {projectId: $projectId, deckId: $deckId})
+                              -[:VIEWED]->(native:NativeReference)
+                        WHERE run.runId IN $runIds
+                        RETURN run.runId, native.authority, native.nativeId
+                        """,
+                        "run_id agtype, authority agtype, native_id agtype",
+                    ),
+                    "artifacts": (
+                        """
+                        MATCH (run:Run {projectId: $projectId, deckId: $deckId})
+                              -[:PRODUCED_ARTIFACT]->(artifact:Artifact)
+                        WHERE run.runId IN $runIds
+                        RETURN run.runId, properties(artifact)
+                        """,
+                        "run_id agtype, artifact agtype",
+                    ),
+                }
+                telemetry = {
+                    name: _age_rows(
+                        cursor,
+                        query + f"\nLIMIT {edge_limit}",
+                        {
+                            "projectId": project_id,
+                            "deckId": deck_id,
+                            "runIds": run_ids,
+                        },
+                        columns,
+                    )
+                    for name, (query, columns) in telemetry_queries.items()
+                }
+                for row in telemetry["assignments"]:
+                    item = runs.get(str(row.get("run_id") or ""))
+                    if item is not None:
+                        item["assignedFromCardIds"].append(
+                            str(row.get("sender_card_id") or "")
+                        )
+                for row in telemetry["lineage"]:
+                    parent_id = str(row.get("parent_run_id") or "")
+                    child_id = str(row.get("child_run_id") or "")
+                    if child_id in runs and parent_id:
+                        runs[child_id]["parentRunIds"].append(parent_id)
+                    if parent_id in runs and child_id:
+                        runs[parent_id]["childRunIds"].append(child_id)
+                for row in telemetry["tools"]:
+                    item = runs.get(str(row.get("run_id") or ""))
+                    if item is not None:
+                        item["usedTools"].append(str(row.get("tool_id") or ""))
+                for telemetry_name, output_name in (
+                    ("used", "nativeReferences"),
+                    ("viewed", "viewedNativeReferences"),
+                ):
+                    for row in telemetry[telemetry_name]:
+                        item = runs.get(str(row.get("run_id") or ""))
+                        if item is not None:
+                            item[output_name].append({
+                                "authority": str(row.get("authority") or ""),
+                                "nativeId": str(row.get("native_id") or ""),
+                            })
+                for row in telemetry["artifacts"]:
+                    item = runs.get(str(row.get("run_id") or ""))
+                    artifact = row.get("artifact")
+                    if item is not None and isinstance(artifact, dict):
+                        item["artifacts"].append({
+                            "artifactId": str(artifact.get("artifactId") or ""),
+                            "artifactKind": str(artifact.get("artifactKind") or ""),
+                            "locator": str(artifact.get("locator") or "")[:2048],
+                        })
+
+    deck = loaded["deck"]
+    cards = [
+        {
+            "cardId": str(card.get("id") or ""),
+            "title": str(card.get("title") or ""),
+            "runtimeType": str(card.get("runtimeType") or ""),
+            "runtimeBinding": str(card.get("runtimeBinding") or ""),
+            "enabled": card.get("enabled") is not False
+            and (card.get("runtimeOptions") or {}).get("enabled") is not False,
+        }
+        for card in deck["nodes"]
+    ]
+    relationships = [
+        {
+            "id": str(edge.get("id") or ""),
+            "source": str(edge.get("source") or ""),
+            "target": str(edge.get("target") or ""),
+            "edgeType": str(edge.get("edgeType") or ""),
+            "enabled": edge.get("enabled") is not False,
+        }
+        for edge in deck["edges"]
+    ]
+    legacy_assignment = (
+        {
+            "assignmentId": assignment_id,
+            "available": False,
+            "reason": "assignmentId is not a current AgentGraph identity; use runId",
+        }
+        if assignment_id
+        else None
+    )
+    return {
+        "ok": True,
+        "authority": "postgresql-age-agentgraph",
+        "projectId": project_id,
+        "deckId": deck_id,
+        "scope": {
+            "readScope": "project-deck",
+            "projectWideRequested": payload.get("projectWide") is True,
+            "conversationId": str(payload.get("conversationId") or ""),
+            "conversationFilterAvailable": False,
+        },
+        "cards": cards,
+        "relationships": relationships,
+        "runs": list(runs.values()),
+        "telemetry": {
+            "runIdentity": True,
+            "usedNativeReferences": True,
+            "viewedNativeReferences": True,
+            "artifacts": True,
+            "rawIdfStored": False,
+        },
+        "legacyAssignment": legacy_assignment,
+    }
+
+
 def _load_deck_internal(project_ref: str, deck_id: str) -> dict[str, Any]:
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         return _load_deck_with_cursor(cursor, project_ref, deck_id, include_internal=True)
@@ -1527,6 +1746,65 @@ def load_saved_idf_revision(
         "ok": True,
         "savedIdf": _saved_idf_payload(materialized, include_content=True),
         "inspection": _inspect_saved_idf(str(materialized["content_markdown"])),
+    }
+
+
+def save_magentic_instructions(payload: dict[str, Any]) -> dict[str, Any]:
+    """Materialize and persist one reviewed Mag One instruction IDF without running it."""
+    instructions = _required_text(payload.get("instructions"), "instructions")
+    sender_card_id = _required_text(payload.get("senderCardId"), "sender_card_id")
+    preview = materialize_magentic_invocation({
+        "projectId": _required_text(payload.get("projectId"), "project_id"),
+        "deckId": _required_text(payload.get("deckId"), "deck_id"),
+        "senderCardId": sender_card_id,
+        "assignment": instructions,
+    })
+    saved = save_idf_revision({
+        "projectId": preview["projectId"],
+        "deckId": preview["deckId"],
+        "cardId": preview["cardContext"]["cardId"],
+        "senderCardId": sender_card_id,
+        "assignment": instructions,
+        "exactIdf": preview["exactIdf"],
+        "cardRevisionId": preview["cardRevisionId"],
+        "provenanceKind": "agent",
+    })
+    saved_idf = saved["savedIdf"]
+    return {
+        "ok": True,
+        "idfId": saved_idf["idfId"],
+        "revision": saved_idf["revision"],
+        "savedIdf": saved_idf,
+        "inspection": saved["inspection"],
+        "started": False,
+    }
+
+
+def load_magentic_saved_invocation(payload: dict[str, Any]) -> dict[str, Any]:
+    """Reload and revalidate one saved Mag One IDF against current Card/AGE authority."""
+    project_ref = _required_text(payload.get("projectId"), "project_id")
+    deck_id = _required_text(payload.get("deckId"), "deck_id")
+    sender_card_id = _required_text(payload.get("senderCardId"), "sender_card_id")
+    idf_id = _required_text(payload.get("idfId"), "idf_id")
+    loaded = load_saved_idf_revision(project_ref, idf_id)
+    saved_idf = loaded["savedIdf"]
+    inspection = loaded["inspection"]
+    if saved_idf["deckId"] != deck_id:
+        raise CardDomainError("saved_idf_deck_mismatch")
+    if inspection.get("runtimeOwner") != "mag_one":
+        raise CardDomainError("saved_idf_not_magentic")
+    prepared = validate_exact_invocation({
+        "projectId": saved_idf["projectId"],
+        "deckId": saved_idf["deckId"],
+        "cardId": saved_idf["targetCardId"],
+        "senderCardId": sender_card_id,
+        "assignment": inspection["assignment"],
+        "exactIdf": saved_idf["contentMarkdown"],
+        "cardRevisionId": saved_idf["targetCardRevisionId"],
+    })
+    return {
+        **prepared,
+        "savedIdf": saved_idf,
     }
 
 

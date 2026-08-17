@@ -536,3 +536,241 @@ def test_age_runtime_telemetry_preserves_run_card_and_artifact_lineage(
     ) is True
     assert len(statements) == 1
     assert "PRODUCED_ARTIFACT" in statements[0][0]
+
+
+def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sql: list[str] = []
+    age_calls: list[tuple[str, dict]] = []
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, statement, *_args):
+            sql.append(statement)
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    deck = {
+        "projectId": "project-one",
+        "deck": {
+            "nodes": [{
+                "id": "card-one",
+                "title": "Main",
+                "runtimeType": "assistant_agent",
+                "runtimeBinding": "main_chat",
+                "runtimeOptions": {"enabled": True},
+            }],
+            "edges": [{
+                "id": "flow-one",
+                "source": "card-one",
+                "target": "card-two",
+                "edgeType": "flow",
+            }],
+        },
+    }
+
+    def age_rows(_cursor, query, params, _columns):
+        age_calls.append((query, params))
+        if "EXECUTED_BY" in query:
+            return [{
+                "run": {
+                    "runId": "run-one",
+                    "correlationId": "correlation-one",
+                    "state": "completed",
+                },
+                "card_id": "card-one",
+            }]
+        if "ASSIGNED_TO" in query:
+            return [{
+                "run_id": "run-one",
+                "sender_card_id": "card-main",
+                "target_card_id": "card-one",
+            }]
+        if "USED_TOOL" in query:
+            return [{"run_id": "run-one", "tool_id": "canvas.inspect"}]
+        if "-[:USED]->" in query:
+            return [{
+                "run_id": "run-one",
+                "authority": "KnowGraph",
+                "native_id": "episode:one",
+            }]
+        if "-[:VIEWED]->" in query:
+            return []
+        if "PRODUCED_ARTIFACT" in query:
+            return [{
+                "run_id": "run-one",
+                "artifact": {
+                    "artifactId": "artifact-one",
+                    "artifactKind": "report",
+                    "locator": "artifact://one",
+                },
+            }]
+        return []
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_load_deck_with_cursor", lambda *_args, **_kwargs: deck)
+    monkeypatch.setattr(card_domain, "_age_rows", age_rows)
+
+    result = card_domain.inspect_agentgraph({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "conversationId": "conversation-one",
+        "assignmentId": "retired-assignment",
+        "limit": 5,
+    })
+
+    assert sql == ["SET TRANSACTION READ ONLY"]
+    assert result["authority"] == "postgresql-age-agentgraph"
+    assert result["projectId"] == "project-one"
+    assert result["scope"] == {
+        "readScope": "project-deck",
+        "projectWideRequested": False,
+        "conversationId": "conversation-one",
+        "conversationFilterAvailable": False,
+    }
+    assert result["cards"][0]["cardId"] == "card-one"
+    assert result["relationships"][0]["edgeType"] == "flow"
+    assert result["runs"] == [{
+        "runId": "run-one",
+        "correlationId": "correlation-one",
+        "state": "completed",
+        "cardId": "card-one",
+        "assignedFromCardIds": ["card-main"],
+        "parentRunIds": [],
+        "childRunIds": [],
+        "usedTools": ["canvas.inspect"],
+        "nativeReferences": [{"authority": "KnowGraph", "nativeId": "episode:one"}],
+        "viewedNativeReferences": [],
+        "artifacts": [{
+            "artifactId": "artifact-one",
+            "artifactKind": "report",
+            "locator": "artifact://one",
+        }],
+    }]
+    assert result["legacyAssignment"] == {
+        "assignmentId": "retired-assignment",
+        "available": False,
+        "reason": "assignmentId is not a current AgentGraph identity; use runId",
+    }
+    assert all(params["projectId"] == "project-one" for _query, params in age_calls)
+    assert all(params["deckId"] == "deck-one" for _query, params in age_calls)
+    assert all(
+        keyword not in query.upper()
+        for query, _params in age_calls
+        for keyword in ("MERGE ", "CREATE ", "DELETE ", " SET ")
+    )
+
+
+def test_mag_one_instruction_idf_uses_only_canonical_persistence_and_never_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict]] = []
+    exact_idf = "exact inspector-visible IDF bytes"
+
+    def materialize(payload):
+        calls.append(("materialize", dict(payload)))
+        return {
+            "projectId": "project-one",
+            "deckId": "deck-one",
+            "cardRevisionId": "22222222-2222-4222-8222-222222222222",
+            "cardContext": {"cardId": "card-mag-one"},
+            "exactIdf": exact_idf,
+        }
+
+    def save(payload):
+        calls.append(("save", dict(payload)))
+        return {
+            "savedIdf": {
+                "idfId": "11111111-1111-4111-8111-111111111111",
+                "revision": 1,
+                "contentMarkdown": exact_idf,
+            },
+            "inspection": {"assignment": "proposed mission", "runtimeOwner": "mag_one"},
+        }
+
+    monkeypatch.setattr(card_domain, "materialize_magentic_invocation", materialize)
+    monkeypatch.setattr(card_domain, "save_idf_revision", save)
+
+    result = card_domain.save_magentic_instructions({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "senderCardId": "card-main",
+        "instructions": "proposed mission",
+    })
+
+    assert result["idfId"] == "11111111-1111-4111-8111-111111111111"
+    assert result["started"] is False
+    assert calls[0] == (
+        "materialize",
+        {
+            "projectId": "project-one",
+            "deckId": "deck-one",
+            "senderCardId": "card-main",
+            "assignment": "proposed mission",
+        },
+    )
+    assert calls[1][0] == "save"
+    assert calls[1][1]["exactIdf"] == exact_idf
+    assert calls[1][1]["provenanceKind"] == "agent"
+    assert "runId" not in calls[1][1]
+
+
+def test_run_mag_one_saved_idf_is_revalidated_without_changing_exact_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exact_idf = "exact inspector-visible IDF bytes"
+    captured: list[dict] = []
+    monkeypatch.setattr(
+        card_domain,
+        "load_saved_idf_revision",
+        lambda *_args: {
+            "savedIdf": {
+                "idfId": "11111111-1111-4111-8111-111111111111",
+                "revision": 1,
+                "projectId": "project-one",
+                "deckId": "deck-one",
+                "targetCardId": "card-mag-one",
+                "targetCardRevisionId": "22222222-2222-4222-8222-222222222222",
+                "contentMarkdown": exact_idf,
+            },
+            "inspection": {"assignment": "proposed mission", "runtimeOwner": "mag_one"},
+        },
+    )
+
+    def validate(payload):
+        captured.append(dict(payload))
+        return {
+            "projectId": "project-one",
+            "deckId": "deck-one",
+            "assignment": "proposed mission",
+            "exactIdf": payload["exactIdf"],
+            "cardRevisionId": payload["cardRevisionId"],
+            "cardContext": {"cardId": "card-mag-one"},
+        }
+
+    monkeypatch.setattr(card_domain, "validate_exact_invocation", validate)
+    prepared = card_domain.load_magentic_saved_invocation({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "senderCardId": "card-main",
+        "idfId": "11111111-1111-4111-8111-111111111111",
+    })
+
+    assert captured[0]["senderCardId"] == "card-main"
+    assert captured[0]["exactIdf"] == exact_idf
+    assert prepared["exactIdf"] == exact_idf
+    assert prepared["savedIdf"]["idfId"] == "11111111-1111-4111-8111-111111111111"

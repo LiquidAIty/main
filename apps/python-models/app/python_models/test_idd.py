@@ -190,6 +190,13 @@ def test_live_mcp_contract_is_ingested_into_the_one_permanent_idd_vocabulary() -
 
 
 def test_explicit_tool_permissions_come_from_the_idd() -> None:
+    dictionary = load_input_data_dictionary()
+    tool_names = {
+        tool["name"]
+        for group in dictionary["toolGroups"]
+        for tool in group["tools"]
+    }
+    assert {"agentgraph.inspect", "write_mag_one_instructions"}.issubset(tool_names)
     assert required_tool_caller_runtime_binding("run_mag_one") == "main_chat"
     assert required_tool_caller_runtime_binding("write_mag_one_instructions") is None
     assert required_tool_caller_runtime_binding("cbm.search_graph") is None

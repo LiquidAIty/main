@@ -144,6 +144,13 @@ parameters = []
 required = []
 
 [[toolGroups.tools]]
+name = "agentgraph.inspect"
+displayName = "Inspect AgentGraph"
+description = "Read bounded Project-scoped Card relationships and available AGE run, attention, lineage, tool, and artifact telemetry."
+parameters = ["projectId", "deckId", "conversationId", "runId", "assignmentId", "limit", "projectWide"]
+required = []
+
+[[toolGroups.tools]]
 name = "coder.status"
 displayName = "Coder status"
 description = "Read the canonical OpenClaude Coder process state."
@@ -160,10 +167,17 @@ required = ["projectId"]
 [[toolGroups.tools]]
 name = "run_mag_one"
 displayName = "Run Magentic-One"
-description = "Materialize one transient mission for the AGE-connected Mag One Card and invoke its native runtime."
-parameters = ["projectId", "deckId", "instructions", "conversationId"]
-required = ["instructions", "projectId", "deckId"]
+description = "Load one canonical saved Mag One IDF and invoke its native runtime after current authority validation."
+parameters = ["projectId", "deckId", "idfId", "conversationId"]
+required = ["idfId", "projectId", "deckId"]
 requiredCallerRuntimeBinding = "main_chat"
+
+[[toolGroups.tools]]
+name = "write_mag_one_instructions"
+displayName = "Write Mag One instructions"
+description = "Persist exact proposed Mag One instructions as one canonical saved IDF without starting a runtime."
+parameters = ["projectId", "deckId", "conversationId", "instructions"]
+required = ["instructions"]
 
 [[toolGroups.tools]]
 name = "canvas.inspect"

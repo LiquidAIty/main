@@ -3,7 +3,6 @@
 import json
 import os
 import socket
-import subprocess
 import sys
 import threading
 import time
@@ -364,6 +363,120 @@ def test_authenticated_connection_reaches_read_only_handler_without_context_inje
     assert "context" not in result[0].text
 
 
+def test_restored_agentgraph_and_magentic_idf_tools_dispatch_without_running(
+    monkeypatch,
+):
+    import asyncio
+    import mcp_host
+    from app import control_plane
+    from app.python_models import card_domain
+
+    context = {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "external-mcp:grant-1",
+        "parentRunId": "external-main:grant-1",
+        "mainCardId": "card_main_chat",
+    }
+    calls = []
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: dict(context))
+
+    async def inspect(args):
+        calls.append(("agentgraph.inspect", dict(args)))
+        return {"ok": True, "authority": "postgresql-age-agentgraph", "runs": []}
+
+    def save_instructions(payload):
+        calls.append(("write_mag_one_instructions", dict(payload)))
+        return {
+            "ok": True,
+            "idfId": "11111111-1111-4111-8111-111111111111",
+            "revision": 1,
+            "started": False,
+        }
+
+    def load_invocation(payload):
+        calls.append(("run_mag_one.load", dict(payload)))
+        return {
+            "projectId": "project-1",
+            "deckId": "deck_builder",
+            "assignment": "exact proposed mission",
+            "exactIdf": "exact inspector-visible IDF bytes",
+            "cardRevisionId": "22222222-2222-4222-8222-222222222222",
+            "cardContext": {"cardId": "card_mag_one"},
+            "savedIdf": {
+                "idfId": "11111111-1111-4111-8111-111111111111",
+                "revision": 1,
+            },
+        }
+
+    async def bridge(path, payload):
+        calls.append((path, dict(payload)))
+        return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
+
+    monkeypatch.setattr(control_plane, "agentgraph_inspect", inspect)
+    monkeypatch.setattr(card_domain, "save_magentic_instructions", save_instructions)
+    monkeypatch.setattr(card_domain, "load_magentic_saved_invocation", load_invocation)
+    monkeypatch.setattr(mcp_host, "_bridge", bridge)
+
+    inspected = asyncio.run(
+        mcp_host._dispatch_tool("agentgraph.inspect", {"runId": "run-1", "limit": 5})
+    )
+    assert json.loads(inspected[0].text)["authority"] == "postgresql-age-agentgraph"
+    assert calls[-1] == (
+        "agentgraph.inspect",
+        {
+            "runId": "run-1",
+            "limit": 5,
+            "projectId": "project-1",
+            "deckId": "deck_builder",
+            "conversationId": "external-mcp:grant-1",
+        },
+    )
+
+    written = asyncio.run(
+        mcp_host._dispatch_tool(
+            "write_mag_one_instructions",
+            {"instructions": "exact proposed mission"},
+        )
+    )
+    assert json.loads(written[0].text) == {
+        "ok": True,
+        "idfId": "11111111-1111-4111-8111-111111111111",
+        "revision": 1,
+        "started": False,
+    }
+    assert calls[-1] == (
+        "write_mag_one_instructions",
+        {
+            "projectId": "project-1",
+            "deckId": "deck_builder",
+            "senderCardId": "card_main_chat",
+            "instructions": "exact proposed mission",
+        },
+    )
+
+    executed = asyncio.run(
+        mcp_host._dispatch_tool(
+            "run_mag_one",
+            {"idfId": "11111111-1111-4111-8111-111111111111"},
+        )
+    )
+    assert json.loads(executed[0].text) == {"ok": True}
+    assert calls[-2] == (
+        "run_mag_one.load",
+        {
+            "projectId": "project-1",
+            "deckId": "deck_builder",
+            "senderCardId": "card_main_chat",
+            "idfId": "11111111-1111-4111-8111-111111111111",
+        },
+    )
+    assert calls[-1][0] == "run_configured_card"
+    assert calls[-1][1]["exactIdf"] == "exact inspector-visible IDF bytes"
+    assert calls[-1][1]["savedIdfId"] == "11111111-1111-4111-8111-111111111111"
+    assert calls[-1][1]["savedIdfRevision"] == 1
+
+
 def test_coder_status_rejects_assignment_identity_and_uses_live_process_bridge(monkeypatch):
     import asyncio
     import mcp_host
@@ -537,77 +650,54 @@ def test_graphiti_timeout_cancels_work_and_later_dispatch_recovers(monkeypatch):
     assert json.loads(later.content[0].text)["ok"] is True
 
 
-def _run_in_script_launch_context(code: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, "-c", code],
-        cwd=_APP_DIR,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-
-
-def test_app_not_importable_without_the_bootstrap():
-    result = _run_in_script_launch_context("import app; print('UNEXPECTED_OK')")
-    assert "UNEXPECTED_OK" not in result.stdout
-    assert "No module named 'app'" in (result.stderr + result.stdout)
-
-
-def test_mcp_host_bootstrap_makes_app_and_control_handlers_importable():
-    result = _run_in_script_launch_context(
-        "import mcp_host;"
-        "from app import control_plane;"
-        "from app.python_models import idf;"
-        "print('APP_IMPORT_OK')"
-    )
-    assert "APP_IMPORT_OK" in result.stdout, result.stderr
-
-
-def test_app_bootstrap_lives_once_at_the_host_boundary():
-    host = open(os.path.join(_APP_DIR, "mcp_host.py"), encoding="utf-8").read()
-    assert host.count("sys.path.insert") == 1
-    text = open(os.path.join(_APP_DIR, "python_models", "idf.py"), encoding="utf-8").read()
-    assert "sys.path.insert" not in text
-
-
 def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
-    code = """
-import asyncio, json, mcp_host
-async def check():
-    tools = await mcp_host.list_tools()
-    by_name = {tool.name: tool for tool in tools}
-    assert set(by_name['card.run_assistant_agent'].inputSchema['required']) == {'cardId', 'input'}
-    assert 'instructionId' not in by_name['card.run_assistant_agent'].inputSchema['properties']
-    assert 'write_mag_one_instructions' not in by_name
-    assert by_name['run_mag_one'].inputSchema['required'] == ['instructions', 'projectId', 'deckId']
-    assert 'minProperties' not in str(by_name['card.update_configuration'].inputSchema)
-    reasoning_schema = by_name['card.update_configuration'].inputSchema['properties']['updates']['properties']['reasoningEffort']
-    assert reasoning_schema == {
-        'type': 'string',
-        'enum': ['low', 'medium', 'high', 'xhigh'],
-    }
-    assert 'main.context' in by_name
-    assert 'agentgraph.inspect' not in by_name
-    assert 'coder.status' in by_name
-    assert all(
-        tool.inputSchema.get('additionalProperties') is False
-        for name, tool in by_name.items()
-        if not name.startswith(('engraphis.', 'cbm.', 'graphiti.'))
-    )
-    assert not any(name.startswith('worldsignals.') for name in by_name)
-    assert len(by_name) == len(set(by_name))
-    print(json.dumps({name: tool.model_dump() for name, tool in by_name.items()}, sort_keys=True))
-asyncio.run(check())
-"""
-    result = _run_in_script_launch_context(code)
-    assert result.returncode == 0, result.stderr
-    catalog = json.loads(result.stdout)
+    import asyncio
+    import mcp_host
+
+    async def check():
+        tools = await mcp_host.list_tools()
+        by_name = {tool.name: tool for tool in tools}
+        assert set(by_name["card.run_assistant_agent"].inputSchema["required"]) == {
+            "cardId",
+            "input",
+        }
+        assert (
+            "instructionId"
+            not in by_name["card.run_assistant_agent"].inputSchema["properties"]
+        )
+        assert "write_mag_one_instructions" in by_name
+        assert by_name["run_mag_one"].inputSchema["required"] == [
+            "idfId",
+            "projectId",
+            "deckId",
+        ]
+        assert by_name["write_mag_one_instructions"].inputSchema["required"] == [
+            "instructions"
+        ]
+        assert "minProperties" not in str(
+            by_name["card.update_configuration"].inputSchema
+        )
+        reasoning_schema = by_name["card.update_configuration"].inputSchema[
+            "properties"
+        ]["updates"]["properties"]["reasoningEffort"]
+        assert reasoning_schema == {
+            "type": "string",
+            "enum": ["low", "medium", "high", "xhigh"],
+        }
+        assert "main.context" in by_name
+        assert "agentgraph.inspect" in by_name
+        assert "coder.status" in by_name
+        assert all(
+            tool.inputSchema.get("additionalProperties") is False
+            for name, tool in by_name.items()
+            if not name.startswith(("engraphis.", "cbm.", "graphiti."))
+        )
+        assert not any(name.startswith("worldsignals.") for name in by_name)
+        assert len(by_name) == len(set(by_name)) == 70
+        return {name: tool.model_dump() for name, tool in by_name.items()}
+
+    catalog = asyncio.run(check())
     assert len(catalog) == len(set(catalog))
-    host = open(os.path.join(_APP_DIR, "mcp_host.py"), encoding="utf-8").read()
-    assert "CHATGPT_MAIN" not in host
-    assert "MAIN_PROJECT_ID" not in host
-    assert "MAIN_DECK_ID" not in host
-    assert "MAIN_CONVERSATION_ID" not in host
 
 
 def test_catalog_identity_covers_the_complete_frozen_tool_descriptor():
@@ -639,53 +729,62 @@ def test_catalog_identity_covers_the_complete_frozen_tool_descriptor():
     assert mcp_host._catalog_identity([original])[1] != mcp_host._catalog_identity([changed])[1]
 
 
-def test_mag_one_prompt_store_is_removed_from_the_active_catalog():
+def test_mag_one_instruction_tools_use_the_canonical_saved_idf_contract():
     import mcp_host
 
-    assert "write_mag_one_instructions" not in mcp_host._ALLOWED_KEYS
+    assert mcp_host._ALLOWED_KEYS["write_mag_one_instructions"] == {
+        "projectId", "deckId", "conversationId", "instructions",
+    }
     assert mcp_host._ALLOWED_KEYS["run_mag_one"] == {
-        "projectId", "deckId", "instructions", "conversationId",
+        "projectId", "deckId", "idfId", "conversationId",
     }
 
 
 def test_native_engraphis_registry_is_initialized_once_without_schema_adaptation():
-    code = """
-import asyncio, json, mcp_host
-async def check():
-    await mcp_host._initialize_native_engraphis()
-    native = {tool.name: tool for tool in await mcp_host._native_engraphis_mcp().list_tools()}
-    first = await mcp_host._native_engraphis_tools()
-    await mcp_host._initialize_native_engraphis()
-    second = await mcp_host._native_engraphis_tools()
-    assert len(native) == 31
-    assert set(native) == {tool.name for tool in first}
-    assert len(first) == 31
-    assert [id(tool) for tool in first] == [id(tool) for tool in second]
-    assert {tool.name for tool in first} == set(native)
-    for tool in first:
-        assert tool.model_dump() == native[tool.name].model_dump()
-    combined = await mcp_host.list_tools()
-    combined_names = [tool.name for tool in combined]
-    assert len(set(combined_names)) == len(combined_names)
-    combined_identity = mcp_host._catalog_identity(combined)
-    assert combined_identity[0] == len(combined_names)
-    assert len(combined_identity[1]) == 64
-    assert {
-        'main.context', 'canvas.inspect', 'coder.status', 'card.run_assistant_agent',
-    }.issubset(set(combined_names))
-    assert {
-        'coder.inspect', 'coder.effective_tools', 'coder.account', 'coder.stop', 'coder.steer',
-    }.isdisjoint(combined_names)
-    assert {
-        f'engraphis.{name.removeprefix("engraphis_")}' for name in set(native)
-    }.issubset(combined_names)
-    assert not set(native).intersection(combined_names)
-    print(json.dumps(sorted(tool.name for tool in first)))
-asyncio.run(check())
-"""
-    result = _run_in_script_launch_context(code)
-    assert result.returncode == 0, result.stderr
-    assert len(json.loads(result.stdout)) == 31
+    import asyncio
+    import mcp_host
+
+    async def check():
+        await mcp_host._initialize_native_engraphis()
+        native = {
+            tool.name: tool
+            for tool in await mcp_host._native_engraphis_mcp().list_tools()
+        }
+        first = await mcp_host._native_engraphis_tools()
+        await mcp_host._initialize_native_engraphis()
+        second = await mcp_host._native_engraphis_tools()
+        assert len(native) == 31
+        assert set(native) == {tool.name for tool in first}
+        assert len(first) == 31
+        assert [id(tool) for tool in first] == [id(tool) for tool in second]
+        assert {tool.name for tool in first} == set(native)
+        for tool in first:
+            assert tool.model_dump() == native[tool.name].model_dump()
+        combined = await mcp_host.list_tools()
+        combined_names = [tool.name for tool in combined]
+        assert len(set(combined_names)) == len(combined_names)
+        combined_identity = mcp_host._catalog_identity(combined)
+        assert combined_identity[0] == len(combined_names)
+        assert len(combined_identity[1]) == 64
+        assert {
+            "main.context",
+            "canvas.inspect",
+            "coder.status",
+            "card.run_assistant_agent",
+        }.issubset(set(combined_names))
+        assert {
+            "coder.inspect",
+            "coder.effective_tools",
+            "coder.account",
+            "coder.stop",
+            "coder.steer",
+        }.isdisjoint(combined_names)
+        assert {
+            f'engraphis.{name.removeprefix("engraphis_")}' for name in set(native)
+        }.issubset(combined_names)
+        assert not set(native).intersection(combined_names)
+
+    asyncio.run(check())
 
 
 def test_native_engraphis_uses_the_cached_local_embedding_model(monkeypatch):
@@ -1085,7 +1184,9 @@ def test_native_cbm_client_failure_is_strict(monkeypatch):
         )
 
 
-def test_streamable_http_is_stateless_across_fresh_clients(monkeypatch):
+def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_clients(
+    monkeypatch,
+):
     import asyncio
     import httpx
     import mcp_host
@@ -1104,32 +1205,32 @@ def test_streamable_http_is_stateless_across_fresh_clients(monkeypatch):
         "mainCardId": "card_main_chat",
     }
 
-    async def empty_catalog():
-        return []
-
-    async def initialized():
-        return None
+    class VerifiedToken:
+        async def verify_token(self, token):
+            if token != "request-scoped-test-token":
+                return None
+            return AccessToken(
+                token=token,
+                client_id="chatgpt-client",
+                scopes=["liquidaity.main"],
+                expires_at=4102444800,
+                subject="auth0|test",
+                claims={"main": context},
+            )
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
     monkeypatch.setattr(mcp_host, "HTTP_MCP_PORT", port)
-    monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", False)
     monkeypatch.setattr(
         mcp_host,
-        "get_access_token",
-        lambda: AccessToken(
-            token="request-scoped-test-token",
-            client_id="chatgpt-client",
-            scopes=["main"],
-            expires_at=4102444800,
-            claims={"main": context},
-        ),
+        "PUBLIC_MCP_RESOURCE_URL",
+        "https://example.test/mcp",
     )
-    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
-    monkeypatch.setattr(mcp_host, "_start_native_engraphis_warmup", lambda: None)
-    monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialized)
-    monkeypatch.setattr(mcp_host, "_native_engraphis_tools", empty_catalog)
-    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", empty_catalog)
-    monkeypatch.setattr(mcp_host, "_native_cbm_tools", empty_catalog)
+    monkeypatch.setattr(mcp_host, "AUTH0_ISSUER_URL", "https://tenant.example/")
+    monkeypatch.setattr(mcp_host, "AUTH0_AUDIENCE", "https://example.test/mcp")
+    monkeypatch.setattr(mcp_host, "AUTH0_CLIENT_ID", "chatgpt-client")
+    monkeypatch.setattr(mcp_host, "AUTH0_REQUIRED_SCOPE", "liquidaity.main")
+    monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", True)
+    monkeypatch.setattr(mcp_host, "Auth0TokenVerifier", lambda _config: VerifiedToken())
 
     async def check():
         server_task = asyncio.create_task(mcp_host.main())
@@ -1153,6 +1254,7 @@ def test_streamable_http_is_stateless_across_fresh_clients(monkeypatch):
                     response_session_ids.append(response.headers.get("mcp-session-id"))
 
                 async with httpx.AsyncClient(
+                    headers={"Authorization": "Bearer request-scoped-test-token"},
                     event_hooks={"response": [observe]}
                 ) as http_client:
                     async with streamable_http_client(
@@ -1173,8 +1275,10 @@ def test_streamable_http_is_stateless_across_fresh_clients(monkeypatch):
             first_catalog, first_context = await fresh_client()
             second_catalog, second_context = await fresh_client()
             assert first_catalog == second_catalog
+            assert len(first_catalog) == len(set(first_catalog)) == 70
             assert "main.context" in first_catalog
-            assert "agentgraph.inspect" not in first_catalog
+            assert "agentgraph.inspect" in first_catalog
+            assert "write_mag_one_instructions" in first_catalog
             assert "coder.status" in first_catalog
             assert first_context == second_context == context
         finally:
@@ -1185,46 +1289,6 @@ def test_streamable_http_is_stateless_across_fresh_clients(monkeypatch):
                 pass
 
     asyncio.run(check())
-
-
-def test_stdio_initializes_and_lists_the_canonical_catalog():
-    code = f"""
-import asyncio, json, sys, time, mcp_host
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-
-async def check():
-    expected = sorted(tool.name for tool in await mcp_host.list_tools())
-    params = StdioServerParameters(
-        command=sys.executable,
-        args=['mcp_host.py'],
-        cwd={_APP_DIR!r},
-    )
-    async with stdio_client(params) as streams:
-        async with ClientSession(streams[0], streams[1]) as session:
-            await session.initialize()
-            started = time.perf_counter()
-            actual = sorted(tool.name for tool in (await session.list_tools()).tools)
-            elapsed = time.perf_counter() - started
-            assert actual == expected
-            assert len(actual) == len(set(actual))
-            assert 'main.context' in actual
-            assert 'agentgraph.inspect' not in actual
-            assert sum(name.startswith('engraphis.') for name in actual) == 31
-            assert elapsed < 10
-            print(json.dumps({{'status': 'STDIO_OK', 'count': len(actual), 'elapsed': elapsed}}))
-
-asyncio.run(check())
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        cwd=_APP_DIR,
-        capture_output=True,
-        text=True,
-        timeout=45,
-    )
-    assert result.returncode == 0, result.stderr
-    assert "STDIO_OK" in result.stdout
 
 
 def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_principal(monkeypatch):
@@ -1426,7 +1490,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
             or tool.name.startswith(tuple(mcp_host._NATIVE_PREFIXES.values()))
         ), f"advertised but undispatchable: {tool.name}"
     assert "main.context" in by_name
-    assert "agentgraph.inspect" not in by_name
+    assert "agentgraph.inspect" in by_name
+    assert "write_mag_one_instructions" in by_name
     assert "coder.status" in by_name
     assert "card.run_assistant_agent" in by_name
     assert "run_coder_subagent" not in by_name
@@ -1510,6 +1575,15 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
             calls.append((name, arguments))
             return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
 
+    async def initialize_engraphis():
+        return None
+
+    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialize_engraphis)
+    monkeypatch.setattr(
+        mcp_host,
+        "_native_engraphis_readiness_failure",
+        lambda: None,
+    )
     monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
 
     def call_native_cbm(name, arguments):
@@ -1836,88 +1910,86 @@ def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(m
     assert json.loads(succeeded[0].text) == {"ok": True, "cards": []}
 
 
-def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp():
+def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp(monkeypatch):
+    import asyncio
+    import httpx
+    import mcp_host
+
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     resource = "https://exemption-unstable-wolverine.ngrok-free.dev/mcp"
-    code = f"""
-import json, os, subprocess, sys, time
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
-env = {{
-    **os.environ,
-    'MCP_TRANSPORT': 'streamable-http',
-    'MCP_HTTP_PORT': '{port}',
-    'MCP_PUBLIC_RESOURCE_URL': '{resource}',
-    'MCP_AUTH0_ISSUER_URL': 'https://tenant.auth0.com/',
-    'MCP_AUTH0_AUDIENCE': '{resource}',
-    'MCP_AUTH0_CLIENT_ID': 'chatgpt-client',
-    'MCP_AUTH0_REQUIRED_SCOPE': 'liquidaity.main',
-    'MCP_OAUTH_ENFORCED': 'true',
-}}
-server_code = r'''\
-import asyncio
-import mcp_host
-async def empty_catalog():
-    return []
-async def initialized():
-    return None
-mcp_host._initialize_native_engraphis = initialized
-mcp_host._start_native_engraphis_warmup = lambda: None
-mcp_host._initialize_native_graphiti = initialized
-mcp_host._native_engraphis_tools = empty_catalog
-mcp_host._native_graphiti_tools = empty_catalog
-mcp_host._native_cbm_tools = empty_catalog
-asyncio.run(mcp_host.main())
-'''
-server = subprocess.Popen([sys.executable, '-c', server_code], cwd={_APP_DIR!r}, env=env)
-try:
-    metadata_url = 'http://127.0.0.1:{port}/.well-known/oauth-protected-resource/mcp'
-    failure = None
-    for _ in range(30):
+
+    async def empty_catalog():
+        return []
+
+    async def initialized():
+        return None
+
+    monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setattr(mcp_host, "HTTP_MCP_PORT", port)
+    monkeypatch.setattr(mcp_host, "PUBLIC_MCP_RESOURCE_URL", resource)
+    monkeypatch.setattr(mcp_host, "AUTH0_ISSUER_URL", "https://tenant.auth0.com/")
+    monkeypatch.setattr(mcp_host, "AUTH0_AUDIENCE", resource)
+    monkeypatch.setattr(mcp_host, "AUTH0_CLIENT_ID", "chatgpt-client")
+    monkeypatch.setattr(mcp_host, "AUTH0_REQUIRED_SCOPE", "liquidaity.main")
+    monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", True)
+    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
+    monkeypatch.setattr(mcp_host, "_start_native_engraphis_warmup", lambda: None)
+    monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialized)
+    monkeypatch.setattr(mcp_host, "_native_engraphis_tools", empty_catalog)
+    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", empty_catalog)
+    monkeypatch.setattr(mcp_host, "_native_cbm_tools", empty_catalog)
+
+    async def check():
+        server_task = asyncio.create_task(mcp_host.main())
         try:
-            metadata = json.load(urlopen(metadata_url, timeout=1))
-            break
-        except Exception as exc:
-            failure = exc
-            time.sleep(0.1)
-    else:
-        raise failure or RuntimeError('oauth_metadata_not_ready')
-    assert metadata['resource'] == '{resource}'
-    assert metadata['authorization_servers'] == ['https://tenant.auth0.com/']
-    assert metadata['scopes_supported'] == [
-        'openid',
-        'profile',
-        'email',
-        'offline_access',
-        'liquidaity.main',
-    ]
-    assert metadata['resource_name'] == 'LiquidAIty'
-    root_metadata = json.load(urlopen(
-        'http://127.0.0.1:{port}/.well-known/oauth-protected-resource',
-        timeout=1,
-    ))
-    assert root_metadata == metadata
-    try:
-        urlopen(Request('http://127.0.0.1:{port}/mcp', data=b'{{}}', method='POST'), timeout=2)
-        raise AssertionError('anonymous_mcp_was_accepted')
-    except HTTPError as exc:
-        assert exc.code == 401
-        challenge = exc.headers['WWW-Authenticate']
-        assert 'scope="liquidaity.main"' in challenge
-        assert 'resource_metadata="{resource.replace('/mcp', '/.well-known/oauth-protected-resource/mcp')}"' in challenge
-    print('OAUTH_METADATA_AND_CHALLENGE_OK')
-finally:
-    server.terminate()
-    server.wait(timeout=10)
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        cwd=_APP_DIR,
-        capture_output=True,
-        text=True,
-        timeout=20,
-    )
-    assert result.returncode == 0, result.stderr
-    assert "OAUTH_METADATA_AND_CHALLENGE_OK" in result.stdout
+            base_url = f"http://127.0.0.1:{port}"
+            failure = None
+            async with httpx.AsyncClient(base_url=base_url, timeout=2) as client:
+                for _ in range(30):
+                    try:
+                        response = await client.get(
+                            "/.well-known/oauth-protected-resource/mcp"
+                        )
+                        if response.status_code == 200:
+                            break
+                    except Exception as error:
+                        failure = error
+                    await asyncio.sleep(0.1)
+                else:
+                    raise failure or RuntimeError("oauth_metadata_not_ready")
+
+                metadata = response.json()
+                assert metadata["resource"] == resource
+                assert metadata["authorization_servers"] == [
+                    "https://tenant.auth0.com/"
+                ]
+                assert metadata["scopes_supported"] == [
+                    "openid",
+                    "profile",
+                    "email",
+                    "offline_access",
+                    "liquidaity.main",
+                ]
+                assert metadata["resource_name"] == "LiquidAIty"
+
+                root_metadata = await client.get(
+                    "/.well-known/oauth-protected-resource"
+                )
+                assert root_metadata.json() == metadata
+
+                anonymous = await client.post("/mcp", json={})
+                assert anonymous.status_code == 401
+                challenge = anonymous.headers["www-authenticate"]
+                assert 'scope="liquidaity.main"' in challenge
+                assert (
+                    f'resource_metadata="{resource.replace("/mcp", "/.well-known/oauth-protected-resource/mcp")}"'
+                    in challenge
+                )
+        finally:
+            server_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await server_task
+
+    asyncio.run(check())

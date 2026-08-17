@@ -1552,6 +1552,31 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
+            name="agentgraph.inspect",
+            description=(
+                "Read a bounded, authenticated Project-scoped view of current PostgreSQL/AGE "
+                "Card relationships plus available run, native-reference attention, lineage, "
+                "tool, and artifact telemetry. runId selects one current Run. The retired "
+                "assignmentId field is accepted only to report honestly that it is no longer "
+                "a current AgentGraph identity. No prompt or raw IDF is returned."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "runId": {"type": "string"},
+                    "assignmentId": {"type": "string"},
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50,
+                        "default": 20,
+                    },
+                    "projectWide": {"type": "boolean", "default": False},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
             name="coder.status",
             description=(
                 "Read the canonical OpenClaude Coder session/process state. Reports running only "
@@ -1581,8 +1606,10 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="run_mag_one",
             description=(
-                "Main Chat only: materialize one transient mission for the AGE-connected "
-                "Magentic-One Card and invoke native MagenticOneGroupChat. "
+                "Main Chat only: submit one existing canonical saved IDF identity for the "
+                "AGE-connected Magentic-One Card and invoke native MagenticOneGroupChat. "
+                "The saved exact IDF is reloaded and revalidated against current Card revision "
+                "and magentic_control authority before execution. "
                 "The backend resolves the live worker roster from blue SIDE connections; never type "
                 "a roster. Execute only on an explicit user request — Hermes never launches Mag One."
             ),
@@ -1591,10 +1618,26 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "projectId": {"type": "string"},
                     "deckId": {"type": "string"},
-                    "instructions": {"type": "string"},
+                    "idfId": {"type": "string"},
                     "conversationId": {"type": "string"},
                 },
-                "required": ["instructions", "projectId", "deckId"],
+                "required": ["idfId", "projectId", "deckId"],
+            },
+        ),
+        Tool(
+            name="write_mag_one_instructions",
+            description=(
+                "Persist the exact proposed Mag One instructions through the canonical saved-IDF "
+                "owner for Main review. Returns a stable idfId for a later run_mag_one call and "
+                "never starts Mag One or any other runtime."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "instructions": {"type": "string"},
+                },
+                "required": ["instructions"],
+                "additionalProperties": False,
             },
         ),
         Tool(
@@ -1872,9 +1915,24 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
     "main.context": set(),
+    "agentgraph.inspect": {
+        "projectId",
+        "deckId",
+        "conversationId",
+        "runId",
+        "assignmentId",
+        "limit",
+        "projectWide",
+    },
     "coder.status": set(),
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
-    "run_mag_one": {"projectId", "deckId", "instructions", "conversationId"},
+    "run_mag_one": {"projectId", "deckId", "idfId", "conversationId"},
+    "write_mag_one_instructions": {
+        "projectId",
+        "deckId",
+        "conversationId",
+        "instructions",
+    },
     "canvas.inspect": {"projectId", "deckId"},
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
@@ -1899,6 +1957,7 @@ _BRIDGE_PATHS: dict[str, str] = {
 # Control tools dispatch to the Python control-plane handlers (app/control_plane.py).
 # Imported lazily so bridge-only usage never requires the psycopg dependency chain.
 _CONTROL_HANDLER_NAMES: dict[str, str] = {
+    "agentgraph.inspect": "agentgraph_inspect",
     "canvas.inspect": "canvas_inspect",
     "card.update_configuration": "card_update_configuration",
     "canvas.upsert_wire": "canvas_upsert_wire",
@@ -2026,6 +2085,8 @@ async def _dispatch_tool(
                 text=json.dumps({"ok": False, "error": caller_error}),
             )
         ]
+    if not caller_card_id and context is not None:
+        caller_card_id = str(context.get("mainCardId") or "").strip()
     extra = [k for k in args.keys() if k not in allowed]
     if extra:
         return [
@@ -2037,35 +2098,56 @@ async def _dispatch_tool(
     if name == "run_mag_one":
         from app.python_models.card_domain import (
             CardDomainError,
-            materialize_magentic_invocation,
+            load_magentic_saved_invocation,
         )
 
         try:
-            instructions = str(args.get("instructions") or "").strip()
-            preview = await asyncio.to_thread(
-                materialize_magentic_invocation,
+            prepared = await asyncio.to_thread(
+                load_magentic_saved_invocation,
                 {
                     "projectId": str(args.get("projectId") or ""),
                     "deckId": str(args.get("deckId") or ""),
                     "senderCardId": caller_card_id,
-                    "assignment": instructions,
+                    "idfId": str(args.get("idfId") or ""),
                 },
             )
+            saved_idf = prepared["savedIdf"]
             return await _bridge(
                 "run_configured_card",
                 {
                     "action": "execute",
-                    "projectId": preview["projectId"],
-                    "deckId": preview["deckId"],
-                    "cardId": preview["cardContext"]["cardId"],
+                    "projectId": prepared["projectId"],
+                    "deckId": prepared["deckId"],
+                    "cardId": prepared["cardContext"]["cardId"],
                     "senderCardId": caller_card_id,
                     "correlationId": f"mag_one:{uuid4()}",
                     "conversationId": str(args.get("conversationId") or "main"),
-                    "input": instructions,
-                    "exactIdf": preview["exactIdf"],
-                    "cardRevisionId": preview["cardRevisionId"],
+                    "input": prepared["assignment"],
+                    "exactIdf": prepared["exactIdf"],
+                    "cardRevisionId": prepared["cardRevisionId"],
+                    "savedIdfId": saved_idf["idfId"],
+                    "savedIdfRevision": saved_idf["revision"],
                 },
             )
+        except CardDomainError as err:
+            return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
+    if name == "write_mag_one_instructions":
+        from app.python_models.card_domain import (
+            CardDomainError,
+            save_magentic_instructions,
+        )
+
+        try:
+            saved = await asyncio.to_thread(
+                save_magentic_instructions,
+                {
+                    "projectId": str(args.get("projectId") or ""),
+                    "deckId": str(args.get("deckId") or ""),
+                    "senderCardId": caller_card_id,
+                    "instructions": str(args.get("instructions") or ""),
+                },
+            )
+            return [TextContent(type="text", text=json.dumps(saved))]
         except CardDomainError as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
     if name == "main.context":
