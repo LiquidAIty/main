@@ -713,7 +713,10 @@ class HermesACPAgent(acp.Agent):
 
         request_params: dict[str, Any]
         if method == "account/read":
-            request_params = {"refreshToken": False}
+            refresh_token = params.get("refreshToken", True)
+            if not isinstance(refresh_token, bool):
+                raise ValueError("codex_account_refresh_token_flag_invalid")
+            request_params = {"refreshToken": refresh_token}
         elif method == "account/login/start":
             login_type = str(params.get("type") or "").strip()
             if login_type not in {"chatgpt", "chatgptDeviceCode"}:

@@ -140,6 +140,40 @@ def test_no_flow_edge_materializes_no_delegation_transport(
     assert preview["cardContext"]["directSubagents"] == []
 
 
+def test_magentic_card_may_invoke_only_a_saved_magentic_option_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mag_one = _agent("mag-one", runtimeType="magentic_one", runtimeBinding="magentic_one")
+    worker = _agent("worker", runtimeBinding="local_coder")
+    for number, card in enumerate((mag_one, worker), start=1):
+        card["_cardRevisionId"] = f"revision-{number}"
+        card["_cardRevision"] = 1
+        card["_cardRevisionSha256"] = f"sha-{number}"
+    loaded = {
+        "projectId": "00000000-0000-0000-0000-000000000001",
+        "deck": {
+            "nodes": [mag_one, worker],
+            "edges": [{
+                "source": "worker",
+                "target": "mag-one",
+                "edgeType": "magentic_option",
+            }],
+        },
+    }
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: loaded)
+    payload = {
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardId": "worker",
+        "senderCardId": "mag-one",
+        "assignment": "bounded worker task",
+    }
+    assert card_domain.materialize_invocation(payload)["runtimeOwner"] == "coder"
+    loaded["deck"]["edges"] = []
+    with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
+        card_domain.materialize_invocation(payload)
+
+
 def test_disabled_flow_edge_materializes_no_delegation_transport(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

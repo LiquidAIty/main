@@ -95,7 +95,7 @@ async def test_codex_account_extension_uses_official_transport_without_starting_
     )
     client.request.assert_called_once_with(
         "account/read",
-        {"refreshToken": False},
+        {"refreshToken": True},
         timeout=15,
     )
     assert response["result"]["account"]["type"] == "chatgpt"

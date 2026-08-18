@@ -1184,15 +1184,31 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         raise CardDomainError("card_disabled")
     sender_id = str(payload.get("senderCardId") or "").strip()
     if sender_id:
-        required_edge = "magentic_control" if card.get("runtimeType") == "magentic_one" else "flow"
-        authorized = any(
-            edge["source"] == sender_id
-            and edge["target"] == card_id
-            and edge["edgeType"] == required_edge
-            and edge.get("enabled") is not False
-            for edge in loaded["deck"]["edges"]
-        )
-        if sender_id not in cards or not authorized:
+        sender = cards.get(sender_id)
+        if card.get("runtimeType") == "magentic_one":
+            authorized = any(
+                edge["source"] == sender_id
+                and edge["target"] == card_id
+                and edge["edgeType"] == "magentic_control"
+                and edge.get("enabled") is not False
+                for edge in loaded["deck"]["edges"]
+            )
+        elif sender is not None and sender.get("runtimeType") == "magentic_one":
+            authorized = any(
+                edge["edgeType"] == "magentic_option"
+                and {edge["source"], edge["target"]} == {sender_id, card_id}
+                and edge.get("enabled") is not False
+                for edge in loaded["deck"]["edges"]
+            )
+        else:
+            authorized = any(
+                edge["source"] == sender_id
+                and edge["target"] == card_id
+                and edge["edgeType"] == "flow"
+                and edge.get("enabled") is not False
+                for edge in loaded["deck"]["edges"]
+            )
+        if sender is None or not authorized:
             raise CardDomainError("card_invocation_edge_authority_required")
     options = _json_object(card.get("runtimeOptions"), "runtime_options")
     ceiling = _string_list(options.get("tools"), "tools")
@@ -1857,12 +1873,16 @@ def _coder_transport(prepared: dict[str, Any], payload: dict[str, Any]) -> dict[
     coder_packet = {
             **packet,
             "projectId": prepared["projectId"],
+            "deckId": prepared.get("deckId"),
+            "conversationId": str(payload.get("conversationId") or "").strip() or None,
+            "parentRunId": str(payload.get("runId") or "").strip() or None,
             "exactIdf": prepared["exactIdf"],
             "modelProvider": context.get("provider"),
             "providerModelId": context.get("providerModelId") or context.get("modelKey"),
             "modelKey": context.get("modelKey"),
             "accessMode": context.get("accessMode"),
             "cardId": context.get("cardId"),
+            "runtimeBinding": context.get("runtimeBinding"),
             "cardTitle": context.get("title"),
             "cardPrompt": context.get("prompt") or "",
             "nativeTools": list(context.get("nativeTools") or []),

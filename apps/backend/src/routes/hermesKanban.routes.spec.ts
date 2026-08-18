@@ -8,17 +8,14 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 const execMocks = vi.hoisted(() => ({
   execFile: vi.fn(),
 }));
-const fsMocks = vi.hoisted(() => ({
-  mkdirSync: vi.fn(),
+const profileMemoryMocks = vi.hoisted(() => ({
+  ensureHermesHolographicMemoryProfile: vi.fn(),
 }));
 
 vi.mock('node:child_process', () => ({
   execFile: execMocks.execFile,
 }));
-vi.mock('node:fs', async () => {
-  const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
-  return { ...actual, mkdirSync: fsMocks.mkdirSync };
-});
+vi.mock('../hermes/profileMemory', () => profileMemoryMocks);
 
 import router from './hermesKanban.routes';
 import {
@@ -180,7 +177,7 @@ describe('hermesKanban helpers', () => {
 describe('saved-card native Hermes Kanban submission', () => {
   beforeEach(() => {
     execMocks.execFile.mockReset();
-    fsMocks.mkdirSync.mockReset();
+    profileMemoryMocks.ensureHermesHolographicMemoryProfile.mockReset();
   });
 
   it('creates under the stable card profile and returns the exact native task/run snapshot', async () => {
@@ -226,9 +223,9 @@ describe('saved-card native Hermes Kanban submission', () => {
       runId: 6,
       snapshot,
     });
-    expect(fsMocks.mkdirSync).toHaveBeenCalledWith(
-      expect.stringMatching(/[\\/]Hermes[\\/]\.hermes[\\/]profiles[\\/]card_hermes_steward$/i),
-      { recursive: true },
+    expect(profileMemoryMocks.ensureHermesHolographicMemoryProfile).toHaveBeenCalledWith(
+      expect.stringMatching(/[\\/]Hermes$/i),
+      'card_hermes_steward',
     );
     const [, createArgs] = execMocks.execFile.mock.calls[0];
     expect(createArgs).toEqual(expect.arrayContaining([

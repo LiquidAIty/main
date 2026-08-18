@@ -8,6 +8,9 @@ const coderWriteModeSchema = z.enum(['read-only', 'edit']);
 const coderPacketSchema = z.object({
   id: nonEmptyText,
   projectId: nonEmptyText,
+  deckId: nonEmptyText.optional(),
+  conversationId: nonEmptyText.optional(),
+  parentRunId: nonEmptyText.optional(),
   repoPath: nonEmptyText,
   objective: nonEmptyText,
   planExcerpt: nonEmptyText,
@@ -32,6 +35,7 @@ const coderPacketSchema = z.object({
   providerModelId: nonEmptyText.optional(),
   accessMode: z.enum(['coder-oauth', 'openai-api', 'openrouter-api']).optional(),
   cardId: nonEmptyText.optional(),
+  runtimeBinding: nonEmptyText.optional(),
   cardTitle: nonEmptyText.optional(),
   cardPrompt: z.string().optional(),
   cardProfile: nonEmptyText.optional(),

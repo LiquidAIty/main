@@ -334,7 +334,7 @@ class CodexAppServerSession:
             client_version=_get_hermes_version(),
         )
         account = self._client.request(
-            "account/read", {"refreshToken": False}, timeout=10
+            "account/read", {"refreshToken": True}, timeout=10
         )
         account_info = account.get("account") if isinstance(account, dict) else None
         self.auth_mode = (

@@ -116,6 +116,9 @@ AUTH0_CLIENT_ID = os.environ.get("MCP_AUTH0_CLIENT_ID", "").strip()
 AUTH0_REQUIRED_SCOPE = os.environ.get(
     "MCP_AUTH0_REQUIRED_SCOPE", "liquidaity.main"
 ).strip()
+INTERNAL_MCP_SECRET = os.environ.get("LIQUIDAITY_INTERNAL_MCP_SECRET", "").strip()
+INTERNAL_MCP_ISSUER = "liquidaity-runtime"
+INTERNAL_MCP_AUDIENCE = "liquidaity-internal-mcp"
 OAUTH_SCOPES = (
     "openid",
     "profile",
@@ -157,6 +160,9 @@ _MAIN_CONTEXT_FIELDS = frozenset(
     {"projectId", "deckId", "conversationId", "parentRunId", "mainCardId"}
 )
 _TRUSTED_STDIO_OPTIONAL_CONTEXT_FIELDS = frozenset({"callerRuntimeBinding"})
+_AUTHENTICATED_OPTIONAL_CONTEXT_FIELDS = frozenset(
+    {"callerRuntimeBinding", "principalKind", "grantedTools"}
+)
 
 
 def _configured_tool_allowlist() -> frozenset[str] | None:
@@ -587,10 +593,60 @@ def _authenticated_main_context() -> dict[str, Any] | None:
     if expires_at is not None and float(expires_at) <= time.time():
         return None
     claims = getattr(access_token, "claims", None)
-    context = claims.get("main") if isinstance(claims, dict) else None
+    internal = claims.get("internal") if isinstance(claims, dict) else None
+    if isinstance(internal, dict) and internal.get("kind") in {"card-runtime", "system-root"}:
+        context = {
+            "projectId": internal.get("projectId"),
+            "deckId": internal.get("deckId"),
+            "conversationId": internal.get("conversationId"),
+            "parentRunId": internal.get("parentRunId"),
+            "mainCardId": internal.get("callerCardId"),
+            "callerRuntimeBinding": internal.get("callerRuntimeBinding"),
+            "principalKind": internal.get("kind"),
+            "grantedTools": internal.get("grantedTools", []),
+        }
+    else:
+        context = claims.get("main") if isinstance(claims, dict) else None
     if not isinstance(context, dict) or not _MAIN_CONTEXT_FIELDS.issubset(context):
         return None
-    return {field: str(context[field]) for field in _MAIN_CONTEXT_FIELDS}
+    resolved: dict[str, Any] = {
+        field: str(context[field]) for field in _MAIN_CONTEXT_FIELDS
+    }
+    for field in _AUTHENTICATED_OPTIONAL_CONTEXT_FIELDS:
+        value = context.get(field)
+        if field == "grantedTools" and isinstance(value, list):
+            resolved[field] = sorted(
+                {str(item).strip() for item in value if str(item).strip()}
+            )
+        elif str(value or "").strip():
+            resolved[field] = str(value)
+    return resolved
+
+
+def _internal_mcp_principal() -> dict[str, Any] | None:
+    access_token = get_access_token()
+    claims = getattr(access_token, "claims", None) if access_token is not None else None
+    principal = claims.get("internal") if isinstance(claims, dict) else None
+    return dict(principal) if isinstance(principal, dict) else None
+
+
+def _request_tool_is_allowed(name: str) -> bool:
+    if not _tool_is_allowed(name):
+        return False
+    principal = _internal_mcp_principal()
+    if principal is None:
+        return True
+    kind = str(principal.get("kind") or "")
+    if kind == "catalog-reader":
+        return False
+    if kind == "system-root":
+        return name == "card.run_assistant_agent"
+    if kind != "card-runtime":
+        return False
+    grants = principal.get("grantedTools")
+    return isinstance(grants, list) and name in {
+        str(value).strip() for value in grants if str(value).strip()
+    }
 
 
 class AgentRuntimeServer(Server):
@@ -1101,20 +1157,24 @@ class _NativeStdioMcpClient:
             name="main-native-cbm-stderr",
             daemon=True,
         ).start()
-        initialized = self._request(
-            "initialize",
-            {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {
-                    "name": "main-native-cbm",
-                    "version": "1.0.0",
+        try:
+            initialized = self._request(
+                "initialize",
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "main-native-cbm",
+                        "version": "1.0.0",
+                    },
                 },
-            },
-        )
-        if not isinstance(initialized.get("serverInfo"), dict):
-            raise RuntimeError("native_cbm_initialize_invalid")
-        self._notify("notifications/initialized", {})
+            )
+            if not isinstance(initialized.get("serverInfo"), dict):
+                raise RuntimeError("native_cbm_initialize_invalid")
+            self._notify("notifications/initialized", {})
+        except Exception:
+            self.close()
+            raise
 
     def _read_stdout(self) -> None:
         stream = self._process.stdout
@@ -1275,6 +1335,45 @@ def _normalize_native_cbm_index_arguments(
     return normalized
 
 
+def _is_native_cbm_bootstrap_race(error: Exception) -> bool:
+    """Recognize the native 0.10.2 daemon handoff race and nothing broader."""
+    detail = str(error)
+    return (
+        "native_cbm_process_exited:" in detail
+        and "CBM daemon could not start within 30000 ms" in detail
+    )
+
+
+def _open_native_cbm_client(
+    command: str,
+    args: list[str],
+    cwd: str,
+) -> tuple[_NativeStdioMcpClient, tuple[Tool, ...], list[str]]:
+    """Open one native CBM client, retrying its proven bootstrap race once."""
+    for attempt in range(2):
+        client: _NativeStdioMcpClient | None = None
+        try:
+            client = _NativeStdioMcpClient(command, args, cwd)
+            tools = tuple(client.list_tools())
+            names = [tool.name for tool in tools]
+            if len(names) != len(set(names)):
+                raise RuntimeError("native_cbm_duplicate_tool_name")
+            return client, tools, names
+        except Exception as error:
+            if client is not None:
+                client.close()
+            if attempt == 0 and _is_native_cbm_bootstrap_race(error):
+                _trace(
+                    "native_cbm_bootstrap_retry",
+                    exception_class=error.__class__.__name__,
+                    result_category="dependency_retry",
+                    completed=False,
+                )
+                continue
+            raise
+    raise RuntimeError("native_cbm_bootstrap_retry_exhausted")
+
+
 def _initialize_native_cbm_sync() -> None:
     global _NATIVE_CBM_CLIENT, _NATIVE_CBM_NAMES, _NATIVE_CBM_TOOLS
     if (
@@ -1297,15 +1396,7 @@ def _initialize_native_cbm_sync() -> None:
         if stale_client is not None:
             stale_client.close()
         command, args, cwd = _native_cbm_config()
-        client = _NativeStdioMcpClient(command, args, cwd)
-        try:
-            tools = tuple(client.list_tools())
-            names = [tool.name for tool in tools]
-            if len(names) != len(set(names)):
-                raise RuntimeError("native_cbm_duplicate_tool_name")
-        except Exception:
-            client.close()
-            raise
+        client, tools, names = _open_native_cbm_client(command, args, cwd)
         _NATIVE_CBM_CLIENT = client
         _NATIVE_CBM_TOOLS = tools
         _NATIVE_CBM_NAMES = frozenset(names)
@@ -1428,6 +1519,44 @@ class Auth0TokenVerifier:
 
         try:
             header = jwt.get_unverified_header(token)
+            if header.get("alg") == "HS256":
+                if len(INTERNAL_MCP_SECRET) < 32:
+                    return None
+                claims = jwt.decode(
+                    token,
+                    INTERNAL_MCP_SECRET,
+                    algorithms=["HS256"],
+                    audience=INTERNAL_MCP_AUDIENCE,
+                    issuer=INTERNAL_MCP_ISSUER,
+                    options={"require": ["exp", "iat", "sub", "principal"]},
+                )
+                principal = claims.get("principal")
+                if not isinstance(principal, dict) or principal.get("kind") not in {
+                    "catalog-reader", "system-root", "card-runtime"
+                }:
+                    return None
+                if principal.get("kind") != "catalog-reader":
+                    required = (
+                        "projectId", "deckId", "conversationId", "parentRunId",
+                        "callerCardId", "callerRuntimeBinding",
+                    )
+                    if any(not str(principal.get(field) or "").strip() for field in required):
+                        return None
+                    grants = principal.get("grantedTools")
+                    if not isinstance(grants, list) or any(
+                        not isinstance(value, str) or not value.strip() for value in grants
+                    ):
+                        return None
+                access_token = AccessToken(
+                    token=token,
+                    client_id="liquidaity-internal-runtime",
+                    scopes=[self.config.required_scope],
+                    expires_at=int(claims["exp"]),
+                    resource=self.config.resource_url,
+                )
+                object.__setattr__(access_token, "subject", str(claims["sub"]))
+                object.__setattr__(access_token, "claims", {**claims, "internal": principal})
+                return access_token
             if header.get("alg") != "RS256":
                 return None
             signing_key = self.jwk_client.get_signing_key_from_jwt(token).key
@@ -1680,8 +1809,8 @@ async def _materialize_complete_catalog() -> list[Tool]:
         Tool(
             name="card.run_assistant_agent",
             description=(
-                "Run ONE saved, enabled AutoGen AssistantAgent card "
-                "with its saved identity, prompt, model, and tools. "
+                "Run ONE saved, enabled Card through its saved runtime adapter "
+                "with its saved identity, prompt, provider/model/profile, and tools. "
                 "No prompt/model/tool/card overrides "
                 "exist on this path — extra arguments are rejected structurally. deckId defaults to "
                 "the canonical Agent Canvas deck. On the Harness saved-card doorway path, the "
@@ -1846,7 +1975,17 @@ async def list_tools() -> list[Tool]:
     """Return no HTTP catalog until the one complete frozen catalog is ready."""
     global _CATALOG_FAILURE, _CATALOG_STATE
     if MCP_TRANSPORT == "streamable-http":
-        return _http_catalog_or_error()
+        tools = _http_catalog_or_error()
+        principal = _internal_mcp_principal()
+        if principal is None or principal.get("kind") == "catalog-reader":
+            return tools
+        if principal.get("kind") == "system-root":
+            return [tool for tool in tools if tool.name == "card.run_assistant_agent"]
+        grants = principal.get("grantedTools")
+        allowed = {
+            str(value).strip() for value in grants or [] if str(value).strip()
+        } if isinstance(grants, list) else set()
+        return [tool for tool in tools if tool.name in allowed]
     try:
         tools = await _materialize_complete_catalog()
     except Exception as error:
@@ -2093,8 +2232,9 @@ async def _dispatch_tool(
             if "correlationId" in allowed:
                 args["correlationId"] = f"external-mcp:{uuid4()}"
             if name == "card.run_assistant_agent":
-                args["originatingAgentId"] = str(context["mainCardId"])
-                args["originatingRunId"] = str(context["parentRunId"])
+                if context.get("principalKind") != "system-root":
+                    args["originatingAgentId"] = str(context["mainCardId"])
+                    args["originatingRunId"] = str(context["parentRunId"])
             from app.python_models.idd import required_tool_caller_runtime_binding
 
             if required_tool_caller_runtime_binding(name) is not None:
@@ -2298,7 +2438,7 @@ def _attach_execution_receipt(result: Any, receipt: dict[str, Any]) -> Any:
 
 
 def _mcp_tool_timeout_seconds(name: str) -> float:
-    if name == "cbm.index_repository":
+    if name in {"cbm.index_repository", "card.run_assistant_agent"}:
         return _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
     return _MCP_CALL_TIMEOUT_SECONDS
 
@@ -2315,7 +2455,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     }
     _trace("tool_call_started", **trace_fields)
     try:
-        if not _tool_is_allowed(name):
+        if not _request_tool_is_allowed(name):
             raise PermissionError(f"tool_not_granted: {name}")
         result = await asyncio.wait_for(
             _dispatch_tool(name, arguments),

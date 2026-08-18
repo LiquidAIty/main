@@ -1,6 +1,7 @@
 """Focused native Magentic-One/IDF adapter coverage. No provider calls."""
 
 import asyncio
+import inspect
 from hashlib import sha256
 from types import SimpleNamespace
 
@@ -127,22 +128,58 @@ def test_native_mag_one_failure_does_not_echo_secret(monkeypatch):
     assert secret not in result.model_dump_json()
 
 
-def test_saved_hermes_worker_returns_native_output_and_id_metadata(monkeypatch):
+def test_saved_card_worker_uses_official_mcp_and_returns_native_output(monkeypatch):
     context = _context()
     agent = mac.SavedHermesCardAgent(
         name="Research_Agent", description="hermes_steward", context=context,
         card_id="research", outer_run_id="mag:one",
     )
 
-    async def run(_args):
-        return {"ok": True, "result": {"status": "completed", "output": "worker result"}}
+    calls = []
 
-    monkeypatch.setattr(mac.control_plane, "card_run_assistant_agent", run)
+    async def run(**kwargs):
+        calls.append(kwargs)
+        return {"ok": True, "result": {
+            "status": "completed",
+            "output": "worker result",
+            "correlationId": "child-run-1",
+        }}
+
+    monkeypatch.setattr(mac, "call_saved_card_via_mcp", run)
     response = asyncio.run(agent.on_messages(
         [SimpleNamespace(content="subtask", source="orchestrator")],
         mac.CancellationToken(),
     ))
     assert response.chat_message.content == "worker result"
     assert response.chat_message.metadata == {
-        "cardId": "research", "originatingRunId": "mag:one", "idfId": "idf:mag"
+        "cardId": "research",
+        "childRunId": "child-run-1",
+        "originatingRunId": "mag:one",
+        "idfId": "idf:mag",
     }
+    assert calls == [{
+        "project_id": "p",
+        "deck_id": "d",
+        "conversation_id": "c",
+        "parent_run_id": "mag:one",
+        "caller_card_id": "mag:card",
+        "caller_runtime_binding": "magentic_one",
+        "target_card_id": "research",
+        "input_text": "[orchestrator]\nsubtask",
+    }]
+
+
+def test_native_mag_one_wraps_every_saved_worker_without_worker_model_clients():
+    participants = mac._build_participants(
+        _context(),
+        [],
+        saved_hermes_cards=True,
+        outer_run_id="mag:one",
+    )
+    assert [type(agent) for agent in participants] == [
+        mac.McpSavedCardAgent,
+        mac.McpSavedCardAgent,
+    ]
+    source = inspect.getsource(mac.McpSavedCardAgent.on_messages)
+    assert "call_saved_card_via_mcp" in source
+    assert "control_plane.card_run_assistant_agent" not in source

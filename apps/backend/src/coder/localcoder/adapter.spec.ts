@@ -651,6 +651,46 @@ describe('LocalCoderAdapter MCP config handling', () => {
     expect(report.assumptions.join(' ')).toContain('localcoder_native_cbm_unavailable');
   });
 
+  it('uses the shared official MCP host for a saved Coder Card and hides the signing secret', async () => {
+    const root = createRuntimeFixture(null, true);
+    let mcpContent = '';
+    let childEnv: NodeJS.ProcessEnv = {};
+    const adapter = new LocalCoderAdapter({
+      workspaceRoot: root,
+      env: {
+        PATH: '',
+        OPENAI_API_KEY: 'key',
+        OPENAI_MODEL: 'gpt-5.6-luna',
+        LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
+        LIQUIDAITY_INTERNAL_MCP_URL: 'http://127.0.0.1:8765/mcp',
+      },
+      runProcess: async (_command, args, options) => {
+        childEnv = options.env;
+        const idx = args.indexOf('--mcp-config');
+        if (idx >= 0) mcpContent = readFileSync(args[idx + 1], 'utf8');
+        return { started: true, exitCode: 0, stdout: structuredStdout(), stderr: '' };
+      },
+    });
+    const report = await adapter.run({
+      ...packet(root),
+      deckId: 'deck_builder',
+      conversationId: 'conversation-1',
+      parentRunId: 'coder-run-1',
+      cardId: 'card_local_coder',
+      runtimeBinding: 'local_coder',
+    });
+
+    expect(report.status).toBe('succeeded');
+    const parsed = JSON.parse(mcpContent);
+    expect(Object.keys(parsed.mcpServers)).toEqual(['main']);
+    expect(parsed.mcpServers.main).toMatchObject({
+      type: 'http',
+      url: 'http://127.0.0.1:8765/mcp',
+      headers: { Authorization: expect.stringMatching(/^Bearer /) },
+    });
+    expect(childEnv.LIQUIDAITY_INTERNAL_MCP_SECRET).toBeUndefined();
+  });
+
   it('supports only an explicit diagnostic MCP-disabled mode and records it visibly', async () => {
     const root = createRuntimeFixture(null);
     let capturedArgs: string[] = [];

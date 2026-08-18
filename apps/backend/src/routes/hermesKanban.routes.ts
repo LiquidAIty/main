@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
+import { ensureHermesHolographicMemoryProfile } from '../hermes/profileMemory';
 
 /*
  * Hermes Kanban proxy — thin read/persistence adapter (DONT.md rule 5).
@@ -182,7 +182,7 @@ export async function runHermesKanbanCardTask(args: {
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile)) {
     throw new Error('hermes_kanban_card_profile_invalid');
   }
-  mkdirSync(path.join(HERMES_HOME, 'profiles', profile), { recursive: true });
+  ensureHermesHolographicMemoryProfile(HERMES_ROOT, profile);
   const idempotencyKey = `liquidaity-${createHash('sha256')
     .update([
       args.projectId,

@@ -59,6 +59,8 @@ class FakeClient:
             return {}
         if method == "turn/steer":
             return {"turnId": (params or {}).get("expectedTurnId")}
+        if method == "account/read":
+            return {"account": {"type": "chatgpt", "planType": "pro"}}
         return {}
 
     def notify(self, method: str, params=None):
@@ -168,6 +170,7 @@ class TestLifecycle:
         # thread/start should be called exactly once
         method_calls = [m for (m, _) in client.requests if m == "thread/start"]
         assert len(method_calls) == 1
+        assert ("account/read", {"refreshToken": True}) in client.requests
 
     def test_thread_start_passes_cwd_only(self):
         """thread/start carries cwd. We intentionally do NOT pass `permissions`

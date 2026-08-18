@@ -24,8 +24,8 @@ from autogen_agentchat.messages import BaseChatMessage, TextMessage
 from autogen_core import CancellationToken
 from autogen_agentchat.teams import MagenticOneGroupChat
 
-from app import control_plane
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
+from app.python_models.internal_mcp import call_saved_card_via_mcp
 from app.python_models.tool_registry import (
     DEFAULT_TOOL_REGISTRY,
     build_local_coder_tool,
@@ -85,13 +85,13 @@ def _safe_agent_name(raw: str, index: int, used: set[str]) -> str:
     return name
 
 
-class SavedHermesCardAgent(BaseChatAgent):
-    """AutoGen-facing shell for one real saved Hermes-backed card.
+class McpSavedCardAgent(BaseChatAgent):
+    """AutoGen-facing shell for one real saved Card and its native runtime.
 
     The shell has no model, prompt, tools, memory, or persistent identity of
     its own. Magentic-One talks to this ChatAgent interface; the implementation
-    calls the trusted saved-card doorway, which resolves the card again from
-    the deck and executes its card-id-owned Hermes runtime.
+    calls the official MCP saved-card doorway, which resolves the target Card
+    again from the deck and executes exactly its card-owned runtime adapter.
     """
 
     def __init__(
@@ -138,40 +138,38 @@ class SavedHermesCardAgent(BaseChatAgent):
             )
 
         self._invocation += 1
-        correlation_id = (
-            f"{self._context.session.turnId}:{self._card_id}:{self._invocation}"
-        )
         call = asyncio.create_task(
-            control_plane.card_run_assistant_agent(
-                {
-                    "projectId": self._context.session.projectId,
-                    "deckId": _as_text(
-                        (self._context.cardRuntime.runtimeOptions or {}).get("deckId")
-                    ),
-                    "cardId": self._card_id,
-                    "correlationId": correlation_id,
-                    "conversationId": self._context.idf.conversationId,
-                    "originatingAgentId": self._context.cardRuntime.cardId,
-                    "originatingRunId": self._outer_run_id,
-                    "input": input_text,
-                }
+            call_saved_card_via_mcp(
+                project_id=self._context.session.projectId,
+                deck_id=_as_text(
+                    (self._context.cardRuntime.runtimeOptions or {}).get("deckId")
+                ),
+                conversation_id=self._context.idf.conversationId,
+                parent_run_id=self._outer_run_id,
+                caller_card_id=self._context.cardRuntime.cardId,
+                caller_runtime_binding=(
+                    _as_text(self._context.cardRuntime.runtimeBinding) or "magentic_one"
+                ),
+                target_card_id=self._card_id,
+                input_text=input_text,
             )
         )
         cancellation_token.link_future(call)
         response = await call
         if not isinstance(response, dict):
             raise RuntimeError(
-                f"saved_hermes_card_run_failed: cardId={self._card_id} "
+                f"saved_card_mcp_run_failed: cardId={self._card_id} "
                 "status=invalid_response"
             )
         result = response.get("result")
         status = _as_text(result.get("status")) if isinstance(result, dict) else ""
         output = _as_text(result.get("output")) if isinstance(result, dict) else ""
-        if not response.get("ok") or status != "completed" or not output:
+        child_run_id = _as_text(result.get("correlationId")) if isinstance(result, dict) else ""
+        if not response.get("ok") or status != "completed" or not output or not child_run_id:
             # Backend/native error text is intentionally not copied into the
             # Mag One transcript. It may contain provider or process detail.
             raise RuntimeError(
-                f"saved_hermes_card_run_failed: cardId={self._card_id} "
+                f"saved_card_mcp_run_failed: cardId={self._card_id} "
                 f"status={status or 'unknown'}"
             )
         return Response(
@@ -180,11 +178,17 @@ class SavedHermesCardAgent(BaseChatAgent):
                 content=output,
                 metadata={
                     "cardId": self._card_id,
+                    "childRunId": child_run_id,
                     "originatingRunId": self._outer_run_id,
                     "idfId": self._context.idf.idfId,
                 },
             )
         )
+
+
+# Historical public symbol retained for callers/tests while production now uses
+# the runtime-neutral MCP Card shell above.
+SavedHermesCardAgent = McpSavedCardAgent
 
 
 def _build_participants(
@@ -201,7 +205,7 @@ def _build_participants(
     participants: list[BaseChatAgent] = []
     used_names: set[str] = set()
     configured_participants = card.participants or []
-    if isinstance(model_client, (list, tuple)) and len(model_client) != len(
+    if not saved_hermes_cards and isinstance(model_client, (list, tuple)) and len(model_client) != len(
         configured_participants
     ):
         raise RuntimeError(
@@ -219,11 +223,11 @@ def _build_participants(
         )
         system_prompt = _as_text(getattr(participant, "prompt", ""))
 
-        if saved_hermes_cards and description != "local_coder":
+        if saved_hermes_cards:
             if not outer_run_id:
                 raise RuntimeError("magentic_outer_run_id_required")
             participants.append(
-                SavedHermesCardAgent(
+                McpSavedCardAgent(
                     name=name,
                     description=description,
                     context=context,
@@ -466,23 +470,9 @@ async def run_native_magentic_mission(
                 reasoning_effort=runtime_options.get("reasoningEffort"),
             )
         )
-        participant_clients = [
-            _build_model_client(
-                AutoGenAgentConfig(
-                    provider=participant.provider,
-                    provider_model_id=participant.providerModelId,
-                    temperature=participant.temperature,
-                    max_tokens=participant.maxTokens,
-                    reasoning_effort=participant.reasoningEffort,
-                )
-            )
-            if _as_text(participant.runtimeBinding) == "local_coder"
-            else None
-            for participant in context.cardRuntime.participants
-        ]
         participants = _build_participants(
             context,
-            participant_clients,
+            [],
             saved_hermes_cards=True,
             outer_run_id=run_id,
         )

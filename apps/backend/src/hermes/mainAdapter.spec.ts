@@ -2,6 +2,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildHermesOfficialMcpServer,
   deriveHermesSessionKey,
   providerForHermes,
   resolveHermesCardRuntimeHome,
@@ -25,5 +26,29 @@ describe('Hermes ACP transport identity', () => {
     expect(deriveHermesSessionKey('project-1', 'conversation-1', 'card_main_chat')).toBe(
       'hermes:project-1:conversation-1:card_main_chat',
     );
+  });
+
+  it('connects genuine Hermes to the one official HTTP MCP host with Card grants', () => {
+    const server = buildHermesOfficialMcpServer({
+      sessionKey: 'session-1',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'conversation-1',
+      parentRunId: 'main-run-1',
+      cardId: 'card_main_chat',
+      runtimeBinding: 'main_chat',
+      tools: ['canvas.inspect', 'card.run_assistant_agent', 'web_search'],
+    }, {
+      LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
+      LIQUIDAITY_INTERNAL_MCP_URL: 'http://127.0.0.1:8765/mcp',
+    });
+    expect(server).toMatchObject({
+      type: 'http',
+      name: expect.stringMatching(/^main-runtime-/),
+      url: 'http://127.0.0.1:8765/mcp',
+      headers: [{ name: 'Authorization', value: expect.stringMatching(/^Bearer /) }],
+    });
+    expect(server).not.toHaveProperty('command');
+    expect(JSON.stringify(server)).not.toContain('0123456789abcdef0123456789abcdef');
   });
 });

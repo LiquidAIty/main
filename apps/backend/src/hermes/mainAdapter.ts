@@ -4,7 +4,14 @@ import path from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { resolveServerCodexExecutable, resolveServerCodexHome } from '../config/env';
 import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../coder/workspaceRoot';
+import {
+  resolvePythonAgentMcpServerSpec,
+} from '../services/mcp/pythonAgentMcpClient';
+import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { resolveSavedMcpConnections } from './mcpConnections';
+import { ensureHermesHolographicMemoryProfile } from './profileMemory';
+
+export { resolveHermesCardRuntimeHome } from './profileMemory';
 
 export type HermesTurnUsage = {
   providerInputTokens: number | null;
@@ -115,10 +122,6 @@ function resolveHermesInstall(): { root: string; executable: string } {
   return { root, executable };
 }
 
-export function resolveHermesCardRuntimeHome(root: string, cardId: string): string {
-  return path.join(root, '.hermes', 'profiles', safeProfile(cardId));
-}
-
 export function providerForHermes(provider: string, accessMode?: CardAccessMode): string {
   const normalized = String(provider || '').trim().toLowerCase();
   if (normalized === 'openai' && accessMode === 'chatgpt-account') return 'openai-codex';
@@ -136,6 +139,41 @@ function jsonText(value: unknown): string {
   } catch {
     return String(value ?? '');
   }
+}
+
+export function buildHermesOfficialMcpServer(
+  args: Pick<
+    HermesTurnArgs,
+    | 'sessionKey'
+    | 'projectId'
+    | 'deckId'
+    | 'conversationId'
+    | 'parentRunId'
+    | 'cardId'
+    | 'runtimeBinding'
+    | 'tools'
+  >,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, unknown> | null {
+  const granted = args.tools.filter((name) => name !== 'web_search');
+  if (granted.length === 0) return null;
+  const shared = resolvePythonAgentMcpServerSpec({
+    kind: 'card-runtime',
+    projectId: args.projectId,
+    deckId: args.deckId,
+    conversationId: args.conversationId,
+    parentRunId: args.parentRunId,
+    callerCardId: args.cardId,
+    callerRuntimeBinding: args.runtimeBinding,
+    grantedTools: granted,
+  }, env);
+  const suffix = createHash('sha256').update(args.sessionKey).digest('hex').slice(0, 12);
+  return {
+    type: 'http',
+    name: `main-runtime-${suffix}`,
+    url: shared.url,
+    headers: Object.entries(shared.headers).map(([name, value]) => ({ name, value })),
+  };
 }
 
 class AcpProcess {
@@ -156,12 +194,12 @@ class AcpProcess {
     const install = resolveHermesInstall();
     const codexHome = resolveServerCodexHome();
     this.executable = install.executable;
-    this.profileHome = resolveHermesCardRuntimeHome(install.root, profile);
-    mkdirSync(this.profileHome, { recursive: true });
+    this.profileHome = ensureHermesHolographicMemoryProfile(install.root, profile);
+    const childEnv = withoutInternalMcpSecret(process.env);
     this.child = spawn(this.executable, [], {
       cwd: install.root,
       env: {
-        ...process.env,
+        ...childEnv,
         HERMES_HOME: this.profileHome,
         CODEX_HOME: codexHome,
         HERMES_CODEX_HOME: codexHome,
@@ -357,35 +395,8 @@ class AcpProcess {
 
   private mcpServers(args: HermesTurnArgs): Record<string, unknown>[] {
     const referenced = resolveSavedMcpConnections(args.mcpConnectionIds);
-    const granted = args.tools.filter((name) => name !== 'web_search');
-    if (granted.length === 0) return referenced;
-    const root = resolveRepoRoot();
-    const python = path.join(root, 'apps', 'python-models', '.venv', 'Scripts', 'python.exe');
-    const host = path.join(root, 'apps', 'python-models', 'app', 'mcp_host.py');
-    if (!existsSync(python) || !existsSync(host)) {
-      throw new Error(`hermes_main_mcp_unavailable:${!existsSync(python) ? python : host}`);
-    }
-    const suffix = createHash('sha256').update(args.sessionKey).digest('hex').slice(0, 12);
-    return [{
-      name: `main-runtime-${suffix}`,
-      command: python,
-      args: [host],
-      env: [
-        { name: 'MCP_TRANSPORT', value: 'stdio' },
-        { name: 'MCP_TOOL_ALLOWLIST', value: granted.join(',') },
-        {
-          name: 'MCP_TRUSTED_MAIN_CONTEXT',
-          value: JSON.stringify({
-            projectId: args.projectId,
-            deckId: args.deckId,
-            conversationId: args.conversationId,
-            parentRunId: args.parentRunId,
-            mainCardId: args.cardId,
-            callerRuntimeBinding: args.runtimeBinding,
-          }),
-        },
-      ],
-    }, ...referenced];
+    const official = buildHermesOfficialMcpServer(args);
+    return official ? [official, ...referenced] : referenced;
   }
 
   private async resolveSession(args: HermesTurnArgs): Promise<string> {

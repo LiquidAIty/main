@@ -1,7 +1,6 @@
 // REAL MCP-boundary integration (SPEC: do not mock MCP discovery/call).
-// Spawns the actual Python Agent MCP host over stdio via the official SDK client,
-// proves tool discovery and structural argument rejection at the boundary.
-// Discovery + argument rejection need only the python venv (offline-runnable).
+// Connects to the already-supervised official HTTP MCP host through the SDK.
+// It is intentionally conditional because this test must never spawn a second host.
 import { afterAll, describe, expect, it } from 'vitest';
 
 import {
@@ -15,7 +14,12 @@ afterAll(async () => {
   await closePythonAgentMcpClient();
 });
 
-describe('Python Agent MCP host — real stdio discovery + calls', () => {
+const canonicalHostAvailable = Boolean(
+  process.env.LIQUIDAITY_INTERNAL_MCP_SECRET
+  && process.env.LIQUIDAITY_INTERNAL_MCP_URL,
+);
+
+describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated HTTP discovery + calls', () => {
   it('federates the three complete native catalogs with the Main control surface', async () => {
     const names = await listPythonAgentMcpTools();
     expect(new Set(names).size).toBe(names.length);

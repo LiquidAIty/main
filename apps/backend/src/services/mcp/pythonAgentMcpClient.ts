@@ -1,16 +1,21 @@
 // @graph entity: PythonAgentMcpClient
 // @graph role: harness-mcp-client-to-python-agent-host
 //
-// THE Harness-side MCP client for the Python Agent MCP host (app/mcp_host.py).
-// The Harness control plane calls agent capabilities through this MCP boundary —
-// never by direct HTTP to Python runtime endpoints. One lazy stdio connection
+// THE backend MCP client for the one supervised Python Agent MCP host.
+// Saved-Card adapters call agent capabilities through this MCP boundary —
+// never by spawning another host. One lazy authenticated HTTP connection
 // (official @modelcontextprotocol/sdk client); a dead transport is honestly
 // re-created on the NEXT call — a failed call itself is never retried.
 
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import {
+  createInternalMcpBearer,
+  resolveInternalMcpUrl,
+  type InternalMcpPrincipal,
+} from './internalMcpAuth';
 
 function firstExisting(candidates: string[], kind: string): string {
   for (const candidate of candidates) {
@@ -46,10 +51,12 @@ export function resolvePythonAgentMcpHostPath(): string {
 let clientPromise: Promise<Client> | null = null;
 
 async function connect(): Promise<Client> {
-  const transport = new StdioClientTransport({
-    command: resolvePythonAgentMcpCommand(),
-    args: [resolvePythonAgentMcpHostPath()],
-    env: { ...process.env } as Record<string, string>,
+  const transport = new StreamableHTTPClientTransport(new URL(resolveInternalMcpUrl()), {
+    requestInit: {
+      headers: {
+        Authorization: `Bearer ${createInternalMcpBearer({ kind: 'catalog-reader' })}`,
+      },
+    },
   });
   const client = new Client({ name: 'main-harness', version: '0.1.0' });
   client.onclose = () => {
@@ -70,9 +77,7 @@ function getClient(): Promise<Client> {
   return clientPromise;
 }
 
-/** Close the one backend-owned stdio transport. The backend process owns this
- * client, so its shutdown must also terminate the Python MCP child instead of
- * relying on parent-process death to clean up a Windows process tree. */
+/** Close the one backend-owned client connection to the supervised MCP host. */
 export async function closePythonAgentMcpClient(): Promise<void> {
   const pending = clientPromise;
   clientPromise = null;
@@ -97,17 +102,19 @@ export type PythonMcpToolDescriptor = {
   securitySchemes?: Record<string, unknown>[];
 };
 
-/** The repository-owned stdio server used by both the persistent Harness
- * client and bounded Coder runs. Keeping path resolution here prevents the two
- * consumers from drifting onto different Python hosts. */
-export function resolvePythonAgentMcpServerSpec(): {
-  type: 'stdio'; command: string; args: string[]; env: Record<string, string>;
+/** The one supervised official Python MCP host used by every saved-Card adapter. */
+export function resolvePythonAgentMcpServerSpec(
+  principal: InternalMcpPrincipal = { kind: 'catalog-reader' },
+  env: NodeJS.ProcessEnv = process.env,
+): {
+  type: 'http'; url: string; headers: Record<string, string>;
 } {
   return {
-    type: 'stdio',
-    command: resolvePythonAgentMcpCommand(),
-    args: [resolvePythonAgentMcpHostPath()],
-    env: {},
+    type: 'http',
+    url: resolveInternalMcpUrl(env),
+    headers: {
+      Authorization: `Bearer ${createInternalMcpBearer(principal, env)}`,
+    },
   };
 }
 

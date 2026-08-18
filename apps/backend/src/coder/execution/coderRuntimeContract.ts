@@ -235,14 +235,20 @@ export function resolveCoderToolPolicy(mode: CoderAuthorityMode): CoderToolPolic
   };
 }
 
-export type McpServerSpec = {
-  type: 'stdio';
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-};
+export type McpServerSpec =
+  | {
+      type: 'stdio';
+      command: string;
+      args: string[];
+      env: Record<string, string>;
+    }
+  | {
+      type: 'http';
+      url: string;
+      headers: Record<string, string>;
+    };
 
-function resolveNativeCodebaseMemoryServer(): McpServerSpec {
+function resolveNativeCodebaseMemoryServer(): Extract<McpServerSpec, { type: 'stdio' }> {
   const repoRoot = resolveRepoRoot();
   const configPath = path.join(repoRoot, '.mcp.json');
   const config = JSON.parse(readFileSync(configPath, 'utf8')) as {

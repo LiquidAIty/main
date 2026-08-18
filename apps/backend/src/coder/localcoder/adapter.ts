@@ -12,6 +12,8 @@ import {
   parseOpenClaudeCoderReport,
 } from '../execution/coderRuntimeContract';
 import { resolveServerCodexHome } from '../../config/env';
+import { resolvePythonAgentMcpServerSpec } from '../../services/mcp/pythonAgentMcpClient';
+import { withoutInternalMcpSecret } from '../../services/mcp/internalMcpAuth';
 
 export type ProcessResult = {
   started: boolean;
@@ -766,7 +768,7 @@ export class LocalCoderAdapter {
     };
   }
 
-  private prepareMcpConfig(): McpPrepResult {
+  private prepareMcpConfig(packet: CoderPacket): McpPrepResult {
     if (this.diagnosticMcpMode === 'disabled') {
       return {
         flags: [],
@@ -776,8 +778,29 @@ export class LocalCoderAdapter {
     }
     const kept: Record<string, unknown> = {};
     const keptNames: string[] = [];
+    const hasSavedCardContext = Boolean(
+      packet.projectId
+      && packet.deckId
+      && packet.conversationId
+      && packet.parentRunId
+      && packet.cardId
+      && packet.runtimeBinding,
+    );
+    if (hasSavedCardContext) {
+      kept.main = resolvePythonAgentMcpServerSpec({
+        kind: 'card-runtime',
+        projectId: packet.projectId,
+        deckId: String(packet.deckId),
+        conversationId: String(packet.conversationId),
+        parentRunId: String(packet.parentRunId),
+        callerCardId: String(packet.cardId),
+        callerRuntimeBinding: String(packet.runtimeBinding),
+        grantedTools: packet.mcpTools ?? [],
+      }, this.env);
+      keptNames.push('main');
+    }
     const nativeCbm = this.resolveNativeCbmServer();
-    if ('server' in nativeCbm) {
+    if (!hasSavedCardContext && 'server' in nativeCbm) {
       kept['codebase-memory-mcp'] = nativeCbm.server;
       keptNames.push('codebase-memory-mcp');
     }
@@ -925,7 +948,7 @@ export class LocalCoderAdapter {
       };
     }
 
-    const mcp = this.prepareMcpConfig();
+    const mcp = this.prepareMcpConfig(packet);
     const args = [
       ...runtime.baseArgs,
       ...this.coderPluginFlags(),
@@ -938,7 +961,7 @@ export class LocalCoderAdapter {
       assumptions: [...report.assumptions, mcp.note],
     });
     const childEnv: NodeJS.ProcessEnv = {
-      ...this.env,
+      ...withoutInternalMcpSecret(this.env),
       OPENAI_MODEL: String(packet.providerModelId),
     };
     if (packet.accessMode === 'openrouter-api') {

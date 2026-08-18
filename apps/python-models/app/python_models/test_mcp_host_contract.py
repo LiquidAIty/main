@@ -245,6 +245,149 @@ def test_main_context_rejects_expired_or_incomplete_request_claims(monkeypatch):
     assert mcp_host._authenticated_main_context() is None
 
 
+def test_internal_mcp_token_binds_card_context_without_auth0_or_provider_calls(monkeypatch):
+    import jwt
+    import mcp_host
+
+    secret = "0123456789abcdef0123456789abcdef"
+    now = int(time.time())
+    principal = {
+        "kind": "card-runtime",
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-1",
+        "parentRunId": "run-1",
+        "callerCardId": "card-main",
+        "callerRuntimeBinding": "main_chat",
+        "grantedTools": ["canvas.inspect", "card.run_assistant_agent"],
+    }
+    token = jwt.encode({
+        "iss": "liquidaity-runtime",
+        "aud": "liquidaity-internal-mcp",
+        "sub": "card-runtime:card-main",
+        "iat": now,
+        "exp": now + 60,
+        "principal": principal,
+    }, secret, algorithm="HS256")
+
+    class NoAuth0Jwks:
+        def get_signing_key_from_jwt(self, _token):
+            raise AssertionError("Auth0 JWKS must not run for internal MCP")
+
+    monkeypatch.setattr(mcp_host, "INTERNAL_MCP_SECRET", secret)
+    verifier = mcp_host.Auth0TokenVerifier(
+        mcp_host.OAuthConfig(
+            resource_url="https://example.ngrok.dev/mcp",
+            issuer_url="https://auth.example/",
+            audience="https://example.ngrok.dev/mcp",
+            client_id="chatgpt-client",
+            required_scope="liquidaity.main",
+        ),
+        jwk_client=NoAuth0Jwks(),
+    )
+    verified = verifier._verify_sync(token)
+    assert verified is not None
+    monkeypatch.setattr(mcp_host, "get_access_token", lambda: verified)
+    assert mcp_host._authenticated_main_context() == {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-1",
+        "parentRunId": "run-1",
+        "mainCardId": "card-main",
+        "callerRuntimeBinding": "main_chat",
+        "principalKind": "card-runtime",
+        "grantedTools": ["canvas.inspect", "card.run_assistant_agent"],
+    }
+    assert mcp_host._request_tool_is_allowed("canvas.inspect") is True
+    assert mcp_host._request_tool_is_allowed("run_mag_one") is False
+
+
+def test_internal_mcp_catalog_is_filtered_but_public_catalog_stays_complete(monkeypatch):
+    import asyncio
+    import mcp_host
+    from mcp.server.auth.provider import AccessToken
+
+    tools = (
+        mcp_host.Tool(name="canvas.inspect", description="x", inputSchema={"type": "object"}),
+        mcp_host.Tool(name="run_mag_one", description="y", inputSchema={"type": "object"}),
+    )
+    monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
+    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", tools)
+    principal = {
+        "kind": "card-runtime",
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-1",
+        "parentRunId": "run-1",
+        "callerCardId": "card-helper",
+        "callerRuntimeBinding": "hermes_steward",
+        "grantedTools": ["canvas.inspect"],
+    }
+    current = {"token": AccessToken(
+        token="internal",
+        client_id="liquidaity-internal-runtime",
+        scopes=["liquidaity.main"],
+        expires_at=int(time.time()) + 60,
+        claims={"internal": principal},
+    )}
+    monkeypatch.setattr(mcp_host, "get_access_token", lambda: current["token"])
+    assert [tool.name for tool in asyncio.run(mcp_host.list_tools())] == ["canvas.inspect"]
+    current["token"] = None
+    assert [tool.name for tool in asyncio.run(mcp_host.list_tools())] == [
+        "canvas.inspect", "run_mag_one",
+    ]
+
+
+def test_internal_card_invocation_injects_caller_identity_and_root_entry_omits_sender(monkeypatch):
+    import asyncio
+    import mcp_host
+    from app import control_plane
+
+    context = {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-1",
+        "parentRunId": "parent-run-1",
+        "mainCardId": "card-main",
+        "callerRuntimeBinding": "main_chat",
+        "principalKind": "card-runtime",
+        "grantedTools": ["card.run_assistant_agent"],
+    }
+    calls = []
+
+    async def run(args):
+        calls.append(dict(args))
+        return {"ok": True, "result": {"status": "completed", "output": "ok"}}
+
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: dict(context))
+    monkeypatch.setattr(control_plane, "card_run_assistant_agent", run)
+    result = asyncio.run(mcp_host._dispatch_tool(
+        "card.run_assistant_agent",
+        {"cardId": "card-coder", "input": "bounded task"},
+    ))
+    assert json.loads(result[0].text)["ok"] is True
+    assert calls[-1] == {
+        "cardId": "card-coder",
+        "input": "bounded task",
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-1",
+        "correlationId": calls[-1]["correlationId"],
+        "originatingAgentId": "card-main",
+        "originatingRunId": "parent-run-1",
+    }
+
+    context["principalKind"] = "system-root"
+    calls.clear()
+    asyncio.run(mcp_host._dispatch_tool(
+        "card.run_assistant_agent",
+        {"cardId": "card-main", "input": "root entry"},
+    ))
+    assert "originatingAgentId" not in calls[-1]
+    assert "originatingRunId" not in calls[-1]
+
+
 def test_stdio_process_owned_context_and_tool_allowlist_are_fail_closed(monkeypatch):
     import asyncio
     import mcp_host
@@ -1347,6 +1490,80 @@ def test_native_cbm_client_failure_is_strict(monkeypatch):
         mcp_host._call_native_cbm(
             "search_graph", {"project": "C-Projects-LiquidAIty-main"}
         )
+
+
+def test_native_cbm_bootstrap_race_retries_once_on_the_same_authority(monkeypatch):
+    import mcp_host
+
+    attempts = []
+    native_tool = mcp_host.Tool(
+        name="search_graph",
+        description="Native project search.",
+        inputSchema={"type": "object", "properties": {}},
+    )
+
+    class NativeClient:
+        def __init__(self, command, args, cwd):
+            attempts.append((command, list(args), cwd))
+            if len(attempts) == 1:
+                raise RuntimeError(
+                    "native_cbm_process_exited:1:codebase-memory-mcp: "
+                    "CBM daemon could not start within 30000 ms"
+                )
+
+        def list_tools(self):
+            return [native_tool]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(mcp_host, "_NativeStdioMcpClient", NativeClient)
+    client, tools, names = mcp_host._open_native_cbm_client(
+        "docker", ["exec", "-i", "codegraph", "/opt/cbm/codebase-memory-mcp"], "repo"
+    )
+
+    assert isinstance(client, NativeClient)
+    assert tools == (native_tool,)
+    assert names == ["search_graph"]
+    assert len(attempts) == 2
+    assert attempts[0] == attempts[1]
+
+
+def test_native_cbm_bootstrap_does_not_retry_other_failures(monkeypatch):
+    import mcp_host
+
+    attempts = 0
+
+    class NativeClient:
+        def __init__(self, _command, _args, _cwd):
+            nonlocal attempts
+            attempts += 1
+            raise RuntimeError("native_cbm_initialize_invalid")
+
+    monkeypatch.setattr(mcp_host, "_NativeStdioMcpClient", NativeClient)
+    with pytest.raises(RuntimeError, match="native_cbm_initialize_invalid"):
+        mcp_host._open_native_cbm_client("docker", [], "repo")
+    assert attempts == 1
+
+
+def test_native_cbm_second_bootstrap_race_fails_strictly(monkeypatch):
+    import mcp_host
+
+    attempts = 0
+
+    class NativeClient:
+        def __init__(self, _command, _args, _cwd):
+            nonlocal attempts
+            attempts += 1
+            raise RuntimeError(
+                "native_cbm_process_exited:1:codebase-memory-mcp: "
+                "CBM daemon could not start within 30000 ms"
+            )
+
+    monkeypatch.setattr(mcp_host, "_NativeStdioMcpClient", NativeClient)
+    with pytest.raises(RuntimeError, match="CBM daemon could not start"):
+        mcp_host._open_native_cbm_client("docker", [], "repo")
+    assert attempts == 2
 
 
 def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_clients(
