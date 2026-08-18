@@ -364,6 +364,69 @@ class TestSessionOps:
             assert state.agent.valid_tool_names == {"memory", "skills_list"}
 
     @pytest.mark.asyncio
+    async def test_saved_delegate_cards_are_host_scoped_and_patch_delegate_schema(
+        self, agent
+    ):
+        delegate_definition = {
+            "type": "function",
+            "function": {
+                "name": "delegate_task",
+                "description": "Delegate",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "tasks": {
+                            "type": "array",
+                            "items": {"type": "object", "properties": {}},
+                        },
+                    },
+                },
+            },
+        }
+        with (
+            patch("toolsets.validate_toolset", return_value=True),
+            patch(
+                "model_tools.get_tool_definitions",
+                return_value=[delegate_definition],
+            ),
+            patch("agent.memory_manager.inject_memory_provider_tools"),
+        ):
+            created = await agent.new_session(
+                cwd="/tmp",
+                sessionConfig={
+                    "accessMode": "chatgpt-account",
+                    "enabledTools": [],
+                    "enabledToolsets": ["delegation"],
+                    "delegateCards": [{
+                        "cardId": "card_local_coder",
+                        "title": "Coder",
+                        "runtimeBinding": "coder",
+                        "prompt": "Saved Coder prompt",
+                        "profile": "coder",
+                        "provider": "openai",
+                        "providerModelId": "gpt-5.6-luna",
+                        "accessMode": "chatgpt-account",
+                        "executionMode": "single",
+                        "skills": [],
+                        "toolsets": ["terminal"],
+                        "allowedToolNames": ["terminal"],
+                    }],
+                },
+            )
+        state = agent.session_manager.get_session(created.session_id)
+        assert state.agent._saved_delegate_cards["card_local_coder"]["profile"] == "coder"
+        assert state.agent._saved_delegate_access_mode == "chatgpt-account"
+        delegate_tool = next(
+            tool for tool in state.agent.tools
+            if tool["function"]["name"] == "delegate_task"
+        )
+        properties = delegate_tool["function"]["parameters"]["properties"]
+        assert properties["target_card_id"]["enum"] == ["card_local_coder"]
+        assert properties["tasks"]["items"]["properties"]["target_card_id"]["enum"] == [
+            "card_local_coder"
+        ]
+
+    @pytest.mark.asyncio
     async def test_missing_saved_skill_fails_by_identifier_without_prompt_leak(self, agent):
         secret = "secret-prompt-value"
         with patch(

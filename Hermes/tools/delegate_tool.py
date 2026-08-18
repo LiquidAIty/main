@@ -1321,6 +1321,9 @@ def _build_child_agent(
     # ACP transport overrides from trusted delegation config.
     override_acp_command: Optional[str] = None,
     override_acp_args: Optional[List[str]] = None,
+    saved_system_prompt: Optional[str] = None,
+    allowed_tool_names: Optional[List[str]] = None,
+    saved_card_identity: Optional[Dict[str, str]] = None,
     # Per-call role controlling whether the child can further delegate.
     # 'leaf' (default) cannot; 'orchestrator' retains the delegation
     # toolset subject to depth/kill-switch bounds applied below.
@@ -1435,6 +1438,8 @@ def _build_child_agent(
         max_spawn_depth=max_spawn,
         child_depth=child_depth,
     )
+    if saved_system_prompt:
+        child_prompt = f"{saved_system_prompt}\n\n{child_prompt}"
     # Extract parent's API key so subagents inherit auth (e.g. Nous Portal).
     parent_api_key = getattr(parent_agent, "api_key", None)
     if (not parent_api_key) and hasattr(parent_agent, "_client_kwargs"):
@@ -1655,6 +1660,20 @@ def _build_child_agent(
             iteration_budget=None,  # fresh budget per subagent
             **child_optional_kwargs,
         )
+    if allowed_tool_names is not None:
+        allowed = set(allowed_tool_names)
+        available = {
+            str((tool.get("function") or {}).get("name") or ""): tool
+            for tool in list(getattr(child, "tools", None) or [])
+            if isinstance(tool, dict)
+        }
+        missing = [name for name in allowed_tool_names if name not in available]
+        if missing:
+            raise ValueError(
+                "saved_delegate_tools_unavailable:" + ",".join(missing)
+            )
+        child.tools = [available[name] for name in allowed_tool_names]
+        child.valid_tool_names = allowed
     child._print_fn = getattr(parent_agent, "_print_fn", None)
     # Now the child exists, its session id can ride on every relayed event
     # (including the spawn_requested below — first emit happens after this).
@@ -1670,6 +1689,10 @@ def _build_child_agent(
     child._parent_subagent_id = parent_subagent_id
     child._subagent_goal = goal
     child._parent_turn_id = getattr(parent_agent, "_current_turn_id", "") or ""
+    if saved_card_identity:
+        child._saved_card_id = saved_card_identity.get("cardId")
+        child._saved_card_profile = saved_card_identity.get("profile")
+        child._saved_card_runtime_binding = saved_card_identity.get("runtimeBinding")
     # Stable sidebar marker: delegate subagent sessions must stay out of
     # session pickers even when a parent delete orphans them (parent_session_id
     # → NULL). Mirrors /branch's ``_branched_from`` pattern — see
@@ -2073,6 +2096,12 @@ def _apply_summary_budget(results: List[Dict[str, Any]], parent_agent) -> None:
         )
 
 
+def _saved_card_result_value(child, attribute: str) -> Optional[str]:
+    """Return only real saved-Card identity strings from a delegated child."""
+    value = getattr(child, attribute, None)
+    return value if isinstance(value, str) and value else None
+
+
 def _run_single_child(
     task_index: int,
     goal: str,
@@ -2453,6 +2482,11 @@ def _run_single_child(
                     else None
                 ),
                 "_child_role": getattr(child, "_delegate_role", None),
+                "card_id": _saved_card_result_value(child, "_saved_card_id"),
+                "profile": _saved_card_result_value(child, "_saved_card_profile"),
+                "runtime_binding": _saved_card_result_value(
+                    child, "_saved_card_runtime_binding"
+                ),
                 "diagnostic_path": diagnostic_path,
             }
             if _late_pending_steer:
@@ -2642,6 +2676,11 @@ def _run_single_child(
                 ),
             },
             "tool_trace": tool_trace,
+            "card_id": _saved_card_result_value(child, "_saved_card_id"),
+            "profile": _saved_card_result_value(child, "_saved_card_profile"),
+            "runtime_binding": _saved_card_result_value(
+                child, "_saved_card_runtime_binding"
+            ),
             # Captured before the finally block calls child.close() so the
             # parent thread can fire subagent_stop with the correct role.
             # Stripped before the dict is serialised back to the model.
@@ -2819,6 +2858,11 @@ def _run_single_child(
             "api_calls": 0,
             "duration_seconds": duration,
             "_child_role": getattr(child, "_delegate_role", None),
+            "card_id": _saved_card_result_value(child, "_saved_card_id"),
+            "profile": _saved_card_result_value(child, "_saved_card_profile"),
+            "runtime_binding": _saved_card_result_value(
+                child, "_saved_card_runtime_binding"
+            ),
         }
         if _late_pending_steer:
             _error_entry["missed_steer"] = _late_pending_steer
@@ -3129,10 +3173,50 @@ def _validate_batch_tasks(task_list: List[Dict[str, Any]]) -> Optional[str]:
     return None
 
 
+def _resolve_saved_delegate_card(
+    parent_agent,
+    target_card_id: Optional[str],
+) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Resolve one host-supplied saved Card without model-controlled grants."""
+    target = str(target_card_id or "").strip()
+    if not target:
+        return None, None
+    registry = getattr(parent_agent, "_saved_delegate_cards", None)
+    if not isinstance(registry, dict) or target not in registry:
+        return None, f"saved_delegate_card_not_authorized:{target}"
+    card = registry[target]
+    if not isinstance(card, dict):
+        return None, f"saved_delegate_card_invalid:{target}"
+    execution_mode = str(card.get("executionMode") or "").strip()
+    if execution_mode != "single":
+        return None, f"saved_delegate_execution_mode_unsupported:{execution_mode}"
+    parent_access_mode = str(
+        getattr(parent_agent, "_saved_delegate_access_mode", "") or ""
+    ).strip()
+    target_access_mode = str(card.get("accessMode") or "").strip()
+    if parent_access_mode and target_access_mode != parent_access_mode:
+        return None, (
+            "saved_delegate_access_mode_mismatch:"
+            f"{target_access_mode}:{parent_access_mode}"
+        )
+    allowed = card.get("allowedToolNames")
+    if not isinstance(allowed, list) or any(
+        not isinstance(name, str) for name in allowed
+    ):
+        return None, f"saved_delegate_tools_invalid:{target}"
+    parent_names = getattr(parent_agent, "valid_tool_names", None)
+    if isinstance(parent_names, (set, list, tuple)):
+        missing = [name for name in allowed if name not in parent_names]
+        if missing:
+            return None, "saved_delegate_tools_not_in_parent:" + ",".join(missing)
+    return card, None
+
+
 def delegate_task(
     goal: Optional[str] = None,
     context: Optional[str] = None,
     tasks: Optional[List[Dict[str, Any]]] = None,
+    target_card_id: Optional[str] = None,
     max_iterations: Optional[int] = None,
     role: Optional[str] = None,
     background: Optional[bool] = None,
@@ -3235,7 +3319,12 @@ def delegate_task(
             )
         task_list = tasks
     elif goal and isinstance(goal, str) and goal.strip():
-        single_task: Dict[str, Any] = {"goal": goal, "context": context, "role": top_role}
+        single_task: Dict[str, Any] = {
+            "goal": goal,
+            "context": context,
+            "role": top_role,
+            "target_card_id": target_card_id,
+        }
         if output_schema is not None:
             single_task["output_schema"] = output_schema
         task_list = [single_task]
@@ -3263,6 +3352,16 @@ def delegate_task(
         batch_error = _validate_batch_tasks(task_list)
         if batch_error:
             return tool_error(batch_error)
+
+    saved_delegate_cards: list[Optional[Dict[str, Any]]] = []
+    for task in task_list:
+        saved_delegate, saved_delegate_error = _resolve_saved_delegate_card(
+            parent_agent,
+            task.get("target_card_id"),
+        )
+        if saved_delegate_error:
+            return tool_error(saved_delegate_error)
+        saved_delegate_cards.append(saved_delegate)
 
     # T1-24: coerce/validate optional per-task output_schema up front so a
     # malformed schema fails the whole call loudly instead of spawning
@@ -3342,14 +3441,23 @@ def delegate_task(
             from tools.delegation_output_schema import append_output_contract
 
             _child_context = append_output_contract(_child_context, _task_schema)
+        saved_delegate = saved_delegate_cards[i]
         child = _build_child_preserving_parent_tools(
             task_index=i,
             goal=t["goal"],
             context=_child_context,
-            # Subagents always inherit the parent's toolsets; the model
-            # cannot choose or narrow them (no model-facing toolsets arg).
-            toolsets=None,
-            model=creds["model"],
+            # Generic children inherit parent toolsets. A host-authorized
+            # saved Card may narrow them; the model never names toolsets.
+            toolsets=(
+                list(saved_delegate.get("toolsets") or [])
+                if saved_delegate is not None
+                else None
+            ),
+            model=(
+                str(saved_delegate.get("providerModelId") or "")
+                if saved_delegate is not None
+                else creds["model"]
+            ),
             max_iterations=effective_max_iter,
             task_count=n_tasks,
             parent_agent=parent_agent,
@@ -3361,6 +3469,27 @@ def delegate_task(
             override_max_tokens=creds.get("max_output_tokens"),
             override_acp_command=creds.get("command"),
             override_acp_args=creds.get("args"),
+            saved_system_prompt=(
+                str(saved_delegate.get("prompt") or "")
+                if saved_delegate is not None
+                else None
+            ),
+            allowed_tool_names=(
+                list(saved_delegate.get("allowedToolNames") or [])
+                if saved_delegate is not None
+                else None
+            ),
+            saved_card_identity=(
+                {
+                    "cardId": str(saved_delegate.get("cardId") or ""),
+                    "profile": str(saved_delegate.get("profile") or ""),
+                    "runtimeBinding": str(
+                        saved_delegate.get("runtimeBinding") or ""
+                    ),
+                }
+                if saved_delegate is not None
+                else None
+            ),
             role=effective_role,
         )
         # Attach the validated schema for the completion-side validation
@@ -4236,6 +4365,14 @@ DELEGATE_TASK_SCHEMA = {
                             "type": "string",
                             "description": "Task-specific context",
                         },
+                        "target_card_id": {
+                            "type": "string",
+                            "description": (
+                                "Optional host-authorized saved Hermes Card "
+                                "identity. The ACP host supplies the allowed "
+                                "values and capability ceiling."
+                            ),
+                        },
                         "role": {
                             "type": "string",
                             "enum": ["leaf", "orchestrator"],
@@ -4266,6 +4403,14 @@ DELEGATE_TASK_SCHEMA = {
                 "type": "string",
                 "enum": ["leaf", "orchestrator"],
                 "description": "(rebuilt at get_definitions() time)",
+            },
+            "target_card_id": {
+                "type": "string",
+                "description": (
+                    "Optional host-authorized saved Hermes Card identity. "
+                    "The ACP host supplies the allowed values and capability "
+                    "ceiling."
+                ),
             },
             "output_schema": {
                 "type": "object",
@@ -4344,6 +4489,7 @@ registry.register(
         goal=args.get("goal"),
         context=args.get("context"),
         tasks=_strip_model_hidden_task_fields(args.get("tasks")),
+        target_card_id=args.get("target_card_id"),
         max_iterations=args.get("max_iterations"),
         role=args.get("role"),
         background=_model_background_value(args, kw.get("parent_agent")),

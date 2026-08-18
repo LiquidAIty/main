@@ -176,6 +176,7 @@ class SessionState:
     external_toolsets: Optional[List[str]] = None
     external_skills: Optional[List[str]] = None
     external_mcp_server_names: List[str] = field(default_factory=list)
+    external_delegate_cards: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class SessionManager:

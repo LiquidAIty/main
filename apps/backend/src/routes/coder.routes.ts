@@ -235,6 +235,9 @@ function resolvePreparedHermesTurnArgs(
     mcpConnectionIds: Array.isArray(context.mcpConnectionIds) ? context.mcpConnectionIds : [],
     coderCardIds: Array.isArray(context.coderCardIds) ? context.coderCardIds : [],
     directSubagents: Array.isArray(context.directSubagents) ? context.directSubagents : [],
+    nativeHermesDelegates: Array.isArray(context.nativeHermesDelegates)
+      ? context.nativeHermesDelegates
+      : [],
     savedCardRuntime: context.savedCardRuntime || {
       provider: String(context.provider || ''),
       modelKey: String(context.modelKey || ''),

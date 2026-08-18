@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from datetime import datetime, timezone
 import base64
 import contextvars
@@ -265,6 +266,61 @@ def _external_session_access_mode(kwargs: dict[str, Any]) -> str | None:
     if value not in {"chatgpt-account", "openai-api", "openrouter-api"}:
         raise ValueError("acp_session_config_invalid: field=accessMode")
     return value
+
+
+def _external_session_delegate_cards(
+    kwargs: dict[str, Any],
+) -> list[dict[str, Any]] | None:
+    """Read the host-authorized saved Hermes delegate registry.
+
+    The registry is ACP transport metadata, not model-authored context.  It is
+    intentionally bounded and contains no credentials or routing topology.
+    """
+    config = kwargs.get("sessionConfig")
+    if not isinstance(config, dict) or "delegateCards" not in config:
+        return None
+    value = config.get("delegateCards")
+    if not isinstance(value, list) or len(value) > 16:
+        raise ValueError("acp_session_config_invalid: field=delegateCards")
+
+    required_strings = (
+        "cardId", "title", "runtimeBinding", "prompt", "profile",
+        "provider", "providerModelId", "accessMode", "executionMode",
+    )
+    list_fields = ("skills", "toolsets", "allowedToolNames")
+    delegates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in value:
+        if not isinstance(entry, dict):
+            raise ValueError("acp_session_config_invalid: field=delegateCards")
+        normalized: dict[str, Any] = {}
+        for key in required_strings:
+            item = entry.get(key)
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(
+                    f"acp_session_config_invalid: field=delegateCards.{key}"
+                )
+            normalized[key] = item.strip() if key != "prompt" else item
+        if normalized["cardId"] in seen:
+            raise ValueError("acp_session_delegate_card_duplicate")
+        if normalized["executionMode"] not in {"single", "auto-kanban"}:
+            raise ValueError(
+                "acp_session_config_invalid: field=delegateCards.executionMode"
+            )
+        for key in list_fields:
+            items = entry.get(key)
+            if not isinstance(items, list) or any(
+                not isinstance(item, str) for item in items
+            ):
+                raise ValueError(
+                    f"acp_session_config_invalid: field=delegateCards.{key}"
+                )
+            normalized[key] = list(dict.fromkeys(
+                item.strip() for item in items if item.strip()
+            ))
+        seen.add(normalized["cardId"])
+        delegates.append(normalized)
+    return delegates
 
 
 def _resource_display_name(uri: str, name: str | None = None, title: str | None = None) -> str:
@@ -1102,6 +1158,7 @@ class HermesACPAgent(acp.Agent):
     def _refresh_external_tool_surface(self, state: SessionState) -> None:
         """Apply an exact caller-owned native capability ceiling when present."""
         if state.external_native_tools is None and state.external_toolsets is None:
+            self._apply_saved_delegate_registry(state)
             return
 
         from agent.memory_manager import inject_memory_provider_tools
@@ -1157,9 +1214,53 @@ class HermesACPAgent(acp.Agent):
         state.agent.tools = deduped
         state.agent.valid_tool_names = set(seen)
         inject_memory_provider_tools(state.agent)
+        self._apply_saved_delegate_registry(state)
         invalidate = getattr(state.agent, "_invalidate_system_prompt", None)
         if callable(invalidate):
             invalidate()
+
+    def _apply_saved_delegate_registry(self, state: SessionState) -> None:
+        """Attach trusted saved-Card targets and advertise their exact IDs."""
+        delegates = {
+            delegate["cardId"]: dict(delegate)
+            for delegate in state.external_delegate_cards
+        }
+        state.agent._saved_delegate_cards = delegates
+        state.agent._saved_delegate_access_mode = str(
+            getattr(state, "external_access_mode", "") or ""
+        )
+        if not delegates:
+            return
+
+        ids = list(delegates)
+        patched_tools: list[dict[str, Any]] = []
+        for tool in list(getattr(state.agent, "tools", None) or []):
+            function = tool.get("function") if isinstance(tool, dict) else None
+            if not isinstance(function, dict) or function.get("name") != "delegate_task":
+                patched_tools.append(tool)
+                continue
+            patched = copy.deepcopy(tool)
+            parameters = patched["function"].setdefault("parameters", {})
+            properties = parameters.setdefault("properties", {})
+            properties["target_card_id"] = {
+                "type": "string",
+                "enum": ids,
+                "description": (
+                    "Optional saved Hermes Card identity selected from the "
+                    "host-authorized FLOW targets. The host applies its prompt "
+                    "and capability ceiling."
+                ),
+            }
+            tasks = properties.get("tasks")
+            if isinstance(tasks, dict):
+                items = tasks.get("items")
+                if isinstance(items, dict):
+                    item_properties = items.setdefault("properties", {})
+                    item_properties["target_card_id"] = copy.deepcopy(
+                        properties["target_card_id"]
+                    )
+            patched_tools.append(patched)
+        state.agent.tools = patched_tools
 
     def _apply_external_session_config(
         self, state: SessionState, kwargs: dict[str, Any]
@@ -1169,6 +1270,7 @@ class HermesACPAgent(acp.Agent):
         skills = _external_session_string_list(kwargs, "skills")
         enabled_tools = _external_session_string_list(kwargs, "enabledTools")
         enabled_toolsets = _external_session_string_list(kwargs, "enabledToolsets")
+        delegate_cards = _external_session_delegate_cards(kwargs)
 
         prompt_parts = [_external_session_system_prompt(kwargs)]
         if access_mode is not None:
@@ -1195,6 +1297,31 @@ class HermesACPAgent(acp.Agent):
             state.external_native_tools = enabled_tools
         if enabled_toolsets is not None:
             state.external_toolsets = enabled_toolsets
+        if delegate_cards is not None:
+            materialized_delegates: list[dict[str, Any]] = []
+            for delegate in delegate_cards:
+                materialized = dict(delegate)
+                delegate_skills = list(materialized.get("skills") or [])
+                if delegate_skills:
+                    from agent.skill_commands import build_preloaded_skills_prompt
+
+                    skill_prompt, _loaded, missing = build_preloaded_skills_prompt(
+                        delegate_skills,
+                        task_id=f"{state.session_id}:{materialized['cardId']}",
+                    )
+                    if missing:
+                        raise ValueError(
+                            "acp_session_delegate_skills_missing: "
+                            + ",".join(missing)
+                        )
+                    if skill_prompt:
+                        materialized["prompt"] = (
+                            str(materialized["prompt"])
+                            + "\n\n"
+                            + skill_prompt
+                        )
+                materialized_delegates.append(materialized)
+            state.external_delegate_cards = materialized_delegates
         if enabled_tools is not None or enabled_toolsets is not None:
             # The current ACP load/new request is authoritative. Re-add only
             # the MCP server names actually supplied on this request below.

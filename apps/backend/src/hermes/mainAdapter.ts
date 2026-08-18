@@ -49,10 +49,29 @@ export type HermesRuntimeConfig = {
   mcpConnectionIds: string[];
   coderCardIds: string[];
   directSubagents: { cardId: string; title: string; runtimeBinding: string }[];
+  nativeHermesDelegates: HermesNativeDelegateConfig[];
   savedCardRuntime: { provider: string; modelKey: string; providerModelId: string };
   profileSnapshot: { name: string; model: string; gateway: string } | null;
   profileConflicts: string[];
   profileConflictResolution: 'hermes' | 'card';
+};
+
+export type HermesNativeDelegateConfig = {
+  cardId: string;
+  title: string;
+  runtimeBinding: string;
+  runtimeOwner: 'hermes';
+  prompt: string;
+  profile: string;
+  provider: string;
+  providerModelId: string;
+  accessMode: CardAccessMode;
+  executionMode: 'single' | 'auto-kanban';
+  tools: string[];
+  nativeTools: string[];
+  skills: string[];
+  toolsets: string[];
+  mcpConnectionIds: string[];
 };
 
 export type CardAccessMode = 'chatgpt-account' | 'coder-oauth' | 'openai-api' | 'openrouter-api';
@@ -187,6 +206,41 @@ export function buildHermesOfficialMcpServer(
     url: shared.url,
     headers: Object.entries(shared.headers).map(([name, value]) => ({ name, value })),
   };
+}
+
+function sanitizeHermesMcpName(value: string): string {
+  return String(value || '').replace(/[^A-Za-z0-9_]/g, '_');
+}
+
+export function buildHermesDelegateCards(
+  delegates: HermesNativeDelegateConfig[],
+  officialServerName: string,
+): Record<string, unknown>[] {
+  const server = sanitizeHermesMcpName(officialServerName);
+  return delegates.filter((delegate) => delegate.executionMode === 'single').map((delegate) => {
+    const allowedToolNames = [
+      ...delegate.nativeTools,
+      ...delegate.tools.map((toolName) => {
+        if (toolName === 'web_search') return toolName;
+        if (!server) return '';
+        return `mcp__${server}__${sanitizeHermesMcpName(toolName)}`;
+      }),
+    ].filter((name, index, names) => Boolean(name) && names.indexOf(name) === index);
+    return {
+      cardId: delegate.cardId,
+      title: delegate.title,
+      runtimeBinding: delegate.runtimeBinding,
+      prompt: delegate.prompt,
+      profile: delegate.profile,
+      provider: delegate.provider,
+      providerModelId: delegate.providerModelId,
+      accessMode: delegate.accessMode,
+      executionMode: delegate.executionMode,
+      skills: delegate.skills,
+      toolsets: delegate.toolsets,
+      allowedToolNames,
+    };
+  });
 }
 
 class AcpProcess {
@@ -415,14 +469,21 @@ class AcpProcess {
   private async resolveSession(args: HermesTurnArgs): Promise<string> {
     const existing = this.sessionByKey.get(args.sessionKey);
     const cwd = this.sessionCwd(args.sessionKey, args.workingDirectory);
+    const mcpServers = this.mcpServers(args);
+    const officialServerName = String(
+      mcpServers.find((server) => String(server.name || '').startsWith('main-runtime-'))?.name || '',
+    );
     const sessionConfig = {
       systemPrompt: args.prompt,
       accessMode: args.accessMode,
       enabledTools: args.nativeTools,
       enabledToolsets: args.toolsets,
       skills: args.skills,
+      delegateCards: buildHermesDelegateCards(
+        args.nativeHermesDelegates,
+        officialServerName,
+      ),
     };
-    const mcpServers = this.mcpServers(args);
     if (existing) {
       await this.request('session/load', {
         cwd,

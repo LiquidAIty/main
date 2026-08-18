@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildHermesOfficialMcpServer,
+  buildHermesDelegateCards,
   deriveHermesSessionKey,
   providerForHermes,
   requireHermesCompletionText,
@@ -61,5 +62,62 @@ describe('Hermes ACP transport identity', () => {
     });
     expect(server).not.toHaveProperty('command');
     expect(JSON.stringify(server)).not.toContain('0123456789abcdef0123456789abcdef');
+  });
+
+  it('projects saved Hermes delegates into exact native and official-MCP tool names', () => {
+    expect(buildHermesDelegateCards([{
+      cardId: 'card_local_coder',
+      title: 'Coder',
+      runtimeBinding: 'coder',
+      runtimeOwner: 'hermes',
+      prompt: 'Saved Coder prompt',
+      profile: 'coder',
+      provider: 'openai',
+      providerModelId: 'gpt-5.6-luna',
+      accessMode: 'chatgpt-account',
+      executionMode: 'single',
+      tools: ['cbm.search_graph', 'web_search'],
+      nativeTools: ['terminal'],
+      skills: [],
+      toolsets: ['terminal'],
+      mcpConnectionIds: [],
+    }], 'main-runtime-abcd')).toEqual([{
+      cardId: 'card_local_coder',
+      title: 'Coder',
+      runtimeBinding: 'coder',
+      prompt: 'Saved Coder prompt',
+      profile: 'coder',
+      provider: 'openai',
+      providerModelId: 'gpt-5.6-luna',
+      accessMode: 'chatgpt-account',
+      executionMode: 'single',
+      skills: [],
+      toolsets: ['terminal'],
+      allowedToolNames: [
+        'terminal',
+        'mcp__main_runtime_abcd__cbm_search_graph',
+        'web_search',
+      ],
+    }]);
+  });
+
+  it('does not advertise saved auto-Kanban Cards as plain delegate_task children', () => {
+    expect(buildHermesDelegateCards([{
+      cardId: 'card_hermes_steward',
+      title: 'Helper',
+      runtimeBinding: 'hermes_steward',
+      runtimeOwner: 'hermes',
+      prompt: 'Saved Helper prompt',
+      profile: 'liquidaity-hermes-steward',
+      provider: 'openai',
+      providerModelId: 'gpt-5.6-luna',
+      accessMode: 'chatgpt-account',
+      executionMode: 'auto-kanban',
+      tools: [],
+      nativeTools: [],
+      skills: [],
+      toolsets: [],
+      mcpConnectionIds: [],
+    }], 'main-runtime-abcd')).toEqual([]);
   });
 });

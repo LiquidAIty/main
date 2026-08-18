@@ -1206,6 +1206,65 @@ def _resolve_hermes_profile(
     }
 
 
+def _native_hermes_delegates(
+    direct_subagents: list[dict[str, str]],
+    cards: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Project saved Hermes FLOW targets for the native delegate_task seam.
+
+    This transport metadata is deliberately excluded from serialized IDF.  It
+    gives the already-selected Hermes runtime the saved target configuration;
+    it does not choose a target or grant a relationship by itself.
+    """
+    delegates: list[dict[str, Any]] = []
+    for direct in direct_subagents:
+        target = cards[direct["cardId"]]
+        binding = str(target.get("runtimeBinding") or "").strip()
+        if binding not in _HERMES_RUNTIME_BINDINGS:
+            continue
+        if _runtime_owner(target) != "hermes":
+            continue
+        options = _json_object(target.get("runtimeOptions"), "runtime_options")
+        provider = _required_text(options.get("provider"), "card_provider")
+        model_key = _required_text(options.get("modelKey"), "card_model_key")
+        provider_model_id = _required_text(
+            options.get("providerModelId") or model_key,
+            "card_provider_model_id",
+        )
+        profile_config = _resolve_hermes_profile(
+            options,
+            provider,
+            model_key,
+            provider_model_id,
+        )
+        facet = options.get("hermesFacet")
+        facet = facet if isinstance(facet, dict) else {}
+        facet_instructions = str(facet.get("instructions") or "")
+        common_prompt = str(target.get("prompt") or "")
+        system_prompt = common_prompt + (
+            "\n\n" + facet_instructions if facet_instructions else ""
+        )
+        delegates.append({
+            **direct,
+            "runtimeOwner": "hermes",
+            "prompt": system_prompt,
+            "profile": profile_config["profile"],
+            "provider": provider,
+            "providerModelId": profile_config["providerModelId"],
+            "accessMode": str(options.get("accessMode") or ""),
+            "executionMode": str(options.get("executionMode") or "single"),
+            "tools": _string_list(options.get("tools"), "tools"),
+            "nativeTools": _string_list(options.get("nativeTools"), "native_tools"),
+            "skills": _string_list(options.get("skills"), "skills"),
+            "toolsets": _string_list(options.get("toolsets"), "toolsets"),
+            "mcpConnectionIds": _string_list(
+                options.get("mcpConnectionIds"),
+                "mcp_connection_ids",
+            ),
+        })
+    return delegates
+
+
 def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     project_ref = _required_text(payload.get("projectId"), "project_id")
     deck_id = _required_text(payload.get("deckId"), "deck_id")
@@ -1283,6 +1342,12 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         if write_mode not in {"read-only", "edit"}:
             raise CardDomainError("coder_write_mode_invalid")
         runtime_options["writeMode"] = write_mode
+    direct_subagents = _direct_subagents(card_id, cards, loaded["deck"]["edges"])
+    native_hermes_delegates = (
+        _native_hermes_delegates(direct_subagents, cards)
+        if owner == "hermes"
+        else []
+    )
     card_context = {
         "cardId": card_id, "title": card["title"], "prompt": common_prompt,
         "runtimeType": card["runtimeType"], "accessMode": str(options.get("accessMode") or ""),
@@ -1297,13 +1362,21 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         "toolsets": _string_list(options.get("toolsets"), "toolsets"),
         "mcpConnectionIds": _string_list(options.get("mcpConnectionIds"), "mcp_connection_ids"),
         "coderCardIds": _string_list(options.get("coderCards"), "coder_cards"),
-        "directSubagents": _direct_subagents(card_id, cards, loaded["deck"]["edges"]),
+        "directSubagents": direct_subagents,
+        "nativeHermesDelegates": native_hermes_delegates,
         "runtimeOptions": runtime_options,
     }
-    if card_context["directSubagents"] and "card.run_assistant_agent" not in card_context["tools"]:
+    native_delegate_ids = {
+        delegate["cardId"] for delegate in native_hermes_delegates
+    }
+    has_external_flow_target = any(
+        direct["cardId"] not in native_delegate_ids
+        for direct in direct_subagents
+    )
+    if has_external_flow_target and "card.run_assistant_agent" not in card_context["tools"]:
         # A saved, enabled FLOW relationship is the complete bounded grant for
-        # delegation to that exact connected target. It grants no ordinary
-        # tool and cannot expand the target Card's own capability ceiling.
+        # external Card execution. Saved Hermes targets stay on native
+        # delegate_task and never acquire the recursive MCP Card tool.
         card_context["tools"].append("card.run_assistant_agent")
     if profile_config:
         card_context.update(profile_config)

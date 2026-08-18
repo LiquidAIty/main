@@ -30,6 +30,7 @@ from tools.delegate_tool import (
     _strip_blocked_tools,
     _resolve_child_credential_pool,
     _resolve_delegation_credentials,
+    _resolve_saved_delegate_card,
 )
 
 
@@ -64,6 +65,8 @@ class TestDelegateRequirements(unittest.TestCase):
         self.assertIn("goal", props)
         self.assertIn("tasks", props)
         self.assertIn("context", props)
+        self.assertIn("target_card_id", props)
+        self.assertIn("target_card_id", props["tasks"]["items"]["properties"])
         # toolsets is intentionally NOT exposed to the model — subagents always
         # inherit the parent's toolsets. Letting the model name toolsets was a
         # capability-selection surface the model should not control.
@@ -261,6 +264,91 @@ class TestDelegateTask(unittest.TestCase):
         result = json.loads(delegate_task(goal="test", parent_agent=parent))
         self.assertIn("error", result)
         self.assertIn("depth limit", result["error"].lower())
+
+    def test_saved_delegate_resolution_is_host_authorized_and_fail_closed(self):
+        parent = _make_mock_parent(depth=0)
+        parent.valid_tool_names = {"terminal", "mcp__main__cbm_search_graph"}
+        parent._saved_delegate_access_mode = "chatgpt-account"
+        parent._saved_delegate_cards = {
+            "card_local_coder": {
+                "cardId": "card_local_coder",
+                "profile": "coder",
+                "runtimeBinding": "coder",
+                "executionMode": "single",
+                "accessMode": "chatgpt-account",
+                "allowedToolNames": ["terminal"],
+            },
+            "card_helper": {
+                "cardId": "card_helper",
+                "profile": "helper",
+                "runtimeBinding": "hermes_steward",
+                "executionMode": "auto-kanban",
+                "accessMode": "chatgpt-account",
+                "allowedToolNames": [],
+            },
+        }
+
+        resolved, error = _resolve_saved_delegate_card(parent, "card_local_coder")
+        self.assertIsNone(error)
+        self.assertEqual(resolved["profile"], "coder")
+        self.assertEqual(
+            _resolve_saved_delegate_card(parent, "missing")[1],
+            "saved_delegate_card_not_authorized:missing",
+        )
+        self.assertEqual(
+            _resolve_saved_delegate_card(parent, "card_helper")[1],
+            "saved_delegate_execution_mode_unsupported:auto-kanban",
+        )
+
+        parent._saved_delegate_cards["card_local_coder"]["allowedToolNames"] = [
+            "mcp__main__not_granted"
+        ]
+        self.assertEqual(
+            _resolve_saved_delegate_card(parent, "card_local_coder")[1],
+            "saved_delegate_tools_not_in_parent:mcp__main__not_granted",
+        )
+
+    def test_child_builder_applies_saved_prompt_exact_tool_ceiling_and_identity(self):
+        parent = _make_mock_parent(depth=0)
+        parent.enabled_toolsets = ["terminal", "web"]
+        parent.valid_tool_names = {"terminal", "web_search"}
+        with patch("run_agent.AIAgent") as MockAgent:
+            child = MagicMock()
+            child.tools = [
+                {"type": "function", "function": {"name": "terminal"}},
+                {"type": "function", "function": {"name": "web_search"}},
+            ]
+            MockAgent.return_value = child
+            built = _build_child_agent(
+                task_index=0,
+                goal="Inspect the bounded repository slice",
+                context="No writes",
+                toolsets=["terminal"],
+                model="gpt-5.6-luna",
+                max_iterations=10,
+                parent_agent=parent,
+                task_count=1,
+                saved_system_prompt="Saved Coder prompt",
+                allowed_tool_names=["terminal"],
+                saved_card_identity={
+                    "cardId": "card_local_coder",
+                    "profile": "coder",
+                    "runtimeBinding": "coder",
+                },
+            )
+
+        self.assertTrue(
+            MockAgent.call_args.kwargs["ephemeral_system_prompt"].startswith(
+                "Saved Coder prompt\n\n"
+            )
+        )
+        self.assertEqual(built.valid_tool_names, {"terminal"})
+        self.assertEqual(
+            [tool["function"]["name"] for tool in built.tools],
+            ["terminal"],
+        )
+        self.assertEqual(built._saved_card_id, "card_local_coder")
+        self.assertEqual(built._saved_card_profile, "coder")
 
 
     def test_child_inherits_runtime_credentials(self):
@@ -1240,6 +1328,7 @@ class TestDispatchDelegateTask(unittest.TestCase):
                 parent,
                 {
                     "goal": "test",
+                    "target_card_id": "card_local_coder",
                     "acp_command": "claude",
                     "acp_args": ["--acp", "--stdio"],
                     "tasks": [
@@ -1255,6 +1344,7 @@ class TestDispatchDelegateTask(unittest.TestCase):
         self.assertNotIn("acp_command", captured)
         self.assertNotIn("acp_args", captured)
         self.assertEqual(captured["goal"], "test")
+        self.assertEqual(captured["target_card_id"], "card_local_coder")
         self.assertNotIn("acp_command", captured["tasks"][0])
         self.assertNotIn("acp_args", captured["tasks"][0])
 

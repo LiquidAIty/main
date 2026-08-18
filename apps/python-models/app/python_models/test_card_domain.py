@@ -85,13 +85,26 @@ def _delegation_preview(
     *,
     edges: list[dict[str, object]],
     target: dict | None = None,
+    parent_binding: str = "research_agent",
 ) -> dict:
-    parent = _agent("parent")
+    parent = _agent("parent", runtimeBinding=parent_binding)
     parent["runtimeOptions"] = {
         **parent["runtimeOptions"],
         "tools": ["calculator"],
+        **({"profile": "main"} if parent_binding in card_domain._HERMES_RUNTIME_BINDINGS else {}),
     }
-    child = target or _agent("child", runtimeBinding="coder")
+    child = target or _agent(
+        "child",
+        runtimeBinding="coder",
+        runtimeOptions={
+            **_agent("child")["runtimeOptions"],
+            "profile": "coder",
+            "executionMode": "single",
+            "nativeTools": ["terminal"],
+            "skills": ["repository-coder"],
+            "toolsets": ["terminal"],
+        },
+    )
     for number, card in enumerate((parent, child), start=1):
         card["_cardRevisionId"] = f"revision-{number}"
         card["_cardRevision"] = 1
@@ -129,6 +142,37 @@ def test_enabled_flow_edge_materializes_bounded_delegation_tool_and_target(
         "title": "child",
         "runtimeBinding": "coder",
     }]
+
+
+def test_hermes_flow_target_uses_native_delegate_metadata_without_recursive_mcp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preview = _delegation_preview(
+        monkeypatch,
+        edges=[{"source": "parent", "target": "child", "edgeType": "flow"}],
+        parent_binding="main_chat",
+    )
+    assert preview["runtimeOwner"] == "hermes"
+    assert preview["cardContext"]["tools"] == ["calculator"]
+    assert "card.run_assistant_agent" not in preview["providerProjection"]["enabledTools"]
+    assert preview["cardContext"]["nativeHermesDelegates"] == [{
+        "cardId": "child",
+        "title": "child",
+        "runtimeBinding": "coder",
+        "runtimeOwner": "hermes",
+        "prompt": "common prompt",
+        "profile": "coder",
+        "provider": "openrouter",
+        "providerModelId": "deepseek/deepseek-v4-flash-0731",
+        "accessMode": "openrouter-api",
+        "executionMode": "single",
+        "tools": [],
+        "nativeTools": ["terminal"],
+        "skills": ["repository-coder"],
+        "toolsets": ["terminal"],
+        "mcpConnectionIds": [],
+    }]
+    assert "nativeHermesDelegates" not in preview["exactIdf"]
 
 
 def test_no_flow_edge_materializes_no_delegation_transport(
