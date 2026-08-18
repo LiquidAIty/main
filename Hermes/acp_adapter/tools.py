@@ -1326,7 +1326,15 @@ def build_tool_complete(
         kind=kind,
         status="failed" if _tool_result_failed(result, tool_name) else "completed",
         content=content,
-        raw_output=None if tool_name in _POLISHED_TOOLS or _is_structured_json_result(result) else result,
+        # LiquidAIty's official MCP seam needs the exact structured result so
+        # native graph IDs can be observed without reconstructing them from the
+        # human-readable ACP rendering. Keep upstream presentation behavior in
+        # ``content`` and preserve raw output only for explicit MCP calls.
+        raw_output=(
+            result
+            if tool_name.startswith("mcp__")
+            else None if tool_name in _POLISHED_TOOLS or _is_structured_json_result(result) else result
+        ),
     )
 
 

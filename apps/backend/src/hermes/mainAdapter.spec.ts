@@ -5,6 +5,7 @@ import {
   buildHermesOfficialMcpServer,
   buildHermesDelegateCards,
   deriveHermesSessionKey,
+  hermesToolResultOutput,
   providerForHermes,
   requireHermesCompletionText,
   resolveHermesCardRuntimeHome,
@@ -38,6 +39,18 @@ describe('Hermes ACP transport identity', () => {
     expect(() => requireHermesCompletionText('', 'openrouter-api')).toThrow(
       'hermes_empty_completion',
     );
+  });
+
+  it('preserves exact MCP raw output and reads ordinary ACP content without inventing data', () => {
+    const exact = '{"results":[{"qualified_name":"pkg.alpha"}]}';
+    expect(hermesToolResultOutput({
+      rawOutput: exact,
+      content: [{ type: 'content', content: { type: 'text', text: 'formatted display' } }],
+    })).toBe(exact);
+    expect(hermesToolResultOutput({
+      rawOutput: null,
+      content: [{ type: 'content', content: { type: 'text', text: 'terminal output' } }],
+    })).toBe('terminal output');
   });
 
   it('connects genuine Hermes to the one official HTTP MCP host with Card grants', () => {

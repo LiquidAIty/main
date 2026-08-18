@@ -86,9 +86,9 @@ export function unwrapNativeToolOutput(value: unknown): Record<string, any> | nu
 
 function toolAuthority(toolName: string): GraphAttentionAuthority | null {
   const name = toolName.toLowerCase();
-  if (name.includes('engraphis.')) return 'thinkgraph';
-  if (name.includes('graphiti.')) return 'knowgraph';
-  if (name.includes('cbm.')) return 'codegraph';
+  if (/(^|[._])engraphis[._]/.test(name)) return 'thinkgraph';
+  if (/(^|[._])graphiti[._]/.test(name)) return 'knowgraph';
+  if (/(^|[._])cbm[._]/.test(name)) return 'codegraph';
   return null;
 }
 

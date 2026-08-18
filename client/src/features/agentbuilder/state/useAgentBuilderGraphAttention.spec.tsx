@@ -48,6 +48,18 @@ describe('attention-activated native graph projection', () => {
     });
   });
 
+  it('recognizes the exact MCP-safe tool name Hermes emits over ACP', () => {
+    const result = projectNativeToolResult({
+      toolName: 'mcp__main_runtime_abcd__cbm_search_graph',
+      projectId: 'project-1',
+      actorCardId: 'card_main_chat',
+      output: '{"results":[{"qualified_name":"pkg.alpha","name":"alpha","label":"Function"}]}',
+    });
+
+    expect(result?.authority).toBe('codegraph');
+    expect(result?.projection.nodes.map((node) => node.id)).toEqual(['pkg.alpha']);
+  });
+
   it('keeps graph authorities separate and never creates missing endpoint nodes', () => {
     const think = projectNativeToolResult({
       toolName: 'engraphis.recall',

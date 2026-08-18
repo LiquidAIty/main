@@ -246,6 +246,18 @@ class TestBuildToolComplete:
         assert "{\"results\"" not in text
         assert result.raw_output is None
 
+    def test_build_tool_complete_preserves_exact_structured_mcp_output(self):
+        payload = '{"results":[{"qualified_name":"pkg.alpha","label":"Function"}]}'
+        result = build_tool_complete(
+            "tc-native-graph",
+            "mcp__main_runtime_abcd__cbm_search_graph",
+            payload,
+        )
+
+        assert result.status == "completed"
+        assert result.content
+        assert result.raw_output == payload
+
 
 
 
