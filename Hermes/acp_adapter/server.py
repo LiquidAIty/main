@@ -1679,7 +1679,19 @@ class HermesACPAgent(acp.Agent):
         mcp_servers: list | None = None,
         **kwargs: Any,
     ) -> NewSessionResponse:
-        state = self.session_manager.create_session(cwd=cwd)
+        access_mode = _external_session_access_mode(kwargs)
+        if access_mode == "chatgpt-account":
+            # The session must be born on the authenticated Codex app-server
+            # transport. Constructing a temporary direct-provider agent first
+            # incorrectly requires an API key before session/set_model can apply
+            # the saved Card model.
+            state = self.session_manager.create_session(
+                cwd=cwd,
+                requested_provider="openai-codex",
+                api_mode="codex_app_server",
+            )
+        else:
+            state = self.session_manager.create_session(cwd=cwd)
         self._apply_external_session_config(state, kwargs)
         await self._register_session_mcp_servers(state, mcp_servers)
         self._schedule_mcp_late_refresh(state)
@@ -2699,7 +2711,6 @@ class HermesACPAgent(acp.Agent):
                 model_id,
                 current_provider or "openrouter",
             )
-            state.model = resolved_model
             provider_changed = bool(current_provider and requested_provider != current_provider)
             current_base_url = None if provider_changed else getattr(state.agent, "base_url", None)
             current_api_mode = None if provider_changed else getattr(state.agent, "api_mode", None)
@@ -2712,7 +2723,7 @@ class HermesACPAgent(acp.Agent):
                 )
             if access_mode == "chatgpt-account":
                 current_api_mode = "codex_app_server"
-            state.agent = self.session_manager._make_agent(
+            replacement_agent = self.session_manager._make_agent(
                 session_id=session_id,
                 cwd=state.cwd,
                 model=resolved_model,
@@ -2720,7 +2731,9 @@ class HermesACPAgent(acp.Agent):
                 base_url=current_base_url,
                 api_mode=current_api_mode,
             )
-            state.agent.ephemeral_system_prompt = state.ephemeral_system_prompt or None
+            replacement_agent.ephemeral_system_prompt = state.ephemeral_system_prompt or None
+            state.model = resolved_model
+            state.agent = replacement_agent
             self._refresh_external_tool_surface(state)
             self.session_manager.save_session(session_id)
             logger.info(

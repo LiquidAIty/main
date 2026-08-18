@@ -111,6 +111,29 @@ const mcpClientMocks = vi.hoisted(() => ({
   listPythonAgentMcpCatalog: vi.fn(async (): Promise<any[]> => []),
 }));
 
+const kanbanMocks = vi.hoisted(() => ({
+  runHermesKanbanCardTask: vi.fn(async () => ({
+    taskId: 't_native-steward',
+    runId: 40,
+    snapshot: {
+      task: { id: 't_native-steward', status: 'running', result: null },
+      runs: [{ id: 40, status: 'running' }],
+    },
+  })),
+  waitForHermesKanbanCardTask: vi.fn(async () => ({
+    taskId: 't_native-steward',
+    runId: 41,
+    snapshot: {
+      task: {
+        id: 't_native-steward',
+        status: 'done',
+        result: 'Authentic native Kanban result.',
+      },
+      runs: [{ id: 41, status: 'done' }],
+    },
+  })),
+}));
+
 const orchestratorMocks = vi.hoisted(() => ({
   dispatchConfiguredRuntime: vi.fn(async (): Promise<any> => ({
     ok: true,
@@ -152,24 +175,31 @@ const orchestratorMocks = vi.hoisted(() => ({
       };
     }
     if (endpoint === '/domain/runs/begin') {
+      const autoKanban = body.cardId === 'card_hermes_steward';
       return {
         runId: body.runId,
         cardRevisionId: body.cardRevisionId,
         runtimeOwner: 'hermes',
         hermesTransport: {
-          profile: 'default',
+          profile: autoKanban ? 'liquidaity-hermes-steward' : 'default',
           systemPrompt: 'Saved prompt',
           message: body.exactIdf,
           cardContext: {
             cardId: body.cardId,
-            title: body.cardId === 'card_main_chat' ? 'Main' : 'Worker',
-            runtimeBinding: body.cardId === 'card_main_chat' ? 'main_chat' : 'hermes',
+            title: body.cardId === 'card_main_chat' ? 'Main' : 'Hermes steward',
+            runtimeBinding: body.cardId === 'card_main_chat' ? 'main_chat' : 'hermes_steward',
             provider: 'openai',
             modelKey: 'gpt-5.6-luna',
             providerModelId: 'gpt-5.6-luna',
             accessMode: 'chatgpt-account',
-            executionMode: 'single',
-            tools: [],
+            executionMode: autoKanban ? 'auto-kanban' : 'single',
+            tools: autoKanban ? ['graphiti.search_nodes'] : [],
+            nativeTools: autoKanban ? ['memory'] : [],
+            skills: autoKanban ? ['documentation'] : [],
+            toolsets: [],
+            mcpConnectionIds: [],
+            coderCardIds: [],
+            directSubagents: [],
           },
         },
       };
@@ -239,8 +269,18 @@ vi.mock('../conversations/store', () => ({
 
 vi.mock('../hermes/mainAdapter', () => ({
   deriveHermesSessionKey: (projectId: string, conversationId: string, cardId: string) => `${projectId}:${conversationId}:${cardId}`,
+  providerForHermes: (provider: string, accessMode?: string) => (
+    provider === 'openai' && accessMode === 'chatgpt-account'
+      ? 'openai-codex'
+      : provider
+  ),
   requestHermesCodexAccount: chatSessionMocks.requestHermesCodexAccount,
   startHermesTurn: chatSessionMocks.startHermesTurn,
+}));
+
+vi.mock('./hermesKanban.routes', () => ({
+  runHermesKanbanCardTask: kanbanMocks.runHermesKanbanCardTask,
+  waitForHermesKanbanCardTask: kanbanMocks.waitForHermesKanbanCardTask,
 }));
 
 vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
@@ -535,6 +575,92 @@ describe('coder routes', () => {
         ([endpoint]) => endpoint === '/domain/runs/begin',
       );
       expect(JSON.parse(String(beginCall?.[1]?.body || '{}')).exactIdf).toBe(exactIdf);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('routes a saved auto-kanban Hermes card through the native Kanban owner', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    chatSessionMocks.startHermesTurn.mockClear();
+    kanbanMocks.runHermesKanbanCardTask.mockClear();
+    kanbanMocks.waitForHermesKanbanCardTask.mockClear();
+    const exactIdf = [
+      '# LiquidAIty IDF',
+      '',
+      'profile: liquidaity-hermes-steward',
+      'nativeTools: memory',
+      'tools: graphiti.search_nodes',
+      '',
+      'Prepare one bounded documentation result.',
+    ].join('\n');
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'card_hermes_steward',
+          correlationId: 'corr-steward-1',
+          conversationId: 'conversation-main-1',
+          originatingRunId: 'run-main-parent-1',
+          senderCardId: 'card_main_chat',
+          input: 'Prepare one bounded documentation result.',
+          action: 'execute',
+          exactIdf,
+          cardRevisionId: 'revision:card_hermes_steward',
+        }),
+      });
+      const payload = await response.json();
+      expect(response.status, JSON.stringify(payload)).toBe(200);
+      expect(payload).toMatchObject({
+        ok: true,
+        result: {
+          status: 'completed',
+          output: 'Authentic native Kanban result.',
+          runtimeOwner: 'hermes',
+          transport: {
+            threadId: 't_native-steward',
+            turnId: '41',
+            planType: 'hermes-auto-kanban',
+            nativeTaskId: 't_native-steward',
+            nativeRunId: 41,
+            nativeStatus: 'done',
+          },
+          receipt: { runId: 'corr-steward-1', state: 'completed' },
+        },
+      });
+      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
+      expect(kanbanMocks.runHermesKanbanCardTask).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        deckId: 'deck_builder',
+        correlationId: 'corr-steward-1',
+        conversationId: 'conversation-main-1',
+        parentRunId: 'run-main-parent-1',
+        cardId: 'card_hermes_steward',
+        title: 'Hermes steward',
+        prompt: 'Saved prompt',
+        profile: 'liquidaity-hermes-steward',
+        provider: 'openai-codex',
+        providerModelId: 'gpt-5.6-luna',
+        skills: ['documentation'],
+        input: exactIdf,
+      });
+      expect(kanbanMocks.waitForHermesKanbanCardTask).toHaveBeenCalledWith(
+        'liquidaity-hermes-steward',
+        't_native-steward',
+      );
+      const finishCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+        ([endpoint, init]) => endpoint === '/domain/runs/finish'
+          && JSON.parse(String(init?.body || '{}')).state === 'completed',
+      );
+      expect(JSON.parse(String(finishCall?.[1]?.body || '{}'))).toMatchObject({
+        runId: 'corr-steward-1',
+        providerThreadRef: 't_native-steward',
+        providerTurnRef: '41',
+      });
     } finally {
       await closeServer(server);
     }

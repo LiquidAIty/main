@@ -128,6 +128,39 @@ class TestCreateSession:
 
         assert state.agent.session_cwd == "/tmp/project"
 
+    def test_codex_app_server_skips_direct_provider_credential_resolution(self, monkeypatch):
+        captured = {}
+
+        class FakeAgent:
+            model = "gpt-5.6-luna"
+
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        monkeypatch.setattr("run_agent.AIAgent", FakeAgent)
+        monkeypatch.setattr(
+            "hermes_cli.config.load_config",
+            lambda: {"model": {}, "mcp_servers": {}},
+        )
+        monkeypatch.setattr(
+            "hermes_cli.runtime_provider.resolve_runtime_provider",
+            lambda **_kwargs: pytest.fail("direct provider resolution must stay unused"),
+        )
+        monkeypatch.setattr("acp_adapter.session._register_task_cwd", lambda task_id, cwd: None)
+
+        SessionManager(db=None)._make_agent(
+            session_id="chatgpt-account-session",
+            cwd="/tmp/project",
+            model="gpt-5.6-luna",
+            requested_provider="openai-codex",
+            api_mode="codex_app_server",
+        )
+
+        assert captured["provider"] == "openai-codex"
+        assert captured["api_mode"] == "codex_app_server"
+        assert captured["api_key"] is None
+        assert captured["base_url"] == ""
+
 
 
 

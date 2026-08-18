@@ -353,6 +353,9 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
             "/api/coder/mcp-bridge/run_configured_card",
             {**payload, "action": "materialize"},
         )
+        if isinstance(preview_response, dict) and preview_response.get("ok") is False:
+            error = str(preview_response.get("error") or "configured_card_materialization_failed").strip()
+            raise ControlPlaneError(error or "configured_card_materialization_failed")
         preview_result = preview_response.get("result") if isinstance(preview_response, dict) else None
         invocation = preview_result.get("invocation") if isinstance(preview_result, dict) else None
         exact_idf = invocation.get("exactIdf") if isinstance(invocation, dict) else None

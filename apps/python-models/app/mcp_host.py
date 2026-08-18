@@ -132,9 +132,14 @@ _STARTUP_SOURCE_REVISION, _STARTUP_SOURCE_SHA256 = _startup_source_identity()
 _TRACE_LOCK = threading.Lock()
 _CATALOG_DIAGNOSTIC_LOCK = threading.Lock()
 _LATEST_CATALOG_DIAGNOSTIC: dict[str, Any] | None = None
+_CATALOG_STATE = "initializing"
+_CATALOG_FAILURE: str | None = None
+_HTTP_CATALOG_TOOLS: tuple[Tool, ...] | None = None
+_HTTP_CATALOG_INITIALIZATION_TASK: asyncio.Task[None] | None = None
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
 _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS = 300.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
+_EXPECTED_PUBLIC_TOOL_COUNT = 70
 _PUBLIC_MCP_NAME = "LiquidAIty"
 _PUBLIC_MCP_DESCRIPTION = (
     "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
@@ -252,11 +257,15 @@ def _oauth_trace_fields() -> dict[str, str]:
 
 
 def _catalog_diagnostics() -> dict[str, Any]:
-    """Return identity only; catalog membership remains owned by ``list_tools``."""
+    """Return bounded process/catalog readiness without exposing membership."""
     with _CATALOG_DIAGNOSTIC_LOCK:
         identity = dict(_LATEST_CATALOG_DIAGNOSTIC or {})
+        state = _CATALOG_STATE
+        failure = _CATALOG_FAILURE
     return {
-        "catalogReady": bool(identity),
+        "catalogState": state,
+        "catalogReady": state == "ready" and bool(identity),
+        **({"catalogFailure": failure} if failure else {}),
         **identity,
         "processId": _STARTUP_PROCESS_ID,
         "startupId": _STARTUP_ID,
@@ -1465,8 +1474,7 @@ async def _bridge(path: str, payload: dict[str, Any]) -> list[TextContent]:
     return [TextContent(type="text", text=text)]
 
 
-@server.list_tools()
-async def list_tools() -> list[Tool]:
+async def _materialize_complete_catalog() -> list[Tool]:
     global _LATEST_CATALOG_DIAGNOSTIC
 
     tools = [
@@ -1754,6 +1762,104 @@ async def list_tools() -> list[Tool]:
         **_oauth_trace_fields(),
     )
     return published
+
+
+async def _initialize_http_catalog_once() -> None:
+    """Freeze the complete public HTTP catalog once without delaying the bind."""
+    global _CATALOG_FAILURE, _CATALOG_STATE, _HTTP_CATALOG_TOOLS
+    global _LATEST_CATALOG_DIAGNOSTIC
+    with _CATALOG_DIAGNOSTIC_LOCK:
+        _CATALOG_STATE = "initializing"
+        _CATALOG_FAILURE = None
+        _HTTP_CATALOG_TOOLS = None
+        _LATEST_CATALOG_DIAGNOSTIC = None
+    try:
+        tools = tuple(await _materialize_complete_catalog())
+        names = [tool.name for tool in tools]
+        if len(tools) != _EXPECTED_PUBLIC_TOOL_COUNT or len(set(names)) != len(names):
+            raise RuntimeError(
+                "public_catalog_count_mismatch: "
+                f"expected={_EXPECTED_PUBLIC_TOOL_COUNT} actual={len(tools)} "
+                f"unique={len(set(names))}"
+            )
+        catalog_count, catalog_hash = _catalog_identity(list(tools))
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        failure = (
+            f"{error.__class__.__name__}: {_sanitize_failure_detail(error)}"
+        )
+        with _CATALOG_DIAGNOSTIC_LOCK:
+            _CATALOG_STATE = "failed"
+            _CATALOG_FAILURE = failure
+            _HTTP_CATALOG_TOOLS = None
+            _LATEST_CATALOG_DIAGNOSTIC = None
+        _trace(
+            "catalog_initialization_failed",
+            exception_class=error.__class__.__name__,
+            result_category="catalog_initialization_failed",
+            completed=True,
+        )
+        return
+    with _CATALOG_DIAGNOSTIC_LOCK:
+        _HTTP_CATALOG_TOOLS = tools
+        _LATEST_CATALOG_DIAGNOSTIC = {
+            "publicToolCount": catalog_count,
+            "publicToolUniqueCount": len(set(names)),
+            "catalogHash": catalog_hash,
+        }
+        _CATALOG_FAILURE = None
+        _CATALOG_STATE = "ready"
+
+
+def _start_http_catalog_initialization() -> asyncio.Task[None]:
+    """Return the one process-wide HTTP catalog initialization task."""
+    global _HTTP_CATALOG_INITIALIZATION_TASK
+    task = _HTTP_CATALOG_INITIALIZATION_TASK
+    if task is None:
+        task = asyncio.create_task(
+            _initialize_http_catalog_once(),
+            name="liquidaity-mcp-catalog-initialization",
+        )
+        _HTTP_CATALOG_INITIALIZATION_TASK = task
+    return task
+
+
+def _http_catalog_or_error() -> list[Tool]:
+    with _CATALOG_DIAGNOSTIC_LOCK:
+        state = _CATALOG_STATE
+        failure = _CATALOG_FAILURE
+        tools = _HTTP_CATALOG_TOOLS
+    if state == "initializing":
+        raise RuntimeError("mcp_catalog_initializing")
+    if state == "failed":
+        raise RuntimeError(
+            f"mcp_catalog_initialization_failed: {failure or 'unknown'}"
+        )
+    if state != "ready" or tools is None:
+        raise RuntimeError("mcp_catalog_readiness_invalid")
+    return list(tools)
+
+
+@server.list_tools()
+async def list_tools() -> list[Tool]:
+    """Return no HTTP catalog until the one complete frozen catalog is ready."""
+    global _CATALOG_FAILURE, _CATALOG_STATE
+    if MCP_TRANSPORT == "streamable-http":
+        return _http_catalog_or_error()
+    try:
+        tools = await _materialize_complete_catalog()
+    except Exception as error:
+        with _CATALOG_DIAGNOSTIC_LOCK:
+            _CATALOG_STATE = "failed"
+            _CATALOG_FAILURE = (
+                f"{error.__class__.__name__}: {_sanitize_failure_detail(error)}"
+            )
+        raise
+    with _CATALOG_DIAGNOSTIC_LOCK:
+        _CATALOG_STATE = "ready"
+        _CATALOG_FAILURE = None
+    return tools
 
 
 _SERVER_OWNED_ARGUMENTS = {
@@ -2337,7 +2443,7 @@ async def _run_streamable_http() -> None:
     from starlette.authentication import AuthenticationBackend
     from starlette.applications import Starlette
     from starlette.middleware.authentication import AuthenticationMiddleware
-    from starlette.responses import PlainTextResponse
+    from starlette.responses import JSONResponse, PlainTextResponse
     from starlette.routing import Mount, Route
 
     from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
@@ -2360,12 +2466,46 @@ async def _run_streamable_http() -> None:
         await session_manager.handle_request(scope, receive, send)
 
     async def lifespan(_app: Starlette):
+        catalog_task = _start_http_catalog_initialization()
         try:
             async with session_manager.run():
                 yield
         finally:
+            if not catalog_task.done():
+                catalog_task.cancel()
+                try:
+                    await catalog_task
+                except asyncio.CancelledError:
+                    pass
             await _close_native_graphiti()
             await asyncio.to_thread(_close_native_cbm)
+
+    async def health_endpoint(_request: Any) -> JSONResponse:
+        diagnostics = _catalog_diagnostics()
+        return JSONResponse(
+            {
+                "ok": diagnostics["catalogState"] != "failed",
+                **diagnostics,
+            },
+            status_code=200,
+        )
+
+    async def readiness_endpoint(_request: Any) -> JSONResponse:
+        diagnostics = _catalog_diagnostics()
+        ready = bool(
+            diagnostics["catalogReady"]
+            and diagnostics.get("publicToolCount") == _EXPECTED_PUBLIC_TOOL_COUNT
+            and diagnostics.get("publicToolUniqueCount") == _EXPECTED_PUBLIC_TOOL_COUNT
+        )
+        return JSONResponse(
+            {"ok": ready, **diagnostics},
+            status_code=200 if ready else 503,
+        )
+
+    health_routes = [
+        Route("/health", endpoint=health_endpoint, methods=["GET"]),
+        Route("/health/ready", endpoint=readiness_endpoint, methods=["GET"]),
+    ]
 
     if OAUTH_ENFORCED:
         class ScopedRequireAuthMiddleware(RequireAuthMiddleware):
@@ -2427,6 +2567,7 @@ async def _run_streamable_http() -> None:
             resource_name=_PUBLIC_MCP_NAME,
         )
         routes = [
+            *health_routes,
             Route(
                 "/.well-known/oauth-protected-resource",
                 endpoint=protected_resource_routes[0].endpoint,
@@ -2436,7 +2577,7 @@ async def _run_streamable_http() -> None:
             Mount("/", app=protected_endpoint),
         ]
     else:
-        routes = [Mount("/", app=endpoint)]
+        routes = [*health_routes, Mount("/", app=endpoint)]
     http_app = _SafeRequestTraceMiddleware(
         Starlette(routes=routes, lifespan=lifespan)
     )
@@ -2460,10 +2601,7 @@ async def main() -> None:
         # returns them to the Harness.
         await _run_stdio()
         return
-    await _initialize_native_engraphis()
-    await _initialize_native_graphiti()
     if MCP_TRANSPORT == "streamable-http":
-        await _native_cbm_tools()
         await _run_streamable_http()
         return
     raise RuntimeError(f"unsupported_mcp_transport: {MCP_TRANSPORT}")

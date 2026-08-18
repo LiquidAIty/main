@@ -167,6 +167,8 @@ export async function runHermesKanbanCardTask(args: {
   projectId: string;
   deckId: string;
   correlationId: string;
+  conversationId: string;
+  parentRunId: string;
   cardId: string;
   title: string;
   prompt: string;
@@ -182,7 +184,14 @@ export async function runHermesKanbanCardTask(args: {
   }
   mkdirSync(path.join(HERMES_HOME, 'profiles', profile), { recursive: true });
   const idempotencyKey = `liquidaity-${createHash('sha256')
-    .update([args.projectId, args.deckId, args.cardId, args.correlationId].join('\u0000'))
+    .update([
+      args.projectId,
+      args.deckId,
+      args.cardId,
+      args.correlationId,
+      args.conversationId,
+      args.parentRunId,
+    ].join('\u0000'))
     .digest('hex')}`;
   const body = [
     '[LIQUIDAITY_SAVED_CARD_INSTRUCTIONS]',

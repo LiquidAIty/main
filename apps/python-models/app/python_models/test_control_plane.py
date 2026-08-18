@@ -177,6 +177,30 @@ class TestRunAssistantAgent:
         forwarded = calls[3][2]
         assert forwarded["conversationId"] == "conv-1"
 
+    def test_materialization_rejection_preserves_the_authority_error(self, monkeypatch):
+        calls = []
+
+        def backend(method, path, payload=None):
+            calls.append((method, path, payload))
+            return {"ok": False, "error": "card_relationship_not_authorized"}
+
+        monkeypatch.setattr(cp, "_backend_json", backend)
+
+        with pytest.raises(cp.ControlPlaneError, match="^card_relationship_not_authorized$"):
+            asyncio.run(cp.card_run_assistant_agent({
+                "projectId": "p",
+                "deckId": "deck_builder",
+                "cardId": "card_main_chat",
+                "correlationId": "main-self-flow-rejected",
+                "conversationId": "conv-1",
+                "originatingAgentId": "card_main_chat",
+                "originatingRunId": "main-turn-1",
+                "input": "Do not run Main through the delegation doorway.",
+            }))
+
+        assert len(calls) == 1
+        assert calls[0][2]["action"] == "materialize"
+
     def test_trusted_inter_agent_call_forwards_native_parent_run(self, monkeypatch):
         calls = []
 

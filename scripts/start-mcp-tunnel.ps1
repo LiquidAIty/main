@@ -3,8 +3,8 @@ param(
     [string]$PublicResourceUrl,
     [ValidateRange(1, 65535)]
     [int]$McpPort = 8765,
-    [ValidateRange(1, 300)]
-    [int]$TimeoutSeconds = 60,
+    [ValidateRange(0, 300)]
+    [int]$TimeoutSeconds = 0,
     [switch]$ReadyOnly
 )
 
@@ -25,18 +25,27 @@ if (
 $localBaseUrl = "http://127.0.0.1:$McpPort"
 $metadataUrl = "$localBaseUrl/.well-known/oauth-protected-resource/mcp"
 $mcpUrl = "$localBaseUrl/mcp"
-$deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+$readinessUrl = "$localBaseUrl/health/ready"
+$deadline = if ($TimeoutSeconds -gt 0) {
+    [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+} else {
+    $null
+}
 $lastState = 'not checked'
+$lastCatalogFailure = ''
 
 $http = [System.Net.Http.HttpClient]::new()
 $http.Timeout = [TimeSpan]::FromSeconds(2)
 
 try {
-    while ([DateTimeOffset]::UtcNow -lt $deadline) {
+    while ($null -eq $deadline -or [DateTimeOffset]::UtcNow -lt $deadline) {
         $tcpReady = $false
         $metadataReady = $false
         $anonymousRejected = $false
         $challengeReady = $false
+        $catalogReady = $false
+        $catalogState = 'unreachable'
+        $catalogCount = 0
 
         $tcp = [System.Net.Sockets.TcpClient]::new()
         try {
@@ -74,18 +83,47 @@ try {
                 )
                 $anonymous.Dispose()
                 $request.Dispose()
+
+                $readiness = $http.GetAsync($readinessUrl).GetAwaiter().GetResult()
+                $readinessBody = $readiness.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                $readinessPayload = $readinessBody | ConvertFrom-Json
+                $catalogState = [string]$readinessPayload.catalogState
+                $catalogCount = [int]$readinessPayload.publicToolCount
+                $catalogReady = (
+                    [int]$readiness.StatusCode -eq 200 -and
+                    [bool]$readinessPayload.catalogReady -and
+                    $catalogState -eq 'ready' -and
+                    $catalogCount -eq 70 -and
+                    [int]$readinessPayload.publicToolUniqueCount -eq 70
+                )
+                if ($catalogState -eq 'failed') {
+                    $catalogFailure = [string]$readinessPayload.catalogFailure
+                    if ($catalogFailure -and $catalogFailure -ne $lastCatalogFailure) {
+                        Write-Host "MCP catalog initialization failed; tunnel remains unpublished: $catalogFailure"
+                        $lastCatalogFailure = $catalogFailure
+                    }
+                }
+                $readiness.Dispose()
             } catch {
                 $metadataReady = $false
                 $anonymousRejected = $false
                 $challengeReady = $false
+                $catalogReady = $false
             }
         }
 
         $lastState = (
             "tcp=$tcpReady metadata=$metadataReady " +
-            "anonymous401=$anonymousRejected challenge=$challengeReady"
+            "anonymous401=$anonymousRejected challenge=$challengeReady " +
+            "catalogState=$catalogState catalogCount=$catalogCount catalogReady=$catalogReady"
         )
-        if ($tcpReady -and $metadataReady -and $anonymousRejected -and $challengeReady) {
+        if (
+            $tcpReady -and
+            $metadataReady -and
+            $anonymousRejected -and
+            $challengeReady -and
+            $catalogReady
+        ) {
             Write-Host "MCP local OAuth readiness passed: $lastState"
             if ($ReadyOnly) {
                 exit 0
@@ -102,4 +140,4 @@ try {
     $http.Dispose()
 }
 
-throw "MCP local OAuth readiness failed after $TimeoutSeconds seconds: $lastState"
+throw "MCP complete local readiness failed after $TimeoutSeconds seconds: $lastState"

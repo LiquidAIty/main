@@ -251,6 +251,62 @@ class TestSessionOps:
         assert state.agent.ephemeral_system_prompt == "Updated saved-card prompt"
 
     @pytest.mark.asyncio
+    async def test_chatgpt_account_session_starts_and_switches_on_codex_app_server(
+        self, agent
+    ):
+        make_agent = MagicMock(
+            return_value=MagicMock(
+                model="bootstrap",
+                provider="openai-codex",
+                api_mode="codex_app_server",
+                base_url="",
+            )
+        )
+        agent.session_manager._make_agent = make_agent
+
+        created = await agent.new_session(
+            cwd="/tmp",
+            sessionConfig={"accessMode": "chatgpt-account"},
+        )
+        state = agent.session_manager.get_session(created.session_id)
+        initial = make_agent.call_args.kwargs
+        assert initial["requested_provider"] == "openai-codex"
+        assert initial["api_mode"] == "codex_app_server"
+
+        make_agent.reset_mock()
+        agent._resolve_model_selection = MagicMock(
+            return_value=("openai-codex", "gpt-5.6-luna")
+        )
+        await agent.set_session_model(
+            model_id="openai-codex:gpt-5.6-luna",
+            session_id=created.session_id,
+        )
+
+        switched = make_agent.call_args.kwargs
+        assert switched["model"] == "gpt-5.6-luna"
+        assert switched["requested_provider"] == "openai-codex"
+        assert switched["api_mode"] == "codex_app_server"
+        assert state.model == "gpt-5.6-luna"
+
+        previous_agent = state.agent
+        make_agent.side_effect = RuntimeError(
+            "codex_app_server_model_unsupported:gpt-not-supported"
+        )
+        agent._resolve_model_selection = MagicMock(
+            return_value=("openai-codex", "gpt-not-supported")
+        )
+        with pytest.raises(
+            RuntimeError,
+            match="^codex_app_server_model_unsupported:gpt-not-supported$",
+        ):
+            await agent.set_session_model(
+                model_id="openai-codex:gpt-not-supported",
+                session_id=created.session_id,
+            )
+        assert state.agent is previous_agent
+        assert state.model == "gpt-5.6-luna"
+
+    @pytest.mark.asyncio
     async def test_saved_card_capabilities_and_skills_are_exact_and_survive_model_switch(
         self, agent
     ):

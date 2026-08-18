@@ -202,13 +202,28 @@ class SessionManager:
 
     # ---- public API ---------------------------------------------------------
 
-    def create_session(self, cwd: str = ".") -> SessionState:
+    def create_session(
+        self,
+        cwd: str = ".",
+        *,
+        model: str | None = None,
+        requested_provider: str | None = None,
+        base_url: str | None = None,
+        api_mode: str | None = None,
+    ) -> SessionState:
         """Create a new session with a unique ID and a fresh AIAgent."""
         import threading
 
         cwd = _translate_acp_cwd(cwd)
         session_id = str(uuid.uuid4())
-        agent = self._make_agent(session_id=session_id, cwd=cwd)
+        agent = self._make_agent(
+            session_id=session_id,
+            cwd=cwd,
+            model=model,
+            requested_provider=requested_provider,
+            base_url=base_url,
+            api_mode=api_mode,
+        )
         state = SessionState(
             session_id=session_id,
             agent=agent,
@@ -660,20 +675,39 @@ class SessionManager:
             "model": model or default_model,
         }
 
-        try:
-            runtime = resolve_runtime_provider(requested=requested_provider or config_provider)
+        selected_provider = str(requested_provider or config_provider or "").strip().lower()
+        if api_mode == "codex_app_server":
+            # The Codex app-server subprocess owns ChatGPT-account authentication.
+            # Resolving a direct provider credential here is both unnecessary and
+            # incorrect for an externally selected chatgpt-account ACP session: an
+            # isolated Hermes profile intentionally has no copied provider token.
+            if selected_provider not in {"openai", "openai-codex"}:
+                raise RuntimeError("acp_codex_app_server_provider_invalid")
             kwargs.update(
                 {
-                    "provider": runtime.get("provider"),
-                    "api_mode": api_mode or runtime.get("api_mode"),
-                    "base_url": base_url or runtime.get("base_url"),
-                    "api_key": runtime.get("api_key"),
-                    "command": runtime.get("command"),
-                    "args": list(runtime.get("args") or []),
+                    "provider": selected_provider,
+                    "api_mode": "codex_app_server",
+                    "base_url": base_url or "",
+                    "api_key": None,
+                    "command": None,
+                    "args": [],
                 }
             )
-        except Exception as exc:
-            raise RuntimeError("acp_provider_resolution_failed") from exc
+        else:
+            try:
+                runtime = resolve_runtime_provider(requested=selected_provider or None)
+                kwargs.update(
+                    {
+                        "provider": runtime.get("provider"),
+                        "api_mode": runtime.get("api_mode"),
+                        "base_url": base_url or runtime.get("base_url"),
+                        "api_key": runtime.get("api_key"),
+                        "command": runtime.get("command"),
+                        "args": list(runtime.get("args") or []),
+                    }
+                )
+            except Exception as exc:
+                raise RuntimeError("acp_provider_resolution_failed") from exc
 
         _register_task_cwd(session_id, cwd)
 

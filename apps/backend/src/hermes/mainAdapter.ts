@@ -77,6 +77,9 @@ export type HermesTurnHandle = {
       turnId: string | null;
       authMode: string | null;
       planType: string | null;
+      nativeTaskId?: string;
+      nativeRunId?: string | number | null;
+      nativeStatus?: string;
     };
   }>;
   resolved: { cardId: string; provider: string; modelKey: string; providerModelId: string };
@@ -431,7 +434,7 @@ class AcpProcess {
   async startTurn(args: HermesTurnArgs, onEvent: (event: HermesSessionEvent) => void): Promise<HermesTurnHandle> {
     await this.ready;
     if (args.executionMode !== 'single') {
-      throw new Error('hermes_auto_kanban_card_execution_not_wired');
+      throw new Error('hermes_acp_single_execution_required');
     }
     const sessionId = await this.resolveSession(args);
     if (this.turns.has(sessionId)) throw new Error('hermes_session_turn_already_running');

@@ -1041,7 +1041,18 @@ def init_agent(
     # Claude uses its own timeout path and is not covered here.
     _provider_timeout = get_provider_request_timeout(agent.provider, agent.model)
 
-    if agent.api_mode == "anthropic_messages":
+    if agent.api_mode == "codex_app_server":
+        # Codex app-server owns ChatGPT-account authentication and constructs
+        # its native session lazily in agent.codex_runtime.  Do not route this
+        # execution mode through the direct-provider/OpenAI client resolver:
+        # doing so incorrectly requires an API key before the authenticated
+        # app-server subprocess can start.
+        agent.api_key = ""
+        agent.client = None
+        agent._client_kwargs = {}
+        if not agent.quiet_mode:
+            print(f"🤖 AI Agent initialized with model: {agent.model} (Codex app-server)")
+    elif agent.api_mode == "anthropic_messages":
         from agent.anthropic_adapter import build_anthropic_client, resolve_anthropic_token
         # Bedrock + Claude → use AnthropicBedrock SDK for full feature parity
         # (prompt caching, thinking budgets, adaptive thinking).

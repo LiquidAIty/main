@@ -862,7 +862,7 @@ def test_native_engraphis_nonsemantic_dispatch_has_no_global_embedding_gate(monk
     asyncio.run(check())
 
 
-def test_streamable_http_discovers_catalogs_before_accepting_requests(monkeypatch):
+def test_streamable_http_binds_before_catalog_provider_initialization(monkeypatch):
     import asyncio
     import mcp_host
 
@@ -889,12 +889,185 @@ def test_streamable_http_discovers_catalogs_before_accepting_requests(monkeypatc
 
     asyncio.run(mcp_host.main())
 
-    assert events == [
-        "engraphis_registry",
-        "graphiti_registry",
-        "cbm_registry",
-        "http",
-    ]
+    assert events == ["http"]
+
+
+def test_http_tools_list_never_exposes_initializing_or_failed_catalog(monkeypatch):
+    import asyncio
+    import mcp_host
+    from mcp.types import Tool
+
+    monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
+    monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
+    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", None)
+    with pytest.raises(RuntimeError, match="mcp_catalog_initializing"):
+        asyncio.run(mcp_host.list_tools())
+
+    monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "failed")
+    monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", "RuntimeError: native_cbm_failed")
+    with pytest.raises(RuntimeError, match="native_cbm_failed"):
+        asyncio.run(mcp_host.list_tools())
+
+    tools = tuple(
+        Tool(
+            name=f"ready.tool_{index}",
+            description="ready",
+            inputSchema={"type": "object", "properties": {}},
+        )
+        for index in range(70)
+    )
+    monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
+    monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
+    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", tools)
+    ready = asyncio.run(mcp_host.list_tools())
+    assert len(ready) == len({tool.name for tool in ready}) == 70
+
+
+def test_http_catalog_initialization_is_process_wide_once(monkeypatch):
+    import asyncio
+    import mcp_host
+    from mcp.types import Tool
+
+    calls = 0
+
+    async def complete_catalog():
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0)
+        return [
+            Tool(
+                name=f"ready.tool_{index}",
+                description="ready",
+                inputSchema={"type": "object", "properties": {}},
+            )
+            for index in range(70)
+        ]
+
+    monkeypatch.setattr(mcp_host, "_materialize_complete_catalog", complete_catalog)
+    monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
+    monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
+    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", None)
+    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_INITIALIZATION_TASK", None)
+
+    async def check():
+        first = mcp_host._start_http_catalog_initialization()
+        second = mcp_host._start_http_catalog_initialization()
+        assert first is second
+        await asyncio.gather(first, second)
+
+    asyncio.run(check())
+    assert calls == 1
+    assert mcp_host._CATALOG_STATE == "ready"
+    assert len(mcp_host._HTTP_CATALOG_TOOLS or ()) == 70
+
+
+def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
+    import asyncio
+    import httpx
+    import mcp_host
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+    from mcp.types import Tool
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def slow_complete_catalog():
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await release.wait()
+        return [
+            Tool(
+                name=f"ready.tool_{index}",
+                description="ready",
+                inputSchema={"type": "object", "properties": {}},
+            )
+            for index in range(70)
+        ]
+
+    async def closed_graphiti():
+        return None
+
+    monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setattr(mcp_host, "HTTP_MCP_PORT", port)
+    monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", False)
+    monkeypatch.setattr(mcp_host, "_materialize_complete_catalog", slow_complete_catalog)
+    monkeypatch.setattr(mcp_host, "_close_native_graphiti", closed_graphiti)
+    monkeypatch.setattr(mcp_host, "_close_native_cbm", lambda: None)
+    monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
+    monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
+    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", None)
+    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_INITIALIZATION_TASK", None)
+
+    async def check():
+        server_task = asyncio.create_task(mcp_host.main())
+        try:
+            base_url = f"http://127.0.0.1:{port}"
+            async with httpx.AsyncClient(base_url=base_url, timeout=2) as client:
+                for _ in range(30):
+                    try:
+                        health = await client.get("/health")
+                        if health.status_code == 200:
+                            break
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.1)
+                else:
+                    raise RuntimeError("http_health_not_ready")
+                await entered.wait()
+                assert health.json()["catalogState"] == "initializing"
+                readiness = await client.get("/health/ready")
+                assert readiness.status_code == 503
+                assert readiness.json()["catalogReady"] is False
+                release.set()
+                for _ in range(30):
+                    readiness = await client.get("/health/ready")
+                    if readiness.status_code == 200:
+                        break
+                    await asyncio.sleep(0.1)
+                assert readiness.json()["publicToolCount"] == 70
+
+            async with streamable_http_client(f"{base_url}/mcp") as streams:
+                async with ClientSession(streams[0], streams[1]) as session:
+                    await session.initialize()
+                    tools = (await session.list_tools()).tools
+                    assert len(tools) == len({tool.name for tool in tools}) == 70
+        finally:
+            server_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await server_task
+
+    asyncio.run(check())
+    assert calls == 1
+
+
+def test_http_catalog_failure_is_truthful_and_unpublished(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    async def failed_catalog():
+        raise RuntimeError("native_graphiti_catalog_failed")
+
+    monkeypatch.setattr(mcp_host, "_materialize_complete_catalog", failed_catalog)
+    monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
+    monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
+    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", None)
+
+    asyncio.run(mcp_host._initialize_http_catalog_once())
+
+    diagnostics = mcp_host._catalog_diagnostics()
+    assert diagnostics["catalogState"] == "failed"
+    assert diagnostics["catalogReady"] is False
+    assert diagnostics["catalogFailure"] == (
+        "RuntimeError: native_graphiti_catalog_failed"
+    )
+    assert mcp_host._HTTP_CATALOG_TOOLS is None
 
 
 def test_stdio_accepts_protocol_before_catalog_provider_initialization(monkeypatch):
@@ -1223,6 +1396,10 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
     monkeypatch.setattr(mcp_host, "AUTH0_REQUIRED_SCOPE", "liquidaity.main")
     monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", True)
     monkeypatch.setattr(mcp_host, "Auth0TokenVerifier", lambda _config: VerifiedToken())
+    monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
+    monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
+    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", None)
+    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_INITIALIZATION_TASK", None)
 
     async def check():
         server_task = asyncio.create_task(mcp_host.main())
@@ -1238,6 +1415,19 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                     await asyncio.sleep(0.1)
             else:
                 raise failure or RuntimeError("http_mcp_not_ready")
+
+            async with httpx.AsyncClient(timeout=2) as readiness_client:
+                for _ in range(450):
+                    readiness = await readiness_client.get(
+                        f"http://127.0.0.1:{port}/health/ready"
+                    )
+                    if readiness.status_code == 200:
+                        break
+                    if readiness.json().get("catalogState") == "failed":
+                        raise RuntimeError(readiness.text)
+                    await asyncio.sleep(0.1)
+                else:
+                    raise RuntimeError("http_mcp_catalog_not_ready")
 
             async def fresh_client():
                 response_session_ids = []
@@ -1712,6 +1902,7 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
     assert main_payload["ok"] is True
     expected_count, expected_hash = mcp_host._catalog_identity(authenticated)
     assert main_payload["diagnostics"] == {
+        "catalogState": "ready",
         "catalogReady": True,
         "publicToolCount": expected_count,
         "publicToolUniqueCount": len({tool.name for tool in authenticated}),
@@ -1721,6 +1912,19 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
         "sourceRevision": mcp_host._STARTUP_SOURCE_REVISION,
         "sourceSha256": mcp_host._STARTUP_SOURCE_SHA256,
     }
+
+
+def test_tunnel_waits_for_complete_catalog_without_default_timeout():
+    script = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
+        "scripts",
+        "start-mcp-tunnel.ps1",
+    )
+    source = open(script, encoding="utf-8").read()
+    assert "[int]$TimeoutSeconds = 0" in source
+    assert '$readinessUrl = "$localBaseUrl/health/ready"' in source
+    assert "$catalogCount -eq 70" in source
+    assert "$catalogReady" in source
 
 
 def test_oauth_catalog_declares_security_before_main_context_resolution(monkeypatch):

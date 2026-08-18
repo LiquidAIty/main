@@ -12,11 +12,17 @@ import {
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 import {
   deriveHermesSessionKey,
+  providerForHermes,
   requestHermesCodexAccount,
   startHermesTurn,
   type HermesSessionEvent,
+  type HermesTurnArgs,
   type HermesTurnHandle,
 } from '../hermes/mainAdapter';
+import {
+  runHermesKanbanCardTask,
+  waitForHermesKanbanCardTask,
+} from './hermesKanban.routes';
 import {
   getConversationMessages,
   listConversations,
@@ -190,22 +196,27 @@ router.post('/mcp-bridge/coder_status', async (_req, res) => {
   });
 });
 
-async function startPreparedHermesTransport(args: {
+type PreparedHermesTransportArgs = {
   prepared: any;
   projectId: string;
   deckId: string;
+  correlationId?: string;
   conversationId: string;
   parentRunId?: string;
   workingDirectory?: string;
   onEvent: (event: HermesSessionEvent) => void;
-}): Promise<HermesTurnHandle> {
+};
+
+function resolvePreparedHermesTurnArgs(
+  args: PreparedHermesTransportArgs,
+): HermesTurnArgs {
   const transport = args.prepared?.hermesTransport;
   const context = transport?.cardContext || {};
   const profile = String(transport?.profile || '').trim();
   if (args.prepared?.runtimeOwner !== 'hermes' || !profile) {
     throw new Error('prepared_hermes_transport_invalid');
   }
-  return startHermesTurn({
+  return {
     cardId: String(context.cardId || ''),
     title: String(context.title || ''),
     runtimeBinding: String(context.runtimeBinding || ''),
@@ -242,7 +253,75 @@ async function startPreparedHermesTransport(args: {
     parentRunId: args.parentRunId || args.conversationId,
     message: String(transport.message || ''),
     ...(args.workingDirectory ? { workingDirectory: args.workingDirectory } : {}),
-  }, args.onEvent);
+  };
+}
+
+async function startPreparedHermesTransport(
+  args: PreparedHermesTransportArgs,
+): Promise<HermesTurnHandle> {
+  const turnArgs = resolvePreparedHermesTurnArgs(args);
+  if (turnArgs.executionMode !== 'single') {
+    throw new Error('prepared_hermes_single_transport_required');
+  }
+  return startHermesTurn(turnArgs, args.onEvent);
+}
+
+async function runPreparedHermesTransport(
+  args: PreparedHermesTransportArgs & { correlationId: string },
+): Promise<Awaited<HermesTurnHandle['done']>> {
+  const turnArgs = resolvePreparedHermesTurnArgs(args);
+  if (turnArgs.executionMode === 'single') {
+    const handle = await startPreparedHermesTransport(args);
+    return handle.done;
+  }
+
+  const created = await runHermesKanbanCardTask({
+    projectId: args.projectId,
+    deckId: args.deckId,
+    correlationId: args.correlationId,
+    conversationId: args.conversationId,
+    parentRunId: args.parentRunId || args.conversationId,
+    cardId: turnArgs.cardId,
+    title: turnArgs.title,
+    prompt: turnArgs.prompt,
+    profile: turnArgs.profile,
+    provider: providerForHermes(turnArgs.provider, turnArgs.accessMode),
+    providerModelId: turnArgs.providerModelId,
+    skills: turnArgs.skills,
+    input: turnArgs.message,
+  });
+  const initialStatus = String(created.snapshot?.task?.status || '').trim().toLowerCase();
+  const completed = initialStatus === 'done'
+    ? created
+    : await waitForHermesKanbanCardTask(turnArgs.profile, created.taskId);
+  const nativeStatus = String(completed.snapshot?.task?.status || '').trim().toLowerCase();
+  const finalText = String(completed.snapshot?.task?.result || '');
+  if (nativeStatus !== 'done' || !finalText.trim()) {
+    throw new Error('hermes_kanban_card_completion_invalid');
+  }
+  const usage = {
+    providerInputTokens: null,
+    providerOutputTokens: null,
+    totalCostUsd: null,
+    usageAvailable: false,
+    usageSource: 'hermes_native_kanban_unavailable',
+    contextBreakdownJson: '',
+  };
+  args.onEvent({ kind: 'text', text: finalText });
+  args.onEvent({ kind: 'done', fullText: finalText, usage });
+  return {
+    finalText,
+    usage,
+    transport: {
+      threadId: completed.taskId,
+      turnId: completed.runId === null ? null : String(completed.runId),
+      authMode: null,
+      planType: 'hermes-auto-kanban',
+      nativeTaskId: completed.taskId,
+      nativeRunId: completed.runId,
+      nativeStatus,
+    },
+  };
 }
 
 // Thin configured-Card transport. Python owns Card/AGE/IDD validation,
@@ -314,15 +393,15 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     let transport: Record<string, unknown> | null = null;
     try {
       if (prepared.runtimeOwner === 'hermes') {
-        const handle = await startPreparedHermesTransport({
+        const response = await runPreparedHermesTransport({
           prepared,
           projectId,
           deckId,
+          correlationId,
           conversationId,
           parentRunId: originatingRunId,
           onEvent: () => undefined,
         });
-        const response = await handle.done;
         output = response.finalText;
         transport = response.transport;
       } else if (prepared.coderTransport?.coderPacket) {
