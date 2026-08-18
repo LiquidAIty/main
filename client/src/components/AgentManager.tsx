@@ -385,7 +385,9 @@ export function buildActiveAgentManagerLocalConfig(input: {
   return {
     runtime_binding: input.runtimeBinding || null,
     execution_mode:
-      input.runtimeBinding === 'main_chat' ? 'single' : input.executionMode,
+      input.runtimeBinding === 'main_chat' || input.runtimeBinding === 'coder'
+        ? 'single'
+        : input.executionMode,
     provider: input.provider,
     access_mode: input.accessMode,
     model_key: input.modelKey || null,
@@ -407,6 +409,7 @@ export function canChooseCardExecutionMode(
 ): boolean {
   return (
     runtimeBinding !== 'main_chat' &&
+    runtimeBinding !== 'coder' &&
     runtimeBinding !== 'local_coder' &&
     runtimeType !== 'magentic_one'
   );

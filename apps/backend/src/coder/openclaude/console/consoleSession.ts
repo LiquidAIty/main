@@ -9,6 +9,7 @@ import {
   type ConsoleRuntimeResolution,
 } from '../../localcoder/adapter';
 import { resolveRepoRoot } from '../../workspaceRoot';
+import { ensureHermesHolographicMemoryProfile } from '../../../hermes/profileMemory';
 
 /**
  * OpenClaude Console Bridge — the smallest owned backend that runs the real
@@ -319,8 +320,8 @@ export type HermesConsoleRuntimeResolution = {
   missing: string[];
 };
 
-function resolveRepoHermesHome(): string {
-  return path.join(resolveRepoRoot(), 'Hermes', '.hermes');
+function ensureRepoHermesProfile(profile: string): string {
+  return ensureHermesHolographicMemoryProfile(path.join(resolveRepoRoot(), 'Hermes'), profile);
 }
 
 /** Resolve the installed Hermes CLI without substituting another runtime. */
@@ -822,6 +823,10 @@ type HermesManagerOptions = {
   maxBufferChars?: number;
   now?: () => string;
   idFactory?: () => string;
+  ownerCardId?: string;
+  profile?: string;
+  resolveProfileHome?: (profile: string) => string;
+  toolsets?: string[];
 };
 
 /**
@@ -840,6 +845,10 @@ export class HermesConsoleSessionManager {
   private readonly maxBufferChars: number;
   private readonly now: () => string;
   private readonly idFactory: () => string;
+  private readonly ownerCardId: string;
+  private readonly profile: string;
+  private readonly resolveProfileHome: (profile: string) => string;
+  private readonly toolsets: string[];
   private counter = 0;
 
   constructor(options: HermesManagerOptions = {}) {
@@ -854,6 +863,10 @@ export class HermesConsoleSessionManager {
     this.now = options.now || nowIso;
     this.idFactory =
       options.idFactory || (() => `hms_${Date.now()}_${++this.counter}`);
+    this.ownerCardId = options.ownerCardId || 'card_hermes_steward';
+    this.profile = options.profile || 'liquidaity-hermes-steward';
+    this.resolveProfileHome = options.resolveProfileHome || ensureRepoHermesProfile;
+    this.toolsets = [...(options.toolsets || [])];
   }
 
   start(request: StartConsoleSessionRequest): StartConsoleSessionResult {
@@ -891,11 +904,15 @@ export class HermesConsoleSessionManager {
 
     const info: ConsoleSessionInfo = {
       id: this.idFactory(),
-      ownerCardId: 'card_hermes_steward',
+      ownerCardId: this.ownerCardId,
       targetRoot,
       mode: 'interactive',
       state: 'starting',
-      commandPath: redactConsoleSecrets(runtime.describe),
+      commandPath: redactConsoleSecrets(
+        this.toolsets.length
+          ? `${runtime.describe} --toolsets ${this.toolsets.join(',')}`
+          : runtime.describe,
+      ),
       runtimeSource: `hermes_${runtime.source}`,
       transportMode: 'pty',
       provider: null,
@@ -917,16 +934,23 @@ export class HermesConsoleSessionManager {
     this.sessions.set(info.id, session);
 
     try {
-      const child = this.ptySpawn(runtime.command, runtime.baseArgs, {
+      const profileHome = this.resolveProfileHome(this.profile);
+      const child = this.ptySpawn(
+        runtime.command,
+        this.toolsets.length
+          ? [...runtime.baseArgs, '--toolsets', this.toolsets.join(',')]
+          : runtime.baseArgs,
+        {
         cwd: targetRoot,
         env: {
           ...this.env,
-          HERMES_HOME: resolveRepoHermesHome(),
+          HERMES_HOME: profileHome,
           HERMES_SESSION_SOURCE: 'saved-card-terminal',
         },
         shell: runtime.shell,
         interactive: true,
-      });
+        },
+      );
       session.attachChild(child);
       session.markRunning();
     } catch (error) {
@@ -952,4 +976,13 @@ export class HermesConsoleSessionManager {
   }
 }
 
-export const hermesConsoleSessionManager = new HermesConsoleSessionManager();
+export const hermesConsoleSessionManager = new HermesConsoleSessionManager({
+  ownerCardId: 'card_hermes_steward',
+  profile: 'liquidaity-hermes-steward',
+  toolsets: ['memory'],
+});
+export const coderConsoleSessionManager = new HermesConsoleSessionManager({
+  ownerCardId: 'card_local_coder',
+  profile: 'coder',
+  toolsets: ['file', 'terminal', 'memory'],
+});

@@ -7,6 +7,8 @@ export type RuntimeBinding =
   | 'assist'
   | 'local_coder'
   | 'main_chat'
+  | 'coder'
+  | 'magentic_one'
   | 'research_agent'
   | 'plan_agent'
   | 'worldsignals_agent'

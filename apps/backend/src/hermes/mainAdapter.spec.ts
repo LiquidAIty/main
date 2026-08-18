@@ -5,6 +5,7 @@ import {
   buildHermesOfficialMcpServer,
   deriveHermesSessionKey,
   providerForHermes,
+  requireHermesCompletionText,
   resolveHermesCardRuntimeHome,
 } from './mainAdapter';
 
@@ -25,6 +26,16 @@ describe('Hermes ACP transport identity', () => {
   it('derives one transport session key from resolved identities', () => {
     expect(deriveHermesSessionKey('project-1', 'conversation-1', 'card_main_chat')).toBe(
       'hermes:project-1:conversation-1:card_main_chat',
+    );
+  });
+
+  it('requires visible completion text and classifies an empty Codex account result truthfully', () => {
+    expect(requireHermesCompletionText('answer', 'chatgpt-account')).toBe('answer');
+    expect(() => requireHermesCompletionText('  ', 'chatgpt-account')).toThrow(
+      'codex_app_server_empty_completion',
+    );
+    expect(() => requireHermesCompletionText('', 'openrouter-api')).toThrow(
+      'hermes_empty_completion',
     );
   });
 

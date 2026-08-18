@@ -134,7 +134,7 @@ class McpSavedCardAgent(BaseChatAgent):
         input_text = "\n\n".join(transported).strip()
         if not input_text:
             raise RuntimeError(
-                f"saved_hermes_card_messages_required: cardId={self._card_id}"
+                f"saved_card_messages_required: cardId={self._card_id}"
             )
 
         self._invocation += 1
@@ -186,17 +186,12 @@ class McpSavedCardAgent(BaseChatAgent):
         )
 
 
-# Historical public symbol retained for callers/tests while production now uses
-# the runtime-neutral MCP Card shell above.
-SavedHermesCardAgent = McpSavedCardAgent
-
-
 def _build_participants(
     context: RuntimeRequest,
     model_client: Any,
     *,
     extra_tools: list[Any] | None = None,
-    saved_hermes_cards: bool = False,
+    saved_card_workers: bool = False,
     outer_run_id: str = "",
 ) -> list[BaseChatAgent]:
     card = context.cardRuntime
@@ -205,7 +200,7 @@ def _build_participants(
     participants: list[BaseChatAgent] = []
     used_names: set[str] = set()
     configured_participants = card.participants or []
-    if not saved_hermes_cards and isinstance(model_client, (list, tuple)) and len(model_client) != len(
+    if not saved_card_workers and isinstance(model_client, (list, tuple)) and len(model_client) != len(
         configured_participants
     ):
         raise RuntimeError(
@@ -223,7 +218,7 @@ def _build_participants(
         )
         system_prompt = _as_text(getattr(participant, "prompt", ""))
 
-        if saved_hermes_cards:
+        if saved_card_workers:
             if not outer_run_id:
                 raise RuntimeError("magentic_outer_run_id_required")
             participants.append(
@@ -473,7 +468,7 @@ async def run_native_magentic_mission(
         participants = _build_participants(
             context,
             [],
-            saved_hermes_cards=True,
+            saved_card_workers=True,
             outer_run_id=run_id,
         )
         team_options: dict[str, Any] = {

@@ -176,27 +176,36 @@ const orchestratorMocks = vi.hoisted(() => ({
     }
     if (endpoint === '/domain/runs/begin') {
       const autoKanban = body.cardId === 'card_hermes_steward';
+      const coderCard = body.cardId === 'card_local_coder';
       return {
         runId: body.runId,
         cardRevisionId: body.cardRevisionId,
         runtimeOwner: 'hermes',
         hermesTransport: {
-          profile: autoKanban ? 'liquidaity-hermes-steward' : 'default',
+          profile: autoKanban
+            ? 'liquidaity-hermes-steward'
+            : coderCard
+              ? 'coder'
+              : 'default',
           systemPrompt: 'Saved prompt',
           message: body.exactIdf,
           cardContext: {
             cardId: body.cardId,
-            title: body.cardId === 'card_main_chat' ? 'Main' : 'Hermes steward',
-            runtimeBinding: body.cardId === 'card_main_chat' ? 'main_chat' : 'hermes_steward',
+            title: body.cardId === 'card_main_chat' ? 'Main' : coderCard ? 'Coder' : 'Hermes steward',
+            runtimeBinding: body.cardId === 'card_main_chat'
+              ? 'main_chat'
+              : coderCard
+                ? 'coder'
+                : 'hermes_steward',
             provider: 'openai',
             modelKey: 'gpt-5.6-luna',
             providerModelId: 'gpt-5.6-luna',
             accessMode: 'chatgpt-account',
             executionMode: autoKanban ? 'auto-kanban' : 'single',
-            tools: autoKanban ? ['graphiti.search_nodes'] : [],
+            tools: autoKanban ? ['graphiti.search_nodes'] : coderCard ? ['cbm.search_graph'] : [],
             nativeTools: autoKanban ? ['memory'] : [],
             skills: autoKanban ? ['documentation'] : [],
-            toolsets: [],
+            toolsets: coderCard ? ['file', 'terminal'] : [],
             mcpConnectionIds: [],
             coderCardIds: [],
             directSubagents: [],
@@ -666,6 +675,54 @@ describe('coder routes', () => {
     }
   });
 
+  it('runs the preserved Coder Card through its Hermes profile and exact IDF', async () => {
+    chatSessionMocks.startHermesTurn.mockClear();
+    orchestratorMocks.dispatchConfiguredRuntime.mockClear();
+    const exactIdf = '# IDF\n\nInspect the bounded code slice.';
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'card_local_coder',
+          senderCardId: 'card_main_chat',
+          correlationId: 'corr-coder-1',
+          conversationId: 'main',
+          input: 'Inspect the bounded code slice.',
+          action: 'execute',
+          exactIdf,
+          cardRevisionId: 'revision:card_local_coder',
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1);
+      expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).toMatchObject({
+        cardId: 'card_local_coder',
+        runtimeBinding: 'coder',
+        profile: 'coder',
+        executionMode: 'single',
+        tools: ['cbm.search_graph'],
+        toolsets: ['file', 'terminal'],
+        message: exactIdf,
+      });
+      expect(orchestratorMocks.dispatchConfiguredRuntime).not.toHaveBeenCalled();
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        result: {
+          cardId: 'card_local_coder',
+          runtimeOwner: 'hermes',
+          output: 'Real assistant reply.',
+        },
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it('sends the exact Python-prepared outer mission to native Mag One', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.dispatchConfiguredRuntime.mockClear();
@@ -1059,6 +1116,37 @@ describe('coder routes', () => {
         expect(body).toContain('"correlationId":"req_');
         expect(body).toContain('/api/coder/main/session/chat');
         expect(body).not.toContain('provider credential leaked');
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('persists and exposes an empty Codex app-server completion as its exact failure', async () => {
+      chatSessionMocks.startHermesTurn.mockRejectedValueOnce(
+        new Error('codex_app_server_empty_completion'),
+      );
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1',
+            conversationId: 'empty-codex',
+            message: 'hello',
+          }),
+        });
+        const body = await response.text();
+
+        expect(response.status).toBe(200);
+        expect(body).toContain('event: error');
+        expect(body).toContain('codex_app_server_empty_completion');
+        expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledWith(
+          '/domain/runs/finish',
+          expect.objectContaining({
+            body: expect.stringContaining('"errorCode":"codex_app_server_empty_completion"'),
+          }),
+        );
       } finally {
         await closeServer(server);
       }

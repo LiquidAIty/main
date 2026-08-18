@@ -480,6 +480,10 @@ describe('HermesConsoleSessionManager', () => {
       ptySpawn,
       resolveRuntime: () => hermesRuntime,
       idFactory: () => 'hms_test',
+      ownerCardId: 'card_local_coder',
+      profile: 'coder',
+      resolveProfileHome: () => 'C:/Hermes/.hermes/profiles/coder',
+      toolsets: ['file', 'terminal', 'memory'],
     });
 
     const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
@@ -487,20 +491,20 @@ describe('HermesConsoleSessionManager', () => {
 
     expect(result.session.info).toMatchObject({
       id: 'hms_test',
-      ownerCardId: 'card_hermes_steward',
+      ownerCardId: 'card_local_coder',
       state: 'running',
       runtimeSource: 'hermes_installed',
       transportMode: 'pty',
     });
     expect(ptySpawn).toHaveBeenCalledWith(
       hermesRuntime.command,
-      ['chat', '--cli'],
+      ['chat', '--cli', '--toolsets', 'file,terminal,memory'],
       expect.objectContaining({
         cwd: tmpdir(),
         shell: false,
         interactive: true,
         env: expect.objectContaining({
-          HERMES_HOME: expect.stringMatching(/[\\/]Hermes[\\/]\.hermes$/i),
+          HERMES_HOME: 'C:/Hermes/.hermes/profiles/coder',
           HERMES_SESSION_SOURCE: 'saved-card-terminal',
         }),
       }),

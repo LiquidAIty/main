@@ -72,12 +72,18 @@ describe('Main / Hermes / graph authority topology', () => {
     ] as any)).toBe(false);
   });
 
-  it('defines Main→Hermes invocation and only the intended workers on the blue bus', () => {
+  it('keeps internal Hermes roles off the Mag One worker bus', () => {
     expect(INITIAL_DECK.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' }),
-      expect.objectContaining({ source: 'card_local_coder', target: 'card_magentic', edgeType: 'magentic_option' }),
       expect.objectContaining({ source: 'card_worldsignals_agent', target: 'card_magentic', edgeType: 'magentic_option' }),
     ]));
+    for (const internalCardId of ['card_main_chat', 'card_local_coder', 'card_hermes_steward']) {
+      expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
+        source: internalCardId,
+        target: 'card_magentic',
+        edgeType: 'magentic_option',
+      }));
+    }
   });
 
   it('grants Main and the one real Hermes card progressive graph tools without ordinary web search', () => {
@@ -122,5 +128,54 @@ describe('Main / Hermes / graph authority topology', () => {
       targetHandle: 'task-bus-top',
       edgeType: 'magentic_control',
     }));
+  });
+
+  it('keeps Main, Coder, steward, and Mag One capability ceilings disjoint', () => {
+    const byId = new Map(INITIAL_DECK.nodes.map((node) => [node.id, node]));
+    const main = byId.get('card_main_chat');
+    const coder = byId.get('card_local_coder');
+    const steward = byId.get('card_hermes_steward');
+    const magOne = byId.get('card_magentic');
+
+    expect(main?.runtimeOptions?.tools).toContain('run_mag_one');
+    expect(main?.runtimeOptions?.toolsets).toEqual(['file', 'terminal', 'delegation']);
+    expect(main?.prompt).toContain('native Hermes delegate_task');
+    expect(main?.prompt).toContain('only internal role allowed to submit it to Mag One');
+    expect(main?.prompt).toContain('official MCP run_mag_one seam');
+
+    expect(coder).toMatchObject({
+      title: 'Coder',
+      runtimeBinding: 'coder',
+      runtimeOptions: {
+        profile: 'coder',
+        executionMode: 'single',
+        accessMode: 'chatgpt-account',
+        nativeTools: ['memory'],
+        toolsets: ['file', 'terminal'],
+      },
+    });
+    expect(coder?.runtimeOptions?.tools).toContain('cbm.search_graph');
+    expect(coder?.runtimeOptions?.tools).not.toEqual(expect.arrayContaining([
+      'run_local_coder',
+      'run_mag_one',
+      'write_mag_one_instructions',
+      'graphiti.add_memory',
+    ]));
+    expect(coder?.prompt).toContain('You are Coder');
+    expect(coder?.prompt).toContain('Do not create hidden agents');
+
+    expect(steward?.runtimeOptions?.tools).toContain('write_mag_one_instructions');
+    expect(steward?.runtimeOptions?.tools).not.toContain('run_mag_one');
+    expect(steward?.runtimeOptions?.toolsets ?? []).toEqual([]);
+    expect(steward?.prompt).toContain('Do not use a repository-writing terminal');
+    expect(steward?.prompt).toContain('Coder writes the exact IDF');
+
+    expect(magOne).toMatchObject({
+      runtimeBinding: 'magentic_one',
+      runtimeType: 'magentic_one',
+    });
+    expect(INITIAL_DECK.nodes.filter(
+      (node) => node.runtimeOptions?.executionMode === 'auto-kanban',
+    ).map((node) => node.id)).toEqual(['card_hermes_steward']);
   });
 });

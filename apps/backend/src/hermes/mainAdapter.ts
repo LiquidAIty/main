@@ -63,6 +63,19 @@ export type CodexAccountTransportMethod =
   | 'account/logout'
   | 'account/rateLimits/read';
 
+export function requireHermesCompletionText(
+  value: unknown,
+  accessMode: CardAccessMode,
+): string {
+  const text = typeof value === 'string' ? value : '';
+  if (text.trim()) return text;
+  throw new Error(
+    accessMode === 'chatgpt-account'
+      ? 'codex_app_server_empty_completion'
+      : 'hermes_empty_completion',
+  );
+}
+
 export type HermesTurnArgs = HermesRuntimeConfig & {
   sessionKey: string;
   projectId: string;
@@ -477,10 +490,11 @@ class AcpProcess {
       };
       if (result?.stopReason === 'cancelled') throw new Error('hermes_turn_cancelled');
       if (result?.stopReason === 'refusal') throw new Error('hermes_turn_refused');
-      onEvent({ kind: 'done', fullText: active.fullText, usage });
+      const finalText = requireHermesCompletionText(active.fullText, args.accessMode);
+      onEvent({ kind: 'done', fullText: finalText, usage });
       const meta = result?._meta?.liquidaity || {};
       return {
-        finalText: active.fullText,
+        finalText,
         usage,
         transport: {
           threadId: typeof meta.codexThreadId === 'string' ? meta.codexThreadId : null,

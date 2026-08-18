@@ -5,6 +5,7 @@ import type { OpenClaudeProviderTargetInput } from '../coder/openclaude/contract
 import { openClaudeRuntimeService } from '../coder/openclaude/runtime/service';
 import { localCoderService } from '../coder/localcoder/service';
 import {
+  coderConsoleSessionManager,
   hermesConsoleSessionManager,
   openClaudeConsoleSessionManager,
   type ConsoleMode,
@@ -791,6 +792,11 @@ router.post('/main/session/chat', async (req, res) => {
   } catch (error) {
     turnFinished = true;
     const reason = error instanceof Error ? error.message : 'hermes_turn_failed';
+    const errorCode = reason.startsWith('harness_run_persistence_failed')
+      ? 'harness_run_persistence_failed'
+      : reason === 'codex_app_server_empty_completion'
+        ? 'codex_app_server_empty_completion'
+        : 'harness_turn_failed';
     if (!runCancelled) {
       await requestPythonRailsJson('/domain/runs/finish', {
         method: 'POST',
@@ -798,9 +804,7 @@ router.post('/main/session/chat', async (req, res) => {
         body: JSON.stringify({
           runId: correlationId,
           state: 'failed',
-          errorCode: reason.startsWith('harness_run_persistence_failed')
-            ? 'harness_run_persistence_failed'
-            : 'harness_turn_failed',
+          errorCode,
           errorSummary: reason,
         }),
       }).catch((persistenceError) => {
@@ -811,12 +815,12 @@ router.post('/main/session/chat', async (req, res) => {
     }
     logHarnessTrace(`[harness] request failed corr=${correlationId} reason=${redactTrace(reason)}`);
     writeSse('error', {
-      code: reason.startsWith('harness_run_persistence_failed')
-        ? 'harness_run_persistence_failed'
-        : 'harness_turn_failed',
-      message: reason.startsWith('harness_run_persistence_failed')
+      code: errorCode,
+      message: errorCode === 'harness_run_persistence_failed'
         ? 'The model finished, but its durable run record could not be completed.'
-        : 'The chat run failed. Check the correlation ID in the backend logs.',
+        : errorCode === 'codex_app_server_empty_completion'
+          ? 'Codex app-server completed without an assistant response.'
+          : 'The chat run failed. Check the correlation ID in the backend logs.',
       correlationId,
       route: '/api/coder/main/session/chat',
       status: 502,
@@ -918,7 +922,8 @@ router.get('/openclaude/terminal/launch', (req, res) => {
 // process managers and session namespaces.
 type ConsoleRouteManager =
   | typeof openClaudeConsoleSessionManager
-  | typeof hermesConsoleSessionManager;
+  | typeof hermesConsoleSessionManager
+  | typeof coderConsoleSessionManager;
 
 function mountConsoleSessionRoutes(
   prefix: string,
@@ -1012,7 +1017,7 @@ function mountConsoleSessionRoutes(
   });
 }
 
-mountConsoleSessionRoutes('/openclaude/console', openClaudeConsoleSessionManager);
+mountConsoleSessionRoutes('/openclaude/console', coderConsoleSessionManager);
 mountConsoleSessionRoutes('/hermes/console', hermesConsoleSessionManager);
 
 

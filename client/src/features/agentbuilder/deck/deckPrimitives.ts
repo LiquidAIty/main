@@ -57,6 +57,22 @@ export const LOCAL_CODER_CONTROLLER_TOOLS = [
   'cbm.manage_adr',
   'cbm.ingest_traces',
 ] as const;
+export const CODER_CONTROLLER_TOOLS = [
+  'cbm.index_repository',
+  'cbm.search_graph',
+  'cbm.query_graph',
+  'cbm.trace_path',
+  'cbm.get_code_snippet',
+  'cbm.get_graph_schema',
+  'cbm.get_architecture',
+  'cbm.search_code',
+  'cbm.list_projects',
+  'cbm.delete_project',
+  'cbm.index_status',
+  'cbm.detect_changes',
+  'cbm.manage_adr',
+  'cbm.ingest_traces',
+] as const;
 export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'engraphis.remember',
   'engraphis.recall',
@@ -115,7 +131,8 @@ export function normalizeAgentExecutionMode(
   value: unknown,
   runtimeBinding?: unknown,
 ): AgentExecutionMode {
-  if (normalizeRuntimeBinding(runtimeBinding) === 'main_chat') return 'single';
+  const binding = normalizeRuntimeBinding(runtimeBinding);
+  if (binding === 'main_chat' || binding === 'coder') return 'single';
   return value === 'auto-kanban' ? 'auto-kanban' : 'single';
 }
 
@@ -159,6 +176,8 @@ export function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   if (normalized === 'assist') return 'assist';
   if (normalized === 'local_coder') return 'local_coder';
   if (normalized === 'main_chat') return 'main_chat';
+  if (normalized === 'coder') return 'coder';
+  if (normalized === 'magentic_one') return 'magentic_one';
   if (normalized === 'research_agent') return 'research_agent';
   if (normalized === 'plan_agent') return 'plan_agent';
   if (normalized === 'worldsignals_agent') return 'worldsignals_agent';

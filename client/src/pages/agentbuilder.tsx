@@ -64,7 +64,6 @@ import {
   buildQuickAddAssistCard,
   formatBuilderStatusMessage,
   readDeckDocument,
-  resolveLocalCoderControllerConsoleConfig,
   resolveProjectDeckLoadResult,
 } from '../features/agentbuilder/deck/deckDocument';
 import {
@@ -298,10 +297,6 @@ export default function AgentBuilder(): React.ReactElement {
   }, [deck]);
   const priorWorkspaceViewRef = useRef<'chat' | 'canvas' | 'knowledge' | 'trading' | 'worldsignal'>('canvas');
   const [hermesConsoleOpen, setHermesConsoleOpen] = useState(false);
-  const localCoderConsoleConfig = useMemo(
-    () => resolveLocalCoderControllerConsoleConfig(deck),
-    [deck],
-  );
   const terminalRoot = useMemo(
     () => resolveDeckWorkspaceRoot(deck, null) || DEFAULT_WORKSPACE_ROOT,
     [deck],
@@ -1441,11 +1436,10 @@ export default function AgentBuilder(): React.ReactElement {
               <OpenClaudeConsolePanel
                 open
                 placement="docked"
-                title="OpenClaude Code"
+                title="Coder"
+                testIdPrefix="coder-console"
                 targetRoot={terminalRoot}
                 projectId={typeof activeProject === 'string' ? activeProject : undefined}
-                provider={localCoderConsoleConfig.provider}
-                model={localCoderConsoleConfig.model}
               />
             }
           />

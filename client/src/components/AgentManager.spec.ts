@@ -57,6 +57,7 @@ describe('AgentManager active builder config', () => {
     expect(canChooseCardExecutionMode('assist', 'assistant_agent')).toBe(true);
     expect(canChooseCardExecutionMode(null, 'assistant_agent')).toBe(true);
     expect(canChooseCardExecutionMode('main_chat', 'assistant_agent')).toBe(false);
+    expect(canChooseCardExecutionMode('coder', 'assistant_agent')).toBe(false);
     expect(canChooseCardExecutionMode('local_coder', 'assistant_agent')).toBe(false);
     expect(canChooseCardExecutionMode(null, 'magentic_one')).toBe(false);
 
@@ -77,6 +78,27 @@ describe('AgentManager active builder config', () => {
       mcpConnectionIdsText: '',
     });
     expect(ordinary.execution_mode).toBe('auto-kanban');
+
+    const coder = buildActiveAgentManagerLocalConfig({
+      runtimeBinding: 'coder',
+      executionMode: 'auto-kanban',
+      provider: 'openai',
+      accessMode: 'chatgpt-account',
+      modelKey: 'gpt-test',
+      reasoningEffort: '',
+      temperature: '',
+      maxTokens: '',
+      maxTurns: '',
+      promptTemplate: '',
+      toolsText: 'cbm.search_graph',
+      skillsText: '',
+      toolsetsText: 'file\nterminal',
+      mcpConnectionIdsText: '',
+    });
+    expect(coder.execution_mode).toBe('single');
+    expect(coder.access_mode).toBe('chatgpt-account');
+    expect(coder.tools).toEqual(['cbm.search_graph']);
+    expect(coder.toolsets).toEqual(['file', 'terminal']);
   });
 
   it('separates stable Card versions from transient and explicitly saved IDFs', () => {

@@ -130,7 +130,7 @@ def test_native_mag_one_failure_does_not_echo_secret(monkeypatch):
 
 def test_saved_card_worker_uses_official_mcp_and_returns_native_output(monkeypatch):
     context = _context()
-    agent = mac.SavedHermesCardAgent(
+    agent = mac.McpSavedCardAgent(
         name="Research_Agent", description="hermes_steward", context=context,
         card_id="research", outer_run_id="mag:one",
     )
@@ -173,7 +173,7 @@ def test_native_mag_one_wraps_every_saved_worker_without_worker_model_clients():
     participants = mac._build_participants(
         _context(),
         [],
-        saved_hermes_cards=True,
+        saved_card_workers=True,
         outer_run_id="mag:one",
     )
     assert [type(agent) for agent in participants] == [

@@ -71,8 +71,8 @@ describe('agentbuilder authoring flow', () => {
 
     expect(INITIAL_DECK.nodes.map((node) => node.runtimeBinding)).toEqual([
       'main_chat',
-      null,
-      'local_coder',
+      'magentic_one',
+      'coder',
       'hermes_steward',
       'trading_agent',
       'worldsignals_agent',
@@ -94,7 +94,6 @@ describe('agentbuilder authoring flow', () => {
       { source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
       { source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' },
       { source: 'card_hermes_steward', target: 'card_worldsignals_agent', edgeType: 'flow' },
-      { source: 'card_local_coder', target: 'card_magentic', edgeType: 'magentic_option' },
       {
         source: 'card_main_chat',
         target: 'card_magentic',
@@ -109,11 +108,16 @@ describe('agentbuilder authoring flow', () => {
     const systemCoder = INITIAL_DECK.nodes.find((node) => node.id === 'card_local_coder');
     expect(systemCoder?.runtimeType).toBe('assistant_agent');
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_magentic')?.runtimeType).toBe('magentic_one');
-    expect(systemCoder?.runtimeBinding).toBe('local_coder');
+    expect(systemCoder?.runtimeBinding).toBe('coder');
     expect(systemCoder?.runtimeOptions?.tools).toContain('cbm.search_graph');
-    expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_local_coder' && edge.edgeType === 'magentic_option')).toBe(true);
-    expect(INITIAL_DECK.nodes.every((node) => node.runtimeOptions?.profile === undefined)).toBe(true);
+    expect(systemCoder?.runtimeOptions?.tools).not.toContain('run_local_coder');
+    expect(systemCoder?.runtimeOptions?.toolsets).toEqual(['file', 'terminal']);
+    expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_local_coder' && edge.edgeType === 'magentic_option')).toBe(false);
+    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_main_chat')?.runtimeOptions?.profile).toBe('liquidaity-main');
+    expect(systemCoder?.runtimeOptions?.profile).toBe('coder');
+    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_hermes_steward')?.runtimeOptions?.profile).toBe('liquidaity-hermes-steward');
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_main_chat')?.runtimeOptions?.executionMode).toBe('single');
+    expect(systemCoder?.runtimeOptions?.executionMode).toBe('single');
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_hermes_steward')?.runtimeOptions?.executionMode).toBe('auto-kanban');
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_worldsignals_agent')?.runtimeOptions?.executionMode).toBe('single');
   });

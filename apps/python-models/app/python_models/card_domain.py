@@ -1038,24 +1038,60 @@ def save_deck(
     return load_deck(project_id, deck_id)
 
 
+_HERMES_RUNTIME_BINDINGS = {"main_chat", "coder", "hermes_steward"}
+_AUTOGEN_RUNTIME_BINDINGS = {
+    "assist", "research_agent", "plan_agent", "worldsignals_agent", "trading_agent",
+}
+
+
 def _runtime_owner(card: dict[str, Any]) -> str:
-    binding = str(card.get("runtimeBinding") or "")
+    """Resolve one runtime owner from the explicit saved binding only.
+
+    Dormant Hermes, AutoGen, and LocalCoder facets may coexist on the Card. They
+    never participate in owner selection. The selected binding must agree with
+    the Card runtime shape and the one allowed execution mode for that owner.
+    """
+    binding = str(card.get("runtimeBinding") or "").strip()
+    runtime_type = str(card.get("runtimeType") or "").strip()
     options = _json_object(card.get("runtimeOptions"), "runtime_options")
+    execution_mode = str(card.get("executionMode") or options.get("executionMode") or "single").strip()
+    profile = str(card.get("profile") or options.get("profile") or "").strip()
+
+    if not binding:
+        raise CardDomainError("card_runtime_binding_required")
     if binding == "local_coder":
-        return "coder"
-    if card.get("runtimeType") == "magentic_one":
+        raise CardDomainError("card_runtime_binding_inactive:local_coder")
+    if binding == "magentic_one":
+        if runtime_type != "magentic_one":
+            raise CardDomainError("card_runtime_binding_contradictory:magentic_one")
         return "mag_one"
-    if options.get("profile"):
+    if binding in _HERMES_RUNTIME_BINDINGS:
+        if runtime_type != "assistant_agent" or not profile:
+            raise CardDomainError(f"card_runtime_binding_contradictory:{binding}")
+        expected_mode = "auto-kanban" if binding == "hermes_steward" else "single"
+        if execution_mode != expected_mode:
+            raise CardDomainError(f"card_runtime_binding_contradictory:{binding}")
         return "hermes"
-    if card.get("runtimeType") == "assistant_agent":
+    if binding in _AUTOGEN_RUNTIME_BINDINGS:
+        if runtime_type != "assistant_agent" or execution_mode != "single":
+            raise CardDomainError(f"card_runtime_binding_contradictory:{binding}")
         return "autogen"
-    raise CardDomainError("card_runtime_owner_unavailable")
+    raise CardDomainError(f"card_runtime_binding_unsupported:{binding}")
 
 
 def _card_enabled(card: dict[str, Any]) -> bool:
     options = card.get("runtimeOptions")
     option_enabled = options.get("enabled") if isinstance(options, dict) else None
     return card.get("enabled") is not False and option_enabled is not False
+
+
+def _is_magentic_worker_card(card: dict[str, Any]) -> bool:
+    """Keep the internal Hermes system plane outside Mag One membership."""
+    return (
+        card.get("runtimeType") == "assistant_agent"
+        and str(card.get("runtimeBinding") or "").strip() not in _HERMES_RUNTIME_BINDINGS
+        and _card_enabled(card)
+    )
 
 
 def _direct_subagents(
@@ -1382,7 +1418,9 @@ def describe_magentic_agents(project_ref: str, deck_id: str) -> dict[str, Any]:
         card = cards.get(card_id)
         if card is None or card_id in seen or not _card_enabled(card):
             continue
-        if card.get("runtimeType") != "assistant_agent" or card.get("runtimeBinding") in {"main_chat", "hermes_steward"}:
+        if card.get("runtimeType") != "assistant_agent" or card.get("runtimeBinding") in {
+            "main_chat", "coder", "hermes_steward"
+        }:
             continue
         seen.add(card_id)
         options = _json_object(card.get("runtimeOptions"), "runtime_options")
@@ -1577,12 +1615,7 @@ def _inspect_saved_idf(content: str) -> dict[str, Any]:
     if not assignment.strip() or len(system_values) > 1 or len(contexts) != 1:
         raise CardDomainError("saved_idf_structure_invalid")
     context = contexts[0]
-    runtime_owner = (
-        "mag_one" if context.get("runtimeType") == "magentic_one"
-        else "hermes" if context.get("profile")
-        else "coder" if context.get("runtimeBinding") == "local_coder"
-        else "autogen"
-    )
+    runtime_owner = _runtime_owner(context)
     return {
         "assignment": assignment,
         "instructionText": system_values[0] if system_values else "",
@@ -1927,9 +1960,7 @@ def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
                 if (
                     worker is not None
                     and worker_id not in worker_ids
-                    and worker.get("runtimeType") == "assistant_agent"
-                    and worker.get("runtimeBinding") not in {"main_chat", "hermes_steward"}
-                    and _card_enabled(worker)
+                    and _is_magentic_worker_card(worker)
                 ):
                     worker_ids.append(worker_id)
             known_tools = {item["canonicalId"] for item in materialize_tool_catalog(tool_manifest())}

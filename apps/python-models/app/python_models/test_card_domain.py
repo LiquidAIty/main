@@ -58,7 +58,7 @@ def test_deck_validation_rejects_duplicate_identities_and_missing_endpoints() ->
 def test_direct_subagents_keep_only_enabled_top_level_assistant_flow_targets() -> None:
     cards = {
         "parent": _agent("parent"),
-        "enabled": _agent("enabled", runtimeBinding="local_coder"),
+        "enabled": _agent("enabled", runtimeBinding="coder"),
         "disabled-option": _agent(
             "disabled-option",
             runtimeOptions={**_agent("x")["runtimeOptions"], "enabled": False},
@@ -76,7 +76,7 @@ def test_direct_subagents_keep_only_enabled_top_level_assistant_flow_targets() -
     assert card_domain._direct_subagents("parent", cards, edges) == [{
         "cardId": "enabled",
         "title": "enabled",
-        "runtimeBinding": "local_coder",
+        "runtimeBinding": "coder",
     }]
 
 
@@ -91,7 +91,7 @@ def _delegation_preview(
         **parent["runtimeOptions"],
         "tools": ["calculator"],
     }
-    child = target or _agent("child", runtimeBinding="local_coder")
+    child = target or _agent("child", runtimeBinding="coder")
     for number, card in enumerate((parent, child), start=1):
         card["_cardRevisionId"] = f"revision-{number}"
         card["_cardRevision"] = 1
@@ -127,7 +127,7 @@ def test_enabled_flow_edge_materializes_bounded_delegation_tool_and_target(
     assert preview["cardContext"]["directSubagents"] == [{
         "cardId": "child",
         "title": "child",
-        "runtimeBinding": "local_coder",
+        "runtimeBinding": "coder",
     }]
 
 
@@ -144,7 +144,7 @@ def test_magentic_card_may_invoke_only_a_saved_magentic_option_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mag_one = _agent("mag-one", runtimeType="magentic_one", runtimeBinding="magentic_one")
-    worker = _agent("worker", runtimeBinding="local_coder")
+    worker = _agent("worker", runtimeBinding="research_agent")
     for number, card in enumerate((mag_one, worker), start=1):
         card["_cardRevisionId"] = f"revision-{number}"
         card["_cardRevision"] = 1
@@ -168,7 +168,7 @@ def test_magentic_card_may_invoke_only_a_saved_magentic_option_worker(
         "senderCardId": "mag-one",
         "assignment": "bounded worker task",
     }
-    assert card_domain.materialize_invocation(payload)["runtimeOwner"] == "coder"
+    assert card_domain.materialize_invocation(payload)["runtimeOwner"] == "autogen"
     loaded["deck"]["edges"] = []
     with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
         card_domain.materialize_invocation(payload)
@@ -195,7 +195,7 @@ def test_disabled_missing_or_invalid_flow_target_is_not_eligible(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     edge = [{"source": "parent", "target": "child", "edgeType": "flow"}]
-    disabled = _agent("child", runtimeBinding="local_coder")
+    disabled = _agent("child", runtimeBinding="coder")
     disabled["runtimeOptions"] = {**disabled["runtimeOptions"], "enabled": False}
     assert _delegation_preview(
         monkeypatch,
@@ -235,6 +235,62 @@ def test_stable_card_keeps_common_hermes_and_autogen_prompts_separate() -> None:
     assert stable["autogenFacet"]["systemMessage"] == "AutoGen instructions"
 
 
+def test_runtime_owner_uses_only_the_explicit_binding_and_rejects_conflicts() -> None:
+    dual_autogen = _agent("dual-autogen")
+    dual_autogen["runtimeOptions"] = {
+        **dual_autogen["runtimeOptions"],
+        "profile": "dormant-hermes-profile",
+        "hermesFacet": {"instructions": "Dormant Hermes configuration"},
+        "autogenFacet": {"systemMessage": "Selected AutoGen configuration"},
+        "executionMode": "single",
+    }
+    assert card_domain._runtime_owner(dual_autogen) == "autogen"
+
+    for binding, profile, mode in (
+        ("main_chat", "liquidaity-main", "single"),
+        ("coder", "coder", "single"),
+        ("hermes_steward", "liquidaity-hermes-steward", "auto-kanban"),
+    ):
+        card = _agent(binding, runtimeBinding=binding)
+        card["runtimeOptions"] = {
+            **card["runtimeOptions"],
+            "profile": profile,
+            "executionMode": mode,
+            "autogenFacet": {"systemMessage": "Dormant AutoGen configuration"},
+        }
+        assert card_domain._runtime_owner(card) == "hermes"
+
+    mag_one = _agent(
+        "mag-one",
+        runtimeType="magentic_one",
+        runtimeBinding="magentic_one",
+    )
+    mag_one["runtimeOptions"] = {
+        **mag_one["runtimeOptions"],
+        "profile": "dormant-hermes-profile",
+    }
+    assert card_domain._runtime_owner(mag_one) == "mag_one"
+
+    with pytest.raises(card_domain.CardDomainError, match="card_runtime_binding_required"):
+        card_domain._runtime_owner(_agent("missing", runtimeBinding=None))
+    with pytest.raises(card_domain.CardDomainError, match="card_runtime_binding_inactive:local_coder"):
+        card_domain._runtime_owner(_agent("legacy", runtimeBinding="local_coder"))
+    with pytest.raises(card_domain.CardDomainError, match="card_runtime_binding_contradictory:coder"):
+        card_domain._runtime_owner(_agent("coder", runtimeBinding="coder"))
+    with pytest.raises(card_domain.CardDomainError, match="card_runtime_binding_contradictory:magentic_one"):
+        card_domain._runtime_owner(_agent("not-mag-one", runtimeBinding="magentic_one"))
+
+
+def test_internal_hermes_roles_are_never_magentic_workers() -> None:
+    for binding in ("main_chat", "coder", "hermes_steward"):
+        assert card_domain._is_magentic_worker_card(
+            _agent(binding, runtimeBinding=binding)
+        ) is False
+    assert card_domain._is_magentic_worker_card(
+        _agent("worldsignals", runtimeBinding="worldsignals_agent")
+    ) is True
+
+
 def test_coder_transport_preserves_exact_idf_and_python_owned_permission() -> None:
     prepared = {
         "projectId": "project-one",
@@ -270,10 +326,11 @@ def test_coder_transport_preserves_exact_idf_and_python_owned_permission() -> No
 
 def _destination_fixture(monkeypatch: pytest.MonkeyPatch) -> dict:
     sender = _agent("sender")
-    hermes = _agent("hermes", prompt="Hermes saved prompt", runtimeBinding="research_agent")
+    hermes = _agent("hermes", prompt="Hermes saved prompt", runtimeBinding="coder")
     hermes["runtimeOptions"] = {
         **hermes["runtimeOptions"],
         "profile": "research",
+        "executionMode": "single",
         "profileSnapshot": {
             "name": "research",
             "model": "deepseek/deepseek-v4-flash-0731",

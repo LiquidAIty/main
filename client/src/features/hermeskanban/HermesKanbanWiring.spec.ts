@@ -4,7 +4,7 @@
 // These read committed/test-time source and assert the surface contract:
 //  - rail/card click opens HermesKanbanWorkspace;
 //  - the workspace may explicitly open the separate installed-Hermes terminal;
-//  - Coder terminal infrastructure is untouched;
+//  - the under-chat Coder terminal uses its separate Hermes profile;
 //  - the Agent Card inspector (AgentManager) is unchanged;
 //  - the Hermes Kanban uses only the /api/hermes-kanban bridge (no second
 //    kanban/database authority).
@@ -51,7 +51,7 @@ describe('Installed Hermes terminal remains separate from Kanban and Coder', () 
     expect(page).toContain('<HermesConsole');
     expect(workspace).toContain('onOpenTerminal');
     expect(workspace).toContain('data-testid="hermes-terminal-open"');
-    expect(terminal).toContain('title="Hermes Terminal"');
+    expect(terminal).toContain("title = 'Hermes Terminal'");
     expect(terminal).toContain('hermesConsoleClient');
   });
 
@@ -69,11 +69,16 @@ describe('Installed Hermes terminal remains separate from Kanban and Coder', () 
   });
 });
 
-describe('Shared/Coder terminal infrastructure is untouched', () => {
-  it('keeps OpenClaudeConsolePanel as the Coder terminal surface', () => {
+describe('Coder terminal runtime swap', () => {
+  it('keeps the existing under-chat terminal contract and mounts the Coder runtime owner', () => {
     const page = read(AGENTBUILDER);
     expect(page).toContain('OpenClaudeConsolePanel');
-    expect(page).toContain('title="OpenClaude Code"');
+    expect(page).toContain('title="Coder"');
+    expect(page).not.toContain('title="OpenClaude Code"');
+    expect(read(CODER_ROUTES)).toContain(
+      "mountConsoleSessionRoutes('/openclaude/console', coderConsoleSessionManager)",
+    );
+    expect(read(CONSOLE_SESSION)).toContain("profile: 'coder'");
   });
 
   it('leaves the Agent Card inspector (AgentManager) unchanged', () => {
