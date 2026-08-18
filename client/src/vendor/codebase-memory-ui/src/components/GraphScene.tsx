@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
 import { NodeCloud } from "./NodeCloud";
@@ -17,12 +16,14 @@ interface CameraTarget {
   lookAt: THREE.Vector3;
 }
 
+type OrbitControlsHandle = React.ElementRef<typeof OrbitControls>;
+
 function CameraAnimator({
   target,
   controlsRef,
 }: {
   target: CameraTarget | null;
-  controlsRef: React.RefObject<OrbitControlsImpl | null>;
+  controlsRef: React.RefObject<OrbitControlsHandle | null>;
 }) {
   const { camera } = useThree();
   useEffect(() => {
@@ -38,7 +39,7 @@ function CameraAnimator({
 
 export type CameraCommand = { action: "zoom_in" | "zoom_out"; token: number } | null;
 
-function CameraCommandBridge({ command, controlsRef }: { command: CameraCommand; controlsRef: React.RefObject<OrbitControlsImpl | null> }) {
+function CameraCommandBridge({ command, controlsRef }: { command: CameraCommand; controlsRef: React.RefObject<OrbitControlsHandle | null> }) {
   const { camera } = useThree();
   useEffect(() => {
     const controls = controlsRef.current;
@@ -73,7 +74,7 @@ export function GraphScene({
   onNodeClick,
 }: GraphSceneProps) {
   const [hovered, setHovered] = useState<GraphNode | null>(null);
-  const controlsRef = useRef<OrbitControlsImpl | null>(null);
+  const controlsRef = useRef<OrbitControlsHandle | null>(null);
 
   return (
     <Canvas

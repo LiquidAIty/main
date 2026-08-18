@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Button } from "./ui/button";
-import { useGraphData } from "../hooks/useGraphData";
 import {
   GraphScene,
   computeCameraTarget,
@@ -19,17 +18,12 @@ import { GraphNavigationControls, GraphPaperBackground } from "../../../../compo
 
 interface GraphTabProps {
   project: string | null;
-  attentionData?: GraphData;
+  attentionData: GraphData;
   onExpand?: (node: GraphNode) => Promise<void>;
 }
 
 export function GraphTab({ project, attentionData, onExpand }: GraphTabProps) {
-  const loaded = useGraphData();
-  const attentionControlled = attentionData !== undefined;
-  const data = attentionControlled ? attentionData : loaded.data;
-  const loading = attentionControlled ? false : loaded.loading;
-  const error = attentionControlled ? null : loaded.error;
-  const fetchOverview = loaded.fetchOverview;
+  const data = attentionData;
   const [highlightedIds, setHighlightedIds] = useState<Set<number> | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
@@ -92,14 +86,6 @@ export function GraphTab({ project, attentionData, onExpand }: GraphTabProps) {
     frame = window.requestAnimationFrame(fitWhenReady);
     return () => window.cancelAnimationFrame(frame);
   }, [data, project]);
-
-  useEffect(() => {
-    if (project && !attentionControlled) {
-      fetchOverview(project);
-      setHighlightedIds(null);
-      setSelectedPath(null);
-    }
-  }, [attentionControlled, project, fetchOverview]);
 
   const handleSelectPath = useCallback(
     (path: string, nodeIds: Set<number>) => {
@@ -192,46 +178,11 @@ export function GraphTab({ project, attentionData, onExpand }: GraphTabProps) {
     );
   }
 
-  if (loading && !data) {
+  if (!filteredData || filteredData.nodes.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
-          <div className="w-8 h-8 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-white/40 text-sm">Computing layout...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error && !data) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center p-8">
-          <p className="text-red-400 text-sm mb-2">{error}</p>
-          <Button variant="outline" size="sm" onClick={() => fetchOverview(project)}>
-            Retry
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  if (!data || !filteredData || (!attentionControlled && filteredData.nodes.length === 0)) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <p className="text-white/30 text-sm mb-3">
-            {attentionControlled
-              ? "No CodeGraph data viewed in this attention scope yet."
-              : data && filteredData?.nodes.length === 0
-                ? "All nodes filtered out"
-                : "No nodes in this project"}
-          </p>
-          {!attentionControlled && data && filteredData?.nodes.length === 0 && (
-            <Button size="sm" onClick={enableAll}>
-              Reset Filters
-            </Button>
-          )}
+          <p className="text-white/30 text-sm mb-3">No CodeGraph data viewed in this attention scope yet.</p>
         </div>
       </div>
     );
@@ -275,13 +226,6 @@ export function GraphTab({ project, attentionData, onExpand }: GraphTabProps) {
           onZoomOut={() => setCameraCommand({ action: "zoom_out", token: Date.now() })}
           onFit={() => setCameraTarget(computeCameraTarget(filteredData.nodes, new Set(filteredData.nodes.map((node) => node.id))))}
         />
-        {attentionControlled && filteredData.nodes.length === 0 ? (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-sm text-white/30">
-            No CodeGraph data viewed in this attention scope yet.
-          </div>
-        ) : null}
-        {loading ? <div className="absolute bottom-4 left-32 text-[10px] text-white/45">Refreshing…</div> : null}
-        {error ? <div className="absolute bottom-4 left-32 text-[10px] text-red-300">Refresh failed · current graph retained</div> : null}
       </div>
 
       <RightGlassDrawer
@@ -342,7 +286,6 @@ export function GraphTab({ project, attentionData, onExpand }: GraphTabProps) {
               </div>
             </>
           ) : <div className="text-[11px] text-white/35">Select a repository node to inspect its identity and relationships.</div>}
-          {!attentionControlled ? <Button variant="outline" size="sm" className="mt-3 w-full" onClick={() => fetchOverview(project)} disabled={loading}>{loading ? "Refreshing…" : "Refresh graph"}</Button> : null}
         </GlassInspectorSection>
         <GlassInspectorSection title="Node, edge & display filters" signal={`${filteredData.nodes.length.toLocaleString()} nodes`} defaultOpen={false}>
           <FilterPanel

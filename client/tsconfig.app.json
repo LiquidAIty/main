@@ -18,10 +18,7 @@
     "noUnusedParameters": false,
     "module": "esnext",
     "moduleResolution": "bundler",
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["src/vendor/codebase-memory-ui/src/*"]
-    }
+    "baseUrl": "."
   },
   "exclude": [
     "out-tsc",
@@ -40,8 +37,7 @@
     "vitest.config.mts",
     "eslint.config.js",
     "eslint.config.cjs",
-    "eslint.config.mjs",
-    "src/vendor/codebase-memory-ui/vite.config.ts"
+    "eslint.config.mjs"
   ],
   "include": ["src/**/*.js", "src/**/*.jsx", "src/**/*.ts", "src/**/*.tsx"]
 }
