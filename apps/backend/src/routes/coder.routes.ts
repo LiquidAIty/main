@@ -479,6 +479,52 @@ router.post('/mcp-bridge/idfs', async (req, res) => {
 // conversation. The saved Coder Card remains a separate Hermes profile.
 const activeHermesTurns = new Map<string, HermesTurnHandle>();
 
+type NativeAttentionEvent = {
+  eventId: string;
+  timestamp: string;
+  projectId: string | null;
+  deckId: string | null;
+  conversationId: string | null;
+  runId: string | null;
+  cardId: string | null;
+  authority: 'codegraph' | 'knowgraph' | 'thinkgraph' | 'agentgraph';
+  operation: 'read' | 'write';
+  toolName: string;
+  nativeNodeIds: string[];
+  nativeEdgeIds: string[];
+  resultHash: string;
+  truncated: boolean;
+};
+
+function nativeAttentionEvents(value: unknown): NativeAttentionEvent[] {
+  if (!value || typeof value !== 'object') return [];
+  const runs = Array.isArray((value as any).runs) ? (value as any).runs : [];
+  return runs.flatMap((run: any) => Array.isArray(run?.attentionEvents) ? run.attentionEvents : [])
+    .filter((event: any) => (
+      event
+      && typeof event === 'object'
+      && String(event.eventId || '').trim()
+      && ['codegraph', 'knowgraph', 'thinkgraph', 'agentgraph'].includes(event.authority)
+      && ['read', 'write'].includes(event.operation)
+    ))
+    .map((event: any) => ({
+      eventId: String(event.eventId),
+      timestamp: String(event.timestamp || ''),
+      projectId: event.projectId ? String(event.projectId) : null,
+      deckId: event.deckId ? String(event.deckId) : null,
+      conversationId: event.conversationId ? String(event.conversationId) : null,
+      runId: event.runId ? String(event.runId) : null,
+      cardId: event.cardId ? String(event.cardId) : null,
+      authority: event.authority,
+      operation: event.operation,
+      toolName: String(event.toolName || ''),
+      nativeNodeIds: Array.isArray(event.nativeNodeIds) ? event.nativeNodeIds.map(String).slice(0, 128) : [],
+      nativeEdgeIds: Array.isArray(event.nativeEdgeIds) ? event.nativeEdgeIds.map(String).slice(0, 256) : [],
+      resultHash: String(event.resultHash || ''),
+      truncated: event.truncated === true,
+    }));
+}
+
 function codexTransportResult(value: Record<string, unknown>): Record<string, any> {
   const result = value.result;
   return result && typeof result === 'object' ? result as Record<string, any> : {};
@@ -677,6 +723,27 @@ router.post('/main/session/chat', async (req, res) => {
   let turnFinished = false;
   let runCancelled = false;
   let terminalDoneEvent: Extract<HermesSessionEvent, { kind: 'done' }> | null = null;
+  const emittedAttentionIds = new Set<string>();
+  let attentionReadQueue = Promise.resolve();
+  const queueAttentionRead = (): Promise<void> => {
+    attentionReadQueue = attentionReadQueue.then(async () => {
+      const inspection = await requestPythonRailsJson('/domain/agentgraph/inspect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, deckId, conversationId, runId: correlationId, limit: 1 }),
+      });
+      for (const attention of nativeAttentionEvents(inspection)) {
+        if (attention.runId !== correlationId || emittedAttentionIds.has(attention.eventId)) continue;
+        emittedAttentionIds.add(attention.eventId);
+        writeSse('native_attention', { kind: 'native_attention', ...attention });
+      }
+    }).catch((error) => {
+      logHarnessTrace(
+        `[harness] native attention readback skipped corr=${correlationId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
+      );
+    });
+    return attentionReadQueue;
+  };
   try {
     const handle = await startPreparedHermesTransport({
       prepared,
@@ -697,6 +764,9 @@ router.post('/main/session/chat', async (req, res) => {
         const traceLine = formatHarnessTrace(scopedEvent, correlationId);
         if (traceLine) logHarnessTrace(traceLine);
         writeSse(scopedEvent.kind, scopedEvent);
+        if (scopedEvent.kind === 'tool_result' && !scopedEvent.isError) {
+          void queueAttentionRead();
+        }
       },
     });
     activeHermesTurns.set(sessionId, handle);
@@ -716,6 +786,7 @@ router.post('/main/session/chat', async (req, res) => {
       });
     });
     const { finalText, usage, transport } = await handle.done;
+    await attentionReadQueue;
     try {
       await requestPythonRailsJson('/domain/runs/finish', {
         method: 'POST',

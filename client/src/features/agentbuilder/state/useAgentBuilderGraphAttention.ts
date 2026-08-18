@@ -15,9 +15,27 @@ import type {
 export type GraphAttentionAuthority = 'thinkgraph' | 'knowgraph' | 'codegraph';
 
 type AttentionContext = {
-  actorCardId: string;
+  actorCardId: string | null;
   actorColor: string;
   toolName: string;
+};
+
+export type NativeAttentionEvent = {
+  kind: 'native_attention';
+  eventId: string;
+  timestamp: string;
+  projectId: string | null;
+  deckId: string | null;
+  conversationId: string | null;
+  runId: string | null;
+  cardId: string | null;
+  authority: GraphAttentionAuthority | 'agentgraph';
+  operation: 'read' | 'write';
+  toolName: string;
+  nativeNodeIds: string[];
+  nativeEdgeIds: string[];
+  resultHash: string;
+  truncated: boolean;
 };
 
 type ExpandRequest = {
@@ -37,59 +55,12 @@ export type GraphAttentionState = {
 };
 
 const CARD_ACTIVE_COLOR = '#37ADAA';
+const UNKNOWN_ACTOR_COLOR = '#8B95A7';
 const MAX_OPERATION_NODES = 200;
 const MAX_OPERATION_EDGES = 300;
 
 function isRecord(value: unknown): value is Record<string, any> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function parseJson(value: unknown): unknown {
-  if (typeof value !== 'string') return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
-}
-
-/** Unwrap the existing ACP/MCP result without consulting execution receipts. */
-export function unwrapNativeToolOutput(value: unknown): Record<string, any> | null {
-  const parsed = parseJson(value);
-  if (Array.isArray(parsed)) {
-    const rows = parsed.filter(isRecord);
-    const contentBlocks = rows.some((item) => typeof item.text === 'string' && typeof item.type === 'string');
-    if (!contentBlocks && rows.length > 0) return { rows };
-    for (const item of parsed) {
-      const unwrapped = unwrapNativeToolOutput(item);
-      if (unwrapped) return unwrapped;
-    }
-    return null;
-  }
-  if (!isRecord(parsed) || Object.prototype.hasOwnProperty.call(parsed, 'executionReceipt')) {
-    return null;
-  }
-  if (Array.isArray(parsed.content)) {
-    for (const block of parsed.content) {
-      const unwrapped = unwrapNativeToolOutput(isRecord(block) ? block.text : block);
-      if (unwrapped) return unwrapped;
-    }
-  }
-  if (isRecord(parsed.structuredContent?.result)) return parsed.structuredContent.result;
-  const nestedOutput = unwrapNativeToolOutput(parsed.rawOutput ?? parsed.output);
-  if (nestedOutput) return nestedOutput;
-  if (isRecord(parsed.result) && Object.keys(parsed).every((key) => ['result', 'isError'].includes(key))) {
-    return parsed.result;
-  }
-  return parsed;
-}
-
-function toolAuthority(toolName: string): GraphAttentionAuthority | null {
-  const name = toolName.toLowerCase();
-  if (/(^|[._])engraphis[._]/.test(name)) return 'thinkgraph';
-  if (/(^|[._])graphiti[._]/.test(name)) return 'knowgraph';
-  if (/(^|[._])cbm[._]/.test(name)) return 'codegraph';
-  return null;
 }
 
 function attentionProperties(
@@ -185,52 +156,6 @@ function recordsAt(payload: Record<string, any>, keys: string[]): Record<string,
     if (Array.isArray(value)) records.push(...value.filter(isRecord));
   }
   return records;
-}
-
-function projectThinkGraphResult(
-  payload: Record<string, any>,
-  projectId: string,
-  context: AttentionContext,
-): GraphProjectionV1 {
-  const candidates = recordsAt(payload, [
-    'memories', 'sources', 'history', 'answer', 'supersedes', 'records',
-  ]);
-  if (payload.id || payload.memory_id) candidates.unshift(payload);
-  const nodes = candidates
-    .map((record) => nodeFromRecord(record, 'thinkgraph', context, ['id', 'memory_id']))
-    .filter((node): node is GraphProjectionNode => Boolean(node))
-    .slice(0, MAX_OPERATION_NODES);
-  const edges: GraphProjectionEdge[] = [];
-  const direct = edgeFromRecord({
-    id: payload.edge_id,
-    source: payload.a,
-    target: payload.b,
-    relation: payload.relation,
-  }, 'thinkgraph', context);
-  if (direct) edges.push(direct);
-  return projection('thinkgraph', projectId, nodes, edges);
-}
-
-function projectKnowGraphResult(
-  payload: Record<string, any>,
-  projectId: string,
-  context: AttentionContext,
-): GraphProjectionV1 {
-  const candidates = recordsAt(payload, ['nodes', 'episodes', 'communities']);
-  if (payload.uuid && !payload.source_node_uuid && !payload.target_node_uuid) {
-    candidates.unshift(payload);
-  }
-  const nodes = candidates
-    .map((record) => nodeFromRecord(record, 'knowgraph', context, ['uuid', 'id']))
-    .filter((node): node is GraphProjectionNode => Boolean(node))
-    .slice(0, MAX_OPERATION_NODES);
-  const edgeCandidates = recordsAt(payload, ['edges', 'facts', 'relationships']);
-  if (payload.source_node_uuid && payload.target_node_uuid) edgeCandidates.unshift(payload);
-  const edges = edgeCandidates
-    .map((record) => edgeFromRecord(record, 'knowgraph', context))
-    .filter((edge): edge is GraphProjectionEdge => Boolean(edge))
-    .slice(0, MAX_OPERATION_EDGES);
-  return projection('knowgraph', projectId, nodes, edges);
 }
 
 function codeRecordId(record: Record<string, any>): string {
@@ -354,29 +279,43 @@ function decorateNativeProjection(
   return projection(authority, projectId, nodes, edges);
 }
 
-export function projectNativeToolResult(args: {
-  toolName: string;
-  output: unknown;
+export function projectNativeAttentionEvent(args: {
+  event: NativeAttentionEvent;
   projectId: string;
-  actorCardId: string;
-  actorColor?: string;
-  anchorNode?: GraphProjectionNode;
 }): { authority: GraphAttentionAuthority; projection: GraphProjectionV1 } | null {
-  const authority = toolAuthority(args.toolName);
-  const payload = unwrapNativeToolOutput(args.output);
-  if (!authority || !payload) return null;
+  const { event } = args;
+  if (!['thinkgraph', 'knowgraph', 'codegraph'].includes(event.authority)) return null;
+  const authority = event.authority as GraphAttentionAuthority;
+  const nodeIds = [...new Set(
+    (Array.isArray(event.nativeNodeIds) ? event.nativeNodeIds : [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean),
+  )].slice(0, MAX_OPERATION_NODES);
+  if (nodeIds.length === 0) return null;
   const context = {
-    actorCardId: args.actorCardId,
-    actorColor: args.actorColor || CARD_ACTIVE_COLOR,
-    toolName: args.toolName,
+    actorCardId: event.cardId,
+    actorColor: event.cardId ? CARD_ACTIVE_COLOR : UNKNOWN_ACTOR_COLOR,
+    toolName: event.toolName,
   };
-  const next = authority === 'thinkgraph'
-    ? projectThinkGraphResult(payload, args.projectId, context)
-    : authority === 'knowgraph'
-      ? projectKnowGraphResult(payload, args.projectId, context)
-      : projectCodeGraphResult(payload, args.projectId, context, args.anchorNode);
-  if (next.nodes.length === 0 && next.edges.length === 0) return null;
-  return { authority, projection: next };
+  const nodes = nodeIds.map((nativeId): GraphProjectionNode => ({
+    id: nativeId,
+    canonicalId: nativeId,
+    label: nativeId,
+    type: 'NativeReference',
+    authority,
+    mentionCount: 1,
+    properties: attentionProperties({
+      nativeId,
+      attentionEventId: event.eventId,
+      attentionOperation: event.operation,
+      attentionResultHash: event.resultHash,
+      attentionTruncated: event.truncated,
+      attentionNativeEdgeIds: event.nativeEdgeIds,
+    }, context),
+    codeGraphRef: authority === 'codegraph' ? nativeId : undefined,
+    knowGraphRef: authority === 'knowgraph' ? nativeId : undefined,
+  }));
+  return { authority, projection: projection(authority, args.projectId, nodes, []) };
 }
 
 export function mergeAttentionProjection(
@@ -412,11 +351,9 @@ export default function useAgentBuilderGraphAttention({ projectId }: { projectId
   const [projections, setProjections] = useState(() => emptyAttention(projectId));
   const [errors, setErrors] = useState<Partial<Record<GraphAttentionAuthority, string>>>({});
   const activeRunRef = useRef<string | null>(null);
-  const pendingToolsRef = useRef(new Map<string, { toolName: string; actorCardId: string }>());
 
   useEffect(() => {
     activeRunRef.current = null;
-    pendingToolsRef.current.clear();
     setErrors({});
     setProjections(emptyAttention(projectId));
   }, [projectId]);
@@ -431,36 +368,23 @@ export default function useAgentBuilderGraphAttention({ projectId }: { projectId
 
   const startAttentionScope = useCallback((turn: MainChatTurnStarted) => {
     activeRunRef.current = turn.runId;
-    pendingToolsRef.current.clear();
     setErrors({});
     setProjections(emptyAttention(turn.projectId));
   }, []);
 
   const observeNativeTurnEvent = useCallback((turn: MainChatTurnEvent) => {
     if (activeRunRef.current !== turn.runId) return;
-    const event = turn.event as Record<string, unknown>;
-    const toolUseId = String(event.toolUseId || '');
-    if (event.kind === 'tool_start') {
-      pendingToolsRef.current.set(toolUseId, {
-        toolName: String(event.toolName || ''),
-        actorCardId: String(event.invokingCardId || ''),
-      });
-      return;
-    }
-    if (event.kind !== 'tool_result' || event.isError === true) return;
-    const pending = pendingToolsRef.current.get(toolUseId);
-    pendingToolsRef.current.delete(toolUseId);
-    const result = projectNativeToolResult({
-      toolName: String(event.toolName || pending?.toolName || ''),
-      output: event.output,
+    const event = turn.event as NativeAttentionEvent;
+    if (event.kind !== 'native_attention') return;
+    const result = projectNativeAttentionEvent({
+      event,
       projectId: turn.projectId,
-      actorCardId: String(event.invokingCardId || pending?.actorCardId || 'unknown-card'),
     });
     if (result) merge(result.authority, result.projection);
   }, [merge]);
 
   const finishAttentionScope = useCallback((turn: MainChatTurnFinished) => {
-    if (activeRunRef.current === turn.runId) pendingToolsRef.current.clear();
+    if (activeRunRef.current === turn.runId) activeRunRef.current = null;
   }, []);
 
   const expandNode = useCallback(async ({
@@ -469,8 +393,10 @@ export default function useAgentBuilderGraphAttention({ projectId }: { projectId
     projectId,
     codeGraphProject,
   }: ExpandRequest) => {
-    const actorCardId = String(node.properties?.attentionActorCardId || 'unknown-card');
-    const actorColor = String(node.properties?.attentionActorColor || CARD_ACTIVE_COLOR);
+    const actorCardId = typeof node.properties?.attentionActorCardId === 'string'
+      ? node.properties.attentionActorCardId
+      : null;
+    const actorColor = String(node.properties?.attentionActorColor || UNKNOWN_ACTOR_COLOR);
     try {
       let incoming: GraphProjectionV1 | null = null;
       if (authority === 'thinkgraph') {

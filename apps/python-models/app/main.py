@@ -17,6 +17,7 @@ from app.python_models.card_domain import (
     begin_prompt_free_run,
     describe_magentic_agents,
     finish_prompt_free_run,
+    inspect_agentgraph,
     list_decks,
     list_saved_idfs,
     load_deck,
@@ -208,6 +209,15 @@ def domain_run_begin(payload: dict[str, Any]):
 def domain_run_finish(payload: dict[str, Any]):
     try:
         return finish_prompt_free_run(payload)
+    except CardDomainError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/domain/agentgraph/inspect")
+def domain_agentgraph_inspect(payload: dict[str, Any]):
+    """Private rails readback for existing AGE attention/run telemetry."""
+    try:
+        return inspect_agentgraph(payload)
     except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 

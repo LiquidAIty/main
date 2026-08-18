@@ -4,9 +4,8 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import useAgentBuilderGraphAttention, {
-  mergeAttentionProjection,
-  projectNativeToolResult,
-  unwrapNativeToolOutput,
+  projectNativeAttentionEvent,
+  type NativeAttentionEvent,
 } from './useAgentBuilderGraphAttention';
 
 const turn = {
@@ -17,71 +16,90 @@ const turn = {
   observedAt: '2026-08-17T12:00:00.000Z',
 };
 
+function attention(
+  authority: NativeAttentionEvent['authority'],
+  nativeNodeIds: string[],
+  nativeEdgeIds: string[] = [],
+  cardId: string | null = 'card_main_chat',
+): NativeAttentionEvent {
+  return {
+    kind: 'native_attention',
+    eventId: `event-${authority}`,
+    timestamp: '2026-08-18T12:00:00Z',
+    projectId: 'project-1',
+    deckId: 'deck_builder',
+    conversationId: 'main',
+    runId: 'req-one',
+    cardId,
+    authority,
+    operation: 'read',
+    toolName: authority === 'codegraph' ? 'cbm.search_graph'
+      : authority === 'knowgraph' ? 'graphiti.search_nodes' : 'engraphis.why',
+    nativeNodeIds,
+    nativeEdgeIds,
+    resultHash: 'a'.repeat(64),
+    truncated: false,
+  };
+}
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe('attention-activated native graph projection', () => {
-  it('ignores execution receipts and projects only exact CBM result symbols', () => {
-    expect(unwrapNativeToolOutput(JSON.stringify({ executionReceipt: { tool: 'cbm.search_graph' } }))).toBeNull();
-    const result = projectNativeToolResult({
-      toolName: 'cbm.search_graph',
+  it('projects only exact Python-owned native references without parsing provider JSON', () => {
+    const result = projectNativeAttentionEvent({
+      event: attention('codegraph', ['pkg.alpha', 'pkg.beta', 'pkg.alpha']),
       projectId: 'project-1',
-      actorCardId: 'card_main_chat',
-      output: JSON.stringify({
-        content: [
-          { type: 'text', text: JSON.stringify({ results: [
-            { qualified_name: 'pkg.alpha', name: 'alpha', label: 'Function', file_path: 'src/a.ts' },
-            { qualified_name: 'pkg.beta', name: 'beta', label: 'Function', file_path: 'src/b.ts' },
-          ] }) },
-          { type: 'text', text: JSON.stringify({ executionReceipt: { tool: 'cbm.search_graph' } }) },
-        ],
-      }),
     });
 
     expect(result?.authority).toBe('codegraph');
     expect(result?.projection.nodes.map((node) => node.id)).toEqual(['pkg.alpha', 'pkg.beta']);
     expect(result?.projection.edges).toEqual([]);
     expect(result?.projection.nodes[0].properties).toMatchObject({
-      file_path: 'src/a.ts',
+      nativeId: 'pkg.alpha',
       attentionActorCardId: 'card_main_chat',
       attentionActorColor: '#37ADAA',
       attentionToolName: 'cbm.search_graph',
     });
   });
 
-  it('recognizes the exact MCP-safe tool name Hermes emits over ACP', () => {
-    const result = projectNativeToolResult({
-      toolName: 'mcp__main_runtime_abcd__cbm_search_graph',
+  it('uses the canonical Python-owned tool name without browser normalization', () => {
+    const event = attention('codegraph', ['pkg.alpha']);
+    const result = projectNativeAttentionEvent({
+      event,
       projectId: 'project-1',
-      actorCardId: 'card_main_chat',
-      output: '{"results":[{"qualified_name":"pkg.alpha","name":"alpha","label":"Function"}]}',
     });
 
     expect(result?.authority).toBe('codegraph');
-    expect(result?.projection.nodes.map((node) => node.id)).toEqual(['pkg.alpha']);
+    expect(result?.projection.nodes[0].properties?.attentionToolName).toBe(
+      'cbm.search_graph',
+    );
   });
 
-  it('keeps graph authorities separate and never creates missing endpoint nodes', () => {
-    const think = projectNativeToolResult({
-      toolName: 'engraphis.recall',
+  it('uses neutral provenance when no Card identity is proven', () => {
+    const result = projectNativeAttentionEvent({
+      event: attention('thinkgraph', ['memory-one'], [], null),
       projectId: 'project-1',
-      actorCardId: 'card_main_chat',
-      output: { memories: [{ id: 'mem-1', title: 'Runtime decision', mtype: 'semantic' }] },
-    })!;
-    const know = projectNativeToolResult({
-      toolName: 'graphiti.search_memory_facts',
+    });
+
+    expect(result?.projection.nodes[0].properties).toMatchObject({
+      attentionActorCardId: null,
+      attentionActorColor: '#8B95A7',
+    });
+  });
+
+  it('keeps authorities separate and never invents endpoints for edge-only events', () => {
+    const think = projectNativeAttentionEvent({
+      event: attention('thinkgraph', ['mem-1']),
       projectId: 'project-1',
-      actorCardId: 'card_main_chat',
-      output: { facts: [{ uuid: 'edge-1', source_node_uuid: 'node-a', target_node_uuid: 'node-b', name: 'USES' }] },
     })!;
+    const know = projectNativeAttentionEvent({
+      event: attention('knowgraph', [], ['edge-1']),
+      projectId: 'project-1',
+    });
 
     expect(think.authority).toBe('thinkgraph');
     expect(think.projection.nodes.map((node) => node.id)).toEqual(['mem-1']);
-    expect(know.authority).toBe('knowgraph');
-    expect(know.projection.nodes).toEqual([]);
-    expect(mergeAttentionProjection(
-      { ...know.projection, nodes: [], edges: [] },
-      know.projection,
-    ).edges).toEqual([]);
+    expect(know).toBeNull();
   });
 
   it('starts all three canvases empty, wakes exact Graphiti write data, and clears on the next scope', async () => {
@@ -93,24 +111,11 @@ describe('attention-activated native graph projection', () => {
     act(() => result.current.startAttentionScope(turn));
     act(() => result.current.observeNativeTurnEvent({
       ...turn,
-      event: {
-        kind: 'tool_result',
-        toolName: 'graphiti.add_triplet',
-        toolUseId: 'tool-1',
-        invokingCardId: 'card_main_chat',
-        isError: false,
-        output: JSON.stringify({
-          nodes: [
-            { uuid: 'node-a', name: 'Alpha', labels: ['Entity'] },
-            { uuid: 'node-b', name: 'Beta', labels: ['Entity'] },
-          ],
-          edges: [{ uuid: 'edge-1', source_node_uuid: 'node-a', target_node_uuid: 'node-b', name: 'USES' }],
-        }),
-      },
+      event: { ...attention('knowgraph', ['node-a', 'node-b'], ['edge-1']), operation: 'write' },
     }));
 
     await waitFor(() => expect(result.current.projections.knowgraph.nodes).toHaveLength(2));
-    expect(result.current.projections.knowgraph.edges.map((edge) => edge.id)).toEqual(['edge-1']);
+    expect(result.current.projections.knowgraph.edges).toEqual([]);
     expect(result.current.projections.thinkgraph.nodes).toEqual([]);
     expect(result.current.projections.codegraph.nodes).toEqual([]);
 
@@ -133,14 +138,7 @@ describe('attention-activated native graph projection', () => {
     act(() => result.current.startAttentionScope(turn));
     act(() => result.current.observeNativeTurnEvent({
       ...turn,
-      event: {
-        kind: 'tool_result',
-        toolName: 'engraphis.recall',
-        toolUseId: 'tool-1',
-        invokingCardId: 'card_main_chat',
-        isError: false,
-        output: JSON.stringify({ memories: [{ id: 'mem-1', title: 'Center' }] }),
-      },
+      event: attention('thinkgraph', ['mem-1']),
     }));
     const center = result.current.projections.thinkgraph.nodes[0];
 
@@ -171,11 +169,7 @@ describe('attention-activated native graph projection', () => {
     act(() => result.current.startAttentionScope(turn));
     act(() => result.current.observeNativeTurnEvent({
       ...turn,
-      event: {
-        kind: 'tool_result', toolName: 'graphiti.search_nodes', toolUseId: 'tool-1',
-        invokingCardId: 'card_main_chat', isError: false,
-        output: JSON.stringify({ nodes: [{ uuid: 'node-a', name: 'Alpha', labels: ['Entity'] }] }),
-      },
+      event: attention('knowgraph', ['node-a']),
     }));
     const center = result.current.projections.knowgraph.nodes[0];
 
@@ -206,11 +200,7 @@ describe('attention-activated native graph projection', () => {
     act(() => result.current.startAttentionScope(turn));
     act(() => result.current.observeNativeTurnEvent({
       ...turn,
-      event: {
-        kind: 'tool_result', toolName: 'cbm.search_graph', toolUseId: 'tool-1',
-        invokingCardId: 'card_main_chat', isError: false,
-        output: JSON.stringify({ results: [{ qualified_name: 'pkg.alpha', name: 'alpha', label: 'Function', file_path: 'src/a.ts' }] }),
-      },
+      event: attention('codegraph', ['pkg.alpha']),
     }));
     const center = result.current.projections.codegraph.nodes[0];
 

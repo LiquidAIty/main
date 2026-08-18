@@ -56,7 +56,7 @@ function notifyObserver<T>(observer: ((value: T) => void) | undefined, value: T)
   try {
     observer?.(value);
   } catch (error) {
-    console.warn('[THINKGRAPH_LIVE_OBSERVER]', error);
+    console.warn('[NATIVE_GRAPH_ATTENTION_OBSERVER]', error);
   }
 }
 

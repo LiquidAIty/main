@@ -154,26 +154,6 @@ function textContent(update: any): string {
   return update?.content?.type === 'text' ? String(update.content.text || '') : '';
 }
 
-function toolContentText(value: unknown): string {
-  if (!Array.isArray(value)) return '';
-  return value.map((item) => {
-    if (!item || typeof item !== 'object') return '';
-    const record = item as Record<string, any>;
-    if (record.type === 'content' && record.content?.type === 'text') {
-      return String(record.content.text || '');
-    }
-    if (record.type === 'text') return String(record.text || '');
-    return '';
-  }).filter(Boolean).join('\n');
-}
-
-export function hermesToolResultOutput(update: any): string {
-  if (update?.rawOutput !== undefined && update?.rawOutput !== null) {
-    return jsonText(update.rawOutput);
-  }
-  return toolContentText(update?.content);
-}
-
 function jsonText(value: unknown): string {
   if (typeof value === 'string') return value;
   try {
@@ -428,7 +408,7 @@ class AcpProcess {
         kind: 'tool_result',
         toolName: turn.toolNames.get(id) || String(update.title || 'tool'),
         toolUseId: id,
-        output: hermesToolResultOutput(update),
+        output: jsonText(update.rawOutput),
         isError: update.status === 'failed',
       });
     }

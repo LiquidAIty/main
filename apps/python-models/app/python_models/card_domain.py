@@ -552,6 +552,128 @@ def load_deck(project_ref: str, deck_id: str) -> dict[str, Any]:
         return _load_deck_with_cursor(cursor, project_ref, deck_id)
 
 
+def observe_native_attention(event: dict[str, Any]) -> bool:
+    """Observe one proven MCP native-reference result on the existing Run in AGE.
+
+    This is deliberately fail-open for the tool caller: AGE observation never owns
+    dispatch.  Missing or mismatched Run/Card identity produces no graph write.
+    """
+    project_id = str(event.get("projectId") or "").strip()
+    deck_id = str(event.get("deckId") or "").strip()
+    run_id = str(event.get("runId") or "").strip()
+    card_id = str(event.get("cardId") or "").strip()
+    event_id = str(event.get("eventId") or "").strip()
+    tool_name = str(event.get("toolName") or "").strip()
+    authority = str(event.get("authority") or "").strip()
+    operation = str(event.get("operation") or "").strip()
+    timestamp = str(event.get("timestamp") or "").strip()
+    result_hash = str(event.get("resultHash") or "").strip()
+    node_ids = [
+        str(value).strip() for value in event.get("nativeNodeIds") or []
+        if str(value).strip()
+    ][:128]
+    edge_ids = [
+        str(value).strip() for value in event.get("nativeEdgeIds") or []
+        if str(value).strip()
+    ][:256]
+    if not all((project_id, deck_id, run_id, card_id, event_id, tool_name, authority,
+                operation, timestamp, result_hash)):
+        return False
+    references = [
+        {"nativeId": native_id, "nativeKind": native_kind}
+        for native_kind, native_ids in (("node", node_ids), ("edge", edge_ids))
+        for native_id in native_ids
+    ]
+    if not references:
+        return False
+    try:
+        with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            matched = _age_rows(
+                cursor,
+                """
+                MATCH (run:Run {
+                  projectId: $projectId, deckId: $deckId, runId: $runId
+                })-[:EXECUTED_BY]->(card:Card {
+                  projectId: $projectId, deckId: $deckId, cardId: $cardId
+                })
+                MERGE (tool:Tool {toolId: $toolName})
+                MERGE (run)-[used:USED_TOOL {eventId: $eventId}]->(tool)
+                SET used.timestamp=$timestamp,
+                    used.projectId=$projectId,
+                    used.deckId=$deckId,
+                    used.conversationId=$conversationId,
+                    used.cardId=$cardId,
+                    used.authority=$authority,
+                    used.operation=$operation,
+                    used.toolName=$toolName,
+                    used.nativeNodeIds=$nativeNodeIds,
+                    used.nativeEdgeIds=$nativeEdgeIds,
+                    used.resultHash=$resultHash,
+                    used.truncated=$truncated
+                RETURN run.runId
+                """,
+                {
+                    "projectId": project_id,
+                    "deckId": deck_id,
+                    "conversationId": str(event.get("conversationId") or ""),
+                    "runId": run_id,
+                    "cardId": card_id,
+                    "eventId": event_id,
+                    "timestamp": timestamp,
+                    "authority": authority,
+                    "operation": operation,
+                    "toolName": tool_name,
+                    "nativeNodeIds": node_ids,
+                    "nativeEdgeIds": edge_ids,
+                    "resultHash": result_hash,
+                    "truncated": event.get("truncated") is True,
+                },
+                "run_id agtype",
+            )
+            if len(matched) != 1:
+                return False
+            _age_rows(
+                cursor,
+                """
+                MATCH (run:Run {
+                  projectId: $projectId, deckId: $deckId, runId: $runId
+                })
+                UNWIND $references AS reference
+                MERGE (native:NativeReference {
+                  projectId: $projectId,
+                  authority: $authority,
+                  nativeId: reference.nativeId
+                })
+                MERGE (run)-[used:USED {
+                  eventId: $eventId,
+                  nativeId: reference.nativeId,
+                  nativeKind: reference.nativeKind
+                }]->(native)
+                SET used.timestamp=$timestamp,
+                    used.toolName=$toolName,
+                    used.operation=$operation,
+                    used.resultHash=$resultHash
+                RETURN count(used)
+                """,
+                {
+                    "projectId": project_id,
+                    "deckId": deck_id,
+                    "runId": run_id,
+                    "eventId": event_id,
+                    "timestamp": timestamp,
+                    "authority": authority,
+                    "operation": operation,
+                    "toolName": tool_name,
+                    "resultHash": result_hash,
+                    "references": references,
+                },
+                "observed agtype",
+            )
+        return True
+    except Exception:
+        return False
+
+
 def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
     """Read bounded current Card authority and identity-only AGE telemetry."""
     project_ref = _required_text(payload.get("projectId"), "project_id")
@@ -599,6 +721,7 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     "parentRunIds": [],
                     "childRunIds": [],
                     "usedTools": [],
+                    "attentionEvents": [],
                     "nativeReferences": [],
                     "viewedNativeReferences": [],
                     "artifacts": [],
@@ -630,11 +753,11 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     "tools": (
                         """
                         MATCH (run:Run {projectId: $projectId, deckId: $deckId})
-                              -[:USED_TOOL]->(tool:Tool)
+                              -[edge:USED_TOOL]->(tool:Tool)
                         WHERE run.runId IN $runIds
-                        RETURN run.runId, tool.toolId
+                        RETURN run.runId, tool.toolId, properties(edge)
                         """,
-                        "run_id agtype, tool_id agtype",
+                        "run_id agtype, tool_id agtype, event agtype",
                     ),
                     "used": (
                         """
@@ -693,7 +816,27 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                 for row in telemetry["tools"]:
                     item = runs.get(str(row.get("run_id") or ""))
                     if item is not None:
-                        item["usedTools"].append(str(row.get("tool_id") or ""))
+                        tool_id = str(row.get("tool_id") or "")
+                        if tool_id and tool_id not in item["usedTools"]:
+                            item["usedTools"].append(tool_id)
+                        event = row.get("event")
+                        if isinstance(event, dict) and str(event.get("eventId") or "").strip():
+                            item["attentionEvents"].append({
+                                "eventId": str(event.get("eventId") or ""),
+                                "timestamp": str(event.get("timestamp") or ""),
+                                "projectId": str(event.get("projectId") or project_id),
+                                "deckId": str(event.get("deckId") or deck_id),
+                                "conversationId": str(event.get("conversationId") or "") or None,
+                                "runId": str(row.get("run_id") or "") or None,
+                                "cardId": str(event.get("cardId") or "") or None,
+                                "authority": str(event.get("authority") or ""),
+                                "operation": str(event.get("operation") or ""),
+                                "toolName": str(event.get("toolName") or tool_id),
+                                "nativeNodeIds": [str(value) for value in event.get("nativeNodeIds") or []],
+                                "nativeEdgeIds": [str(value) for value in event.get("nativeEdgeIds") or []],
+                                "resultHash": str(event.get("resultHash") or ""),
+                                "truncated": event.get("truncated") is True,
+                            })
                 for telemetry_name, output_name in (
                     ("used", "nativeReferences"),
                     ("viewed", "viewedNativeReferences"),
@@ -763,6 +906,7 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
             "runIdentity": True,
             "usedNativeReferences": True,
             "viewedNativeReferences": True,
+            "nativeAttentionEvents": True,
             "artifacts": True,
             "rawIdfStored": False,
         },

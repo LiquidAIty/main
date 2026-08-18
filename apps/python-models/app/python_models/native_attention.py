@@ -1,0 +1,326 @@
+"""Bounded native graph-reference observation at the official MCP boundary.
+
+The native graph authorities keep their own schemas and data.  This module only
+extracts stable IDs from explicitly declared tool contracts; it never copies a
+graph result or infers graph access from prose.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from hashlib import sha256
+from typing import Any, Callable, Literal
+from uuid import uuid4
+
+from mcp.types import CallToolResult
+
+NATIVE_ATTENTION_NODE_LIMIT = 128
+NATIVE_ATTENTION_EDGE_LIMIT = 256
+
+Authority = Literal["codegraph", "knowgraph", "thinkgraph", "agentgraph"]
+Operation = Literal["read", "write"]
+Extractor = Callable[[str, dict[str, Any]], tuple[list[str], list[str]]]
+
+
+@dataclass(frozen=True)
+class NativeAttentionContract:
+    authority: Authority
+    operation: Operation
+    extractor: Extractor
+
+
+def _text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _records(payload: dict[str, Any], *keys: str) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list):
+            result.extend(item for item in value if isinstance(item, dict))
+    return result
+
+
+def _values(records: list[dict[str, Any]], *keys: str) -> list[str]:
+    result: list[str] = []
+    for record in records:
+        for key in keys:
+            value = _text(record.get(key))
+            if value:
+                result.append(value)
+                break
+    return result
+
+
+def _extract_codegraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
+    if tool_name == "cbm.search_graph":
+        return _values(_records(payload, "results", "semantic_results"), "qualified_name"), []
+    if tool_name == "cbm.trace_path":
+        return _values(_records(payload, "callers", "callees"), "qualified_name"), []
+    if tool_name == "cbm.search_code":
+        return _values(_records(payload, "results"), "qualified_name"), []
+    if tool_name == "cbm.get_code_snippet":
+        qualified_name = _text(payload.get("qualified_name"))
+        return ([qualified_name] if qualified_name else []), []
+    if tool_name == "cbm.query_graph":
+        return _values(_records(payload, "rows", "results"), "qualified_name"), []
+    if tool_name in {"cbm.list_projects", "cbm.index_status", "cbm.index_repository", "cbm.delete_project"}:
+        projects = _values(_records(payload, "projects"), "name", "project")
+        project = _text(payload.get("project") or payload.get("name"))
+        if project:
+            projects.insert(0, project)
+        return projects, []
+    if tool_name == "cbm.detect_changes":
+        return _values(
+            _records(payload, "changed_symbols", "affected_symbols", "symbols"),
+            "qualified_name",
+        ), []
+    if tool_name == "cbm.manage_adr":
+        adr_id = _text(payload.get("adr_id") or payload.get("id"))
+        return ([adr_id] if adr_id else []), []
+    return [], []
+
+
+def _extract_knowgraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
+    nodes: list[str] = []
+    edges: list[str] = []
+    if tool_name == "graphiti.search_nodes":
+        nodes.extend(_values(_records(payload, "nodes"), "uuid"))
+    elif tool_name == "graphiti.search_memory_facts":
+        facts = _records(payload, "facts")
+        nodes.extend(_values(facts, "source_node_uuid"))
+        nodes.extend(_values(facts, "target_node_uuid"))
+        edges.extend(_values(facts, "uuid"))
+    elif tool_name == "graphiti.get_entity_edge":
+        nodes.extend(filter(None, (
+            _text(payload.get("source_node_uuid")),
+            _text(payload.get("target_node_uuid")),
+        )))
+        edge_id = _text(payload.get("uuid"))
+        if edge_id:
+            edges.append(edge_id)
+    elif tool_name == "graphiti.get_episodes":
+        nodes.extend(_values(_records(payload, "episodes"), "uuid"))
+    elif tool_name in {"graphiti.get_episode_entities", "graphiti.add_triplet"}:
+        native_edges = _records(payload, "edges", "facts")
+        nodes.extend(_values(_records(payload, "nodes", "entities"), "uuid"))
+        nodes.extend(_values(native_edges, "source_node_uuid"))
+        nodes.extend(_values(native_edges, "target_node_uuid"))
+        edges.extend(_values(native_edges, "uuid"))
+    elif tool_name in {"graphiti.build_communities", "graphiti.summarize_saga"}:
+        nodes.extend(_values(_records(payload, "communities"), "uuid"))
+        top_uuid = _text(payload.get("uuid"))
+        if top_uuid:
+            nodes.append(top_uuid)
+    return nodes, edges
+
+
+def _extract_thinkgraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
+    records = _records(
+        payload,
+        "memories",
+        "answer",
+        "supersedes",
+        "history",
+        "sources",
+        "records",
+    )
+    nodes = _values(records, "id", "memory_id")
+    if tool_name == "engraphis.search_code":
+        nodes.extend(_values(_records(payload, "symbols"), "fqname"))
+    elif tool_name == "engraphis.code_path":
+        for item in payload.get("path") or []:
+            if isinstance(item, dict):
+                value = _text(item.get("fqname") or item.get("id") or item.get("name"))
+            else:
+                value = _text(item)
+            if value:
+                nodes.append(value)
+    top_id = _text(payload.get("id") or payload.get("memory_id"))
+    if top_id:
+        nodes.insert(0, top_id)
+    for key in ("a", "b"):
+        value = _text(payload.get(key))
+        if value:
+            nodes.append(value)
+    return nodes, []
+
+
+def _extract_agentgraph(_tool_name: str, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
+    nodes = _values(_records(payload, "cards"), "cardId")
+    nodes.extend(_values(_records(payload, "runs"), "runId"))
+    edges = _values(_records(payload, "relationships"), "id")
+    return nodes, edges
+
+
+def _contracts() -> dict[str, NativeAttentionContract]:
+    contracts: dict[str, NativeAttentionContract] = {
+        "agentgraph.inspect": NativeAttentionContract("agentgraph", "read", _extract_agentgraph),
+        "cbm.search_graph": NativeAttentionContract("codegraph", "read", _extract_codegraph),
+        "cbm.trace_path": NativeAttentionContract("codegraph", "read", _extract_codegraph),
+        "cbm.search_code": NativeAttentionContract("codegraph", "read", _extract_codegraph),
+        "cbm.get_code_snippet": NativeAttentionContract("codegraph", "read", _extract_codegraph),
+        "cbm.query_graph": NativeAttentionContract("codegraph", "read", _extract_codegraph),
+        "cbm.list_projects": NativeAttentionContract("codegraph", "read", _extract_codegraph),
+        "cbm.index_status": NativeAttentionContract("codegraph", "read", _extract_codegraph),
+        "cbm.detect_changes": NativeAttentionContract("codegraph", "read", _extract_codegraph),
+        "cbm.index_repository": NativeAttentionContract("codegraph", "write", _extract_codegraph),
+        "cbm.delete_project": NativeAttentionContract("codegraph", "write", _extract_codegraph),
+        "cbm.manage_adr": NativeAttentionContract("codegraph", "write", _extract_codegraph),
+        "cbm.ingest_traces": NativeAttentionContract("codegraph", "write", _extract_codegraph),
+        "graphiti.search_nodes": NativeAttentionContract("knowgraph", "read", _extract_knowgraph),
+        "graphiti.search_memory_facts": NativeAttentionContract("knowgraph", "read", _extract_knowgraph),
+        "graphiti.get_entity_edge": NativeAttentionContract("knowgraph", "read", _extract_knowgraph),
+        "graphiti.get_episodes": NativeAttentionContract("knowgraph", "read", _extract_knowgraph),
+        "graphiti.get_episode_entities": NativeAttentionContract("knowgraph", "read", _extract_knowgraph),
+        "graphiti.add_triplet": NativeAttentionContract("knowgraph", "write", _extract_knowgraph),
+        "graphiti.build_communities": NativeAttentionContract("knowgraph", "write", _extract_knowgraph),
+        "graphiti.summarize_saga": NativeAttentionContract("knowgraph", "write", _extract_knowgraph),
+    }
+    for name in (
+        "engraphis.recall",
+        "engraphis.recall_context",
+        "engraphis.recall_grounded",
+        "engraphis.answer",
+        "engraphis.why",
+        "engraphis.timeline",
+        "engraphis.recall_proactive",
+        "engraphis.proactive_context",
+        "engraphis.search_code",
+        "engraphis.code_path",
+        "engraphis.code_impact",
+        "engraphis.export_code_graph",
+    ):
+        contracts[name] = NativeAttentionContract("thinkgraph", "read", _extract_thinkgraph)
+    for name in (
+        "engraphis.remember",
+        "engraphis.forget",
+        "engraphis.pin",
+        "engraphis.correct",
+        "engraphis.promote",
+        "engraphis.link",
+        "engraphis.record_event",
+        "engraphis.ingest",
+        "engraphis.consolidate",
+    ):
+        contracts[name] = NativeAttentionContract("thinkgraph", "write", _extract_thinkgraph)
+    return contracts
+
+
+NATIVE_ATTENTION_CONTRACTS = _contracts()
+
+
+def canonical_native_tool_name(tool_name: str) -> str | None:
+    """Resolve canonical dotted names, including Hermes-safe MCP aliases, once."""
+    name = _text(tool_name)
+    if name in NATIVE_ATTENTION_CONTRACTS:
+        return name
+    if not name.startswith("mcp__"):
+        return None
+    matches = [
+        candidate
+        for candidate in NATIVE_ATTENTION_CONTRACTS
+        if name.endswith("__" + candidate.replace(".", "_"))
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _decoded(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _result_payloads(result: Any) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    if isinstance(result, CallToolResult):
+        structured = result.structuredContent
+        if isinstance(structured, dict):
+            candidate = _decoded(structured.get("result"))
+            if isinstance(candidate, dict):
+                payloads.append(candidate)
+            elif isinstance(structured.get("result"), dict):
+                payloads.append(structured["result"])
+            elif structured:
+                payloads.append(structured)
+        blocks = result.content
+    else:
+        blocks = result if isinstance(result, list) else []
+    for block in blocks:
+        candidate = _decoded(getattr(block, "text", None))
+        if isinstance(candidate, dict):
+            payloads.append(candidate)
+    return payloads
+
+
+def _dedupe_and_cap(values: list[str], limit: int) -> tuple[list[str], bool]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = _text(value)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(normalized)
+    return unique[:limit], len(unique) > limit
+
+
+def build_native_attention_event(
+    tool_name: str,
+    result: Any,
+    context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    canonical_name = canonical_native_tool_name(tool_name)
+    contract = NATIVE_ATTENTION_CONTRACTS.get(canonical_name or "")
+    if contract is None:
+        return None
+    node_ids: list[str] = []
+    edge_ids: list[str] = []
+    for payload in _result_payloads(result):
+        nodes, edges = contract.extractor(canonical_name or "", payload)
+        node_ids.extend(nodes)
+        edge_ids.extend(edges)
+    native_node_ids, nodes_truncated = _dedupe_and_cap(
+        node_ids, NATIVE_ATTENTION_NODE_LIMIT
+    )
+    native_edge_ids, edges_truncated = _dedupe_and_cap(
+        edge_ids, NATIVE_ATTENTION_EDGE_LIMIT
+    )
+    if not native_node_ids and not native_edge_ids:
+        return None
+    normalized_references = {
+        "nativeNodeIds": native_node_ids,
+        "nativeEdgeIds": native_edge_ids,
+    }
+    normalized = {
+        "authority": contract.authority,
+        "operation": contract.operation,
+        "toolName": canonical_name,
+        **normalized_references,
+    }
+    identity = context if isinstance(context, dict) else {}
+    return {
+        "eventId": f"native-attention:{uuid4()}",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "projectId": _text(identity.get("projectId")) or None,
+        "deckId": _text(identity.get("deckId")) or None,
+        "conversationId": _text(identity.get("conversationId")) or None,
+        "runId": _text(identity.get("parentRunId")) or None,
+        "cardId": _text(identity.get("mainCardId")) or None,
+        **normalized,
+        "resultHash": sha256(
+            json.dumps(
+                normalized_references,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
+        "truncated": nodes_truncated or edges_truncated,
+    }

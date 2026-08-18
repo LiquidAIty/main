@@ -2422,7 +2422,11 @@ def _failure_code_from_result(result: Any) -> str | None:
     return None
 
 
-def _attach_execution_receipt(result: Any, receipt: dict[str, Any]) -> Any:
+def _attach_execution_receipt(
+    result: Any,
+    receipt: dict[str, Any],
+    native_attention: dict[str, Any] | None = None,
+) -> Any:
     block = TextContent(
         type="text",
         text=json.dumps({"executionReceipt": receipt}, ensure_ascii=False),
@@ -2430,10 +2434,24 @@ def _attach_execution_receipt(result: Any, receipt: dict[str, Any]) -> Any:
     if isinstance(result, CallToolResult):
         payload = result.model_dump(exclude_none=True)
         payload["content"] = [*result.content, block]
+        if native_attention is not None:
+            payload["_meta"] = {
+                **(result.meta or {}),
+                "nativeAttention": native_attention,
+            }
         return CallToolResult.model_validate(payload)
     if isinstance(result, list):
-        return [*result, block]
-    return CallToolResult(content=[TextContent(type="text", text=str(result)), block])
+        content = [*result, block]
+        if native_attention is None:
+            return content
+        return CallToolResult(
+            content=content,
+            meta={"nativeAttention": native_attention},
+        )
+    return CallToolResult(
+        content=[TextContent(type="text", text=str(result)), block],
+        meta={"nativeAttention": native_attention} if native_attention is not None else None,
+    )
 
 
 def _mcp_tool_timeout_seconds(name: str) -> float:
@@ -2461,6 +2479,30 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             timeout=_mcp_tool_timeout_seconds(name),
         )
         result_category = _tool_result_category(result)
+        native_attention = None
+        if result_category == "success":
+            from app.python_models.native_attention import build_native_attention_event
+
+            native_attention = build_native_attention_event(
+                name,
+                result,
+                _authenticated_main_context(),
+            )
+            if native_attention is not None:
+                from app.python_models.card_domain import observe_native_attention
+
+                telemetry_written = await asyncio.to_thread(
+                    observe_native_attention,
+                    native_attention,
+                )
+                _trace(
+                    "native_attention_observed",
+                    tool_name=native_attention["toolName"],
+                    result_category=(
+                        "age_observed" if telemetry_written else "mcp_meta_only"
+                    ),
+                    completed=True,
+                )
         receipt["durationMs"] = int((time.monotonic() - started_clock) * 1000)
         receipt["state"] = "failed" if result_category == "tool_error" else "completed"
         receipt["failureCode"] = (
@@ -2475,7 +2517,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         )
         if result_category == "tool_error" and isinstance(result, list):
             result = CallToolResult(content=result, isError=True)
-        return _attach_execution_receipt(result, receipt)
+        return _attach_execution_receipt(result, receipt, native_attention)
     except Exception as error:
         receipt["durationMs"] = int((time.monotonic() - started_clock) * 1000)
         receipt["state"] = "failed"

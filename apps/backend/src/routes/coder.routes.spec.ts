@@ -179,6 +179,9 @@ const orchestratorMocks = vi.hoisted(() => ({
     if (endpoint === '/domain/runs/finish') {
       return { receipt: { runId: body.runId, state: body.state } };
     }
+    if (endpoint === '/domain/agentgraph/inspect') {
+      return { ok: true, runs: [] };
+    }
     if (endpoint === '/domain/idfs/save') {
       return {
         ok: true,
@@ -853,6 +856,70 @@ describe('coder routes', () => {
         expect(body).toContain('event: tool_result');
         expect(body).toContain('"invokingCardId":"card_main_chat"');
       } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('emits only compact Python-owned native attention events after a graph tool result', async () => {
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint: string, init?: RequestInit) => {
+        if (endpoint !== '/domain/agentgraph/inspect') return railsImplementation(endpoint, init);
+        const request = JSON.parse(String(init?.body || '{}'));
+        return {
+          ok: true,
+          runs: [{
+            runId: request.runId,
+            attentionEvents: [{
+              eventId: 'native-attention:event-one',
+              timestamp: '2026-08-18T12:00:00Z',
+              projectId: request.projectId,
+              deckId: request.deckId,
+              conversationId: request.conversationId,
+              runId: request.runId,
+              cardId: 'card_main_chat',
+              authority: 'codegraph',
+              operation: 'read',
+              toolName: 'cbm.search_graph',
+              nativeNodeIds: ['pkg._runtime_owner'],
+              nativeEdgeIds: [],
+              resultHash: 'a'.repeat(64),
+              truncated: false,
+            }],
+          }],
+        };
+      });
+      chatSessionMocks.startHermesTurn.mockImplementationOnce(async (_params: unknown, onEvent: (event: any) => void) => {
+        onEvent({
+          kind: 'tool_result',
+          toolName: 'mcp__main_runtime__cbm_search_graph',
+          toolUseId: 'tool-1',
+          output: 'human-readable ordinary tool output',
+          isError: false,
+        });
+        return {
+          done: Promise.resolve({ finalText: 'Done.', usage: chatSessionMocks.usage }),
+          cancel: chatSessionMocks.lastCancel,
+          answer: vi.fn(),
+          resolved: {
+            cardId: 'card_main_chat', provider: 'openai',
+            modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
+          },
+        };
+      });
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'attention-event', message: 'inspect' }),
+        });
+        const body = await response.text();
+        expect(body).toContain('event: native_attention');
+        expect(body).toContain('"toolName":"cbm.search_graph"');
+        expect(body).toContain('"nativeNodeIds":["pkg._runtime_owner"]');
+        expect(body).not.toContain('results');
+      } finally {
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
         await closeServer(server);
       }
     });

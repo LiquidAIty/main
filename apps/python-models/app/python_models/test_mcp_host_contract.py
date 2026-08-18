@@ -523,6 +523,91 @@ def test_authenticated_connection_reaches_read_only_handler_without_context_inje
     assert "context" not in result[0].text
 
 
+def test_official_dispatch_attaches_compact_native_attention_without_changing_result(
+    monkeypatch,
+):
+    import asyncio
+    import mcp_host
+    from app.python_models import card_domain
+    from mcp.types import CallToolResult, TextContent
+
+    context = {
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "conversationId": "conversation-one",
+        "parentRunId": "run-one",
+        "mainCardId": "card-one",
+    }
+    native_text = json.dumps({
+        "results": [{"qualified_name": "pkg._runtime_owner"}],
+        "total": 1,
+    })
+    observed = []
+
+    async def dispatch(_name, _arguments):
+        return CallToolResult(
+            content=[TextContent(type="text", text=native_text)],
+            structuredContent={"result": json.loads(native_text)},
+        )
+
+    monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
+    monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda _name: True)
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: dict(context))
+    monkeypatch.setattr(
+        card_domain,
+        "observe_native_attention",
+        lambda event: observed.append(dict(event)) or True,
+    )
+
+    result = asyncio.run(mcp_host.call_tool(
+        "mcp__main_runtime_abcd__cbm_search_graph",
+        {"project": "C-Projects-LiquidAIty-main", "name_pattern": ".*_runtime_owner.*"},
+    ))
+
+    assert isinstance(result, CallToolResult)
+    assert result.content[0].text == native_text
+    assert json.loads(result.content[-1].text)["executionReceipt"]["state"] == "completed"
+    assert result.meta is not None
+    attention = result.meta["nativeAttention"]
+    assert attention["toolName"] == "cbm.search_graph"
+    assert attention["nativeNodeIds"] == ["pkg._runtime_owner"]
+    assert attention["nativeEdgeIds"] == []
+    assert attention["projectId"] == "project-one"
+    assert attention["runId"] == "run-one"
+    assert attention["cardId"] == "card-one"
+    assert observed == [attention]
+
+
+def test_official_dispatch_emits_no_attention_for_non_graph_result(monkeypatch):
+    import asyncio
+    import mcp_host
+    from app.python_models import card_domain
+    from mcp.types import CallToolResult, TextContent
+
+    async def dispatch(_name, _arguments):
+        return CallToolResult(
+            content=[TextContent(type="text", text='{"ok":true}')],
+            structuredContent={"ok": True},
+        )
+
+    observed = []
+    monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
+    monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda _name: True)
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
+    monkeypatch.setattr(
+        card_domain,
+        "observe_native_attention",
+        lambda event: observed.append(event) or True,
+    )
+
+    result = asyncio.run(mcp_host.call_tool("canvas.inspect", {}))
+
+    assert isinstance(result, CallToolResult)
+    assert result.content[0].text == '{"ok":true}'
+    assert not result.meta or "nativeAttention" not in result.meta
+    assert observed == []
+
+
 def test_restored_agentgraph_and_magentic_idf_tools_dispatch_without_running(
     monkeypatch,
 ):

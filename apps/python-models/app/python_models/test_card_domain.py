@@ -683,7 +683,25 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
                 "target_card_id": "card-one",
             }]
         if "USED_TOOL" in query:
-            return [{"run_id": "run-one", "tool_id": "canvas.inspect"}]
+            return [{
+                "run_id": "run-one",
+                "tool_id": "cbm.search_graph",
+                "event": {
+                    "eventId": "native-attention:event-one",
+                    "timestamp": "2026-08-18T12:00:00Z",
+                    "projectId": "project-one",
+                    "deckId": "deck-one",
+                    "conversationId": "conversation-one",
+                    "cardId": "card-one",
+                    "authority": "codegraph",
+                    "operation": "read",
+                    "toolName": "cbm.search_graph",
+                    "nativeNodeIds": ["pkg._runtime_owner"],
+                    "nativeEdgeIds": [],
+                    "resultHash": "a" * 64,
+                    "truncated": False,
+                },
+            }]
         if "-[:USED]->" in query:
             return [{
                 "run_id": "run-one",
@@ -734,7 +752,23 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         "assignedFromCardIds": ["card-main"],
         "parentRunIds": [],
         "childRunIds": [],
-        "usedTools": ["canvas.inspect"],
+        "usedTools": ["cbm.search_graph"],
+        "attentionEvents": [{
+            "eventId": "native-attention:event-one",
+            "timestamp": "2026-08-18T12:00:00Z",
+            "projectId": "project-one",
+            "deckId": "deck-one",
+            "conversationId": "conversation-one",
+            "runId": "run-one",
+            "cardId": "card-one",
+            "authority": "codegraph",
+            "operation": "read",
+            "toolName": "cbm.search_graph",
+            "nativeNodeIds": ["pkg._runtime_owner"],
+            "nativeEdgeIds": [],
+            "resultHash": "a" * 64,
+            "truncated": False,
+        }],
         "nativeReferences": [{"authority": "KnowGraph", "nativeId": "episode:one"}],
         "viewedNativeReferences": [],
         "artifacts": [{
@@ -755,6 +789,74 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         for query, _params in age_calls
         for keyword in ("MERGE ", "CREATE ", "DELETE ", " SET ")
     )
+
+
+def test_native_attention_observation_requires_existing_run_card_identity(monkeypatch):
+    statements: list[tuple[str, dict]] = []
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    def age_rows(_cursor, query, params, _columns):
+        statements.append((query, params))
+        if "EXECUTED_BY" in query:
+            return [{"run_id": "run-one"}]
+        return [{"observed": 3}]
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_age_rows", age_rows)
+    event = {
+        "eventId": "native-attention:event-one",
+        "timestamp": "2026-08-18T12:00:00Z",
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "conversationId": "conversation-one",
+        "runId": "run-one",
+        "cardId": "card-one",
+        "authority": "codegraph",
+        "operation": "read",
+        "toolName": "cbm.search_graph",
+        "nativeNodeIds": ["pkg._runtime_owner"],
+        "nativeEdgeIds": ["edge-one"],
+        "resultHash": "a" * 64,
+        "truncated": False,
+    }
+
+    assert card_domain.observe_native_attention(event) is True
+    assert len(statements) == 2
+    assert "USED_TOOL" in statements[0][0]
+    assert "EXECUTED_BY" in statements[0][0]
+    assert "UNWIND $references" in statements[1][0]
+    assert "USED" in statements[1][0]
+    assert statements[0][1]["nativeNodeIds"] == ["pkg._runtime_owner"]
+    assert statements[0][1]["nativeEdgeIds"] == ["edge-one"]
+    assert statements[1][1]["references"] == [
+        {"nativeId": "pkg._runtime_owner", "nativeKind": "node"},
+        {"nativeId": "edge-one", "nativeKind": "edge"},
+    ]
+    assert not any(
+        key in params
+        for _query, params in statements
+        for key in ("prompt", "result", "content", "exactIdf")
+    )
+
+    before = len(statements)
+    assert card_domain.observe_native_attention({**event, "cardId": None}) is False
+    assert len(statements) == before
 
 
 def test_mag_one_instruction_idf_uses_only_canonical_persistence_and_never_runs(

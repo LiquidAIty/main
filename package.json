@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
+    "build": "npm run build --workspaces --if-present",
     "dev": "npm run dev:fresh",
     "dev:stop": "kill-port 4000 5173 8003 8001 8765 4040",
     "dev:fresh": "npm run dev:stop && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-services.ps1",
