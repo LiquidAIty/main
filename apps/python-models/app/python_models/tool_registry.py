@@ -15,14 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import ast
-import json
 import operator
-import os
 import re
 from datetime import datetime, timezone
 from typing import Any, Callable
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 from autogen_core.tools import FunctionTool
 
@@ -182,156 +178,6 @@ async def get_paper_account_readiness_tool() -> dict[str, Any]:
     return result.to_dict()
 
 
-def _backend_base_url() -> str:
-    return os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
-
-
-def _post_backend_json_sync(path: str, payload: dict[str, Any]) -> str:
-    request = Request(
-        f"{_backend_base_url()}{path}",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        # LocalCoder/OpenClaude owns job completion. A second socket deadline
-        # here used to abort the AutoGen caller at 60 seconds while the same
-        # canonical Coder process was still completing, leaving a false failed
-        # card run. The loopback connection closes naturally if its backend or
-        # child process terminates; do not invent a competing execution timer.
-        with urlopen(request) as response:  # noqa: S310 — loopback backend only
-            return response.read().decode("utf-8")
-    except HTTPError as err:
-        body = ""
-        try:
-            body = err.read().decode("utf-8")
-        except Exception:
-            body = ""
-        # Honest error pass-through: the bridge returns structured JSON errors.
-        return body or json.dumps({"ok": False, "error": f"backend_http_{err.code}"})
-    except URLError as err:
-        return json.dumps({"ok": False, "error": f"backend_unreachable: {err.reason}"})
-
-
-# ---------------------------------------------------------------------------
-# Local Coder tool — run a real coding task through the LocalCoder engine.
-# ---------------------------------------------------------------------------
-
-
-async def run_local_coder(
-    objective: str,
-    plan_excerpt: str = "",
-    context_summary: str = "",
-    guardrails: list[str] | None = None,
-    allowed_files: list[str] | None = None,
-    forbidden_work: list[str] | None = None,
-    proof_required: list[str] | None = None,
-    stop_conditions: list[str] | None = None,
-    code_anchors: list[str] | None = None,
-    cbm_queries: list[str] | None = None,
-    report_format: str = "Return a CoderReport JSON: status, filesChanged, proofResults, blockers, nextRecommendedTask.",
-    write_mode: str = "read-only",
-    project_id: str = "default",
-) -> str:
-    """Run a real coding task through the LocalCoder engine; return its CoderReport.
-
-    The model supplies ONLY the logical coding task. The coder's filesystem root is
-    injected server-side by the backend (trusted, never model-chosen) and the run id
-    is server-minted. Returns the authoritative CoderReport JSON verbatim — no
-    fabricated success and no fallback: a blocked/failed run is reported honestly.
-    """
-    packet = {
-        "projectId": str(project_id or "default").strip() or "default",
-        "objective": str(objective or "").strip(),
-        "planExcerpt": str(plan_excerpt or "").strip() or str(objective or "").strip(),
-        "contextSummary": str(context_summary or "").strip() or "Provided by the orchestrator run.",
-        "codeAnchors": [str(x) for x in (code_anchors or []) if str(x).strip()],
-        "cbmQueries": [str(x) for x in (cbm_queries or []) if str(x).strip()],
-        "guardrails": [str(x) for x in (guardrails or []) if str(x).strip()],
-        "allowedFiles": [str(x) for x in (allowed_files or []) if str(x).strip()],
-        "forbiddenWork": [str(x) for x in (forbidden_work or []) if str(x).strip()],
-        "proofRequired": [str(x) for x in (proof_required or []) if str(x).strip()],
-        "reportFormat": str(report_format or "").strip() or "CoderReport JSON",
-        "stopConditions": [str(x) for x in (stop_conditions or []) if str(x).strip()],
-        "writeMode": "edit" if str(write_mode or "").strip().lower() == "edit" else "read-only",
-    }
-    return await asyncio.to_thread(
-        _post_backend_json_sync,
-        "/api/coder/localcoder/run",
-        {"coderPacket": packet},
-    )
-
-
-def build_local_coder_tool(
-    model_provider: str,
-    provider_model_id: str,
-    reasoning_effort: str | None = None,
-    inner_mcp_tools: list[str] | None = None,
-) -> FunctionTool:
-    """Create a run_local_coder tool bound to the trusted saved-card model.
-
-    Provider/model come from the backend-authored card runtime, not from model
-    arguments. OpenRouter and OpenAI Account are configurations of this same
-    LocalCoder/OpenClaude execution path.
-    """
-    provider = str(model_provider or "").strip()
-    model_id = str(provider_model_id or "").strip()
-    saved_reasoning_effort = str(reasoning_effort or "").strip() or None
-    saved_mcp_tools = [
-        str(tool).strip() for tool in (inner_mcp_tools or []) if str(tool).strip()
-    ]
-
-    async def _adapter_with_model(
-        objective: str,
-        plan_excerpt: str = "",
-        context_summary: str = "",
-        guardrails: list[str] | None = None,
-        allowed_files: list[str] | None = None,
-        forbidden_work: list[str] | None = None,
-        proof_required: list[str] | None = None,
-        stop_conditions: list[str] | None = None,
-        code_anchors: list[str] | None = None,
-        cbm_queries: list[str] | None = None,
-        report_format: str = "Return a CoderReport JSON: status, filesChanged, proofResults, blockers, nextRecommendedTask.",
-        write_mode: str = "read-only",
-        project_id: str = "default",
-    ) -> str:
-        packet = {
-            "projectId": str(project_id or "default").strip() or "default",
-            "objective": str(objective or "").strip(),
-            "planExcerpt": str(plan_excerpt or "").strip() or str(objective or "").strip(),
-            "contextSummary": str(context_summary or "").strip() or "Provided by the orchestrator run.",
-            "codeAnchors": [str(x) for x in (code_anchors or []) if str(x).strip()],
-            "cbmQueries": [str(x) for x in (cbm_queries or []) if str(x).strip()],
-            "guardrails": [str(x) for x in (guardrails or []) if str(x).strip()],
-            "allowedFiles": [str(x) for x in (allowed_files or []) if str(x).strip()],
-            "forbiddenWork": [str(x) for x in (forbidden_work or []) if str(x).strip()],
-            "proofRequired": [str(x) for x in (proof_required or []) if str(x).strip()],
-            "reportFormat": str(report_format or "").strip() or "CoderReport JSON",
-            "stopConditions": [str(x) for x in (stop_conditions or []) if str(x).strip()],
-            "writeMode": "edit" if str(write_mode or "").strip().lower() == "edit" else "read-only",
-            "modelProvider": provider,
-            "providerModelId": model_id,
-            **(
-                {"reasoningEffort": saved_reasoning_effort}
-                if saved_reasoning_effort
-                else {}
-            ),
-            **({"mcpTools": saved_mcp_tools} if saved_mcp_tools else {}),
-        }
-        return await asyncio.to_thread(
-            _post_backend_json_sync,
-            "/api/coder/localcoder/run",
-            {"coderPacket": packet},
-        )
-
-    return FunctionTool(
-        _adapter_with_model,
-        description=DEFAULT_TOOL_REGISTRY.spec("run_local_coder").description,
-        name="run_local_coder",
-    )
-
-
 # ---------------------------------------------------------------------------
 # ToolRegistry.
 # ---------------------------------------------------------------------------
@@ -460,41 +306,6 @@ def build_default_tool_registry() -> ToolRegistry:
         (ToolSpec(name="worldsignals.stream_events", description="Read a bounded set of real-time events from the WorldSignals SSE channel.", enabled=True, inputSchema={"type": "object", "properties": {"max_events": {"type": "integer", "minimum": 1, "maximum": 20, "default": 1}, "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 30, "default": 15}}, "required": [], "additionalProperties": False}, outputSchema={"type": "object"}), worldsignals_stream_events),
     ]:
         registry.register(spec, adapter)
-    registry.register(
-        ToolSpec(
-            name="run_local_coder",
-            description=(
-                "Run a real coding task through the LocalCoder engine and return its "
-                "authoritative CoderReport. Supply ONLY the logical task (objective, "
-                "plan_excerpt, context_summary, guardrails, allowed_files, proof_required, "
-                "stop_conditions, forbidden_work, code_anchors, report_format, write_mode). "
-                "The coder's filesystem root is injected server-side (trusted, never chosen "
-                "by the model). Reports blocked/failed honestly; no fake success."
-            ),
-            enabled=True,
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "objective": {"type": "string"},
-                    "plan_excerpt": {"type": "string"},
-                    "context_summary": {"type": "string"},
-                    "guardrails": {"type": "array", "items": {"type": "string"}},
-                    "allowed_files": {"type": "array", "items": {"type": "string"}},
-                    "forbidden_work": {"type": "array", "items": {"type": "string"}},
-                    "proof_required": {"type": "array", "items": {"type": "string"}},
-                    "stop_conditions": {"type": "array", "items": {"type": "string"}},
-                    "code_anchors": {"type": "array", "items": {"type": "string"}},
-                    "cbm_queries": {"type": "array", "items": {"type": "string"}},
-                    "report_format": {"type": "string"},
-                    "write_mode": {"type": "string", "enum": ["read-only", "edit"]},
-                    "project_id": {"type": "string"},
-                },
-                "required": ["objective"],
-            },
-            outputSchema={"type": "object", "description": "authoritative CoderReport JSON"},
-        ),
-        run_local_coder,
-    )
     registry.register(
         ToolSpec(
             name="current_datetime",

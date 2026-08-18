@@ -21,7 +21,8 @@ describe('internal MCP Card authentication', () => {
       conversationId: 'conversation-1',
       parentRunId: 'run-1',
       callerCardId: 'card-main',
-      callerRuntimeBinding: 'main_chat',
+      callerRuntimeKind: 'hermes',
+      callerRuntimeMode: 'main',
       grantedTools: ['canvas.inspect', 'canvas.inspect', 'card.run_assistant_agent'],
     }, env, 1000);
     const claims = verifyInternalMcpBearerForTest(token, env);
@@ -32,6 +33,8 @@ describe('internal MCP Card authentication', () => {
       principal: {
         kind: 'card-runtime',
         callerCardId: 'card-main',
+        callerRuntimeKind: 'hermes',
+        callerRuntimeMode: 'main',
         grantedTools: ['canvas.inspect', 'card.run_assistant_agent'],
       },
     });

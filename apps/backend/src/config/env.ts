@@ -45,7 +45,7 @@ function resolveFileBackedConfig(env: NodeJS.ProcessEnv): void {
 /**
  * Resolve the one server-owned Codex credential-store directory.
  *
- * Both Hermes' app-server transport and OpenClaude/LocalCoder receive this
+ * Hermes' app-server transport receives this
  * directory reference. Token material remains owned by Codex in auth.json and
  * is never copied into LiquidAIty persistence or browser state.
  */

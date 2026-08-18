@@ -8,11 +8,9 @@ import type {
   DeckDocument,
 } from '../../../types/agentgraph';
 import {
-  normalizeAgentExecutionMode,
   cleanOptionalText,
-  normalizeRuntimeBinding,
+  normalizeCardRuntime,
   normalizeRuntimeOptions,
-  normalizeRuntimeType,
 } from '../deck/deckPrimitives';
 import { INITIAL_AGENT_TEMPLATES } from '../deck/newProjectDeck';
 
@@ -79,12 +77,7 @@ export default function useAgentBuilderCardEditor({
     const resolvedProvider =
       runtimeOptions.provider ?? effectiveAgent?.provider ?? null;
     return {
-      runtime_binding: selectedCard.runtimeBinding ?? null,
-      runtime_type: selectedCard.runtimeType ?? 'assistant_agent',
-      execution_mode: normalizeAgentExecutionMode(
-        runtimeOptions.executionMode,
-        selectedCard.runtimeBinding,
-      ),
+      runtime: selectedCard.runtime,
       runtime_options: runtimeOptions,
       parent_graph_id: selectedCard.parentGraphId ?? null,
       provider:
@@ -95,7 +88,6 @@ export default function useAgentBuilderCardEditor({
           : '',
       access_mode:
         runtimeOptions.accessMode === 'chatgpt-account'
-        || runtimeOptions.accessMode === 'coder-oauth'
         || runtimeOptions.accessMode === 'openai-api'
         || runtimeOptions.accessMode === 'openrouter-api'
           ? runtimeOptions.accessMode
@@ -124,17 +116,8 @@ export default function useAgentBuilderCardEditor({
 
       recordDeckWriteReason('card-editor');
       setDeck((currentDeck) => {
-        const nextRuntimeBinding = normalizeRuntimeBinding(
-          nextConfig.runtime_binding,
-        );
-        const nextRuntimeType =
-          normalizeRuntimeType(nextConfig.runtime_type) ??
-          normalizeRuntimeType(selectedCard.runtimeType) ??
-          'assistant_agent';
-        const nextExecutionMode = normalizeAgentExecutionMode(
-          nextConfig.execution_mode,
-          nextRuntimeBinding,
-        );
+        const nextRuntime = normalizeCardRuntime(nextConfig.runtime);
+        if (!nextRuntime) throw new Error('card_runtime_invalid');
         const nextParentGraphId = cleanOptionalText(
           nextConfig.parent_graph_id,
         );
@@ -147,7 +130,6 @@ export default function useAgentBuilderCardEditor({
         const nextModel = String(nextConfig.model_key || '').trim() || null;
         const nextAccessMode =
           nextConfig.access_mode === 'chatgpt-account'
-          || nextConfig.access_mode === 'coder-oauth'
           || nextConfig.access_mode === 'openai-api'
           || nextConfig.access_mode === 'openrouter-api'
             ? nextConfig.access_mode
@@ -181,7 +163,6 @@ export default function useAgentBuilderCardEditor({
           temperature: nextTemperature,
           maxTokens: nextMaxTokens,
           maxTurns: nextMaxTurns,
-          executionMode: nextExecutionMode,
           tools: nextTools,
           skills: normalizeStringList(nextConfig.skills),
           toolsets: normalizeStringList(nextConfig.toolsets),
@@ -218,8 +199,7 @@ export default function useAgentBuilderCardEditor({
               ? {
                   ...node,
                   prompt: String(nextConfig.prompt_template || ''),
-                  runtimeBinding: nextRuntimeBinding,
-                  runtimeType: nextRuntimeType,
+                  runtime: nextRuntime,
                   runtimeOptions: nextRuntimeOptions,
                   parentGraphId: nextParentGraphId,
                   overrides: nextOverrides,

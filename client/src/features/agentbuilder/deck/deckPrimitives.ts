@@ -4,9 +4,8 @@
 import type {
   AgentCardInstance,
   AgentCardRuntimeOptions,
-  AgentCardRuntimeType,
+  CardRuntime,
   DeckEdgeType,
-  RuntimeBinding,
 } from '../../../types/agentgraph';
 
 export const DEFAULT_WORKSPACE_ROOT = 'C:\\Projects\\main';
@@ -38,25 +37,6 @@ export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = DEFAULT_CARD_MODEL_KEY;
 export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
 // Seed default ONLY for a fresh Coder card. Once a card has a saved
 // provider/model, that saved value remains authoritative.
-export const LOCAL_CODER_CONTROLLER_MODEL_KEY = DEFAULT_CARD_MODEL_KEY;
-export const LOCAL_CODER_CONTROLLER_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
-export const LOCAL_CODER_CONTROLLER_TOOLS = [
-  'run_local_coder',
-  'cbm.index_repository',
-  'cbm.search_graph',
-  'cbm.query_graph',
-  'cbm.trace_path',
-  'cbm.get_code_snippet',
-  'cbm.get_graph_schema',
-  'cbm.get_architecture',
-  'cbm.search_code',
-  'cbm.list_projects',
-  'cbm.delete_project',
-  'cbm.index_status',
-  'cbm.detect_changes',
-  'cbm.manage_adr',
-  'cbm.ingest_traces',
-] as const;
 export const CODER_CONTROLLER_TOOLS = [
   'cbm.index_repository',
   'cbm.search_graph',
@@ -125,21 +105,19 @@ export const HERMES_CARD_TOOLS = [
   'write_mag_one_instructions',
 ] as const;
 
-export type AgentExecutionMode = NonNullable<AgentCardRuntimeOptions['executionMode']>;
-
-export function normalizeAgentExecutionMode(
-  value: unknown,
-  runtimeBinding?: unknown,
-): AgentExecutionMode {
-  const binding = normalizeRuntimeBinding(runtimeBinding);
-  if (binding === 'main_chat' || binding === 'coder') return 'single';
-  return value === 'auto-kanban' ? 'auto-kanban' : 'single';
-}
-
-export function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
-  const normalized = safeText(value).trim().toLowerCase();
-  if (normalized === 'assistant_agent') return 'assistant_agent';
-  if (normalized === 'magentic_one') return 'magentic_one';
+export function normalizeCardRuntime(value: unknown): CardRuntime | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  const kind = safeText(candidate.kind).trim().toLowerCase();
+  const mode = safeText(candidate.mode).trim().toLowerCase();
+  if (kind === 'hermes') {
+    const profile = safeText(candidate.profile).trim();
+    if (!profile || !['main', 'delegate', 'kanban'].includes(mode)) return null;
+    return { kind, mode: mode as 'main' | 'delegate' | 'kanban', profile };
+  }
+  if (kind === 'autogen' && ['assistant', 'magentic_one'].includes(mode)) {
+    return { kind, mode: mode as 'assistant' | 'magentic_one' };
+  }
   return null;
 }
 
@@ -169,19 +147,4 @@ export const uid = () => Math.random().toString(36).slice(2, 8);
 
 export function cloneDeckDocument<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-export function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
-  const normalized = safeText(value).trim().toLowerCase();
-  if (normalized === 'assist') return 'assist';
-  if (normalized === 'local_coder') return 'local_coder';
-  if (normalized === 'main_chat') return 'main_chat';
-  if (normalized === 'coder') return 'coder';
-  if (normalized === 'magentic_one') return 'magentic_one';
-  if (normalized === 'research_agent') return 'research_agent';
-  if (normalized === 'plan_agent') return 'plan_agent';
-  if (normalized === 'worldsignals_agent') return 'worldsignals_agent';
-  if (normalized === 'trading_agent') return 'trading_agent';
-  if (normalized === 'hermes_steward') return 'hermes_steward';
-  return null;
 }

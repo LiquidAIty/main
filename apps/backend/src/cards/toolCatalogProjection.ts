@@ -19,7 +19,8 @@ export type ToolCatalogReference = {
   shortDescription: string;
   availability: 'available' | 'disabled';
   contracts: NativeToolContract[];
-  requiredCallerRuntimeBinding?: string;
+  requiredCallerRuntimeKind?: 'hermes' | 'autogen';
+  requiredCallerRuntimeMode?: 'main' | 'delegate' | 'kanban' | 'assistant' | 'magentic_one';
 };
 
 export type ToolCatalogIndex = {

@@ -25,12 +25,6 @@ function isSeamRectHost(value: unknown): value is SeamRectHost {
   );
 }
 
-function normalizeViewportRuntimeType(runtimeType: unknown): string {
-  const normalized = String(runtimeType ?? '').trim().toLowerCase();
-  if (normalized === 'magentic-one') return 'magentic_one';
-  return normalized;
-}
-
 export function buildInitialBusSeamViewport({
   busPosition,
   zoom,
@@ -61,7 +55,7 @@ export function buildInitialWorkbenchLandingViewport(
   },
 ): CanvasLandingViewport | null {
   const busNode = document.nodes.find(
-    (node) => normalizeViewportRuntimeType(node.runtimeType) === 'magentic_one',
+    (node) => node.runtime.kind === 'autogen' && node.runtime.mode === 'magentic_one',
   );
   const workbenchNode = document.nodes.find(
     (node) =>

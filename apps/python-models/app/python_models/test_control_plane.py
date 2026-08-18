@@ -14,11 +14,12 @@ DECK = {
     "id": "deck_builder",
     "name": "Builder",
     "nodes": [
-        {"id": "signals-card", "title": "WorldSignals", "runtimeBinding": "world_signals",
-         "runtimeType": "assistant_agent", "prompt": "p",
+        {"id": "signals-card", "title": "WorldSignals",
+         "runtime": {"kind": "autogen", "mode": "assistant"}, "prompt": "p",
          "runtimeOptions": {"tools": ["worldsignals.capabilities", "worldsignals.command"]}},
-        {"id": "worker", "title": "Worker", "runtimeBinding": None,
-         "runtimeType": "assistant_agent", "prompt": "", "runtimeOptions": None},
+        {"id": "worker", "title": "Worker",
+         "runtime": {"kind": "autogen", "mode": "assistant"},
+         "prompt": "", "runtimeOptions": None},
     ],
     "edges": [{"id": "w1", "source": "worker", "target": "signals-card", "edgeType": "flow"}],
 }
@@ -42,7 +43,7 @@ def fake_backend(monkeypatch):
     return saved
 
 
-def test_saved_card_role_falls_back_to_its_runtime_binding() -> None:
+def test_saved_card_reference_exposes_explicit_runtime() -> None:
     reference = cp.resolve_saved_card_reference(
         "project-one",
         "deck_builder",
@@ -50,8 +51,8 @@ def test_saved_card_role_falls_back_to_its_runtime_binding() -> None:
         deck=DECK,
     )
 
-    assert reference["runtimeBinding"] == "world_signals"
-    assert reference["role"] == "world_signals"
+    assert reference["runtime"] == {"kind": "autogen", "mode": "assistant"}
+    assert reference["role"] == ""
 
 
 def test_canvas_inspect_returns_only_the_bounded_public_projection(fake_backend) -> None:
@@ -61,8 +62,7 @@ def test_canvas_inspect_returns_only_the_bounded_public_projection(fake_backend)
     assert result["cards"][0] == {
         "id": "signals-card",
         "title": "WorldSignals",
-        "runtimeBinding": "world_signals",
-        "runtimeType": "assistant_agent",
+        "runtime": {"kind": "autogen", "mode": "assistant"},
         "tools": ["worldsignals.capabilities", "worldsignals.command"],
     }
     assert all("prompt" not in card for card in result["cards"])

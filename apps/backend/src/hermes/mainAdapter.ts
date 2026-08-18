@@ -34,39 +34,29 @@ export type HermesSessionEvent =
 export type HermesRuntimeConfig = {
   cardId: string;
   title: string;
-  runtimeBinding: string;
+  runtime: { kind: 'hermes'; mode: 'main' | 'delegate' | 'kanban'; profile: string };
   prompt: string;
-  profile: string;
   provider: string;
   modelKey: string;
   providerModelId: string;
   accessMode: CardAccessMode;
-  executionMode: 'single' | 'auto-kanban';
   tools: string[];
   nativeTools: string[];
   skills: string[];
   toolsets: string[];
   mcpConnectionIds: string[];
-  coderCardIds: string[];
-  directSubagents: { cardId: string; title: string; runtimeBinding: string }[];
   nativeHermesDelegates: HermesNativeDelegateConfig[];
-  savedCardRuntime: { provider: string; modelKey: string; providerModelId: string };
-  profileSnapshot: { name: string; model: string; gateway: string } | null;
-  profileConflicts: string[];
-  profileConflictResolution: 'hermes' | 'card';
 };
 
 export type HermesNativeDelegateConfig = {
   cardId: string;
   title: string;
-  runtimeBinding: string;
+  runtime: { kind: 'hermes'; mode: 'delegate'; profile: string };
   runtimeOwner: 'hermes';
   prompt: string;
-  profile: string;
   provider: string;
   providerModelId: string;
   accessMode: CardAccessMode;
-  executionMode: 'single' | 'auto-kanban';
   tools: string[];
   nativeTools: string[];
   skills: string[];
@@ -74,7 +64,7 @@ export type HermesNativeDelegateConfig = {
   mcpConnectionIds: string[];
 };
 
-export type CardAccessMode = 'chatgpt-account' | 'coder-oauth' | 'openai-api' | 'openrouter-api';
+export type CardAccessMode = 'chatgpt-account' | 'openai-api' | 'openrouter-api';
 
 export type CodexAccountTransportMethod =
   | 'account/read'
@@ -182,7 +172,7 @@ export function buildHermesOfficialMcpServer(
     | 'conversationId'
     | 'parentRunId'
     | 'cardId'
-    | 'runtimeBinding'
+    | 'runtime'
     | 'tools'
   >,
   env: NodeJS.ProcessEnv = process.env,
@@ -196,7 +186,8 @@ export function buildHermesOfficialMcpServer(
     conversationId: args.conversationId,
     parentRunId: args.parentRunId,
     callerCardId: args.cardId,
-    callerRuntimeBinding: args.runtimeBinding,
+    callerRuntimeKind: args.runtime.kind,
+    callerRuntimeMode: args.runtime.mode,
     grantedTools: granted,
   }, env);
   const suffix = createHash('sha256').update(args.sessionKey).digest('hex').slice(0, 12);
@@ -217,7 +208,7 @@ export function buildHermesDelegateCards(
   officialServerName: string,
 ): Record<string, unknown>[] {
   const server = sanitizeHermesMcpName(officialServerName);
-  return delegates.filter((delegate) => delegate.executionMode === 'single').map((delegate) => {
+  return delegates.filter((delegate) => delegate.runtime.mode === 'delegate').map((delegate) => {
     const allowedToolNames = [
       ...delegate.nativeTools,
       ...delegate.tools.map((toolName) => {
@@ -229,13 +220,11 @@ export function buildHermesDelegateCards(
     return {
       cardId: delegate.cardId,
       title: delegate.title,
-      runtimeBinding: delegate.runtimeBinding,
+      runtime: delegate.runtime,
       prompt: delegate.prompt,
-      profile: delegate.profile,
       provider: delegate.provider,
       providerModelId: delegate.providerModelId,
       accessMode: delegate.accessMode,
-      executionMode: delegate.executionMode,
       skills: delegate.skills,
       toolsets: delegate.toolsets,
       allowedToolNames,
@@ -518,8 +507,8 @@ class AcpProcess {
 
   async startTurn(args: HermesTurnArgs, onEvent: (event: HermesSessionEvent) => void): Promise<HermesTurnHandle> {
     await this.ready;
-    if (args.executionMode !== 'single') {
-      throw new Error('hermes_acp_single_execution_required');
+    if (args.runtime.mode === 'kanban') {
+      throw new Error('hermes_acp_kanban_gateway_required');
     }
     const sessionId = await this.resolveSession(args);
     if (this.turns.has(sessionId)) throw new Error('hermes_session_turn_already_running');
@@ -623,7 +612,7 @@ export async function startHermesTurn(
   args: HermesTurnArgs,
   onEvent: (event: HermesSessionEvent) => void,
 ): Promise<HermesTurnHandle> {
-  return processForProfile(args.profile).startTurn(args, onEvent);
+  return processForProfile(args.runtime.profile).startTurn(args, onEvent);
 }
 
 export async function requestHermesCodexAccount(

@@ -272,17 +272,13 @@ class TestDelegateTask(unittest.TestCase):
         parent._saved_delegate_cards = {
             "card_local_coder": {
                 "cardId": "card_local_coder",
-                "profile": "coder",
-                "runtimeBinding": "coder",
-                "executionMode": "single",
+                "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
                 "accessMode": "chatgpt-account",
                 "allowedToolNames": ["terminal"],
             },
             "card_helper": {
                 "cardId": "card_helper",
-                "profile": "helper",
-                "runtimeBinding": "hermes_steward",
-                "executionMode": "auto-kanban",
+                "runtime": {"kind": "hermes", "mode": "kanban", "profile": "helper"},
                 "accessMode": "chatgpt-account",
                 "allowedToolNames": [],
             },
@@ -290,14 +286,14 @@ class TestDelegateTask(unittest.TestCase):
 
         resolved, error = _resolve_saved_delegate_card(parent, "card_local_coder")
         self.assertIsNone(error)
-        self.assertEqual(resolved["profile"], "coder")
+        self.assertEqual(resolved["runtime"]["profile"], "coder")
         self.assertEqual(
             _resolve_saved_delegate_card(parent, "missing")[1],
             "saved_delegate_card_not_authorized:missing",
         )
         self.assertEqual(
             _resolve_saved_delegate_card(parent, "card_helper")[1],
-            "saved_delegate_execution_mode_unsupported:auto-kanban",
+            "saved_delegate_runtime_unsupported",
         )
 
         parent._saved_delegate_cards["card_local_coder"]["allowedToolNames"] = [
@@ -332,8 +328,7 @@ class TestDelegateTask(unittest.TestCase):
                 allowed_tool_names=["terminal"],
                 saved_card_identity={
                     "cardId": "card_local_coder",
-                    "profile": "coder",
-                    "runtimeBinding": "coder",
+                    "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
                 },
             )
 
@@ -348,7 +343,7 @@ class TestDelegateTask(unittest.TestCase):
             ["terminal"],
         )
         self.assertEqual(built._saved_card_id, "card_local_coder")
-        self.assertEqual(built._saved_card_profile, "coder")
+        self.assertEqual(built._saved_card_runtime["profile"], "coder")
 
 
     def test_child_inherits_runtime_credentials(self):

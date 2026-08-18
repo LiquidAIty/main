@@ -18,7 +18,7 @@ export function resolveCardModelStrict(card: any): {
   const modelKey = card.runtimeOptions?.modelKey;
   if (!modelKey) {
     throw new Error(
-      `card_model_config_missing: cardId=${card.id} runtimeType=${card.runtimeType}`,
+      `card_model_config_missing: cardId=${card.id} runtime=${card.runtime?.kind || 'unconfigured'}/${card.runtime?.mode || 'unconfigured'}`,
     );
   }
   const resolved = resolveModel(modelKey);

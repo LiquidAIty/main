@@ -2,8 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type {
   AgentCardRuntimeOptions,
-  AgentCardRuntimeType,
-  RuntimeBinding,
+  CardRuntime,
 } from '../types/agentgraph';
 
 type ModelOption = { key: string; label: string; providerModelId: string };
@@ -12,7 +11,7 @@ export type InputDictionaryEditorField = {
   name: string;
   label: string;
   path: string;
-  control: 'select' | 'catalog-select' | 'catalog-multiselect' | 'number' | 'integer';
+  control: 'select' | 'catalog-select' | 'catalog-multiselect' | 'number' | 'integer' | 'text';
   allowUnset?: boolean;
   catalog?: string;
   filteredBy?: string;
@@ -203,13 +202,11 @@ interface AgentManagerProps {
 }
 
 export type AgentManagerLocalConfig = {
-  runtime_binding?: RuntimeBinding | null;
-  runtime_type?: AgentCardRuntimeType | null;
-  execution_mode?: 'single' | 'auto-kanban' | null;
+  runtime: CardRuntime;
   runtime_options?: AgentCardRuntimeOptions | null;
   parent_graph_id?: string | null;
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | '' | null;
-  access_mode?: 'chatgpt-account' | 'coder-oauth' | 'openai-api' | 'openrouter-api' | '' | null;
+  access_mode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | '' | null;
   model_key?: string | null;
   reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
   temperature?: number | null;
@@ -230,7 +227,7 @@ export type StandaloneCardTestResult = {
   tools: string[];
   provider?: string | null;
   model?: string | null;
-  runtimeType?: string | null;
+  runtimeLabel?: string | null;
   invocation?: {
     ephemeral: boolean;
     assignment: string;
@@ -366,11 +363,27 @@ function parseListText(value: string): string[] {
     .filter(Boolean);
 }
 
+function buildEditedCardRuntime(
+  kind: 'hermes' | 'autogen',
+  mode: CardRuntime['mode'],
+  profile: string,
+): CardRuntime {
+  if (kind === 'hermes') {
+    const hermesMode = ['main', 'delegate', 'kanban'].includes(mode)
+      ? mode as 'main' | 'delegate' | 'kanban'
+      : 'delegate';
+    return { kind, mode: hermesMode, profile: profile.trim() || 'default' };
+  }
+  return {
+    kind,
+    mode: mode === 'magentic_one' ? 'magentic_one' : 'assistant',
+  };
+}
+
 export function buildActiveAgentManagerLocalConfig(input: {
-  runtimeBinding: RuntimeBinding | '';
-  executionMode: 'single' | 'auto-kanban';
+  runtime: CardRuntime;
   provider: 'openai' | 'openrouter' | '';
-  accessMode: 'chatgpt-account' | 'coder-oauth' | 'openai-api' | 'openrouter-api' | '';
+  accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | '';
   modelKey: string;
   reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | '';
   temperature: number | '';
@@ -383,11 +396,7 @@ export function buildActiveAgentManagerLocalConfig(input: {
   mcpConnectionIdsText: string;
 }): AgentManagerLocalConfig {
   return {
-    runtime_binding: input.runtimeBinding || null,
-    execution_mode:
-      input.runtimeBinding === 'main_chat' || input.runtimeBinding === 'coder'
-        ? 'single'
-        : input.executionMode,
+    runtime: input.runtime,
     provider: input.provider,
     access_mode: input.accessMode,
     model_key: input.modelKey || null,
@@ -401,18 +410,6 @@ export function buildActiveAgentManagerLocalConfig(input: {
     toolsets: parseListText(input.toolsetsText),
     mcp_connection_ids: parseListText(input.mcpConnectionIdsText),
   };
-}
-
-export function canChooseCardExecutionMode(
-  runtimeBinding: RuntimeBinding | '' | null | undefined,
-  runtimeType: AgentCardRuntimeType | null | undefined,
-): boolean {
-  return (
-    runtimeBinding !== 'main_chat' &&
-    runtimeBinding !== 'coder' &&
-    runtimeBinding !== 'local_coder' &&
-    runtimeType !== 'magentic_one'
-  );
 }
 
 export function AgentManager({
@@ -449,18 +446,16 @@ export function AgentManager({
   const saveCardResetTimerRef = useRef<number | null>(null);
   const saveCardStatusRef = useRef<SaveCardStatus>('idle');
   saveCardStatusRef.current = saveCardStatus;
-  const [runtimeBinding, setRuntimeBinding] = useState<RuntimeBinding | ''>('');
-  const [executionMode, setExecutionMode] = useState<'single' | 'auto-kanban'>('single');
+  const [runtimeKind, setRuntimeKind] = useState<'hermes' | 'autogen'>('hermes');
+  const [runtimeMode, setRuntimeMode] = useState<CardRuntime['mode']>('delegate');
   const [cardNameDraft, setCardNameDraft] = useState(cardName);
   const [cardSubtextDraft, setCardSubtextDraft] = useState(cardSubtext);
   const [provider, setProvider] = useState<'openai' | 'openrouter' | ''>('');
   const [accessMode, setAccessMode] = useState<
-    'chatgpt-account' | 'coder-oauth' | 'openai-api' | 'openrouter-api' | ''
+    'chatgpt-account' | 'openai-api' | 'openrouter-api' | ''
   >('');
   const [modelKey, setModelKey] = useState('');
   const [hermesProfile, setHermesProfile] = useState('');
-  const [hermesProfiles, setHermesProfiles] = useState<Array<{ name: string; model?: string; gateway?: string }>>([]);
-  const [profileConflictResolution, setProfileConflictResolution] = useState<'hermes' | 'card'>('hermes');
   const [reasoningEffort, setReasoningEffort] = useState<
     'low' | 'medium' | 'high' | 'xhigh' | ''
   >('');
@@ -539,14 +534,8 @@ export function AgentManager({
     }
     setSaveCardStatus('idle');
     setSaveCardErrorMessage(null);
-    setRuntimeBinding(localConfig.runtime_binding || '');
-    setExecutionMode(
-      localConfig.runtime_binding === 'main_chat'
-        ? 'single'
-        : localConfig.execution_mode === 'auto-kanban'
-          ? 'auto-kanban'
-          : 'single',
-    );
+    setRuntimeKind(localConfig.runtime.kind);
+    setRuntimeMode(localConfig.runtime.mode);
     setProvider(
       localConfig.provider === 'openai' || localConfig.provider === 'openrouter'
         ? localConfig.provider
@@ -554,15 +543,13 @@ export function AgentManager({
     );
     setAccessMode(
       localConfig.access_mode === 'chatgpt-account'
-      || localConfig.access_mode === 'coder-oauth'
       || localConfig.access_mode === 'openai-api'
       || localConfig.access_mode === 'openrouter-api'
         ? localConfig.access_mode
         : '',
     );
     setModelKey(localConfig.model_key || '');
-    setHermesProfile(String(localConfig.runtime_options?.profile || cardId || ''));
-    setProfileConflictResolution(localConfig.runtime_options?.profileConflictResolution === 'card' ? 'card' : 'hermes');
+    setHermesProfile(localConfig.runtime.kind === 'hermes' ? localConfig.runtime.profile : '');
     setReasoningEffort(localConfig.reasoning_effort || '');
     setTemperature(typeof localConfig.temperature === 'number' ? localConfig.temperature : '');
     setMaxTokens(typeof localConfig.max_tokens === 'number' ? localConfig.max_tokens : '');
@@ -596,31 +583,6 @@ export function AgentManager({
     );
   }, [isLocalConfigMode, localConfig]);
 
-  useEffect(() => {
-    if (!isLocalConfigMode || runtimeBinding === 'local_coder') return;
-    let active = true;
-    void fetch('/api/hermes-kanban/profiles')
-      .then((response) => response.json())
-      .then((payload) => {
-        if (!active || payload?.ok !== true || !Array.isArray(payload?.data)) return;
-        setHermesProfiles(payload.data
-          .filter((entry: any) => typeof entry?.name === 'string' && entry.name.trim())
-          .map((entry: any) => {
-            const rawModel = String(entry.model || '').trim();
-            const rawGateway = String(entry.gateway || '').trim().toLowerCase();
-            return {
-              name: entry.name.trim(),
-              model: rawModel === '—' || rawModel === '-' ? '' : rawModel,
-              gateway: ['stopped', 'running', '—', '-'].includes(rawGateway) ? '' : rawGateway,
-            };
-          }));
-      })
-      .catch(() => {
-        if (active) setHermesProfiles([]);
-      });
-    return () => { active = false; };
-  }, [isLocalConfigMode, runtimeBinding]);
-
   const markDraftDirty = () => {
     draftDirtyRef.current = true;
   };
@@ -629,8 +591,7 @@ export function AgentManager({
     if (!isLocalConfigMode || !localConfig || !onSaveLocalConfig) return;
     if (saveCardStatus === 'saving') return;
     const editedConfig = buildActiveAgentManagerLocalConfig({
-      runtimeBinding,
-      executionMode,
+      runtime: buildEditedCardRuntime(runtimeKind, runtimeMode, hermesProfile || cardId),
       provider,
       accessMode,
       modelKey,
@@ -647,12 +608,6 @@ export function AgentManager({
     const payload = {
       ...localConfig,
       ...editedConfig,
-      runtime_options: {
-        ...(localConfig.runtime_options || {}),
-        profile: hermesProfile || cardId || null,
-        profileSnapshot: hermesProfiles.find((profile) => profile.name === hermesProfile) || null,
-        profileConflictResolution,
-      },
       provider:
         provider ||
         (localConfig.provider === 'local_openai_compatible'
@@ -683,8 +638,8 @@ export function AgentManager({
     localConfig,
     onSaveLocalConfig,
     saveCardStatus,
-    runtimeBinding,
-    executionMode,
+    runtimeKind,
+    runtimeMode,
     provider,
     accessMode,
     modelKey,
@@ -700,8 +655,6 @@ export function AgentManager({
     toolsetsText,
     mcpConnectionIdsText,
     hermesProfile,
-    hermesProfiles,
-    profileConflictResolution,
     cardId,
   ]);
 
@@ -763,8 +716,7 @@ export function AgentManager({
     }
     draftDirtyRef.current = false;
     const editedConfig = buildActiveAgentManagerLocalConfig({
-      runtimeBinding,
-      executionMode,
+      runtime: buildEditedCardRuntime(runtimeKind, runtimeMode, hermesProfile || cardId),
       provider,
       accessMode,
       modelKey,
@@ -781,12 +733,6 @@ export function AgentManager({
     void onSaveLocalConfig({
       ...localConfig,
       ...editedConfig,
-      runtime_options: {
-        ...(localConfig.runtime_options || {}),
-        profile: hermesProfile || cardId || null,
-        profileSnapshot: hermesProfiles.find((profile) => profile.name === hermesProfile) || null,
-        profileConflictResolution,
-      },
       provider:
         provider ||
         (localConfig.provider === 'local_openai_compatible'
@@ -797,8 +743,8 @@ export function AgentManager({
     isLocalConfigMode,
     localConfig,
     onSaveLocalConfig,
-    runtimeBinding,
-    executionMode,
+    runtimeKind,
+    runtimeMode,
     provider,
     accessMode,
     modelKey,
@@ -814,14 +760,14 @@ export function AgentManager({
     toolsetsText,
     mcpConnectionIdsText,
     hermesProfile,
-    hermesProfiles,
-    profileConflictResolution,
     cardId,
   ]);
 
   const availableModels = provider ? modelsByProvider[provider] || [] : [];
   const editorField = (name: string) => cardEditorFields.find((field) => field.name === name);
-  const executionModeField = editorField('executionMode');
+  const runtimeKindField = editorField('runtimeKind');
+  const runtimeModeField = editorField('runtimeMode');
+  const runtimeProfileField = editorField('runtimeProfile');
   const providerField = editorField('provider');
   const accessModeField = editorField('accessMode');
   const modelKeyField = editorField('modelKey');
@@ -832,18 +778,17 @@ export function AgentManager({
   const providerOptions = (providerField?.options || []).filter(
     (option) => (modelsByProvider[option.value] || []).length > 0,
   );
-  const accessModeOptions = (accessModeField?.options || []).filter((option) =>
-    runtimeBinding === 'local_coder'
-      ? option.value !== 'chatgpt-account'
-      : option.value !== 'coder-oauth',
+  const accessModeOptions = accessModeField?.options || [];
+  const runtimeModeOptions = (runtimeModeField?.options || []).filter((option) =>
+    runtimeKind === 'hermes'
+      ? ['main', 'delegate', 'kanban'].includes(option.value)
+      : ['assistant', 'magentic_one'].includes(option.value),
   );
-  const canChooseExecutionMode = Boolean(executionModeField) && canChooseCardExecutionMode(
-    runtimeBinding,
-    localConfig?.runtime_type,
-  ) && !(executionModeField?.blockedRuntimeBindings || []).includes(String(runtimeBinding || ''))
-    && !(executionModeField?.blockedRuntimeTypes || []).includes(String(localConfig?.runtime_type || ''));
   const runtimeDictionaryReady = Boolean(
-    providerField
+    runtimeKindField
+    && runtimeModeField
+    && runtimeProfileField
+    && providerField
     && accessModeField
     && modelKeyField
     && reasoningEffortField
@@ -935,7 +880,9 @@ export function AgentManager({
           </div>
           <div style={{ color: '#9FB2B8', fontSize: 11.5, lineHeight: 1.5 }}>
             <div>Card: {cardId} · {cardName || 'Untitled'}</div>
-            <div>Runtime: {localConfig?.runtime_binding || 'unconfigured'} · {localConfig?.runtime_type || 'assistant_agent'}</div>
+            <div>
+              Runtime: {localConfig?.runtime.kind || 'unconfigured'} · {localConfig?.runtime.mode || 'unconfigured'}
+            </div>
             <div>Provider: {localConfig?.provider || 'unconfigured'} · {localConfig?.model_key || 'unconfigured'} · {localConfig?.access_mode || 'unconfigured'}</div>
             <div>Skills: {Array.isArray(localConfig?.skills) && localConfig.skills.length ? localConfig.skills.map(String).join(', ') : 'none'}</div>
             <div>Tools: {Array.isArray(localConfig?.tools) && localConfig.tools.length ? localConfig.tools.map(String).join(', ') : 'none'}</div>
@@ -1151,79 +1098,58 @@ export function AgentManager({
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            {runtimeBinding !== 'local_coder' ? (
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                {runtimeKindField?.label}
+              </label>
+              <select
+                data-testid="agent-runtime-kind"
+                value={runtimeKind}
+                onChange={(event) => {
+                  const nextKind = event.target.value === 'autogen' ? 'autogen' : 'hermes';
+                  setRuntimeKind(nextKind);
+                  setRuntimeMode(nextKind === 'hermes' ? 'delegate' : 'assistant');
+                  markDraftDirty();
+                }}
+              >
+                {(runtimeKindField?.options || []).map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                {runtimeModeField?.label}
+              </label>
+              <select
+                data-testid="agent-runtime-mode"
+                value={runtimeMode}
+                onChange={(event) => {
+                  setRuntimeMode(event.target.value as CardRuntime['mode']);
+                  markDraftDirty();
+                }}
+              >
+                {runtimeModeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+            {runtimeKind === 'hermes' ? (
               <div>
                 <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                  Hermes profile
+                  {runtimeProfileField?.label}
                 </label>
-                <select
+                <input
                   data-testid="agent-hermes-profile"
                   value={hermesProfile}
                   onChange={(event) => {
                     setHermesProfile(event.target.value);
                     markDraftDirty();
                   }}
-                >
-                  <option value={cardId}>{cardId} (Card identity)</option>
-                  {hermesProfiles.filter((profile) => profile.name !== cardId).map((profile) => (
-                    <option key={profile.name} value={profile.name}>
-                      {profile.name}{profile.model ? ` · ${profile.model}` : ''}{profile.gateway ? ` · ${profile.gateway}` : ''}
-                    </option>
-                  ))}
-                </select>
+                />
                 <div style={{ color: '#80969F', fontSize: 10, marginTop: 4 }}>
-                  Saved reference only. Profile tools cannot exceed this Card's grants.
+                  This saved profile owns the Card's isolated Hermes session and SQLite memory.
                 </div>
-                {(() => {
-                  const selectedProfile = hermesProfiles.find((profile) => profile.name === hermesProfile);
-                  const conflict = selectedProfile?.model
-                    && selectedProfile.model !== modelKey
-                    && !availableModels.some((model) => model.key === modelKey && model.label.includes(selectedProfile.model || ''));
-                  return conflict ? (
-                    <div data-testid="agent-hermes-profile-conflict" style={{ marginTop: 6, padding: 6, border: '1px solid #775F32', borderRadius: 6, color: '#FFD38A', fontSize: 10.5 }}>
-                      Hermes model {selectedProfile.model} conflicts with saved runtime model {modelKey || 'unset'}.
-                      <select
-                        aria-label="Hermes profile conflict resolution"
-                        value={profileConflictResolution}
-                        onChange={(event) => {
-                          setProfileConflictResolution(event.target.value === 'card' ? 'card' : 'hermes');
-                          markDraftDirty();
-                        }}
-                        style={{ marginTop: 5, width: '100%' }}
-                      >
-                        <option value="hermes">Hermes wins (default)</option>
-                        <option value="card">Persist Card runtime override</option>
-                      </select>
-                    </div>
-                  ) : null;
-                })()}
-              </div>
-            ) : null}
-            {canChooseExecutionMode ? (
-              <div>
-                <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                  {executionModeField?.label}
-                </label>
-                <select
-                  data-testid="agent-execution-mode"
-                  value={executionMode}
-                  onChange={(event) => {
-                    setExecutionMode(event.target.value as 'single' | 'auto-kanban');
-                    markDraftDirty();
-                  }}
-                  style={{
-                    width: '100%',
-                    padding: 8,
-                    background: '#2B2B2B',
-                    color: '#FFF',
-                    border: '1px solid #3A3A3A',
-                    borderRadius: 8,
-                  }}
-                >
-                  {(executionModeField?.options || []).map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
               </div>
             ) : null}
             <div>
@@ -1813,8 +1739,8 @@ export function AgentManager({
           >
             <div style={{ color: '#D5E4E8' }}>
               Status: {runResult.status || 'completed'}
-              {runResult.provider || runResult.model || runResult.runtimeType
-                ? ` · ${[runResult.provider, runResult.model, runResult.runtimeType]
+              {runResult.provider || runResult.model || runResult.runtimeLabel
+                ? ` · ${[runResult.provider, runResult.model, runResult.runtimeLabel]
                     .filter(Boolean)
                     .join(' · ')}`
                 : ''}

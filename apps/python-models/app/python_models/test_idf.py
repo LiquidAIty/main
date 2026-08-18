@@ -25,7 +25,7 @@ def test_transient_renderer_preserves_exact_non_directional_content() -> None:
         "cardId": "card-one",
         "title": "One",
         "prompt": "stable system",
-        "runtimeType": "assistant_agent",
+        "runtime": {"kind": "autogen", "mode": "assistant"},
         "accessMode": "openrouter-api",
         "provider": "openrouter",
         "providerModelId": "model-one",

@@ -1,6 +1,6 @@
 """Stable Card/deck authority and transient IDF preparation.
 
-PostgreSQL owns stable Project, Deck, Card revision, grants, facets, layout, and
+PostgreSQL owns stable Project, Deck, Card revision, runtime, grants, layout, and
 prompt-free Run identities. AGE owns Card relationships. Dynamic communication
 is materialized and validated in memory and is never written by this module.
 """
@@ -38,18 +38,16 @@ GRANT_FIELDS = {
     "skill": "skills",
     "toolset": "toolsets",
     "mcp_connection": "mcpConnectionIds",
-    "coder_card": "coderCards",
 }
 KNOWN_RUNTIME_OPTION_FIELDS = {
-    "tools", "nativeTools", "skills", "toolsets", "mcpConnectionIds", "coderCards",
-    "profile", "profileSnapshot", "profileConflictResolution", "hermesFacet", "autogenFacet",
+    "tools", "nativeTools", "skills", "toolsets", "mcpConnectionIds",
     "provider", "modelKey", "providerModelId", "accessMode", "reasoningEffort",
-    "temperature", "maxTokens", "maxTurns", "executionMode", "enabled", "binding",
+    "temperature", "maxTokens", "maxTurns", "enabled",
 }
 KNOWN_CARD_FIELDS = {
     "id", "kind", "templateId", "title", "subtitle", "role", "status",
-    "parentGraphId", "prompt", "outputContract", "runtimeType",
-    "runtimeBinding", "runtimeOptions", "provider", "providerModelId",
+    "parentGraphId", "prompt", "outputContract", "runtime",
+    "runtimeOptions", "provider", "providerModelId",
     "enabled", "position",
     "_cardRevisionId", "_cardRevision", "_cardRevisionSha256",
 }
@@ -103,6 +101,30 @@ def _string_list(value: Any, field: str) -> list[str]:
         seen.add(text)
         result.append(text)
     return result
+
+
+def _card_runtime(card: dict[str, Any]) -> dict[str, str]:
+    runtime = _json_object(card.get("runtime"), "card_runtime")
+    unknown = set(runtime) - {"kind", "mode", "profile"}
+    if unknown:
+        raise CardDomainError(f"card_runtime_fields_unsupported:{','.join(sorted(unknown))}")
+    kind = _required_text(runtime.get("kind"), "runtime_kind")
+    mode = _required_text(runtime.get("mode"), "runtime_mode")
+    if kind == "hermes":
+        if mode not in {"main", "delegate", "kanban"}:
+            raise CardDomainError(f"hermes_runtime_mode_unsupported:{mode}")
+        return {
+            "kind": kind,
+            "mode": mode,
+            "profile": _required_text(runtime.get("profile"), "runtime_profile"),
+        }
+    if kind == "autogen":
+        if mode not in {"assistant", "magentic_one"}:
+            raise CardDomainError(f"autogen_runtime_mode_unsupported:{mode}")
+        if runtime.get("profile") is not None:
+            raise CardDomainError("autogen_runtime_profile_forbidden")
+        return {"kind": kind, "mode": mode}
+    raise CardDomainError(f"runtime_kind_unsupported:{kind}")
 
 
 def _resolve_project(cursor: Any, project_id: str) -> dict[str, Any]:
@@ -323,10 +345,6 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
         field: _string_list(options.get(field, card.get(field)), field)
         for field in GRANT_FIELDS.values()
     }
-    hermes = _json_object(options.get("hermesFacet"), "hermes_facet")
-    snapshot = _json_object(options.get("profileSnapshot"), "profile_snapshot")
-    autogen_value = options.get("autogenFacet")
-    autogen = _json_object(autogen_value, "autogen_facet")
     extensions = {key: value for key, value in options.items() if key not in KNOWN_RUNTIME_OPTION_FIELDS}
     stable = {
         "cardId": _required_text(card.get("id"), "card_id"),
@@ -339,8 +357,7 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
         "parentGraphId": card.get("parentGraphId"),
         "basePrompt": str(card.get("prompt") or ""),
         "stableOutputContract": card.get("outputContract"),
-        "runtimeType": _required_text(card.get("runtimeType"), "runtime_type"),
-        "runtimeBinding": card.get("runtimeBinding") or options.get("binding"),
+        "runtime": _card_runtime(card),
         "provider": options.get("provider") or card.get("provider"),
         "modelKey": options.get("modelKey"),
         "providerModelId": options.get("providerModelId") or card.get("providerModelId"),
@@ -349,7 +366,6 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
         "temperature": options.get("temperature"),
         "maxTokens": options.get("maxTokens"),
         "maxTurns": options.get("maxTurns"),
-        "executionMode": options.get("executionMode"),
         "enabled": card.get("enabled", options.get("enabled", True)) is not False,
         "enabledLocation": (
             "card" if "enabled" in card
@@ -358,29 +374,12 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
         ),
         "runtimeExtensions": extensions,
         "grants": grants,
-        "hermesFacet": {
-            "profileName": options.get("profile"),
-            "profileHomeRef": hermes.get("profileHomeRef"),
-            "instructions": str(hermes.get("instructions") or ""),
-            "snapshotModel": snapshot.get("model"),
-            "snapshotGateway": snapshot.get("gateway"),
-            "conflictResolution": options.get("profileConflictResolution"),
-            "detailsPresent": "hermesFacet" in options,
-        } if options.get("profile") else None,
-        "autogenFacet": {
-            "assistantName": autogen.get("assistantName") or str(card.get("id") or ""),
-            "systemMessage": str(autogen.get("systemMessage") or ""),
-            "terminationMode": autogen.get("terminationMode"),
-            "maxTurns": autogen.get("maxTurns"),
-        } if isinstance(autogen_value, dict) else None,
         "presentationProperties": {
             key: value for key, value in card.items() if key not in KNOWN_CARD_FIELDS
         },
     }
     if stable["kind"] != "agent":
         raise CardDomainError("card_kind_unsupported")
-    if stable["runtimeType"] not in {"assistant_agent", "magentic_one"}:
-        raise CardDomainError("runtime_type_unsupported")
     return stable
 
 
@@ -400,9 +399,9 @@ def _insert_revision(
           revision_id, project_id, deck_id, card_id, revision_number,
           template_id, kind, title, subtitle, role, status, parent_graph_id,
           base_prompt, base_prompt_sha256, stable_output_contract,
-          runtime_type, runtime_binding, provider, model_key, provider_model_id,
+          runtime_kind, runtime_mode, runtime_profile, provider, model_key, provider_model_id,
           access_mode, reasoning_effort, temperature, max_tokens, max_turns,
-          execution_mode, enabled, enabled_location, runtime_extension_config, revision_sha256
+          enabled, enabled_location, runtime_extension_config, revision_sha256
         ) VALUES (
           %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
           %s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s
@@ -412,11 +411,12 @@ def _insert_revision(
             revision_id, project_id, deck_id, stable["cardId"], revision_number,
             stable["templateId"], stable["kind"], stable["title"], stable["subtitle"],
             stable["role"], stable["status"], stable["parentGraphId"], stable["basePrompt"],
-            _sha(stable["basePrompt"]), stable["stableOutputContract"], stable["runtimeType"],
-            stable["runtimeBinding"], stable["provider"], stable["modelKey"],
+            _sha(stable["basePrompt"]), stable["stableOutputContract"], stable["runtime"]["kind"],
+            stable["runtime"]["mode"], stable["runtime"].get("profile"),
+            stable["provider"], stable["modelKey"],
             stable["providerModelId"], stable["accessMode"], stable["reasoningEffort"],
             stable["temperature"], stable["maxTokens"], stable["maxTurns"],
-            stable["executionMode"], stable["enabled"], stable["enabledLocation"],
+            stable["enabled"], stable["enabledLocation"],
             _canonical_json(stable["runtimeExtensions"]), revision_sha,
         ),
     )
@@ -430,38 +430,6 @@ def _insert_revision(
                 """,
                 (revision_id, grant_kind, ordinal, grant_id),
             )
-    hermes = stable["hermesFacet"]
-    if hermes:
-        cursor.execute(
-            """
-            INSERT INTO ag_catalog.hermes_card_facets (
-              revision_id, profile_name, profile_home_ref, instruction_text,
-              instruction_sha256, snapshot_model, snapshot_gateway, conflict_resolution
-              , details_present
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """,
-            (
-                revision_id, hermes["profileName"], hermes["profileHomeRef"],
-                hermes["instructions"], _sha(hermes["instructions"]),
-                hermes["snapshotModel"], hermes["snapshotGateway"],
-                hermes["conflictResolution"], hermes["detailsPresent"],
-            ),
-        )
-    autogen = stable["autogenFacet"]
-    if autogen:
-        cursor.execute(
-            """
-            INSERT INTO ag_catalog.autogen_card_facets (
-              revision_id, assistant_name, system_message, system_message_sha256,
-              termination_mode, max_turns
-            ) VALUES (%s,%s,%s,%s,%s,%s)
-            """,
-            (
-                revision_id, autogen["assistantName"], autogen["systemMessage"],
-                _sha(autogen["systemMessage"]), autogen["terminationMode"],
-                autogen["maxTurns"],
-            ),
-        )
     return revision_id
 
 
@@ -484,22 +452,13 @@ def _load_deck_with_cursor(
     cursor.execute(
         """
         SELECT revision.*, membership.ordinal, membership.position_x, membership.position_y,
-               membership.display_status, membership.presentation_config,
-               hermes.profile_name, hermes.profile_home_ref, hermes.instruction_text,
-               hermes.snapshot_model, hermes.snapshot_gateway, hermes.conflict_resolution,
-               hermes.details_present,
-               autogen.assistant_name, autogen.system_message,
-               autogen.termination_mode, autogen.max_turns AS autogen_max_turns
+               membership.display_status, membership.presentation_config
         FROM ag_catalog.agent_cards AS card
         JOIN ag_catalog.agent_card_revisions AS revision
           ON revision.revision_id = card.current_revision_id
         JOIN ag_catalog.deck_card_memberships AS membership
           ON membership.project_id=card.project_id AND membership.deck_id=card.deck_id
          AND membership.card_id=card.card_id
-        LEFT JOIN ag_catalog.hermes_card_facets AS hermes
-          ON hermes.revision_id=revision.revision_id
-        LEFT JOIN ag_catalog.autogen_card_facets AS autogen
-          ON autogen.revision_id=revision.revision_id
         WHERE card.project_id=%s AND card.deck_id=%s
         ORDER BY membership.ordinal
         """,
@@ -534,31 +493,9 @@ def _load_deck_with_cursor(
             ("providerModelId", "provider_model_id"), ("accessMode", "access_mode"),
             ("reasoningEffort", "reasoning_effort"), ("temperature", "temperature"),
             ("maxTokens", "max_tokens"), ("maxTurns", "max_turns"),
-            ("executionMode", "execution_mode"),
         ):
             if row.get(column) is not None:
                 options[key] = row[column]
-        if row.get("profile_name"):
-            options["profile"] = row["profile_name"]
-            options["profileSnapshot"] = {
-                "name": row["profile_name"],
-                "model": row.get("snapshot_model") or "",
-                "gateway": row.get("snapshot_gateway") or "",
-            }
-            if row.get("conflict_resolution"):
-                options["profileConflictResolution"] = row["conflict_resolution"]
-            if row.get("details_present"):
-                options["hermesFacet"] = {
-                    "profileHomeRef": row.get("profile_home_ref"),
-                    "instructions": row.get("instruction_text") or "",
-                }
-        if row.get("assistant_name"):
-            options["autogenFacet"] = {
-                "assistantName": row["assistant_name"],
-                "systemMessage": row.get("system_message") or "",
-                "terminationMode": row.get("termination_mode"),
-                "maxTurns": row.get("autogen_max_turns"),
-            }
         presentation = dict(row.get("presentation_config") or {})
         node = {
             **presentation,
@@ -566,8 +503,12 @@ def _load_deck_with_cursor(
             "prompt": row["base_prompt"], "status": row.get("status") or row.get("display_status"),
             "position": {"x": float(row["position_x"]), "y": float(row["position_y"])},
             "subtitle": row.get("subtitle"), "templateId": row["template_id"],
-            "runtimeType": row["runtime_type"], "parentGraphId": row.get("parent_graph_id"),
-            "runtimeBinding": row.get("runtime_binding"), "runtimeOptions": options,
+            "runtime": {
+                "kind": row["runtime_kind"],
+                "mode": row["runtime_mode"],
+                **({"profile": row["runtime_profile"]} if row.get("runtime_profile") else {}),
+            },
+            "parentGraphId": row.get("parent_graph_id"), "runtimeOptions": options,
         }
         if row.get("enabled_location") == "card":
             node["enabled"] = row.get("enabled") is not False
@@ -779,8 +720,7 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
         {
             "cardId": str(card.get("id") or ""),
             "title": str(card.get("title") or ""),
-            "runtimeType": str(card.get("runtimeType") or ""),
-            "runtimeBinding": str(card.get("runtimeBinding") or ""),
+            "runtime": _card_runtime(card),
             "enabled": card.get("enabled") is not False
             and (card.get("runtimeOptions") or {}).get("enabled") is not False,
         }
@@ -1038,45 +978,14 @@ def save_deck(
     return load_deck(project_id, deck_id)
 
 
-_HERMES_RUNTIME_BINDINGS = {"main_chat", "coder", "hermes_steward"}
-_AUTOGEN_RUNTIME_BINDINGS = {
-    "assist", "research_agent", "plan_agent", "worldsignals_agent", "trading_agent",
-}
-
-
 def _runtime_owner(card: dict[str, Any]) -> str:
-    """Resolve one runtime owner from the explicit saved binding only.
-
-    Dormant Hermes, AutoGen, and LocalCoder facets may coexist on the Card. They
-    never participate in owner selection. The selected binding must agree with
-    the Card runtime shape and the one allowed execution mode for that owner.
-    """
-    binding = str(card.get("runtimeBinding") or "").strip()
-    runtime_type = str(card.get("runtimeType") or "").strip()
-    options = _json_object(card.get("runtimeOptions"), "runtime_options")
-    execution_mode = str(card.get("executionMode") or options.get("executionMode") or "single").strip()
-    profile = str(card.get("profile") or options.get("profile") or "").strip()
-
-    if not binding:
-        raise CardDomainError("card_runtime_binding_required")
-    if binding == "local_coder":
-        raise CardDomainError("card_runtime_binding_inactive:local_coder")
-    if binding == "magentic_one":
-        if runtime_type != "magentic_one":
-            raise CardDomainError("card_runtime_binding_contradictory:magentic_one")
-        return "mag_one"
-    if binding in _HERMES_RUNTIME_BINDINGS:
-        if runtime_type != "assistant_agent" or not profile:
-            raise CardDomainError(f"card_runtime_binding_contradictory:{binding}")
-        expected_mode = "auto-kanban" if binding == "hermes_steward" else "single"
-        if execution_mode != expected_mode:
-            raise CardDomainError(f"card_runtime_binding_contradictory:{binding}")
+    """Resolve one transport owner from the one explicit saved runtime union."""
+    runtime = _card_runtime(card)
+    if runtime["kind"] == "hermes":
         return "hermes"
-    if binding in _AUTOGEN_RUNTIME_BINDINGS:
-        if runtime_type != "assistant_agent" or execution_mode != "single":
-            raise CardDomainError(f"card_runtime_binding_contradictory:{binding}")
-        return "autogen"
-    raise CardDomainError(f"card_runtime_binding_unsupported:{binding}")
+    if runtime["mode"] == "magentic_one":
+        return "mag_one"
+    return "autogen"
 
 
 def _card_enabled(card: dict[str, Any]) -> bool:
@@ -1086,12 +995,9 @@ def _card_enabled(card: dict[str, Any]) -> bool:
 
 
 def _is_magentic_worker_card(card: dict[str, Any]) -> bool:
-    """Keep the internal Hermes system plane outside Mag One membership."""
-    return (
-        card.get("runtimeType") == "assistant_agent"
-        and str(card.get("runtimeBinding") or "").strip() not in _HERMES_RUNTIME_BINDINGS
-        and _card_enabled(card)
-    )
+    """Only saved AutoGen Assistant Cards may be Mag One workers in the MVP."""
+    runtime = _card_runtime(card)
+    return runtime == {"kind": "autogen", "mode": "assistant"} and _card_enabled(card)
 
 
 def _direct_subagents(
@@ -1113,7 +1019,7 @@ def _direct_subagents(
             or target_id in seen
             or target is None
             or target.get("kind") != "agent"
-            or target.get("runtimeType") != "assistant_agent"
+            or _card_runtime(target) == {"kind": "autogen", "mode": "magentic_one"}
             or str(target.get("parentGraphId") or "").strip()
             or not _card_enabled(target)
         ):
@@ -1122,7 +1028,7 @@ def _direct_subagents(
         direct.append({
             "cardId": target_id,
             "title": str(target.get("title") or target_id),
-            "runtimeBinding": str(target.get("runtimeBinding") or ""),
+            "runtime": _card_runtime(target),
         })
     return direct
 
@@ -1165,49 +1071,8 @@ def _normalized_native_references(value: Any) -> list[dict[str, Any]]:
     return normalized
 
 
-def _resolve_hermes_profile(
-    options: dict[str, Any],
-    provider: str,
-    model_key: str,
-    provider_model_id: str,
-) -> dict[str, Any]:
-    profile = _required_text(options.get("profile"), "hermes_profile")
-    snapshot = _json_object(options.get("profileSnapshot"), "profile_snapshot")
-    snapshot_model = str(snapshot.get("model") or "").strip()
-    snapshot_gateway = str(snapshot.get("gateway") or "").strip().lower()
-    resolution = "card" if options.get("profileConflictResolution") == "card" else "hermes"
-    conflicts: list[str] = []
-    profile_provider = (
-        "openrouter" if snapshot_gateway == "openrouter"
-        else "openai" if snapshot_gateway in {"openai", "openai-codex"}
-        else ""
-    )
-    if snapshot_gateway and not profile_provider:
-        conflicts.append(f"profile_gateway_unresolved:{snapshot_gateway}")
-    elif profile_provider and profile_provider != provider:
-        conflicts.append(f"profile_provider_conflict:{profile_provider}:{provider}")
-    if snapshot_model and snapshot_model not in {provider_model_id, model_key}:
-        conflicts.append(f"profile_model_conflict:{snapshot_model}:{provider_model_id}")
-    if resolution == "hermes" and any(
-        not conflict.startswith("profile_model_conflict:") for conflict in conflicts
-    ):
-        raise CardDomainError("hermes_profile_conflict_unresolved")
-    return {
-        "profile": profile,
-        "profileSnapshot": {
-            "name": str(snapshot.get("name") or profile),
-            "model": snapshot_model,
-            "gateway": snapshot_gateway,
-        },
-        "profileConflicts": conflicts,
-        "profileConflictResolution": resolution,
-        "providerModelId": snapshot_model if resolution == "hermes" and snapshot_model else provider_model_id,
-        "modelKey": f"hermes-profile:{profile}" if resolution == "hermes" and snapshot_model else model_key,
-    }
-
-
 def _native_hermes_delegates(
-    direct_subagents: list[dict[str, str]],
+    direct_subagents: list[dict[str, Any]],
     cards: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Project saved Hermes FLOW targets for the native delegate_task seam.
@@ -1219,10 +1084,8 @@ def _native_hermes_delegates(
     delegates: list[dict[str, Any]] = []
     for direct in direct_subagents:
         target = cards[direct["cardId"]]
-        binding = str(target.get("runtimeBinding") or "").strip()
-        if binding not in _HERMES_RUNTIME_BINDINGS:
-            continue
-        if _runtime_owner(target) != "hermes":
+        runtime = _card_runtime(target)
+        if runtime["kind"] != "hermes" or runtime["mode"] != "delegate":
             continue
         options = _json_object(target.get("runtimeOptions"), "runtime_options")
         provider = _required_text(options.get("provider"), "card_provider")
@@ -1231,28 +1094,14 @@ def _native_hermes_delegates(
             options.get("providerModelId") or model_key,
             "card_provider_model_id",
         )
-        profile_config = _resolve_hermes_profile(
-            options,
-            provider,
-            model_key,
-            provider_model_id,
-        )
-        facet = options.get("hermesFacet")
-        facet = facet if isinstance(facet, dict) else {}
-        facet_instructions = str(facet.get("instructions") or "")
-        common_prompt = str(target.get("prompt") or "")
-        system_prompt = common_prompt + (
-            "\n\n" + facet_instructions if facet_instructions else ""
-        )
         delegates.append({
             **direct,
             "runtimeOwner": "hermes",
-            "prompt": system_prompt,
-            "profile": profile_config["profile"],
+            "prompt": str(target.get("prompt") or ""),
             "provider": provider,
-            "providerModelId": profile_config["providerModelId"],
+            "modelKey": model_key,
+            "providerModelId": provider_model_id,
             "accessMode": str(options.get("accessMode") or ""),
-            "executionMode": str(options.get("executionMode") or "single"),
             "tools": _string_list(options.get("tools"), "tools"),
             "nativeTools": _string_list(options.get("nativeTools"), "native_tools"),
             "skills": _string_list(options.get("skills"), "skills"),
@@ -1280,7 +1129,9 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     sender_id = str(payload.get("senderCardId") or "").strip()
     if sender_id:
         sender = cards.get(sender_id)
-        if card.get("runtimeType") == "magentic_one":
+        target_runtime = _card_runtime(card)
+        sender_runtime = _card_runtime(sender) if sender is not None else None
+        if target_runtime == {"kind": "autogen", "mode": "magentic_one"}:
             authorized = any(
                 edge["source"] == sender_id
                 and edge["target"] == card_id
@@ -1288,7 +1139,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
                 and edge.get("enabled") is not False
                 for edge in loaded["deck"]["edges"]
             )
-        elif sender is not None and sender.get("runtimeType") == "magentic_one":
+        elif sender_runtime == {"kind": "autogen", "mode": "magentic_one"}:
             authorized = any(
                 edge["edgeType"] == "magentic_option"
                 and {edge["source"], edge["target"]} == {sender_id, card_id}
@@ -1310,14 +1161,10 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     requested_tools = _string_list(payload.get("tools"), "tools") if payload.get("tools") is not None else ceiling
     if not set(requested_tools).issubset(set(ceiling)):
         raise CardDomainError("invocation_tool_ceiling_exceeded")
+    runtime = _card_runtime(card)
     owner = _runtime_owner(card)
-    facet = options.get("hermesFacet") if owner == "hermes" else options.get("autogenFacet")
-    facet = facet if isinstance(facet, dict) else {}
-    facet_instructions = str(
-        (facet.get("instructions") if owner == "hermes" else facet.get("systemMessage")) or ""
-    )
     common_prompt = str(card.get("prompt") or "")
-    system_text = common_prompt + ("\n\n" + facet_instructions if facet_instructions else "")
+    system_text = common_prompt
     dynamic_context = str(payload.get("contextMarkdown") or "")
     output_requirements = str(payload.get("outputRequirements") or card.get("outputContract") or "")
     references = _normalized_native_references(payload.get("nativeReferences"))
@@ -1326,18 +1173,13 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     provider_model_id = str(options.get("providerModelId") or model_key)
     if not provider or not model_key or not provider_model_id:
         raise CardDomainError("card_model_configuration_incomplete")
-    profile_config = (
-        _resolve_hermes_profile(options, provider, model_key, provider_model_id)
-        if owner == "hermes"
-        else None
-    )
     runtime_options = {
         "reasoningEffort": options.get("reasoningEffort"),
         "temperature": options.get("temperature"),
         "maxTokens": options.get("maxTokens"),
         "maxTurns": options.get("maxTurns"),
     }
-    if owner == "coder":
+    if options.get("writeMode") is not None:
         write_mode = str(options.get("writeMode") or "read-only")
         if write_mode not in {"read-only", "edit"}:
             raise CardDomainError("coder_write_mode_invalid")
@@ -1350,41 +1192,17 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     )
     card_context = {
         "cardId": card_id, "title": card["title"], "prompt": common_prompt,
-        "runtimeType": card["runtimeType"], "accessMode": str(options.get("accessMode") or ""),
-        "runtimeBinding": str(card.get("runtimeBinding") or ""),
+        "runtime": runtime, "accessMode": str(options.get("accessMode") or ""),
         "provider": provider,
-        "modelKey": profile_config["modelKey"] if profile_config else model_key,
-        "providerModelId": profile_config["providerModelId"] if profile_config else provider_model_id,
-        "executionMode": str(options.get("executionMode") or "single"),
+        "modelKey": model_key,
+        "providerModelId": provider_model_id,
         "tools": requested_tools,
         "nativeTools": _string_list(options.get("nativeTools"), "native_tools"),
         "skills": _string_list(options.get("skills"), "skills"),
         "toolsets": _string_list(options.get("toolsets"), "toolsets"),
         "mcpConnectionIds": _string_list(options.get("mcpConnectionIds"), "mcp_connection_ids"),
-        "coderCardIds": _string_list(options.get("coderCards"), "coder_cards"),
-        "directSubagents": direct_subagents,
-        "nativeHermesDelegates": native_hermes_delegates,
         "runtimeOptions": runtime_options,
     }
-    native_delegate_ids = {
-        delegate["cardId"] for delegate in native_hermes_delegates
-    }
-    has_external_flow_target = any(
-        direct["cardId"] not in native_delegate_ids
-        for direct in direct_subagents
-    )
-    if has_external_flow_target and "card.run_assistant_agent" not in card_context["tools"]:
-        # A saved, enabled FLOW relationship is the complete bounded grant for
-        # external Card execution. Saved Hermes targets stay on native
-        # delegate_task and never acquire the recursive MCP Card tool.
-        card_context["tools"].append("card.run_assistant_agent")
-    if profile_config:
-        card_context.update(profile_config)
-        card_context["savedCardRuntime"] = {
-            "provider": provider,
-            "modelKey": model_key,
-            "providerModelId": provider_model_id,
-        }
     try:
         catalog = materialize_tool_catalog(tool_manifest())
     except IddValidationError as error:
@@ -1418,7 +1236,8 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         "runtimeOwner": owner,
         "assignment": assignment,
         "cardContext": card_context,
-        "runtimeFacet": {"owner": owner, "instructions": facet_instructions},
+        "delegationTargets": direct_subagents,
+        "nativeHermesDelegates": native_hermes_delegates,
         "exactIdf": exact_idf,
         "providerProjection": {
             "systemPrompt": system_text,
@@ -1436,7 +1255,8 @@ def materialize_main_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     loaded = _load_deck_internal(project_ref, deck_id)
     main_cards = [
         card for card in loaded["deck"]["nodes"]
-        if str(card.get("runtimeBinding") or "") == "main_chat"
+        if _card_runtime(card).get("kind") == "hermes"
+        and _card_runtime(card).get("mode") == "main"
     ]
     if len(main_cards) != 1:
         raise CardDomainError("main_card_identity_ambiguous")
@@ -1461,7 +1281,8 @@ def materialize_magentic_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     }
     targets = [
         card for card in loaded["deck"]["nodes"]
-        if card["id"] in target_ids and card.get("runtimeType") == "magentic_one"
+        if card["id"] in target_ids
+        and _card_runtime(card) == {"kind": "autogen", "mode": "magentic_one"}
     ]
     if len(targets) != 1:
         raise CardDomainError("magentic_control_target_ambiguous")
@@ -1477,7 +1298,10 @@ def describe_magentic_agents(project_ref: str, deck_id: str) -> dict[str, Any]:
     """Read the AGE-authored worker roster without executing any runtime."""
     loaded = _load_deck_internal(project_ref, deck_id)
     cards = {card["id"]: card for card in loaded["deck"]["nodes"]}
-    magentic = [card for card in cards.values() if card.get("runtimeType") == "magentic_one"]
+    magentic = [
+        card for card in cards.values()
+        if _card_runtime(card) == {"kind": "autogen", "mode": "magentic_one"}
+    ]
     if len(magentic) != 1:
         raise CardDomainError("magentic_card_identity_ambiguous")
     orchestrator = magentic[0]
@@ -1491,9 +1315,7 @@ def describe_magentic_agents(project_ref: str, deck_id: str) -> dict[str, Any]:
         card = cards.get(card_id)
         if card is None or card_id in seen or not _card_enabled(card):
             continue
-        if card.get("runtimeType") != "assistant_agent" or card.get("runtimeBinding") in {
-            "main_chat", "coder", "hermes_steward"
-        }:
+        if not _is_magentic_worker_card(card):
             continue
         seen.add(card_id)
         options = _json_object(card.get("runtimeOptions"), "runtime_options")
@@ -1536,25 +1358,19 @@ def _autogen_participant(card: dict[str, Any], known_tools: set[str]) -> dict[st
     unknown = [tool for tool in selected_tools if tool not in known_tools]
     if unknown:
         raise CardDomainError(f"configured_tool_unknown:{unknown[0]}")
-    binding = str(card.get("runtimeBinding") or "")
-    facet = options.get("autogenFacet") if isinstance(options.get("autogenFacet"), dict) else {}
-    facet_prompt = str(facet.get("systemMessage") or "")
-    prompt = str(card.get("prompt") or "") + ("\n\n" + facet_prompt if facet_prompt else "")
-    participant_tools = ["run_local_coder"] if binding == "local_coder" else selected_tools
-    inner_tools = [tool for tool in selected_tools if tool != "run_local_coder"] if binding == "local_coder" else []
+    runtime = _card_runtime(card)
+    if runtime != {"kind": "autogen", "mode": "assistant"}:
+        raise CardDomainError("magentic_worker_runtime_invalid")
     return {
         "cardId": card["id"],
         "title": card.get("title") or card["id"],
-        "runtimeType": "assistant_agent",
-        "runtimeBinding": binding or None,
-        "executionMode": str(options.get("executionMode") or "single"),
-        "tools": participant_tools,
-        "prompt": prompt,
+        "runtime": runtime,
+        "tools": selected_tools,
+        "prompt": str(card.get("prompt") or ""),
         "provider": provider,
         "accessMode": access_mode,
         "providerModelId": model,
         "reasoningEffort": options.get("reasoningEffort"),
-        "innerMcpTools": inner_tools,
         "temperature": options.get("temperature"),
         "maxTokens": options.get("maxTokens"),
     }
@@ -1953,62 +1769,6 @@ def _saved_idf_run_reference(
     return idf_id, revision_value
 
 
-def _coder_transport(prepared: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
-    """Build process metadata while preserving the exact IDF as Coder input."""
-    context = prepared["cardContext"]
-    assignment = _required_text(payload.get("assignment"), "assignment")
-    runtime_options = context.get("runtimeOptions") or {}
-    write_mode = str(runtime_options.get("writeMode") or "read-only")
-    try:
-        packet = validate_record("coder-packet", {
-            "objective": assignment,
-            "planExcerpt": assignment,
-            "contextSummary": "The exact Inspector-visible IDF is the complete outer Coder job.",
-            "codeAnchors": [],
-            "cbmQueries": [],
-            "guardrails": [],
-            "allowedFiles": [],
-            "forbiddenWork": [],
-            "proofRequired": [],
-            "reportFormat": "CoderReport JSON",
-            "stopConditions": [],
-            "writeMode": write_mode,
-        })
-    except IddValidationError as error:
-        raise CardDomainError(str(error)) from error
-    coder_packet = {
-            **packet,
-            "projectId": prepared["projectId"],
-            "deckId": prepared.get("deckId"),
-            "conversationId": str(payload.get("conversationId") or "").strip() or None,
-            "parentRunId": str(payload.get("runId") or "").strip() or None,
-            "exactIdf": prepared["exactIdf"],
-            "modelProvider": context.get("provider"),
-            "providerModelId": context.get("providerModelId") or context.get("modelKey"),
-            "modelKey": context.get("modelKey"),
-            "accessMode": context.get("accessMode"),
-            "cardId": context.get("cardId"),
-            "runtimeBinding": context.get("runtimeBinding"),
-            "cardTitle": context.get("title"),
-            "cardPrompt": context.get("prompt") or "",
-            "nativeTools": list(context.get("nativeTools") or []),
-            "skills": list(context.get("skills") or []),
-            "toolsets": list(context.get("toolsets") or []),
-            "mcpConnectionIds": list(context.get("mcpConnectionIds") or []),
-            "reasoningEffort": runtime_options.get("reasoningEffort"),
-            "mcpTools": [
-                tool for tool in list(context.get("tools") or [])
-                if tool != "run_local_coder"
-            ],
-    }
-    return {
-        "exactIdf": prepared["exactIdf"],
-        "coderPacket": {
-            key: value for key, value in coder_packet.items() if value is not None
-        },
-    }
-
-
 def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
     prepared = validate_exact_invocation(payload)
     run_id = _required_text(payload.get("runId"), "run_id")
@@ -2041,41 +1801,20 @@ def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
             if not participants:
                 raise CardDomainError("magentic_runtime_no_connected_participants")
         else:
-            participant_tools = selected_tools
-            inner_tools: list[str] = []
             participants = [{
                 "cardId": context["cardId"],
                 "title": context["title"],
-                "runtimeType": "assistant_agent",
-                "runtimeBinding": context.get("runtimeBinding") or None,
-                "executionMode": context.get("executionMode") or "single",
-                "tools": participant_tools,
+                "runtime": context["runtime"],
+                "tools": selected_tools,
                 "prompt": prepared["providerProjection"]["systemPrompt"],
                 "provider": context.get("provider"),
                 "accessMode": context.get("accessMode"),
                 "providerModelId": context.get("providerModelId") or context.get("modelKey"),
                 "reasoningEffort": (context.get("runtimeOptions") or {}).get("reasoningEffort"),
-                "innerMcpTools": inner_tools,
                 "temperature": (context.get("runtimeOptions") or {}).get("temperature"),
                 "maxTokens": (context.get("runtimeOptions") or {}).get("maxTokens"),
             }]
-        card_runtime = {
-            "cardId": context["cardId"],
-            "title": context["title"],
-            "runtimeType": "magentic_one" if owner == "mag_one" else "assistant_agent",
-            "runtimeBinding": context.get("runtimeBinding") or None,
-            "executionMode": context.get("executionMode") or "single",
-            "prompt": prepared["providerProjection"]["systemPrompt"],
-            "provider": context.get("provider"),
-            "accessMode": context.get("accessMode"),
-            "modelKey": context.get("modelKey"),
-            "providerModelId": context.get("providerModelId") or context.get("modelKey"),
-            "runtimeOptions": {
-                **(context.get("runtimeOptions") or {}),
-                "deckId": prepared["deckId"],
-            },
-            "participants": participants,
-        }
+        card_runtime = context
         native_runtime_request = {
             "session": {
                 "sessionId": f"{prepared['deckId']}:{context['cardId']}:{run_id}",
@@ -2115,19 +1854,22 @@ def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
                 "createdAt": _now().isoformat(),
             },
             "cardRuntime": card_runtime,
+            "participants": participants,
         }
     with connect_postgres() as connection, connection.cursor() as cursor:
         cursor.execute(
             """
             INSERT INTO ag_catalog.agent_runs (
-              run_id, project_id, deck_id, target_card_revision_id, runtime_type,
+              run_id, project_id, deck_id, target_card_revision_id,
+              runtime_kind, runtime_mode,
               provider, model_key, provider_model_id, access_mode, correlation_id,
               saved_idf_id, saved_idf_revision, state, started_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
             """,
             (
                 run_id, prepared["projectId"], prepared["deckId"],
-                prepared["cardRevisionId"], context["runtimeType"], context.get("provider"),
+                prepared["cardRevisionId"], context["runtime"]["kind"],
+                context["runtime"]["mode"], context.get("provider"),
                 context.get("modelKey"), context.get("providerModelId"),
                 context.get("accessMode"), correlation_id,
                 saved_idf_id, saved_idf_revision,
@@ -2149,12 +1891,14 @@ def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
         ),
         "telemetryWritten": telemetry_written,
         "nativeRuntimeRequest": native_runtime_request,
-        "coderTransport": _coder_transport(prepared, payload) if owner == "coder" else None,
         "hermesTransport": {
-            "profile": context.get("profile"),
+            "profile": context["runtime"].get("profile"),
+            "mode": context["runtime"]["mode"],
             "systemPrompt": prepared["providerProjection"]["systemPrompt"],
             "message": prepared["exactIdf"],
             "cardContext": context,
+            "delegationTargets": prepared.get("delegationTargets") or [],
+            "nativeHermesDelegates": prepared.get("nativeHermesDelegates") or [],
         } if owner == "hermes" else None,
     }
 
@@ -2224,42 +1968,6 @@ def _observe_run_start(
                     {"parentRunId": parent_run_id, "runId": run_id},
                     "value agtype",
                 )
-            for tool_id in context.get("tools") or []:
-                _age_rows(
-                    cursor,
-                    """
-                    MATCH (run:Run {runId: $runId})
-                    MERGE (tool:Tool {toolId: $toolId})
-                    MERGE (run)-[edge:USED_TOOL]->(tool)
-                    RETURN properties(edge)
-                    """,
-                    {"runId": run_id, "toolId": tool_id},
-                    "value agtype",
-                )
-            idf_inspection = prepared.get("idfInspection")
-            exact_references = (
-                idf_inspection.get("nativeReferences")
-                if isinstance(idf_inspection, dict)
-                else []
-            )
-            for reference in _normalized_native_references(exact_references):
-                _age_rows(
-                    cursor,
-                    """
-                    MATCH (run:Run {runId: $runId})
-                    MERGE (native:NativeReference {
-                      authority: $authority, nativeId: $nativeId
-                    })
-                    MERGE (run)-[edge:USED]->(native)
-                    RETURN properties(edge)
-                    """,
-                    {
-                        "runId": run_id,
-                        "authority": reference["authority"],
-                        "nativeId": reference["nativeId"],
-                    },
-                    "value agtype",
-                )
         return True
     except Exception:
         return False
@@ -2291,7 +1999,7 @@ def finish_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
         cursor.execute(
             """
             SELECT run_id, project_id, deck_id, target_card_revision_id,
-                   runtime_type, provider, model_key, provider_model_id,
+                   runtime_kind, runtime_mode, provider, model_key, provider_model_id,
                    access_mode, correlation_id, provider_thread_ref,
                    provider_turn_ref, state, started_at, finished_at,
                    error_code, error_summary, provider_input_tokens,

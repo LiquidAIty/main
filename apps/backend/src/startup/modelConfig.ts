@@ -14,9 +14,7 @@ function derivePrintableProvider(card: AgentCardInstance): string {
 }
 
 function cardRoleTag(card: AgentCardInstance): string {
-  if (card.runtimeType === 'magentic_one') return 'orchestrator';
-  const binding = String(card.runtimeBinding || '').trim();
-  return binding || 'agent';
+  return `${card.runtime.kind}/${card.runtime.mode}`;
 }
 
 export async function logModelConfiguration() {

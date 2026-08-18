@@ -48,7 +48,7 @@ describe('Hermes ACP transport identity', () => {
       conversationId: 'conversation-1',
       parentRunId: 'main-run-1',
       cardId: 'card_main_chat',
-      runtimeBinding: 'main_chat',
+      runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
       tools: ['canvas.inspect', 'card.run_assistant_agent', 'web_search'],
     }, {
       LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
@@ -68,14 +68,12 @@ describe('Hermes ACP transport identity', () => {
     expect(buildHermesDelegateCards([{
       cardId: 'card_local_coder',
       title: 'Coder',
-      runtimeBinding: 'coder',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
       runtimeOwner: 'hermes',
       prompt: 'Saved Coder prompt',
-      profile: 'coder',
       provider: 'openai',
       providerModelId: 'gpt-5.6-luna',
       accessMode: 'chatgpt-account',
-      executionMode: 'single',
       tools: ['cbm.search_graph', 'web_search'],
       nativeTools: ['terminal'],
       skills: [],
@@ -84,13 +82,11 @@ describe('Hermes ACP transport identity', () => {
     }], 'main-runtime-abcd')).toEqual([{
       cardId: 'card_local_coder',
       title: 'Coder',
-      runtimeBinding: 'coder',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
       prompt: 'Saved Coder prompt',
-      profile: 'coder',
       provider: 'openai',
       providerModelId: 'gpt-5.6-luna',
       accessMode: 'chatgpt-account',
-      executionMode: 'single',
       skills: [],
       toolsets: ['terminal'],
       allowedToolNames: [
@@ -105,19 +101,17 @@ describe('Hermes ACP transport identity', () => {
     expect(buildHermesDelegateCards([{
       cardId: 'card_hermes_steward',
       title: 'Helper',
-      runtimeBinding: 'hermes_steward',
+      runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
       runtimeOwner: 'hermes',
       prompt: 'Saved Helper prompt',
-      profile: 'liquidaity-hermes-steward',
       provider: 'openai',
       providerModelId: 'gpt-5.6-luna',
       accessMode: 'chatgpt-account',
-      executionMode: 'auto-kanban',
       tools: [],
       nativeTools: [],
       skills: [],
       toolsets: [],
       mcpConnectionIds: [],
-    }], 'main-runtime-abcd')).toEqual([]);
+    }] as any, 'main-runtime-abcd')).toEqual([]);
   });
 });

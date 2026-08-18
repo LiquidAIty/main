@@ -9,7 +9,7 @@ export default defineConfig({
     // The one Vitest workspace definition (replaces the deprecated
     // vitest.workspace.ts). Three projects, nothing else is ever collected:
     //   client  — inline below; owns ONLY client/src specs. Vendored repos
-    //             (localcoder, worldsignal, src/vendor),
+    //             (worldsignal, src/vendor),
     //             e2e/playwright (a Playwright runner), and other foreign
     //             runners that used to produce hundreds of phantom failures.
     //   backend — apps/backend/vitest.config.ts

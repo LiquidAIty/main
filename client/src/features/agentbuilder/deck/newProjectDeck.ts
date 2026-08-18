@@ -311,7 +311,7 @@ export const INITIAL_DECK: DeckDocument = {
   name: 'Agent Card Deck',
   workspaceRoot: DEFAULT_WORKSPACE_ROOT,
   promptTemplates: cloneDeckDocument(INITIAL_PROMPT_TEMPLATES),
-  version: 6,
+  version: 7,
   nodes: [
     {
       // The Main front-door card. Its saved prompt/model/tools are
@@ -323,16 +323,13 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_main_chat',
         )?.content || '',
-      runtimeBinding: 'main_chat',
-      runtimeType: 'assistant_agent',
+      runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
       // Main's tools are role-filtered before the Python MCP host exposes them.
       // No ordinary web search is granted.
       runtimeOptions: {
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
-        profile: 'liquidaity-main',
-        executionMode: 'single',
         tools: [...MAIN_CHAT_CONTROLLER_TOOLS],
         toolsets: ['file', 'terminal', 'delegation'],
       },
@@ -350,8 +347,7 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_magentic',
         )?.content || '',
-      runtimeBinding: 'magentic_one',
-      runtimeType: 'magentic_one',
+      runtime: { kind: 'autogen', mode: 'magentic_one' },
       runtimeOptions: {
         provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
         accessMode: 'openrouter-api',
@@ -372,14 +368,11 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_coder',
         )?.content || '',
-      runtimeBinding: 'coder',
-      runtimeType: 'assistant_agent',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
       runtimeOptions: {
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
-        profile: 'coder',
-        executionMode: 'single',
         tools: [...CODER_CONTROLLER_TOOLS],
         nativeTools: ['memory'],
         toolsets: ['file', 'terminal'],
@@ -398,15 +391,12 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_hermes_steward',
         )?.content || '',
-      runtimeBinding: 'hermes_steward',
-      runtimeType: 'assistant_agent',
+      runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
       runtimeOptions: {
         tools: [...HERMES_CARD_TOOLS],
         modelKey: DEFAULT_CARD_MODEL_KEY,
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
-        profile: 'liquidaity-hermes-steward',
-        executionMode: 'auto-kanban',
       },
       parentGraphId: null,
       title: 'Kanban',
@@ -422,13 +412,11 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_trading_workbench',
         )?.content || '',
-      runtimeBinding: 'trading_agent',
-      runtimeType: 'assistant_agent',
+      runtime: { kind: 'autogen', mode: 'assistant' },
       runtimeOptions: {
         modelKey: DEFAULT_CARD_MODEL_KEY,
         provider: DEFAULT_CARD_PROVIDER,
-        accessMode: 'chatgpt-account',
-        executionMode: 'single',
+        accessMode: 'openai-api',
       },
       parentGraphId: 'workbench_trading',
       title: 'Trading Agent',
@@ -444,8 +432,7 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_worldsignals_agent',
         )?.content || '',
-      runtimeBinding: 'worldsignals_agent',
-      runtimeType: 'assistant_agent',
+      runtime: { kind: 'autogen', mode: 'assistant' },
       // Real configured outside-world data sources only (EDGAR filings + Alpaca
       // market data — the registered runner tools). Never invented integrations.
       runtimeOptions: {
@@ -461,8 +448,7 @@ export const INITIAL_DECK: DeckDocument = {
         ],
         modelKey: DEFAULT_CARD_MODEL_KEY,
         provider: DEFAULT_CARD_PROVIDER,
-        accessMode: 'chatgpt-account',
-        executionMode: 'single',
+        accessMode: 'openai-api',
       },
       parentGraphId: null,
       title: 'WorldSignals Agent',

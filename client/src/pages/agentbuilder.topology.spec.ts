@@ -3,11 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { INITIAL_DECK } from '../features/agentbuilder/deck/newProjectDeck';
 import {
   deriveVisibleRailItems,
-  hasDirectedRuntimeBindingConnection,
+  hasDirectedCardConnection,
 } from '../features/agentbuilder/rail/railVisibility';
 
 const mainToHermesConnected = (nodes: typeof INITIAL_DECK.nodes, edges: typeof INITIAL_DECK.edges) =>
-  hasDirectedRuntimeBindingConnection(nodes, edges, 'main_chat', 'hermes_steward');
+  hasDirectedCardConnection(
+    nodes,
+    edges,
+    (card) => card.runtime.kind === 'hermes' && card.runtime.mode === 'main',
+    (card) => card.runtime.kind === 'hermes' && card.runtime.mode === 'kanban',
+  );
 
 describe('Main / Hermes / graph authority topology', () => {
   it('defines no graph-agent card, template, prompt, or runtime binding', () => {
@@ -116,7 +121,8 @@ describe('Main / Hermes / graph authority topology', () => {
 
   it('publishes explicit role grants that are filtered before Python MCP startup', () => {
     const cards = INITIAL_DECK.nodes.filter((node) =>
-      node.runtimeBinding === 'main_chat' || node.runtimeBinding === 'hermes_steward'
+      node.runtime.kind === 'hermes'
+      && (node.runtime.mode === 'main' || node.runtime.mode === 'kanban')
     );
     const granted = [...new Set(cards.flatMap((card) => card.runtimeOptions?.tools ?? []))];
     expect(granted.length).toBeGreaterThan(0);
@@ -145,10 +151,8 @@ describe('Main / Hermes / graph authority topology', () => {
 
     expect(coder).toMatchObject({
       title: 'Coder',
-      runtimeBinding: 'coder',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
       runtimeOptions: {
-        profile: 'coder',
-        executionMode: 'single',
         accessMode: 'chatgpt-account',
         nativeTools: ['memory'],
         toolsets: ['file', 'terminal'],
@@ -156,7 +160,6 @@ describe('Main / Hermes / graph authority topology', () => {
     });
     expect(coder?.runtimeOptions?.tools).toContain('cbm.search_graph');
     expect(coder?.runtimeOptions?.tools).not.toEqual(expect.arrayContaining([
-      'run_local_coder',
       'run_mag_one',
       'write_mag_one_instructions',
       'graphiti.add_memory',
@@ -171,11 +174,10 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(steward?.prompt).toContain('Coder writes the exact IDF');
 
     expect(magOne).toMatchObject({
-      runtimeBinding: 'magentic_one',
-      runtimeType: 'magentic_one',
+      runtime: { kind: 'autogen', mode: 'magentic_one' },
     });
     expect(INITIAL_DECK.nodes.filter(
-      (node) => node.runtimeOptions?.executionMode === 'auto-kanban',
+      (node) => node.runtime.kind === 'hermes' && node.runtime.mode === 'kanban',
     ).map((node) => node.id)).toEqual(['card_hermes_steward']);
   });
 });

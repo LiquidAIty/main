@@ -26,10 +26,7 @@ from autogen_agentchat.teams import MagenticOneGroupChat
 
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
 from app.python_models.internal_mcp import call_saved_card_via_mcp
-from app.python_models.tool_registry import (
-    DEFAULT_TOOL_REGISTRY,
-    build_local_coder_tool,
-)
+from app.python_models.tool_registry import DEFAULT_TOOL_REGISTRY
 from app.python_models.orchestration_contracts import (
     RuntimeRequest,
     OrchestratorRunResponse,
@@ -53,11 +50,10 @@ def _as_text(value: Any) -> str:
 
 
 def connected_agent_names(context: RuntimeRequest) -> list[str]:
-    card = context.cardRuntime
-    if card is None:
+    if context.cardRuntime is None:
         return []
     names: list[str] = []
-    for participant in card.participants or []:
+    for participant in context.participants or []:
         title = _as_text(getattr(participant, "title", ""))
         if title:
             names.append(title)
@@ -147,9 +143,8 @@ class McpSavedCardAgent(BaseChatAgent):
                 conversation_id=self._context.idf.conversationId,
                 parent_run_id=self._outer_run_id,
                 caller_card_id=self._context.cardRuntime.cardId,
-                caller_runtime_binding=(
-                    _as_text(self._context.cardRuntime.runtimeBinding) or "magentic_one"
-                ),
+                caller_runtime_kind=self._context.cardRuntime.runtime.kind,
+                caller_runtime_mode=self._context.cardRuntime.runtime.mode,
                 target_card_id=self._card_id,
                 input_text=input_text,
             )
@@ -199,7 +194,7 @@ def _build_participants(
         return []
     participants: list[BaseChatAgent] = []
     used_names: set[str] = set()
-    configured_participants = card.participants or []
+    configured_participants = context.participants or []
     if not saved_card_workers and isinstance(model_client, (list, tuple)) and len(model_client) != len(
         configured_participants
     ):
@@ -211,11 +206,7 @@ def _build_participants(
         card_id = _as_text(getattr(participant, "cardId", ""))
         title = _as_text(getattr(participant, "title", "")) or card_id
         name = _safe_agent_name(title or f"Agent {i + 1}", i, used_names)
-        description = (
-            _as_text(getattr(participant, "runtimeBinding", ""))
-            or _as_text(getattr(participant, "runtimeType", ""))
-            or "assistant"
-        )
+        description = f"{participant.runtime.kind}/{participant.runtime.mode}"
         system_prompt = _as_text(getattr(participant, "prompt", ""))
 
         if saved_card_workers:
@@ -253,22 +244,6 @@ def _build_participants(
         # behavior). Unknown/disabled IDs fail loudly through resolve_selected
         # rather than being silently dropped.
         tools = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools) if selected_tools else []
-        if "run_local_coder" in selected_tools:
-            tools = [
-                build_local_coder_tool(
-                    _as_text(getattr(participant, "provider", "")),
-                    _as_text(getattr(participant, "providerModelId", "")),
-                    _as_text(getattr(participant, "reasoningEffort", "")) or None,
-                    [
-                        _as_text(tool)
-                        for tool in (getattr(participant, "innerMcpTools", []) or [])
-                        if _as_text(tool)
-                    ],
-                )
-                if getattr(tool, "name", "") == "run_local_coder"
-                else tool
-                for tool in tools
-            ]
         if extra_tools:
             tools = [*tools, *extra_tools]
         if tools:
@@ -292,11 +267,14 @@ def _validate_single_card_context(context: RuntimeRequest) -> str | None:
     card = context.cardRuntime
     if card is None:
         return "card_runtime_missing"
-    if card.runtimeType != "assistant_agent":
-        return f"single_card_runtime_invalid: runtimeType={card.runtimeType}"
+    if card.runtime.kind != "autogen" or card.runtime.mode != "assistant":
+        return (
+            "single_card_runtime_invalid: runtime="
+            f"{card.runtime.kind}/{card.runtime.mode}"
+        )
     if context.session.orchestrator != "assistant_agent":
         return f"single_card_orchestrator_invalid: orchestrator={context.session.orchestrator}"
-    count = len(card.participants or [])
+    count = len(context.participants or [])
     if count != 1:
         return f"single_card_participant_count_invalid: {count}"
     if not _as_text(context.idf.userText):
@@ -367,7 +345,7 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
             error=guard,
         )
 
-    single = context.cardRuntime.participants[0]
+    single = context.participants[0]
     client = None
     try:
         client = _build_model_client(

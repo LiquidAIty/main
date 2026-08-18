@@ -21,32 +21,32 @@ async function render() {
     root.render(
       <HarnessChatPanel
         chat={<div data-testid="main-chat">Main Chat</div>}
-        terminal={<div data-testid="openclaude-terminal-instance">OpenClaude Code</div>}
+        terminal={<div data-testid="coder-terminal-instance">Coder</div>}
       />,
     );
   });
   return container;
 }
 
-describe('HarnessChatPanel OpenClaude dock', () => {
+describe('HarnessChatPanel Coder dock', () => {
   it('keeps Main Chat usable while the terminal starts collapsed', async () => {
     const host = await render();
     expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
-    const handle = host.querySelector('[data-testid="chat-openclaude-handle"]') as HTMLButtonElement;
+    const handle = host.querySelector('[data-testid="chat-coder-terminal-handle"]') as HTMLButtonElement;
     expect(handle.getAttribute('aria-expanded')).toBe('false');
-    expect(host.querySelector('[data-testid="chat-hermes-region"]')).toBeNull();
+    expect(host.querySelector('[data-testid="chat-coder-terminal-region"]')).not.toBeNull();
   });
 
   it('slides up and down without unmounting the persistent terminal', async () => {
     const host = await render();
-    const handle = host.querySelector('[data-testid="chat-openclaude-handle"]') as HTMLButtonElement;
-    const terminal = host.querySelector('[data-testid="openclaude-terminal-instance"]');
+    const handle = host.querySelector('[data-testid="chat-coder-terminal-handle"]') as HTMLButtonElement;
+    const terminal = host.querySelector('[data-testid="coder-terminal-instance"]');
     await act(async () => handle.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     expect(handle.getAttribute('aria-expanded')).toBe('true');
-    expect(host.querySelector('[data-testid="openclaude-terminal-instance"]')).toBe(terminal);
+    expect(host.querySelector('[data-testid="coder-terminal-instance"]')).toBe(terminal);
     await act(async () => handle.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     expect(handle.getAttribute('aria-expanded')).toBe('false');
-    expect(host.querySelector('[data-testid="openclaude-terminal-instance"]')).toBe(terminal);
+    expect(host.querySelector('[data-testid="coder-terminal-instance"]')).toBe(terminal);
   });
 
   it('makes ChatGPT the sole Main at full height and restores native Main when pulled down', async () => {
@@ -56,8 +56,8 @@ describe('HarnessChatPanel OpenClaude dock', () => {
       x: 0, y: 0, top: 0, left: 0, right: 800, bottom: 600,
       width: 800, height: 600, toJSON: () => ({}),
     });
-    const handle = host.querySelector('[data-testid="chat-openclaude-handle"]') as HTMLButtonElement;
-    const terminal = host.querySelector('[data-testid="openclaude-terminal-instance"]');
+    const handle = host.querySelector('[data-testid="chat-coder-terminal-handle"]') as HTMLButtonElement;
+    const terminal = host.querySelector('[data-testid="coder-terminal-instance"]');
 
     await act(async () => {
       handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientY: 590 }));
@@ -66,7 +66,7 @@ describe('HarnessChatPanel OpenClaude dock', () => {
     });
     expect(panel.getAttribute('data-main-mode')).toBe('chatgpt');
     expect(host.querySelector('[data-testid="main-chat"]')).toBeNull();
-    expect(host.querySelector('[data-testid="openclaude-terminal-instance"]')).toBe(terminal);
+    expect(host.querySelector('[data-testid="coder-terminal-instance"]')).toBe(terminal);
 
     await act(async () => {
       handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientY: 0 }));
@@ -75,6 +75,6 @@ describe('HarnessChatPanel OpenClaude dock', () => {
     });
     expect(panel.getAttribute('data-main-mode')).toBe('native');
     expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
-    expect(host.querySelector('[data-testid="openclaude-terminal-instance"]')).toBe(terminal);
+    expect(host.querySelector('[data-testid="coder-terminal-instance"]')).toBe(terminal);
   });
 });

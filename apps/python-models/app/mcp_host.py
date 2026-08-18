@@ -1,10 +1,8 @@
-"""Main Python MCP host (stdio) — THE one MCP host the Harness launches.
+"""The one official Python MCP host for LiquidAIty runtimes and connectors.
 
-Launch shape: localcoder/scripts/start-grpc.ts resolves this venv's python.exe
-and this file's absolute path from the real repo layout, validates both exist,
-and the gRPC Harness (localcoder/src/grpc/server.ts) spawns them as ONE stdio
-MCP client for the server's lifetime — before any chat work is accepted. No
-env vars, no .env, no per-turn spawn, no fallback host.
+The canonical supervised service tree launches one Streamable HTTP host for
+the process lifetime. Hermes and AutoGen use that same authenticated seam; no
+per-turn spawn or fallback host exists.
 
 Exposes this application tool surface plus the dynamically discovered native
 Engraphis, Codebase Memory, and official Graphiti MCP registries:
@@ -142,7 +140,7 @@ _HTTP_CATALOG_INITIALIZATION_TASK: asyncio.Task[None] | None = None
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
 _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS = 300.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
-_EXPECTED_PUBLIC_TOOL_COUNT = 70
+_EXPECTED_PUBLIC_TOOL_COUNT = 69
 _PUBLIC_MCP_NAME = "LiquidAIty"
 _PUBLIC_MCP_DESCRIPTION = (
     "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
@@ -159,9 +157,11 @@ _GRAPHITI_PROVIDER_HEALTH: dict[str, Any] = {
 _MAIN_CONTEXT_FIELDS = frozenset(
     {"projectId", "deckId", "conversationId", "parentRunId", "mainCardId"}
 )
-_TRUSTED_STDIO_OPTIONAL_CONTEXT_FIELDS = frozenset({"callerRuntimeBinding"})
+_TRUSTED_STDIO_OPTIONAL_CONTEXT_FIELDS = frozenset(
+    {"callerRuntimeKind", "callerRuntimeMode"}
+)
 _AUTHENTICATED_OPTIONAL_CONTEXT_FIELDS = frozenset(
-    {"callerRuntimeBinding", "principalKind", "grantedTools"}
+    {"callerRuntimeKind", "callerRuntimeMode", "principalKind", "grantedTools"}
 )
 
 
@@ -601,7 +601,8 @@ def _authenticated_main_context() -> dict[str, Any] | None:
             "conversationId": internal.get("conversationId"),
             "parentRunId": internal.get("parentRunId"),
             "mainCardId": internal.get("callerCardId"),
-            "callerRuntimeBinding": internal.get("callerRuntimeBinding"),
+            "callerRuntimeKind": internal.get("callerRuntimeKind"),
+            "callerRuntimeMode": internal.get("callerRuntimeMode"),
             "principalKind": internal.get("kind"),
             "grantedTools": internal.get("grantedTools", []),
         }
@@ -1538,7 +1539,7 @@ class Auth0TokenVerifier:
                 if principal.get("kind") != "catalog-reader":
                     required = (
                         "projectId", "deckId", "conversationId", "parentRunId",
-                        "callerCardId", "callerRuntimeBinding",
+                        "callerCardId", "callerRuntimeKind", "callerRuntimeMode",
                     )
                     if any(not str(principal.get(field) or "").strip() for field in required):
                         return None
@@ -1641,14 +1642,6 @@ async def _materialize_complete_catalog() -> list[Tool]:
                 },
                 "required": [],
             },
-        ),
-        Tool(
-            name="coder.status",
-            description=(
-                "Read the canonical OpenClaude Coder session/process state. Reports running only "
-                "when the backend's live session owner has a starting or running process."
-            ),
-            inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
             name="mag_one.describe_connected_agents",
@@ -2012,7 +2005,8 @@ _SERVER_OWNED_ARGUMENTS = {
     "originatingAgentId",
     "originatingRunId",
     "_callerCardId",
-    "_callerRuntimeBinding",
+    "_callerRuntimeKind",
+    "_callerRuntimeMode",
 }
 
 
@@ -2022,21 +2016,25 @@ def _enforce_tool_caller(
     *,
     authenticated_external: bool = False,
 ) -> str | None:
-    from app.python_models.idd import required_tool_caller_runtime_binding
+    from app.python_models.idd import required_tool_caller_runtime
 
-    expected = required_tool_caller_runtime_binding(name)
+    expected = required_tool_caller_runtime(name)
     card_id = str(args.pop("_callerCardId", "") or "").strip()
-    binding = str(args.pop("_callerRuntimeBinding", "") or "").strip()
-    if authenticated_external and not binding:
-        # The authenticated account MCP surface is the Main doorway. Hermes
-        # stdio processes supply their exact saved runtime binding instead.
-        binding = "main_chat"
+    kind = str(args.pop("_callerRuntimeKind", "") or "").strip()
+    mode = str(args.pop("_callerRuntimeMode", "") or "").strip()
+    if authenticated_external and not kind and not mode:
+        # The authenticated account MCP surface is the Main doorway. Internal
+        # runtimes supply their exact saved runtime union instead.
+        kind, mode = "hermes", "main"
     if expected is None:
         return None
-    if not card_id or not binding:
+    if not card_id or not kind or not mode:
         return "tool_caller_identity_unavailable"
-    if binding != expected:
-        return f"tool_caller_not_authorized: {name} requires {expected}"
+    if {"kind": kind, "mode": mode} != expected:
+        return (
+            f"tool_caller_not_authorized: {name} requires "
+            f"{expected['kind']}/{expected['mode']}"
+        )
     return None
 
 
@@ -2098,7 +2096,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "limit",
         "projectWide",
     },
-    "coder.status": set(),
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "idfId", "conversationId"},
     "write_mag_one_instructions": {
@@ -2124,7 +2121,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
 }
 
 _BRIDGE_PATHS: dict[str, str] = {
-    "coder.status": "coder_status",
     "mag_one.describe_connected_agents": "describe_connected_agents",
 }
 
@@ -2235,12 +2231,15 @@ async def _dispatch_tool(
                 if context.get("principalKind") != "system-root":
                     args["originatingAgentId"] = str(context["mainCardId"])
                     args["originatingRunId"] = str(context["parentRunId"])
-            from app.python_models.idd import required_tool_caller_runtime_binding
+            from app.python_models.idd import required_tool_caller_runtime
 
-            if required_tool_caller_runtime_binding(name) is not None:
+            if required_tool_caller_runtime(name) is not None:
                 args["_callerCardId"] = str(context["mainCardId"])
-                args["_callerRuntimeBinding"] = str(
-                    context.get("callerRuntimeBinding") or "main_chat"
+                args["_callerRuntimeKind"] = str(
+                    context.get("callerRuntimeKind") or "hermes"
+                )
+                args["_callerRuntimeMode"] = str(
+                    context.get("callerRuntimeMode") or "main"
                 )
         except (KeyError, RuntimeError, ValueError) as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]

@@ -14,8 +14,7 @@ def _agent(card_id: str, **overrides):
         "templateId": "template_assist",
         "title": card_id,
         "prompt": "common prompt",
-        "runtimeType": "assistant_agent",
-        "runtimeBinding": "research_agent",
+        "runtime": {"kind": "autogen", "mode": "assistant"},
         "runtimeOptions": {
             "provider": "openrouter",
             "modelKey": "deepseek/deepseek-v4-flash-0731",
@@ -55,16 +54,21 @@ def test_deck_validation_rejects_duplicate_identities_and_missing_endpoints() ->
         card_domain._validated_deck_collections(missing, "deck-two")
 
 
-def test_direct_subagents_keep_only_enabled_top_level_assistant_flow_targets() -> None:
+def test_direct_subagents_keep_only_enabled_top_level_flow_targets() -> None:
     cards = {
         "parent": _agent("parent"),
-        "enabled": _agent("enabled", runtimeBinding="coder"),
+        "enabled": _agent(
+            "enabled",
+            runtime={"kind": "hermes", "mode": "delegate", "profile": "coder"},
+        ),
         "disabled-option": _agent(
             "disabled-option",
             runtimeOptions={**_agent("x")["runtimeOptions"], "enabled": False},
         ),
         "nested": _agent("nested", parentGraphId="nested-graph"),
-        "orchestrator": _agent("orchestrator", runtimeType="magentic_one"),
+        "orchestrator": _agent(
+            "orchestrator", runtime={"kind": "autogen", "mode": "magentic_one"}
+        ),
     }
     edges = [
         {"source": "parent", "target": "enabled", "edgeType": "flow"},
@@ -76,7 +80,7 @@ def test_direct_subagents_keep_only_enabled_top_level_assistant_flow_targets() -
     assert card_domain._direct_subagents("parent", cards, edges) == [{
         "cardId": "enabled",
         "title": "enabled",
-        "runtimeBinding": "coder",
+        "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
     }]
 
 
@@ -85,21 +89,18 @@ def _delegation_preview(
     *,
     edges: list[dict[str, object]],
     target: dict | None = None,
-    parent_binding: str = "research_agent",
+    parent_runtime: dict | None = None,
 ) -> dict:
-    parent = _agent("parent", runtimeBinding=parent_binding)
+    parent = _agent("parent", runtime=parent_runtime or {"kind": "autogen", "mode": "assistant"})
     parent["runtimeOptions"] = {
         **parent["runtimeOptions"],
         "tools": ["calculator"],
-        **({"profile": "main"} if parent_binding in card_domain._HERMES_RUNTIME_BINDINGS else {}),
     }
     child = target or _agent(
         "child",
-        runtimeBinding="coder",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "coder"},
         runtimeOptions={
             **_agent("child")["runtimeOptions"],
-            "profile": "coder",
-            "executionMode": "single",
             "nativeTools": ["terminal"],
             "skills": ["repository-coder"],
             "toolsets": ["terminal"],
@@ -125,23 +126,21 @@ def _delegation_preview(
     })
 
 
-def test_enabled_flow_edge_materializes_bounded_delegation_tool_and_target(
+def test_enabled_flow_edge_materializes_bounded_target_without_inventing_tool_grant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     preview = _delegation_preview(
         monkeypatch,
         edges=[{"source": "parent", "target": "child", "edgeType": "flow"}],
     )
-    assert preview["cardContext"]["tools"] == ["calculator", "card.run_assistant_agent"]
-    assert preview["providerProjection"]["enabledTools"] == [
-        "calculator",
-        "card.run_assistant_agent",
-    ]
-    assert preview["cardContext"]["directSubagents"] == [{
+    assert preview["cardContext"]["tools"] == ["calculator"]
+    assert preview["providerProjection"]["enabledTools"] == ["calculator"]
+    assert preview["delegationTargets"] == [{
         "cardId": "child",
         "title": "child",
-        "runtimeBinding": "coder",
+        "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
     }]
+    assert "delegationTargets" not in preview["exactIdf"]
 
 
 def test_hermes_flow_target_uses_native_delegate_metadata_without_recursive_mcp(
@@ -150,22 +149,21 @@ def test_hermes_flow_target_uses_native_delegate_metadata_without_recursive_mcp(
     preview = _delegation_preview(
         monkeypatch,
         edges=[{"source": "parent", "target": "child", "edgeType": "flow"}],
-        parent_binding="main_chat",
+        parent_runtime={"kind": "hermes", "mode": "main", "profile": "main"},
     )
     assert preview["runtimeOwner"] == "hermes"
     assert preview["cardContext"]["tools"] == ["calculator"]
     assert "card.run_assistant_agent" not in preview["providerProjection"]["enabledTools"]
-    assert preview["cardContext"]["nativeHermesDelegates"] == [{
+    assert preview["nativeHermesDelegates"] == [{
         "cardId": "child",
         "title": "child",
-        "runtimeBinding": "coder",
+        "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
         "runtimeOwner": "hermes",
         "prompt": "common prompt",
-        "profile": "coder",
         "provider": "openrouter",
+        "modelKey": "deepseek/deepseek-v4-flash-0731",
         "providerModelId": "deepseek/deepseek-v4-flash-0731",
         "accessMode": "openrouter-api",
-        "executionMode": "single",
         "tools": [],
         "nativeTools": ["terminal"],
         "skills": ["repository-coder"],
@@ -181,14 +179,14 @@ def test_no_flow_edge_materializes_no_delegation_transport(
     preview = _delegation_preview(monkeypatch, edges=[])
     assert preview["cardContext"]["tools"] == ["calculator"]
     assert preview["providerProjection"]["enabledTools"] == ["calculator"]
-    assert preview["cardContext"]["directSubagents"] == []
+    assert preview["delegationTargets"] == []
 
 
 def test_magentic_card_may_invoke_only_a_saved_magentic_option_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    mag_one = _agent("mag-one", runtimeType="magentic_one", runtimeBinding="magentic_one")
-    worker = _agent("worker", runtimeBinding="research_agent")
+    mag_one = _agent("mag-one", runtime={"kind": "autogen", "mode": "magentic_one"})
+    worker = _agent("worker", runtime={"kind": "autogen", "mode": "assistant"})
     for number, card in enumerate((mag_one, worker), start=1):
         card["_cardRevisionId"] = f"revision-{number}"
         card["_cardRevision"] = 1
@@ -232,155 +230,93 @@ def test_disabled_flow_edge_materializes_no_delegation_transport(
     )
     assert "card.run_assistant_agent" not in preview["cardContext"]["tools"]
     assert "card.run_assistant_agent" not in preview["providerProjection"]["enabledTools"]
-    assert preview["cardContext"]["directSubagents"] == []
+    assert preview["delegationTargets"] == []
 
 
 def test_disabled_missing_or_invalid_flow_target_is_not_eligible(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     edge = [{"source": "parent", "target": "child", "edgeType": "flow"}]
-    disabled = _agent("child", runtimeBinding="coder")
+    disabled = _agent(
+        "child", runtime={"kind": "hermes", "mode": "delegate", "profile": "coder"}
+    )
     disabled["runtimeOptions"] = {**disabled["runtimeOptions"], "enabled": False}
     assert _delegation_preview(
         monkeypatch,
         edges=edge,
         target=disabled,
-    )["cardContext"]["directSubagents"] == []
+    )["delegationTargets"] == []
 
-    invalid = _agent("child", runtimeType="magentic_one")
+    invalid = _agent("child", runtime={"kind": "autogen", "mode": "magentic_one"})
     assert _delegation_preview(
         monkeypatch,
         edges=edge,
         target=invalid,
-    )["cardContext"]["directSubagents"] == []
+    )["delegationTargets"] == []
 
     missing = _delegation_preview(
         monkeypatch,
         edges=[{"source": "parent", "target": "missing", "edgeType": "flow"}],
     )
-    assert missing["cardContext"]["directSubagents"] == []
+    assert missing["delegationTargets"] == []
     assert "card.run_assistant_agent" not in missing["cardContext"]["tools"]
 
 
-def test_stable_card_keeps_common_hermes_and_autogen_prompts_separate() -> None:
-    card = _agent("dual")
-    card["runtimeOptions"] = {
-        **card["runtimeOptions"],
-        "profile": "dual-profile",
-        "hermesFacet": {"instructions": "Hermes instructions"},
-        "autogenFacet": {
-            "assistantName": "DualAgent",
-            "systemMessage": "AutoGen instructions",
-        },
-    }
+def test_stable_card_has_one_prompt_and_one_explicit_runtime() -> None:
+    card = _agent(
+        "coder",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "coder"},
+    )
     stable = card_domain._stable_card(card)
     assert stable["basePrompt"] == "common prompt"
-    assert stable["hermesFacet"]["instructions"] == "Hermes instructions"
-    assert stable["autogenFacet"]["systemMessage"] == "AutoGen instructions"
-
-
-def test_runtime_owner_uses_only_the_explicit_binding_and_rejects_conflicts() -> None:
-    dual_autogen = _agent("dual-autogen")
-    dual_autogen["runtimeOptions"] = {
-        **dual_autogen["runtimeOptions"],
-        "profile": "dormant-hermes-profile",
-        "hermesFacet": {"instructions": "Dormant Hermes configuration"},
-        "autogenFacet": {"systemMessage": "Selected AutoGen configuration"},
-        "executionMode": "single",
+    assert stable["runtime"] == {
+        "kind": "hermes", "mode": "delegate", "profile": "coder"
     }
-    assert card_domain._runtime_owner(dual_autogen) == "autogen"
 
-    for binding, profile, mode in (
-        ("main_chat", "liquidaity-main", "single"),
-        ("coder", "coder", "single"),
-        ("hermes_steward", "liquidaity-hermes-steward", "auto-kanban"),
+
+def test_runtime_owner_is_exhaustive_over_the_explicit_runtime_union() -> None:
+    for mode in ("main", "delegate", "kanban"):
+        assert card_domain._runtime_owner(_agent(
+            mode, runtime={"kind": "hermes", "mode": mode, "profile": mode}
+        )) == "hermes"
+    assert card_domain._runtime_owner(_agent(
+        "assistant", runtime={"kind": "autogen", "mode": "assistant"}
+    )) == "autogen"
+    assert card_domain._runtime_owner(_agent(
+        "mag-one", runtime={"kind": "autogen", "mode": "magentic_one"}
+    )) == "mag_one"
+    for invalid, error in (
+        (None, "runtime_kind_required"),
+        ({"kind": "hermes", "mode": "delegate"}, "runtime_profile_required"),
+        ({"kind": "autogen", "mode": "delegate"}, "autogen_runtime_mode_unsupported"),
+        ({"kind": "other", "mode": "assistant"}, "runtime_kind_unsupported"),
     ):
-        card = _agent(binding, runtimeBinding=binding)
-        card["runtimeOptions"] = {
-            **card["runtimeOptions"],
-            "profile": profile,
-            "executionMode": mode,
-            "autogenFacet": {"systemMessage": "Dormant AutoGen configuration"},
-        }
-        assert card_domain._runtime_owner(card) == "hermes"
-
-    mag_one = _agent(
-        "mag-one",
-        runtimeType="magentic_one",
-        runtimeBinding="magentic_one",
-    )
-    mag_one["runtimeOptions"] = {
-        **mag_one["runtimeOptions"],
-        "profile": "dormant-hermes-profile",
-    }
-    assert card_domain._runtime_owner(mag_one) == "mag_one"
-
-    with pytest.raises(card_domain.CardDomainError, match="card_runtime_binding_required"):
-        card_domain._runtime_owner(_agent("missing", runtimeBinding=None))
-    with pytest.raises(card_domain.CardDomainError, match="card_runtime_binding_inactive:local_coder"):
-        card_domain._runtime_owner(_agent("legacy", runtimeBinding="local_coder"))
-    with pytest.raises(card_domain.CardDomainError, match="card_runtime_binding_contradictory:coder"):
-        card_domain._runtime_owner(_agent("coder", runtimeBinding="coder"))
-    with pytest.raises(card_domain.CardDomainError, match="card_runtime_binding_contradictory:magentic_one"):
-        card_domain._runtime_owner(_agent("not-mag-one", runtimeBinding="magentic_one"))
+        with pytest.raises(card_domain.CardDomainError, match=error):
+            card_domain._runtime_owner(_agent("invalid", runtime=invalid))
 
 
-def test_internal_hermes_roles_are_never_magentic_workers() -> None:
-    for binding in ("main_chat", "coder", "hermes_steward"):
-        assert card_domain._is_magentic_worker_card(
-            _agent(binding, runtimeBinding=binding)
-        ) is False
-    assert card_domain._is_magentic_worker_card(
-        _agent("worldsignals", runtimeBinding="worldsignals_agent")
-    ) is True
-
-
-def test_coder_transport_preserves_exact_idf_and_python_owned_permission() -> None:
-    prepared = {
-        "projectId": "project-one",
-        "exactIdf": "# LiquidAIty IDF\n\nExact Coder job.",
-        "cardContext": {
-            "cardId": "card_coder",
-            "title": "Coder",
-            "prompt": "Return a CoderReport.",
-            "provider": "openai",
-            "modelKey": "gpt-5.6-luna",
-            "providerModelId": "gpt-5.6-luna",
-            "accessMode": "coder-oauth",
-            "tools": ["cbm.search_graph", "run_local_coder"],
-            "nativeTools": [],
-            "skills": [],
-            "toolsets": [],
-            "mcpConnectionIds": [],
-            "runtimeOptions": {"writeMode": "edit", "reasoningEffort": "high"},
-        },
-    }
-    transport = card_domain._coder_transport(
-        prepared,
-        {"assignment": "Exact Coder job."},
-    )
-    packet = transport["coderPacket"]
-    assert transport["exactIdf"] == prepared["exactIdf"]
-    assert packet["exactIdf"] == prepared["exactIdf"]
-    assert packet["writeMode"] == "edit"
-    assert packet["mcpTools"] == ["cbm.search_graph"]
-    assert "repoPath" not in packet
-    assert "id" not in packet
+def test_only_autogen_assistant_cards_are_magentic_workers() -> None:
+    for mode in ("main", "delegate", "kanban"):
+        assert card_domain._is_magentic_worker_card(_agent(
+            mode, runtime={"kind": "hermes", "mode": mode, "profile": mode}
+        )) is False
+    assert card_domain._is_magentic_worker_card(_agent(
+        "mag-one", runtime={"kind": "autogen", "mode": "magentic_one"}
+    )) is False
+    assert card_domain._is_magentic_worker_card(_agent(
+        "worker", runtime={"kind": "autogen", "mode": "assistant"}
+    )) is True
 
 
 def _destination_fixture(monkeypatch: pytest.MonkeyPatch) -> dict:
     sender = _agent("sender")
-    hermes = _agent("hermes", prompt="Hermes saved prompt", runtimeBinding="coder")
+    hermes = _agent(
+        "hermes",
+        prompt="Hermes saved prompt",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "research"},
+    )
     hermes["runtimeOptions"] = {
         **hermes["runtimeOptions"],
-        "profile": "research",
-        "executionMode": "single",
-        "profileSnapshot": {
-            "name": "research",
-            "model": "deepseek/deepseek-v4-flash-0731",
-            "gateway": "openrouter",
-        },
-        "profileConflictResolution": "card",
         "tools": ["calculator"],
     }
     autogen = _agent("autogen", prompt="AutoGen saved prompt")
@@ -443,6 +379,9 @@ def test_same_exact_idf_is_destination_independent_for_different_authorized_card
     assert '"recipientCardId":"not-authority"' in exact
     assert '"type": "serialized-card"' in exact
     assert '"cardId": "hermes"' in exact
+    assert '"tools": [\n      "calculator"' in exact
+    assert '"toolDefinitions"' not in exact
+    assert hermes_preview["providerProjection"]["toolDefinitions"]
     assert "flow-hermes" not in exact
     assert "flow-autogen" not in exact
 
@@ -548,16 +487,11 @@ def test_main_materialization_contains_the_saved_card_without_routing_data(
         "create",
         lambda *args, **kwargs: pytest.fail("IDF materialization opened Engraphis"),
     )
-    main = _agent("main", runtimeBinding="main_chat")
+    main = _agent(
+        "main", runtime={"kind": "hermes", "mode": "main", "profile": "default"}
+    )
     main["runtimeOptions"] = {
         **main["runtimeOptions"],
-        "profile": "default",
-        "profileSnapshot": {
-            "name": "default",
-            "model": "deepseek/deepseek-v4-flash-0731",
-            "gateway": "openrouter",
-        },
-        "profileConflictResolution": "card",
         "tools": ["canvas.inspect"],
     }
     main["_cardRevisionId"] = "main-revision"
@@ -579,7 +513,8 @@ def test_main_materialization_contains_the_saved_card_without_routing_data(
     assert "main-revision" not in preview["exactIdf"]
     assert '"cardId": "main"' in preview["exactIdf"]
     assert "canvas.inspect" in preview["exactIdf"]
-    assert "directSubagents" not in preview["exactIdf"]
+    assert '"toolDefinitions"' not in preview["exactIdf"]
+    assert "delegationTargets" not in preview["exactIdf"]
     assert preview["providerProjection"]["enabledTools"] == ["canvas.inspect"]
 
 
@@ -588,8 +523,7 @@ def test_saved_idf_inspection_reads_exact_non_directional_body_without_routing()
         "cardId": "portable",
         "title": "Portable",
         "prompt": "Portable instructions.",
-        "runtimeType": "assistant_agent",
-        "runtimeBinding": "research_agent",
+        "runtime": {"kind": "autogen", "mode": "assistant"},
         "accessMode": "openrouter-api",
         "provider": "openrouter",
         "providerModelId": "model-one",
@@ -610,7 +544,7 @@ def test_saved_idf_inspection_reads_exact_non_directional_body_without_routing()
     assert inspection["providerProjection"]["message"] == exact
 
 
-def test_age_runtime_telemetry_preserves_run_card_and_artifact_lineage(
+def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     statements: list[tuple[str, dict]] = []
@@ -667,14 +601,9 @@ def test_age_runtime_telemetry_preserves_run_card_and_artifact_lineage(
         correlation_id="correlation-one",
     ) is True
     assert any("EXECUTED_BY" in query for query, _params in statements)
-    assert any("USED_TOOL" in query for query, _params in statements)
-    native_use = [
-        (query, params) for query, params in statements
-        if "[edge:USED]" in query
-    ]
-    assert len(native_use) == 1
-    assert native_use[0][1]["nativeId"] == "episode:exact"
-    assert all(params.get("nativeId") != "episode:stale-request" for _query, params in statements)
+    assert all("USED_TOOL" not in query for query, _params in statements)
+    assert all("[edge:USED]" not in query for query, _params in statements)
+    assert all("[edge:VIEWED]" not in query for query, _params in statements)
 
     statements.clear()
     assert card_domain._observe_run_finish("run-one", "completed") is True
@@ -724,8 +653,7 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
             "nodes": [{
                 "id": "card-one",
                 "title": "Main",
-                "runtimeType": "assistant_agent",
-                "runtimeBinding": "main_chat",
+                "runtime": {"kind": "hermes", "mode": "main", "profile": "main"},
                 "runtimeOptions": {"enabled": True},
             }],
             "edges": [{

@@ -9,7 +9,7 @@ type HarnessChatPanelProps = {
   terminal: ReactNode;
 };
 
-/** Main Chat with the persistent OpenClaude Code terminal docked beneath it. */
+/** Main Chat with the saved Coder Card's persistent Hermes terminal beneath it. */
 export default function HarnessChatPanel({ chat, terminal }: HarnessChatPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef(false);
@@ -88,11 +88,11 @@ export default function HarnessChatPanel({ chat, terminal }: HarnessChatPanelPro
 
       <button
         type="button"
-        data-testid="chat-openclaude-handle"
+        data-testid="chat-coder-terminal-handle"
         aria-expanded={open}
-        aria-controls="chat-openclaude-region"
-        aria-label={gptMainMode ? 'Exit ChatGPT Main mode' : open ? 'Collapse OpenClaude Code terminal' : 'Expand OpenClaude Code terminal'}
-        title={gptMainMode ? 'GPT = Main — pull down to restore native Main Chat' : open ? 'Slide down OpenClaude Code' : 'Slide up OpenClaude Code'}
+        aria-controls="chat-coder-terminal-region"
+        aria-label={gptMainMode ? 'Exit ChatGPT Main mode' : open ? 'Collapse Coder terminal' : 'Expand Coder terminal'}
+        title={gptMainMode ? 'GPT = Main — pull down to restore native Main Chat' : open ? 'Slide down Coder' : 'Slide up Coder'}
         onMouseDown={onDragStart}
         onClick={onHandleClick}
         style={{
@@ -113,8 +113,8 @@ export default function HarnessChatPanel({ chat, terminal }: HarnessChatPanelPro
       </button>
 
       <div
-        id="chat-openclaude-region"
-        data-testid="chat-openclaude-region"
+        id="chat-coder-terminal-region"
+        data-testid="chat-coder-terminal-region"
         aria-hidden={!open}
         style={{
           flex: '0 0 auto',

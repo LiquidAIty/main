@@ -128,7 +128,7 @@ def load_input_data_dictionary() -> dict[str, Any]:
         if not isinstance(name, str) or not name or name in editor_field_names:
             raise IddValidationError("idd_editor_field_name_invalid")
         if definition.get("control") not in {
-            "select", "catalog-select", "catalog-multiselect", "number", "integer",
+            "select", "catalog-select", "catalog-multiselect", "number", "integer", "text",
         }:
             raise IddValidationError(f"idd_editor_field_control_invalid:{name}")
         catalog_name = definition.get("catalog")
@@ -274,9 +274,16 @@ def _declared_tool_references() -> dict[str, dict[str, Any]]:
             if not isinstance(native_name, str) or not native_name:
                 raise IddValidationError("idd_tool_declaration_name_invalid")
             canonical_id = name_prefix + native_name
-            required_binding = tool.get("requiredCallerRuntimeBinding")
-            if required_binding is not None and (
-                not isinstance(required_binding, str) or not required_binding
+            required_kind = tool.get("requiredCallerRuntimeKind")
+            required_mode = tool.get("requiredCallerRuntimeMode")
+            if (required_kind is None) != (required_mode is None) or (
+                required_kind is not None
+                and (
+                    not isinstance(required_kind, str)
+                    or not required_kind
+                    or not isinstance(required_mode, str)
+                    or not required_mode
+                )
             ):
                 raise IddValidationError("idd_tool_permission_invalid")
             current = references.get(canonical_id)
@@ -284,17 +291,21 @@ def _declared_tool_references() -> dict[str, dict[str, Any]]:
             if current is not None:
                 if current["kind"] != tool.get("kind", group_kind):
                     raise IddValidationError("idd_tool_declaration_kind_conflict")
-                current_requirement = current.get("requiredCallerRuntimeBinding")
+                current_requirement = (
+                    current.get("requiredCallerRuntimeKind"),
+                    current.get("requiredCallerRuntimeMode"),
+                )
                 if (
-                    required_binding is not None
-                    and current_requirement is not None
-                    and required_binding != current_requirement
+                    required_kind is not None
+                    and all(current_requirement)
+                    and (required_kind, required_mode) != current_requirement
                 ):
                     raise IddValidationError("idd_tool_permission_conflict")
                 if declared_source not in current["sourceIds"]:
                     current["sourceIds"].append(declared_source)
-                if required_binding is not None:
-                    current["requiredCallerRuntimeBinding"] = required_binding
+                if required_kind is not None:
+                    current["requiredCallerRuntimeKind"] = required_kind
+                    current["requiredCallerRuntimeMode"] = required_mode
                 continue
             reference = {
                 "canonicalId": canonical_id,
@@ -306,21 +317,25 @@ def _declared_tool_references() -> dict[str, dict[str, Any]]:
                 "availability": "disabled",
                 "contracts": [],
             }
-            if required_binding is not None:
-                reference["requiredCallerRuntimeBinding"] = required_binding
+            if required_kind is not None:
+                reference["requiredCallerRuntimeKind"] = required_kind
+                reference["requiredCallerRuntimeMode"] = required_mode
             references[canonical_id] = validate_record(
                 "tool-catalog-reference", reference
             )
     return references
 
 
-def required_tool_caller_runtime_binding(name: str) -> str | None:
-    """Return an explicit IDD permission requirement; never infer one from a name."""
+def required_tool_caller_runtime(name: str) -> dict[str, str] | None:
+    """Return one explicit runtime requirement; never infer one from a name."""
     reference = _declared_tool_references().get(name)
     if reference is None:
         return None
-    value = reference.get("requiredCallerRuntimeBinding")
-    return value if isinstance(value, str) and value else None
+    kind = reference.get("requiredCallerRuntimeKind")
+    mode = reference.get("requiredCallerRuntimeMode")
+    if not isinstance(kind, str) or not kind or not isinstance(mode, str) or not mode:
+        return None
+    return {"kind": kind, "mode": mode}
 
 
 def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:

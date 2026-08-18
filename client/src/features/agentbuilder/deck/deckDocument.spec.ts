@@ -9,7 +9,7 @@ describe('buildQuickAddAssistCard (hex-plus add agent)', () => {
     const { nextDeck, nextNode } = buildQuickAddAssistCard(INITIAL_DECK);
     expect(nextDeck.nodes.length).toBe(INITIAL_DECK.nodes.length + 1);
     expect(nextNode).toBeDefined();
-    expect(nextNode.runtimeType).toBe('assistant_agent');
+    expect(nextNode.runtime).toEqual({ kind: 'autogen', mode: 'assistant' });
     expect(nextNode.kind).toBe('agent');
   });
 
@@ -31,8 +31,6 @@ describe('buildQuickAddAssistCard (hex-plus add agent)', () => {
     expect(nextNode.runtimeOptions?.skills).toEqual([]);
     expect(nextNode.runtimeOptions?.toolsets).toEqual([]);
     expect(nextNode.runtimeOptions?.mcpConnectionIds).toEqual([]);
-    expect(nextNode.runtimeOptions?.executionMode).toBe('single');
-    expect(nextNode.runtimeOptions?.profile).toBeUndefined();
     expect(nextNode.status).toBe('ready');
     expect(typeof nextNode.position.x).toBe('number');
     expect(typeof nextNode.position.y).toBe('number');

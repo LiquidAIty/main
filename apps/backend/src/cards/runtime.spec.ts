@@ -7,7 +7,7 @@ describe('saved Card model lookup', () => {
     expect(
       resolveCardModelStrict({
         id: 'card_deepseek',
-        runtimeType: 'assistant_agent',
+        runtime: { kind: 'autogen', mode: 'assistant' },
         runtimeOptions: {
           provider: 'openrouter',
           modelKey: 'deepseek/deepseek-v4-flash-0731',
@@ -23,7 +23,7 @@ describe('saved Card model lookup', () => {
     expect(() =>
       resolveCardModelStrict({
         id: 'card_deepseek',
-        runtimeType: 'assistant_agent',
+        runtime: { kind: 'autogen', mode: 'assistant' },
         runtimeOptions: {
           provider: 'openai',
           modelKey: 'deepseek/deepseek-v4-flash-0731',

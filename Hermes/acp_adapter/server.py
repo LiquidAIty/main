@@ -284,8 +284,7 @@ def _external_session_delegate_cards(
         raise ValueError("acp_session_config_invalid: field=delegateCards")
 
     required_strings = (
-        "cardId", "title", "runtimeBinding", "prompt", "profile",
-        "provider", "providerModelId", "accessMode", "executionMode",
+        "cardId", "title", "prompt", "provider", "providerModelId", "accessMode",
     )
     list_fields = ("skills", "toolsets", "allowedToolNames")
     delegates: list[dict[str, Any]] = []
@@ -303,10 +302,23 @@ def _external_session_delegate_cards(
             normalized[key] = item.strip() if key != "prompt" else item
         if normalized["cardId"] in seen:
             raise ValueError("acp_session_delegate_card_duplicate")
-        if normalized["executionMode"] not in {"single", "auto-kanban"}:
+        runtime = entry.get("runtime")
+        if (
+            not isinstance(runtime, dict)
+            or set(runtime) != {"kind", "mode", "profile"}
+            or runtime.get("kind") != "hermes"
+            or runtime.get("mode") != "delegate"
+            or not isinstance(runtime.get("profile"), str)
+            or not runtime["profile"].strip()
+        ):
             raise ValueError(
-                "acp_session_config_invalid: field=delegateCards.executionMode"
+                "acp_session_config_invalid: field=delegateCards.runtime"
             )
+        normalized["runtime"] = {
+            "kind": "hermes",
+            "mode": "delegate",
+            "profile": runtime["profile"].strip(),
+        }
         for key in list_fields:
             items = entry.get(key)
             if not isinstance(items, list) or any(

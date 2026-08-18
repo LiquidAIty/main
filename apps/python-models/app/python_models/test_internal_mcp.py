@@ -20,7 +20,8 @@ def test_card_runtime_token_is_scoped_and_signed(monkeypatch):
         conversation_id="conversation-1",
         parent_run_id="run-1",
         caller_card_id="card-mag-one",
-        caller_runtime_binding="magentic_one",
+        caller_runtime_kind="autogen",
+        caller_runtime_mode="magentic_one",
         granted_tools=["card.run_assistant_agent"],
     )
     claims = jwt.decode(
@@ -37,7 +38,8 @@ def test_card_runtime_token_is_scoped_and_signed(monkeypatch):
         "conversationId": "conversation-1",
         "parentRunId": "run-1",
         "callerCardId": "card-mag-one",
-        "callerRuntimeBinding": "magentic_one",
+        "callerRuntimeKind": "autogen",
+        "callerRuntimeMode": "magentic_one",
         "grantedTools": ["card.run_assistant_agent"],
     }
 
@@ -99,7 +101,8 @@ def test_saved_card_call_uses_official_http_mcp_with_server_owned_identity(monke
         conversation_id="conversation-1",
         parent_run_id="run-1",
         caller_card_id="card-mag-one",
-        caller_runtime_binding="magentic_one",
+        caller_runtime_kind="autogen",
+        caller_runtime_mode="magentic_one",
         target_card_id="card-coder",
         input_text="bounded task",
     ))

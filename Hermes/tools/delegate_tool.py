@@ -1691,8 +1691,7 @@ def _build_child_agent(
     child._parent_turn_id = getattr(parent_agent, "_current_turn_id", "") or ""
     if saved_card_identity:
         child._saved_card_id = saved_card_identity.get("cardId")
-        child._saved_card_profile = saved_card_identity.get("profile")
-        child._saved_card_runtime_binding = saved_card_identity.get("runtimeBinding")
+        child._saved_card_runtime = saved_card_identity.get("runtime")
     # Stable sidebar marker: delegate subagent sessions must stay out of
     # session pickers even when a parent delete orphans them (parent_session_id
     # → NULL). Mirrors /branch's ``_branched_from`` pattern — see
@@ -2483,10 +2482,7 @@ def _run_single_child(
                 ),
                 "_child_role": getattr(child, "_delegate_role", None),
                 "card_id": _saved_card_result_value(child, "_saved_card_id"),
-                "profile": _saved_card_result_value(child, "_saved_card_profile"),
-                "runtime_binding": _saved_card_result_value(
-                    child, "_saved_card_runtime_binding"
-                ),
+                "runtime": _saved_card_result_value(child, "_saved_card_runtime"),
                 "diagnostic_path": diagnostic_path,
             }
             if _late_pending_steer:
@@ -2677,10 +2673,7 @@ def _run_single_child(
             },
             "tool_trace": tool_trace,
             "card_id": _saved_card_result_value(child, "_saved_card_id"),
-            "profile": _saved_card_result_value(child, "_saved_card_profile"),
-            "runtime_binding": _saved_card_result_value(
-                child, "_saved_card_runtime_binding"
-            ),
+            "runtime": _saved_card_result_value(child, "_saved_card_runtime"),
             # Captured before the finally block calls child.close() so the
             # parent thread can fire subagent_stop with the correct role.
             # Stripped before the dict is serialised back to the model.
@@ -2859,10 +2852,7 @@ def _run_single_child(
             "duration_seconds": duration,
             "_child_role": getattr(child, "_delegate_role", None),
             "card_id": _saved_card_result_value(child, "_saved_card_id"),
-            "profile": _saved_card_result_value(child, "_saved_card_profile"),
-            "runtime_binding": _saved_card_result_value(
-                child, "_saved_card_runtime_binding"
-            ),
+            "runtime": _saved_card_result_value(child, "_saved_card_runtime"),
         }
         if _late_pending_steer:
             _error_entry["missed_steer"] = _late_pending_steer
@@ -3187,9 +3177,14 @@ def _resolve_saved_delegate_card(
     card = registry[target]
     if not isinstance(card, dict):
         return None, f"saved_delegate_card_invalid:{target}"
-    execution_mode = str(card.get("executionMode") or "").strip()
-    if execution_mode != "single":
-        return None, f"saved_delegate_execution_mode_unsupported:{execution_mode}"
+    runtime = card.get("runtime")
+    if (
+        not isinstance(runtime, dict)
+        or runtime.get("kind") != "hermes"
+        or runtime.get("mode") != "delegate"
+        or not str(runtime.get("profile") or "").strip()
+    ):
+        return None, "saved_delegate_runtime_unsupported"
     parent_access_mode = str(
         getattr(parent_agent, "_saved_delegate_access_mode", "") or ""
     ).strip()
@@ -3482,10 +3477,7 @@ def delegate_task(
             saved_card_identity=(
                 {
                     "cardId": str(saved_delegate.get("cardId") or ""),
-                    "profile": str(saved_delegate.get("profile") or ""),
-                    "runtimeBinding": str(
-                        saved_delegate.get("runtimeBinding") or ""
-                    ),
+                    "runtime": dict(saved_delegate.get("runtime") or {}),
                 }
                 if saved_delegate is not None
                 else None

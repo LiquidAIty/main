@@ -7,7 +7,7 @@
 
 [dictionary]
 name = "LiquidAIty"
-version = 1
+version = 2
 idfFormat = "mixed-markdown"
 islandStyle = "bracketed-native-language"
 unknownIslands = "inert"
@@ -151,13 +151,6 @@ parameters = ["projectId", "deckId", "conversationId", "runId", "assignmentId", 
 required = []
 
 [[toolGroups.tools]]
-name = "coder.status"
-displayName = "Coder status"
-description = "Read the canonical OpenClaude Coder process state."
-parameters = []
-required = []
-
-[[toolGroups.tools]]
 name = "mag_one.describe_connected_agents"
 displayName = "Describe connected Mag One agents"
 description = "Read saved bus-eligible Mag One card capabilities."
@@ -170,7 +163,8 @@ displayName = "Run Magentic-One"
 description = "Load one canonical saved Mag One IDF and invoke its native runtime after current authority validation."
 parameters = ["projectId", "deckId", "idfId", "conversationId"]
 required = ["idfId", "projectId", "deckId"]
-requiredCallerRuntimeBinding = "main_chat"
+requiredCallerRuntimeKind = "hermes"
+requiredCallerRuntimeMode = "main"
 
 [[toolGroups.tools]]
 name = "write_mag_one_instructions"
@@ -209,8 +203,8 @@ required = ["query"]
 
 [[toolGroups.tools]]
 name = "card.run_assistant_agent"
-displayName = "Run AssistantAgent card"
-description = "Run one saved AutoGen AssistantAgent card with saved authority."
+displayName = "Run saved Card"
+description = "Run one saved external Card through current Card grants and AGE relationship authority."
 parameters = ["projectId", "deckId", "cardId", "correlationId", "conversationId", "originatingAgentId", "originatingRunId", "input"]
 required = ["cardId", "input"]
 
@@ -639,15 +633,6 @@ parameters = []
 required = []
 
 [[toolGroups.tools]]
-name = "run_local_coder"
-namespace = "coder"
-sourceId = "local_coder"
-kind = "agent"
-description = "Run a bounded LocalCoder task and return its CoderReport."
-parameters = ["allowed_files", "cbm_queries", "code_anchors", "context_summary", "forbidden_work", "guardrails", "objective", "plan_excerpt", "project_id", "proof_required", "report_format", "stop_conditions", "write_mode"]
-required = ["objective"]
-
-[[toolGroups.tools]]
 name = "web_search"
 namespace = "web"
 sourceId = "autogen"
@@ -716,40 +701,9 @@ type = "string"
 required = true
 
 [[records.fields]]
-name = "runtimeType"
-type = "string"
+name = "runtime"
+type = "object"
 required = true
-
-[[records.fields]]
-name = "runtimeBinding"
-type = "string"
-required = false
-
-[[records.fields]]
-name = "profile"
-type = "string"
-required = false
-
-[[records.fields]]
-name = "savedCardRuntime"
-type = "object"
-required = false
-
-[[records.fields]]
-name = "profileSnapshot"
-type = "object"
-required = false
-
-[[records.fields]]
-name = "profileConflicts"
-type = "string-array"
-required = false
-
-[[records.fields]]
-name = "profileConflictResolution"
-type = "string"
-required = false
-values = ["hermes", "card"]
 
 [[records.fields]]
 name = "provider"
@@ -760,7 +714,7 @@ required = false
 name = "accessMode"
 type = "string"
 required = true
-values = ["chatgpt-account", "coder-oauth", "openai-api", "openrouter-api"]
+values = ["chatgpt-account", "openai-api", "openrouter-api"]
 
 [[records.fields]]
 name = "modelKey"
@@ -771,12 +725,6 @@ required = false
 name = "providerModelId"
 type = "string"
 required = false
-
-[[records.fields]]
-name = "executionMode"
-type = "string"
-required = false
-values = ["single", "auto-kanban"]
 
 [[records.fields]]
 name = "tools"
@@ -814,27 +762,7 @@ type = "string-array"
 required = false
 
 [[records.fields]]
-name = "directSubagents"
-type = "object-array"
-required = false
-
-[[records.fields]]
 name = "runtimeOptions"
-type = "object"
-required = false
-
-[[records.fields]]
-name = "participants"
-type = "object-array"
-required = false
-
-[[records.fields]]
-name = "assistant"
-type = "object"
-required = false
-
-[[records.fields]]
-name = "magentic"
 type = "object"
 required = false
 
@@ -867,72 +795,6 @@ required = true
 name = "required"
 type = "boolean"
 required = true
-
-[[records]]
-name = "coder-packet"
-allowUnknownFields = false
-description = "User-reviewable dynamic coding fields embedded in one transient outer IDF."
-
-[[records.fields]]
-name = "objective"
-type = "string"
-required = true
-
-[[records.fields]]
-name = "planExcerpt"
-type = "string"
-required = true
-
-[[records.fields]]
-name = "contextSummary"
-type = "string"
-required = true
-
-[[records.fields]]
-name = "codeAnchors"
-type = "string-array"
-required = true
-
-[[records.fields]]
-name = "cbmQueries"
-type = "string-array"
-required = true
-
-[[records.fields]]
-name = "guardrails"
-type = "string-array"
-required = true
-
-[[records.fields]]
-name = "allowedFiles"
-type = "string-array"
-required = true
-
-[[records.fields]]
-name = "forbiddenWork"
-type = "string-array"
-required = true
-
-[[records.fields]]
-name = "proofRequired"
-type = "string-array"
-required = true
-
-[[records.fields]]
-name = "reportFormat"
-type = "string"
-required = true
-
-[[records.fields]]
-name = "stopConditions"
-type = "string-array"
-required = true
-
-[[records.fields]]
-name = "writeMode"
-type = "string"
-required = true
-values = ["read-only", "edit"]
 
 [[records]]
 name = "model-option"
@@ -1012,7 +874,12 @@ type = "object-array"
 required = true
 
 [[records.fields]]
-name = "requiredCallerRuntimeBinding"
+name = "requiredCallerRuntimeKind"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "requiredCallerRuntimeMode"
 type = "string"
 required = false
 
@@ -1021,22 +888,56 @@ required = false
 # are not copied into this file as stale provider/tool inventories.
 
 [[editorFields]]
-name = "executionMode"
-label = "Execution mode"
-path = "executionMode"
+name = "runtimeKind"
+label = "Runtime"
+path = "runtime.kind"
 control = "select"
 allowUnset = false
-blockedRuntimeBindings = ["main_chat", "local_coder"]
-blockedRuntimeTypes = ["magentic_one"]
-help = "Ordinary cards may use Hermes single or Auto-Kanban without changing identity."
+help = "Choose the one runtime owner for this saved Card."
 
 [[editorFields.options]]
-value = "single"
-label = "Single"
+value = "hermes"
+label = "Hermes"
 
 [[editorFields.options]]
-value = "auto-kanban"
-label = "Auto-Kanban"
+value = "autogen"
+label = "AutoGen"
+
+[[editorFields]]
+name = "runtimeMode"
+label = "Runtime mode"
+path = "runtime.mode"
+control = "select"
+allowUnset = false
+help = "Hermes supports Main, Delegate, and Kanban; AutoGen supports Assistant and Magentic-One."
+
+[[editorFields.options]]
+value = "main"
+label = "Main"
+
+[[editorFields.options]]
+value = "delegate"
+label = "Delegate"
+
+[[editorFields.options]]
+value = "kanban"
+label = "Kanban"
+
+[[editorFields.options]]
+value = "assistant"
+label = "Assistant"
+
+[[editorFields.options]]
+value = "magentic_one"
+label = "Magentic-One"
+
+[[editorFields]]
+name = "runtimeProfile"
+label = "Hermes profile"
+path = "runtime.profile"
+control = "text"
+allowUnset = true
+help = "Required for Hermes Cards and absent for AutoGen Cards."
 
 [[editorFields]]
 name = "provider"
@@ -1066,10 +967,6 @@ help = "Select account transport or an explicit API credential mode; credentials
 [[editorFields.options]]
 value = "chatgpt-account"
 label = "ChatGPT account"
-
-[[editorFields.options]]
-value = "coder-oauth"
-label = "Coder OAuth"
 
 [[editorFields.options]]
 value = "openai-api"

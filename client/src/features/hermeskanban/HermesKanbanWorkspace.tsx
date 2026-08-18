@@ -20,7 +20,6 @@ import { KANBAN_STATUSES } from './types';
 
 export type HermesKanbanWorkspaceProps = {
   onClose: () => void;
-  onOpenTerminal?: () => void;
   focusedCardId?: string | null;
 };
 
@@ -115,7 +114,6 @@ function AddTaskForm({
 
 export default function HermesKanbanWorkspace({
   onClose,
-  onOpenTerminal,
 }: HermesKanbanWorkspaceProps) {
   const [boards, setBoards] = useState<KanbanBoardInfo[]>([]);
   const [currentBoard, setCurrentBoard] = useState<string>('');
@@ -433,18 +431,6 @@ export default function HermesKanbanWorkspace({
           gap: 6,
         }}
       >
-        {onOpenTerminal ? (
-          <button
-            type="button"
-            data-testid="hermes-terminal-open"
-            aria-label="Open installed Hermes terminal"
-            title="Open installed Hermes terminal"
-            onClick={onOpenTerminal}
-            style={graphDrawerButtonStyle({ color: '#7DE0DA' })}
-          >
-            Terminal
-          </button>
-        ) : null}
         <button
           type="button"
           data-testid="hermes-kanban-close"

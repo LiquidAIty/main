@@ -47,7 +47,8 @@ def create_card_runtime_token(
     conversation_id: str,
     parent_run_id: str,
     caller_card_id: str,
-    caller_runtime_binding: str,
+    caller_runtime_kind: str,
+    caller_runtime_mode: str,
     granted_tools: Iterable[str],
 ) -> str:
     principal = {
@@ -57,12 +58,13 @@ def create_card_runtime_token(
         "conversationId": str(conversation_id or "").strip(),
         "parentRunId": str(parent_run_id or "").strip(),
         "callerCardId": str(caller_card_id or "").strip(),
-        "callerRuntimeBinding": str(caller_runtime_binding or "").strip(),
+        "callerRuntimeKind": str(caller_runtime_kind or "").strip(),
+        "callerRuntimeMode": str(caller_runtime_mode or "").strip(),
         "grantedTools": _unique_strings(granted_tools),
     }
     if any(not principal[field] for field in (
         "projectId", "deckId", "conversationId", "parentRunId",
-        "callerCardId", "callerRuntimeBinding",
+        "callerCardId", "callerRuntimeKind", "callerRuntimeMode",
     )):
         raise RuntimeError("internal_mcp_principal_incomplete")
     now = int(time.time())
@@ -102,7 +104,8 @@ async def call_saved_card_via_mcp(
     conversation_id: str,
     parent_run_id: str,
     caller_card_id: str,
-    caller_runtime_binding: str,
+    caller_runtime_kind: str,
+    caller_runtime_mode: str,
     target_card_id: str,
     input_text: str,
 ) -> dict[str, Any]:
@@ -113,7 +116,8 @@ async def call_saved_card_via_mcp(
         conversation_id=conversation_id,
         parent_run_id=parent_run_id,
         caller_card_id=caller_card_id,
-        caller_runtime_binding=caller_runtime_binding,
+        caller_runtime_kind=caller_runtime_kind,
+        caller_runtime_mode=caller_runtime_mode,
         granted_tools=("card.run_assistant_agent",),
     )
     async with httpx.AsyncClient(

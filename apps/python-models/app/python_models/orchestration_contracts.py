@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
@@ -61,41 +61,45 @@ class ProjectSession(BaseModel):
     )
 
 
+class HermesRuntime(BaseModel):
+    kind: Literal["hermes"]
+    mode: Literal["main", "delegate", "kanban"]
+    profile: RequiredRuntimeString
+
+
+class AutoGenRuntime(BaseModel):
+    kind: Literal["autogen"]
+    mode: Literal["assistant", "magentic_one"]
+
+
+CardRuntime = Annotated[
+    Union[HermesRuntime, AutoGenRuntime],
+    Field(discriminator="kind"),
+]
+
+
 class CardRuntimeConfig(BaseModel):
     cardId: str
     title: str
-    runtimeType: Literal[
-        "magentic_one",
-        "assistant_agent",
-    ]
-    runtimeBinding: str | None = None
-    executionMode: Literal["single", "auto-kanban"] | None = None
+    runtime: CardRuntime
     prompt: str = ""
     provider: str | None = None
-    accessMode: Literal["chatgpt-account", "coder-oauth", "openai-api", "openrouter-api"]
+    accessMode: Literal["chatgpt-account", "openai-api", "openrouter-api"]
     modelKey: str | None = None
     providerModelId: str | None = None
     runtimeOptions: dict = Field(default_factory=dict)
-    assistant: dict | None = None
-    magentic: dict | None = None
-    participants: list["CardRuntimeParticipant"] = Field(default_factory=list)
 
 
 class CardRuntimeParticipant(BaseModel):
     cardId: str
     title: str
-    runtimeType: Literal["assistant_agent"]
-    runtimeBinding: str | None = None
-    executionMode: Literal["single", "auto-kanban"] = "single"
+    runtime: AutoGenRuntime
     tools: list[str] = Field(default_factory=list)
     prompt: str = ""
     provider: RequiredRuntimeString
-    accessMode: Literal["chatgpt-account", "coder-oauth", "openai-api", "openrouter-api"]
+    accessMode: Literal["chatgpt-account", "openai-api", "openrouter-api"]
     providerModelId: RequiredRuntimeString
     reasoningEffort: Literal["low", "medium", "high", "xhigh"] | None = None
-    # Local Coder only: exact MCP capabilities selected on the saved card.
-    # ``tools`` remains the outer AutoGen controller grant.
-    innerMcpTools: list[str] = Field(default_factory=list)
     temperature: float | None = None
     maxTokens: int | None = None
 
@@ -150,6 +154,7 @@ class RuntimeRequest(BaseModel):
     session: ProjectSession
     idf: InputDataFile
     cardRuntime: CardRuntimeConfig | None = None
+    participants: list[CardRuntimeParticipant] = Field(default_factory=list)
 
 
 def require_idf_card_runtime(context: RuntimeRequest) -> CardRuntimeConfig:

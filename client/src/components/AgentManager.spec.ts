@@ -7,7 +7,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildActiveAgentManagerLocalConfig,
-  canChooseCardExecutionMode,
   buildInputDictionarySelectedRows,
   buildDisplayedToolRows,
   parseCardEditorInputDataDictionary,
@@ -17,8 +16,7 @@ import {
 describe('AgentManager active builder config', () => {
   it('builds the exact active local configuration payload', () => {
     const payload = buildActiveAgentManagerLocalConfig({
-      runtimeBinding: 'main_chat',
-      executionMode: 'auto-kanban',
+      runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
       provider: 'openai',
       accessMode: 'chatgpt-account',
       modelKey: 'gpt-test',
@@ -34,8 +32,7 @@ describe('AgentManager active builder config', () => {
     });
 
     expect(payload).toEqual({
-      runtime_binding: 'main_chat',
-      execution_mode: 'single',
+      runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
       provider: 'openai',
       access_mode: 'chatgpt-account',
       model_key: 'gpt-test',
@@ -53,17 +50,9 @@ describe('AgentManager active builder config', () => {
     expect(serialized).not.toMatch(/api.?key|access.?token|refresh.?token|client.?secret/i);
   });
 
-  it('offers one execution-mode field only to ordinary cards', () => {
-    expect(canChooseCardExecutionMode('assist', 'assistant_agent')).toBe(true);
-    expect(canChooseCardExecutionMode(null, 'assistant_agent')).toBe(true);
-    expect(canChooseCardExecutionMode('main_chat', 'assistant_agent')).toBe(false);
-    expect(canChooseCardExecutionMode('coder', 'assistant_agent')).toBe(false);
-    expect(canChooseCardExecutionMode('local_coder', 'assistant_agent')).toBe(false);
-    expect(canChooseCardExecutionMode(null, 'magentic_one')).toBe(false);
-
-    const ordinary = buildActiveAgentManagerLocalConfig({
-      runtimeBinding: 'assist',
-      executionMode: 'auto-kanban',
+  it('serializes the selected two-owner runtime without implicit mode coercion', () => {
+    const assistant = buildActiveAgentManagerLocalConfig({
+      runtime: { kind: 'autogen', mode: 'assistant' },
       provider: 'openai',
       accessMode: 'openai-api',
       modelKey: 'gpt-test',
@@ -77,11 +66,10 @@ describe('AgentManager active builder config', () => {
       toolsetsText: '',
       mcpConnectionIdsText: '',
     });
-    expect(ordinary.execution_mode).toBe('auto-kanban');
+    expect(assistant.runtime).toEqual({ kind: 'autogen', mode: 'assistant' });
 
     const coder = buildActiveAgentManagerLocalConfig({
-      runtimeBinding: 'coder',
-      executionMode: 'auto-kanban',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
       provider: 'openai',
       accessMode: 'chatgpt-account',
       modelKey: 'gpt-test',
@@ -95,7 +83,7 @@ describe('AgentManager active builder config', () => {
       toolsetsText: 'file\nterminal',
       mcpConnectionIdsText: '',
     });
-    expect(coder.execution_mode).toBe('single');
+    expect(coder.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'coder' });
     expect(coder.access_mode).toBe('chatgpt-account');
     expect(coder.tools).toEqual(['cbm.search_graph']);
     expect(coder.toolsets).toEqual(['file', 'terminal']);
@@ -142,8 +130,8 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain('Description');
     expect(source).not.toContain('Card mode');
     expect(source).not.toContain('Runtime Type');
-    expect(idd).toContain('label = "Execution mode"');
-    expect(source).toContain('data-testid="agent-execution-mode"');
+    expect(idd).toContain('label = "Runtime mode"');
+    expect(source).toContain('data-testid="agent-runtime-mode"');
     expect(source).toContain('Advanced runtime');
     expect(source).not.toContain('GlassInspectorSection');
     expect(source).not.toContain('roleBadge');
@@ -281,23 +269,23 @@ describe('AgentManager active builder config', () => {
     ]);
   });
 
-  it('recognizes a private native agent capability as a valid Coder selection', () => {
+  it('recognizes a declared private Python capability as a valid Card selection', () => {
     expect(
       buildInputDictionarySelectedRows(
         [{
-          canonicalId: 'run_local_coder',
-          kind: 'agent',
-          sourceIds: ['local_coder', 'python_runtime'],
-          displayName: 'Local Coder',
+          canonicalId: 'calculator',
+          kind: 'tool',
+          sourceIds: ['python_runtime'],
+          displayName: 'Calculator',
           availability: 'available',
         }],
         [],
       ),
     ).toEqual([
       expect.objectContaining({
-        name: 'run_local_coder',
-        kind: 'agent',
-        sourceIds: ['local_coder', 'python_runtime'],
+        name: 'calculator',
+        kind: 'tool',
+        sourceIds: ['python_runtime'],
         availability: 'available',
       }),
     ]);

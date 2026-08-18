@@ -93,8 +93,8 @@ try {
                     [int]$readiness.StatusCode -eq 200 -and
                     [bool]$readinessPayload.catalogReady -and
                     $catalogState -eq 'ready' -and
-                    $catalogCount -eq 70 -and
-                    [int]$readinessPayload.publicToolUniqueCount -eq 70
+                    $catalogCount -eq 69 -and
+                    [int]$readinessPayload.publicToolUniqueCount -eq 69
                 )
                 if ($catalogState -eq 'failed') {
                     $catalogFailure = [string]$readinessPayload.catalogFailure

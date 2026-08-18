@@ -20,9 +20,10 @@ from app.python_models.orchestration_contracts import (
 
 async def orchestrate_runtime(context: RuntimeRequest) -> OrchestratorRunResponse:
     card_runtime = require_idf_card_runtime(context)
-    if card_runtime.runtimeType != "magentic_one":
+    if card_runtime.runtime.kind != "autogen" or card_runtime.runtime.mode != "magentic_one":
         raise RuntimeError(
-            f"orchestrator_card_required: runtimeType={card_runtime.runtimeType}"
+            "orchestrator_card_required: runtime="
+            f"{card_runtime.runtime.kind}/{card_runtime.runtime.mode}"
         )
 
     # Native Magentic-One owns its private Task and Progress Ledgers. Python rails
@@ -31,12 +32,13 @@ async def orchestrate_runtime(context: RuntimeRequest) -> OrchestratorRunRespons
 
 
 def _configured_runtime_handler(card_runtime: CardRuntimeConfig):
-    if card_runtime.runtimeType == "assistant_agent":
+    if card_runtime.runtime.kind == "autogen" and card_runtime.runtime.mode == "assistant":
         return run_configured_card
-    if card_runtime.runtimeType == "magentic_one":
+    if card_runtime.runtime.kind == "autogen" and card_runtime.runtime.mode == "magentic_one":
         return orchestrate_runtime
     raise RuntimeError(
-        f"configured_card_runtime_unsupported: runtimeType={card_runtime.runtimeType}"
+        "configured_card_runtime_unsupported: runtime="
+        f"{card_runtime.runtime.kind}/{card_runtime.runtime.mode}"
     )
 
 

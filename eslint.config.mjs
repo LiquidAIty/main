@@ -13,7 +13,6 @@ export default [
       '**/vitest.config.*.timestamp*',
       // Vendored / parked / generated trees — not owned active-core code.
       // The lint gate measures the code we maintain, nothing else.
-      'localcoder/**',
       'client/src/vendor/**',
       'Kronos-main/**',
       'vendor/**',

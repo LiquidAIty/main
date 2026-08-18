@@ -1,16 +1,9 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
-import { ZodError } from 'zod';
-import type { OpenClaudeProviderTargetInput } from '../coder/openclaude/contracts';
-import { openClaudeRuntimeService } from '../coder/openclaude/runtime/service';
-import { localCoderService } from '../coder/localcoder/service';
 import {
-  coderConsoleSessionManager,
-  hermesConsoleSessionManager,
-  openClaudeConsoleSessionManager,
+  coderTerminalSessionManager,
   type ConsoleMode,
-} from '../coder/openclaude/console/consoleSession';
-import { resolveRepoRoot } from '../coder/workspaceRoot';
+} from '../hermes/coderTerminal';
 import {
   deriveHermesSessionKey,
   providerForHermes,
@@ -182,21 +175,6 @@ router.post('/mcp-bridge/describe_connected_agents', async (req, res) => {
   }
 });
 
-router.post('/mcp-bridge/coder_status', async (_req, res) => {
-  const sessions = openClaudeConsoleSessionManager.list();
-  const liveSessions = sessions.filter(
-    (session) => session.state === 'starting' || session.state === 'running',
-  );
-  return res.json({
-    ok: true,
-    state: liveSessions.length > 0 ? 'running' : 'idle',
-    running: liveSessions.length > 0,
-    liveSessions,
-    recentSessions: sessions.slice(-10),
-    authority: 'openclaude_console_session_manager',
-  });
-});
-
 type PreparedHermesTransportArgs = {
   prepared: any;
   projectId: string;
@@ -213,39 +191,32 @@ function resolvePreparedHermesTurnArgs(
 ): HermesTurnArgs {
   const transport = args.prepared?.hermesTransport;
   const context = transport?.cardContext || {};
-  const profile = String(transport?.profile || '').trim();
-  if (args.prepared?.runtimeOwner !== 'hermes' || !profile) {
+  const runtime = context.runtime;
+  if (
+    args.prepared?.runtimeOwner !== 'hermes'
+    || runtime?.kind !== 'hermes'
+    || !['main', 'delegate', 'kanban'].includes(runtime?.mode)
+    || !String(runtime?.profile || '').trim()
+  ) {
     throw new Error('prepared_hermes_transport_invalid');
   }
   return {
     cardId: String(context.cardId || ''),
     title: String(context.title || ''),
-    runtimeBinding: String(context.runtimeBinding || ''),
+    runtime,
     prompt: String(transport.systemPrompt || ''),
-    profile,
     provider: String(context.provider || ''),
     modelKey: String(context.modelKey || ''),
     providerModelId: String(context.providerModelId || ''),
     accessMode: context.accessMode,
-    executionMode: context.executionMode === 'auto-kanban' ? 'auto-kanban' : 'single',
     tools: Array.isArray(context.tools) ? context.tools : [],
     nativeTools: Array.isArray(context.nativeTools) ? context.nativeTools : [],
     skills: Array.isArray(context.skills) ? context.skills : [],
     toolsets: Array.isArray(context.toolsets) ? context.toolsets : [],
     mcpConnectionIds: Array.isArray(context.mcpConnectionIds) ? context.mcpConnectionIds : [],
-    coderCardIds: Array.isArray(context.coderCardIds) ? context.coderCardIds : [],
-    directSubagents: Array.isArray(context.directSubagents) ? context.directSubagents : [],
-    nativeHermesDelegates: Array.isArray(context.nativeHermesDelegates)
-      ? context.nativeHermesDelegates
+    nativeHermesDelegates: Array.isArray(transport.nativeHermesDelegates)
+      ? transport.nativeHermesDelegates
       : [],
-    savedCardRuntime: context.savedCardRuntime || {
-      provider: String(context.provider || ''),
-      modelKey: String(context.modelKey || ''),
-      providerModelId: String(context.providerModelId || ''),
-    },
-    profileSnapshot: context.profileSnapshot || null,
-    profileConflicts: Array.isArray(context.profileConflicts) ? context.profileConflicts : [],
-    profileConflictResolution: context.profileConflictResolution === 'card' ? 'card' : 'hermes',
     sessionKey: deriveHermesSessionKey(
       args.projectId,
       args.conversationId,
@@ -264,7 +235,7 @@ async function startPreparedHermesTransport(
   args: PreparedHermesTransportArgs,
 ): Promise<HermesTurnHandle> {
   const turnArgs = resolvePreparedHermesTurnArgs(args);
-  if (turnArgs.executionMode !== 'single') {
+  if (turnArgs.runtime.mode === 'kanban') {
     throw new Error('prepared_hermes_single_transport_required');
   }
   return startHermesTurn(turnArgs, args.onEvent);
@@ -274,7 +245,7 @@ async function runPreparedHermesTransport(
   args: PreparedHermesTransportArgs & { correlationId: string },
 ): Promise<Awaited<HermesTurnHandle['done']>> {
   const turnArgs = resolvePreparedHermesTurnArgs(args);
-  if (turnArgs.executionMode === 'single') {
+  if (turnArgs.runtime.mode !== 'kanban') {
     const handle = await startPreparedHermesTransport(args);
     return handle.done;
   }
@@ -288,7 +259,7 @@ async function runPreparedHermesTransport(
     cardId: turnArgs.cardId,
     title: turnArgs.title,
     prompt: turnArgs.prompt,
-    profile: turnArgs.profile,
+    profile: turnArgs.runtime.profile,
     provider: providerForHermes(turnArgs.provider, turnArgs.accessMode),
     providerModelId: turnArgs.providerModelId,
     skills: turnArgs.skills,
@@ -297,7 +268,7 @@ async function runPreparedHermesTransport(
   const initialStatus = String(created.snapshot?.task?.status || '').trim().toLowerCase();
   const completed = initialStatus === 'done'
     ? created
-    : await waitForHermesKanbanCardTask(turnArgs.profile, created.taskId);
+    : await waitForHermesKanbanCardTask(turnArgs.runtime.profile, created.taskId);
   const nativeStatus = String(completed.snapshot?.task?.status || '').trim().toLowerCase();
   const finalText = String(completed.snapshot?.task?.result || '');
   if (nativeStatus !== 'done' || !finalText.trim()) {
@@ -408,26 +379,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         });
         output = response.finalText;
         transport = response.transport;
-      } else if (prepared.coderTransport?.coderPacket) {
-        const coderPacket = prepared.coderTransport.coderPacket as Record<string, unknown>;
-        if (String(coderPacket.exactIdf || '') !== exactIdf) {
-          throw new Error('coder_transport_exact_idf_mismatch');
-        }
-        const coderResult = await localCoderService.run({
-          ...coderPacket,
-          id: correlationId,
-          repoPath: resolveRepoRoot(),
-        });
-        output = JSON.stringify(coderResult.report, null, 2);
-        transport = {
-          report: coderResult.report,
-          comparison: coderResult.comparison,
-          cbmScopeGate: coderResult.cbmScopeGate,
-          runtimeDiagnostics: coderResult.runtimeDiagnostics,
-        };
-        if (!['succeeded', 'partial'].includes(coderResult.report.status)) {
-          throw new Error(`local_coder_${coderResult.report.status}:${coderResult.report.summary}`);
-        }
       } else if (prepared.nativeRuntimeRequest) {
         const response = await dispatchConfiguredRuntime(prepared.nativeRuntimeRequest);
         if (!response.ok) throw new Error(response.error || 'configured_runtime_failed');
@@ -525,7 +476,7 @@ router.post('/mcp-bridge/idfs', async (req, res) => {
 
 // ── Persistent repo-owned Hermes Main bridge (BuilderChat -> ACP) ───────────
 // One stable native Hermes conversation per saved Main card and product
-// conversation. OpenClaude remains the separate Coder/terminal runtime.
+// conversation. The saved Coder Card remains a separate Hermes profile.
 const activeHermesTurns = new Map<string, HermesTurnHandle>();
 
 function codexTransportResult(value: Record<string, unknown>): Record<string, any> {
@@ -570,7 +521,7 @@ router.get('/main/codex-account', async (req, res) => {
       });
     }
     const accountEnvelope = await requestHermesCodexAccount(
-      runtimeConfig.profile,
+      String(runtimeConfig.runtime?.profile || ''),
       'account/read',
       { refreshToken: false },
     );
@@ -582,7 +533,7 @@ router.get('/main/codex-account', async (req, res) => {
       return res.status(409).json({ ok: false, error: 'codex_chatgpt_account_required' });
     }
     const rateEnvelope = account
-      ? await requestHermesCodexAccount(runtimeConfig.profile, 'account/rateLimits/read')
+      ? await requestHermesCodexAccount(String(runtimeConfig.runtime?.profile || ''), 'account/rateLimits/read')
       : null;
     return res.json({
       ok: true,
@@ -616,11 +567,11 @@ router.post('/main/codex-account', async (req, res) => {
       return res.status(409).json({ ok: false, error: 'main_chatgpt_account_mode_required' });
     }
     if (action === 'logout') {
-      const envelope = await requestHermesCodexAccount(runtimeConfig.profile, 'account/logout');
+      const envelope = await requestHermesCodexAccount(String(runtimeConfig.runtime?.profile || ''), 'account/logout');
       return res.json({ ok: true, action, ...codexTransportResult(envelope) });
     }
 
-    const currentEnvelope = await requestHermesCodexAccount(runtimeConfig.profile, 'account/read');
+    const currentEnvelope = await requestHermesCodexAccount(String(runtimeConfig.runtime?.profile || ''), 'account/read');
     const current = codexTransportResult(currentEnvelope);
     if (current.account?.type === 'chatgpt') {
       return res.json({ ok: true, action, alreadyAuthenticated: true, account: current.account });
@@ -630,7 +581,7 @@ router.post('/main/codex-account', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'codex_login_type_not_allowed' });
     }
     const envelope = await requestHermesCodexAccount(
-      runtimeConfig.profile,
+      String(runtimeConfig.runtime?.profile || ''),
       'account/login/start',
       { type: loginType },
     );
@@ -722,7 +673,7 @@ router.post('/main/session/chat', async (req, res) => {
     }
   };
   writeSse('session', { sessionId });
-  logHarnessTrace(`[hermes] request received ${`corr=${correlationId}`} project=${projectId} profile=${prepared.hermesTransport.profile}`);
+  logHarnessTrace(`[hermes] request received ${`corr=${correlationId}`} project=${projectId} profile=${prepared.hermesTransport.cardContext.runtime.profile}`);
   let turnFinished = false;
   let runCancelled = false;
   let terminalDoneEvent: Extract<HermesSessionEvent, { kind: 'done' }> | null = null;
@@ -909,35 +860,17 @@ function parseConsoleMode(value: unknown): ConsoleMode {
   return CONSOLE_MODES.includes(value as ConsoleMode) ? (value as ConsoleMode) : 'interactive';
 }
 
-router.get('/openclaude/terminal/launch', (req, res) => {
-  const launch = openClaudeRuntimeService.getTerminalLaunch({
-    modelKey: typeof req.query.modelKey === 'string' ? req.query.modelKey : undefined,
-    provider: typeof req.query.provider === 'string' ? (req.query.provider as OpenClaudeProviderTargetInput['provider']) : undefined,
-    providerModelId:
-      typeof req.query.providerModelId === 'string' ? req.query.providerModelId : undefined,
-  });
-  const statusCode = launch.ok ? 200 : 400;
-  return res.status(statusCode).json({ ok: launch.ok, launch });
-});
-
 // ── Native terminal transports ─────────────────────────────────────────────
 // Route plumbing is shared, while Coder and installed Hermes keep separate
 // process managers and session namespaces.
-type ConsoleRouteManager =
-  | typeof openClaudeConsoleSessionManager
-  | typeof hermesConsoleSessionManager
-  | typeof coderConsoleSessionManager;
-
 function mountConsoleSessionRoutes(
   prefix: string,
-  manager: ConsoleRouteManager,
+  manager: typeof coderTerminalSessionManager,
 ): void {
   router.post(`${prefix}/sessions`, (req, res) => {
     const started = manager.start({
       targetRoot: typeof req.body?.targetRoot === 'string' ? req.body.targetRoot : undefined,
       mode: parseConsoleMode(req.body?.mode),
-      model: typeof req.body?.model === 'string' ? req.body.model : undefined,
-      provider: typeof req.body?.provider === 'string' ? req.body.provider : undefined,
       prompt: typeof req.body?.prompt === 'string' ? req.body.prompt : undefined,
     });
     if (!started.ok) {
@@ -1020,69 +953,17 @@ function mountConsoleSessionRoutes(
   });
 }
 
-mountConsoleSessionRoutes('/openclaude/console', coderConsoleSessionManager);
-mountConsoleSessionRoutes('/hermes/console', hermesConsoleSessionManager);
+mountConsoleSessionRoutes('/hermes/coder-terminal', coderTerminalSessionManager);
 
 
-/** Resolve the saved Main Chat card from the live deck by binding, never title. */
+/** Resolve the saved Main Chat card from explicit runtime identity, never title. */
 async function resolveMainChatCardId(projectId: string, deckId: string): Promise<string | null> {
   const { deck } = await getDeckDocument(projectId, deckId);
   const card = (deck?.nodes || []).find(
     (node: any) =>
-      String((node?.runtimeOptions as any)?.binding ?? node?.runtimeBinding ?? '') === 'main_chat',
+      node?.runtime?.kind === 'hermes' && node?.runtime?.mode === 'main',
   );
   return card ? String(card.id) : null;
 }
-
-router.get('/localcoder/status', async (req, res) => {
-  const repoPath = typeof req.query.repoPath === 'string' ? req.query.repoPath : undefined;
-  const inspection = await localCoderService.inspect(repoPath);
-  return res.status(inspection.ready ? 200 : 424).json({
-    ok: inspection.ready,
-    inspection,
-  });
-});
-
-// LocalCoder/OpenClaude remains the sole coding runtime. Its Python-owned
-// callers pass a transient logical CoderPacket; this narrow process boundary
-// injects only the server-trusted repository root and process correlation id.
-// It does not persist or reconstruct an IDF, conversation, result, or receipt.
-router.post('/localcoder/run', async (req, res) => {
-  try {
-    const supplied = req.body?.coderPacket && typeof req.body.coderPacket === 'object'
-      ? req.body.coderPacket
-      : req.body;
-    const runId = `coder_${randomUUID()}`;
-    const coderPacket = {
-      ...(supplied || {}),
-      id: runId,
-      repoPath: resolveRepoRoot(),
-    };
-    const result = await localCoderService.run(coderPacket);
-    const reportOk = result.report.status === 'succeeded' || result.report.status === 'partial';
-    const statusCode =
-      result.report.status === 'blocked'
-        ? 424
-        : result.report.status === 'failed'
-          ? 502
-          : 200;
-    return res.status(statusCode).json({
-      ok: reportOk,
-      ...result,
-    });
-  } catch (error) {
-    if (error instanceof ZodError) {
-      return res.status(400).json({
-        ok: false,
-        error: 'invalid_coder_packet',
-        issues: error.issues,
-      });
-    }
-    return res.status(500).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'localcoder_run_failed',
-    });
-  }
-});
 
 export default router;

@@ -20,11 +20,9 @@ class InputDataFileError(ValueError):
 
 
 _NON_DIRECTIONAL_CARD_FIELDS = {
-    "cardId", "title", "prompt", "runtimeType", "runtimeBinding", "profile",
-    "savedCardRuntime", "profileSnapshot", "profileConflicts",
-    "profileConflictResolution", "provider", "accessMode", "modelKey",
-    "providerModelId", "executionMode", "tools", "toolDefinitions",
-    "nativeTools", "skills", "toolsets", "mcpConnectionIds", "coderCardIds",
+    "cardId", "title", "prompt", "runtime", "provider", "accessMode", "modelKey",
+    "providerModelId", "tools",
+    "nativeTools", "skills", "toolsets", "mcpConnectionIds",
     "runtimeOptions",
 }
 
@@ -42,15 +40,15 @@ def _serialized_card(card_context: dict[str, Any]) -> dict[str, Any]:
 
 
 def _render_card_context(card_context: dict[str, Any]) -> str:
+    runtime = card_context["runtime"]
     lines = [
         f"id: {card_context['cardId']}",
         f"name: {card_context['title']}",
-        f"runtime: {card_context['runtimeType']}",
+        f"runtime: {runtime['kind']}/{runtime['mode']}",
     ]
-    for key in ("runtimeBinding", "executionMode", "profile"):
-        value = card_context.get(key)
-        if isinstance(value, str) and value:
-            lines.append(f"{key}: {value}")
+    profile = runtime.get("profile")
+    if isinstance(profile, str) and profile:
+        lines.append(f"profile: {profile}")
     provider = card_context.get("provider")
     model = card_context.get("providerModelId") or card_context.get("modelKey")
     if provider or model:
@@ -78,7 +76,6 @@ def render_content_markdown(
     card_context: dict[str, Any],
     dynamic_context_markdown: str,
     native_references: list[dict[str, Any]],
-    job_context: dict[str, Any] | None = None,
 ) -> str:
     """Render one self-contained Card plus context without a destination map."""
     sections = ["# LiquidAIty Input Data File"]
@@ -99,11 +96,6 @@ def render_content_markdown(
         sections.extend(["## Dynamic Context", dynamic_context_markdown])
     if native_references:
         sections.extend(["## Native Imports", _native_reference_island(native_references)])
-    if job_context is not None:
-        sections.extend([
-            "## Approved Coding Job Fields",
-            "```json\n" + json.dumps(job_context, ensure_ascii=False, sort_keys=True, indent=2) + "\n```",
-        ])
     sections.extend(["## Current Input", user_text])
     return "\n\n".join(sections)
 

@@ -3,21 +3,16 @@ export type PromptTemplate = {
   content: string;
 };
 
-export type RuntimeBinding =
-  | 'assist'
-  | 'local_coder'
-  | 'main_chat'
-  | 'coder'
-  | 'magentic_one'
-  | 'research_agent'
-  | 'plan_agent'
-  | 'worldsignals_agent'
-  | 'trading_agent'
-  | 'hermes_steward';
-
-export type AgentCardRuntimeType =
-  | 'assistant_agent'
-  | 'magentic_one';
+export type CardRuntime =
+  | {
+      kind: 'hermes';
+      mode: 'main' | 'delegate' | 'kanban';
+      profile: string;
+    }
+  | {
+      kind: 'autogen';
+      mode: 'assistant' | 'magentic_one';
+    };
 
 // flow = ORANGE direct parent→subagent; magentic_option = BLUE side worker
 // slot; magentic_control = BLUE dedicated top control input (submit the
@@ -29,7 +24,7 @@ export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'in
 export type AgentCardRuntimeOptions = {
   // 'local_openai_compatible' = a local SLM served over an OpenAI-compatible endpoint.
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | null;
-  accessMode?: 'chatgpt-account' | 'coder-oauth' | 'openai-api' | 'openrouter-api' | null;
+  accessMode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | null;
   modelKey?: string | null;
   reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
   temperature?: number | null;
@@ -44,11 +39,6 @@ export type AgentCardRuntimeOptions = {
   toolsets?: string[] | null;
   /** References to globally configured MCP connections; never credentials. */
   mcpConnectionIds?: string[] | null;
-  /** Explicit persisted reference to an adopted Hermes profile. */
-  profile?: string | null;
-  profileSnapshot?: { name: string; model?: string | null; gateway?: string | null } | null;
-  profileConflictResolution?: 'hermes' | 'card' | null;
-  executionMode?: 'single' | 'auto-kanban' | null;
 };
 
 export type DeckNodeKind = 'agent';
@@ -69,8 +59,7 @@ export type AgentCardInstance = {
   kind?: DeckNodeKind;
   templateId: string;
   prompt?: string | null;
-  runtimeBinding?: RuntimeBinding | null;
-  runtimeType?: AgentCardRuntimeType | null;
+  runtime: CardRuntime;
   runtimeOptions?: AgentCardRuntimeOptions | null;
   parentGraphId?: string | null;
   tools?: string[];

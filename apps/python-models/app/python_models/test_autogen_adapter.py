@@ -43,21 +43,22 @@ def _transient_idf(*, card_context: dict, system_text: str, user_text: str) -> I
 def _context() -> RuntimeRequest:
     participants = [
         CardRuntimeParticipant(
-            cardId="research", title="Research Agent", runtimeType="assistant_agent",
-            runtimeBinding="hermes_steward", provider="openrouter",
+            cardId="signals", title="WorldSignals",
+            runtime={"kind": "autogen", "mode": "assistant"}, provider="openrouter",
             accessMode="openrouter-api", providerModelId=MODEL,
         ),
         CardRuntimeParticipant(
-            cardId="coder", title="Coder", runtimeType="assistant_agent",
-            runtimeBinding="local_coder", provider="openrouter",
+            cardId="trading", title="Trading",
+            runtime={"kind": "autogen", "mode": "assistant"}, provider="openrouter",
             accessMode="openrouter-api", providerModelId=MODEL,
         ),
     ]
     card_runtime = CardRuntimeConfig(
-        cardId="mag:card", title="Mag One", runtimeType="magentic_one",
+        cardId="mag:card", title="Mag One",
+        runtime={"kind": "autogen", "mode": "magentic_one"},
         prompt="saved orchestrator system", provider="openrouter",
         accessMode="openrouter-api", modelKey=MODEL, providerModelId=MODEL,
-        runtimeOptions={"deckId": "d"}, participants=participants,
+        runtimeOptions={"deckId": "d"},
     )
     idf = _transient_idf(
         card_context=card_runtime.model_dump(exclude_none=True),
@@ -72,6 +73,7 @@ def _context() -> RuntimeRequest:
         ),
         idf=idf,
         cardRuntime=card_runtime,
+        participants=participants,
     )
 
 
@@ -84,7 +86,7 @@ def test_invalid_saved_max_tokens_fails_instead_of_provider_default(max_tokens):
 
 
 def test_connected_agents_are_saved_display_names():
-    assert mac.connected_agent_names(_context()) == ["Research Agent", "Coder"]
+    assert mac.connected_agent_names(_context()) == ["WorldSignals", "Trading"]
 
 
 def test_native_mag_one_consumes_exact_idf_and_returns_native_ids(monkeypatch):
@@ -131,8 +133,8 @@ def test_native_mag_one_failure_does_not_echo_secret(monkeypatch):
 def test_saved_card_worker_uses_official_mcp_and_returns_native_output(monkeypatch):
     context = _context()
     agent = mac.McpSavedCardAgent(
-        name="Research_Agent", description="hermes_steward", context=context,
-        card_id="research", outer_run_id="mag:one",
+        name="WorldSignals", description="autogen/assistant", context=context,
+        card_id="signals", outer_run_id="mag:one",
     )
 
     calls = []
@@ -152,7 +154,7 @@ def test_saved_card_worker_uses_official_mcp_and_returns_native_output(monkeypat
     ))
     assert response.chat_message.content == "worker result"
     assert response.chat_message.metadata == {
-        "cardId": "research",
+        "cardId": "signals",
         "childRunId": "child-run-1",
         "originatingRunId": "mag:one",
         "idfId": "idf:mag",
@@ -163,8 +165,9 @@ def test_saved_card_worker_uses_official_mcp_and_returns_native_output(monkeypat
         "conversation_id": "c",
         "parent_run_id": "mag:one",
         "caller_card_id": "mag:card",
-        "caller_runtime_binding": "magentic_one",
-        "target_card_id": "research",
+        "caller_runtime_kind": "autogen",
+        "caller_runtime_mode": "magentic_one",
+        "target_card_id": "signals",
         "input_text": "[orchestrator]\nsubtask",
     }]
 

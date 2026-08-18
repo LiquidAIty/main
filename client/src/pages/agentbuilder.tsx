@@ -22,9 +22,8 @@ import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWor
 import useAgentBuilderWorkspaceLayout from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
-import OpenClaudeConsolePanel from '../features/agentbuilder/console/OpenClaudeConsolePanel';
+import CoderTerminalPanel from '../features/agentbuilder/console/CoderTerminalPanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
-import HermesConsole from '../components/hermes/HermesConsole';
 import HermesKanbanWorkspace from '../features/hermeskanban/HermesKanbanWorkspace';
 import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import type { AgentBuilderChatMessage } from '../features/agentbuilder/console/useAgentBuilderMainChat';
@@ -52,7 +51,6 @@ import RightGlassDrawer from '../components/graph/RightGlassDrawer';
 import {
   cloneDeckDocument,
   DEFAULT_WORKSPACE_ROOT,
-  normalizeRuntimeType,
   safeText,
 } from '../features/agentbuilder/deck/deckPrimitives';
 import {
@@ -209,17 +207,8 @@ export function getStandaloneCardUnavailableReason(
   card: AgentCardInstance | null,
 ): string | null {
   if (!card) return 'Select a saved card before testing.';
-  if (card.runtimeBinding === 'main_chat') {
-    return 'Main uses the persistent Harness conversation and is not tested as an isolated card.';
-  }
-  if (card.runtimeBinding === 'trading_agent') {
-    return 'Trading Agent is a workspace gateway; its saved configuration forbids a backend model run.';
-  }
-  if (card.runtimeBinding === 'worldsignals_agent') {
-    return 'WorldSignals Agent is a workspace gateway and is not runnable by itself.';
-  }
-  if (card.runtimeType !== 'assistant_agent' && card.runtimeType !== 'magentic_one') {
-    return `Standalone testing is unavailable for runtime ${card.runtimeType || 'unconfigured'}.`;
+  if (card.runtime.kind === 'hermes' && card.runtime.mode === 'main') {
+    return 'Main uses its persistent conversation route and is not tested as an isolated Card.';
   }
   return null;
 }
@@ -296,7 +285,6 @@ export default function AgentBuilder(): React.ReactElement {
     currentDeckRef.current = deck;
   }, [deck]);
   const priorWorkspaceViewRef = useRef<'chat' | 'canvas' | 'knowledge' | 'trading' | 'worldsignal'>('canvas');
-  const [hermesConsoleOpen, setHermesConsoleOpen] = useState(false);
   const terminalRoot = useMemo(
     () => resolveDeckWorkspaceRoot(deck, null) || DEFAULT_WORKSPACE_ROOT,
     [deck],
@@ -580,9 +568,12 @@ export default function AgentBuilder(): React.ReactElement {
   // Main's ordinary Chat input + Send control is its only invocation composer.
   // The Inspector can display Main, but must not expose a second self-test input.
   const showStandaloneTestControls =
-    Boolean(selectedCard) && selectedCard?.runtimeBinding !== 'main_chat';
+    Boolean(selectedCard)
+    && !(selectedCard?.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'main');
   const mainInvocationTargets = useMemo(() => {
-    const mainCard = deck.nodes.find((node) => node.runtimeBinding === 'main_chat');
+    const mainCard = deck.nodes.find(
+      (node) => node.runtime.kind === 'hermes' && node.runtime.mode === 'main',
+    );
     if (!mainCard) return [];
     const allowed = new Set(
       deck.edges
@@ -691,7 +682,7 @@ export default function AgentBuilder(): React.ReactElement {
           tools: Array.isArray(result.tools) ? result.tools.map((tool: unknown) => String(tool)) : [],
           provider: selectedCard.runtimeOptions?.provider || null,
           model: selectedCard.runtimeOptions?.modelKey || null,
-          runtimeType: result.runtimeType ? String(result.runtimeType) : selectedCard.runtimeType || null,
+          runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
           invocation: {
             ...invocation,
             savedIdf: result.savedIdf || invocation.savedIdf || null,
@@ -709,7 +700,8 @@ export default function AgentBuilder(): React.ReactElement {
         setStandaloneTestResult({
           status: 'failed', output: '', error: error instanceof Error ? error.message : 'Standalone card test failed.',
           toolCallCount: null, tools: [], provider: selectedCard.runtimeOptions?.provider || null,
-          model: selectedCard.runtimeOptions?.modelKey || null, runtimeType: selectedCard.runtimeType || null,
+          model: selectedCard.runtimeOptions?.modelKey || null,
+          runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
           invocation,
         });
         setDeckStatusMessage(error instanceof Error ? error.message : 'Standalone card test failed.');
@@ -795,9 +787,7 @@ export default function AgentBuilder(): React.ReactElement {
           model: result.invocation.cardContext?.providerModelId
             ? String(result.invocation.cardContext.providerModelId)
             : selectedCard.runtimeOptions?.modelKey || null,
-          runtimeType: result.invocation.cardContext?.runtimeType
-            ? String(result.invocation.cardContext.runtimeType)
-            : selectedCard.runtimeType || null,
+          runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
           invocation: result.invocation,
         });
         setDeckStatusMessage(`${selectedCard.title} IDF previewed in memory. Nothing was persisted or executed.`);
@@ -807,7 +797,8 @@ export default function AgentBuilder(): React.ReactElement {
         setStandaloneTestResult({
           status: 'failed', output: '', error: error instanceof Error ? error.message : String(error),
           toolCallCount: null, tools: [], provider: selectedCard.runtimeOptions?.provider || null,
-          model: selectedCard.runtimeOptions?.modelKey || null, runtimeType: selectedCard.runtimeType || null,
+          model: selectedCard.runtimeOptions?.modelKey || null,
+          runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
         });
       }
     } finally {
@@ -859,7 +850,7 @@ export default function AgentBuilder(): React.ReactElement {
         tools: current?.tools || [],
         provider: current?.provider || null,
         model: current?.model || null,
-        runtimeType: current?.runtimeType || null,
+        runtimeLabel: current?.runtimeLabel || null,
         invocation: savedInvocation,
         receipt: current?.receipt || null,
       }));
@@ -930,7 +921,7 @@ export default function AgentBuilder(): React.ReactElement {
         tools: Array.isArray(invocation.cardContext.tools) ? invocation.cardContext.tools.map(String) : [],
         provider: typeof invocation.cardContext.provider === 'string' ? invocation.cardContext.provider : null,
         model: typeof invocation.cardContext.providerModelId === 'string' ? invocation.cardContext.providerModelId : null,
-        runtimeType: typeof invocation.cardContext.runtimeType === 'string' ? invocation.cardContext.runtimeType : null,
+        runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
         invocation,
       });
       setDeckStatusMessage(`Loaded IDF ${saved.idfId} revision ${saved.revision}.`);
@@ -1060,7 +1051,8 @@ export default function AgentBuilder(): React.ReactElement {
       setInspectorDrawerOpen(Boolean(selectedNode));
       const isMagenticSelection = Boolean(
         selectedNode &&
-          normalizeRuntimeType(selectedNode.runtimeType) === 'magentic_one',
+          selectedNode.runtime.kind === 'autogen'
+          && selectedNode.runtime.mode === 'magentic_one',
       );
       if (cardId) {
         setBuilderCanvasFocusRequest((current) => ({
@@ -1097,19 +1089,8 @@ export default function AgentBuilder(): React.ReactElement {
   }, [deck.nodes, workspaceView]);
 
   const closeHermesKanban = useCallback(() => {
-    setHermesConsoleOpen(false);
     setWorkspaceView(priorWorkspaceViewRef.current);
   }, []);
-
-  const openHermesTerminal = useCallback(() => {
-    const hermesCard = deck.nodes.find(isHermesStewardCard);
-    if (!hermesCard) return;
-    setHermesConsoleOpen(true);
-  }, [deck.nodes]);
-
-  useEffect(() => {
-    setHermesConsoleOpen(false);
-  }, [activeProject]);
 
   const handleSelectEdge = useCallback(
     (edgeId: string | null) => {
@@ -1390,9 +1371,8 @@ export default function AgentBuilder(): React.ReactElement {
     compact = false,
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
-    // Normal chat is the primary interaction surface. The existing persistent
-    // OpenClaude PTY stays mounted beneath it so collapse and workspace changes
-    // do not destroy the selected project's live terminal session.
+    // Normal chat is primary. The saved Coder Card's Hermes terminal remains
+    // mounted beneath it so layout changes do not destroy the live session.
     const chat = (
       <div style={{ height: '100%', minHeight: 0 }}>
         <BuilderChat
@@ -1402,11 +1382,13 @@ export default function AgentBuilder(): React.ReactElement {
           colors={C}
           busy={nativeSessionBusy}
           mainAccessMode={
-            String((deck.nodes.find((node) => node.runtimeBinding === 'main_chat')?.runtimeOptions as any)?.accessMode || '')
+            String((deck.nodes.find((node) => node.runtime.kind === 'hermes' && node.runtime.mode === 'main')?.runtimeOptions as any)?.accessMode || '')
           }
           invocationTargets={mainInvocationTargets}
           onInspectInvocation={(cardId, assignment) => {
-            const mainCardId = deck.nodes.find((node) => node.runtimeBinding === 'main_chat')?.id || null;
+            const mainCardId = deck.nodes.find(
+              (node) => node.runtime.kind === 'hermes' && node.runtime.mode === 'main',
+            )?.id || null;
             pendingInvocationRef.current = { cardId, assignment, senderCardId: mainCardId };
             setSelectedCardId(cardId);
             setSelectedEdgeId(null);
@@ -1433,7 +1415,7 @@ export default function AgentBuilder(): React.ReactElement {
           <HarnessChatPanel
             chat={chat}
             terminal={
-              <OpenClaudeConsolePanel
+              <CoderTerminalPanel
                 open
                 placement="docked"
                 title="Coder"
@@ -1501,15 +1483,6 @@ export default function AgentBuilder(): React.ReactElement {
           >
             <HermesKanbanWorkspace
               onClose={closeHermesKanban}
-              onOpenTerminal={openHermesTerminal}
-            />
-            <HermesConsole
-              open={hermesConsoleOpen}
-              targetRoot={terminalRoot}
-              projectId={
-                typeof activeProject === 'string' ? activeProject : undefined
-              }
-              onClose={() => setHermesConsoleOpen(false)}
             />
           </div>
         ) : null}

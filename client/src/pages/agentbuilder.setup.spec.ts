@@ -1,20 +1,19 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 
-import type { AgentCardInstance, DeckDocument, RuntimeBinding } from '../types/agentgraph';
+import type { AgentCardInstance, CardRuntime, DeckDocument } from '../types/agentgraph';
 // Deck logic moved out of the page in the 2026-07-08 decomposition; the spec
 // tests the real modules directly.
 import { INITIAL_DECK } from '../features/agentbuilder/deck/newProjectDeck';
 import {
   readDeckDocument,
-  resolveLocalCoderControllerConsoleConfig,
   resolveProjectDeckLoadResult,
   resolveProjectDeckPayload,
 } from '../features/agentbuilder/deck/deckDocument';
 
 function createCard(
   id: string,
-  runtimeType: AgentCardInstance['runtimeType'],
+  runtime: CardRuntime,
   overrides: Partial<AgentCardInstance> = {},
 ): AgentCardInstance {
   return {
@@ -22,8 +21,7 @@ function createCard(
     kind: 'agent',
     templateId: 'template_test',
     prompt: '',
-    runtimeBinding: null,
-    runtimeType,
+    runtime,
     runtimeOptions: null,
     title: id,
     position: { x: 0, y: 0 },
@@ -43,20 +41,16 @@ function createDeck(nodes: AgentCardInstance[]): DeckDocument {
 }
 
 describe('agentbuilder authoring flow', () => {
-  it('does not manufacture LocalCoder authority from a Card id or template', () => {
+  it('does not manufacture Coder authority from a Card id or template', () => {
     const deck = createDeck([
-      createCard('card_local_coder', 'assistant_agent', {
+      createCard('card_local_coder', { kind: 'autogen', mode: 'assistant' }, {
         templateId: 'template_local_coder',
         runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.6-luna' },
       }),
     ]);
 
     const loaded = readDeckDocument(deck);
-    expect(loaded.nodes[0]?.runtimeBinding).toBeNull();
-    expect(resolveLocalCoderControllerConsoleConfig(loaded)).toEqual({
-      provider: '',
-      model: '',
-    });
+    expect(loaded.nodes[0]?.runtime).toEqual({ kind: 'autogen', mode: 'assistant' });
   });
 
   it('ships the default example using the real magentic-led agent graph', () => {
@@ -69,13 +63,13 @@ describe('agentbuilder authoring flow', () => {
       'WorldSignals Agent',
     ]);
 
-    expect(INITIAL_DECK.nodes.map((node) => node.runtimeBinding)).toEqual([
-      'main_chat',
-      'magentic_one',
-      'coder',
-      'hermes_steward',
-      'trading_agent',
-      'worldsignals_agent',
+    expect(INITIAL_DECK.nodes.map((node) => node.runtime)).toEqual([
+      { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
+      { kind: 'autogen', mode: 'magentic_one' },
+      { kind: 'hermes', mode: 'delegate', profile: 'coder' },
+      { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
+      { kind: 'autogen', mode: 'assistant' },
+      { kind: 'autogen', mode: 'assistant' },
     ]);
     expect(INITIAL_DECK.nodes.map((node) => node.templateId)).toEqual([
       'template_main_chat',
@@ -106,20 +100,15 @@ describe('agentbuilder authoring flow', () => {
       },
     ]);
     const systemCoder = INITIAL_DECK.nodes.find((node) => node.id === 'card_local_coder');
-    expect(systemCoder?.runtimeType).toBe('assistant_agent');
-    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_magentic')?.runtimeType).toBe('magentic_one');
-    expect(systemCoder?.runtimeBinding).toBe('coder');
+    expect(systemCoder?.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'coder' });
+    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_magentic')?.runtime).toEqual({ kind: 'autogen', mode: 'magentic_one' });
     expect(systemCoder?.runtimeOptions?.tools).toContain('cbm.search_graph');
     expect(systemCoder?.runtimeOptions?.tools).not.toContain('run_local_coder');
     expect(systemCoder?.runtimeOptions?.toolsets).toEqual(['file', 'terminal']);
     expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_local_coder' && edge.edgeType === 'magentic_option')).toBe(false);
-    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_main_chat')?.runtimeOptions?.profile).toBe('liquidaity-main');
-    expect(systemCoder?.runtimeOptions?.profile).toBe('coder');
-    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_hermes_steward')?.runtimeOptions?.profile).toBe('liquidaity-hermes-steward');
-    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_main_chat')?.runtimeOptions?.executionMode).toBe('single');
-    expect(systemCoder?.runtimeOptions?.executionMode).toBe('single');
-    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_hermes_steward')?.runtimeOptions?.executionMode).toBe('auto-kanban');
-    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_worldsignals_agent')?.runtimeOptions?.executionMode).toBe('single');
+    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_main_chat')?.runtime).toEqual({ kind: 'hermes', mode: 'main', profile: 'liquidaity-main' });
+    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_hermes_steward')?.runtime).toEqual({ kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' });
+    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_worldsignals_agent')?.runtime).toEqual({ kind: 'autogen', mode: 'assistant' });
   });
 
   it('loads a real saved deck and preserves its visible chain', () => {
@@ -129,14 +118,12 @@ describe('agentbuilder authoring flow', () => {
       promptTemplates: [],
       version: INITIAL_DECK.version,
       nodes: [
-        createCard('card_saved_a', 'assistant_agent', {
+        createCard('card_saved_a', { kind: 'hermes', mode: 'main', profile: 'saved-main' }, {
           templateId: 'template_main_chat',
-          runtimeBinding: 'main_chat',
           title: 'Saved A',
         }),
-        createCard('card_saved_b', 'assistant_agent', {
+        createCard('card_saved_b', { kind: 'autogen', mode: 'assistant' }, {
           templateId: 'template_research',
-          runtimeBinding: 'research_agent',
           title: 'Saved B',
         }),
       ],
@@ -158,23 +145,22 @@ describe('agentbuilder authoring flow', () => {
     ]);
   });
 
-  it('keeps a legacy profile field readable without making it runtime identity', () => {
-    const legacy = createDeck([
-      createCard('card_legacy', 'assistant_agent', {
+  it('keeps a Hermes profile in the one explicit runtime identity', () => {
+    const deck = createDeck([
+      createCard('card_saved_helper', { kind: 'hermes', mode: 'delegate', profile: 'saved-helper' }, {
         runtimeOptions: {
           provider: 'openai',
           modelKey: 'gpt-5.6-luna',
-          profile: 'old-selector',
           skills: ['saved-skill'],
           mcpConnectionIds: ['saved-connection'],
         },
       }),
     ]);
 
-    const loaded = readDeckDocument(JSON.parse(JSON.stringify(legacy)));
+    const loaded = readDeckDocument(JSON.parse(JSON.stringify(deck)));
 
+    expect(loaded.nodes[0].runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'saved-helper' });
     expect(loaded.nodes[0].runtimeOptions).toMatchObject({
-      profile: 'old-selector',
       skills: ['saved-skill'],
       mcpConnectionIds: ['saved-connection'],
     });
@@ -235,38 +221,30 @@ describe('agentbuilder authoring flow', () => {
   });
 
   it('preserves a saved deck without merging the current new-project template into it', () => {
-    const legacyDeck: DeckDocument = {
+    const savedDeck: DeckDocument = {
       id: 'deck_builder',
       name: 'Agent Card Deck',
       promptTemplates: [],
       version: 2,
       nodes: [
-        createCard('card_main_chat', 'assistant_agent', {
+        createCard('card_main_chat', { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' }, {
           templateId: 'template_main_chat',
-          runtimeBinding: 'main_chat',
           title: 'Main Chat',
         }),
-        // Retired bindings: valid when this deck was saved, no longer in the
-        // RuntimeBinding union. Persisted data can still carry them, which is
-        // exactly what the upgrade path must drop — so they're cast, not typed.
-        createCard('card_kg_ingest', 'assistant_agent', {
+        createCard('card_kg_ingest', { kind: 'autogen', mode: 'assistant' }, {
           templateId: 'template_kg_ingest',
-          runtimeBinding: 'kg_ingest' as RuntimeBinding,
           title: 'KG Ingest / ThinkGraph',
         }),
-        createCard('card_research', 'assistant_agent', {
+        createCard('card_research', { kind: 'autogen', mode: 'assistant' }, {
           templateId: 'template_research',
-          runtimeBinding: 'research_agent',
           title: 'Research Agent',
         }),
-        createCard('card_knowgraph', 'assistant_agent', {
+        createCard('card_knowgraph', { kind: 'autogen', mode: 'assistant' }, {
           templateId: 'template_knowgraph',
-          runtimeBinding: 'knowgraph' as RuntimeBinding,
           title: 'KnowGraph',
         }),
-        createCard('card_neo4j', 'assistant_agent', {
+        createCard('card_neo4j', { kind: 'autogen', mode: 'assistant' }, {
           templateId: 'template_neo4j',
-          runtimeBinding: 'neo4j' as RuntimeBinding,
           title: 'Neo4j',
         }),
       ],
@@ -275,7 +253,7 @@ describe('agentbuilder authoring flow', () => {
       ],
     };
 
-    const hydrated = readDeckDocument(legacyDeck);
+    const hydrated = readDeckDocument(savedDeck);
 
     expect(hydrated.nodes.map((node) => node.id)).toEqual([
       'card_main_chat',
@@ -357,8 +335,7 @@ describe('agentbuilder authoring flow', () => {
       kind: 'agent',
       templateId: 'template_code_workbench',
       prompt: 'retired',
-      runtimeBinding: null,
-      runtimeType: 'assistant_agent',
+      runtime: { kind: 'autogen', mode: 'assistant' },
       runtimeOptions: null,
       parentGraphId: 'workbench_code',
       title: 'Code Agent',
@@ -384,9 +361,8 @@ describe('agentbuilder authoring flow', () => {
       promptTemplates: [],
       version: 3,
       nodes: [
-        createCard('card_current_a', 'assistant_agent', {
+        createCard('card_current_a', { kind: 'hermes', mode: 'main', profile: 'current-main' }, {
           templateId: 'template_main_chat',
-          runtimeBinding: 'main_chat',
           title: 'Current A',
         }),
       ],
@@ -403,9 +379,8 @@ describe('agentbuilder authoring flow', () => {
       version: 1,
       promptTemplates: [],
       nodes: [
-        createCard('card_lonely', 'assistant_agent', {
+        createCard('card_lonely', { kind: 'hermes', mode: 'main', profile: 'lonely-main' }, {
           templateId: 'template_main_chat',
-          runtimeBinding: 'main_chat',
           title: 'Lonely',
         }),
       ],
@@ -423,8 +398,8 @@ describe('agentbuilder authoring flow', () => {
       version: 1,
       promptTemplates: [],
       nodes: [
-        createCard('card_a', 'assistant_agent', { title: 'A' }),
-        createCard('card_b', 'assistant_agent', { title: 'B' }),
+        createCard('card_a', { kind: 'autogen', mode: 'assistant' }, { title: 'A' }),
+        createCard('card_b', { kind: 'autogen', mode: 'assistant' }, { title: 'B' }),
       ],
       edges: [
         { id: 'edge_a_b', source: 'card_a', target: 'card_b', edgeType: 'flow' },
@@ -448,14 +423,12 @@ describe('agentbuilder authoring flow', () => {
       version: 3,
       promptTemplates: [],
       nodes: [
-        createCard('card_custom_main', 'assistant_agent', {
+        createCard('card_custom_main', { kind: 'hermes', mode: 'main', profile: 'custom-main' }, {
           templateId: 'template_main_chat',
-          runtimeBinding: 'main_chat',
           title: 'Main Chat',
         }),
-        createCard('card_custom_research', 'assistant_agent', {
+        createCard('card_custom_research', { kind: 'autogen', mode: 'assistant' }, {
           templateId: 'template_research',
-          runtimeBinding: 'research_agent',
           title: 'Research Agent',
         }),
       ],
@@ -501,8 +474,8 @@ describe('agentbuilder authoring flow', () => {
       promptTemplates: [],
       version: 2,
       nodes: [
-        createCard('card_a', 'assistant_agent', { title: 'A' }),
-        createCard('card_b', 'assistant_agent', { title: 'B' }),
+        createCard('card_a', { kind: 'autogen', mode: 'assistant' }, { title: 'A' }),
+        createCard('card_b', { kind: 'autogen', mode: 'assistant' }, { title: 'B' }),
       ],
       edges: [
         { id: 'edge_call', source: 'card_a', target: 'card_b', edgeType: 'flow' },

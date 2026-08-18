@@ -4,11 +4,9 @@ import type {
   DeckDocument,
 } from '../../../types/agentgraph';
 import {
-  cleanOptionalText,
   cloneDeckDocument,
+  normalizeCardRuntime,
   normalizeRuntimeOptions,
-  normalizeRuntimeType,
-  safeText,
   uid,
 } from './deckPrimitives';
 import {
@@ -53,8 +51,9 @@ export function buildQuickAddAssistCard(
   };
   const assistCount = deck.nodes.filter(
     (node) =>
-      normalizeRuntimeType(node.runtimeType) === 'assistant_agent' &&
-      !safeText(node.parentGraphId).trim(),
+      normalizeCardRuntime(node.runtime)?.kind === 'autogen'
+      && normalizeCardRuntime(node.runtime)?.mode === 'assistant'
+      && !String(node.parentGraphId || '').trim(),
   ).length;
 
   const nextNode: AgentCardInstance = {
@@ -62,14 +61,12 @@ export function buildQuickAddAssistCard(
     kind: 'agent',
     templateId: template?.id || 'template_assist',
     prompt: promptContent,
-    runtimeBinding: template?.id === 'template_magentic' ? null : undefined,
-    runtimeType: 'assistant_agent',
+    runtime: { kind: 'autogen', mode: 'assistant' },
     runtimeOptions: normalizeRuntimeOptions({
       provider: template?.provider || undefined,
       modelKey: template?.model || undefined,
       temperature: template?.temperature ?? undefined,
       maxTokens: template?.maxTokens ?? undefined,
-      executionMode: 'single',
       tools: template?.tools ?? [],
       skills: [],
       toolsets: [],
@@ -88,22 +85,6 @@ export function buildQuickAddAssistCard(
     nodes: [...deck.nodes, nextNode],
   };
   return { nextDeck, nextNode };
-}
-
-
-export function resolveLocalCoderControllerConsoleConfig(
-  deck: Pick<DeckDocument, 'nodes'>,
-): { provider: string; model: string } {
-  const card = deck.nodes.find(
-    (node) => safeText(node.runtimeBinding).trim().toLowerCase() === 'local_coder',
-  ) || null;
-  const runtimeOptions = normalizeRuntimeOptions(card?.runtimeOptions) ?? {};
-  // The saved card is the only runtime authority. Missing values remain empty
-  // so the terminal fails honestly instead of selecting an unseen model.
-  return {
-    provider: cleanOptionalText(runtimeOptions.provider) || '',
-    model: cleanOptionalText(runtimeOptions.modelKey) || '',
-  };
 }
 
 

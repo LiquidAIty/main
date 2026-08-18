@@ -13,18 +13,17 @@ from app.python_models.orchestration_contracts import InputDataFile, ProjectSess
 MODEL = "deepseek/deepseek-v4-flash-0731"
 
 
-def _runtime_request(runtime_type: str) -> RuntimeRequest:
+def _runtime_request(runtime_mode: str) -> RuntimeRequest:
     card_runtime = {
         "cardId": "card:one",
         "title": "One",
-        "runtimeType": runtime_type,
+        "runtime": {"kind": "autogen", "mode": runtime_mode},
         "prompt": "Saved prompt",
         "provider": "openrouter",
         "accessMode": "openrouter-api",
         "modelKey": MODEL,
         "providerModelId": MODEL,
         "runtimeOptions": {},
-        "participants": [],
     }
     content = render_content_markdown(
         system_text="Saved prompt",
@@ -36,7 +35,7 @@ def _runtime_request(runtime_type: str) -> RuntimeRequest:
     return RuntimeRequest(
         session=ProjectSession(
             sessionId="s", projectId="p", turnId="t", route="r",
-            orchestrator="magentic_one" if runtime_type == "magentic_one" else "assistant_agent",
+            orchestrator="magentic_one" if runtime_mode == "magentic_one" else "assistant_agent",
             modelProvider="openrouter", modelKey=MODEL, providerModelId=MODEL,
             startedAt="now",
         ),
@@ -54,7 +53,7 @@ def _runtime_request(runtime_type: str) -> RuntimeRequest:
 
 
 def test_dispatch_selects_single_assistant_inside_python() -> None:
-    context = _runtime_request("assistant_agent")
+    context = _runtime_request("assistant")
     assert autogen_orchestrator._configured_runtime_handler(
         context.cardRuntime,
     ) is autogen_orchestrator.run_configured_card
@@ -70,7 +69,7 @@ def test_dispatch_selects_mag_one_inside_python() -> None:
 def test_orchestrate_requires_saved_card_runtime():
     card_context = {
         "cardId": "card:one", "title": "One", "prompt": "",
-        "runtimeType": "magentic_one",
+        "runtime": {"kind": "autogen", "mode": "magentic_one"},
         "accessMode": "openrouter-api",
     }
     content = render_content_markdown(

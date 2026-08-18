@@ -16,7 +16,8 @@ export type InternalMcpPrincipal =
       conversationId: string;
       parentRunId: string;
       callerCardId: string;
-      callerRuntimeBinding: string;
+      callerRuntimeKind: 'hermes' | 'autogen';
+      callerRuntimeMode: 'main' | 'delegate' | 'kanban' | 'assistant' | 'magentic_one';
       grantedTools: string[];
     };
 
@@ -62,7 +63,8 @@ export function createInternalMcpBearer(
         conversationId: String(principal.conversationId || '').trim(),
         parentRunId: String(principal.parentRunId || '').trim(),
         callerCardId: String(principal.callerCardId || '').trim(),
-        callerRuntimeBinding: String(principal.callerRuntimeBinding || '').trim(),
+        callerRuntimeKind: String(principal.callerRuntimeKind || '').trim() as typeof principal.callerRuntimeKind,
+        callerRuntimeMode: String(principal.callerRuntimeMode || '').trim() as typeof principal.callerRuntimeMode,
         grantedTools: uniqueStrings(principal.grantedTools),
       };
   if (normalized.kind !== 'catalog-reader') {
@@ -72,7 +74,8 @@ export function createInternalMcpBearer(
       normalized.conversationId,
       normalized.parentRunId,
       normalized.callerCardId,
-      normalized.callerRuntimeBinding,
+      normalized.callerRuntimeKind,
+      normalized.callerRuntimeMode,
     ];
     if (required.some((value) => !value)) throw new Error('internal_mcp_principal_incomplete');
   }

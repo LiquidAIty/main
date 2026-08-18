@@ -118,14 +118,13 @@ def resolve_saved_card_reference(
         if isinstance(card.get("runtimeOptions"), dict)
         else {}
     )
-    binding = str(card.get("runtimeBinding") or runtime_options.get("binding") or "")
-    role = str(card.get("role") or runtime_options.get("role") or binding).strip()
+    runtime = card.get("runtime") if isinstance(card.get("runtime"), dict) else {}
+    role = str(card.get("role") or runtime_options.get("role") or "").strip()
     return {
         "cardId": card_id,
         "title": str(card.get("title") or ""),
         "role": role,
-        "runtimeType": str(card.get("runtimeType") or ""),
-        "runtimeBinding": binding,
+        "runtime": runtime,
         "provider": str(runtime_options.get("provider") or card.get("provider") or ""),
         "modelKey": str(runtime_options.get("modelKey") or ""),
         "providerModelId": str(
@@ -171,8 +170,7 @@ async def canvas_inspect(args: dict[str, Any]) -> dict[str, Any]:
         {
             "id": str(node.get("id") or ""),
             "title": str(node.get("title") or ""),
-            "runtimeBinding": node.get("runtimeBinding"),
-            "runtimeType": node.get("runtimeType"),
+            "runtime": node.get("runtime"),
             "tools": ((node.get("runtimeOptions") or {}).get("tools")) or node.get("tools") or [],
         }
         for node in deck.get("nodes") or []

@@ -8,7 +8,7 @@ from app.python_models.idd import (
     materialize_card_editor,
     materialize_catalog,
     materialize_tool_catalog,
-    required_tool_caller_runtime_binding,
+    required_tool_caller_runtime,
     validate_idf_islands,
     validate_record,
 )
@@ -21,14 +21,14 @@ def test_literal_idd_is_the_only_loaded_rule_catalog() -> None:
     assert dictionary["dictionary"]["idfFormat"] == "mixed-markdown"
     assert dictionary["dictionary"]["unknownIslands"] == "inert"
     assert {item["name"] for item in dictionary["records"]} == {
-        "card-context", "coder-packet", "model-option", "native-reference",
+        "card-context", "model-option", "native-reference",
         "tool-catalog-reference",
     }
     assert {item["name"] for item in dictionary["catalogs"]} == {
         "configured-models", "native-tools",
     }
     assert {item["name"] for item in dictionary["editorFields"]} == {
-        "executionMode", "provider", "modelKey", "reasoningEffort",
+        "runtimeKind", "runtimeMode", "runtimeProfile", "provider", "modelKey", "reasoningEffort",
         "temperature", "maxTokens", "maxTurns", "tools", "accessMode",
     }
     assert {item["name"] for item in dictionary["islands"]} == {
@@ -107,13 +107,12 @@ def test_idd_errors_never_echo_values() -> None:
                 "cardId": "card_research",
                 "title": "Research",
                 "prompt": secret,
-                "runtimeType": "assistant_agent",
+                "runtime": secret,
                 "accessMode": "chatgpt-account",
-                "executionMode": secret,
             },
         )
     except IddValidationError as error:
-        assert str(error) == "idd_record_field_invalid:card-context.executionMode"
+        assert str(error) == "idd_record_field_invalid:card-context.runtime"
         assert secret not in str(error)
     else:
         raise AssertionError("invalid structured IDF record was accepted")
@@ -145,9 +144,12 @@ def test_card_editor_materializes_models_and_bounds_from_the_literal_idd() -> No
     fields = {field["name"]: field for field in materialized["fields"]}
     assert fields["modelKey"]["catalog"] == "configured-models"
     assert fields["tools"]["catalog"] == "native-tools"
-    assert fields["executionMode"]["options"] == [
-        {"value": "single", "label": "Single"},
-        {"value": "auto-kanban", "label": "Auto-Kanban"},
+    assert fields["runtimeMode"]["options"] == [
+        {"value": "main", "label": "Main"},
+        {"value": "delegate", "label": "Delegate"},
+        {"value": "kanban", "label": "Kanban"},
+        {"value": "assistant", "label": "Assistant"},
+        {"value": "magentic_one", "label": "Magentic-One"},
     ]
     assert fields["temperature"]["minimum"] == 0.0
     assert fields["maxTokens"]["minimum"] == 1
@@ -197,9 +199,9 @@ def test_explicit_tool_permissions_come_from_the_idd() -> None:
         for tool in group["tools"]
     }
     assert {"agentgraph.inspect", "write_mag_one_instructions"}.issubset(tool_names)
-    assert required_tool_caller_runtime_binding("run_mag_one") == "main_chat"
-    assert required_tool_caller_runtime_binding("write_mag_one_instructions") is None
-    assert required_tool_caller_runtime_binding("cbm.search_graph") is None
+    assert required_tool_caller_runtime("run_mag_one") == {"kind": "hermes", "mode": "main"}
+    assert required_tool_caller_runtime("write_mag_one_instructions") is None
+    assert required_tool_caller_runtime("cbm.search_graph") is None
 
 
 def test_materialized_catalog_errors_do_not_echo_secret_values() -> None:

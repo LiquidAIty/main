@@ -6,38 +6,25 @@ import type {
   AgentCardInstance,
   DeckDocument,
   DeckEdge,
-  RuntimeBinding,
 } from '../../../types/agentgraph';
 import {
   normalizeDeckEdgeType,
-  normalizeRuntimeBinding,
-  normalizeRuntimeType,
 } from '../deck/deckPrimitives';
 
-// Card identity comes from the SAVED runtime binding — never an id/template/
-// title string match. A user who renames a card, or a deck that adds a second
-// one, keeps working; the old matchers silently didn't.
-function hasRuntimeBinding(
-  card: AgentCardInstance | null | undefined,
-  binding: RuntimeBinding,
-): boolean {
-  return Boolean(card && normalizeRuntimeBinding(card.runtimeBinding) === binding);
-}
-
 function isTradingAgentCard(card: AgentCardInstance | null | undefined): boolean {
-  return hasRuntimeBinding(card, 'trading_agent');
+  return card?.id === 'card_trading_workbench';
 }
 
 export function isHermesStewardCard(
   card: AgentCardInstance | null | undefined,
 ): boolean {
-  return hasRuntimeBinding(card, 'hermes_steward');
+  return Boolean(card?.runtime.kind === 'hermes' && card.runtime.mode === 'kanban');
 }
 
 export function isWorldSignalsAgentCard(
   card: AgentCardInstance | null | undefined,
 ): boolean {
-  return hasRuntimeBinding(card, 'worldsignals_agent');
+  return card?.id === 'card_worldsignals_agent';
 }
 
 type ProgressiveRailVisibility = {
@@ -53,7 +40,7 @@ function buildBusConnectedCardIds(
 ): Set<string> {
   const nodeIds = new Set(nodes.map((node) => node.id));
   const busIds = nodes
-    .filter((node) => normalizeRuntimeType(node.runtimeType) === 'magentic_one')
+    .filter((node) => node.runtime.kind === 'autogen' && node.runtime.mode === 'magentic_one')
     .map((node) => node.id);
   if (busIds.length === 0) return new Set<string>();
 
@@ -86,14 +73,14 @@ function buildBusConnectedCardIds(
   return connected;
 }
 
-export function hasDirectedRuntimeBindingConnection(
+export function hasDirectedCardConnection(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
-  sourceBinding: RuntimeBinding,
-  targetBinding: RuntimeBinding,
+  sourcePredicate: (card: AgentCardInstance) => boolean,
+  targetPredicate: (card: AgentCardInstance) => boolean,
 ): boolean {
-  const sourceIds = new Set(nodes.filter((node) => hasRuntimeBinding(node, sourceBinding)).map((node) => node.id));
-  const targetIds = new Set(nodes.filter((node) => hasRuntimeBinding(node, targetBinding)).map((node) => node.id));
+  const sourceIds = new Set(nodes.filter(sourcePredicate).map((node) => node.id));
+  const targetIds = new Set(nodes.filter(targetPredicate).map((node) => node.id));
   if (sourceIds.size === 0 || targetIds.size === 0) return false;
   return edges.some(
     (edge) =>
@@ -132,11 +119,11 @@ export function deriveVisibleRailItems({
       isBusConnectedCard(deck.nodes, deck.edges, isTradingAgentCard),
     showHermesKanban:
       workspaceView === 'hermes' ||
-      hasDirectedRuntimeBindingConnection(
+      hasDirectedCardConnection(
         deck.nodes,
         deck.edges,
-        'main_chat',
-        'hermes_steward',
+        (card) => card.runtime.kind === 'hermes' && card.runtime.mode === 'main',
+        (card) => card.runtime.kind === 'hermes' && card.runtime.mode === 'kanban',
       ),
   };
 }

@@ -400,13 +400,11 @@ class TestSessionOps:
                     "delegateCards": [{
                         "cardId": "card_local_coder",
                         "title": "Coder",
-                        "runtimeBinding": "coder",
+                        "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
                         "prompt": "Saved Coder prompt",
-                        "profile": "coder",
                         "provider": "openai",
                         "providerModelId": "gpt-5.6-luna",
                         "accessMode": "chatgpt-account",
-                        "executionMode": "single",
                         "skills": [],
                         "toolsets": ["terminal"],
                         "allowedToolNames": ["terminal"],
@@ -414,7 +412,10 @@ class TestSessionOps:
                 },
             )
         state = agent.session_manager.get_session(created.session_id)
-        assert state.agent._saved_delegate_cards["card_local_coder"]["profile"] == "coder"
+        assert (
+            state.agent._saved_delegate_cards["card_local_coder"]["runtime"]["profile"]
+            == "coder"
+        )
         assert state.agent._saved_delegate_access_mode == "chatgpt-account"
         delegate_tool = next(
             tool for tool in state.agent.tools

@@ -64,17 +64,17 @@ def test_manifest_is_registry_backed_no_duplicate_entries():
 
 def test_manifest_publishes_only_factual_private_runtime_contracts():
     manifest = {entry["name"]: entry for entry in tool_manifest()}
-    coder = manifest["run_local_coder"]
-    assert coder["kind"] == "tool"
-    assert coder["sourceId"] == "python_runtime"
-    assert coder["namespace"] == "python"
-    assert coder["nativeName"] == "run_local_coder"
-    assert coder["connectionKind"] == "private-runtime"
-    assert coder["enabled"] is True
-    assert coder["inputSchema"]["type"] == "object"
-    assert coder["outputSchema"]
-    assert "capability" not in coder
-    assert "agentCompatibility" not in coder
+    calculator = manifest["calculator"]
+    assert calculator["kind"] == "tool"
+    assert calculator["sourceId"] == "python_runtime"
+    assert calculator["namespace"] == "python"
+    assert calculator["nativeName"] == "calculator"
+    assert calculator["connectionKind"] == "private-runtime"
+    assert calculator["enabled"] is True
+    assert calculator["inputSchema"]["type"] == "object"
+    assert calculator["outputSchema"]
+    assert "capability" not in calculator
+    assert "agentCompatibility" not in calculator
 
 
 def test_manifest_exposes_no_secrets_endpoints_or_db_config():

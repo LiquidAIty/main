@@ -43,19 +43,21 @@ def _transient_idf(*, card_context: dict, user_text: str) -> InputDataFile:
     )
 
 
-def _context(*, user_text: str = "run", runtime_type: str = "assistant_agent",
+def _context(*, user_text: str = "run", runtime_mode: str = "assistant",
              participants: list[CardRuntimeParticipant] | None = None,
              orchestrator: str = "assistant_agent") -> RuntimeRequest:
     card = CardRuntimeConfig(
-        cardId="card:one", title="One", runtimeType=runtime_type,
+        cardId="card:one", title="One",
+        runtime={"kind": "autogen", "mode": runtime_mode},
         prompt="saved system", accessMode="openrouter-api",
-        participants=participants if participants is not None else [
-            CardRuntimeParticipant(
-                cardId="card:one", title="One", runtimeType="assistant_agent",
-                provider="openrouter", accessMode="openrouter-api", providerModelId=MODEL,
-            )
-        ],
     )
+    resolved_participants = participants if participants is not None else [
+        CardRuntimeParticipant(
+            cardId="card:one", title="One",
+            runtime={"kind": "autogen", "mode": "assistant"},
+            provider="openrouter", accessMode="openrouter-api", providerModelId=MODEL,
+        )
+    ]
     document = _transient_idf(
         card_context=card.model_dump(exclude_none=True),
         user_text=user_text,
@@ -69,16 +71,17 @@ def _context(*, user_text: str = "run", runtime_type: str = "assistant_agent",
         ),
         idf=document,
         cardRuntime=card,
+        participants=resolved_participants,
     )
 
 
 @pytest.mark.parametrize(
     ("context", "error"),
     [
-        (_context(runtime_type="magentic_one"), "single_card_runtime_invalid"),
+        (_context(runtime_mode="magentic_one"), "single_card_runtime_invalid"),
         (_context(orchestrator="magentic_one"), "single_card_orchestrator_invalid"),
         (_context(participants=[]), "single_card_participant_count_invalid: 0"),
-        (_context(participants=[_context().cardRuntime.participants[0]] * 2), "single_card_participant_count_invalid: 2"),
+        (_context(participants=[_context().participants[0]] * 2), "single_card_participant_count_invalid: 2"),
     ],
 )
 def test_structural_guard_rejects_invalid_runtime_without_model(context, error):
@@ -142,7 +145,7 @@ def test_single_card_error_never_echoes_idf_secret(monkeypatch):
 
 
 def test_unknown_saved_tool_fails_loudly():
-    participant = _context().cardRuntime.participants[0].model_copy(
+    participant = _context().participants[0].model_copy(
         update={"tools": ["not-a-real-tool"]}
     )
     with pytest.raises(Exception, match="not-a-real-tool"):

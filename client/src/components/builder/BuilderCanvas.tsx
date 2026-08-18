@@ -24,7 +24,6 @@ import '@xyflow/react/dist/style.css';
 
 import type {
   AgentCardInstance,
-  AgentCardRuntimeType,
   DeckDocument,
   DeckEdge,
   DeckEdgeType,
@@ -92,7 +91,7 @@ export function buildCanvasDocumentRecoveryKey(document: DeckDocument): string {
       x: node.position.x,
       y: node.position.y,
       parentGraphId: String(node.parentGraphId || ''),
-      runtimeType: normalizeRuntimeType(node.runtimeType),
+      runtime: node.runtime,
     })),
     edges: document.edges.map((edge) => ({
       id: edge.id,
@@ -193,7 +192,7 @@ export function toFlowNodes(
   );
   const hoveredRelatedNodeIds = buildFocusedNodeSet(hoveredCardId, neighborsByNode);
   return document.nodes.map((node) => {
-    const isMagenticBus = normalizeRuntimeType(node.runtimeType) === 'magentic_one';
+    const isMagenticBus = node.runtime.kind === 'autogen' && node.runtime.mode === 'magentic_one';
     return {
       id: node.id,
       type: isMagenticBus ? 'magenticBus' : 'agentCard',
@@ -235,12 +234,6 @@ type FlowEdgeData = {
   isReturnEdge?: boolean;
 };
 
-function normalizeRuntimeType(value: unknown): AgentCardRuntimeType {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'magentic_one') return 'magentic_one';
-  return 'assistant_agent';
-}
-
 // The dedicated saved top control input on the Mag One bus card. An edge into
 // this handle is the Control plug; every other bus connection is a Worker plug
 // (eligibility only, never invocation).
@@ -264,8 +257,8 @@ function resolveCanvasConnectionEdgeType(
   const targetNode = nodeMap.get(connection.target);
   if (!sourceNode || !targetNode) return null;
 
-  const sourceIsBus = normalizeRuntimeType(sourceNode.runtimeType) === 'magentic_one';
-  const targetIsBus = normalizeRuntimeType(targetNode.runtimeType) === 'magentic_one';
+  const sourceIsBus = sourceNode.runtime.kind === 'autogen' && sourceNode.runtime.mode === 'magentic_one';
+  const targetIsBus = targetNode.runtime.kind === 'autogen' && targetNode.runtime.mode === 'magentic_one';
   if (sourceIsBus && targetIsBus) return null;
 
   if (sourceIsBus || targetIsBus) {

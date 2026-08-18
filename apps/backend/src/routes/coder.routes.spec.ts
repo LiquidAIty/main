@@ -6,26 +6,6 @@ import { describe, expect, it, vi } from 'vitest';
 // after the '.routes' infix strip. vitest hoists vi.mock() above these.
 import router from './coder.routes';
 
-const planningMocks = vi.hoisted(() => ({
-  packet: {
-    id: 'packet-prepared',
-    projectId: 'project-1',
-    repoPath: 'C:\\Projects\\main',
-    objective: 'Run the localcoder.',
-    planExcerpt: 'Living plan.',
-    contextSummary: 'Real context assembled.',
-    codeAnchors: ['apps/backend/src/routes/coder.routes.ts'],
-    cbmQueries: ['search_graph coder'],
-    guardrails: ['No fake success.'],
-    allowedFiles: ['apps/backend/src/routes/coder.routes.ts'],
-    forbiddenWork: ['No specs/.'],
-    proofRequired: ['Compile.'],
-    reportFormat: 'Make a bounded task list and return a task-by-task CoderReport.',
-    stopConditions: ['Stop after one report.'],
-    writeMode: 'edit',
-  },
-}));
-
 const deckMocks = vi.hoisted(() => ({
   getDeckDocument: vi.fn(async () => ({
     deck: {
@@ -33,27 +13,17 @@ const deckMocks = vi.hoisted(() => ({
         {
           id: 'card_main_chat',
           kind: 'main',
-          runtimeType: 'main_chat',
-          runtimeOptions: { binding: 'main_chat' },
+          runtime: { kind: 'hermes', mode: 'main', profile: 'default' },
+          runtimeOptions: {},
         },
         {
           id: 'card_local_coder',
           kind: 'agent',
-          runtimeType: 'assistant_agent',
-          runtimeBinding: 'local_coder',
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
         },
       ],
       edges: [],
     } as any,
-  })),
-}));
-
-const cbmScopeMocks = vi.hoisted(() => ({
-  runLocalCoderCbmScopeGate: vi.fn(async () => ({
-    sourceRoot: 'C:/Projects/main',
-    scopeStatus: 'ok',
-    editAllowed: true,
-    blockedReason: '',
   })),
 }));
 
@@ -163,13 +133,13 @@ const orchestratorMocks = vi.hoisted(() => ({
         cardContext: {
           cardId,
           title: cardId === 'card_main_chat' ? 'Main' : 'Worker',
-          runtimeBinding: cardId === 'card_main_chat' ? 'main_chat' : 'hermes',
-          profile: 'default',
+          runtime: cardId === 'card_main_chat'
+            ? { kind: 'hermes', mode: 'main', profile: 'default' }
+            : { kind: 'hermes', mode: 'delegate', profile: 'worker' },
           provider: 'openai',
           modelKey: 'gpt-5.6-luna',
           providerModelId: 'gpt-5.6-luna',
           accessMode: 'chatgpt-account',
-          executionMode: 'single',
           tools: [],
         },
       };
@@ -182,34 +152,27 @@ const orchestratorMocks = vi.hoisted(() => ({
         cardRevisionId: body.cardRevisionId,
         runtimeOwner: 'hermes',
         hermesTransport: {
-          profile: autoKanban
-            ? 'liquidaity-hermes-steward'
-            : coderCard
-              ? 'coder'
-              : 'default',
           systemPrompt: 'Saved prompt',
           message: body.exactIdf,
           cardContext: {
             cardId: body.cardId,
             title: body.cardId === 'card_main_chat' ? 'Main' : coderCard ? 'Coder' : 'Hermes steward',
-            runtimeBinding: body.cardId === 'card_main_chat'
-              ? 'main_chat'
+            runtime: body.cardId === 'card_main_chat'
+              ? { kind: 'hermes', mode: 'main', profile: 'default' }
               : coderCard
-                ? 'coder'
-                : 'hermes_steward',
+                ? { kind: 'hermes', mode: 'delegate', profile: 'coder' }
+                : { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
             provider: 'openai',
             modelKey: 'gpt-5.6-luna',
             providerModelId: 'gpt-5.6-luna',
             accessMode: 'chatgpt-account',
-            executionMode: autoKanban ? 'auto-kanban' : 'single',
             tools: autoKanban ? ['graphiti.search_nodes'] : coderCard ? ['cbm.search_graph'] : [],
             nativeTools: autoKanban ? ['memory'] : [],
             skills: autoKanban ? ['documentation'] : [],
             toolsets: coderCard ? ['file', 'terminal'] : [],
             mcpConnectionIds: [],
-            coderCardIds: [],
-            directSubagents: [],
           },
+          nativeHermesDelegates: [],
         },
       };
     }
@@ -260,10 +223,6 @@ const orchestratorMocks = vi.hoisted(() => ({
 
 const dbMocks = vi.hoisted(() => ({
   query: vi.fn(),
-}));
-
-vi.mock('../services/graphContext/cbmScopeGate', () => ({
-  runLocalCoderCbmScopeGate: cbmScopeMocks.runLocalCoderCbmScopeGate,
 }));
 
 vi.mock('../decks/store', () => ({
@@ -342,11 +301,6 @@ describe('coder routes', () => {
       await closeServer(server);
     }
   });
-  // Force a deterministic blocked state via a broken explicit command so these
-  // route tests never spawn a real coder process, regardless of whether the
-  // vendored runtime is built or API keys are exported on the test machine.
-  const BROKEN_COMMAND = 'node C:/liquidaity/nonexistent/openclaude.mjs';
-
   it('passes factual live contracts to the one IDD and returns its current vocabulary', async () => {
     mcpClientMocks.listPythonAgentMcpCatalog.mockResolvedValueOnce([{
       name: 'cbm.search_graph',
@@ -361,14 +315,14 @@ describe('coder routes', () => {
     }]);
     orchestratorMocks.requestPythonRailsJson.mockResolvedValueOnce({
       tools: [{
-        name: 'run_local_coder',
-        nativeName: 'run_local_coder',
+        name: 'calculator',
+        nativeName: 'calculator',
         kind: 'tool',
         sourceId: 'python_runtime',
         namespace: 'python',
         connectionKind: 'private-runtime',
-        description: 'Run the saved Coder runtime.',
-        inputSchema: { type: 'object', properties: { objective: { type: 'string' } } },
+        description: 'Evaluate bounded arithmetic.',
+        inputSchema: { type: 'object', properties: { expression: { type: 'string' } } },
       }],
     }).mockResolvedValueOnce({
       references: [
@@ -383,20 +337,20 @@ describe('coder routes', () => {
           }],
         },
         {
-          canonicalId: 'run_local_coder', kind: 'agent', namespace: 'coder',
-          sourceIds: ['local_coder', 'python_runtime'], displayName: 'Local Coder',
-          shortDescription: 'Run a bounded LocalCoder task.', availability: 'available',
+          canonicalId: 'calculator', kind: 'tool', namespace: 'python',
+          sourceIds: ['python_runtime'], displayName: 'Calculator',
+          shortDescription: 'Evaluate bounded arithmetic.', availability: 'available',
           contracts: [{
-            sourceId: 'python_runtime', nativeName: 'run_local_coder', connectionKind: 'private-runtime',
-            available: true, description: 'Run the saved Coder runtime.',
-            inputSchema: { type: 'object', properties: { objective: { type: 'string' } } },
+            sourceId: 'python_runtime', nativeName: 'calculator', connectionKind: 'private-runtime',
+            available: true, description: 'Evaluate bounded arithmetic.',
+            inputSchema: { type: 'object', properties: { expression: { type: 'string' } } },
           }],
         },
       ],
     });
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/input-data-dictionary/tools?selectedIds=run_local_coder,missing.tool`);
+      const response = await fetch(`${baseUrl}/input-data-dictionary/tools?selectedIds=calculator,missing.tool`);
       expect(response.status).toBe(200);
       const payload = await response.json();
       expect(payload.references).toHaveLength(2);
@@ -408,13 +362,13 @@ describe('coder routes', () => {
           contracts: [expect.objectContaining({ annotations: { readOnlyHint: true } })],
         }),
         expect.objectContaining({
-          canonicalId: 'run_local_coder',
-          kind: 'agent',
-          displayName: 'Local Coder',
-          sourceIds: ['local_coder', 'python_runtime'],
+          canonicalId: 'calculator',
+          kind: 'tool',
+          displayName: 'Calculator',
+          sourceIds: ['python_runtime'],
         }),
       ]));
-      expect(payload.selectedKnownReferences.map((entry: any) => entry.canonicalId)).toEqual(['run_local_coder']);
+      expect(payload.selectedKnownReferences.map((entry: any) => entry.canonicalId)).toEqual(['calculator']);
       expect(payload.unresolvedSelectedIds).toEqual(['missing.tool']);
       const materializeCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
         ([endpoint]) => endpoint === '/idd/tools/materialize',
@@ -422,7 +376,7 @@ describe('coder routes', () => {
       const materializeBody = JSON.parse(String(materializeCall?.[1]?.body || '{}'));
       expect(materializeBody.tools).toEqual(expect.arrayContaining([
         expect.objectContaining({ name: 'cbm.search_graph', annotations: { readOnlyHint: true } }),
-        expect.objectContaining({ name: 'run_local_coder', sourceId: 'python_runtime' }),
+        expect.objectContaining({ name: 'calculator', sourceId: 'python_runtime' }),
       ]));
     } finally {
       await closeServer(server);
@@ -481,25 +435,6 @@ describe('coder routes', () => {
         ok: false,
         error: 'conversation_history_read_failed',
         messages: [],
-      });
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  it('reports Coder idle from the live session owner instead of AgentGraph history', async () => {
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/coder_status`, {
-        method: 'POST',
-      });
-      expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toMatchObject({
-        ok: true,
-        state: 'idle',
-        running: false,
-        liveSessions: [],
-        authority: 'openclaude_console_session_manager',
       });
     } finally {
       await closeServer(server);
@@ -702,9 +637,7 @@ describe('coder routes', () => {
       expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1);
       expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).toMatchObject({
         cardId: 'card_local_coder',
-        runtimeBinding: 'coder',
-        profile: 'coder',
-        executionMode: 'single',
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
         tools: ['cbm.search_graph'],
         toolsets: ['file', 'terminal'],
         message: exactIdf,
@@ -854,7 +787,7 @@ describe('coder routes', () => {
       deck: {
         nodes: [{
           id: 'card_main_chat',
-          runtimeOptions: { binding: 'main_chat' },
+          runtime: { kind: 'hermes', mode: 'main', profile: 'default' },
         }],
         edges: [],
       },
@@ -880,104 +813,6 @@ describe('coder routes', () => {
         expect.stringContaining('p.owner_user_id = g.user_id'),
         ['https://tenant.auth0.com', 'auth0|jeremiah'],
       );
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  async function withBrokenRuntime<T>(fn: () => Promise<T>): Promise<T> {
-    const previous = process.env.LOCALCODER_COMMAND;
-    process.env.LOCALCODER_COMMAND = BROKEN_COMMAND;
-    try {
-      return await fn();
-    } finally {
-      if (previous === undefined) delete process.env.LOCALCODER_COMMAND;
-      else process.env.LOCALCODER_COMMAND = previous;
-    }
-  }
-
-  it('fails closed on the headless LocalCoder status route when nothing runnable', async () => {
-    await withBrokenRuntime(async () => {
-      const { server, baseUrl } = await createApiServer();
-      try {
-        const response = await fetch(`${baseUrl}/localcoder/status`);
-        const payload = await response.json();
-        expect(response.status).toBe(424);
-        expect(payload.ok).toBe(false);
-        expect(payload.inspection.ready).toBe(false);
-        expect(payload.inspection.missing.join(' ')).toContain(
-          'localcoder_explicit_command_script_not_found',
-        );
-      } finally {
-        await closeServer(server);
-      }
-    });
-  });
-
-  it('returns an exact blocked CoderReport from the LocalCoder run route without launching a coder', async () => {
-    await withBrokenRuntime(async () => {
-      const { server, baseUrl } = await createApiServer();
-      try {
-        const response = await fetch(`${baseUrl}/localcoder/run`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: 'packet-route',
-            projectId: 'project-1',
-            repoPath: process.cwd(),
-            objective: 'Run LocalCoder.',
-            planExcerpt: 'First loop.',
-            contextSummary: 'Route proof.',
-            codeAnchors: ['apps/backend/src/coder'],
-            cbmQueries: ['search_graph LocalCoder'],
-            guardrails: ['No fake success.'],
-            allowedFiles: ['apps/backend/src/coder/**'],
-            forbiddenWork: ['No specs/.'],
-            proofRequired: ['Compile.'],
-            reportFormat: 'CoderReport JSON',
-            stopConditions: ['Stop after one job.'],
-          }),
-        });
-        const payload = await response.json();
-        expect(response.status).toBe(424);
-        expect(payload.ok).toBe(false);
-        expect(payload.report.status).toBe('blocked');
-        expect(payload.report.coderPacketId).toMatch(/^coder_[0-9a-f-]+$/);
-        expect(payload.report.blockers.join(' ')).toContain(
-          'localcoder_explicit_command_script_not_found',
-        );
-        expect(payload.cbmScopeGate.editAllowed).toBe(true);
-      } finally {
-        await closeServer(server);
-      }
-    });
-  });
-
-  it('blocks the LocalCoder route when the structural edit-scope is invalid', async () => {
-    cbmScopeMocks.runLocalCoderCbmScopeGate.mockResolvedValueOnce({
-      sourceRoot: 'C:/Projects/main',
-      scopeStatus: 'blocked',
-      editAllowed: false,
-      blockedReason: 'edit_scope_root_not_found: /nonexistent',
-    });
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/localcoder/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...planningMocks.packet,
-          id: 'packet-scope-blocked',
-          writeMode: 'read-only',
-        }),
-      });
-      const payload = await response.json();
-
-      expect(response.status).toBe(424);
-      expect(payload.ok).toBe(false);
-      expect(payload.report.status).toBe('blocked');
-      expect(payload.report.blockers.join(' ')).toContain('edit_scope_root_not_found');
-      expect(payload.cbmScopeGate.editAllowed).toBe(false);
     } finally {
       await closeServer(server);
     }
@@ -1042,7 +877,7 @@ describe('coder routes', () => {
         expect(chatSessionMocks.startHermesTurn.mock.calls[0][0]).toMatchObject({
           sessionKey: 'project-1:main:card_main_chat',
           message: '# IDF\n\nhello',
-          profile: 'default',
+          runtime: { kind: 'hermes', mode: 'main', profile: 'default' },
         });
         const railsCalls = orchestratorMocks.requestPythonRailsJson.mock.calls;
         expect(railsCalls.map(([endpoint]) => endpoint)).toEqual([

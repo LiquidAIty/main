@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
-import type { ConsoleOutputChunk } from './openClaudeConsoleClient';
+import type { ConsoleOutputChunk } from './coderTerminalClient';
 
 /**
- * xterm.js rendering of an OpenClaude console session. Kept isolated so the
+ * xterm.js rendering of a Coder terminal session. Kept isolated so the
  * parent panel stays testable: xterm needs a real DOM (canvas/measurement), so
  * terminal creation is guarded and degrades to a no-op in non-DOM/test
  * environments. The parent also keeps a plain-text transcript mirror.
@@ -89,5 +89,5 @@ export default function XtermView({ chunks, interactive, onInput, onResize, tran
     state.written = chunks.length;
   }, [chunks]);
 
-  return <div ref={containerRef} data-testid="openclaude-xterm" style={{ flex: 1, minHeight: 0 }} />;
+  return <div ref={containerRef} data-testid="coder-terminal-xterm" style={{ flex: 1, minHeight: 0 }} />;
 }
