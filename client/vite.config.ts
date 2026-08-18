@@ -68,8 +68,8 @@ export default defineConfig(() => {
         // which has only a getter" and every graph tab shows "Graph scene
         // unavailable". troika 0.52.4 makes those settable. npm keeps re-nesting
         // 0.49.1 under drei (its range can't take 0.52.x and overrides are ignored),
-        // so we pin resolution here to the hoisted 0.52.4 (root direct dep). This is
-        // install-proof: Vite uses this regardless of node_modules nesting.
+        // so the client declares 0.52.4 directly and resolution is pinned to the
+        // workspace-hoisted copy. Vite uses this regardless of nested placement.
         {
           find: 'troika-three-text',
           replacement: path.resolve(__dirname, '../node_modules/troika-three-text'),
@@ -100,11 +100,6 @@ export default defineConfig(() => {
       proxy: {
         // Codebase-memory UI endpoints (dev): forward to local CBM UI server
         '/rpc': {
-          target: 'http://127.0.0.1:9749',
-          changeOrigin: true,
-          secure: false,
-        },
-        '/api/layout': {
           target: 'http://127.0.0.1:9749',
           changeOrigin: true,
           secure: false,

@@ -18,11 +18,11 @@ the two never silently merge or fall back into one another.
 ## Authority
 
 - **Research agents** WRITE validated source-backed evidence to KnowGraph (only).
-- The **Harness** READS KnowGraph through MCP — it NEVER writes KnowGraph.
+- Granted **Hermes Main/Kanban Cards** READ KnowGraph through MCP — they never bypass its native owner.
 - Mag One does not write ThinkGraph through any KnowGraph path.
-- There is NO Harness-visible `knowgraph.write` / `knowgraph.apply_delta`.
+- There is no generic Hermes-visible `knowgraph.write` / `knowgraph.apply_delta`.
 
-## MCP tools (Harness-only, read)
+## MCP tools (Card-granted, read)
 
 `knowgraph.get_slice`, `knowgraph.search`, `knowgraph.inspect_evidence`,
 `knowgraph.get_source_context`. They return bounded, evidence-aware structures with
@@ -31,11 +31,11 @@ evidence/source refs, dates/freshness, confidence/status, and contradictions/gap
 
 ## Rules
 
-- Entity-first extraction happens upstream (research pipeline), not in the Harness.
+- Entity-first extraction happens upstream in the research pipeline, not in TypeScript transport.
 - Keep source, assertion, evidence, time, and confidence/provenance attached.
 - Facts and derived conclusions stay separate — never treat a ThinkGraph hypothesis
   as a KnowGraph fact.
 - Do not hide legacy bad evidence (e.g. the RDW self-loop); it is repaired upstream,
   not masked.
-- Return stable evidence/source/entity refs so the Harness can cite and the
+- Return stable evidence/source/entity refs so Hermes Cards can cite and the
   ThinkGraph can reference them.

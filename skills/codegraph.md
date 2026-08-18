@@ -18,7 +18,8 @@ NOT another TypeScript planner/context-packet subsystem.
 ## Authority
 
 - The **CBM indexer** WRITES CodeGraph (through the existing codebase-memory/indexing system).
-- The **Harness / Coder** READ CodeGraph through MCP (search/scoped repository reads).
+- Granted **Hermes Main, Coder, and Kanban Cards** READ CodeGraph through MCP (search/scoped
+  repository reads).
 - CBM maps code structure and impact; it is not a runtime permission gate. Direct source reads,
   compile output, focused tests, and live proof win when graph memory disagrees.
 
@@ -33,5 +34,5 @@ connects to the native codebase-memory MCP server through its ordinary MCP confi
 
 - Code only. No graph-based planner packets, no direct UI/database writes.
 - Use scoped repository reads and require proof before edits.
-- Harness reads CodeGraph to produce file pointers; Mag One delegates to the coder
+- Hermes Cards read CodeGraph to produce file pointers; Main delegates to the Coder
   to implement on the pointed files.

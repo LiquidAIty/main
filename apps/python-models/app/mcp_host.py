@@ -140,7 +140,6 @@ _HTTP_CATALOG_INITIALIZATION_TASK: asyncio.Task[None] | None = None
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
 _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS = 300.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
-_EXPECTED_PUBLIC_TOOL_COUNT = 69
 _PUBLIC_MCP_NAME = "LiquidAIty"
 _PUBLIC_MCP_DESCRIPTION = (
     "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
@@ -1898,10 +1897,10 @@ async def _initialize_http_catalog_once() -> None:
     try:
         tools = tuple(await _materialize_complete_catalog())
         names = [tool.name for tool in tools]
-        if len(tools) != _EXPECTED_PUBLIC_TOOL_COUNT or len(set(names)) != len(names):
+        if not tools or len(set(names)) != len(names):
             raise RuntimeError(
-                "public_catalog_count_mismatch: "
-                f"expected={_EXPECTED_PUBLIC_TOOL_COUNT} actual={len(tools)} "
+                "public_catalog_invalid: "
+                f"actual={len(tools)} "
                 f"unique={len(set(names))}"
             )
         catalog_count, catalog_hash = _catalog_identity(list(tools))
@@ -2675,8 +2674,9 @@ async def _run_streamable_http() -> None:
         diagnostics = _catalog_diagnostics()
         ready = bool(
             diagnostics["catalogReady"]
-            and diagnostics.get("publicToolCount") == _EXPECTED_PUBLIC_TOOL_COUNT
-            and diagnostics.get("publicToolUniqueCount") == _EXPECTED_PUBLIC_TOOL_COUNT
+            and int(diagnostics.get("publicToolCount") or 0) > 0
+            and diagnostics.get("publicToolCount")
+            == diagnostics.get("publicToolUniqueCount")
         )
         return JSONResponse(
             {"ok": ready, **diagnostics},

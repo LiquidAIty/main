@@ -40,29 +40,27 @@ Never collapse CURRENT and TARGET into one claim.
 
 ### CURRENT
 
-- Main Chat is source-wired through the persistent repo-owned Hermes ACP adapter, but the complete
-  loaded six-service runtime and user-visible Main execution remain unproven.
-- The saved Hermes doorway currently becomes a generic inherited-context Harness agent; that is not
-  proof that repo-owned Hermes executed.
-- A Hermes console manager and Hermes/Kanban surfaces exist, but real Main-to-Hermes execution is not
-  complete.
-- OpenClaude persistent terminal and Local Coder/CoderReport are working Coder surfaces.
+- Main Chat, Coder, and Kanban are saved Cards source-wired through one persistent repo-owned Hermes
+  ACP adapter with separate profiles, sessions, memory, prompts, models, and grants.
+- Coder is a Hermes delegate Card with a backend-owned terminal under Chat. The historical
+  `card_local_coder` identifier is persistence compatibility, not runtime ownership.
+- OpenClaude, LocalCoder, and Bun are absent from the supported product and dependency graph.
+- The complete loaded six-service runtime and user-visible Main/Coder/Kanban model execution remain
+  unproven until an explicitly approved live test.
 - The Knowledge workspace has a real 2D native force-directed graph surface.
-- The Agent Canvas can visually activate cards and edges, but its composition currently supplies no
-  live activity IDs.
-- The current live ThinkGraph presentation derives transient graph projection from streamed prose;
-  this is not the desired native context-activity contract.
+- The Agent Builder Graphs workspace renders bounded native ThinkGraph, KnowGraph, and CodeGraph
+  attention projections; the redundant standalone CodeGraph app/package shell is deleted.
+- AGE/Card activity and native graph attention are structurally wired, but complete end-to-end
+  attribution and Reveal pacing remain incomplete.
 
 ### APPROVED TARGET
 
-- Repo-owned Hermes becomes Main Chat and the general/research runtime.
-- OpenClaude remains the contained Coder and under-chat terminal.
-- The existing Hermes card is the bounded Hermes/AutoGen experiment and may steward the one native
-  Magentic-One runtime.
+- Repo-owned Hermes Main, Coder, and Kanban complete live proof without another runtime or fallback.
+- Main approves exact IDF handoff to the one native AutoGen Magentic-One runtime.
 - Real native graph reads, Context Selections, handoffs, consumption, traversal, and writes drive the
   two visual canvases.
-- The replaced OpenClaude Main-only path and transient-prose graph activity path are deleted only
-  after their replacements pass preservation proof.
+- Native child Runs, tools, references, artifacts, failures, and completion become truthful AGE
+  observations without making AGE a runtime controller.
 
 Do not document TARGET behavior as CURRENT. Do not preserve an abandoned runtime as a hidden fallback.
 
@@ -167,11 +165,10 @@ One repository ownership boundary equals one CBM project:
 | --- | --- | --- | --- |
 | LiquidAIty core | `C-Projects-LiquidAIty-main` | `C:\Projects\LiquidAIty\main` | Default for ordinary work |
 | Hermes vendor | `C-Projects-Hermes` | `C:\Projects\LiquidAIty\main\Hermes` | Only while explicitly working in Hermes |
-| OpenClaude/LocalCoder vendor | `C-Projects-LocalCoder` | `C:\Projects\LiquidAIty\main\localcoder` | Only while explicitly working in LocalCoder |
 
 The core project excludes the large imported and vendored roots in `.cbmignore`. Normal LiquidAIty
-work uses only `C-Projects-LiquidAIty-main`; do not query, preload, merge, or cross-link the Hermes or LocalCoder
-graphs merely because they exist. When a task explicitly crosses a vendor boundary, query the core
+work uses only `C-Projects-LiquidAIty-main`; do not query, preload, merge, or cross-link the Hermes graph
+merely because it exists. When a task explicitly crosses a vendor boundary, query the core
 and owning vendor projects separately and narrowly, then join the evidence in the CoderReport—not in
 a combined CBM graph.
 
@@ -266,7 +263,7 @@ and the proposed post-commit checkpoint. Immediately before deletion:
 Then perform exactly one delete, exactly one full `index_repository` rebuild of `C:/Projects/LiquidAIty/main`, and
 one readiness/count/exclusion verification phase. Reindexing alone does not replace deletion because
 SQLite-backed incremental refresh can retain deleted or newly excluded fragments. Never delete
-`C-Projects-Hermes`, `C-Projects-LocalCoder`, another project, repository source, or CBM storage files
+`C-Projects-Hermes`, another project, repository source, or CBM storage files
 under this authorization. Never use delete/rebuild for an ordinary timeout or connector failure.
 
 `UserPromptSubmit` injects this maintenance and discovery SOP, but the active agent executes maintenance
@@ -340,7 +337,7 @@ persistence readback, and real runtime evidence win when they disagree with grap
 
 ## Vendored source modification law
 
-Treat `Hermes/`, `localcoder/`, `worldsignal/`, `Kronos-main/`, and other explicitly
+Treat `Hermes/`, `worldsignal/`, `Kronos-main/`, and other explicitly
 vendored or imported runtimes as controlled upstream forks, not ordinary LiquidAIty cleanup targets.
 Before a nontrivial vendor edit, the active CoderPacket must record:
 
@@ -493,10 +490,12 @@ Kanban card." It is an ordinary Hermes-backed card and may run either `single` o
 changing its identity, profile home, memory, or capability ceiling. Temporary Hermes swarm workers are
 not saved LiquidAIty cards.
 
-### OpenClaude Coder
+### Hermes Coder
 
-The persistent OpenClaude terminal and bounded Local Coder/CoderReport are protected. Main-to-Hermes
-migration must preserve them. Coder uses CBM first for this repository.
+The saved Coder Card uses the repo-owned Hermes adapter in `delegate` mode with profile `coder` and a
+backend-owned terminal under Chat. Its stable `card_local_coder` ID must not be interpreted as a
+runtime selector. Coder uses CBM first for this repository. Do not restore OpenClaude/LocalCoder, add a
+hidden coding runtime, or make Coder a Mag One worker without an explicit later product decision.
 
 ### Magentic-One
 

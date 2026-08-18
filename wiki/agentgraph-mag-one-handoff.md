@@ -63,7 +63,8 @@ writer.
    and AutoGen facets.
 3. AGE topology writes fail closed; prompt-free execution telemetry is best-effort.
 4. Native Mag One remains `MagenticOneGroupChat`; private ledgers are not persisted or reconstructed.
-5. OpenClaude/LocalCoder remains the sole Coder and owns repository/process/test/CoderReport behavior.
+5. The saved Hermes Coder Card owns bounded repository/process/test behavior and is not a Mag One
+   worker unless a later explicit topology/runtime decision changes that boundary.
 6. No provider/model/tool fallback and no automatic raw prompt, IDF, context, response, or transcript
    archive. Only an explicit Save IDF action may preserve the exact canonical IDF revision.
 

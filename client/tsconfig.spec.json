@@ -13,9 +13,7 @@
       "vitest/importMeta",
       "vite/client",
       "node",
-      "vitest",
-      "@nx/react/typings/cssmodule.d.ts",
-      "@nx/react/typings/image.d.ts"
+      "vitest"
     ],
     "jsx": "react-jsx",
     "lib": ["es2022", "dom", "dom.iterable"],

@@ -28,9 +28,6 @@
     "dist",
     "jest.config.ts",
     "**/*.spec.ts",
-    "src/**/*.test.ts",
-    "eslint.config.js",
-    "eslint.config.cjs",
-    "eslint.config.mjs"
+    "src/**/*.test.ts"
   ]
 }

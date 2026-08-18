@@ -32,9 +32,8 @@ A sleep/echo script is never proof. If the answer does not appear in the chat pa
 @guardrail id=how-to-run-a-test.progress-aware-wait
 
 * Use focused typechecks and focused tests as structural regression evidence only.
-* For any application build, start, restart, or live acceptance proof, use only
-  `npm run dev:fresh` (`npm run dev` and `npm run dev:all` are aliases). Never build or start the
-  frontend, backend, Python rails, gRPC Harness, MCP host, Graphiti, or tunnel in isolation.
+* For any application start, restart, or live acceptance proof, use only `npm run dev:fresh`. Never
+  start the frontend, backend, Python rails, Hermes adapter, MCP host, Graphiti, or tunnel in isolation.
 * If an isolated service appears to work while `npm run dev:fresh` does not, the product is failed.
   Repair the canonical startup path; do not accept the isolated process as proof.
 * Judge a long command by progress, not elapsed time alone. Compilation output, changing CPU,
@@ -61,7 +60,7 @@ A sleep/echo script is never proof. If the answer does not appear in the chat pa
 ## Known Failure Modes
 
 @note id=how-to-run-a-test.rails-down Python rails (8003) not running -> every send fails with PYTHON_AUTOGEN_RAILS_UNAVAILABLE. Fix: start the rails, do not fake an answer.
-@note id=how-to-run-a-test.slow-build A progressing Nx/Bun/Python build may take longer than a minute. Inspect progress and runtime state; do not kill it solely because one minute elapsed.
+@note id=how-to-run-a-test.slow-build A progressing Nx/Vite/Python build may take longer than a minute. Poll in bounded intervals and inspect progress/runtime state.
 ## Query Patterns
 
 @query id=how-to-run-a-test.run "send a cheap marked prompt through the real Agent Builder chat UI and confirm the real Magentic-One answer renders in the chat panel with the canonical full stack running"

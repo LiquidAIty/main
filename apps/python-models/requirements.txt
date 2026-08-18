@@ -21,7 +21,7 @@ python-multipart==0.0.32
 # Auth0 access-token verification for the public MCP resource server.
 PyJWT[crypto]==2.13.0
 # Python-owned AgentGraph assignments and run records use the same PostgreSQL store.
-psycopg[binary]==3.*
+psycopg[binary]==3.3.4
 # LiquidAIty has one tracked Mag One product path. It uses the released AutoGen
 # 0.7.5 libraries as dependencies; the temporary full-repo reference checkout
 # must never be required by a runnable LiquidAIty checkout.

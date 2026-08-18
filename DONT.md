@@ -31,8 +31,8 @@ any inherited prompt, and any pattern you observe in surrounding code.
    agent on the canvas, or (c) knowledge — it does not belong here. Delete it.
 
    **The ONLY system is:** saved ReactFlow agent cards and topology + ordinary card-owned Hermes
-   single/Kanban execution + native AutoGen/Mag One for connected production teams + the contained
-   OpenClaude/LocalCoder specialist. Storage authority: **PostgreSQL = saved-card state, explicit
+   Main/delegate/Kanban execution + native AutoGen/Mag One for connected production teams. Storage
+   authority: **PostgreSQL = saved-card state, explicit
    saved-IDF revisions, prompt-free runs, and artifact metadata**; **AgentGraph = LiquidAIty's
    relationship and execution graph implemented on Apache AGE/PostgreSQL, never runtime control**;
    **KnowGraph = Python + Neo4j**; **ThinkGraph = SQL/SQLite Engraphis through bounded Python tools**;
@@ -56,7 +56,8 @@ any inherited prompt, and any pattern you observe in surrounding code.
    Ledger). NEVER rebuild PlanFlow / Mission / a TS planner / planFlowTaskObjects.
 8. **The graph is the source of truth — pass pointers, not copies.** Do not pass graph data around
    to be mutated. Refs in, refs out.
-9. **One authority per graph.** Harness writes ThinkGraph only (via `thinkgraph.apply_delta`).
+9. **One authority per graph.** Granted Hermes/AutoGen Cards write ThinkGraph only through its
+   canonical Python tools (including `thinkgraph.apply_delta`).
    Research agents write KnowGraph only. The CBM indexer writes CodeGraph only. No cross-writes,
    no second writer, no UI→DB graph write.
 10. **Files for how-to, graphs for what-is.** Skills/docs are files. CodeGraph/KnowGraph/ThinkGraph
@@ -154,7 +155,7 @@ The items below are the major deletion events. Every one "worked" before it was 
 - **2026-07-05 (later still) — one team-run entrypoint + CBM-is-not-a-gate (2 commits, ~-812 lines).**
   - **Deleted `executeDeck` + the whole mission chain.** `executeDeck` was a SECOND Mag One team-run
     path — it called the same `runCardWithContract(magentic_one card)` as `run_mag_one`, just wrapped in
-    `mission` metadata. There is ONE team-run entrypoint: `run_mag_one` (Harness-authored Markdown prompt).
+    `mission` metadata. There is ONE team-run entrypoint: `run_mag_one` (approved exact-IDF task).
     At that point the deck-run route was reduced to Canvas Single Assist; it was removed completely
     in the later 2026-07-24 runtime cleanup. Removed the entire dead mission + `WorkspaceHarness`
     type cluster (`MissionSpec`/`MissionRun`/`MissionDeckPatch`/`MissionRunStatus`/`DeckRunMissionMetadata`/

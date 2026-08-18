@@ -25,24 +25,6 @@
         "development": {},
         "production": {}
       }
-    },
-    "serve": {
-      "executor": "@nx/js:node",
-      "dependsOn": ["build"],
-      "options": {
-        "buildTarget": "backend:build",
-        "port": 4000,
-        "watch": false,
-        "inspect": false
-      },
-      "configurations": {
-        "development": {
-          "buildTarget": "backend:build:development"
-        },
-        "production": {
-          "buildTarget": "backend:build:production"
-        }
-      }
     }
   },
   "tags": []

@@ -4,113 +4,32 @@
   "private": true,
   "scripts": {
     "build": "nx build backend",
-    "serve": "nx serve backend",
+    "serve": "npm run build && npm run start",
     "start": "node dist/src/main.js",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
-    "typecheck:spec": "tsc -p tsconfig.spec.json --noEmit",
-    "audit:unused": "knip"
+    "typecheck:spec": "tsc -p tsconfig.spec.json --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.21.1",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@openai/codex": "0.146.0",
-    "@prisma/client": "^6.13.0",
-    "@types/express": "^4.17.21",
-    "axios": "^1.12.2",
-    "bcrypt": "^5.1.1",
-    "cookie-parser": "^1.4.6",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "multer": "^2.0.2",
-    "neo4j-driver": "^5.15.0",
-    "node-pty": "^1.1.0",
-    "pg": "^8.16.3",
-    "zod": "^3.23.8"
+    "@prisma/client": "6.12.0",
+    "axios": "1.18.1",
+    "bcryptjs": "3.0.3",
+    "cookie-parser": "1.4.7",
+    "dotenv": "16.6.1",
+    "express": "4.22.2",
+    "multer": "2.2.0",
+    "neo4j-driver": "5.28.2",
+    "node-pty": "1.1.0",
+    "pg": "8.16.3",
+    "zod": "3.25.76"
   },
   "devDependencies": {
-    "@types/bcrypt": "^5.0.2",
-    "@types/cookie-parser": "^1.4.7",
-    "@types/multer": "^2.0.0",
-    "@types/node": "^20.11.0",
-    "@types/pg": "^8.11.0",
-    "knip": "^5.30.0",
-    "typescript": "^5.4.5"
-  },
-  "nx": {
-    "targets": {
-      "build": {
-        "executor": "@nx/esbuild:esbuild",
-        "outputs": [
-          "{options.outputPath}"
-        ],
-        "defaultConfiguration": "production",
-        "options": {
-          "platform": "node",
-          "outputPath": "apps/backend/dist",
-          "format": [
-            "cjs"
-          ],
-          "bundle": false,
-          "main": "apps/backend/src/main.ts",
-          "tsConfig": "apps/backend/tsconfig.app.json",
-          "assets": [
-            "apps/backend/src/assets",
-            {
-              "input": "apps/backend/src/config",
-              "glob": "**/*.json",
-              "output": "apps/backend/src/config"
-            }
-          ],
-          "esbuildOptions": {
-            "sourcemap": true,
-            "outExtension": {
-              ".js": ".js"
-            }
-          }
-        },
-        "configurations": {
-          "development": {},
-          "production": {
-            "generateLockfile": true,
-            "esbuildOptions": {
-              "sourcemap": false,
-              "outExtension": {
-                ".js": ".js"
-              }
-            }
-          }
-        }
-      },
-      "serve": {
-        "continuous": true,
-        "executor": "@nx/js:node",
-        "defaultConfiguration": "development",
-        "dependsOn": [
-          "build"
-        ],
-        "options": {
-          "buildTarget": "@nx/backend:build",
-          "runBuildTargetDependencies": false
-        },
-        "configurations": {
-          "development": {
-            "buildTarget": "@nx/backend:build:development"
-          },
-          "production": {
-            "buildTarget": "@nx/backend:build:production"
-          }
-        }
-      },
-      "test": {
-        "options": {
-          "passWithNoTests": true
-        }
-      },
-      "docker-build": {
-        "dependsOn": [
-          "build"
-        ],
-        "command": "docker build -f apps/backend/Dockerfile . -t nx-backend"
-      }
-    }
+    "@types/cookie-parser": "1.4.10",
+    "@types/express": "4.17.23",
+    "@types/multer": "2.0.0",
+    "@types/node": "20.19.22",
+    "@types/pg": "8.15.6",
+    "typescript": "5.8.3"
   }
 }

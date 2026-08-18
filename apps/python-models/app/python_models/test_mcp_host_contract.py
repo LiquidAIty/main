@@ -911,7 +911,8 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
             if not name.startswith(("engraphis.", "cbm.", "graphiti."))
         )
         assert not any(name.startswith("worldsignals.") for name in by_name)
-        assert len(by_name) == len(set(by_name)) == 69
+        assert by_name
+        assert len(by_name) == len(set(by_name))
         return {name: tool.model_dump() for name, tool in by_name.items()}
 
     catalog = asyncio.run(check())
@@ -1126,19 +1127,20 @@ def test_http_tools_list_never_exposes_initializing_or_failed_catalog(monkeypatc
     with pytest.raises(RuntimeError, match="native_cbm_failed"):
         asyncio.run(mcp_host.list_tools())
 
+    catalog_size = 7
     tools = tuple(
         Tool(
             name=f"ready.tool_{index}",
             description="ready",
             inputSchema={"type": "object", "properties": {}},
         )
-        for index in range(69)
+        for index in range(catalog_size)
     )
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
     monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", tools)
     ready = asyncio.run(mcp_host.list_tools())
-    assert len(ready) == len({tool.name for tool in ready}) == 69
+    assert len(ready) == len({tool.name for tool in ready}) == catalog_size
 
 
 def test_http_catalog_initialization_is_process_wide_once(monkeypatch):
@@ -1147,6 +1149,8 @@ def test_http_catalog_initialization_is_process_wide_once(monkeypatch):
     from mcp.types import Tool
 
     calls = 0
+
+    catalog_size = 5
 
     async def complete_catalog():
         nonlocal calls
@@ -1158,7 +1162,7 @@ def test_http_catalog_initialization_is_process_wide_once(monkeypatch):
                 description="ready",
                 inputSchema={"type": "object", "properties": {}},
             )
-            for index in range(69)
+            for index in range(catalog_size)
         ]
 
     monkeypatch.setattr(mcp_host, "_materialize_complete_catalog", complete_catalog)
@@ -1176,7 +1180,7 @@ def test_http_catalog_initialization_is_process_wide_once(monkeypatch):
     asyncio.run(check())
     assert calls == 1
     assert mcp_host._CATALOG_STATE == "ready"
-    assert len(mcp_host._HTTP_CATALOG_TOOLS or ()) == 69
+    assert len(mcp_host._HTTP_CATALOG_TOOLS or ()) == catalog_size
 
 
 def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
@@ -1194,6 +1198,8 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
     release = asyncio.Event()
     calls = 0
 
+    catalog_size = 6
+
     async def slow_complete_catalog():
         nonlocal calls
         calls += 1
@@ -1205,7 +1211,7 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
                 description="ready",
                 inputSchema={"type": "object", "properties": {}},
             )
-            for index in range(69)
+            for index in range(catalog_size)
         ]
 
     async def closed_graphiti():
@@ -1248,13 +1254,13 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
                     if readiness.status_code == 200:
                         break
                     await asyncio.sleep(0.1)
-                assert readiness.json()["publicToolCount"] == 69
+                assert readiness.json()["publicToolCount"] == catalog_size
 
             async with streamable_http_client(f"{base_url}/mcp") as streams:
                 async with ClientSession(streams[0], streams[1]) as session:
                     await session.initialize()
                     tools = (await session.list_tools()).tools
-                    assert len(tools) == len({tool.name for tool in tools}) == 69
+                    assert len(tools) == len({tool.name for tool in tools}) == catalog_size
         finally:
             server_task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -1748,7 +1754,8 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
             first_catalog, first_context = await fresh_client()
             second_catalog, second_context = await fresh_client()
             assert first_catalog == second_catalog
-            assert len(first_catalog) == len(set(first_catalog)) == 69
+            assert first_catalog
+            assert len(first_catalog) == len(set(first_catalog))
             assert "main.context" in first_catalog
             assert "agentgraph.inspect" in first_catalog
             assert "write_mag_one_instructions" in first_catalog

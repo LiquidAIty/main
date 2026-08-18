@@ -49,7 +49,7 @@ describe('native authority graph surfaces', () => {
     edges: [],
   });
 
-  it('mounts the real CBM GraphTab with the resolved repository identity', () => {
+  it('passes the bounded native projection to the embedded CBM GraphTab', () => {
     render(<NativeCodeGraphSurface project="C-Projects-main" projection={empty('codegraph')} onExpand={vi.fn()} />);
     expect(screen.getByTestId('cbm-graph-tab').textContent).toBe('C-Projects-main:0');
   });

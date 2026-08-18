@@ -1,330 +1,67 @@
-# FUTURE.md — LiquidAIty product vision & deferred work
+# LiquidAIty Deferred Work
 
-This file holds the **aspirational product vision** and **deferred features**. It was split out of
-`PLAN.md` on 2026-07-05 so that PLAN.md leads with the *actual* wired architecture primitives.
-Nothing here is load-bearing today — build the primitives in [PLAN.md](./PLAN.md) first, then pull a
-capability from here only when the primitive it depends on is proven. Same law applies:
-[DONT.md](./DONT.md) and [AGENTS.md](./AGENTS.md) govern; no fakes, one writer per graph,
-TS on Python rails with AI brain.
+Core v0 is defined in `PLAN.md` and `ARCHITECTURE.md`. This file contains only work intentionally
+deferred until the static baseline and explicitly approved live proofs pass.
 
-Repo state (2026-07-20): cleaned to Launch core. Non-core experiments removed (~200K lines
-deleted). DONT.md encodes lessons from the purge. The three-graph system (ThinkGraph, KnowGraph,
-CodeGraph) and trading wedge (WorldSignals, Kronos, Alpaca, SEC filings) are wired. Hermes
-integration remains a pre-integration target. The source seed retains its card/topology, while the
-current ADMIN persisted deck lacks the Hermes card/prompt/edges and no actual Hermes process adapter
-exists.
+## Live proof sequence
 
----
+1. Main Hermes returns one bounded response through the saved account/model.
+2. Main delegates one read-only CodeGraph task to the saved Coder Card.
+3. The child Run records actual tool use, exact native references, parent/correlation identity, cost,
+   duration, success/failure, and AGE lineage.
+4. Main delegates one bounded research/board task to Kanban and proves separate profile memory.
+5. Main approves one exact IDF and hands it to native Magentic-One through the official MCP boundary.
 
-## Work-In-Progress Inventory (2026-07-20 integrity pass)
+These calls require explicit approval. Structural tests must not be presented as live proof.
 
-Every parked or half-done piece, named so it is documented instead of sprawled. Nothing below is
-part of the active research loop until its own pass wires it in.
+## Reveal and graph attention
 
-- **Trading research tool (launch wedge, active WIP)** — `client/src/pages/tradingui.tsx` (TradingView
-  surface), `card_trading_workbench` (parked card), Alpaca read-only rails
-  (`apps/python-models .../market/`: snapshot, bars, paper-account readiness),
-  `Kronos-main` submodule (uninitialized) + `market/model_adapters/kronos_adapter.py` + forecast
-  contract. Kronos/Cronos work resumes later by explicit decision.
-- **WorldSignals (parked signal primitive)** — vendored `worldsignal/` service, `worldsignal.routes.ts`,
-  `card_worldsignals_agent` (disconnected), one Playwright spec in `e2e/`. Not in the research loop.
-- **Coder / LocalCoder / OpenClaude (working boundaries, incomplete placement/integration)** —
-  vendored `localcoder/` supplies the persistent gRPC Harness used by Main Chat; the persistent
-  OpenClaude console owns the real PTY/session lifecycle; and `card_local_coder` plus
-  the configured-card exact-IDF transport plus `run_local_coder` provide bounded one-shot coding
-  paths. Direct Card execution no longer inserts an AutoGen prompt controller before LocalCoder.
-  These are separate useful surfaces,
-  not abandoned alternatives. The Code Console is currently a right-side overlay and still needs to
-  occupy the intended under-chat slot; Hermes belongs in its own terminal/UI when its real runtime is
-  integrated.
-- **CodeGraph view (wired but dormant)** — `client/src/components/codegraph/*` renders through the
-  vendored `client/src/vendor/codebase-memory-ui` server via the vite `/rpc` + `/api/layout` proxies
-  to `127.0.0.1:9749`; that server must be running or the proxies log ECONNREFUSED (harmless).
-  `card_codegraph_agent` stays disconnected until code context joins the loop.
-- **Plan Agent** — parked card; the Plan object vision lives below in this file.
-- **e2e layer (barely started)** — `e2e/playwright/worldsignal.spec.ts` + `playwright.config.ts` +
-  `@playwright/test`. One spec for a parked surface; grow or cut in a dedicated pass.
-- **Auth on Prisma, app state on raw Postgres, graphs in their own stores** — login/signup →
-  `auth/userService` + `auth/sessionStore` → `services/database.ts` (Prisma) is the correct, deliberate
-  split: Prisma owns auth/session; raw Postgres owns stable Project/Deck/Card and prompt-free Run state;
-  SQLite/Engraphis owns ThinkGraph; Neo4j owns KnowGraph; CBM owns CodeGraph; repo-root
-  `LiquidAIty.idd` owns IDD definitions; Python materializes IDFs; AgentGraph is implemented on Apache
-  AGE/PostgreSQL and owns Card relationships, delegation/parent-run lineage, and prompt-free telemetry.
-  This split is deliberate.
-- **Hermes runtime/UI** — Main and ordinary Hermes-backed saved cards use the repo-owned persistent
-  Hermes boundary. Preserve saved prompt/profile/model/tool authority, stable card identity across
-  `single` and `auto-kanban`, distinct sessions, and the separate Hermes terminal. The saved
-  `card_hermes_steward` is a planning/memory/KnowGraph helper, not a Kanban card type.
-- **Card model authority is per-card, by design** — current ADMIN readback has Main and Local Coder on
-  `openrouter/z-ai/glm-5.2` and Magentic-One on `openrouter/openai/gpt-5.1-chat`. Mixed models
-  across cards are correct when the live card configs say so — never normalize all cards to one
-  provider/model, and never let a caller override a card's own config. Service-only model calls
-  (embedding/rerank/extraction) are allowed but must never masquerade as a card-agent call.
-- **Card prompts: runtime source of truth is the persisted live card prompt/config**, not the
-  backend/client seed template. Seed templates are defaults for creating/resetting decks only. If a
-  seed template prompt changes and an existing project must pick it up, that requires an explicit live
-  deck migration/readback (as done for `card_main_chat` via the deck PUT API) — never assumed. Report
-  duplicated prompt sources if found; do not delete card prompts.
-- **Object-aware chat (partially wired, not residue)** — graph selection can now attach bounded
-  selected graph-object references to Main Chat/Harness context. Propagation through actual Hermes
-  and approved Mag One execution is not proven. Do not remove inspector/selection code as dead.
-- **Stable Deck/Card state is relational PostgreSQL; React Flow relationships are AgentGraph/AGE** —
-  bounded presentation/runtime extension JSONB remains flexible supporting data, not Card, IDF, graph,
-  conversation, Run, result, or receipt authority.
-- **Deferred maintenance** — dependency security upgrades; eslint warnings on owned code; production
-  orchestration beyond the packaged pinned Linux CBM `codegraph` service. Keep one persistent
-  CodeGraph volume and never run multiple independent daemons against the same cache root.
+- Tune progressive reveal pacing so fast native reads remain understandable without slowing agents.
+- Add optional stacked 3D layers for ThinkGraph, KnowGraph, CodeGraph, and AgentGraph while preserving
+  separate native authorities.
+- Illuminate exact IDF consumption only when a runtime receipt proves the referenced native objects
+  were delivered or opened.
+- Add inspector detail for graph reads/writes, traversals, selections, handoffs, and artifacts without
+  exposing hidden chain-of-thought.
+- Develop bounded prompting recipes that reward useful graph context and reject irrelevant context.
 
-## North Star — the phased map (2026-07-10)
+## Hermes memory
 
-The long-term vision is a **personal cognitive operating system**: graph-based memory,
-object-aware chat, agent teams, user-owned data, tools tailored to the individual. It ships in
-phases; each phase must work repeatedly before the next is pulled. Honest ordering:
+- Measure Main, Coder, and Kanban profile isolation over real sessions.
+- Decide whether native Hermes holographic memory is sufficient before adding any Card-level SQLite
+  memory contract.
+- Keep memory separation intentional; do not create one automatic cross-agent memory dump.
 
-```txt
-NOW (kernel)      proven chat, card, Mag One-worker, Coder, and graph primitives; finish the real
-                  Main → Hermes process boundary before claiming the integrated research loop
-                  + coding loop (bounded job → execution adapter → CoderReport → deterministic
-                  proof review → CBM refresh).
-NEXT (wedges)     Trading research: user thesis anchors in ThinkGraph, sourced evidence in
-                  KnowGraph, probabilistic scenarios, inspectable deltas. NO financial advice,
-                  NO autonomous trading; paper trading later. Coding: dual-path Coder adapters
-                  (external frontier coder OR OpenClaude+API model) over one job/report contract.
-LATER (persona)   Entity/persona nodes with sourced beliefs and attributed perspectives.
-                  Simulated perspectives are ALWAYS labeled simulated ("A simulated perspective
-                  based on X's documented work might argue…"), strongest-supporting and
-                  strongest-opposing interpretations, provenance preserved, original thinkers
-                  credited. NEVER generated text as a real quote. The reasoning method the
-                  product supports: inversion, think-like-the-other-side, multifactor awareness,
-                  probabilistic scoring, class/property/transformation comparison, exposed
-                  uncertainty — the method, never self-promotional claims in prompts or copy.
-LATER (data)      Personal data belongs to the user: local/device-private where practical,
-                  explicit export, explicit permissions, no training use by default. Any shared
-                  knowledge graph is explicit opt-in, revocable, provenance-aware, separate from
-                  private memory. No automatic OSINT at sign-in — a future profile-discovery
-                  workflow must be user-triggered with visible sources, consent, retention, and
-                  removal controls.
-PARKED            MiroFish/agent-economy simulation (a later adapter/experiment, kept out of the
-                  core until both wedges work repeatedly) · knowledge marketplace / token /
-                  profit sharing (privacy, securities, attribution, fraud, market-design, and
-                  regulatory weight — only preserve provenance/ownership fields now) · avatar/
-                  video/marketing/social integrations (separate product modules, each with
-                  explicit scopes when they come).
-```
+## Engraphis
 
-Hermes across all phases: memory steward, runtime oversight, swarm observer, development
-evidence reviewer, and later a user-data permission broker — always through explicit audited
-tools, never an unrestricted invisible controller.
+- Keep semantic embeddings outside startup and IDF materialization.
+- When revisited, use one lazy local-only singleton and the existing compatible cached model.
+- If the model is absent, fail only semantic recall; never use deterministic fake vectors.
+- Evaluate whether Engraphis earns its place after real ThinkGraph use rather than through startup
+  warmup or synthetic memories.
 
-## Product Objects (vision)
+## UI after runtime proof
 
-### One Plan
+- Refine Chat/Graphs as the primary modality and Agent Canvas as the build/test modality.
+- Keep Coder terminal as a revealable second face under Chat.
+- Explore distinct visual treatment for internal Hermes Cards versus AutoGen/Mag One Cards without
+  creating new runtime types.
+- Explore a magnetic plus/X bus for Mag One composition only after saved topology and execution remain
+  stable.
 
-There is one user-facing **Plan**. While being created or revised it is awaiting user approval. The
-internal persistence field may stay `planDraft` for compatibility, but UI/prompts/docs call it **Plan**.
+## Data and trading
 
-```txt
-drafting → awaiting approval → approved → executing → needs review → reviewed
-meaningful revision → awaiting approval again
-```
+- Trading remains paper/simulated until evidence, risk, approval, and receipt boundaries are proven.
+- WorldSignals remains parked unless a current saved edge and product test bring it into scope.
+- Do not connect trading execution to experimental graph or memory paths.
 
-The user-approval transition is the handoff from planning to execution.
+## Cleanup decisions intentionally deferred
 
-```txt
-Plan creation or revision            → no execution
-User approves the current revision   → it becomes the active executable intent
-Agents run bounded approved steps    → results/evidence/artifacts/reviews attach to those steps
-A meaningful Plan revision           → becomes a new revision awaiting approval
-```
-
-A Plan is not automatically accepted project truth because a model wrote it. Until approval, ThinkGraph
-may link the proposal to the request and open questions, but must not promote its contents as accepted
-decisions.
-
-### Plan Canvas
-
-The Plan canvas is the durable, editable work surface. Canvas cards stay compact (step number, short
-title, one-line summary, state); the Inspector owns full details (objective, detail, expected outcome,
-acceptance criteria, constraints, dependencies, open questions, source request, approval state, runs,
-artifacts, evidence, review verdict, next decision, provenance).
-
-The chat steers. The Plan holds durable executable intent. The Inspector explains. The graph links.
-The skills compound.
-
-### Conversation History
-
-Conversation is durable user-visible history: reload, scroll, reply to an earlier message, branch from
-that point. Old messages are retired from active prompt context but never deleted.
-
-```txt
-saved message graph  ≠  full model prompt  ≠  automatic graph memory
-```
-
-A conversation can link to plans, steps, runs, evidence, artifacts, and reviews. Raw transcript text is
-not automatically copied into ThinkGraph or KnowGraph.
-
-## Graph Model (full vision)
-
-### User Scope, Project Lenses
-
-ThinkGraph and KnowGraph are scoped to the **user**. Projects provide context, permissions,
-organization, and an active lens — they do not silo the graph. Every graph record preserves owner/user
-scope, provenance, created/updated times, optional project/plan/step/run/review references, and
-confidence/status where relevant. Retrieval starts from the active Plan/step + project lens, then
-traverses user-owned linked records only when relevance and provenance justify it. Never dump the whole
-user graph into a prompt.
-
-### ThinkGraph (curated project reasoning)
-
-Stores references and curated facts: approved Plan revisions, requested outcomes, accepted decisions,
-superseded/rejected decisions, constraints, open questions, plan/step/conversation references, runs,
-artifacts, Outcome Reviews, blockers, next decisions. Not raw chat; not auto-promoted model suggestions.
-
-### KnowGraph (grounded evidence)
-
-Stores source records + metadata, publication/observation/retrieval times, chunks, entities,
-source-backed claims, evidence links, confidence, contradictions, citation/provenance. A claim can be
-reused across projects, but each project/step carries its own explicit link/question/interpretation.
-No model statement becomes KnowGraph fact without source provenance.
-
-### SkillsGraph
-
-`skills/*.md` are human-readable durable procedures; SkillsGraph is the retrieval layer connecting
-skills to systems/files/tasks/proof-commands/traps/success/failure. A skill is created/updated only
-after real work produced proof worth preserving.
-
-## IDF Context Policy
-
-The IDF is the actual controlled document sent to a model/agent. A normal turn receives only
-the relevant bounded slice: stable saved-card context, current exact input, scoped ThinkGraph,
-KnowGraph, and CodeGraph references/data when useful, relevant skills, and explicit artifact pointers.
-Python rails materializes that document in memory and discards it by default. The user may explicitly
-save the exact Markdown as a repeatable immutable PostgreSQL revision; provider envelopes, outputs,
-transcripts, and separate selected-context bundles remain excluded. Future retention/compression or
-external large-body policy requires measured storage evidence rather than an arbitrary size ceiling.
-
-IDD is the repo-native declaration language for structural rules, catalogs, named variables and
-bindings, field definitions, constraints, and typed operation forms used to construct/edit/validate
-the IDF. Python interprets it without a copied catalog. An IDF instantiates only the declarations it
-uses; IDD definitions are not sent wholesale to the model. AgentGraph/AGE
-meta-knowledge may relate prompt-free run, Card, native reference, and artifact identities, but never
-stores the raw IDF or authorizes or schedules execution.
-
-Excluded by default: entire chat history, retired unrelated messages, entire user graph, raw hidden
-reasoning, raw tool payloads, secrets, unverified model claims, unrelated skills, whole repositories.
-The system states honest emptiness when grounded context is unavailable.
-
-## Runtime Roles (full vision)
-
-- **Harness** — the fast, persistent, interactive front door: conversation, Plan creation/revision,
-  user-judgment questions, bounded context assembly, fast tool use, ordinary single-agent work, native
-  worker/subagent calls, review/evaluator calls. The default interactive runtime.
-- **Python Tools** — first-class capability layer. Proven Python evidence/data capabilities callable
-  through narrow auditable bridges without forcing a full team run (trading, research, documents, graph).
-- **Mag One / Agent Fabric** — a valued specialist team fabric, *not* the default for ordinary chat.
-  Deferred until the graph/context/worker foundation is proven, then used when genuine multi-agent
-  structure is worth the cost (multi-specialist research, visible team collaboration, graph/data/sim
-  work, deliberate team planning, long-running missions). The bus must ultimately distinguish
-  installed/resident · eligible-on-a-bus · selected-for-a-mission · actively-running · watching-on-trigger.
-  Connected does not mean forced into every request.
-
-## The Core Controlled Loop (target)
-
-```txt
-user request or selected Plan step
-→ bounded transient IDF assembled under IDD rules
-→ Plan creation/revision or approved-step mission
-→ agent work
-→ real artifacts/evidence
-→ separate evaluator checks requested outcome against actual evidence
-→ Outcome Review: matched | partial | contradicted | unknown
-→ ThinkGraph / KnowGraph / Plan links update
-→ concise chat pointer
-→ next decision or bounded next step
-```
-
-The generator never grades itself; the evaluator does not accept prose as proof
-(`generator output ≠ verified result`). The first repair loop is bounded: one worker attempt →
-evaluator → at most one concrete repair → evaluator → stop for human review. No infinite retry, no
-silent boundary escalation, no auto-merge/deploy/real-trading.
-
-## First Vertical: Trading Research & Decision Support
-
-Trading is the first complete proof vertical while the core stays domain-neutral.
-
-```txt
-thesis/request → Plan awaiting approval → approved research steps
-→ source-backed SEC / market / KnowGraph evidence
-→ bounded Harness research using proven Python tools → evidence evaluation → Outcome Review
-→ bull/base/bear or directional-uncertainty thesis → paper/simulated proposal only
-→ explicit human approval before any future real-order pathway
-```
-
-Every trading record needs time (`sourcePublishedAt`, `observedAt`, `asOf`, `retrievedAt`, staleness
-policy). Every output separates supported-by-current-evidence · supported-by-older-evidence ·
-contradicted/competing · unknown · model-interpretation. Never present generated market opinion as fact.
-
-## Deferred features (base functions first)
-
-- **No graph access for the Orchestrator (Mag One).** It runs a Harness-authored prompt and has no
-  direct graph tools by default; the originating card/runtime uses the selected material in the IDF.
-- **ThinkGraph slicing/filtering tool for chat.** For now the Harness reads the graph plainly; a
-  bounded filtered "slice" tool (richer than `thinkgraph.get_graph_slice`'s current plain read) is later.
-- **Durable run-folder layer around the coder.** The coder seam is wired (`run_local_coder`, server
-  root); the Run Packet → agent folders → review → KnowGraph-ingest → ThinkGraph-continuation layer is
-  the later greenfield build.
-
-## Near-Term Route (detailed batches)
-
-### Batch A — Graph Truth and Context
-1. Audit and freeze a real baseline. 2. Wire user-scoped ThinkGraph records for Plan/revision refs,
-requested outcomes, constraints, open questions, run/review links. 3. Wire user-scoped KnowGraph
-source-backed retrieval + explicit Plan-step links. 4. Feed scoped ThinkGraph + KnowGraph into the live
-actual IDF consumed by the model call. 5. Prove a fresh turn uses real graph context without full chat
-history and, when Save IDF was explicitly selected, that the saved revision matches what reached the runtime.
-
-### Batch B — Contextual Capabilities
-1. CodeGraph/CBM scoped retrieval for code steps. 2. Deliberate SkillsGraph retrieval. 3. Extend Context
-IDF with code/skills only when relevant. 4. Report stale or incomplete CBM honestly and use direct
-source reads plus focused proof; never treat stale graph memory as authority or invent context.
-
-### Batch C — Bounded Harness Work and Review
-1. Minimal agent contracts. 2. One approved Plan step through a fast Harness worker. 3. Real
-artifacts/evidence + Run records. 4. Separate evaluator. 5. Persist Outcome Review + attach to
-Plan/ThinkGraph/KnowGraph. 6. Prove one paper-only trading research loop.
-
-### Batch D — Mag One Reassessment (only after A–C)
-1. Compare native Magentic-One vs. thin adapter vs. full bus/card. 2. Measure streaming, participant
-selection, Task Ledger overhead, quality gain. 3. Escalation rules. 4. Keep Mag One where team structure
-demonstrably adds value.
-
-## Hard Product Law
-
-Do not fake AI work, graph truth, evidence, execution, or success.
-
-Forbidden: fake plans · fake task/run cards · fake artifacts · fake completed statuses ·
-backend/frontend-authored pretend AI answers · chat text silently converted into executable work · raw
-model output promoted to graph truth · raw model opinion stored as KnowGraph fact · deterministic keyword
-routers · regex intent classifiers · sanitizer/rewrite logic pretending to be planning · mocked success
-on live routes · hidden prompt spaghetti · whole-graph/whole-repo context dumps.
-
-Allowed: real user-approved Plans · real bounded agent work · real source-backed evidence · real
-artifacts · real test/proof results · real missing-state reporting · real evaluator verdicts · real graph
-links and provenance · real skills created after proof.
-
-If proof is missing, say so. If evidence is unavailable, say unknown. If a route is unwired, fail closed.
-If the user has not approved the Plan revision, do not execute it.
-
-## Final Rule
-
-LiquidAIty should show real work and real knowledge relationships, not status theater.
-
-```txt
-The user owns the intent.
-The Plan holds approved direction.
-The chat steers.
-The graph connects and remembers.
-The evidence grounds.
-The workers act within bounds.
-The evaluator can say no.
-```
+- Rename stable historical IDs such as `card_local_coder` only through an explicit persisted-data
+  migration with readback proof.
+- Rename the load-bearing `/api/coder/mcp-bridge/` transport only with coordinated Python/backend
+  callers and compatibility tests.
+- Replace the current dev supervisor only if its dev-only advisory cannot be contained and the
+  replacement preserves one attached six-service process tree.
+- Upgrade React-three/Drei only as a measured compatibility task because the active CodeGraph renderer
+  depends on the current React 18/Three cohort.
