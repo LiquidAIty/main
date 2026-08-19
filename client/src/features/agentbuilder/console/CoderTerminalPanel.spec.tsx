@@ -10,6 +10,13 @@ import type {
   ConsoleSessionInfo,
 } from './coderTerminalClient';
 
+vi.mock('./XtermView', async () => {
+  const react = await import('react');
+  return {
+    default: () => react.createElement('div', { 'data-testid': 'coder-terminal-xterm' }),
+  };
+});
+
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 function session(): ConsoleSessionInfo {
@@ -86,7 +93,7 @@ describe('CoderTerminalPanel', () => {
     expect(host?.querySelector('[data-testid="coder-terminal-status"]')?.textContent).toBe('Running');
   });
 
-  it('shows a supplied IDF only as terminal review text', async () => {
+  it('uses xterm as the sole transcript surface without duplicate command controls', async () => {
     await render(
       <CoderTerminalPanel
         open
@@ -96,7 +103,10 @@ describe('CoderTerminalPanel', () => {
         initialTranscript={[{ seq: 1, stream: 'system', data: '# Exact IDF', at: 'now' }]}
       />,
     );
-    expect(host?.querySelector('[data-testid="coder-terminal-transcript"]')?.textContent)
-      .toContain('# Exact IDF');
+    expect(host?.querySelector('[data-testid="coder-terminal-xterm"]')).not.toBeNull();
+    expect(host?.querySelector('[data-testid="coder-terminal-transcript"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="coder-terminal-input"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="coder-terminal-send"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).not.toBeNull();
   });
 });

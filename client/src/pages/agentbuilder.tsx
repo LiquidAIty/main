@@ -1380,11 +1380,6 @@ export default function AgentBuilder(): React.ReactElement {
         document={deck}
         setDocument={setDeck}
         onPersistGraphMutation={recordDeckWriteReason}
-        presentationViewportKey={
-          surfaceRole === 'large' && workspaceView === 'canvas'
-            ? chatPanelWidth
-            : null
-        }
         activeCardIds={[]}
         activeEdgeIds={[]}
         selectedCardId={selectedCardId}

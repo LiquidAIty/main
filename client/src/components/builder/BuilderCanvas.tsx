@@ -16,6 +16,7 @@ import {
   type EdgeChange,
   type Node,
   type NodeChange,
+  type NodeMouseHandler,
   type OnReconnect,
   type ReactFlowInstance,
 } from '@xyflow/react';
@@ -50,7 +51,7 @@ import AgentCardNode from './nodes/AgentCardNode';
 import MagenticBusNode from './nodes/MagenticBusNode';
 
 const DEV_MODE = import.meta.env.DEV;
-const PERSISTED_NODE_CHANGE_TYPES = new Set<NodeChange['type']>(['add', 'remove', 'replace', 'position']);
+const PERSISTED_NODE_CHANGE_TYPES = new Set<NodeChange['type']>(['add', 'remove', 'replace']);
 const PERSISTED_EDGE_CHANGE_TYPES = new Set<EdgeChange['type']>(['add', 'remove', 'replace']);
 const FALLBACK_NODE_WIDTH = 144;
 const FALLBACK_NODE_HEIGHT = 88;
@@ -545,7 +546,6 @@ export default function BuilderCanvas({
   activeCardIds = [],
   activeEdgeIds = [],
   inspectMode = false,
-  presentationViewportKey = null,
   focusZone = null,
 }: {
   document: DeckDocument;
@@ -559,7 +559,6 @@ export default function BuilderCanvas({
   activeCardIds?: string[];
   activeEdgeIds?: string[];
   inspectMode?: boolean;
-  presentationViewportKey?: string | number | null;
   // Camera focus zone from the left rail (camera-only): pan/zoom to fit the
   // agent/bus nodes. Never hides any node.
   focusZone?: { zone: 'agents'; nonce: number } | null;
@@ -651,26 +650,6 @@ export default function BuilderCanvas({
     };
   }, [document, flowNodes.length, reactFlowInstance]);
 
-  useEffect(() => {
-    if (!reactFlowInstance) return;
-    if (!initialViewportAppliedRef.current) return;
-    if (flowNodes.length === 0) return;
-    if (presentationViewportKey == null) return;
-    const frame = window.requestAnimationFrame(() => {
-      const landingViewport = buildPresentationLandingViewport(
-        latestDocumentRef.current,
-        canvasRef.current,
-        GRAPH_WORKSPACE.landingBaselineZoom,
-      );
-      if (landingViewport) {
-        reactFlowInstance.setViewport(landingViewport, { duration: 0 });
-      }
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [flowNodes.length, presentationViewportKey, reactFlowInstance]);
-
   const isPlainConnectionAllowed = (
     connection: Pick<Connection, 'source' | 'sourceHandle' | 'target' | 'targetHandle'>,
     currentEdges: Edge[],
@@ -696,6 +675,34 @@ export default function BuilderCanvas({
       ...prev,
       version: prev.version + 1,
       nodes: mergeFlowNodesIntoDeck(reduced.nextNodesForPersistence as Node[], prev.nodes),
+    }));
+  };
+
+  const onNodeDragStop: NodeMouseHandler = (_event, draggedNode) => {
+    const previous = latestDocumentRef.current.nodes.find((node) => node.id === draggedNode.id);
+    if (
+      previous &&
+      previous.position.x === draggedNode.position.x &&
+      previous.position.y === draggedNode.position.y
+    ) {
+      return;
+    }
+    const nextNodes = latestFlowNodesRef.current.map((node) =>
+      node.id === draggedNode.id
+        ? { ...node, position: { ...draggedNode.position } }
+        : node,
+    );
+    latestFlowNodesRef.current = nextNodes;
+    setNodes(nextNodes);
+    onPersistGraphMutation?.('canvas:node-drag-stop', {
+      cardId: draggedNode.id,
+      x: draggedNode.position.x,
+      y: draggedNode.position.y,
+    });
+    setDocument((prev) => ({
+      ...prev,
+      version: prev.version + 1,
+      nodes: mergeFlowNodesIntoDeck(nextNodes, prev.nodes),
     }));
   };
 
@@ -1107,6 +1114,7 @@ export default function BuilderCanvas({
         }
         onInit={setReactFlowInstance}
         onNodesChange={onNodesChange}
+        onNodeDragStop={onNodeDragStop}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onReconnect={onReconnect}

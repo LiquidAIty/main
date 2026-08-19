@@ -12,7 +12,6 @@ type AgentCanvasPaneProps = {
     reason: string,
     detail?: Record<string, unknown>,
   ) => void;
-  presentationViewportKey?: string | number | null;
   activeCardIds: string[];
   activeEdgeIds: string[];
   selectedCardId: string | null;
@@ -30,7 +29,6 @@ export default function AgentCanvasPane({
   document,
   setDocument,
   onPersistGraphMutation,
-  presentationViewportKey = null,
   activeCardIds,
   activeEdgeIds,
   selectedCardId,
@@ -50,7 +48,6 @@ export default function AgentCanvasPane({
         document={document}
         setDocument={setDocument}
         onPersistGraphMutation={onPersistGraphMutation}
-        presentationViewportKey={presentationViewportKey}
         activeCardIds={activeCardIds}
         activeEdgeIds={activeEdgeIds}
         selectedCardId={selectedCardId}

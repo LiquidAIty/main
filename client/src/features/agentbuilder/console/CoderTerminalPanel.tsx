@@ -74,8 +74,8 @@ function CoderTerminalPanelInner({
 }: CoderTerminalPanelProps) {
   const [session, setSession] = useState<ConsoleSessionInfo | null>(initialSession);
   const [chunks, setChunks] = useState<ConsoleOutputChunk[]>(initialTranscript);
-  const [input, setInput] = useState('');
   const [startError, setStartError] = useState<string | null>(null);
+  const [terminalError, setTerminalError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [disconnected, setDisconnected] = useState(false);
   const streamRef = useRef<EventSource | null>(null);
@@ -88,7 +88,10 @@ function CoderTerminalPanelInner({
       : STATUS_LABEL[status];
 
   const appendChunk = useCallback((chunk: ConsoleOutputChunk) => {
-    setChunks((prev) => [...prev, chunk].slice(-2000));
+    setChunks((prev) => {
+      if (prev.some((current) => current.seq === chunk.seq)) return prev;
+      return [...prev, chunk].slice(-2000);
+    });
   }, []);
 
   useEffect(() => {
@@ -147,28 +150,30 @@ function CoderTerminalPanelInner({
     async (mode: ConsoleMode) => {
       setBusy(true);
       setStartError(null);
-      const result = await client.startSession({
-        ...(targetRoot.trim() ? { targetRoot } : {}),
-        mode,
-        ...(provider ? { provider } : {}),
-        ...(model ? { model } : {}),
-      });
-      setBusy(false);
-      if (result.ok) {
-        setSession(result.session);
-        setChunks([]);
-      } else {
-        setStartError(`${result.error}${result.missing.length ? `: ${result.missing.join(', ')}` : ''}`);
+      setTerminalError(null);
+      try {
+        const result = await client.startSession({
+          ...(targetRoot.trim() ? { targetRoot } : {}),
+          mode,
+          ...(provider ? { provider } : {}),
+          ...(model ? { model } : {}),
+        });
+        if (result.ok) {
+          setSession(result.session);
+          setChunks([]);
+        } else {
+          setStartError(`${result.error}${result.missing.length ? `: ${result.missing.join(', ')}` : ''}`);
+        }
+      } catch (error) {
+        setStartError(
+          `console_start_failed:${error instanceof Error ? error.message : String(error)}`,
+        );
+      } finally {
+        setBusy(false);
       }
     },
     [client, model, provider, targetRoot],
   );
-
-  const sendInput = useCallback(async () => {
-    if (!session?.id || !input) return;
-    await client.sendInput(session.id, `${input}\n`);
-    setInput('');
-  }, [client, session?.id, input]);
 
   // Raw keystroke + resize forwarding from the xterm terminal.
   const sendRaw = useCallback(
@@ -254,39 +259,24 @@ function CoderTerminalPanelInner({
 
       {session && (status === 'running' || status === 'starting' || status === 'complete') ? (
         <XtermView
+          key={session.id}
           chunks={chunks}
           interactive={Boolean(session.interactiveSupported)}
           onInput={sendRaw}
           onResize={resizeSession}
+          onError={setTerminalError}
         />
       ) : null}
 
-      <pre
-        data-testid={`${testIdPrefix}-transcript`}
-        style={{
-          maxHeight: session ? 140 : undefined,
-          flex: session ? undefined : 1,
-          margin: 0,
-          padding: '8px 12px',
-          overflow: 'auto',
-          whiteSpace: 'pre-wrap',
-          borderTop: session ? '1px solid #11181f' : undefined,
-        }}
-      >
-        {chunks.map((chunk) => (
-          <span key={chunk.seq} style={{ color: chunk.stream === 'stderr' ? '#e06c75' : chunk.stream === 'system' ? '#6b7785' : '#d7e0ea' }}>
-            {chunk.data}
-          </span>
-        ))}
-      </pre>
+      {!session ? <div style={{ flex: 1 }} /> : null}
 
-      {startError ? (
+      {startError || terminalError || session?.error ? (
         <div data-testid={`${testIdPrefix}-error`} style={{ padding: '6px 12px', color: '#e06c75' }}>
-          {startError}
+          {startError || terminalError || session?.error}
         </div>
       ) : null}
 
-      <footer style={{ padding: '8px 12px', borderTop: '1px solid #1c2733', display: 'flex', gap: 8 }}>
+      <footer style={{ padding: '6px 12px', borderTop: '1px solid #1c2733', display: 'flex', justifyContent: 'flex-end' }}>
         {!session || status === 'complete' || status === 'failed' ? (
           <button
             type="button"
@@ -294,31 +284,12 @@ function CoderTerminalPanelInner({
             disabled={busy}
             onClick={() => startSession('interactive')}
           >
-            Start interactive session
+            {session ? 'Restart' : 'Start terminal'}
           </button>
         ) : (
-          <>
-            <input
-              data-testid={`${testIdPrefix}-input`}
-              value={input}
-              placeholder={session.interactiveSupported ? 'Type a command…' : 'Read-only session'}
-              disabled={!session.interactiveSupported}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  void sendInput();
-                }
-              }}
-              style={{ flex: 1, background: '#11181f', color: '#d7e0ea', border: '1px solid #1c2733', padding: '4px 8px' }}
-            />
-            <button type="button" data-testid={`${testIdPrefix}-send`} onClick={() => void sendInput()} disabled={!session.interactiveSupported}>
-              Send
-            </button>
-            <button type="button" data-testid={`${testIdPrefix}-stop`} onClick={() => void stopSession()}>
-              Stop
-            </button>
-          </>
+          <button type="button" data-testid={`${testIdPrefix}-stop`} onClick={() => void stopSession()}>
+            Stop
+          </button>
         )}
       </footer>
     </section>

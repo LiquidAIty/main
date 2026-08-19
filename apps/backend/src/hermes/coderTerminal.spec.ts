@@ -104,6 +104,10 @@ describe('Hermes Coder terminal boundary', () => {
     session.attach(child);
     session.markRunning();
 
+    expect(session.write('Get-Location\r')).toBe(true);
+    expect(child.write).toHaveBeenCalledWith('Get-Location\r');
+    expect(session.resize(132, 41)).toBe(true);
+    expect(child.resize).toHaveBeenCalledWith(132, 41);
     expect(session.stop()).toBe(true);
     expect(child.kill).toHaveBeenCalledWith(process.platform === 'win32' ? undefined : 'SIGTERM');
     onExit?.({ exitCode: 0 });

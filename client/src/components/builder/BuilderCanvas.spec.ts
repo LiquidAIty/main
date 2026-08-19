@@ -177,6 +177,23 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     expect(shouldPersistEdgeChanges(edgeChanges)).toBe(false);
   });
 
+  it('keeps drag movement local until the drag-stop handler commits the exact position', () => {
+    const nodeChanges: NodeChange[] = [{
+      id: 'card_magentic',
+      type: 'position',
+      position: { x: 314.5, y: -72.25 },
+      dragging: true,
+    }];
+    expect(shouldPersistNodeChanges(nodeChanges)).toBe(false);
+    const reduced = reduceCanvasNodeChanges(nodeChanges, [{
+      id: 'card_magentic',
+      position: { x: 0, y: 0 },
+      data: {},
+    }]);
+    expect(reduced.nextNodes[0]?.position).toEqual({ x: 314.5, y: -72.25 });
+    expect(reduced.nextNodesForPersistence).toBeNull();
+  });
+
   it('reduces persisted canvas changes synchronously before React state callbacks run', () => {
     const currentNodes: Node[] = [{
       id: 'card_assist',
@@ -185,10 +202,15 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       data: {},
     }];
     const nodeResult = reduceCanvasNodeChanges(
-      [{ id: 'card_assist', type: 'position', position: { x: 240, y: 120 }, dragging: false }],
+      [{ item: {
+        id: 'card_second',
+        type: 'agentCard',
+        position: { x: 240, y: 120 },
+        data: {},
+      }, type: 'add' }],
       currentNodes,
     );
-    expect(nodeResult.nextNodesForPersistence?.[0].position).toEqual({ x: 240, y: 120 });
+    expect(nodeResult.nextNodesForPersistence?.[1].position).toEqual({ x: 240, y: 120 });
 
     const currentEdges: Edge[] = [{
       id: 'edge_assist_next',
