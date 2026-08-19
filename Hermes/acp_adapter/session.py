@@ -23,6 +23,14 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any, Dict, List, Optional
 
+# LIQUIDAITY VENDOR PATCH: trusted ACP host profiles are isolated in one
+# generic extension module; see ../LIQUIDAITY_VENDOR_PATCHES.md.
+from acp_adapter.host_profiles import (
+    apply_host_session_config,
+    attach_host_session_config,
+    initial_toolsets,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,7 +64,18 @@ def _normalize_cwd_for_compare(cwd: str | None) -> str:
     elif re.match(r"^/mnt/[A-Za-z]/", expanded):
         expanded = f"/mnt/{expanded[5].lower()}/{expanded[7:]}"
 
-    return os.path.normpath(expanded)
+    # Resolve symlink aliases so equivalent spellings of the same directory
+    # compare equal — macOS reports editor workspaces as ``/var/...`` while
+    # sessions get stored under ``/private/var/...`` (and ``/tmp`` vs
+    # ``/private/tmp``), which made ACP history filters silently drop a
+    # workspace's own sessions. ``os.path.realpath`` is lexical for missing
+    # paths (strict=False), so cwds that don't exist on this host — e.g.
+    # WSL-translated Windows drives — keep the previous normpath behavior.
+    # Ported from PrimeIntellect-ai/prime-agent#628.
+    try:
+        return os.path.realpath(expanded)
+    except OSError:
+        return os.path.normpath(expanded)
 
 
 def _build_session_title(title: Any, preview: Any, cwd: str | None) -> str:
@@ -132,8 +151,7 @@ def _expand_acp_enabled_toolsets(
 ) -> List[str]:
     """Return ACP toolsets plus explicit MCP server toolsets for this session."""
     expanded: List[str] = []
-    base_toolsets = ["hermes-acp"] if toolsets is None else list(toolsets)
-    for name in base_toolsets:
+    for name in list(toolsets or ["hermes-acp"]):
         if name and name not in expanded:
             expanded.append(name)
 
@@ -171,12 +189,9 @@ class SessionState:
     runtime_lock: Any = field(default_factory=Lock)
     current_prompt_text: str = ""
     interrupted_prompt_text: str = ""
-    ephemeral_system_prompt: str = ""
-    external_native_tools: Optional[List[str]] = None
-    external_toolsets: Optional[List[str]] = None
-    external_skills: Optional[List[str]] = None
-    external_mcp_server_names: List[str] = field(default_factory=list)
-    external_delegate_cards: List[Dict[str, Any]] = field(default_factory=list)
+    # Ephemeral trusted ACP metadata. It is deliberately not persisted: a host
+    # must reassert its authority whenever it loads/resumes a stored session.
+    host_config: Dict[str, Any] | None = None
 
 
 class SessionManager:
@@ -206,11 +221,7 @@ class SessionManager:
     def create_session(
         self,
         cwd: str = ".",
-        *,
-        model: str | None = None,
-        requested_provider: str | None = None,
-        base_url: str | None = None,
-        api_mode: str | None = None,
+        host_config: Dict[str, Any] | None = None,
     ) -> SessionState:
         """Create a new session with a unique ID and a fresh AIAgent."""
         import threading
@@ -220,10 +231,7 @@ class SessionManager:
         agent = self._make_agent(
             session_id=session_id,
             cwd=cwd,
-            model=model,
-            requested_provider=requested_provider,
-            base_url=base_url,
-            api_mode=api_mode,
+            host_config=host_config,
         )
         state = SessionState(
             session_id=session_id,
@@ -231,12 +239,26 @@ class SessionManager:
             cwd=cwd,
             model=getattr(agent, "model", "") or "",
             cancel_event=threading.Event(),
+            host_config=copy.deepcopy(host_config),
         )
         with self._lock:
             self._sessions[session_id] = state
         _register_task_cwd(session_id, cwd)
         self._persist(state)
         logger.info("Created ACP session %s (cwd=%s)", session_id, cwd)
+        return state
+
+    def configure_host_session(
+        self,
+        state: SessionState,
+        host_config: Dict[str, Any] | None,
+    ) -> SessionState:
+        """Apply one trusted, non-persisted host configuration to a session."""
+
+        if state.is_running:
+            raise RuntimeError("hermes_host_config_turn_in_progress")
+        state.host_config = copy.deepcopy(host_config)
+        apply_host_session_config(state.agent, state.host_config)
         return state
 
     def get_session(self, session_id: str) -> Optional[SessionState]:
@@ -251,27 +273,6 @@ class SessionManager:
             return state
         # Attempt to restore from database.
         return self._restore(session_id)
-
-    def set_ephemeral_system_prompt(
-        self, session_id: str, prompt: str | None
-    ) -> Optional[SessionState]:
-        """Apply caller-owned instructions without persisting them as Hermes identity.
-
-        ACP clients may reconnect to a durable conversation with updated external
-        configuration. Keeping this prompt ephemeral makes the active client the
-        authority while the native Hermes profile and conversation history retain
-        their normal ownership.
-        """
-        state = self.get_session(session_id)
-        if state is None:
-            return None
-        normalized = str(prompt or "").strip()
-        with state.runtime_lock:
-            if state.is_running:
-                raise RuntimeError("acp_session_configuration_locked_while_running")
-            state.ephemeral_system_prompt = normalized
-            state.agent.ephemeral_system_prompt = normalized or None
-        return state
 
     def remove_session(self, session_id: str) -> bool:
         """Remove a session from memory and database. Returns True if it existed."""
@@ -296,6 +297,7 @@ class SessionManager:
             session_id=new_id,
             cwd=cwd,
             model=original.model or None,
+            host_config=original.host_config,
         )
         state = SessionState(
             session_id=new_id,
@@ -304,6 +306,7 @@ class SessionManager:
             model=getattr(agent, "model", original.model) or original.model,
             history=copy.deepcopy(original.history),
             cancel_event=threading.Event(),
+            host_config=copy.deepcopy(original.host_config),
         )
         with self._lock:
             self._sessions[new_id] = state
@@ -640,9 +643,12 @@ class SessionManager:
         requested_provider: str | None = None,
         base_url: str | None = None,
         api_mode: str | None = None,
+        host_config: Dict[str, Any] | None = None,
     ):
         if self._agent_factory is not None:
-            return self._agent_factory()
+            agent = self._agent_factory()
+            attach_host_session_config(agent, host_config)
+            return agent
 
         from run_agent import AIAgent
         from hermes_cli.config import load_config
@@ -666,9 +672,13 @@ class SessionManager:
 
         kwargs = {
             "platform": "acp",
-            "enabled_toolsets": _expand_acp_enabled_toolsets(
-                ["hermes-acp"],
-                mcp_server_names=configured_mcp_servers,
+            "enabled_toolsets": (
+                initial_toolsets(host_config)
+                if host_config is not None
+                else _expand_acp_enabled_toolsets(
+                    ["hermes-acp"],
+                    mcp_server_names=configured_mcp_servers,
+                )
             ),
             "quiet_mode": True,
             "session_id": session_id,
@@ -676,39 +686,20 @@ class SessionManager:
             "model": model or default_model,
         }
 
-        selected_provider = str(requested_provider or config_provider or "").strip().lower()
-        if api_mode == "codex_app_server":
-            # The Codex app-server subprocess owns ChatGPT-account authentication.
-            # Resolving a direct provider credential here is both unnecessary and
-            # incorrect for an externally selected chatgpt-account ACP session: an
-            # isolated Hermes profile intentionally has no copied provider token.
-            if selected_provider not in {"openai", "openai-codex"}:
-                raise RuntimeError("acp_codex_app_server_provider_invalid")
+        try:
+            runtime = resolve_runtime_provider(requested=requested_provider or config_provider)
             kwargs.update(
                 {
-                    "provider": selected_provider,
-                    "api_mode": "codex_app_server",
-                    "base_url": base_url or "",
-                    "api_key": None,
-                    "command": None,
-                    "args": [],
+                    "provider": runtime.get("provider"),
+                    "api_mode": api_mode or runtime.get("api_mode"),
+                    "base_url": base_url or runtime.get("base_url"),
+                    "api_key": runtime.get("api_key"),
+                    "command": runtime.get("command"),
+                    "args": list(runtime.get("args") or []),
                 }
             )
-        else:
-            try:
-                runtime = resolve_runtime_provider(requested=selected_provider or None)
-                kwargs.update(
-                    {
-                        "provider": runtime.get("provider"),
-                        "api_mode": runtime.get("api_mode"),
-                        "base_url": base_url or runtime.get("base_url"),
-                        "api_key": runtime.get("api_key"),
-                        "command": runtime.get("command"),
-                        "args": list(runtime.get("args") or []),
-                    }
-                )
-            except Exception as exc:
-                raise RuntimeError("acp_provider_resolution_failed") from exc
+        except Exception:
+            logger.debug("ACP session falling back to default provider resolution", exc_info=True)
 
         _register_task_cwd(session_id, cwd)
 
@@ -736,6 +727,10 @@ class SessionManager:
             logger.debug("ACP: bounded MCP discovery wait failed", exc_info=True)
 
         agent = AIAgent(**kwargs)
+        # Registration of ACP-supplied MCP servers happens after construction.
+        # Attach profile identity now and publish the complete tool surface only
+        # after the server hook has registered those toolsets.
+        attach_host_session_config(agent, host_config)
         # Codex app-server sessions are spawned lazily on the first turn. Stamp
         # the ACP workspace onto the agent so the Codex runtime starts from the
         # editor/session cwd instead of the Hermes daemon's process cwd.

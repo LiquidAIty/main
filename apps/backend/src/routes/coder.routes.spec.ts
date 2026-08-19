@@ -40,25 +40,6 @@ const chatSessionMocks = vi.hoisted(() => {
     getConversationMessages: vi.fn(async () => []),
     listConversations: vi.fn(async () => []),
     lastCancel: vi.fn(),
-    requestHermesCodexAccount: vi.fn(async (profile: string, method: string) => {
-      expect(profile).toBe('default');
-      if (method === 'account/read') {
-        return {
-          result: {
-            account: { type: 'chatgpt', email: 'owner@example.com', planType: 'pro' },
-            requiresOpenaiAuth: true,
-          },
-          notifications: [{ method: 'account/updated', params: { authMode: 'chatgpt' } }],
-        };
-      }
-      if (method === 'account/rateLimits/read') {
-        return {
-          result: { rateLimits: { primary: { usedPercent: 12 } } },
-          notifications: [],
-        };
-      }
-      return { result: {}, notifications: [] };
-    }),
     startHermesTurn: vi.fn(),
     usage,
   };
@@ -154,6 +135,21 @@ const orchestratorMocks = vi.hoisted(() => ({
         hermesTransport: {
           systemPrompt: 'Saved prompt',
           message: body.exactIdf,
+          delegationTargets: body.cardId === 'card_main_chat' ? [{
+            cardId: 'card_local_coder',
+            title: 'Coder',
+            runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
+            prompt: 'Saved Coder prompt',
+            provider: 'openai',
+            modelKey: 'gpt-5.6-terra',
+            providerModelId: 'gpt-5.6-terra',
+            accessMode: 'chatgpt-account',
+            tools: ['cbm.search_graph'],
+            nativeTools: ['terminal'],
+            skills: ['repository-coder'],
+            toolsets: ['terminal'],
+            mcpConnectionIds: [],
+          }] : [],
           cardContext: {
             cardId: body.cardId,
             title: body.cardId === 'card_main_chat' ? 'Main' : coderCard ? 'Coder' : 'Hermes steward',
@@ -172,7 +168,6 @@ const orchestratorMocks = vi.hoisted(() => ({
             toolsets: coderCard ? ['file', 'terminal'] : [],
             mcpConnectionIds: [],
           },
-          nativeHermesDelegates: [],
         },
       };
     }
@@ -245,7 +240,6 @@ vi.mock('../hermes/mainAdapter', () => ({
       ? 'openai-codex'
       : provider
   ),
-  requestHermesCodexAccount: chatSessionMocks.requestHermesCodexAccount,
   startHermesTurn: chatSessionMocks.startHermesTurn,
 }));
 
@@ -283,27 +277,6 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 describe('coder routes', () => {
-  it('reads the managed ChatGPT account and rate limits through Hermes transport', async () => {
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/main/codex-account?projectId=project-1`);
-      const body = await response.json() as any;
-      expect(response.status).toBe(200);
-      expect(body).toMatchObject({
-        ok: true,
-        accessMode: 'chatgpt-account',
-        account: { type: 'chatgpt', email: 'owner@example.com', planType: 'pro' },
-        rateLimits: { rateLimits: { primary: { usedPercent: 12 } } },
-      });
-      expect(chatSessionMocks.requestHermesCodexAccount).toHaveBeenCalledWith(
-        'default',
-        'account/read',
-        { refreshToken: false },
-      );
-    } finally {
-      await closeServer(server);
-    }
-  });
   it('passes factual live contracts to the one IDD and returns its current vocabulary', async () => {
     mcpClientMocks.listPythonAgentMcpCatalog.mockResolvedValueOnce([{
       name: 'cbm.search_graph',
@@ -945,6 +918,12 @@ describe('coder routes', () => {
           sessionKey: 'project-1:main:card_main_chat',
           message: '# IDF\n\nhello',
           runtime: { kind: 'hermes', mode: 'main', profile: 'default' },
+          delegateProfiles: [{
+            cardId: 'card_local_coder',
+            prompt: 'Saved Coder prompt',
+            providerModelId: 'gpt-5.6-terra',
+            tools: ['cbm.search_graph'],
+          }],
         });
         const railsCalls = orchestratorMocks.requestPythonRailsJson.mock.calls;
         expect(railsCalls.map(([endpoint]) => endpoint)).toEqual([
@@ -1018,37 +997,6 @@ describe('coder routes', () => {
         expect(body).toContain('"correlationId":"req_');
         expect(body).toContain('/api/coder/main/session/chat');
         expect(body).not.toContain('provider credential leaked');
-      } finally {
-        await closeServer(server);
-      }
-    });
-
-    it('persists and exposes an empty Codex app-server completion as its exact failure', async () => {
-      chatSessionMocks.startHermesTurn.mockRejectedValueOnce(
-        new Error('codex_app_server_empty_completion'),
-      );
-      const { server, baseUrl } = await createApiServer();
-      try {
-        const response = await fetch(`${baseUrl}/main/session/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            projectId: 'project-1',
-            conversationId: 'empty-codex',
-            message: 'hello',
-          }),
-        });
-        const body = await response.text();
-
-        expect(response.status).toBe(200);
-        expect(body).toContain('event: error');
-        expect(body).toContain('codex_app_server_empty_completion');
-        expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledWith(
-          '/domain/runs/finish',
-          expect.objectContaining({
-            body: expect.stringContaining('"errorCode":"codex_app_server_empty_completion"'),
-          }),
-        );
       } finally {
         await closeServer(server);
       }

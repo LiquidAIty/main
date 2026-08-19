@@ -28,6 +28,24 @@ def _agent(card_id: str, **overrides):
     return card
 
 
+def _expected_delegate(card_id: str = "child") -> dict:
+    return {
+        "cardId": card_id,
+        "title": card_id,
+        "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
+        "prompt": "common prompt",
+        "provider": "openrouter",
+        "modelKey": "deepseek/deepseek-v4-flash-0731",
+        "providerModelId": "deepseek/deepseek-v4-flash-0731",
+        "accessMode": "openrouter-api",
+        "tools": [],
+        "nativeTools": [],
+        "skills": [],
+        "toolsets": [],
+        "mcpConnectionIds": [],
+    }
+
+
 def test_deck_validation_rejects_duplicate_identities_and_missing_endpoints() -> None:
     duplicate = {
         "id": "deck-two",
@@ -77,11 +95,9 @@ def test_direct_subagents_keep_only_enabled_top_level_flow_targets() -> None:
         {"source": "parent", "target": "orchestrator", "edgeType": "flow"},
         {"source": "enabled", "target": "parent", "edgeType": "flow"},
     ]
-    assert card_domain._direct_subagents("parent", cards, edges) == [{
-        "cardId": "enabled",
-        "title": "enabled",
-        "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
-    }]
+    assert card_domain._direct_subagents("parent", cards, edges) == [
+        _expected_delegate("enabled")
+    ]
 
 
 def _delegation_preview(
@@ -136,14 +152,15 @@ def test_enabled_flow_edge_materializes_bounded_target_without_inventing_tool_gr
     assert preview["cardContext"]["tools"] == ["calculator"]
     assert preview["providerProjection"]["enabledTools"] == ["calculator"]
     assert preview["delegationTargets"] == [{
-        "cardId": "child",
-        "title": "child",
-        "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
+        **_expected_delegate(),
+        "nativeTools": ["terminal"],
+        "skills": ["repository-coder"],
+        "toolsets": ["terminal"],
     }]
     assert "delegationTargets" not in preview["exactIdf"]
 
 
-def test_hermes_flow_target_uses_native_delegate_metadata_without_recursive_mcp(
+def test_hermes_flow_target_projects_saved_profile_outside_exact_idf(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     preview = _delegation_preview(
@@ -154,23 +171,13 @@ def test_hermes_flow_target_uses_native_delegate_metadata_without_recursive_mcp(
     assert preview["runtimeOwner"] == "hermes"
     assert preview["cardContext"]["tools"] == ["calculator"]
     assert "card.run_assistant_agent" not in preview["providerProjection"]["enabledTools"]
-    assert preview["nativeHermesDelegates"] == [{
-        "cardId": "child",
-        "title": "child",
-        "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
-        "runtimeOwner": "hermes",
-        "prompt": "common prompt",
-        "provider": "openrouter",
-        "modelKey": "deepseek/deepseek-v4-flash-0731",
-        "providerModelId": "deepseek/deepseek-v4-flash-0731",
-        "accessMode": "openrouter-api",
-        "tools": [],
+    assert preview["delegationTargets"] == [{
+        **_expected_delegate(),
         "nativeTools": ["terminal"],
         "skills": ["repository-coder"],
         "toolsets": ["terminal"],
-        "mcpConnectionIds": [],
     }]
-    assert "nativeHermesDelegates" not in preview["exactIdf"]
+    assert "delegationTargets" not in preview["exactIdf"]
 
 
 def test_no_flow_edge_materializes_no_delegation_transport(

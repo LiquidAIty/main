@@ -76,10 +76,19 @@ any inherited prompt, and any pattern you observe in surrounding code.
     project, and the controlled-fork law in `AGENTS.md`. Otherwise extract the useful pattern and keep
     the source out. A vendored tree is not an ordinary cleanup target: never mix it into the core CBM
     graph, broadly refactor it, or silently replace upstream behavior.
+15. **No Codex app-server or Codex harness inside LiquidAIty.** ChatGPT-account authentication may
+    supply an `openai-codex` OAuth credential to Hermes, but Hermes must own the conversation loop,
+    prompts, saved Card identity, memory, tools, MCP, and native subagents. Never launch `codex
+    app-server`, proxy its account protocol, pass a LiquidAIty turn to the Codex harness, expose
+    Codex-home/bin configuration, or retain the path as a dormant fallback or future switch. It has
+    repeatedly bypassed the product runtime and made a superficially successful GPT response erase
+    the system the response was supposed to exercise. Unmodified optional app-server modules may
+    remain inside an upstream Hermes refresh; LiquidAIty must not select, configure, wrap, or invoke
+    them, and their presence is not a supported product path.
 
 ## Proof
 
-15. **Proof = real runtime + the build the dev server uses.** Typecheck + the touched tests must be
+16. **Proof = real runtime + the build the dev server uses.** Typecheck + the touched tests must be
     green, and you must say what you did NOT verify. "It compiles" is not "it works."
 
 ## Purge log

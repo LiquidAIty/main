@@ -52,14 +52,12 @@ def fake_session(monkeypatch):
 
 def _make_codex_agent(**kwargs):
     """Construct an AIAgent in codex_app_server mode without contacting any
-    real provider. Codex app-server owns account authentication, so the
-    constructor must not require or synthesize direct-provider credentials."""
-    provider = kwargs.pop("provider", "openai")
-    credentialless = kwargs.pop("credentialless", False)
+    real provider. We pass api_mode explicitly so the constructor takes the
+    fast path for direct credentials."""
     return run_agent.AIAgent(
-        api_key=None if credentialless else "stub",
-        base_url=None if credentialless else "https://stub.invalid",
-        provider=provider,
+        api_key="stub",
+        base_url="https://stub.invalid",
+        provider="openai",
         api_mode="codex_app_server",
         quiet_mode=True,
         skip_context_files=True,
@@ -69,25 +67,9 @@ def _make_codex_agent(**kwargs):
 
 
 class TestApiModeAccepted:
-    def test_api_mode_is_codex_app_server_without_direct_provider_credentials(
-        self, monkeypatch
-    ):
-        monkeypatch.setattr(
-            "agent.auxiliary_client.resolve_provider_client",
-            lambda *_args, **_kwargs: pytest.fail(
-                "direct provider resolution must stay unused"
-            ),
-        )
-        monkeypatch.setattr("run_agent.get_tool_definitions", lambda **_kwargs: [])
-        agent = _make_codex_agent(
-            provider="openai-codex",
-            credentialless=True,
-        )
+    def test_api_mode_is_codex_app_server(self):
+        agent = _make_codex_agent()
         assert agent.api_mode == "codex_app_server"
-        assert agent.provider == "openai-codex"
-        assert agent.api_key == ""
-        assert agent.client is None
-        assert agent._client_kwargs == {}
 
 
 class TestRunConversationCodexPath:
@@ -613,9 +595,7 @@ class TestErrorHandling:
         assert result["completed"] is False
         assert result["partial"] is True
         assert "subprocess died" in result["error"]
-        assert result["final_response"] == (
-            "Codex app-server turn failed: subprocess died."
-        )
+        assert "codex-runtime auto" in result["final_response"]
 
     def test_interrupted_turn_marked_partial(self, monkeypatch):
         def interrupted_turn(self, user_input, **kwargs):

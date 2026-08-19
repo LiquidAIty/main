@@ -7,7 +7,6 @@ import {
 import {
   deriveHermesSessionKey,
   providerForHermes,
-  requestHermesCodexAccount,
   startHermesTurn,
   type HermesSessionEvent,
   type HermesTurnArgs,
@@ -214,8 +213,24 @@ function resolvePreparedHermesTurnArgs(
     skills: Array.isArray(context.skills) ? context.skills : [],
     toolsets: Array.isArray(context.toolsets) ? context.toolsets : [],
     mcpConnectionIds: Array.isArray(context.mcpConnectionIds) ? context.mcpConnectionIds : [],
-    nativeHermesDelegates: Array.isArray(transport.nativeHermesDelegates)
-      ? transport.nativeHermesDelegates
+    delegateProfiles: Array.isArray(transport.delegationTargets)
+      ? transport.delegationTargets.map((target: any) => ({
+        cardId: String(target?.cardId || ''),
+        title: String(target?.title || target?.cardId || ''),
+        runtime: target?.runtime,
+        prompt: String(target?.prompt || ''),
+        provider: String(target?.provider || ''),
+        modelKey: String(target?.modelKey || ''),
+        providerModelId: String(target?.providerModelId || ''),
+        accessMode: target?.accessMode,
+        tools: Array.isArray(target?.tools) ? target.tools : [],
+        nativeTools: Array.isArray(target?.nativeTools) ? target.nativeTools : [],
+        skills: Array.isArray(target?.skills) ? target.skills : [],
+        toolsets: Array.isArray(target?.toolsets) ? target.toolsets : [],
+        mcpConnectionIds: Array.isArray(target?.mcpConnectionIds)
+          ? target.mcpConnectionIds
+          : [],
+      }))
       : [],
     sessionKey: deriveHermesSessionKey(
       args.projectId,
@@ -525,11 +540,6 @@ function nativeAttentionEvents(value: unknown): NativeAttentionEvent[] {
     }));
 }
 
-function codexTransportResult(value: Record<string, unknown>): Record<string, any> {
-  const result = value.result;
-  return result && typeof result === 'object' ? result as Record<string, any> : {};
-}
-
 async function readPreparedMainCardContext(
   projectId: string,
   deckId: string,
@@ -548,102 +558,6 @@ async function readPreparedMainCardContext(
   }
   return prepared.cardContext;
 }
-
-router.get('/main/codex-account', async (req, res) => {
-  try {
-    const projectId = String(req.query.projectId || '').trim();
-    if (!projectId) {
-      return res.status(400).json({ ok: false, error: 'projectId_required' });
-    }
-    const deckId = String(req.query.deckId || BUILDER_DECK_ID).trim();
-    const runtimeConfig = await readPreparedMainCardContext(projectId, deckId);
-    if (runtimeConfig.accessMode !== 'chatgpt-account') {
-      return res.json({
-        ok: true,
-        accessMode: runtimeConfig.accessMode,
-        account: null,
-        rateLimits: null,
-        notifications: [],
-      });
-    }
-    const accountEnvelope = await requestHermesCodexAccount(
-      String(runtimeConfig.runtime?.profile || ''),
-      'account/read',
-      { refreshToken: false },
-    );
-    const accountResponse = codexTransportResult(accountEnvelope);
-    const account = accountResponse.account && typeof accountResponse.account === 'object'
-      ? accountResponse.account as Record<string, unknown>
-      : null;
-    if (account && account.type !== 'chatgpt') {
-      return res.status(409).json({ ok: false, error: 'codex_chatgpt_account_required' });
-    }
-    const rateEnvelope = account
-      ? await requestHermesCodexAccount(String(runtimeConfig.runtime?.profile || ''), 'account/rateLimits/read')
-      : null;
-    return res.json({
-      ok: true,
-      accessMode: runtimeConfig.accessMode,
-      account,
-      requiresOpenaiAuth: Boolean(accountResponse.requiresOpenaiAuth),
-      rateLimits: rateEnvelope ? codexTransportResult(rateEnvelope) : null,
-      notifications: [
-        ...(Array.isArray(accountEnvelope.notifications) ? accountEnvelope.notifications : []),
-        ...(Array.isArray(rateEnvelope?.notifications) ? rateEnvelope.notifications : []),
-      ],
-    });
-  } catch (error) {
-    return res.status(502).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'codex_account_read_failed',
-    });
-  }
-});
-
-router.post('/main/codex-account', async (req, res) => {
-  try {
-    const projectId = String(req.body?.projectId || '').trim();
-    const action = String(req.body?.action || '').trim();
-    if (!projectId || !['login', 'logout'].includes(action)) {
-      return res.status(400).json({ ok: false, error: 'projectId_and_valid_action_required' });
-    }
-    const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
-    const runtimeConfig = await readPreparedMainCardContext(projectId, deckId);
-    if (runtimeConfig.accessMode !== 'chatgpt-account') {
-      return res.status(409).json({ ok: false, error: 'main_chatgpt_account_mode_required' });
-    }
-    if (action === 'logout') {
-      const envelope = await requestHermesCodexAccount(String(runtimeConfig.runtime?.profile || ''), 'account/logout');
-      return res.json({ ok: true, action, ...codexTransportResult(envelope) });
-    }
-
-    const currentEnvelope = await requestHermesCodexAccount(String(runtimeConfig.runtime?.profile || ''), 'account/read');
-    const current = codexTransportResult(currentEnvelope);
-    if (current.account?.type === 'chatgpt') {
-      return res.json({ ok: true, action, alreadyAuthenticated: true, account: current.account });
-    }
-    const loginType = String(req.body?.loginType || 'chatgpt').trim();
-    if (!['chatgpt', 'chatgptDeviceCode'].includes(loginType)) {
-      return res.status(400).json({ ok: false, error: 'codex_login_type_not_allowed' });
-    }
-    const envelope = await requestHermesCodexAccount(
-      String(runtimeConfig.runtime?.profile || ''),
-      'account/login/start',
-      { type: loginType },
-    );
-    return res.json({
-      ok: true,
-      action,
-      ...codexTransportResult(envelope),
-      notifications: Array.isArray(envelope.notifications) ? envelope.notifications : [],
-    });
-  } catch (error) {
-    return res.status(502).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'codex_account_action_failed',
-    });
-  }
-});
 
 router.post('/main/session/chat', async (req, res) => {
   const projectId = String(req.body?.projectId || '');
@@ -819,9 +733,7 @@ router.post('/main/session/chat', async (req, res) => {
     const reason = error instanceof Error ? error.message : 'hermes_turn_failed';
     const errorCode = reason.startsWith('harness_run_persistence_failed')
       ? 'harness_run_persistence_failed'
-      : reason === 'codex_app_server_empty_completion'
-        ? 'codex_app_server_empty_completion'
-        : 'harness_turn_failed';
+      : 'harness_turn_failed';
     if (!runCancelled) {
       await requestPythonRailsJson('/domain/runs/finish', {
         method: 'POST',
@@ -843,9 +755,7 @@ router.post('/main/session/chat', async (req, res) => {
       code: errorCode,
       message: errorCode === 'harness_run_persistence_failed'
         ? 'The model finished, but its durable run record could not be completed.'
-        : errorCode === 'codex_app_server_empty_completion'
-          ? 'Codex app-server completed without an assistant response.'
-          : 'The chat run failed. Check the correlation ID in the backend logs.',
+        : 'The chat run failed. Check the correlation ID in the backend logs.',
       correlationId,
       route: '/api/coder/main/session/chat',
       status: 502,

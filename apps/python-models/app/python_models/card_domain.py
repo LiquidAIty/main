@@ -1148,9 +1148,9 @@ def _direct_subagents(
     card_id: str,
     cards: dict[str, dict[str, Any]],
     edges: list[dict[str, Any]],
-) -> list[dict[str, str]]:
-    """Project exact eligible FLOW targets without inventing Card authority."""
-    direct: list[dict[str, str]] = []
+) -> list[dict[str, Any]]:
+    """Project saved Hermes delegate profiles from exact enabled FLOW targets."""
+    direct: list[dict[str, Any]] = []
     seen: set[str] = set()
     for edge in edges:
         target_id = str(edge.get("target") or "")
@@ -1163,16 +1163,41 @@ def _direct_subagents(
             or target_id in seen
             or target is None
             or target.get("kind") != "agent"
-            or _card_runtime(target) == {"kind": "autogen", "mode": "magentic_one"}
             or str(target.get("parentGraphId") or "").strip()
             or not _card_enabled(target)
         ):
             continue
+        runtime = _card_runtime(target)
+        if runtime.get("kind") != "hermes" or runtime.get("mode") != "delegate":
+            continue
+        options = _json_object(target.get("runtimeOptions"), "delegate_runtime_options")
+        provider = _required_text(options.get("provider"), "delegate_provider")
+        model_key = _required_text(options.get("modelKey"), "delegate_model_key")
+        provider_model_id = _required_text(
+            options.get("providerModelId") or model_key,
+            "delegate_provider_model_id",
+        )
         seen.add(target_id)
         direct.append({
             "cardId": target_id,
             "title": str(target.get("title") or target_id),
-            "runtime": _card_runtime(target),
+            "runtime": runtime,
+            "prompt": str(target.get("prompt") or ""),
+            "provider": provider,
+            "modelKey": model_key,
+            "providerModelId": provider_model_id,
+            "accessMode": _required_text(
+                options.get("accessMode"), "delegate_access_mode"
+            ),
+            "tools": _string_list(options.get("tools"), "delegate_tools"),
+            "nativeTools": _string_list(
+                options.get("nativeTools"), "delegate_native_tools"
+            ),
+            "skills": _string_list(options.get("skills"), "delegate_skills"),
+            "toolsets": _string_list(options.get("toolsets"), "delegate_toolsets"),
+            "mcpConnectionIds": _string_list(
+                options.get("mcpConnectionIds"), "delegate_mcp_connection_ids"
+            ),
         })
     return direct
 
@@ -1213,49 +1238,6 @@ def _normalized_native_references(value: Any) -> list[dict[str, Any]]:
     if len(_canonical_json(normalized).encode("utf-8")) > _NATIVE_REFERENCE_TEXT_LIMIT:
         raise CardDomainError("native_reference_text_limit_exceeded")
     return normalized
-
-
-def _native_hermes_delegates(
-    direct_subagents: list[dict[str, Any]],
-    cards: dict[str, dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Project saved Hermes FLOW targets for the native delegate_task seam.
-
-    This transport metadata is deliberately excluded from serialized IDF.  It
-    gives the already-selected Hermes runtime the saved target configuration;
-    it does not choose a target or grant a relationship by itself.
-    """
-    delegates: list[dict[str, Any]] = []
-    for direct in direct_subagents:
-        target = cards[direct["cardId"]]
-        runtime = _card_runtime(target)
-        if runtime["kind"] != "hermes" or runtime["mode"] != "delegate":
-            continue
-        options = _json_object(target.get("runtimeOptions"), "runtime_options")
-        provider = _required_text(options.get("provider"), "card_provider")
-        model_key = _required_text(options.get("modelKey"), "card_model_key")
-        provider_model_id = _required_text(
-            options.get("providerModelId") or model_key,
-            "card_provider_model_id",
-        )
-        delegates.append({
-            **direct,
-            "runtimeOwner": "hermes",
-            "prompt": str(target.get("prompt") or ""),
-            "provider": provider,
-            "modelKey": model_key,
-            "providerModelId": provider_model_id,
-            "accessMode": str(options.get("accessMode") or ""),
-            "tools": _string_list(options.get("tools"), "tools"),
-            "nativeTools": _string_list(options.get("nativeTools"), "native_tools"),
-            "skills": _string_list(options.get("skills"), "skills"),
-            "toolsets": _string_list(options.get("toolsets"), "toolsets"),
-            "mcpConnectionIds": _string_list(
-                options.get("mcpConnectionIds"),
-                "mcp_connection_ids",
-            ),
-        })
-    return delegates
 
 
 def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1329,11 +1311,6 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
             raise CardDomainError("coder_write_mode_invalid")
         runtime_options["writeMode"] = write_mode
     direct_subagents = _direct_subagents(card_id, cards, loaded["deck"]["edges"])
-    native_hermes_delegates = (
-        _native_hermes_delegates(direct_subagents, cards)
-        if owner == "hermes"
-        else []
-    )
     card_context = {
         "cardId": card_id, "title": card["title"], "prompt": common_prompt,
         "runtime": runtime, "accessMode": str(options.get("accessMode") or ""),
@@ -1357,6 +1334,14 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     if unknown_tools:
         raise CardDomainError(f"configured_tool_unknown:{unknown_tools[0]}")
     tool_definitions = [by_id[name] for name in effective_tools]
+    for delegate in direct_subagents:
+        unknown_delegate_tools = [
+            name for name in delegate["tools"] if name not in by_id
+        ]
+        if unknown_delegate_tools:
+            raise CardDomainError(
+                f"configured_tool_unknown:{unknown_delegate_tools[0]}"
+            )
     card_context["toolDefinitions"] = tool_definitions
     dynamic_sections = dynamic_context
     if output_requirements:
@@ -1381,7 +1366,6 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         "assignment": assignment,
         "cardContext": card_context,
         "delegationTargets": direct_subagents,
-        "nativeHermesDelegates": native_hermes_delegates,
         "exactIdf": exact_idf,
         "providerProjection": {
             "systemPrompt": system_text,
@@ -2042,7 +2026,6 @@ def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
             "message": prepared["exactIdf"],
             "cardContext": context,
             "delegationTargets": prepared.get("delegationTargets") or [],
-            "nativeHermesDelegates": prepared.get("nativeHermesDelegates") or [],
         } if owner == "hermes" else None,
     }
 

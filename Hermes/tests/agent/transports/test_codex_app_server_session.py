@@ -59,8 +59,6 @@ class FakeClient:
             return {}
         if method == "turn/steer":
             return {"turnId": (params or {}).get("expectedTurnId")}
-        if method == "account/read":
-            return {"account": {"type": "chatgpt", "planType": "pro"}}
         return {}
 
     def notify(self, method: str, params=None):
@@ -128,13 +126,6 @@ def make_session(client: FakeClient, **kwargs) -> CodexAppServerSession:
     )
 
 
-def test_session_uses_supervisor_resolved_native_codex_binary(monkeypatch):
-    client = FakeClient()
-    monkeypatch.setenv("HERMES_CODEX_BIN", "/tools/native-codex")
-    session = make_session(client)
-    assert session._codex_bin == "/tools/native-codex"
-
-
 # ---- choice mapping ----
 
 class TestApprovalChoiceMapping:
@@ -170,7 +161,6 @@ class TestLifecycle:
         # thread/start should be called exactly once
         method_calls = [m for (m, _) in client.requests if m == "thread/start"]
         assert len(method_calls) == 1
-        assert ("account/read", {"refreshToken": True}) in client.requests
 
     def test_thread_start_passes_cwd_only(self):
         """thread/start carries cwd. We intentionally do NOT pass `permissions`

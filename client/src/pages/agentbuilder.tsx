@@ -1381,9 +1381,6 @@ export default function AgentBuilder(): React.ReactElement {
           knowledgeProjectId={projectId}
           colors={C}
           busy={nativeSessionBusy}
-          mainAccessMode={
-            String((deck.nodes.find((node) => node.runtime.kind === 'hermes' && node.runtime.mode === 'main')?.runtimeOptions as any)?.accessMode || '')
-          }
           invocationTargets={mainInvocationTargets}
           onInspectInvocation={(cardId, assignment) => {
             const mainCardId = deck.nodes.find(

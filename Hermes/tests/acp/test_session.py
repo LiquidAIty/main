@@ -29,9 +29,6 @@ def manager():
 
 
 class TestCreateSession:
-    def test_explicit_empty_acp_toolsets_do_not_restore_default_bundle(self):
-        assert acp_session._expand_acp_enabled_toolsets([]) == []
-
     def test_create_session_returns_state(self, manager):
         state = manager.create_session(cwd="/tmp/work")
         assert isinstance(state, SessionState)
@@ -67,21 +64,6 @@ class TestCreateSession:
         state = manager.create_session()
         fetched = manager.get_session(state.session_id)
         assert fetched is state
-
-    def test_external_system_prompt_is_ephemeral_and_replaceable(self, manager):
-        state = manager.create_session()
-
-        updated = manager.set_ephemeral_system_prompt(
-            state.session_id, "Current saved-card instructions"
-        )
-
-        assert updated is state
-        assert state.ephemeral_system_prompt == "Current saved-card instructions"
-        assert state.agent.ephemeral_system_prompt == "Current saved-card instructions"
-
-        manager.set_ephemeral_system_prompt(state.session_id, "")
-        assert state.ephemeral_system_prompt == ""
-        assert state.agent.ephemeral_system_prompt is None
 
 
     def test_make_agent_stamps_session_cwd_for_codex_runtime(self, monkeypatch):
@@ -128,39 +110,6 @@ class TestCreateSession:
 
         assert state.agent.session_cwd == "/tmp/project"
 
-    def test_codex_app_server_skips_direct_provider_credential_resolution(self, monkeypatch):
-        captured = {}
-
-        class FakeAgent:
-            model = "gpt-5.6-luna"
-
-            def __init__(self, **kwargs):
-                captured.update(kwargs)
-
-        monkeypatch.setattr("run_agent.AIAgent", FakeAgent)
-        monkeypatch.setattr(
-            "hermes_cli.config.load_config",
-            lambda: {"model": {}, "mcp_servers": {}},
-        )
-        monkeypatch.setattr(
-            "hermes_cli.runtime_provider.resolve_runtime_provider",
-            lambda **_kwargs: pytest.fail("direct provider resolution must stay unused"),
-        )
-        monkeypatch.setattr("acp_adapter.session._register_task_cwd", lambda task_id, cwd: None)
-
-        SessionManager(db=None)._make_agent(
-            session_id="chatgpt-account-session",
-            cwd="/tmp/project",
-            model="gpt-5.6-luna",
-            requested_provider="openai-codex",
-            api_mode="codex_app_server",
-        )
-
-        assert captured["provider"] == "openai-codex"
-        assert captured["api_mode"] == "codex_app_server"
-        assert captured["api_key"] is None
-        assert captured["base_url"] == ""
-
 
 
 
@@ -206,6 +155,54 @@ class TestWslCwdTranslation:
 
 # ---------------------------------------------------------------------------
 # list / cleanup / remove
+# ---------------------------------------------------------------------------
+
+
+class TestSymlinkAliasNormalization:
+    """Ported from PrimeIntellect-ai/prime-agent#628 — symlink aliases of the
+    same directory (macOS ``/var`` vs ``/private/var``, ``/tmp`` vs
+    ``/private/tmp``) must compare equal, or ACP history filters silently drop
+    a workspace's own sessions."""
+
+    def test_symlink_alias_compares_equal(self, tmp_path):
+        real = tmp_path / "real"
+        real.mkdir()
+        alias = tmp_path / "alias"
+        alias.symlink_to(real)
+        assert acp_session._normalize_cwd_for_compare(
+            str(alias)
+        ) == acp_session._normalize_cwd_for_compare(str(real))
+
+    def test_distinct_dirs_still_compare_different(self, tmp_path):
+        a = tmp_path / "a"
+        b = tmp_path / "b"
+        a.mkdir()
+        b.mkdir()
+        assert acp_session._normalize_cwd_for_compare(
+            str(a)
+        ) != acp_session._normalize_cwd_for_compare(str(b))
+
+    def test_missing_path_keeps_lexical_normalization(self):
+        # realpath(strict=False) is lexical for nonexistent paths, so cwds
+        # that don't exist on this host (e.g. WSL-translated drives) behave
+        # exactly as the old normpath comparison did.
+        assert acp_session._normalize_cwd_for_compare(
+            "/nonexistent-hermes-test/x/../y"
+        ) == "/nonexistent-hermes-test/y"
+
+    def test_list_sessions_matches_symlink_alias_cwd(self, manager, tmp_path):
+        real = tmp_path / "proj"
+        real.mkdir()
+        alias = tmp_path / "link"
+        alias.symlink_to(real)
+        state = manager.create_session(cwd=str(real))
+        state.history.append({"role": "user", "content": "hello"})
+        listed = manager.list_sessions(cwd=str(alias))
+        assert [s["session_id"] for s in listed] == [state.session_id]
+
+
+# ---------------------------------------------------------------------------
+# list / cleanup
 # ---------------------------------------------------------------------------
 
 

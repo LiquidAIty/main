@@ -32,7 +32,6 @@ export default function BuilderChat({
   busy = false,
   invocationTargets = [],
   onInspectInvocation,
-  mainAccessMode,
 }: {
   messages: { role: "assistant" | "user"; text: string }[];
   onSend: (t: string) => void;
@@ -42,65 +41,10 @@ export default function BuilderChat({
   busy?: boolean;
   invocationTargets?: Array<{ cardId: string; title: string }>;
   onInspectInvocation?: (cardId: string, assignment: string) => void;
-  mainAccessMode?: string | null;
 }) {
   const [v, setV] = useState("");
   const [invocationTargetId, setInvocationTargetId] = useState("");
-  const [accountState, setAccountState] = useState<any>(null);
-  const [accountBusy, setAccountBusy] = useState(false);
-  const [accountError, setAccountError] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
-
-  const loadCodexAccount = async () => {
-    if (!knowledgeProjectId) return;
-    setAccountBusy(true);
-    setAccountError("");
-    try {
-      const response = await fetch(
-        `/api/coder/main/codex-account?projectId=${encodeURIComponent(knowledgeProjectId)}`,
-      );
-      const payload = await response.json();
-      if (!response.ok || payload?.ok !== true) {
-        throw new Error(String(payload?.error || `codex_account_read_failed_${response.status}`));
-      }
-      setAccountState(payload);
-    } catch (error) {
-      setAccountError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAccountBusy(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadCodexAccount();
-    // Project and saved Main access mode are the only account-read authority
-    // changes relevant to this existing chat surface.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [knowledgeProjectId, mainAccessMode]);
-
-  const changeCodexAccount = async (action: "login" | "logout") => {
-    setAccountBusy(true);
-    setAccountError("");
-    try {
-      const response = await fetch("/api/coder/main/codex-account", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: knowledgeProjectId, action, loginType: "chatgpt" }),
-      });
-      const payload = await response.json();
-      if (!response.ok || payload?.ok !== true) {
-        throw new Error(String(payload?.error || `codex_account_${action}_failed_${response.status}`));
-      }
-      if (action === "login" && typeof payload.authUrl === "string") {
-        window.open(payload.authUrl, "_blank", "noopener,noreferrer");
-      }
-      await loadCodexAccount();
-    } catch (error) {
-      setAccountError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAccountBusy(false);
-    }
-  };
 
   // Keep the latest message (and the active turn's inline work) in view — scroll
   // on new messages and as the active assistant reply streams in.
@@ -202,37 +146,6 @@ export default function BuilderChat({
         </div>
       </div>
       <div className="px-4 pb-4">
-        <div
-          data-testid="main-codex-account"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            marginBottom: 8,
-            padding: "6px 9px",
-            borderRadius: 10,
-            border: `1px solid ${colors.border}`,
-            background: colors.panel,
-            color: colors.neutral,
-            fontSize: 11,
-          }}
-        >
-          <span style={{ color: colors.text }}>Main · {accountState?.accessMode || mainAccessMode || "unconfigured"}</span>
-          {accountState?.account?.type === "chatgpt" ? (
-            <>
-              <span>{accountState.account.email}</span>
-              <span>{accountState.account.planType}</span>
-              {Number.isFinite(accountState?.rateLimits?.rateLimits?.primary?.usedPercent) ? (
-                <span>{accountState.rateLimits.rateLimits.primary.usedPercent}% used</span>
-              ) : null}
-              <button disabled={accountBusy} onClick={() => void changeCodexAccount("logout")}>Logout</button>
-            </>
-          ) : accountState?.accessMode === "chatgpt-account" ? (
-            <button disabled={accountBusy} onClick={() => void changeCodexAccount("login")}>Sign in with ChatGPT</button>
-          ) : null}
-          <button disabled={accountBusy} onClick={() => void loadCodexAccount()}>Refresh</button>
-          {accountError ? <span role="alert" style={{ color: "#FFA2A2" }}>{accountError}</span> : null}
-        </div>
         <div
           className="flex items-center gap-2"
           style={{

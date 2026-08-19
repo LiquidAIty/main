@@ -276,8 +276,6 @@ def main(argv: list[str] | None = None) -> None:
     except Exception:
         logger.exception("ACP agent crashed")
         sys.exit(1)
-    finally:
-        agent.close()
 
 
 if __name__ == "__main__":

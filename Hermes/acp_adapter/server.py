@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 from datetime import datetime, timezone
 import base64
 import contextvars
 import json
 import logging
 import os
-import threading
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -76,6 +74,9 @@ from acp_adapter.permissions import make_approval_callback
 from acp_adapter.provenance import session_provenance_meta
 from acp_adapter.session import SessionManager, SessionState, _expand_acp_enabled_toolsets
 from acp_adapter.tools import build_tool_complete, build_tool_start
+# LIQUIDAITY VENDOR PATCH: consume only the generic namespaced ACP extension
+# documented in ../LIQUIDAITY_VENDOR_PATCHES.md.
+from acp_adapter.host_profiles import parse_host_session_config
 from agent.context_compressor import (
     COMPRESSED_SUMMARY_METADATA_KEY,
     ContextCompressor,
@@ -116,7 +117,14 @@ def _named_custom_provider_catalogs() -> list[tuple[str, str, list[tuple[str, st
             is_provider_enabled,
             load_config,
         )
-        from hermes_cli.models import cached_fetch_api_models
+        from hermes_cli.model_switch import (
+            _NativePickerModelList,
+            _declared_model_ids,
+            _entry_models_discovered,
+            _fetch_picker_live_models,
+            _models_config_is_allowlist,
+        )
+        from hermes_cli.models import should_use_ollama_native_catalog
         from hermes_cli.providers import custom_provider_slug
     except ImportError:
         return []
@@ -153,7 +161,9 @@ def _named_custom_provider_catalogs() -> list[tuple[str, str, list[tuple[str, st
 
         api_key = str(entry.get("api_key", "") or "").strip()
         if not api_key:
-            key_env = str(entry.get("key_env", "") or "").strip()
+            key_env = str(
+                entry.get("key_env") or entry.get("api_key_env") or ""
+            ).strip()
             api_key = os.environ.get(key_env, "").strip() if key_env else ""
 
         declared: list[str] = []
@@ -161,13 +171,23 @@ def _named_custom_provider_catalogs() -> list[tuple[str, str, list[tuple[str, st
         if default_model:
             declared.append(default_model)
         models_cfg = entry.get("models")
-        if isinstance(models_cfg, dict):
-            for mid in models_cfg:
-                mid = str(mid or "").strip()
-                if mid and mid not in declared:
-                    declared.append(mid)
+        for mid in _declared_model_ids(models_cfg):
+            if mid not in declared:
+                declared.append(mid)
 
-        if not api_key and not declared:
+        native_headers = entry.get("extra_headers") or None
+        native_catalog_provider = (
+            provider_key
+            if provider_key.lower() in {"ollama", "custom:ollama"}
+            else "custom"
+        )
+        is_native_ollama = should_use_ollama_native_catalog(
+            native_catalog_provider, base_url, headers=native_headers
+        )
+        explicit_catalog = _models_config_is_allowlist(
+            models_cfg, _entry_models_discovered(entry)
+        )
+        if not api_key and not declared and not is_native_ollama:
             # No credential to discover with and nothing declared:
             # not addressable from the selector.
             continue
@@ -176,17 +196,30 @@ def _named_custom_provider_catalogs() -> list[tuple[str, str, list[tuple[str, st
         discover = entry.get("discover_models", True)
         if isinstance(discover, str):
             discover = discover.lower() not in {"false", "no", "0"}
-        if discover and api_key:
+        native_catalog_provider = native_catalog_provider if is_native_ollama else "custom"
+        live = None
+        if discover and (api_key or is_native_ollama):
             try:
-                live = cached_fetch_api_models(
-                    api_key, base_url, api_mode=entry.get("api_mode")
+                live = _fetch_picker_live_models(
+                    api_key,
+                    base_url,
+                    native_catalog_provider,
+                    explicit_catalog,
+                    headers=native_headers,
+                    timeout=1.5,
+                    api_mode=entry.get("api_mode"),
                 )
             except Exception:
                 live = None
-            if live:
-                model_ids = declared + [m for m in live if m not in declared]
+            if live is not None:
+                if isinstance(live, _NativePickerModelList):
+                    model_ids = list(live)
+                else:
+                    model_ids = declared + [m for m in live if m not in declared]
 
         if not model_ids:
+            if isinstance(live if "live" in locals() else None, _NativePickerModelList):
+                catalogs.append((slug, name, []))
             continue
         catalogs.append((slug, name, [(mid, "") for mid in model_ids]))
 
@@ -223,116 +256,6 @@ _TEXT_RESOURCE_MIME_TYPES = {
     "application/toml",
     "application/sql",
 }
-
-
-def _external_session_system_prompt(kwargs: dict[str, Any]) -> str:
-    """Read an optional caller-owned prompt from ACP extension metadata."""
-    config = kwargs.get("sessionConfig")
-    if not isinstance(config, dict):
-        return ""
-    value = config.get("systemPrompt")
-    return str(value or "").strip()
-
-
-def _external_session_string_list(
-    kwargs: dict[str, Any], key: str
-) -> list[str] | None:
-    """Read one explicit saved-card string list from ACP extension metadata.
-
-    ``None`` means the external client did not claim authority for this field;
-    an empty list is an explicit empty capability grant.
-    """
-    config = kwargs.get("sessionConfig")
-    if not isinstance(config, dict) or key not in config:
-        return None
-    value = config.get(key)
-    if not isinstance(value, list):
-        raise ValueError(f"acp_session_config_invalid: field={key}")
-    result: list[str] = []
-    for entry in value:
-        if not isinstance(entry, str):
-            raise ValueError(f"acp_session_config_invalid: field={key}")
-        normalized = entry.strip()
-        if normalized and normalized not in result:
-            result.append(normalized)
-    return result
-
-
-def _external_session_access_mode(kwargs: dict[str, Any]) -> str | None:
-    config = kwargs.get("sessionConfig")
-    if not isinstance(config, dict) or "accessMode" not in config:
-        return None
-    value = str(config.get("accessMode") or "").strip()
-    if value not in {"chatgpt-account", "openai-api", "openrouter-api"}:
-        raise ValueError("acp_session_config_invalid: field=accessMode")
-    return value
-
-
-def _external_session_delegate_cards(
-    kwargs: dict[str, Any],
-) -> list[dict[str, Any]] | None:
-    """Read the host-authorized saved Hermes delegate registry.
-
-    The registry is ACP transport metadata, not model-authored context.  It is
-    intentionally bounded and contains no credentials or routing topology.
-    """
-    config = kwargs.get("sessionConfig")
-    if not isinstance(config, dict) or "delegateCards" not in config:
-        return None
-    value = config.get("delegateCards")
-    if not isinstance(value, list) or len(value) > 16:
-        raise ValueError("acp_session_config_invalid: field=delegateCards")
-
-    required_strings = (
-        "cardId", "title", "prompt", "provider", "providerModelId", "accessMode",
-    )
-    list_fields = ("skills", "toolsets", "allowedToolNames")
-    delegates: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for entry in value:
-        if not isinstance(entry, dict):
-            raise ValueError("acp_session_config_invalid: field=delegateCards")
-        normalized: dict[str, Any] = {}
-        for key in required_strings:
-            item = entry.get(key)
-            if not isinstance(item, str) or not item.strip():
-                raise ValueError(
-                    f"acp_session_config_invalid: field=delegateCards.{key}"
-                )
-            normalized[key] = item.strip() if key != "prompt" else item
-        if normalized["cardId"] in seen:
-            raise ValueError("acp_session_delegate_card_duplicate")
-        runtime = entry.get("runtime")
-        if (
-            not isinstance(runtime, dict)
-            or set(runtime) != {"kind", "mode", "profile"}
-            or runtime.get("kind") != "hermes"
-            or runtime.get("mode") != "delegate"
-            or not isinstance(runtime.get("profile"), str)
-            or not runtime["profile"].strip()
-        ):
-            raise ValueError(
-                "acp_session_config_invalid: field=delegateCards.runtime"
-            )
-        normalized["runtime"] = {
-            "kind": "hermes",
-            "mode": "delegate",
-            "profile": runtime["profile"].strip(),
-        }
-        for key in list_fields:
-            items = entry.get(key)
-            if not isinstance(items, list) or any(
-                not isinstance(item, str) for item in items
-            ):
-                raise ValueError(
-                    f"acp_session_config_invalid: field=delegateCards.{key}"
-                )
-            normalized[key] = list(dict.fromkeys(
-                item.strip() for item in items if item.strip()
-            ))
-        seen.add(normalized["cardId"])
-        delegates.append(normalized)
-    return delegates
 
 
 def _resource_display_name(uri: str, name: str | None = None, title: str | None = None) -> str:
@@ -750,8 +673,6 @@ class HermesACPAgent(acp.Agent):
         super().__init__()
         self.session_manager = session_manager or SessionManager()
         self._conn: Optional[acp.Client] = None
-        self._codex_account_client: Any | None = None
-        self._codex_account_lock = threading.Lock()
 
     # ---- Connection lifecycle -----------------------------------------------
 
@@ -759,92 +680,6 @@ class HermesACPAgent(acp.Agent):
         """Store the client connection for sending session updates."""
         self._conn = conn
         logger.info("ACP client connected")
-
-    def close(self) -> None:
-        """Close the transport-only Codex account client, if it was opened."""
-        with self._codex_account_lock:
-            client = self._codex_account_client
-            self._codex_account_client = None
-        if client is not None:
-            client.close()
-
-    def _codex_account_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        """Proxy the bounded official account protocol without starting a thread/turn."""
-        allowed_methods = {
-            "account/read",
-            "account/login/start",
-            "account/logout",
-            "account/rateLimits/read",
-        }
-        if method not in allowed_methods:
-            raise ValueError(f"codex_account_method_not_allowed:{method}")
-
-        request_params: dict[str, Any]
-        if method == "account/read":
-            refresh_token = params.get("refreshToken", True)
-            if not isinstance(refresh_token, bool):
-                raise ValueError("codex_account_refresh_token_flag_invalid")
-            request_params = {"refreshToken": refresh_token}
-        elif method == "account/login/start":
-            login_type = str(params.get("type") or "").strip()
-            if login_type not in {"chatgpt", "chatgptDeviceCode"}:
-                raise ValueError("codex_account_login_type_not_allowed")
-            request_params = {"type": login_type}
-        else:
-            request_params = {}
-
-        with self._codex_account_lock:
-            client = self._codex_account_client
-            if client is None or not client.is_alive():
-                from agent.transports.codex_app_server import CodexAppServerClient
-
-                client = CodexAppServerClient(
-                    codex_bin=os.environ.get("HERMES_CODEX_BIN", "codex"),
-                    codex_home=os.environ.get("HERMES_CODEX_HOME")
-                    or os.environ.get("CODEX_HOME"),
-                )
-                client.initialize(
-                    client_name="liquidaity-hermes-account",
-                    client_title="LiquidAIty Hermes Account",
-                    client_version="1.0.0",
-                )
-                self._codex_account_client = client
-
-            notifications: list[dict[str, Any]] = []
-
-            def drain_account_notifications() -> None:
-                while True:
-                    notification = client.take_notification()
-                    if notification is None:
-                        return
-                    if notification.get("method") in {
-                        "account/login/completed",
-                        "account/updated",
-                        "account/rateLimits/updated",
-                    }:
-                        notifications.append(notification)
-
-            drain_account_notifications()
-            result = client.request(method, request_params, timeout=15)
-            drain_account_notifications()
-
-        if method == "account/read":
-            account = result.get("account") if isinstance(result, dict) else None
-            if isinstance(account, dict) and account.get("type") != "chatgpt":
-                raise ValueError("codex_chatgpt_account_required")
-
-        return {"result": result, "notifications": notifications}
-
-    async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        if method != "liquidaity/codex-account":
-            raise ValueError(f"unsupported_hermes_extension:{method}")
-        codex_method = str(params.get("method") or "").strip()
-        codex_params = params.get("params")
-        return await asyncio.to_thread(
-            self._codex_account_request,
-            codex_method,
-            codex_params if isinstance(codex_params, dict) else {},
-        )
 
 
     def _session_modes(self, state: SessionState) -> SessionModeState:
@@ -932,14 +767,47 @@ class HermesACPAgent(acp.Agent):
 
             available_models: list[ModelInfo] = []
             seen_ids: set[str] = set()
+            current_choice_provider = str(provider or "").strip().lower()
+            if current_choice_provider == "ollama":
+                current_choice_provider = "custom:ollama"
+            current_base_url = str(
+                getattr(state.agent, "base_url", "") or ""
+            ).strip().rstrip("/").lower()
+
+            def semantic_provider(provider_id: str) -> str:
+                raw = str(provider_id or "").strip().lower()
+                if raw in {"ollama", "custom:ollama"}:
+                    return "ollama"
+                if raw.startswith("custom:"):
+                    return raw
+                return normalize_provider(raw)
+
+            seen_semantic_ids: set[str] = set()
+            native_empty_rows: set[str] = set()
+            current_identity_resolved = current_choice_provider not in {"", "custom"}
             for row in payload.get("providers") or []:
-                row_provider = normalize_provider(str(row.get("slug") or "").strip())
+                raw_row_provider = str(row.get("slug") or "").strip().lower()
+                row_provider = normalize_provider(raw_row_provider)
+                row_base_url = str(row.get("api_url") or "").strip().rstrip("/").lower()
+                if row.get("native_catalog_empty"):
+                    native_empty_rows.add(raw_row_provider)
+                if (
+                    not current_identity_resolved
+                    and raw_row_provider in {"ollama", "custom:ollama"}
+                    and current_base_url
+                    and row_base_url == current_base_url
+                ):
+                    current_choice_provider = "custom:ollama"
+                    current_identity_resolved = True
                 if not row_provider:
                     continue
                 provider_name = str(row.get("name") or "").strip() or provider_label(
                     row_provider
                 )
-                for model_entry in row.get("models") or []:
+                row_models = row.get("models")
+                if not isinstance(row_models, (list, tuple)):
+                    continue
+                for model_entry in row_models:
                     if isinstance(model_entry, dict):
                         rendered_model = str(
                             model_entry.get("id")
@@ -951,11 +819,25 @@ class HermesACPAgent(acp.Agent):
                         rendered_model = str(model_entry or "").strip()
                     if not rendered_model:
                         continue
-                    choice_id = self._encode_model_choice(row_provider, rendered_model)
-                    if choice_id in seen_ids:
+                    encoded_provider = (
+                        "custom:ollama"
+                        if raw_row_provider == "ollama"
+                        else raw_row_provider
+                        if raw_row_provider == "custom:ollama"
+                        else raw_row_provider
+                        if raw_row_provider.startswith("custom:")
+                        else row_provider
+                    )
+                    choice_id = self._encode_model_choice(
+                        encoded_provider, rendered_model
+                    )
+                    semantic_id = f"{semantic_provider(encoded_provider)}:{rendered_model}"
+                    if choice_id in seen_ids or semantic_id in seen_semantic_ids:
                         continue
                     is_current = (
-                        row_provider == normalized_provider and rendered_model == model
+                        semantic_provider(encoded_provider)
+                        == semantic_provider(current_choice_provider)
+                        and rendered_model == model
                     )
                     description = f"Provider: {provider_name}"
                     if is_current:
@@ -968,14 +850,26 @@ class HermesACPAgent(acp.Agent):
                         )
                     )
                     seen_ids.add(choice_id)
+                    seen_semantic_ids.add(semantic_id)
 
             # Named user-defined endpoints (providers: / custom_providers:)
             # are invisible to canonical provider enumeration — append them
             # so editor clients can select them like the TUI /model picker.
+            named_empty_authoritative: set[str] = set(native_empty_rows)
             for named_slug, named_label, named_catalog in _named_custom_provider_catalogs():
+                if not named_catalog:
+                    named_empty_authoritative.add(str(named_slug).strip().lower())
+                    continue
                 for named_model, named_desc in named_catalog:
                     named_choice = self._encode_model_choice(named_slug, named_model)
-                    if not named_choice or named_choice in seen_ids:
+                    named_semantic_id = (
+                        f"{semantic_provider(named_slug)}:{named_model}"
+                    )
+                    if (
+                        not named_choice
+                        or named_choice in seen_ids
+                        or named_semantic_id in seen_semantic_ids
+                    ):
                         continue
                     named_parts = [f"Provider: {named_label}"]
                     if named_desc:
@@ -990,9 +884,70 @@ class HermesACPAgent(acp.Agent):
                         )
                     )
                     seen_ids.add(named_choice)
+                    seen_semantic_ids.add(named_semantic_id)
 
-            current_model_id = self._encode_model_choice(normalized_provider, model)
-            if current_model_id and current_model_id not in seen_ids:
+            def empty_catalog_applies(provider_id: str) -> bool:
+                raw = str(provider_id or "").strip().lower()
+                normalized = normalize_provider(raw)
+                if normalized == "custom":
+                    return any(
+                        candidate == raw
+                        or f"custom:{candidate}" == raw
+                        or (raw == "custom" and candidate == "custom")
+                        for candidate in named_empty_authoritative
+                    )
+                return any(
+                    candidate == raw
+                    or candidate == f"custom:{normalized}"
+                    or candidate == f"custom:{raw}"
+                    or normalize_provider(candidate) == normalized
+                    for candidate in named_empty_authoritative
+                )
+
+            def choice_provider(model_id: str) -> str:
+                parts = model_id.split(":")
+                if parts[:1] == ["custom"] and len(parts) > 1:
+                    from hermes_cli.models import _configured_custom_provider_ids
+
+                    lowered = model_id.lower()
+                    for candidate in sorted(
+                        (
+                            provider_id
+                            for provider_id in _configured_custom_provider_ids()
+                            if provider_id.startswith("custom:")
+                        ),
+                        key=len,
+                        reverse=True,
+                    ):
+                        if lowered.startswith(candidate + ":"):
+                            return candidate
+                    return "custom"
+                return parts[0]
+
+            if named_empty_authoritative:
+                available_models = [
+                    item
+                    for item in available_models
+                    if not empty_catalog_applies(choice_provider(item.model_id))
+                ]
+                seen_ids = {item.model_id for item in available_models}
+
+            current_is_empty = empty_catalog_applies(current_choice_provider)
+            if current_is_empty:
+                available_models = [
+                    item
+                    for item in available_models
+                    if " • current" not in str(item.description or "")
+                ]
+                seen_ids = {item.model_id for item in available_models}
+            current_model_id = (
+                "" if current_is_empty else self._encode_model_choice(current_choice_provider, model)
+            )
+            if (
+                current_model_id
+                and current_model_id not in seen_ids
+                and not current_is_empty
+            ):
                 provider_name = provider_label(normalized_provider)
                 available_models.insert(
                     0,
@@ -1003,10 +958,14 @@ class HermesACPAgent(acp.Agent):
                     ),
                 )
 
+            if not available_models and current_is_empty:
+                return SessionModelState(available_models=[], current_model_id="")
             if available_models:
                 return SessionModelState(
                     available_models=available_models,
-                    current_model_id=current_model_id or available_models[0].model_id,
+                    current_model_id=current_model_id
+                    if current_model_id or current_is_empty
+                    else available_models[0].model_id,
                 )
         except Exception:
             logger.debug("Could not build ACP model state", exc_info=True)
@@ -1167,179 +1126,6 @@ class HermesACPAgent(acp.Agent):
         loop = asyncio.get_running_loop()
         loop.call_soon(asyncio.create_task, self._send_usage_update(state))
 
-    def _refresh_external_tool_surface(self, state: SessionState) -> None:
-        """Apply an exact caller-owned native capability ceiling when present."""
-        if state.external_native_tools is None and state.external_toolsets is None:
-            self._apply_saved_delegate_registry(state)
-            return
-
-        from agent.memory_manager import inject_memory_provider_tools
-        from model_tools import get_tool_definitions
-        from toolsets import validate_toolset
-
-        requested_toolsets = list(state.external_toolsets or [])
-        missing_toolsets = [name for name in requested_toolsets if not validate_toolset(name)]
-        if missing_toolsets:
-            raise ValueError(
-                "acp_session_toolsets_missing: " + ",".join(missing_toolsets)
-            )
-        enabled_toolsets = _expand_acp_enabled_toolsets(
-            requested_toolsets,
-            mcp_server_names=state.external_mcp_server_names,
-        )
-        selected = get_tool_definitions(
-            enabled_toolsets=enabled_toolsets,
-            quiet_mode=True,
-            skip_tool_search_assembly=True,
-        )
-
-        requested_native = list(state.external_native_tools or [])
-        if requested_native:
-            all_available = get_tool_definitions(
-                enabled_toolsets=None,
-                quiet_mode=True,
-                skip_tool_search_assembly=True,
-            )
-            available_by_name = {
-                tool.get("function", {}).get("name"): tool
-                for tool in all_available or []
-                if isinstance(tool, dict)
-            }
-            missing_native = [
-                name for name in requested_native if name not in available_by_name
-            ]
-            if missing_native:
-                raise ValueError(
-                    "acp_session_native_tools_missing: " + ",".join(missing_native)
-                )
-            selected.extend(available_by_name[name] for name in requested_native)
-
-        deduped: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for tool in selected:
-            name = str(tool.get("function", {}).get("name") or "")
-            if name and name not in seen:
-                seen.add(name)
-                deduped.append(tool)
-
-        state.agent.enabled_toolsets = enabled_toolsets
-        state.agent.tools = deduped
-        state.agent.valid_tool_names = set(seen)
-        inject_memory_provider_tools(state.agent)
-        self._apply_saved_delegate_registry(state)
-        invalidate = getattr(state.agent, "_invalidate_system_prompt", None)
-        if callable(invalidate):
-            invalidate()
-
-    def _apply_saved_delegate_registry(self, state: SessionState) -> None:
-        """Attach trusted saved-Card targets and advertise their exact IDs."""
-        delegates = {
-            delegate["cardId"]: dict(delegate)
-            for delegate in state.external_delegate_cards
-        }
-        state.agent._saved_delegate_cards = delegates
-        state.agent._saved_delegate_access_mode = str(
-            getattr(state, "external_access_mode", "") or ""
-        )
-        if not delegates:
-            return
-
-        ids = list(delegates)
-        patched_tools: list[dict[str, Any]] = []
-        for tool in list(getattr(state.agent, "tools", None) or []):
-            function = tool.get("function") if isinstance(tool, dict) else None
-            if not isinstance(function, dict) or function.get("name") != "delegate_task":
-                patched_tools.append(tool)
-                continue
-            patched = copy.deepcopy(tool)
-            parameters = patched["function"].setdefault("parameters", {})
-            properties = parameters.setdefault("properties", {})
-            properties["target_card_id"] = {
-                "type": "string",
-                "enum": ids,
-                "description": (
-                    "Optional saved Hermes Card identity selected from the "
-                    "host-authorized FLOW targets. The host applies its prompt "
-                    "and capability ceiling."
-                ),
-            }
-            tasks = properties.get("tasks")
-            if isinstance(tasks, dict):
-                items = tasks.get("items")
-                if isinstance(items, dict):
-                    item_properties = items.setdefault("properties", {})
-                    item_properties["target_card_id"] = copy.deepcopy(
-                        properties["target_card_id"]
-                    )
-            patched_tools.append(patched)
-        state.agent.tools = patched_tools
-
-    def _apply_external_session_config(
-        self, state: SessionState, kwargs: dict[str, Any]
-    ) -> None:
-        """Materialize saved-card prompt, skills, and capability grants once."""
-        access_mode = _external_session_access_mode(kwargs)
-        skills = _external_session_string_list(kwargs, "skills")
-        enabled_tools = _external_session_string_list(kwargs, "enabledTools")
-        enabled_toolsets = _external_session_string_list(kwargs, "enabledToolsets")
-        delegate_cards = _external_session_delegate_cards(kwargs)
-
-        prompt_parts = [_external_session_system_prompt(kwargs)]
-        if access_mode is not None:
-            state.external_access_mode = access_mode
-        if skills is not None:
-            state.external_skills = skills
-            if skills:
-                from agent.skill_commands import build_preloaded_skills_prompt
-
-                skill_prompt, _loaded, missing = build_preloaded_skills_prompt(
-                    skills, task_id=state.session_id
-                )
-                if missing:
-                    raise ValueError(
-                        "acp_session_skills_missing: " + ",".join(missing)
-                    )
-                prompt_parts.append(skill_prompt)
-
-        self.session_manager.set_ephemeral_system_prompt(
-            state.session_id,
-            "\n\n".join(part for part in prompt_parts if part),
-        )
-        if enabled_tools is not None:
-            state.external_native_tools = enabled_tools
-        if enabled_toolsets is not None:
-            state.external_toolsets = enabled_toolsets
-        if delegate_cards is not None:
-            materialized_delegates: list[dict[str, Any]] = []
-            for delegate in delegate_cards:
-                materialized = dict(delegate)
-                delegate_skills = list(materialized.get("skills") or [])
-                if delegate_skills:
-                    from agent.skill_commands import build_preloaded_skills_prompt
-
-                    skill_prompt, _loaded, missing = build_preloaded_skills_prompt(
-                        delegate_skills,
-                        task_id=f"{state.session_id}:{materialized['cardId']}",
-                    )
-                    if missing:
-                        raise ValueError(
-                            "acp_session_delegate_skills_missing: "
-                            + ",".join(missing)
-                        )
-                    if skill_prompt:
-                        materialized["prompt"] = (
-                            str(materialized["prompt"])
-                            + "\n\n"
-                            + skill_prompt
-                        )
-                materialized_delegates.append(materialized)
-            state.external_delegate_cards = materialized_delegates
-        if enabled_tools is not None or enabled_toolsets is not None:
-            # The current ACP load/new request is authoritative. Re-add only
-            # the MCP server names actually supplied on this request below.
-            state.external_mcp_server_names = []
-        self._refresh_external_tool_surface(state)
-
     async def _register_session_mcp_servers(
         self,
         state: SessionState,
@@ -1378,16 +1164,6 @@ class HermesACPAgent(acp.Agent):
             return
 
         try:
-            state.external_mcp_server_names = [server.name for server in mcp_servers]
-            if state.external_native_tools is not None or state.external_toolsets is not None:
-                self._refresh_external_tool_surface(state)
-                logger.info(
-                    "Session %s: refreshed exact external tool surface after ACP MCP registration (%d tools)",
-                    state.session_id,
-                    len(state.agent.tools or []),
-                )
-                return
-
             from model_tools import get_tool_definitions
             from agent.memory_manager import inject_memory_provider_tools
 
@@ -1497,6 +1273,13 @@ class HermesACPAgent(acp.Agent):
                     from tools.mcp_tool import refresh_agent_mcp_tools
 
                     added = refresh_agent_mcp_tools(agent, quiet_mode=True)
+                    if current.host_config is not None:
+                        # MCP refresh rebuilds the registry-derived list. Reapply
+                        # the trusted exact-tool/profile projection before a turn
+                        # can observe the refreshed surface.
+                        self.session_manager.configure_host_session(
+                            current, current.host_config
+                        )
                 if added:
                     logger.info(
                         "Session %s: late MCP refresh added %d tools: %s",
@@ -1821,21 +1604,13 @@ class HermesACPAgent(acp.Agent):
         mcp_servers: list | None = None,
         **kwargs: Any,
     ) -> NewSessionResponse:
-        access_mode = _external_session_access_mode(kwargs)
-        if access_mode == "chatgpt-account":
-            # The session must be born on the authenticated Codex app-server
-            # transport. Constructing a temporary direct-provider agent first
-            # incorrectly requires an API key before session/set_model can apply
-            # the saved Card model.
-            state = self.session_manager.create_session(
-                cwd=cwd,
-                requested_provider="openai-codex",
-                api_mode="codex_app_server",
-            )
-        else:
-            state = self.session_manager.create_session(cwd=cwd)
-        self._apply_external_session_config(state, kwargs)
+        host_config = parse_host_session_config(kwargs)
+        state = self.session_manager.create_session(
+            cwd=cwd,
+            host_config=host_config,
+        )
         await self._register_session_mcp_servers(state, mcp_servers)
+        self.session_manager.configure_host_session(state, host_config)
         self._schedule_mcp_late_refresh(state)
         logger.info("New session %s (cwd=%s)", state.session_id, cwd)
         self._schedule_available_commands_update(state.session_id)
@@ -1856,12 +1631,13 @@ class HermesACPAgent(acp.Agent):
         mcp_servers: list | None = None,
         **kwargs: Any,
     ) -> LoadSessionResponse | None:
+        host_config = parse_host_session_config(kwargs)
         state = self.session_manager.update_cwd(session_id, cwd)
         if state is None:
             logger.warning("load_session: session %s not found", session_id)
             return None
-        self._apply_external_session_config(state, kwargs)
         await self._register_session_mcp_servers(state, mcp_servers)
+        self.session_manager.configure_host_session(state, host_config)
         self._schedule_mcp_late_refresh(state)
         logger.info("Loaded session %s", session_id)
         # Per ACP spec, `session/load` must stream the prior conversation back
@@ -1905,12 +1681,16 @@ class HermesACPAgent(acp.Agent):
         mcp_servers: list | None = None,
         **kwargs: Any,
     ) -> ResumeSessionResponse:
+        host_config = parse_host_session_config(kwargs)
         state = self.session_manager.update_cwd(session_id, cwd)
         if state is None:
             logger.warning("resume_session: session %s not found, creating new", session_id)
-            state = self.session_manager.create_session(cwd=cwd)
-        self._apply_external_session_config(state, kwargs)
+            state = self.session_manager.create_session(
+                cwd=cwd,
+                host_config=host_config,
+            )
         await self._register_session_mcp_servers(state, mcp_servers)
+        self.session_manager.configure_host_session(state, host_config)
         self._schedule_mcp_late_refresh(state)
         logger.info("Resumed session %s", state.session_id)
         # See `load_session` above for the spec rationale — replay must
@@ -1963,10 +1743,15 @@ class HermesACPAgent(acp.Agent):
         mcp_servers: list | None = None,
         **kwargs: Any,
     ) -> ForkSessionResponse:
+        host_config = parse_host_session_config(kwargs)
         state = self.session_manager.fork_session(session_id, cwd=cwd)
         new_id = state.session_id if state else ""
         if state is not None:
             await self._register_session_mcp_servers(state, mcp_servers)
+            self.session_manager.configure_host_session(
+                state,
+                host_config if host_config is not None else state.host_config,
+            )
         logger.info("Forked session %s -> %s", session_id, new_id)
         if new_id:
             self._schedule_available_commands_update(new_id)
@@ -2400,11 +2185,7 @@ class HermesACPAgent(acp.Agent):
                     exc_info=True,
                 )
 
-        # Hard interruption can return ``None`` while the cancellation event is
-        # already authoritative. Normalize it before prefix checks so ACP can
-        # return the intended cancelled stop reason instead of an internal RPC
-        # error.
-        final_response = result.get("final_response") or ""
+        final_response = result.get("final_response", "")
         cancelled = bool(state.cancel_event and state.cancel_event.is_set())
         interrupted = bool(result.get("interrupted")) or cancelled
         # Hermes' local "waiting for model response" interrupt status is metadata,
@@ -2462,21 +2243,7 @@ class HermesACPAgent(acp.Agent):
         await self._send_usage_update(state)
 
         stop_reason = "cancelled" if cancelled else "end_turn"
-        transport_meta = None
-        if result.get("codex_thread_id") or result.get("codex_turn_id"):
-            transport_meta = {
-                "liquidaity": {
-                    "codexThreadId": result.get("codex_thread_id"),
-                    "codexTurnId": result.get("codex_turn_id"),
-                    "authMode": result.get("codex_auth_mode"),
-                    "planType": result.get("codex_plan_type"),
-                }
-            }
-        return PromptResponse(
-            stop_reason=stop_reason,
-            usage=usage,
-            field_meta=transport_meta,
-        )
+        return PromptResponse(stop_reason=stop_reason, usage=usage)
 
     # ---- Slash commands (headless) -------------------------------------------
 
@@ -2597,9 +2364,9 @@ class HermesACPAgent(acp.Agent):
             cwd=state.cwd,
             model=new_model,
             requested_provider=target_provider,
+            host_config=state.host_config,
         )
-        state.agent.ephemeral_system_prompt = state.ephemeral_system_prompt or None
-        self._refresh_external_tool_surface(state)
+        self.session_manager.configure_host_session(state, state.host_config)
         self.session_manager.save_session(state.session_id)
         provider_label = getattr(state.agent, "provider", None) or target_provider or current_provider
         logger.info("Session %s: model switched to %s", state.session_id, new_model)
@@ -2607,7 +2374,7 @@ class HermesACPAgent(acp.Agent):
 
     def _cmd_tools(self, args: str, state: SessionState) -> str:
         try:
-            if state.external_native_tools is not None or state.external_toolsets is not None:
+            if state.host_config is not None:
                 tools = list(getattr(state.agent, "tools", None) or [])
                 if not tools:
                     return "No tools available."
@@ -2619,7 +2386,6 @@ class HermesACPAgent(acp.Agent):
                         desc = desc[:77] + "..."
                     lines.append(f"  {name}: {desc}")
                 return "\n".join(lines)
-
             from model_tools import get_tool_definitions
             from types import SimpleNamespace
             from agent.memory_manager import inject_memory_provider_tools
@@ -2853,30 +2619,20 @@ class HermesACPAgent(acp.Agent):
                 model_id,
                 current_provider or "openrouter",
             )
+            state.model = resolved_model
             provider_changed = bool(current_provider and requested_provider != current_provider)
             current_base_url = None if provider_changed else getattr(state.agent, "base_url", None)
             current_api_mode = None if provider_changed else getattr(state.agent, "api_mode", None)
-            access_mode = getattr(state, "external_access_mode", None)
-            expected_provider = "openrouter" if access_mode == "openrouter-api" else "openai"
-            normalized_provider = "openai" if requested_provider == "openai-codex" else requested_provider
-            if access_mode and normalized_provider != expected_provider:
-                raise ValueError(
-                    f"acp_access_mode_provider_mismatch:{access_mode}:{requested_provider}"
-                )
-            if access_mode == "chatgpt-account":
-                current_api_mode = "codex_app_server"
-            replacement_agent = self.session_manager._make_agent(
+            state.agent = self.session_manager._make_agent(
                 session_id=session_id,
                 cwd=state.cwd,
                 model=resolved_model,
                 requested_provider=requested_provider,
                 base_url=current_base_url,
                 api_mode=current_api_mode,
+                host_config=state.host_config,
             )
-            replacement_agent.ephemeral_system_prompt = state.ephemeral_system_prompt or None
-            state.model = resolved_model
-            state.agent = replacement_agent
-            self._refresh_external_tool_surface(state)
+            self.session_manager.configure_host_session(state, state.host_config)
             self.session_manager.save_session(session_id)
             logger.info(
                 "Session %s: model switched to %s via provider %s",
