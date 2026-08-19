@@ -36,6 +36,7 @@ import {
   type ToolCatalogReference,
 } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
+import { resolveHermesExecutionContext } from '../hermes/childExecutionContext';
 
 const router = Router();
 
@@ -171,6 +172,23 @@ router.post('/mcp-bridge/describe_connected_agents', async (req, res) => {
     return res.json({ ok: true, ...result });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'describe_connected_agents_failed' });
+  }
+});
+
+router.post('/mcp-bridge/internal_execution_context', (req, res) => {
+  try {
+    const context = resolveHermesExecutionContext({
+      contextId: String(req.body?.contextId || ''),
+      principal: req.body?.principal && typeof req.body.principal === 'object'
+        ? req.body.principal
+        : {},
+    });
+    return res.json({ ok: true, context });
+  } catch (error) {
+    return res.status(403).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'hermes_execution_context_rejected',
+    });
   }
 });
 

@@ -96,6 +96,9 @@ the exact IDF. The IDF carries task meaning and selected context, not runtime co
 
 ### AutoGen
 
+- The checked-in first-party `autogen-main` fork is pinned to official Python AutoGen 0.7.5 and is
+  the sole installed source for `autogen-core`, `autogen-agentchat`, and `autogen-ext`. Its upstream
+  base is frozen; LiquidAIty maintains it instead of adopting later Microsoft versions.
 - `AssistantAgent` is the direct single-Card rail.
 - `MagenticOneGroupChat` is the native team rail.
 - Task and Progress Ledgers remain private AutoGen state.

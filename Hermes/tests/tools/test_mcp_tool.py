@@ -576,6 +576,33 @@ class TestToolHandler:
         finally:
             _servers.pop("test_srv", None)
 
+    def test_trusted_host_execution_meta_is_forwarded_per_call(self):
+        from acp_adapter.host_profiles import host_execution_scope
+        from tools.mcp_tool import _make_tool_handler, _servers
+
+        mock_session = MagicMock()
+        mock_session.call_tool = AsyncMock(
+            return_value=_make_call_result("hello child", is_error=False)
+        )
+        server = _make_mock_server("test_srv", session=mock_session)
+        _servers["test_srv"] = server
+        child = SimpleNamespace(
+            _host_tool_call_meta={"liquidaity/execution": "context-child-1"}
+        )
+
+        try:
+            handler = _make_tool_handler("test_srv", "greet", 120)
+            with host_execution_scope(child), self._patch_mcp_loop():
+                result = json.loads(handler({"name": "world"}))
+            assert result["result"] == "hello child"
+            mock_session.call_tool.assert_called_once_with(
+                "greet",
+                arguments={"name": "world"},
+                meta={"liquidaity/execution": "context-child-1"},
+            )
+        finally:
+            _servers.pop("test_srv", None)
+
 
     def test_recycled_stdio_server_reconnects_lazily_on_tool_call(self):
         from tools.mcp_tool import _make_tool_handler, _servers

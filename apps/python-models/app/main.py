@@ -15,6 +15,7 @@ from app.python_models.autogen_orchestrator import dispatch_configured_runtime
 from app.python_models.card_domain import (
     CardDomainError,
     begin_prompt_free_run,
+    begin_native_hermes_child_run,
     describe_magentic_agents,
     finish_prompt_free_run,
     inspect_agentgraph,
@@ -209,6 +210,14 @@ def domain_run_begin(payload: dict[str, Any]):
 def domain_run_finish(payload: dict[str, Any]):
     try:
         return finish_prompt_free_run(payload)
+    except CardDomainError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/domain/runs/begin-native-hermes-child")
+def domain_native_hermes_child_run_begin(payload: dict[str, Any]):
+    try:
+        return begin_native_hermes_child_run(payload)
     except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 

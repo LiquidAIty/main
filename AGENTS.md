@@ -45,6 +45,9 @@ Never collapse CURRENT and TARGET into one claim.
 - Coder is a Hermes delegate Card with a backend-owned terminal under Chat. The historical
   `card_local_coder` identifier is persistence compatibility, not runtime ownership.
 - OpenClaude, LocalCoder, and Bun are absent from the supported product and dependency graph.
+- Microsoft AutoGen 0.7.5 is checked in at `autogen-main` as first-party execution infrastructure;
+  Python rails install its three packages only from that tree. The 0.7.5 upstream base is frozen;
+  do not upgrade or rebase it onto later Microsoft AutoGen versions.
 - The complete loaded six-service runtime and user-visible Main/Coder/Kanban model execution remain
   unproven until an explicitly approved live test.
 - The Knowledge workspace has a real 2D native force-directed graph surface.
@@ -159,22 +162,23 @@ the missing project/status capability; do not invent results or start another CB
 
 ### Keep discovery inside the active repository ownership boundary
 
-One repository ownership boundary equals one CBM project:
+The canonical project is the unified tracked-source graph:
 
 | Active ownership boundary | CBM project | Root | Normal use |
 | --- | --- | --- | --- |
-| LiquidAIty core | `C-Projects-LiquidAIty-main` | `C:\Projects\LiquidAIty\main` | Default for ordinary work |
-| Hermes vendor | `C-Projects-Hermes` | `C:\Projects\LiquidAIty\main\Hermes` | Only while explicitly working in Hermes |
+| LiquidAIty product | `C-Projects-LiquidAIty-main` | `C:\Projects\LiquidAIty\main` | LiquidAIty and checked-in AutoGen source |
 
-The core project excludes the large imported and vendored roots in `.cbmignore`. Normal LiquidAIty
-work uses only `C-Projects-LiquidAIty-main`; do not query, preload, merge, or cross-link the Hermes graph
-merely because it exists. When a task explicitly crosses a vendor boundary, query the core
-and owning vendor projects separately and narrowly, then join the evidence in the CoderReport—not in
-a combined CBM graph.
+The normal core graph includes the checked-in first-party `autogen-main` fork. Hermes is too large for
+routine core rebuilds and remains excluded by `.cbmignore`; a controlling task may explicitly authorize
+one temporary unified projection for bounded cross-runtime design work. Runtime homes, credentials,
+virtual environments, caches, builds, downloaded models, and independently versioned applications
+such as WorldSignals remain excluded.
 
-Other significant imported trees remain excluded from the core graph. Create or refresh another
-dedicated project only when active work actually enters that ownership boundary. Do not create an
-index swarm. Direct source and focused tests remain authoritative after graph discovery.
+Temporary unified indexing does not transfer ownership. Hermes remains an upstream-managed controlled vendor;
+AutoGen is a first-party maintained fork; LiquidAIty adapters remain product code. Use path-scoped
+queries to control noise and direct-read the owning current source after discovery. Do not create an
+index swarm or a second Hermes graph for ordinary work. Direct source and focused tests remain
+authoritative after graph discovery.
 
 ### The correct discovery order
 
@@ -263,15 +267,19 @@ and the proposed post-commit checkpoint. Immediately before deletion:
 Then perform exactly one delete, exactly one full `index_repository` rebuild of `C:/Projects/LiquidAIty/main`, and
 one readiness/count/exclusion verification phase. Reindexing alone does not replace deletion because
 SQLite-backed incremental refresh can retain deleted or newly excluded fragments. Never delete
-`C-Projects-Hermes`, another project, repository source, or CBM storage files
+another project, repository source, or CBM storage files
 under this authorization. Never use delete/rebuild for an ordinary timeout or connector failure.
 
 `UserPromptSubmit` injects this maintenance and discovery SOP, but the active agent executes maintenance
 only if the current Main task has not already completed its clean entry. Use the one already-connected
 native MCP owner; the hook itself must not launch a CLI, server, indexer, or direct database process.
 Record completion in task context and never repeat delete/rebuild for an interruption, follow-up,
-clarification, compaction, or another message in the same task. After the clean rebuild, verify the exact project/root,
-ready status, live node/edge/file counts, `.cbmignore` exclusions, and absence of vendor paths once.
+clarification, compaction, or another message in the same task. An explicit controlling task may move
+this single delete/rebuild checkpoint to the final stable-source stage; it still occurs only once.
+After the clean rebuild, verify the exact project/root, ready status, live node/edge/file counts,
+`.cbmignore` exclusions, presence of intended tracked AutoGen source, and absence of excluded
+runtime/vendor-application paths once. If the active task explicitly authorized a temporary Hermes
+projection, report that it becomes structurally divergent once the normal `/Hermes/` exclusion is restored.
 Then begin discovery with the four normal tools: `search_graph`, `trace_path` when relationships matter,
 `get_code_snippet` for exact qualified-symbol snapshots, and `search_code` for bounded concept/literal/
 residue discovery when useful. Outside `C:/Projects/LiquidAIty/main`, do not perform this Main maintenance.
@@ -360,8 +368,8 @@ edit.
 
 Inside a vendor, prohibit broad cleanup, mass rename/format/type/dependency changes, speculative dead-
 code deletion, prompt rewrites, unrelated test rewrites, and upstream documentation or terminology
-changes. Use the vendor's dedicated CBM project first, then direct-read and test the exact upstream
-contract. Record every meaningful local divergence in the single vendored divergence register in
+changes. Use path-scoped searches in the unified core CBM project first, then direct-read and test the
+exact upstream contract. Record every meaningful local divergence in the single vendored divergence register in
 `ARCHITECTURE.md`, including upstream URL, version or commit when known, local files/symbols, reason,
 proof, sync cost, and whether the change can later be removed.
 

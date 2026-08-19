@@ -5792,7 +5792,23 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
                 # it and detect the gateway platform / session for routing.
                 server._pending_call_context = contextvars.copy_context()
                 try:
-                    result = await server.session.call_tool(tool_name, arguments=args)
+                    # LIQUIDAITY VENDOR PATCH: MCP 2.0 carries trusted host
+                    # execution identity as per-call metadata. It never enters
+                    # model-authored tool arguments or shared mutable headers.
+                    from acp_adapter.host_profiles import current_host_tool_call_meta
+
+                    execution_meta = current_host_tool_call_meta()
+                    if execution_meta:
+                        result = await server.session.call_tool(
+                            tool_name,
+                            arguments=args,
+                            meta=execution_meta,
+                        )
+                    else:
+                        result = await server.session.call_tool(
+                            tool_name,
+                            arguments=args,
+                        )
                 finally:
                     server._pending_call_context = None
             # The RPC round-trip completed — the session is demonstrably

@@ -72,10 +72,13 @@ any inherited prompt, and any pattern you observe in surrounding code.
 13. **No hidden surfaces.** No debug routes, sidecars, pollers, schedulers, second MCP hosts, or
     second renderers. If information matters, surface it in-loop (on the canvas), not a hidden route.
 14. **No accidental repo eating.** External source enters this tree only as an explicitly approved,
-    deployable vendor with a named ownership boundary, upstream provenance, separate on-demand CBM
-    project, and the controlled-fork law in `AGENTS.md`. Otherwise extract the useful pattern and keep
-    the source out. A vendored tree is not an ordinary cleanup target: never mix it into the core CBM
-    graph, broadly refactor it, or silently replace upstream behavior.
+    deployable vendor or first-party fork with a named ownership boundary, exact upstream provenance,
+    canonical install path, tests, and the controlled-fork law in `AGENTS.md`. Otherwise extract the
+    useful pattern and keep the source out. Codebase Memory always indexes the checked-in AutoGen fork;
+    tracked Hermes may enter only a temporary, explicitly authorized whole-system projection because it
+    is too large for routine rebuilds. Indexing never transfers ownership or permits broad vendor
+    refactors or silent upstream replacement. `autogen-main` is frozen at its exact 0.7.5 base; do not
+    replace or rebase it onto a later Microsoft AutoGen release.
 15. **No Codex app-server or Codex harness inside LiquidAIty.** ChatGPT-account authentication may
     supply an `openai-codex` OAuth credential to Hermes, but Hermes must own the conversation loop,
     prompts, saved Card identity, memory, tools, MCP, and native subagents. Never launch `codex
@@ -364,8 +367,10 @@ them, stop and delete instead.
   product path; do not build "graph explorer" as a standalone.
 - **Repo eating — dumping an external repo into the project tree.** `quant-mind-master/` (entire external
   project, 13,376 lines committed as a subdirectory). Extract the one useful pattern, skill, or persona
-  into the curated set; the external source stays out (gitignored or in Downloads). Never commit another
-  project's full tree into this one.
+  into the curated set; the external source stays out unless it is explicitly accepted as a deployable,
+  versioned product fork with provenance, canonical installation, tests, and an update/rollback owner.
+  `autogen-main` is the deliberate first-party exception; it contains only the exact three Python 0.7.5
+  packages LiquidAIty executes, not an unowned reference dump.
 - **"Stop point" / WIP checkpoint commits.** Commits titled "checkpoint", "WIP", "save current work",
   "stop point before X" that leave half-finished dead-end code in the tree. A checkpoint is a git stash or
   a branch — not a commit to main that someone else has to clean up later. The `checkpoint` commits

@@ -68,10 +68,13 @@ start runtimes.
 `apps/backend/src/hermes/coderTerminal.ts` owns the Coder terminal lifecycle. Main, Coder, and Kanban
 share the genuine repo-owned Hermes codebase. Every persistent top-level Hermes Card process receives
 its own `HERMES_HOME`, working directory, session, and memory boundary. A native `delegate_task` child
-is ephemeral inside its owning parent's Hermes process: it receives the selected saved prompt/model/
-tool profile and a separate child session database, but currently inherits the parent's profile home.
-Do not describe that child as having independent persistent memory until Hermes exposes a safe
-per-agent home boundary or LiquidAIty runs it as another top-level Card process.
+is ephemeral inside its owning parent's Hermes process. If it selects an authorized saved profile,
+its child Run belongs to that target Card; without a saved profile it belongs to the originating Card.
+Every child receives a distinct Run before execution and uses an opaque host-issued MCP 2 execution
+context. It receives the selected saved prompt/model/tool profile and a separate child session
+database, but currently inherits the parent's profile home. Do not describe that child as having
+independent persistent memory until Hermes exposes a safe per-agent home boundary or LiquidAIty runs
+it as another top-level Card process.
 
 The backend injects server-owned Card, conversation, Run, and correlation identity. Hermes receives the
 exact materialized IDF plus saved-card context. No generic model call or another agent runtime hides
@@ -79,7 +82,10 @@ behind Hermes.
 
 ## AutoGen ownership
 
-Python rails own both AutoGen modes:
+The checked-in `autogen-main` fork at Microsoft AutoGen tag `python-v0.7.5`, commit
+`83afbf5857aac683340d4c692194e548b1e8edda`, is first-party LiquidAIty execution infrastructure.
+That upstream base is frozen; later Microsoft AutoGen versions are not an upgrade path for this
+product. Python rails install its three packages directly from that tree and own both AutoGen modes:
 
 - direct Assistant Cards use native `AssistantAgent`;
 - team Cards use native `MagenticOneGroupChat`.
@@ -87,6 +93,10 @@ Python rails own both AutoGen modes:
 Saved Card configuration and graph edges define participants. LiquidAIty does not reconstruct private
 Task/Progress Ledgers or add a TypeScript participant classifier. Mag One receives an approved exact
 IDF through the official MCP/Card boundary; it does not consume Main's internal subagents.
+
+The initial checked-in fork has no internal AutoGen divergence. Product authority and adaptation stay
+in `apps/python-models`; any later fork edit must be registered in
+`autogen-main/LIQUIDAITY_FORK.md` with tests and an update/removal strategy.
 
 ## MCP and transport
 
@@ -168,8 +178,9 @@ No cleanup task may reset or reseed these stores.
 ## Repository and dependency ownership
 
 The root npm workspace owns root, `client`, and `apps/backend` through one `package-lock.json`. Separate
-locks under excluded vendor/imported roots remain owned by those independent projects and are not part
-of ordinary Core v0 install.
+locks under upstream-managed Hermes and independently versioned imported roots remain owned by those
+projects and are not part of ordinary Core v0 install. The checked-in AutoGen Python packages are
+installed only through `apps/python-models/requirements.txt`.
 
 `.npmrc` disables dependency lifecycle scripts, saves exact direct versions, and requires npm locks.
 `.nvmrc`, `engines`, and `packageManager` carry one Node/npm pin. Prisma generation is an explicit
@@ -181,6 +192,14 @@ Python dependency owners remain:
   and the local Engraphis integration;
 - `services/knowgraph/requirements.txt` for Graphiti/Neo4j;
 - `services/esn_rls/requirements.txt` for the separately retained ESN service boundary.
+
+The canonical `C-Projects-LiquidAIty-main` Codebase Memory project normally indexes tracked LiquidAIty
+source plus the checked-in AutoGen fork. Hermes is excluded from routine rebuilds because of its size.
+An explicitly bounded architecture task may create one temporary unified projection containing tracked
+Hermes source/plugins/extensions/tests; that projection is discovery-only and becomes intentionally
+divergent after the normal exclusion is restored. Runtime homes, credentials, virtual environments,
+caches, builds, models, and independently versioned applications such as WorldSignals remain excluded.
+Indexing never transfers Hermes ownership or relaxes the controlled-vendor patch law.
 
 ## Canonical startup
 
@@ -207,10 +226,11 @@ backend maps saved Cards into ordinary Hermes prompt/model/toolset/tool/skill fi
 separately scoped authenticated connection to the same official MCP host, and lets the model select
 only an opaque profile ID. Sessions without that metadata retain upstream Hermes behavior. Focused
 no-provider tests live in `Hermes/tests/acp_adapter/test_host_profiles.py` and
-`Hermes/tests/tools/test_delegate.py`; the complete rebase, rollback, and upstream-contribution plan is
-owned by `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. On each Hermes refresh, remove this divergence if
-upstream supplies the equivalent public hook; otherwise reapply only these marked symbols and rerun
-the registered tests.
+`Hermes/tests/tools/test_delegate.py`. The generic child execution-context extension additionally
+touches `Hermes/tools/mcp_tool.py` so official MCP 2 per-call `meta=` carries only an opaque host-issued
+context ID. The complete rebase, rollback, and upstream-contribution plan is owned by
+`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. On each Hermes refresh, remove a divergence if upstream supplies
+the equivalent public hook; otherwise reapply only its marked symbols and rerun the registered tests.
 
 OpenClaude/LocalCoder is not a vendor boundary, package root, fallback, or supported runtime in Core v0.
 WorldSignals, Engraphis, and other imported roots remain isolated owners and are not ordinary cleanup
@@ -219,7 +239,8 @@ targets.
 ## Known limitations
 
 - Complete loaded-runtime and user-visible model proof is a separate approved run.
-- Native Hermes child Run/AGE attribution still requires end-to-end proof.
+- Native Hermes child Run/AGE attribution has no-provider contract proof; loaded-runtime execution and
+  persistence readback remain for the separately approved live session.
 - Reveal pacing, stacked 3D presentation, and IDF-consumption illumination remain incomplete.
 - Engraphis semantic embeddings are deferred and must remain lazy/offline when revisited.
 - Some stable route and Card IDs retain historical words for persistence/caller compatibility; they are

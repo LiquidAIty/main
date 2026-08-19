@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Sequence
+from importlib.metadata import distribution
 from pathlib import Path
 
 import pytest
@@ -19,14 +20,34 @@ from autogen_agentchat.teams import MagenticOneGroupChat
 from autogen_core import CancellationToken
 from autogen_ext.models.replay import ReplayChatCompletionClient
 
+import autogen_agentchat
+import autogen_core
+import autogen_ext
 
-def test_released_full_mag_one_dependencies_are_exact_and_not_local_paths() -> None:
+
+def test_checked_in_autogen_fork_is_the_only_declared_runtime_source() -> None:
     requirements = (Path(__file__).parents[2] / "requirements.txt").read_text(encoding="utf-8")
-    assert "autogen-core==0.7.5" in requirements
-    assert "autogen-agentchat==0.7.5" in requirements
-    assert "autogen-ext[magentic-one,openai]==0.7.5" in requirements
-    assert "-e ../../autogen" not in requirements
-    assert "file:../../autogen" not in requirements
+    assert "-e ../../autogen-main/python/packages/autogen-core" in requirements
+    assert "-e ../../autogen-main/python/packages/autogen-agentchat" in requirements
+    assert "-e ../../autogen-main/python/packages/autogen-ext[magentic-one,openai]" in requirements
+    assert "autogen-core==" not in requirements
+    assert "autogen-agentchat==" not in requirements
+    assert "autogen-ext[magentic-one,openai]==" not in requirements
+    fork_root = Path(__file__).parents[4] / "autogen-main" / "python" / "packages"
+    assert (fork_root / "autogen-core" / "pyproject.toml").is_file()
+    assert (fork_root / "autogen-agentchat" / "pyproject.toml").is_file()
+    assert (fork_root / "autogen-ext" / "pyproject.toml").is_file()
+
+
+def test_autogen_imports_and_distributions_resolve_only_to_the_checked_in_fork() -> None:
+    repository_root = Path(__file__).parents[4].resolve()
+    fork_root = (repository_root / "autogen-main").resolve()
+    for module in (autogen_core, autogen_agentchat, autogen_ext):
+        assert Path(module.__file__).resolve().is_relative_to(fork_root)
+    for name in ("autogen-core", "autogen-agentchat", "autogen-ext"):
+        direct = json.loads(distribution(name).read_text("direct_url.json") or "{}")
+        assert direct.get("dir_info", {}).get("editable") is True
+        assert Path(direct["url"].removeprefix("file:///")).resolve().is_relative_to(fork_root)
 
 
 def _progress(*, satisfied: bool, progress: bool, loop: bool, speaker: str, instruction: str) -> str:

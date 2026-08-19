@@ -94,20 +94,39 @@ describe('Hermes ACP transport identity', () => {
         skills: ['repository-coder'],
         toolsets: ['terminal'],
         mcpConnectionIds: [],
+      }, {
+        cardId: 'card_hermes_steward',
+        title: 'Knowledge Helper',
+        runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
+        prompt: 'Saved Kanban prompt',
+        provider: 'openai',
+        modelKey: 'gpt-5.6-terra',
+        providerModelId: 'gpt-5.6-terra',
+        accessMode: 'chatgpt-account',
+        tools: ['knowgraph.search'],
+        nativeTools: ['memory'],
+        skills: ['research'],
+        toolsets: ['memory'],
+        mcpConnectionIds: [],
       }],
       message: '# IDF\n\nInspect the repository.',
     }, {
       LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
       LIQUIDAITY_INTERNAL_MCP_URL: 'http://127.0.0.1:8765/mcp',
-    });
+    }, 'root-context');
 
-    expect(projection.mcpServers).toHaveLength(2);
+    expect(projection.mcpServers).toHaveLength(3);
     expect(projection.mcpServers.map((server) => server.url)).toEqual([
+      'http://127.0.0.1:8765/mcp',
       'http://127.0.0.1:8765/mcp',
       'http://127.0.0.1:8765/mcp',
     ]);
     const sessionConfig = (projection.sessionMeta.hermes as any).sessionConfig;
     expect(sessionConfig.enabledTools).toEqual(['memory', 'delegate_task']);
+    expect(sessionConfig.executionContextId).toBe('root-context');
+    expect(sessionConfig.toolCallMeta).toEqual({
+      'liquidaity/execution': 'root-context',
+    });
     expect(sessionConfig.delegateProfiles).toEqual([
       expect.objectContaining({
         id: 'card_coder',
@@ -116,6 +135,14 @@ describe('Hermes ACP transport identity', () => {
         enabledTools: ['terminal'],
         skills: ['repository-coder'],
         enabledToolsets: expect.arrayContaining(['terminal']),
+      }),
+      expect.objectContaining({
+        id: 'card_hermes_steward',
+        systemPrompt: 'Saved Kanban prompt',
+        model: 'gpt-5.6-terra',
+        enabledTools: ['memory'],
+        skills: ['research'],
+        enabledToolsets: expect.arrayContaining(['memory']),
       }),
     ]);
 
@@ -127,11 +154,19 @@ describe('Hermes ACP transport identity', () => {
       expect.objectContaining({
         principal: expect.objectContaining({
           callerCardId: 'card_main_chat', grantedTools: ['canvas.inspect'],
+          requiresExecutionContext: true,
         }),
       }),
       expect.objectContaining({
         principal: expect.objectContaining({
           callerCardId: 'card_coder', grantedTools: ['cbm.search_graph'],
+          requiresExecutionContext: true,
+        }),
+      }),
+      expect.objectContaining({
+        principal: expect.objectContaining({
+          callerCardId: 'card_hermes_steward', grantedTools: ['knowgraph.search'],
+          callerRuntimeMode: 'kanban', requiresExecutionContext: true,
         }),
       }),
     ]);

@@ -19,6 +19,7 @@ export type InternalMcpPrincipal =
       callerRuntimeKind: 'hermes' | 'autogen';
       callerRuntimeMode: 'main' | 'delegate' | 'kanban' | 'assistant' | 'magentic_one';
       grantedTools: string[];
+      requiresExecutionContext?: boolean;
     };
 
 function requiredSecret(env: NodeJS.ProcessEnv): string {
@@ -66,6 +67,7 @@ export function createInternalMcpBearer(
         callerRuntimeKind: String(principal.callerRuntimeKind || '').trim() as typeof principal.callerRuntimeKind,
         callerRuntimeMode: String(principal.callerRuntimeMode || '').trim() as typeof principal.callerRuntimeMode,
         grantedTools: uniqueStrings(principal.grantedTools),
+        requiresExecutionContext: principal.requiresExecutionContext === true,
       };
   if (normalized.kind !== 'catalog-reader') {
     const required = [

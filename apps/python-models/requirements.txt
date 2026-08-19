@@ -22,9 +22,9 @@ python-multipart==0.0.32
 PyJWT[crypto]==2.13.0
 # Python-owned AgentGraph assignments and run records use the same PostgreSQL store.
 psycopg[binary]==3.3.4
-# LiquidAIty has one tracked Mag One product path. It uses the released AutoGen
-# 0.7.5 libraries as dependencies; the temporary full-repo reference checkout
-# must never be required by a runnable LiquidAIty checkout.
-autogen-core==0.7.5
-autogen-agentchat==0.7.5
-autogen-ext[magentic-one,openai]==0.7.5
+# LiquidAIty owns the checked-in AutoGen 0.7.5 execution fork. These editable
+# installs are the only authoritative AutoGen distributions for Python rails;
+# there is no wheel fallback or runtime sys.path substitution.
+-e ../../autogen-main/python/packages/autogen-core
+-e ../../autogen-main/python/packages/autogen-agentchat
+-e ../../autogen-main/python/packages/autogen-ext[magentic-one,openai]

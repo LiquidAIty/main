@@ -2464,6 +2464,9 @@ def _run_single_child(
     Returns a structured result dict.
     """
     child_start = time.monotonic()
+    _host_terminal_state = "failed"
+    _host_error_summary: Optional[str] = None
+    _host_usage: Dict[str, Any] = {}
 
     # Get the progress callback from the child agent
     child_progress_cb = getattr(child, "tool_progress_callback", None)
@@ -2812,12 +2815,15 @@ def _run_single_child(
             _worker_thread_holder["t"] = threading.current_thread()
             from agent.delegation_context import delegated_child_context
 
+            from acp_adapter.host_profiles import host_execution_scope
+
             with delegated_child_context(str(getattr(child, "session_id", "") or "")):
-                return child.run_conversation(
-                    user_message=goal,
-                    task_id=child_task_id,
-                    stream_callback=_relay_child_text,
-                )
+                with host_execution_scope(child):
+                    return child.run_conversation(
+                        user_message=goal,
+                        task_id=child_task_id,
+                        stream_callback=_relay_child_text,
+                    )
 
         _child_context = contextvars.copy_context()
         _child_future = _timeout_executor.submit(
@@ -2941,6 +2947,8 @@ def _run_single_child(
                     f"{_late_pending_steer}]"
                 )
             _attach_worktree(_error_entry)
+            _host_error_summary = str(_error_entry.get("error") or "subagent_failed")
+            _host_usage = {"durationMs": int(float(duration) * 1000)}
             return _error_entry
         finally:
             # Shut down executor without waiting — if the child thread
@@ -2978,11 +2986,14 @@ def _run_single_child(
                 _schema_retries = 1
                 _retry_result = None
                 try:
-                    _retry_result = child.run_conversation(
-                        user_message=build_retry_message(_schema_errors),
-                        task_id=child_task_id,
-                        stream_callback=_relay_child_text,
-                    )
+                    from acp_adapter.host_profiles import host_execution_scope
+
+                    with host_execution_scope(child):
+                        _retry_result = child.run_conversation(
+                            user_message=build_retry_message(_schema_errors),
+                            task_id=child_task_id,
+                            stream_callback=_relay_child_text,
+                        )
                 except Exception as _retry_exc:
                     logger.warning(
                         "Subagent %d schema-retry turn failed: %s",
@@ -3280,6 +3291,16 @@ def _run_single_child(
                 logger.debug("Progress callback completion failed: %s", e)
 
         _attach_worktree(entry)
+        _host_terminal_state = "completed" if status == "completed" else (
+            "cancelled" if status == "interrupted" else "failed"
+        )
+        _host_error_summary = str(entry.get("error") or "") or None
+        _host_usage = {
+            "durationMs": int(float(entry.get("duration_seconds") or 0) * 1000),
+            "providerInputTokens": entry.get("prompt_tokens"),
+            "providerOutputTokens": entry.get("completion_tokens"),
+            "totalCostUsd": entry.get("cost_usd"),
+        }
         return entry
 
     except Exception as exc:
@@ -3316,9 +3337,19 @@ def _run_single_child(
             )
         # _attach_worktree defaults to a no-op when isolation never engaged.
         _attach_worktree(_error_entry)
+        _host_error_summary = str(exc)
+        _host_usage = {"durationMs": int(float(duration) * 1000)}
         return _error_entry
 
     finally:
+        try:
+            from acp_adapter.host_profiles import finish_host_child_execution
+
+            finish_host_child_execution(
+                child, _host_terminal_state, _host_error_summary, _host_usage
+            )
+        except Exception:
+            logger.exception("Failed to close native child execution context")
         # Stop the heartbeat thread so it doesn't keep touching parent activity
         # after the child has finished (or failed).  Guard the join: .start()
         # now lives inside the try block, so if it raised (OS thread
@@ -3941,6 +3972,23 @@ def delegate_task(
         if live_deleg_id:
             setattr(child, "_delegation_id", live_deleg_id)
         children.append((i, t, child))
+
+    # LIQUIDAITY VENDOR PATCH: the generic ACP host allocates every child
+    # execution context before any child model or MCP call can begin. Outside
+    # an ACP host that advertises this extension the native upstream path is a
+    # no-op and Hermes delegation remains unchanged.
+    from acp_adapter.host_profiles import allocate_host_child_execution
+
+    try:
+        for _, _, child in children:
+            allocate_host_child_execution(parent_agent, child)
+    except Exception as exc:
+        for _, _, child in children:
+            try:
+                child.close()
+            except Exception:
+                pass
+        return tool_error(f"Native child execution context failed: {exc}")
 
     def _execute_and_aggregate(*, honor_parent_interrupt: bool = True) -> dict:
         """Run all built children (1 or N), join on them, aggregate results,

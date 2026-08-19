@@ -1168,7 +1168,7 @@ def _direct_subagents(
         ):
             continue
         runtime = _card_runtime(target)
-        if runtime.get("kind") != "hermes" or runtime.get("mode") != "delegate":
+        if runtime.get("kind") != "hermes" or runtime.get("mode") not in {"delegate", "kanban"}:
             continue
         options = _json_object(target.get("runtimeOptions"), "delegate_runtime_options")
         provider = _required_text(options.get("provider"), "delegate_provider")
@@ -2046,7 +2046,11 @@ def _observe_run_start(
                 """
                 MERGE (run:Run {runId: $runId})
                 SET run.projectId=$projectId, run.deckId=$deckId,
-                    run.correlationId=$correlationId, run.state='running'
+                    run.correlationId=$correlationId, run.state='running',
+                    run.nativeChildId=$nativeChildId,
+                    run.nativeProfileId=$nativeProfileId,
+                    run.conversationId=$conversationId,
+                    run.rootRunId=$rootRunId
                 WITH run
                 MATCH (card:Card {projectId: $projectId, deckId: $deckId, cardId: $cardId})
                 MERGE (run)-[:EXECUTED_BY]->(card)
@@ -2058,6 +2062,14 @@ def _observe_run_start(
                     "deckId": prepared["deckId"],
                     "correlationId": correlation_id,
                     "cardId": context["cardId"],
+                    "nativeChildId": str(payload.get("nativeChildId") or "").strip() or None,
+                    "nativeProfileId": (
+                        str(payload.get("delegateProfileId") or "").strip()
+                        or str((context.get("runtime") or {}).get("profile") or "").strip()
+                        or None
+                    ),
+                    "conversationId": str(payload.get("conversationId") or "").strip() or None,
+                    "rootRunId": str(payload.get("rootRunId") or run_id).strip(),
                 },
                 "value agtype",
             )
@@ -2100,6 +2112,135 @@ def _observe_run_start(
         return False
 
 
+def begin_native_hermes_child_run(payload: dict[str, Any]) -> dict[str, Any]:
+    """Create a prompt-free child Run for one native Hermes delegation.
+
+    The owning saved Card and exact-IDF reference are inherited from the active
+    parent Run.  No child prompt, alternate Card definition, or model input is
+    accepted at this boundary.
+    """
+    run_id = _required_text(payload.get("runId"), "run_id")
+    correlation_id = _required_text(payload.get("correlationId"), "correlation_id")
+    parent_run_id = _required_text(payload.get("parentRunId"), "parent_run_id")
+    root_run_id = _required_text(payload.get("rootRunId"), "root_run_id")
+    project_id = _required_text(payload.get("projectId"), "project_id")
+    deck_id = _required_text(payload.get("deckId"), "deck_id")
+    card_id = _required_text(payload.get("cardId"), "card_id")
+    native_child_id = _required_text(payload.get("nativeChildId"), "native_child_id")
+    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT run.*, revision.card_id
+            FROM ag_catalog.agent_runs AS run
+            JOIN ag_catalog.agent_card_revisions AS revision
+              ON revision.revision_id=run.target_card_revision_id
+            WHERE run.run_id IN (%s, %s)
+            """,
+            (parent_run_id, root_run_id),
+        )
+        rows = {str(row["run_id"]): dict(row) for row in cursor.fetchall()}
+        parent = rows.get(parent_run_id)
+        root = rows.get(root_run_id)
+        if parent is None or root is None:
+            raise CardDomainError("hermes_child_parent_run_not_found")
+        for owner in (parent, root):
+            if (
+                str(owner["project_id"]) != project_id
+                or str(owner["deck_id"]) != deck_id
+                or owner["runtime_kind"] != "hermes"
+                or owner["state"] != "running"
+            ):
+                raise CardDomainError("hermes_child_parent_authority_mismatch")
+        delegate_profile_id = str(payload.get("delegateProfileId") or "").strip()
+        if delegate_profile_id:
+            if delegate_profile_id != card_id:
+                raise CardDomainError("hermes_child_profile_card_mismatch")
+            loaded = _load_deck_internal(project_id, deck_id)
+            cards = {card["id"]: card for card in loaded["deck"]["nodes"]}
+            target = cards.get(card_id)
+            root_card_id = str(root["card_id"])
+            authorized = any(
+                edge["edgeType"] == "flow"
+                and edge["source"] == root_card_id
+                and edge["target"] == card_id
+                and edge.get("enabled") is not False
+                for edge in loaded["deck"]["edges"]
+            )
+            target_runtime = target.get("runtime") if target is not None else None
+            if (
+                target is None
+                or not authorized
+                or not isinstance(target_runtime, dict)
+                or target_runtime.get("kind") != "hermes"
+                or target_runtime.get("mode") not in {"delegate", "kanban"}
+            ):
+                raise CardDomainError("hermes_child_delegate_profile_not_authorized")
+            cursor.execute(
+                """
+                SELECT revision.revision_id, revision.runtime_kind,
+                       revision.runtime_mode, revision.provider, revision.model_key,
+                       revision.provider_model_id, revision.access_mode
+                FROM ag_catalog.agent_cards AS card
+                JOIN ag_catalog.agent_card_revisions AS revision
+                  ON revision.revision_id=card.current_revision_id
+                WHERE card.project_id=%s AND card.deck_id=%s AND card.card_id=%s
+                """,
+                (root["project_id"], deck_id, card_id),
+            )
+            target_revision = cursor.fetchone()
+            if target_revision is None:
+                raise CardDomainError("hermes_child_delegate_revision_not_found")
+            target_owner = dict(target_revision)
+        else:
+            if str(parent["card_id"]) != card_id:
+                raise CardDomainError("hermes_child_parent_card_mismatch")
+            target_owner = parent
+        cursor.execute(
+            """
+            INSERT INTO ag_catalog.agent_runs (
+              run_id, project_id, deck_id, target_card_revision_id,
+              runtime_kind, runtime_mode, provider, model_key, provider_model_id,
+              access_mode, correlation_id, saved_idf_id, saved_idf_revision,
+              state, started_at
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
+            """,
+            (
+                run_id, root["project_id"], root["deck_id"],
+                target_owner.get("revision_id", target_owner.get("target_card_revision_id")),
+                target_owner["runtime_kind"], target_owner["runtime_mode"],
+                target_owner["provider"], target_owner["model_key"],
+                target_owner["provider_model_id"], target_owner["access_mode"], correlation_id,
+                root.get("saved_idf_id"), root.get("saved_idf_revision"),
+            ),
+        )
+    prepared = {
+        "projectId": project_id,
+        "deckId": deck_id,
+        "cardContext": {"cardId": card_id},
+    }
+    telemetry_written = _observe_run_start(
+        prepared,
+        {
+            "originatingRunId": parent_run_id,
+            "rootRunId": root_run_id,
+            "conversationId": str(payload.get("conversationId") or "").strip(),
+            "nativeChildId": native_child_id,
+            "delegateProfileId": delegate_profile_id,
+        },
+        run_id=run_id,
+        correlation_id=correlation_id,
+    )
+    return {
+        "ok": True,
+        "runId": run_id,
+        "parentRunId": parent_run_id,
+        "rootRunId": root_run_id,
+        "cardId": card_id,
+        "nativeChildId": native_child_id,
+        "telemetryWritten": telemetry_written,
+    }
+
+
 def finish_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
     run_id = _required_text(payload.get("runId"), "run_id")
     state = _required_text(payload.get("state"), "state")
@@ -2137,7 +2278,7 @@ def finish_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
             (run_id,),
         )
         receipt = dict(cursor.fetchone())
-    telemetry_written = _observe_run_finish(run_id, state)
+    telemetry_written = _observe_run_finish(run_id, state, payload)
     return {
         "ok": True,
         "runId": run_id,
@@ -2150,17 +2291,33 @@ def finish_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _observe_run_finish(run_id: str, state: str) -> bool:
+def _observe_run_finish(
+    run_id: str,
+    state: str,
+    payload: dict[str, Any] | None = None,
+) -> bool:
     try:
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
             _age_rows(
                 cursor,
                 """
                 MATCH (run:Run {runId: $runId})
-                SET run.state=$state
+                SET run.state=$state, run.finishedAt=$finishedAt,
+                    run.durationMs=$durationMs,
+                    run.providerInputTokens=$providerInputTokens,
+                    run.providerOutputTokens=$providerOutputTokens,
+                    run.totalCostUsd=$totalCostUsd
                 RETURN properties(run)
                 """,
-                {"runId": run_id, "state": state},
+                {
+                    "runId": run_id,
+                    "state": state,
+                    "finishedAt": _now().isoformat(),
+                    "durationMs": (payload or {}).get("durationMs"),
+                    "providerInputTokens": (payload or {}).get("providerInputTokens"),
+                    "providerOutputTokens": (payload or {}).get("providerOutputTokens"),
+                    "totalCostUsd": (payload or {}).get("totalCostUsd"),
+                },
                 "value agtype",
             )
         return True

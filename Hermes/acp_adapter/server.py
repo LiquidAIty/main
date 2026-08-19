@@ -2013,6 +2013,20 @@ class HermesACPAgent(acp.Agent):
         agent.step_callback = step_cb
         agent.stream_delta_callback = stream_delta_cb
 
+        if conn:
+            # LIQUIDAITY VENDOR PATCH: expose one generic, synchronous ACP
+            # extension requester to Hermes' native child lifecycle. Product
+            # Card/Run/AGE policy remains entirely in the ACP host.
+            from acp_adapter.host_profiles import attach_host_execution_requester
+
+            def _host_execution_requester(method: str, params: dict[str, Any]) -> Any:
+                future = asyncio.run_coroutine_threadsafe(
+                    conn.ext_method(method, params), loop
+                )
+                return future.result(timeout=30)
+
+            attach_host_execution_requester(agent, _host_execution_requester, session_id)
+
         # Approval callback is per-thread (thread-local, GHSA-qg5c-hvr5-hjgr).
         # Set it INSIDE _run_agent so the TLS write happens in the executor
         # thread — setting it here would write to the event-loop thread's TLS,
@@ -2099,12 +2113,15 @@ class HermesACPAgent(acp.Agent):
 
             agent._on_session_title = _notify_title_update
             try:
-                result = agent.run_conversation(
-                    user_message=user_content,
-                    conversation_history=state.history,
-                    task_id=session_id,
-                    persist_user_message=user_text or "[Image attachment]",
-                )
+                from acp_adapter.host_profiles import host_execution_scope
+
+                with host_execution_scope(agent):
+                    result = agent.run_conversation(
+                        user_message=user_content,
+                        conversation_history=state.history,
+                        task_id=session_id,
+                        persist_user_message=user_text or "[Image attachment]",
+                    )
                 return result
             except Exception as e:
                 logger.exception("Agent error in session %s", session_id)

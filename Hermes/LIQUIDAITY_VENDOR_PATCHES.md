@@ -57,3 +57,48 @@ Contribution plan:
 Rollback: remove this module and the marked hooks, then stop sending `hermes.sessionConfig`. Hermes
 returns to its upstream broad ACP tool surface and generic native delegation; LiquidAIty must fail
 closed rather than claim saved Card-specific native delegation in that state.
+
+## Patch: generic host-issued child execution context
+
+Purpose: let an ACP host allocate and close an opaque execution context before a native Hermes child
+makes its first model or MCP call. Hermes transports only generic session, native-child, optional
+profile, lifecycle, usage, and per-call metadata fields. It does not parse or own Cards, IDF, IDD,
+AGE, projects, conversations, grants, or product authorization.
+
+Files and symbols:
+
+- `acp_adapter/host_profiles.py`: `attach_host_execution_requester`,
+  `allocate_host_child_execution`, `finish_host_child_execution`, `host_execution_scope`, and
+  `current_host_tool_call_meta`.
+- `acp_adapter/server.py`: attaches one generic ACP extension requester and scopes the root run.
+- `tools/delegate_tool.py`: allocates every child context before execution, scopes native child work,
+  and closes the context once for completion, failure, interruption, or stop.
+- `tools/mcp_tool.py`: passes the host-issued metadata through upstream MCP 2
+  `ClientSession.call_tool(..., meta=...)`; calls without host metadata retain the exact upstream
+  invocation.
+- `tests/acp_adapter/test_host_profiles.py` and `tests/tools/test_mcp_tool.py`: focused no-provider
+  allocation, scoping, closure, credential-absence, and MCP 2 forwarding proof.
+
+Public contract: the ACP host may implement `session/create_execution_context` and
+`session/finish_execution_context`. The create result contains only an opaque context ID and
+namespaced MCP metadata. Hermes never accepts Run or Card identity from model-authored tool arguments
+and never mutates shared MCP headers. Sessions without the host configuration use upstream behavior.
+
+Upgrade/reapply/drop procedure:
+
+1. Check whether upstream Hermes now exposes a generic native-child lifecycle hook plus per-call MCP
+   metadata propagation.
+2. If equivalent, replace these marked hooks with the upstream contract and retain only the
+   LiquidAIty host implementation.
+3. Otherwise reapply only the five named generic symbols and three marked call sites, then run the
+   focused tests above plus the normal delegation suite.
+4. Drop the patch if LiquidAIty stops requiring truthful native-child attribution; the product must
+   then fail closed for saved-profile delegation rather than relabel child work as the parent.
+
+Contribution plan: propose a generic ACP child-lifecycle extension upstream, independent of
+LiquidAIty vocabulary, with tests for pre-execution allocation, ContextVar isolation during concurrent
+children, MCP 2 `meta=`, exact-once closure, and no-op compatibility for ordinary Hermes sessions.
+
+Rollback: remove the marked execution-context hooks from the four production files and stop sending
+`executionContextId`/`toolCallMeta`. This preserves ordinary upstream delegation but disables the
+LiquidAIty saved-profile child path until truthful attribution is restored.

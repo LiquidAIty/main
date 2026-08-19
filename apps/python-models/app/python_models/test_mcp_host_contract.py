@@ -312,6 +312,72 @@ def test_internal_mcp_token_binds_card_context_without_auth0_or_provider_calls(m
     assert mcp_host._request_tool_is_allowed("run_mag_one") is False
 
 
+def test_mcp2_per_call_meta_resolves_child_run_and_card_without_model_identity(monkeypatch):
+    import mcp_host
+
+    principal = {
+        "kind": "card-runtime",
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-1",
+        "parentRunId": "main-run",
+        "callerCardId": "card_coder",
+        "callerRuntimeKind": "hermes",
+        "callerRuntimeMode": "delegate",
+        "grantedTools": ["cbm.search_graph"],
+        "requiresExecutionContext": True,
+    }
+    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: principal)
+    monkeypatch.setattr(
+        type(mcp_host.server),
+        "request_context",
+        property(lambda _self: SimpleNamespace(meta={"liquidaity/execution": "context-1"})),
+    )
+    bridge_calls = []
+
+    def bridge(path, payload):
+        bridge_calls.append((path, payload))
+        return json.dumps({
+            "ok": True,
+            "context": {
+                "projectId": "project-1",
+                "deckId": "deck_builder",
+                "conversationId": "conversation-1",
+                "runId": "child-run",
+                "rootRunId": "main-run",
+                "cardId": "card_coder",
+                "runtimeMode": "delegate",
+                "nativeChildId": "sa-coder",
+                "grantedTools": ["cbm.search_graph"],
+            },
+        })
+
+    monkeypatch.setattr(mcp_host, "_bridge_sync", bridge)
+    context = mcp_host._request_execution_context()
+    assert context["parentRunId"] == "child-run"
+    assert context["mainCardId"] == "card_coder"
+    assert context["nativeChildId"] == "sa-coder"
+    assert bridge_calls == [(
+        "internal_execution_context",
+        {"contextId": "context-1", "principal": principal},
+    )]
+
+
+def test_required_child_execution_meta_fails_closed_when_missing(monkeypatch):
+    import mcp_host
+
+    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: {
+        "kind": "card-runtime", "requiresExecutionContext": True,
+    })
+    monkeypatch.setattr(
+        type(mcp_host.server),
+        "request_context",
+        property(lambda _self: SimpleNamespace(meta={})),
+    )
+    with pytest.raises(PermissionError, match="mcp_execution_context_missing"):
+        mcp_host._request_execution_context()
+
+
 def test_internal_mcp_catalog_is_filtered_but_public_catalog_stays_complete(monkeypatch):
     import asyncio
     import mcp_host
@@ -523,7 +589,7 @@ def test_authenticated_connection_reaches_read_only_handler_without_context_inje
     assert "context" not in result[0].text
 
 
-def test_official_dispatch_attaches_compact_native_attention_without_changing_result(
+def test_child_scoped_dispatch_attaches_attention_to_the_real_child_run_and_card(
     monkeypatch,
 ):
     import asyncio
@@ -535,8 +601,11 @@ def test_official_dispatch_attaches_compact_native_attention_without_changing_re
         "projectId": "project-one",
         "deckId": "deck-one",
         "conversationId": "conversation-one",
-        "parentRunId": "run-one",
-        "mainCardId": "card-one",
+        "parentRunId": "child-run-one",
+        "rootRunId": "main-run-one",
+        "mainCardId": "card_coder",
+        "nativeChildId": "sa-coder",
+        "grantedTools": ["cbm.search_graph"],
     }
     native_text = json.dumps({
         "results": [{"qualified_name": "pkg._runtime_owner"}],
@@ -552,7 +621,7 @@ def test_official_dispatch_attaches_compact_native_attention_without_changing_re
 
     monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
     monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda _name: True)
-    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: dict(context))
+    monkeypatch.setattr(mcp_host, "_request_execution_context", lambda: dict(context))
     monkeypatch.setattr(
         card_domain,
         "observe_native_attention",
@@ -573,8 +642,8 @@ def test_official_dispatch_attaches_compact_native_attention_without_changing_re
     assert attention["nativeNodeIds"] == ["pkg._runtime_owner"]
     assert attention["nativeEdgeIds"] == []
     assert attention["projectId"] == "project-one"
-    assert attention["runId"] == "run-one"
-    assert attention["cardId"] == "card-one"
+    assert attention["runId"] == "child-run-one"
+    assert attention["cardId"] == "card_coder"
     assert observed == [attention]
 
 

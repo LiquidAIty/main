@@ -55,12 +55,13 @@ afterEach(() => {
 
 describe('Hermes Holographic profile configuration', () => {
   it('resolves isolated profile homes and databases', () => {
-    expect(resolveHermesCardRuntimeHome(HERMES_ROOT, 'liquidaity-main')).toBe(
-      path.join(HERMES_ROOT, '.hermes', 'profiles', 'liquidaity-main'),
-    );
-    expect(resolveHermesHolographicMemoryDb(HERMES_ROOT, 'liquidaity-main')).not.toBe(
-      resolveHermesHolographicMemoryDb(HERMES_ROOT, 'liquidaity-hermes-steward'),
-    );
+    const profiles = ['liquidaity-main', 'coder', 'liquidaity-hermes-steward'];
+    const homes = profiles.map((profile) => resolveHermesCardRuntimeHome(HERMES_ROOT, profile));
+    expect(homes[0]).toBe(path.join(HERMES_ROOT, '.hermes', 'profiles', 'liquidaity-main'));
+    expect(new Set(homes).size).toBe(3);
+    expect(new Set(homes.map((home) => path.join(home, 'state.db'))).size).toBe(3);
+    expect(new Set(homes.map((home) => path.join(home, 'memories', 'MEMORY.md'))).size).toBe(3);
+    expect(new Set(profiles.map((profile) => resolveHermesHolographicMemoryDb(HERMES_ROOT, profile))).size).toBe(3);
     expect(() => resolveHermesCardRuntimeHome(HERMES_ROOT, '../escape')).toThrow(
       'hermes_profile_invalid',
     );

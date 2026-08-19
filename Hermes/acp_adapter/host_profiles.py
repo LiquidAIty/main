@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import copy
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Mapping
 
 
@@ -29,6 +31,8 @@ _SESSION_FIELDS = {
     "enabledToolsets",
     "enabledTools",
     "delegateProfiles",
+    "executionContextId",
+    "toolCallMeta",
 }
 _PROFILE_FIELDS = {
     "id",
@@ -44,6 +48,11 @@ _PROFILE_FIELDS = {
 
 class HostSessionConfigError(ValueError):
     """Raised when trusted ACP host metadata is malformed or over-broad."""
+
+
+_ACTIVE_TOOL_CALL_META: ContextVar[dict[str, str] | None] = ContextVar(
+    "hermes_host_tool_call_meta", default=None
+)
 
 
 def _bounded_text(value: Any, field: str, *, limit: int, required: bool = False) -> str:
@@ -149,10 +158,29 @@ def parse_host_session_config(metadata_kwargs: Mapping[str, Any]) -> dict[str, A
     ids = [profile["id"] for profile in profiles]
     if len(ids) != len(set(ids)):
         raise HostSessionConfigError("hermes_host_config_delegate_profile_duplicate")
+    execution_context_id = _bounded_text(
+        raw.get("executionContextId"), "executionContextId", limit=128
+    )
+    raw_tool_meta = raw.get("toolCallMeta") or {}
+    if not isinstance(raw_tool_meta, dict):
+        raise HostSessionConfigError("hermes_host_config_tool_call_meta_must_be_object")
+    if set(raw_tool_meta) - {"liquidaity/execution"}:
+        raise HostSessionConfigError("hermes_host_config_tool_call_meta_unknown_field")
+    execution_meta = _bounded_text(
+        raw_tool_meta.get("liquidaity/execution"),
+        "toolCallMeta.liquidaity/execution",
+        limit=128,
+    )
+    if execution_meta and execution_meta != execution_context_id:
+        raise HostSessionConfigError("hermes_host_config_execution_context_mismatch")
     return {
         "enabledToolsets": _bounded_string_list(raw.get("enabledToolsets"), "enabledToolsets"),
         "enabledTools": _bounded_string_list(raw.get("enabledTools"), "enabledTools"),
         "delegateProfiles": profiles,
+        "executionContextId": execution_context_id,
+        "toolCallMeta": (
+            {"liquidaity/execution": execution_meta} if execution_meta else {}
+        ),
     }
 
 
@@ -163,6 +191,99 @@ def attach_host_session_config(agent: Any, config: dict[str, Any] | None) -> Non
     setattr(agent, "_host_session_config", normalized)
     profiles = normalized.get("delegateProfiles", []) if normalized else []
     setattr(agent, "_host_delegate_profiles", {profile["id"]: profile for profile in profiles})
+
+    setattr(agent, "_host_execution_context_id", (
+        str(normalized.get("executionContextId") or "") if normalized else ""
+    ))
+    setattr(agent, "_host_tool_call_meta", (
+        dict(normalized.get("toolCallMeta") or {}) if normalized else {}
+    ))
+
+
+def attach_host_execution_requester(agent: Any, requester: Any, session_id: str) -> None:
+    """Attach the generic ACP extension back-channel used by native children."""
+
+    setattr(agent, "_host_execution_requester", requester)
+    setattr(agent, "_host_execution_session_id", str(session_id or ""))
+
+
+def allocate_host_child_execution(parent_agent: Any, child: Any) -> bool:
+    """Allocate trusted host execution state before a native child may run."""
+
+    requester = getattr(parent_agent, "_host_execution_requester", None)
+    raw_parent_context_id = getattr(parent_agent, "_host_execution_context_id", "")
+    raw_session_id = getattr(parent_agent, "_host_execution_session_id", "")
+    parent_context_id = (
+        raw_parent_context_id.strip() if isinstance(raw_parent_context_id, str) else ""
+    )
+    session_id = raw_session_id.strip() if isinstance(raw_session_id, str) else ""
+    if not parent_context_id and not session_id:
+        return False
+    if not callable(requester) or not parent_context_id or not session_id:
+        raise HostSessionConfigError("hermes_host_child_execution_context_unavailable")
+    native_child_id = str(getattr(child, "_subagent_id", "") or "")
+    if not native_child_id:
+        raise HostSessionConfigError("hermes_host_native_child_id_missing")
+    delegate_profile_id = str(getattr(child, "_host_delegate_profile_id", "") or "")
+    response = requester("session/create_execution_context", {
+        "sessionId": session_id,
+        "parentExecutionContextId": parent_context_id,
+        "nativeChildId": native_child_id,
+        **({"delegateProfileId": delegate_profile_id} if delegate_profile_id else {}),
+    })
+    if not isinstance(response, dict):
+        raise HostSessionConfigError("hermes_host_child_execution_response_invalid")
+    context_id = _bounded_text(
+        response.get("executionContextId"), "childExecutionContextId", limit=128, required=True
+    )
+    tool_meta = response.get("toolCallMeta")
+    if not isinstance(tool_meta, dict) or tool_meta.get("liquidaity/execution") != context_id:
+        raise HostSessionConfigError("hermes_host_child_execution_meta_invalid")
+    setattr(child, "_host_execution_context_id", context_id)
+    setattr(child, "_host_tool_call_meta", {"liquidaity/execution": context_id})
+    attach_host_execution_requester(child, requester, session_id)
+    return True
+
+
+def finish_host_child_execution(
+    child: Any,
+    state: str,
+    error_summary: str | None = None,
+    usage: Mapping[str, Any] | None = None,
+) -> None:
+    requester = getattr(child, "_host_execution_requester", None)
+    raw_context_id = getattr(child, "_host_execution_context_id", "")
+    context_id = raw_context_id.strip() if isinstance(raw_context_id, str) else ""
+    if not callable(requester) or not context_id:
+        return
+    safe_usage = {
+        key: usage[key]
+        for key in (
+            "durationMs", "providerInputTokens", "providerOutputTokens", "totalCostUsd"
+        )
+        if isinstance(usage, Mapping) and usage.get(key) is not None
+    }
+    requester("session/finish_execution_context", {
+        "executionContextId": context_id,
+        "state": state if state in {"completed", "failed", "cancelled"} else "failed",
+        **({"errorSummary": str(error_summary)[:2048]} if error_summary else {}),
+        **({"usage": safe_usage} if safe_usage else {}),
+    })
+
+
+@contextmanager
+def host_execution_scope(agent: Any):
+    meta = getattr(agent, "_host_tool_call_meta", None)
+    token = _ACTIVE_TOOL_CALL_META.set(dict(meta) if isinstance(meta, dict) else None)
+    try:
+        yield
+    finally:
+        _ACTIVE_TOOL_CALL_META.reset(token)
+
+
+def current_host_tool_call_meta() -> dict[str, str] | None:
+    meta = _ACTIVE_TOOL_CALL_META.get()
+    return dict(meta) if meta else None
 
 
 def initial_toolsets(config: dict[str, Any] | None) -> list[str]:

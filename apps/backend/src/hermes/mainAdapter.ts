@@ -9,6 +9,13 @@ import {
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { resolveSavedMcpConnections } from './mcpConnections';
 import { ensureHermesHolographicMemoryProfile } from './profileMemory';
+import {
+  createHermesChildExecutionContext,
+  bindHermesRootExecutionSession,
+  executionToolCallMeta,
+  finishHermesExecutionContext,
+  registerHermesRootExecutionContext,
+} from './childExecutionContext';
 
 export { resolveHermesCardRuntimeHome } from './profileMemory';
 
@@ -97,6 +104,7 @@ type ActiveTurn = {
   fullText: string;
   toolNames: Map<string, string>;
   permissionRequestIds: Map<string, number | string>;
+  rootExecutionContextId: string;
 };
 
 function safeProfile(value: unknown): string {
@@ -161,6 +169,7 @@ export function buildHermesOfficialMcpServer(
     callerRuntimeKind: args.runtime.kind,
     callerRuntimeMode: args.runtime.mode,
     grantedTools: granted,
+    requiresExecutionContext: true,
   }, env);
   const suffix = createHash('sha256').update(args.sessionKey).digest('hex').slice(0, 12);
   return {
@@ -192,6 +201,7 @@ function namespaceMcpServers(
 export function buildHermesHostSessionProjection(
   args: HermesTurnArgs,
   env: NodeJS.ProcessEnv = process.env,
+  executionContextId = '',
 ): {
   mcpServers: Record<string, unknown>[];
   sessionMeta: Record<string, unknown>;
@@ -203,7 +213,10 @@ export function buildHermesHostSessionProjection(
     : rootSaved;
   const allServers = [...rootServers];
   const profiles = args.delegateProfiles.map((profile) => {
-    if (profile.runtime.kind !== 'hermes' || profile.runtime.mode !== 'delegate') {
+    if (
+      profile.runtime.kind !== 'hermes'
+      || !['delegate', 'kanban'].includes(profile.runtime.mode)
+    ) {
       throw new Error(`hermes_delegate_runtime_invalid:${profile.cardId}`);
     }
     if (
@@ -258,6 +271,10 @@ export function buildHermesHostSessionProjection(
             ...(profiles.length > 0 ? ['delegate_task'] : []),
           ]),
           delegateProfiles: profiles,
+          ...(executionContextId ? {
+            executionContextId,
+            toolCallMeta: executionToolCallMeta(executionContextId),
+          } : {}),
         },
       },
     },
@@ -379,6 +396,45 @@ class AcpProcess {
       this.receivePermission(message.id, message.params);
       return;
     }
+    if (message.method === '_session/create_execution_context' && Object.prototype.hasOwnProperty.call(message, 'id')) {
+      const sessionId = String(message.params?.sessionId || '');
+      const turn = this.turns.get(sessionId);
+      if (!turn) {
+        this.send({ jsonrpc: '2.0', id: message.id, error: { code: -32001, message: 'hermes_turn_context_unavailable' } });
+        return;
+      }
+      void createHermesChildExecutionContext({
+        sessionId,
+        parentExecutionContextId: String(message.params?.parentExecutionContextId || ''),
+        nativeChildId: String(message.params?.nativeChildId || ''),
+        delegateProfileId: String(message.params?.delegateProfileId || '') || undefined,
+      }).then((context) => {
+        this.send({
+          jsonrpc: '2.0', id: message.id, result: {
+            executionContextId: context.contextId,
+            runId: context.runId,
+            toolCallMeta: executionToolCallMeta(context.contextId),
+          },
+        });
+      }).catch((error) => {
+        this.send({ jsonrpc: '2.0', id: message.id, error: { code: -32002, message: error instanceof Error ? error.message : 'hermes_child_context_failed' } });
+      });
+      return;
+    }
+    if (message.method === '_session/finish_execution_context' && Object.prototype.hasOwnProperty.call(message, 'id')) {
+      void finishHermesExecutionContext({
+        contextId: String(message.params?.executionContextId || ''),
+        state: ['completed', 'failed', 'cancelled'].includes(String(message.params?.state || ''))
+          ? message.params.state
+          : 'failed',
+        errorSummary: String(message.params?.errorSummary || '') || undefined,
+        usage: message.params?.usage && typeof message.params.usage === 'object'
+          ? message.params.usage
+          : undefined,
+      }).then((closed) => this.send({ jsonrpc: '2.0', id: message.id, result: { closed } }))
+        .catch((error) => this.send({ jsonrpc: '2.0', id: message.id, error: { code: -32003, message: error instanceof Error ? error.message : 'hermes_child_context_finish_failed' } }));
+      return;
+    }
     if (Object.prototype.hasOwnProperty.call(message, 'id')) {
       this.send({
         jsonrpc: '2.0',
@@ -468,10 +524,14 @@ class AcpProcess {
     return cwd;
   }
 
-  private async resolveSession(args: HermesTurnArgs): Promise<string> {
+  private async resolveSession(args: HermesTurnArgs, executionContextId: string): Promise<string> {
     const existing = this.sessionByKey.get(args.sessionKey);
     const cwd = this.sessionCwd(args.sessionKey, args.workingDirectory);
-    const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(args);
+    const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(
+      args,
+      process.env,
+      executionContextId,
+    );
     if (existing) {
       await this.request('session/load', {
         cwd,
@@ -509,20 +569,47 @@ class AcpProcess {
     if (args.runtime.mode === 'kanban') {
       throw new Error('hermes_acp_kanban_gateway_required');
     }
-    const sessionId = await this.resolveSession(args);
-    if (this.turns.has(sessionId)) throw new Error('hermes_session_turn_already_running');
-    const modelChoice = `${providerForHermes(args.provider, args.accessMode)}:${args.providerModelId}`;
-    if (this.configuredModelBySession.get(sessionId) !== modelChoice) {
-      await this.request('session/set_model', { sessionId, modelId: modelChoice });
-      this.configuredModelBySession.set(sessionId, modelChoice);
+    const provisionalSessionId = args.sessionKey;
+    const rootContext = registerHermesRootExecutionContext({
+      sessionId: provisionalSessionId,
+      runId: args.parentRunId,
+      projectId: args.projectId,
+      deckId: args.deckId,
+      conversationId: args.conversationId,
+      cardId: args.cardId,
+      runtimeMode: args.runtime.mode,
+      grantedTools: args.tools.filter((name) => name !== 'web_search'),
+      delegateProfiles: args.delegateProfiles.map((profile) => ({
+        profileId: profile.cardId,
+        cardId: profile.cardId,
+        runtimeMode: profile.runtime.mode as 'delegate' | 'kanban',
+        grantedTools: profile.tools.filter((name) => name !== 'web_search'),
+      })),
+    });
+    let sessionId: string;
+    let active: ActiveTurn;
+    try {
+      sessionId = await this.resolveSession(args, rootContext.contextId);
+      bindHermesRootExecutionSession(rootContext.contextId, sessionId);
+      if (this.turns.has(sessionId)) throw new Error('hermes_session_turn_already_running');
+      const modelChoice = `${providerForHermes(args.provider, args.accessMode)}:${args.providerModelId}`;
+      if (this.configuredModelBySession.get(sessionId) !== modelChoice) {
+        await this.request('session/set_model', { sessionId, modelId: modelChoice });
+        this.configuredModelBySession.set(sessionId, modelChoice);
+      }
+      active = {
+        onEvent,
+        fullText: '',
+        toolNames: new Map(),
+        permissionRequestIds: new Map(),
+        rootExecutionContextId: rootContext.contextId,
+      };
+      this.turns.set(sessionId, active);
+    } catch (error) {
+      await finishHermesExecutionContext({ contextId: rootContext.contextId, state: 'failed' });
+      throw error;
     }
-    const active: ActiveTurn = {
-      onEvent,
-      fullText: '',
-      toolNames: new Map(),
-      permissionRequestIds: new Map(),
-    };
-    this.turns.set(sessionId, active);
+    let rootTerminalState: 'completed' | 'failed' | 'cancelled' = 'failed';
     const done = this.request('session/prompt', {
       sessionId,
       messageId: randomUUID(),
@@ -540,6 +627,7 @@ class AcpProcess {
       if (result?.stopReason === 'cancelled') throw new Error('hermes_turn_cancelled');
       if (result?.stopReason === 'refusal') throw new Error('hermes_turn_refused');
       const finalText = requireHermesCompletionText(active.fullText);
+      rootTerminalState = 'completed';
       onEvent({ kind: 'done', fullText: finalText, usage });
       return {
         finalText,
@@ -553,10 +641,12 @@ class AcpProcess {
       };
     }).catch((error) => {
       const normalized = error instanceof Error ? error : new Error(String(error));
+      rootTerminalState = normalized.message === 'hermes_turn_cancelled' ? 'cancelled' : 'failed';
       onEvent({ kind: 'error', message: normalized.message, code: 'hermes_turn_failed' });
       throw normalized;
     }).finally(() => {
       this.turns.delete(sessionId);
+      void finishHermesExecutionContext({ contextId: rootContext.contextId, state: rootTerminalState });
     });
     return {
       answer: (promptId, reply) => {
