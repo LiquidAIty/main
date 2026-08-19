@@ -1598,9 +1598,6 @@ def _build_child_agent(
     # 'leaf' (default) cannot; 'orchestrator' retains the delegation
     # toolset subject to depth/kill-switch bounds applied below.
     role: str = "leaf",
-    # LIQUIDAITY VENDOR PATCH: an ACP host may select one prevalidated native
-    # Hermes profile by opaque id.  See ../LIQUIDAITY_VENDOR_PATCHES.md.
-    host_profile: Optional[Dict[str, Any]] = None,
 ):
     """
     Build a child AIAgent on the main thread (thread-safe construction).
@@ -1655,15 +1652,7 @@ def _build_child_agent(
     else:
         parent_toolsets = set(DEFAULT_TOOLSETS)
 
-    # A trusted host profile is already bounded outside model arguments, so it
-    # may intentionally expose a child MCP/toolset surface that is not visible
-    # to the parent model.  Ordinary Hermes delegation retains the upstream
-    # parent-intersection behavior below.
-    if host_profile is not None:
-        child_toolsets = _strip_blocked_tools(
-            [str(value) for value in host_profile.get("enabledToolsets") or []]
-        )
-    elif toolsets:
+    if toolsets:
         # Intersect with parent — subagent must not gain tools the parent lacks.
         # Expand composite toolsets (e.g. hermes-cli) so that individual
         # toolset names (e.g. web, terminal) are recognised during intersection.
@@ -1719,13 +1708,6 @@ def _build_child_agent(
         max_spawn_depth=max_spawn,
         child_depth=child_depth,
     )
-    if host_profile is not None:
-        # LIQUIDAITY VENDOR PATCH: mechanically layer the saved profile prompt
-        # over Hermes' native child prompt; task meaning still comes from the
-        # delegate_task goal/context and no credential is accepted here.
-        from acp_adapter.host_profiles import profile_child_prompt
-
-        child_prompt = profile_child_prompt(host_profile, child_prompt)
     # Extract parent's API key so subagents inherit auth (e.g. Nous Portal).
     parent_api_key = getattr(parent_agent, "api_key", None)
     if (not parent_api_key) and hasattr(parent_agent, "_client_kwargs"):
@@ -2003,13 +1985,6 @@ def _build_child_agent(
                 except Exception:
                     pass
             raise
-    if host_profile is not None:
-        # LIQUIDAITY VENDOR PATCH: exact native/MCP grants are reapplied after
-        # AIAgent construction, whose normal registry snapshot is process-wide.
-        from acp_adapter.host_profiles import apply_host_session_config, profile_tool_config
-
-        apply_host_session_config(child, profile_tool_config(host_profile))
-        child._host_delegate_profile_id = str(host_profile.get("id") or "")
     child._print_fn = getattr(parent_agent, "_print_fn", None)
     # Ownership transfer for the dedicated handle: the child's close() must
     # release it (nothing else holds a reference), and no parent teardown can
@@ -3656,7 +3631,6 @@ def delegate_task(
     tasks: Optional[List[Dict[str, Any]]] = None,
     max_iterations: Optional[int] = None,
     role: Optional[str] = None,
-    profile: Optional[str] = None,
     background: Optional[bool] = None,
     output_schema: Optional[Dict[str, Any]] = None,
     action: Optional[str] = None,
@@ -3669,8 +3643,8 @@ def delegate_task(
     already-running ones.
 
     Spawn modes (action='spawn' or omitted):
-      - Single: provide goal (+ optional context, role, and trusted profile id)
-      - Batch:  provide tasks array [{goal, context, role, profile}, ...]
+      - Single: provide goal (+ optional context and role)
+      - Batch:  provide tasks array [{goal, context, role}, ...]
 
     Control modes (synchronous, never backgrounded):
       - action='list'  -> live children of this conversation's spawn tree
@@ -3787,12 +3761,7 @@ def delegate_task(
             )
         task_list = tasks
     elif goal and isinstance(goal, str) and goal.strip():
-        single_task: Dict[str, Any] = {
-            "goal": goal,
-            "context": context,
-            "role": top_role,
-            "profile": profile,
-        }
+        single_task: Dict[str, Any] = {"goal": goal, "context": context, "role": top_role}
         if output_schema is not None:
             single_task["output_schema"] = output_schema
         task_list = [single_task]
@@ -3810,20 +3779,6 @@ def delegate_task(
             )
         if not task.get("goal", "").strip():
             return tool_error(f"Task {i} is missing a 'goal'.")
-
-    # LIQUIDAITY VENDOR PATCH: the model can select only an id from the trusted
-    # ACP host registry.  It cannot supply prompts, tools, credentials, or host
-    # identity through delegate_task arguments.
-    from acp_adapter.host_profiles import resolve_delegate_profile
-
-    resolved_profiles: List[Optional[Dict[str, Any]]] = []
-    for task in task_list:
-        selected_profile, profile_error = resolve_delegate_profile(
-            parent_agent, task.get("profile")
-        )
-        if profile_error:
-            return tool_error(profile_error)
-        resolved_profiles.append(selected_profile)
 
     # Batch-only quality gate: catch malformed fan-outs (placeholder goals,
     # unexpanded multi-word template markers, 1-task batches) before any
@@ -3914,23 +3869,14 @@ def delegate_task(
 
             _child_context = append_output_contract(_child_context, _task_schema)
         try:
-            host_profile = resolved_profiles[i]
             child = _build_child_preserving_parent_tools(
                 task_index=i,
                 goal=t["goal"],
                 context=_child_context,
                 # Subagents always inherit the parent's toolsets; the model
                 # cannot choose or narrow them (no model-facing toolsets arg).
-                toolsets=(
-                    list(host_profile.get("enabledToolsets") or [])
-                    if host_profile is not None
-                    else None
-                ),
-                model=(
-                    str(host_profile.get("model") or "") or creds["model"]
-                    if host_profile is not None
-                    else creds["model"]
-                ),
+                toolsets=None,
+                model=creds["model"],
                 max_iterations=effective_max_iter,
                 task_count=n_tasks,
                 parent_agent=parent_agent,
@@ -3943,7 +3889,6 @@ def delegate_task(
                 override_acp_command=creds.get("command"),
                 override_acp_args=creds.get("args"),
                 role=effective_role,
-                host_profile=host_profile,
             )
         except ValueError as exc:
             # Explicit-pin preflight failures (e.g. pinned delegation.command
@@ -4864,13 +4809,6 @@ DELEGATE_TASK_SCHEMA = {
                     "specific you are, the better the subagent performs."
                 ),
             },
-            "profile": {
-                "type": "string",
-                "description": (
-                    "Trusted host-defined delegate profile. When the host "
-                    "publishes profiles, select exactly one listed id."
-                ),
-            },
             "tasks": {
                 "type": "array",
                 "items": {
@@ -4885,10 +4823,6 @@ DELEGATE_TASK_SCHEMA = {
                             "type": "string",
                             "enum": ["leaf", "orchestrator"],
                             "description": "Per-task role override. See top-level 'role' for semantics.",
-                        },
-                        "profile": {
-                            "type": "string",
-                            "description": "Trusted host-defined delegate profile id.",
                         },
                         "output_schema": {
                             "type": "object",
@@ -5027,7 +4961,6 @@ registry.register(
         tasks=_strip_model_hidden_task_fields(args.get("tasks")),
         max_iterations=args.get("max_iterations"),
         role=args.get("role"),
-        profile=args.get("profile"),
         background=_model_background_value(args, kw.get("parent_agent")),
         output_schema=args.get("output_schema"),
         action=args.get("action"),

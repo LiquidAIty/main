@@ -19,12 +19,6 @@ export type HermesExecutionContext = {
   grantedTools: string[];
   expiresAt: number;
   state: 'active' | 'closing' | 'closed';
-  delegateProfiles: Array<{
-    profileId: string;
-    cardId: string;
-    runtimeMode: 'delegate' | 'kanban';
-    grantedTools: string[];
-  }>;
 };
 
 const contexts = new Map<string, HermesExecutionContext>();
@@ -60,12 +54,6 @@ export function registerHermesRootExecutionContext(args: {
   cardId: string;
   runtimeMode: 'main' | 'delegate';
   grantedTools: string[];
-  delegateProfiles?: Array<{
-    profileId: string;
-    cardId: string;
-    runtimeMode: 'delegate' | 'kanban';
-    grantedTools: string[];
-  }>;
   now?: number;
 }): HermesExecutionContext {
   const required = [
@@ -88,12 +76,6 @@ export function registerHermesRootExecutionContext(args: {
     grantedTools: uniqueStrings(args.grantedTools),
     expiresAt: (args.now ?? Date.now()) + EXECUTION_CONTEXT_TTL_MS,
     state: 'active',
-    delegateProfiles: (args.delegateProfiles || []).map((profile) => ({
-      profileId: String(profile.profileId || '').trim(),
-      cardId: String(profile.cardId || '').trim(),
-      runtimeMode: profile.runtimeMode,
-      grantedTools: uniqueStrings(profile.grantedTools),
-    })),
   };
   contexts.set(context.contextId, context);
   return { ...context, grantedTools: [...context.grantedTools] };
@@ -111,7 +93,6 @@ export async function createHermesChildExecutionContext(args: {
   sessionId: string;
   parentExecutionContextId: string;
   nativeChildId: string;
-  delegateProfileId?: string;
   request?: typeof requestPythonRailsJson;
 }): Promise<HermesExecutionContext> {
   const parent = activeContext(args.parentExecutionContextId);
@@ -121,24 +102,18 @@ export async function createHermesChildExecutionContext(args: {
   if (!nativeChildId) throw new Error('hermes_native_child_id_required');
   const runId = `hermes_child_${randomUUID()}`;
   const correlationId = `hermes_child_corr_${randomUUID()}`;
-  const delegateProfileId = String(args.delegateProfileId || '').trim();
-  const profile = delegateProfileId
-    ? parent.delegateProfiles.find((candidate) => candidate.profileId === delegateProfileId)
-    : null;
-  if (delegateProfileId && !profile) throw new Error('hermes_delegate_profile_not_authorized');
   const context: HermesExecutionContext = {
     ...parent,
     contextId: randomUUID(),
     runId,
     rootRunId: parent.rootRunId,
     parentRunId: parent.runId,
-    cardId: profile?.cardId || parent.cardId,
-    runtimeMode: profile?.runtimeMode || parent.runtimeMode,
+    cardId: parent.cardId,
+    runtimeMode: parent.runtimeMode,
     nativeChildId,
     expiresAt: Date.now() + EXECUTION_CONTEXT_TTL_MS,
     state: 'active',
-    grantedTools: [...(profile?.grantedTools || parent.grantedTools)],
-    delegateProfiles: [],
+    grantedTools: [...parent.grantedTools],
   };
   const request = args.request ?? requestPythonRailsJson;
   await request('/domain/runs/begin-native-hermes-child', {
@@ -154,7 +129,6 @@ export async function createHermesChildExecutionContext(args: {
       conversationId: context.conversationId,
       cardId: context.cardId,
       nativeChildId,
-      delegateProfileId: delegateProfileId || undefined,
     }),
   });
   contexts.set(context.contextId, context);

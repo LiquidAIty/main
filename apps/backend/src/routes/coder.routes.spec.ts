@@ -918,12 +918,6 @@ describe('coder routes', () => {
           sessionKey: 'project-1:main:card_main_chat',
           message: '# IDF\n\nhello',
           runtime: { kind: 'hermes', mode: 'main', profile: 'default' },
-          delegateProfiles: [{
-            cardId: 'card_local_coder',
-            prompt: 'Saved Coder prompt',
-            providerModelId: 'gpt-5.6-terra',
-            tools: ['cbm.search_graph'],
-          }],
         });
         const railsCalls = orchestratorMocks.requestPythonRailsJson.mock.calls;
         expect(railsCalls.map(([endpoint]) => endpoint)).toEqual([

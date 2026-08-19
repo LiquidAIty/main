@@ -1,10 +1,10 @@
-"""Trusted ACP host configuration for session and delegate tool surfaces.
+"""Trusted ACP host configuration and native child execution attribution.
 
 LIQUIDAITY VENDOR PATCH
 =======================
 This module is the contained implementation described in
 ``../LIQUIDAITY_VENDOR_PATCHES.md``.  It intentionally uses native Hermes
-concepts (toolsets, tools, models, prompts, and delegate profiles) so the
+concepts (toolsets, tools, sessions, and native subagents) so the
 extension remains suitable for an upstream contribution.
 
 ACP 0.9 flattens request ``_meta`` members into handler keyword arguments.
@@ -22,27 +22,15 @@ from contextvars import ContextVar
 from typing import Any, Mapping
 
 
-_PROFILE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
-_MAX_PROFILES = 32
 _MAX_LIST_ITEMS = 128
 _MAX_NAME_CHARS = 256
 _MAX_PROMPT_CHARS = 65_536
+_META_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SESSION_FIELDS = {
     "enabledToolsets",
     "enabledTools",
-    "delegateProfiles",
     "executionContextId",
     "toolCallMeta",
-}
-_PROFILE_FIELDS = {
-    "id",
-    "title",
-    "description",
-    "systemPrompt",
-    "model",
-    "enabledToolsets",
-    "enabledTools",
-    "skills",
 }
 
 
@@ -85,49 +73,6 @@ def _bounded_string_list(value: Any, field: str) -> list[str]:
     return result
 
 
-def _normalize_profile(value: Any, index: int) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise HostSessionConfigError("hermes_host_config_delegate_profile_must_be_object")
-    unknown = sorted(set(value) - _PROFILE_FIELDS)
-    if unknown:
-        raise HostSessionConfigError(
-            f"hermes_host_config_delegate_profile_unknown_field:{unknown[0]}"
-        )
-    profile_id = _bounded_text(
-        value.get("id"), f"delegateProfiles[{index}].id", limit=128, required=True
-    )
-    if not _PROFILE_ID.fullmatch(profile_id):
-        raise HostSessionConfigError("hermes_host_config_delegate_profile_id_invalid")
-    return {
-        "id": profile_id,
-        "title": _bounded_text(
-            value.get("title"), f"delegateProfiles[{index}].title", limit=_MAX_NAME_CHARS
-        ),
-        "description": _bounded_text(
-            value.get("description"),
-            f"delegateProfiles[{index}].description",
-            limit=2_048,
-        ),
-        "systemPrompt": _bounded_text(
-            value.get("systemPrompt"),
-            f"delegateProfiles[{index}].systemPrompt",
-            limit=_MAX_PROMPT_CHARS,
-        ),
-        "model": _bounded_text(
-            value.get("model"), f"delegateProfiles[{index}].model", limit=_MAX_NAME_CHARS
-        ),
-        "enabledToolsets": _bounded_string_list(
-            value.get("enabledToolsets"), f"delegateProfiles[{index}].enabledToolsets"
-        ),
-        "enabledTools": _bounded_string_list(
-            value.get("enabledTools"), f"delegateProfiles[{index}].enabledTools"
-        ),
-        "skills": _bounded_string_list(
-            value.get("skills"), f"delegateProfiles[{index}].skills"
-        ),
-    }
-
-
 def parse_host_session_config(metadata_kwargs: Mapping[str, Any]) -> dict[str, Any] | None:
     """Parse ``_meta.hermes.sessionConfig`` flattened by ACP 0.9.
 
@@ -149,38 +94,33 @@ def parse_host_session_config(metadata_kwargs: Mapping[str, Any]) -> dict[str, A
     unknown = sorted(set(raw) - _SESSION_FIELDS)
     if unknown:
         raise HostSessionConfigError(f"hermes_host_session_config_unknown_field:{unknown[0]}")
-    profiles_raw = raw.get("delegateProfiles") or []
-    if not isinstance(profiles_raw, list):
-        raise HostSessionConfigError("hermes_host_config_delegate_profiles_must_be_list")
-    if len(profiles_raw) > _MAX_PROFILES:
-        raise HostSessionConfigError("hermes_host_config_delegate_profiles_too_many")
-    profiles = [_normalize_profile(value, index) for index, value in enumerate(profiles_raw)]
-    ids = [profile["id"] for profile in profiles]
-    if len(ids) != len(set(ids)):
-        raise HostSessionConfigError("hermes_host_config_delegate_profile_duplicate")
     execution_context_id = _bounded_text(
         raw.get("executionContextId"), "executionContextId", limit=128
     )
     raw_tool_meta = raw.get("toolCallMeta") or {}
     if not isinstance(raw_tool_meta, dict):
         raise HostSessionConfigError("hermes_host_config_tool_call_meta_must_be_object")
-    if set(raw_tool_meta) - {"liquidaity/execution"}:
-        raise HostSessionConfigError("hermes_host_config_tool_call_meta_unknown_field")
-    execution_meta = _bounded_text(
-        raw_tool_meta.get("liquidaity/execution"),
-        "toolCallMeta.liquidaity/execution",
-        limit=128,
-    )
-    if execution_meta and execution_meta != execution_context_id:
+    if len(raw_tool_meta) > 1:
+        raise HostSessionConfigError("hermes_host_config_tool_call_meta_too_many")
+    normalized_tool_meta: dict[str, str] = {}
+    for raw_key, raw_value in raw_tool_meta.items():
+        key = _bounded_text(raw_key, "toolCallMeta.key", limit=256, required=True)
+        if not _META_KEY.fullmatch(key):
+            raise HostSessionConfigError("hermes_host_config_tool_call_meta_key_invalid")
+        value = _bounded_text(
+            raw_value,
+            f"toolCallMeta.{key}",
+            limit=128,
+            required=True,
+        )
+        normalized_tool_meta[key] = value
+    if normalized_tool_meta and execution_context_id not in normalized_tool_meta.values():
         raise HostSessionConfigError("hermes_host_config_execution_context_mismatch")
     return {
         "enabledToolsets": _bounded_string_list(raw.get("enabledToolsets"), "enabledToolsets"),
         "enabledTools": _bounded_string_list(raw.get("enabledTools"), "enabledTools"),
-        "delegateProfiles": profiles,
         "executionContextId": execution_context_id,
-        "toolCallMeta": (
-            {"liquidaity/execution": execution_meta} if execution_meta else {}
-        ),
+        "toolCallMeta": normalized_tool_meta,
     }
 
 
@@ -189,9 +129,6 @@ def attach_host_session_config(agent: Any, config: dict[str, Any] | None) -> Non
 
     normalized = copy.deepcopy(config) if config is not None else None
     setattr(agent, "_host_session_config", normalized)
-    profiles = normalized.get("delegateProfiles", []) if normalized else []
-    setattr(agent, "_host_delegate_profiles", {profile["id"]: profile for profile in profiles})
-
     setattr(agent, "_host_execution_context_id", (
         str(normalized.get("executionContextId") or "") if normalized else ""
     ))
@@ -224,12 +161,10 @@ def allocate_host_child_execution(parent_agent: Any, child: Any) -> bool:
     native_child_id = str(getattr(child, "_subagent_id", "") or "")
     if not native_child_id:
         raise HostSessionConfigError("hermes_host_native_child_id_missing")
-    delegate_profile_id = str(getattr(child, "_host_delegate_profile_id", "") or "")
     response = requester("session/create_execution_context", {
         "sessionId": session_id,
         "parentExecutionContextId": parent_context_id,
         "nativeChildId": native_child_id,
-        **({"delegateProfileId": delegate_profile_id} if delegate_profile_id else {}),
     })
     if not isinstance(response, dict):
         raise HostSessionConfigError("hermes_host_child_execution_response_invalid")
@@ -237,10 +172,15 @@ def allocate_host_child_execution(parent_agent: Any, child: Any) -> bool:
         response.get("executionContextId"), "childExecutionContextId", limit=128, required=True
     )
     tool_meta = response.get("toolCallMeta")
-    if not isinstance(tool_meta, dict) or tool_meta.get("liquidaity/execution") != context_id:
+    if (
+        not isinstance(tool_meta, dict)
+        or len(tool_meta) != 1
+        or context_id not in tool_meta.values()
+        or not all(_META_KEY.fullmatch(str(key)) for key in tool_meta)
+    ):
         raise HostSessionConfigError("hermes_host_child_execution_meta_invalid")
     setattr(child, "_host_execution_context_id", context_id)
-    setattr(child, "_host_tool_call_meta", {"liquidaity/execution": context_id})
+    setattr(child, "_host_tool_call_meta", dict(tool_meta))
     attach_host_execution_requester(child, requester, session_id)
     return True
 
@@ -287,7 +227,7 @@ def current_host_tool_call_meta() -> dict[str, str] | None:
 
 
 def initial_toolsets(config: dict[str, Any] | None) -> list[str]:
-    """Return non-MCP toolsets safe to resolve before ACP registers servers."""
+    """Return Card-granted native toolsets safe before MCP registration."""
 
     if config is None:
         return ["hermes-acp"]
@@ -308,40 +248,6 @@ def _merge_definitions(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 seen.add(name)
                 merged.append(definition)
     return merged
-
-
-def _profile_schema(definition: dict[str, Any], profiles: list[dict[str, Any]]) -> dict[str, Any]:
-    if str((definition.get("function") or {}).get("name") or "") != "delegate_task":
-        return definition
-    decorated = copy.deepcopy(definition)
-    function = decorated.setdefault("function", {})
-    parameters = function.setdefault("parameters", {})
-    properties = parameters.setdefault("properties", {})
-    profile_ids = [profile["id"] for profile in profiles]
-    labels = [
-        f"{profile['id']} ({profile.get('title') or profile.get('description') or 'delegate'})"
-        for profile in profiles
-    ]
-    profile_field = {
-        "type": "string",
-        "enum": profile_ids,
-        "description": (
-            "Trusted host-defined delegate profile. Required for spawn when profiles are listed: "
-            + "; ".join(labels)
-        ),
-    }
-    properties["profile"] = profile_field
-    tasks = properties.get("tasks")
-    if isinstance(tasks, dict):
-        items = tasks.get("items")
-        if isinstance(items, dict):
-            task_properties = items.setdefault("properties", {})
-            task_properties["profile"] = copy.deepcopy(profile_field)
-            required = list(items.get("required") or [])
-            if "profile" not in required:
-                required.append("profile")
-            items["required"] = required
-    return decorated
 
 
 def _explicit_tool_definitions(names: list[str]) -> list[dict[str, Any]]:
@@ -418,8 +324,6 @@ def apply_host_session_config(agent: Any, config: dict[str, Any] | None) -> None
         except Exception:
             pass
 
-    profiles = list(config.get("delegateProfiles") or [])
-    definitions = [_profile_schema(item, profiles) for item in definitions]
     valid_names = {
         str((item.get("function") or {}).get("name") or "")
         for item in definitions
@@ -431,48 +335,3 @@ def apply_host_session_config(agent: Any, config: dict[str, Any] | None) -> None
     invalidate = getattr(agent, "_invalidate_system_prompt", None)
     if callable(invalidate):
         invalidate()
-
-
-def resolve_delegate_profile(agent: Any, profile_id: Any) -> tuple[dict[str, Any] | None, str | None]:
-    """Resolve a model-selected id against the trusted host profile registry."""
-
-    profiles = getattr(agent, "_host_delegate_profiles", None)
-    if not isinstance(profiles, dict) or not profiles:
-        if profile_id is None or not str(profile_id).strip():
-            return None, None
-        return None, "No trusted host delegate profiles are configured for this session."
-    selected = str(profile_id or "").strip()
-    if not selected:
-        return None, "A trusted delegate profile is required for this session."
-    profile = profiles.get(selected)
-    if not isinstance(profile, dict):
-        return None, f"Unknown delegate profile '{selected}'."
-    return copy.deepcopy(profile), None
-
-
-def profile_child_prompt(profile: dict[str, Any] | None, task_prompt: str) -> str:
-    """Mechanically combine a host profile prompt/skill list with task context."""
-
-    if not profile:
-        return task_prompt
-    sections: list[str] = []
-    system_prompt = str(profile.get("systemPrompt") or "").strip()
-    if system_prompt:
-        sections.append(system_prompt)
-    skills = [str(value).strip() for value in profile.get("skills") or [] if str(value).strip()]
-    if skills:
-        sections.append("Host-selected Hermes skills: " + ", ".join(skills))
-    sections.append(task_prompt)
-    return "\n\n".join(section for section in sections if section)
-
-
-def profile_tool_config(profile: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Project a trusted delegate profile into the common tool-surface shape."""
-
-    if not profile:
-        return None
-    return {
-        "enabledToolsets": list(profile.get("enabledToolsets") or []),
-        "enabledTools": list(profile.get("enabledTools") or []),
-        "delegateProfiles": [],
-    }

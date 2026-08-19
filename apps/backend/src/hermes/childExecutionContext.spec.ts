@@ -23,45 +23,34 @@ describe('Hermes child execution attribution', () => {
       cardId: 'card_main_chat',
       runtimeMode: 'main',
       grantedTools: ['canvas.inspect'],
-      delegateProfiles: [{
-        profileId: 'card_coder',
-        cardId: 'card_coder',
-        runtimeMode: 'delegate',
-        grantedTools: ['cbm.search_graph'],
-      }, {
-        profileId: 'card_hermes_steward',
-        cardId: 'card_hermes_steward',
-        runtimeMode: 'kanban',
-        grantedTools: ['knowgraph.search'],
-      }],
     });
     bindHermesRootExecutionSession(context.contextId, 'acp-session-1');
     return context;
   }
 
-  it('creates concurrent saved-profile children without crossing Card or Run identity', async () => {
+  it('creates concurrent native children on one Card without crossing Run identity', async () => {
     const parent = root();
     const request = vi.fn(async () => ({ ok: true }));
     const [coder, kanban] = await Promise.all([
       createHermesChildExecutionContext({
         sessionId: 'acp-session-1',
         parentExecutionContextId: parent.contextId,
-        nativeChildId: 'sa-coder',
-        delegateProfileId: 'card_coder',
+        nativeChildId: 'sa-one',
         request,
       }),
       createHermesChildExecutionContext({
         sessionId: 'acp-session-1',
         parentExecutionContextId: parent.contextId,
-        nativeChildId: 'sa-kanban',
-        delegateProfileId: 'card_hermes_steward',
+        nativeChildId: 'sa-two',
         request,
       }),
     ]);
 
     expect(coder.runId).not.toBe(kanban.runId);
-    expect(coder.cardId).toBe('card_coder');
-    expect(kanban.cardId).toBe('card_hermes_steward');
+    expect(coder.cardId).toBe('card_main_chat');
+    expect(kanban.cardId).toBe('card_main_chat');
+    expect(coder.grantedTools).toEqual(['canvas.inspect']);
+    expect(kanban.grantedTools).toEqual(['canvas.inspect']);
     expect(coder.parentRunId).toBe('main-run');
     expect(kanban.parentRunId).toBe('main-run');
     expect(executionToolCallMeta(coder.contextId)).toEqual({
@@ -85,22 +74,13 @@ describe('Hermes child execution attribution', () => {
     expect(child.runtimeMode).toBe('main');
   });
 
-  it('fails closed for unauthorized profiles, forged principals, and grant widening', async () => {
+  it('fails closed for forged principals and grant widening', async () => {
     const parent = root();
     const request = vi.fn(async () => ({ ok: true }));
-    await expect(createHermesChildExecutionContext({
-      sessionId: 'acp-session-1',
-      parentExecutionContextId: parent.contextId,
-      nativeChildId: 'sa-forged',
-      delegateProfileId: 'card_unknown',
-      request,
-    })).rejects.toThrow('hermes_delegate_profile_not_authorized');
-
     const coder = await createHermesChildExecutionContext({
       sessionId: 'acp-session-1',
       parentExecutionContextId: parent.contextId,
       nativeChildId: 'sa-coder',
-      delegateProfileId: 'card_coder',
       request,
     });
     const principal = {
@@ -110,16 +90,16 @@ describe('Hermes child execution attribution', () => {
       deckId: 'deck_builder',
       conversationId: 'conversation-1',
       parentRunId: 'main-run',
-      callerCardId: 'card_coder',
+      callerCardId: 'card_main_chat',
       callerRuntimeKind: 'hermes',
-      callerRuntimeMode: 'delegate',
-      grantedTools: ['cbm.search_graph'],
+      callerRuntimeMode: 'main',
+      grantedTools: ['canvas.inspect'],
     };
     expect(resolveHermesExecutionContext({ contextId: coder.contextId, principal }).runId)
       .toBe(coder.runId);
     expect(() => resolveHermesExecutionContext({
       contextId: coder.contextId,
-      principal: { ...principal, callerCardId: 'card_main_chat' },
+      principal: { ...principal, callerCardId: 'card_forged' },
     })).toThrow('hermes_execution_context_principal_mismatch');
     expect(() => resolveHermesExecutionContext({
       contextId: coder.contextId,

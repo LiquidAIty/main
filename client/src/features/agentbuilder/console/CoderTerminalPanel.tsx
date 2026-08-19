@@ -14,7 +14,7 @@ type ConsolePanelStatus = 'disconnected' | 'idle' | 'starting' | 'running' | 'fa
 
 type CoderTerminalPanelProps = {
   open: boolean;
-  targetRoot: string;
+  targetRoot?: string;
   title?: string;
   placement?: 'overlay' | 'docked';
   testIdPrefix?: string;
@@ -56,7 +56,7 @@ const STATUS_LABEL: Record<ConsolePanelStatus, string> = {
 
 function CoderTerminalPanelInner({
   open,
-  targetRoot,
+  targetRoot = '',
   title = 'Coder',
   placement = 'overlay',
   testIdPrefix = 'coder-terminal',
@@ -148,7 +148,7 @@ function CoderTerminalPanelInner({
       setBusy(true);
       setStartError(null);
       const result = await client.startSession({
-        targetRoot,
+        ...(targetRoot.trim() ? { targetRoot } : {}),
         mode,
         ...(provider ? { provider } : {}),
         ...(model ? { model } : {}),
@@ -236,7 +236,9 @@ function CoderTerminalPanelInner({
       </header>
 
       <div style={{ padding: '6px 12px', borderBottom: '1px solid #11181f', opacity: 0.85 }}>
-        <div data-testid={`${testIdPrefix}-target-root`}>root: {targetRoot}</div>
+        <div data-testid={`${testIdPrefix}-target-root`}>
+          root: {session?.targetRoot || targetRoot || 'repository root'}
+        </div>
         <div data-testid={`${testIdPrefix}-session-id`}>
           session: {session?.id ?? '—'}
           {projectId ? ` · project: ${projectId}` : ''}

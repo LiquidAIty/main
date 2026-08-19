@@ -53,8 +53,6 @@ export type HermesRuntimeConfig = {
   mcpConnectionIds: string[];
 };
 
-export type HermesDelegateProfileConfig = HermesRuntimeConfig;
-
 export type CardAccessMode = 'chatgpt-account' | 'openai-api' | 'openrouter-api';
 
 export function requireHermesCompletionText(value: unknown): string {
@@ -70,7 +68,6 @@ export type HermesTurnArgs = HermesRuntimeConfig & {
   conversationId: string;
   parentRunId: string;
   message: string;
-  delegateProfiles: HermesDelegateProfileConfig[];
   workingDirectory?: string;
 };
 
@@ -188,16 +185,6 @@ function mcpToolsetNames(servers: Record<string, unknown>[]): string[] {
   return servers.map((server) => `mcp-${String(server.name || '')}`).filter((name) => name !== 'mcp-');
 }
 
-function namespaceMcpServers(
-  servers: Record<string, unknown>[],
-  namespace: string,
-): Record<string, unknown>[] {
-  return servers.map((server) => ({
-    ...server,
-    name: `${namespace}-${String(server.name || 'server')}`,
-  }));
-}
-
 export function buildHermesHostSessionProjection(
   args: HermesTurnArgs,
   env: NodeJS.ProcessEnv = process.env,
@@ -211,54 +198,8 @@ export function buildHermesHostSessionProjection(
   const rootServers: Record<string, unknown>[] = rootOfficial
     ? [rootOfficial, ...rootSaved]
     : rootSaved;
-  const allServers = [...rootServers];
-  const profiles = args.delegateProfiles.map((profile) => {
-    if (
-      profile.runtime.kind !== 'hermes'
-      || !['delegate', 'kanban'].includes(profile.runtime.mode)
-    ) {
-      throw new Error(`hermes_delegate_runtime_invalid:${profile.cardId}`);
-    }
-    if (
-      providerForHermes(profile.provider, profile.accessMode)
-        !== providerForHermes(args.provider, args.accessMode)
-      || profile.accessMode !== args.accessMode
-    ) {
-      throw new Error(`hermes_delegate_provider_authority_mismatch:${profile.cardId}`);
-    }
-    const namespace = `delegate-${createHash('sha256')
-      .update(`${args.sessionKey}:${profile.cardId}`)
-      .digest('hex')
-      .slice(0, 12)}`;
-    const official = buildHermesOfficialMcpServer({
-      ...args,
-      ...profile,
-      sessionKey: `${args.sessionKey}:${profile.cardId}`,
-    }, env);
-    const saved = namespaceMcpServers(
-      resolveSavedMcpConnections(profile.mcpConnectionIds, env),
-      namespace,
-    );
-    const profileServers: Record<string, unknown>[] = official
-      ? [{ ...official, name: `${namespace}-official` }, ...saved]
-      : saved;
-    allServers.push(...profileServers);
-    return {
-      id: profile.cardId,
-      title: profile.title,
-      description: `Saved Hermes Card ${profile.title}`,
-      systemPrompt: profile.prompt,
-      model: profile.providerModelId,
-      enabledToolsets: uniqueStrings([
-        ...profile.toolsets,
-        ...mcpToolsetNames(profileServers),
-      ]),
-      enabledTools: uniqueStrings(profile.nativeTools),
-      skills: uniqueStrings(profile.skills),
-    };
-  });
   return {
-    mcpServers: allServers,
+    mcpServers: rootServers,
     sessionMeta: {
       hermes: {
         sessionConfig: {
@@ -268,9 +209,7 @@ export function buildHermesHostSessionProjection(
           ]),
           enabledTools: uniqueStrings([
             ...args.nativeTools,
-            ...(profiles.length > 0 ? ['delegate_task'] : []),
           ]),
-          delegateProfiles: profiles,
           ...(executionContextId ? {
             executionContextId,
             toolCallMeta: executionToolCallMeta(executionContextId),
@@ -407,7 +346,6 @@ class AcpProcess {
         sessionId,
         parentExecutionContextId: String(message.params?.parentExecutionContextId || ''),
         nativeChildId: String(message.params?.nativeChildId || ''),
-        delegateProfileId: String(message.params?.delegateProfileId || '') || undefined,
       }).then((context) => {
         this.send({
           jsonrpc: '2.0', id: message.id, result: {
@@ -579,12 +517,6 @@ class AcpProcess {
       cardId: args.cardId,
       runtimeMode: args.runtime.mode,
       grantedTools: args.tools.filter((name) => name !== 'web_search'),
-      delegateProfiles: args.delegateProfiles.map((profile) => ({
-        profileId: profile.cardId,
-        cardId: profile.cardId,
-        runtimeMode: profile.runtime.mode as 'delegate' | 'kanban',
-        grantedTools: profile.tools.filter((name) => name !== 'web_search'),
-      })),
     });
     let sessionId: string;
     let active: ActiveTurn;

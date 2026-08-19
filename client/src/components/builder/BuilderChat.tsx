@@ -30,8 +30,6 @@ export default function BuilderChat({
   knowledgeProjectId,
   colors,
   busy = false,
-  invocationTargets = [],
-  onInspectInvocation,
 }: {
   messages: { role: "assistant" | "user"; text: string }[];
   onSend: (t: string) => void;
@@ -39,11 +37,8 @@ export default function BuilderChat({
   colors: BuilderChatColors;
   /** The real SSE turn is still open; prevent a second send and state it plainly. */
   busy?: boolean;
-  invocationTargets?: Array<{ cardId: string; title: string }>;
-  onInspectInvocation?: (cardId: string, assignment: string) => void;
 }) {
   const [v, setV] = useState("");
-  const [invocationTargetId, setInvocationTargetId] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
 
   // Keep the latest message (and the active turn's inline work) in view — scroll
@@ -161,30 +156,6 @@ export default function BuilderChat({
             disabled={!knowledgeProjectId}
             appearance="chat-inline"
           />
-          <select
-            aria-label="Invocation target Card"
-            value={invocationTargetId}
-            onChange={(event) => setInvocationTargetId(event.target.value)}
-            style={{ maxWidth: 150, color: colors.text, background: colors.bg, border: `1px solid ${colors.border}`, borderRadius: 8, padding: "6px 8px", fontSize: 11 }}
-          >
-            <option value="">Target Card</option>
-            {invocationTargets.map((target) => (
-              <option key={target.cardId} value={target.cardId}>{target.title}</option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={busy || !invocationTargetId || !v.trim() || !onInspectInvocation}
-            onClick={() => {
-              const assignment = v.trim();
-              if (!assignment || !invocationTargetId || !onInspectInvocation) return;
-              onInspectInvocation(invocationTargetId, assignment);
-            }}
-            title="Open this assignment in the target Card's canonical Inspector"
-            style={{ color: colors.text, background: "transparent", border: `1px solid ${colors.border}`, borderRadius: 8, padding: "6px 8px", fontSize: 11 }}
-          >
-            Inspect IDF
-          </button>
           <input
             value={v}
             onChange={(e) => setV(e.target.value)}

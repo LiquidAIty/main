@@ -10,6 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { resolveRepoRoot } from '../coder/workspaceRoot';
 
 import {
   configureHermesHolographicMemoryProfile,
@@ -18,7 +19,7 @@ import {
   resolveHermesHolographicMemoryDb,
 } from './profileMemory';
 
-const HERMES_ROOT = path.join(process.cwd(), 'Hermes');
+const HERMES_ROOT = path.join(resolveRepoRoot(), 'Hermes');
 const HERMES_PYTHON = path.join(HERMES_ROOT, 'venv', 'Scripts', 'python.exe');
 const tempHomes: string[] = [];
 

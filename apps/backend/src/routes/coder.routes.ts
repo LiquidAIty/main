@@ -231,25 +231,6 @@ function resolvePreparedHermesTurnArgs(
     skills: Array.isArray(context.skills) ? context.skills : [],
     toolsets: Array.isArray(context.toolsets) ? context.toolsets : [],
     mcpConnectionIds: Array.isArray(context.mcpConnectionIds) ? context.mcpConnectionIds : [],
-    delegateProfiles: Array.isArray(transport.delegationTargets)
-      ? transport.delegationTargets.map((target: any) => ({
-        cardId: String(target?.cardId || ''),
-        title: String(target?.title || target?.cardId || ''),
-        runtime: target?.runtime,
-        prompt: String(target?.prompt || ''),
-        provider: String(target?.provider || ''),
-        modelKey: String(target?.modelKey || ''),
-        providerModelId: String(target?.providerModelId || ''),
-        accessMode: target?.accessMode,
-        tools: Array.isArray(target?.tools) ? target.tools : [],
-        nativeTools: Array.isArray(target?.nativeTools) ? target.nativeTools : [],
-        skills: Array.isArray(target?.skills) ? target.skills : [],
-        toolsets: Array.isArray(target?.toolsets) ? target.toolsets : [],
-        mcpConnectionIds: Array.isArray(target?.mcpConnectionIds)
-          ? target.mcpConnectionIds
-          : [],
-      }))
-      : [],
     sessionKey: deriveHermesSessionKey(
       args.projectId,
       args.conversationId,

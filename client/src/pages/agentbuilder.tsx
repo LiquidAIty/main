@@ -37,7 +37,6 @@ import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgent
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import useAgentBuilderGraphAttention from '../features/agentbuilder/state/useAgentBuilderGraphAttention';
 import TradingUI from './tradingui';
-import { resolveDeckWorkspaceRoot } from '../features/agentbuilder/state/deckWorkspaceRoot';
 import {
   GRAPH_THEME,
   graphDrawerButtonStyle,
@@ -285,10 +284,6 @@ export default function AgentBuilder(): React.ReactElement {
     currentDeckRef.current = deck;
   }, [deck]);
   const priorWorkspaceViewRef = useRef<'chat' | 'canvas' | 'knowledge' | 'trading' | 'worldsignal'>('canvas');
-  const terminalRoot = useMemo(
-    () => resolveDeckWorkspaceRoot(deck, null) || DEFAULT_WORKSPACE_ROOT,
-    [deck],
-  );
   const visibleRailItems = useMemo(
     () =>
       deriveVisibleRailItems({
@@ -558,8 +553,6 @@ export default function AgentBuilder(): React.ReactElement {
   const [savedIdfs, setSavedIdfs] = useState<SavedIdfSummary[]>([]);
   const [savedIdfKey, setSavedIdfKey] = useState('');
   const [savedIdfBusy, setSavedIdfBusy] = useState(false);
-  const [standaloneTestSenderCardId, setStandaloneTestSenderCardId] = useState<string | null>(null);
-  const pendingInvocationRef = useRef<{ cardId: string; assignment: string; senderCardId: string | null } | null>(null);
   const standaloneTestRequestRef = useRef<string | null>(null);
   const standaloneTestUnavailableReason = useMemo(
     () => getStandaloneCardUnavailableReason(selectedCard),
@@ -570,36 +563,9 @@ export default function AgentBuilder(): React.ReactElement {
   const showStandaloneTestControls =
     Boolean(selectedCard)
     && !(selectedCard?.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'main');
-  const mainInvocationTargets = useMemo(() => {
-    const mainCard = deck.nodes.find(
-      (node) => node.runtime.kind === 'hermes' && node.runtime.mode === 'main',
-    );
-    if (!mainCard) return [];
-    const allowed = new Set(
-      deck.edges
-        .filter((edge) => (
-          edge.source === mainCard.id
-          && edge.edgeType === 'flow'
-          && (edge as typeof edge & { enabled?: boolean }).enabled !== false
-        ))
-        .map((edge) => edge.target),
-    );
-    return deck.nodes
-      .filter((node) => allowed.has(node.id) && (node as AgentCardInstance & { enabled?: boolean }).enabled !== false)
-      .map((node) => ({ cardId: node.id, title: node.title }));
-  }, [deck.edges, deck.nodes]);
-
   useEffect(() => {
-    const pending = pendingInvocationRef.current;
     standaloneTestRequestRef.current = null;
-    if (pending?.cardId === selectedCardId) {
-      setStandaloneTestPrompt(pending.assignment);
-      setStandaloneTestSenderCardId(pending.senderCardId);
-      pendingInvocationRef.current = null;
-    } else {
-      setStandaloneTestPrompt('');
-      setStandaloneTestSenderCardId(null);
-    }
+    setStandaloneTestPrompt('');
     setStandaloneTestBusy(false);
     setStandaloneTestResult(null);
     setSavedIdfKey('');
@@ -661,7 +627,6 @@ export default function AgentBuilder(): React.ReactElement {
           correlationId,
           input: invocation.assignment,
           conversationId,
-          senderCardId: standaloneTestSenderCardId,
           exactIdf: invocation.exactIdf,
           cardRevisionId: invocation.cardRevisionId,
           savedIdfId: invocation.savedIdf?.idfId,
@@ -717,7 +682,6 @@ export default function AgentBuilder(): React.ReactElement {
     conversationId,
     selectedCard,
     standaloneTestBusy,
-    standaloneTestSenderCardId,
     standaloneTestUnavailableReason,
   ]);
 
@@ -764,7 +728,6 @@ export default function AgentBuilder(): React.ReactElement {
           correlationId,
           input,
           conversationId,
-          senderCardId: standaloneTestSenderCardId,
         }),
       });
       const payload = await response.json().catch(() => null);
@@ -807,7 +770,7 @@ export default function AgentBuilder(): React.ReactElement {
         setStandaloneTestBusy(false);
       }
     }
-  }, [canvasProjectId, conversationId, selectedCard, standaloneTestBusy, standaloneTestPrompt, standaloneTestSenderCardId, standaloneTestUnavailableReason]);
+  }, [canvasProjectId, conversationId, selectedCard, standaloneTestBusy, standaloneTestPrompt, standaloneTestUnavailableReason]);
 
   const saveStandaloneIdf = useCallback(async (runAfterSave: boolean) => {
     const invocation = standaloneTestResult?.invocation;
@@ -823,10 +786,9 @@ export default function AgentBuilder(): React.ReactElement {
           deckId: BUILDER_DECK_ID,
           cardId: selectedCard.id,
           assignment: invocation.assignment,
-          senderCardId: standaloneTestSenderCardId,
           exactIdf: invocation.exactIdf,
           cardRevisionId: invocation.cardRevisionId,
-          provenanceKind: standaloneTestSenderCardId ? 'main' : 'inspector',
+          provenanceKind: 'inspector',
           idfId: invocation.savedIdf?.idfId,
         }),
       });
@@ -870,7 +832,6 @@ export default function AgentBuilder(): React.ReactElement {
     selectedCard,
     standaloneTestBusy,
     standaloneTestResult,
-    standaloneTestSenderCardId,
   ]);
 
   const loadStandaloneIdf = useCallback(async () => {
@@ -915,7 +876,6 @@ export default function AgentBuilder(): React.ReactElement {
         savedIdf: saved,
       };
       setStandaloneTestPrompt(invocation.assignment);
-      setStandaloneTestSenderCardId(null);
       setStandaloneTestResult({
         status: 'saved', output: '', error: null, toolCallCount: null,
         tools: Array.isArray(invocation.cardContext.tools) ? invocation.cardContext.tools.map(String) : [],
@@ -1042,7 +1002,6 @@ export default function AgentBuilder(): React.ReactElement {
     (cardId: string | null) => {
       recordUiOnlyAction('node-selection');
       setSelectedCardId(cardId);
-      setStandaloneTestSenderCardId(null);
       const selectedNode = cardId
         ? deck.nodes.find((node) => node.id === cardId) || null
         : null;
@@ -1381,23 +1340,6 @@ export default function AgentBuilder(): React.ReactElement {
           knowledgeProjectId={projectId}
           colors={C}
           busy={nativeSessionBusy}
-          invocationTargets={mainInvocationTargets}
-          onInspectInvocation={(cardId, assignment) => {
-            const mainCardId = deck.nodes.find(
-              (node) => node.runtime.kind === 'hermes' && node.runtime.mode === 'main',
-            )?.id || null;
-            pendingInvocationRef.current = { cardId, assignment, senderCardId: mainCardId };
-            setSelectedCardId(cardId);
-            setSelectedEdgeId(null);
-            setStandaloneTestResult(null);
-            setTab('Invocation');
-            setInspectorDrawerOpen(true);
-            setBuilderCanvasFocusRequest((current) => ({
-              kind: 'card',
-              cardId,
-              nonce: (current?.nonce || 0) + 1,
-            }));
-          }}
         />
       </div>
     );
@@ -1417,7 +1359,6 @@ export default function AgentBuilder(): React.ReactElement {
                 placement="docked"
                 title="Coder"
                 testIdPrefix="coder-console"
-                targetRoot={terminalRoot}
                 projectId={typeof activeProject === 'string' ? activeProject : undefined}
               />
             }

@@ -3,7 +3,6 @@ import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
-import { ensureHermesHolographicMemoryProfile } from './profileMemory';
 
 export type ConsoleMode = 'interactive' | 'print' | 'task' | 'shell';
 export type ConsoleSessionState = 'starting' | 'running' | 'exited' | 'failed';
@@ -103,6 +102,65 @@ function resolveHermesCli(): string {
   );
 }
 
+export type HermesOperatorTerminalLaunch = {
+  command: string;
+  args: string[];
+  commandPath: string;
+  env: NodeJS.ProcessEnv;
+  hermesCli: string;
+  hermesHome: string;
+};
+
+/**
+ * Build the interactive operator doorway for the saved Coder terminal.
+ *
+ * The PTY is a normal shell with the repo-owned Hermes environment first on
+ * PATH. Account login therefore remains a native Hermes CLI operation, while
+ * saved Card runs continue to select their own profile homes in mainAdapter.
+ */
+export function buildHermesOperatorTerminalLaunch(): HermesOperatorTerminalLaunch {
+  const repoRoot = resolveRepoRoot();
+  const hermesRoot = path.join(repoRoot, 'Hermes');
+  const hermesCli = resolveHermesCli();
+  const hermesBin = path.dirname(hermesCli);
+  const hermesHome = path.join(hermesRoot, '.hermes');
+  const baseEnv = { ...globalThis.process.env };
+  const pathKey = Object.keys(baseEnv).find((key) => key.toLowerCase() === 'path') || 'PATH';
+  const priorPath = baseEnv[pathKey];
+  baseEnv[pathKey] = priorPath ? `${hermesBin}${path.delimiter}${priorPath}` : hermesBin;
+  baseEnv.HERMES_HOME = hermesHome;
+  baseEnv.HERMES_SESSION_SOURCE = 'saved-coder-card-operator-terminal';
+
+  if (process.platform === 'win32') {
+    const windowsRoot = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+    const command = path.join(
+      windowsRoot,
+      'System32',
+      'WindowsPowerShell',
+      'v1.0',
+      'powershell.exe',
+    );
+    return {
+      command,
+      args: ['-NoLogo', '-NoProfile'],
+      commandPath: `${command} -NoLogo -NoProfile (hermes=${hermesCli})`,
+      env: baseEnv,
+      hermesCli,
+      hermesHome,
+    };
+  }
+
+  const command = process.env.SHELL || '/bin/sh';
+  return {
+    command,
+    args: [],
+    commandPath: `${command} (hermes=${hermesCli})`,
+    env: baseEnv,
+    hermesCli,
+    hermesHome,
+  };
+}
+
 export class HermesCoderTerminalSession {
   private readonly emitter = new EventEmitter();
   private readonly buffer: ConsoleOutputChunk[] = [];
@@ -195,9 +253,11 @@ export class HermesCoderTerminalSession {
   stop(): boolean {
     if (!this.process || !['starting', 'running'].includes(this.info.state)) return false;
     try {
-      this.process.kill('SIGTERM');
+      this.process.kill(process.platform === 'win32' ? undefined : 'SIGTERM');
       this.killFallback = setTimeout(() => {
-        try { this.process?.kill('SIGKILL'); } catch { /* process already exited */ }
+        try {
+          this.process?.kill(process.platform === 'win32' ? undefined : 'SIGKILL');
+        } catch { /* process already exited */ }
       }, KILL_FALLBACK_MS);
       return true;
     } catch {
@@ -246,12 +306,19 @@ export class HermesCoderTerminalManager {
         missing: [],
       };
     }
-    const command = resolveHermesCli();
-    if (!existsSync(command)) {
+    const launch = buildHermesOperatorTerminalLaunch();
+    if (!existsSync(launch.hermesCli)) {
       return {
         ok: false,
         error: 'hermes_coder_runtime_unavailable',
-        missing: [`hermes_repo_cli_entrypoint_missing:${command}`],
+        missing: [`hermes_repo_cli_entrypoint_missing:${launch.hermesCli}`],
+      };
+    }
+    if (!existsSync(launch.command)) {
+      return {
+        ok: false,
+        error: 'hermes_coder_terminal_shell_unavailable',
+        missing: [`operator_shell_missing:${launch.command}`],
       };
     }
     const pty = loadNodePty();
@@ -264,7 +331,7 @@ export class HermesCoderTerminalManager {
       targetRoot,
       mode: 'interactive',
       state: 'starting',
-      commandPath: `${command} chat --cli --toolsets file,terminal,memory`,
+      commandPath: launch.commandPath,
       runtimeSource: 'hermes_installed',
       transportMode: 'pty',
       provider: null,
@@ -281,26 +348,28 @@ export class HermesCoderTerminalManager {
     const session = new HermesCoderTerminalSession(info);
     this.sessions.set(info.id, session);
     try {
-      const profileHome = ensureHermesHolographicMemoryProfile(
-        path.join(resolveRepoRoot(), 'Hermes'),
-        'coder',
-      );
       const child = pty.spawn(
-        command,
-        ['chat', '--cli', '--toolsets', 'file,terminal,memory'],
+        launch.command,
+        launch.args,
         {
           name: 'xterm-color',
           cols: 120,
           rows: 30,
           cwd: targetRoot,
-          env: {
-            ...globalThis.process.env,
-            HERMES_HOME: profileHome,
-            HERMES_SESSION_SOURCE: 'saved-coder-card-terminal',
-          },
+          env: launch.env,
         },
       );
       session.attach(child);
+      session.emitOutput(
+        'system',
+        [
+          '\r\nHermes operator shell ready.',
+          `Repo CLI: ${launch.hermesCli}`,
+          'Native account commands: hermes auth add openai-codex | hermes auth list | hermes auth status openai-codex',
+          'Native configuration: hermes model | hermes doctor',
+          '',
+        ].join('\r\n'),
+      );
       if (request.prompt?.trim()) {
         session.emitOutput(
           'system',

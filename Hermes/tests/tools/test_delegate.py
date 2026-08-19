@@ -288,54 +288,41 @@ class TestDelegateTask(unittest.TestCase):
             self.assertEqual(kwargs["provider"], parent.provider)
             self.assertEqual(kwargs["api_mode"], parent.api_mode)
 
-    def test_trusted_host_profile_selects_saved_child_model_prompt_and_tools(self):
-        """LIQUIDAITY VENDOR PATCH: profile ids resolve before child creation."""
+    def test_native_child_gets_host_execution_context_before_running(self):
+        """LIQUIDAITY VENDOR PATCH: attribution exists before the child turn."""
         parent = _make_mock_parent(depth=0)
-        parent._host_delegate_profiles = {
-            "card_coder": {
-                "id": "card_coder",
-                "title": "Coder",
-                "description": "Saved Coder",
-                "systemPrompt": "Saved Coder prompt",
-                "model": "gpt-5.6-terra",
-                "enabledToolsets": ["terminal"],
-                "enabledTools": ["terminal"],
-                "skills": ["repository-coder"],
-            }
-        }
+        parent._host_execution_context_id = "root-context"
+        parent._host_execution_session_id = "acp-session"
+        calls = []
 
+        def requester(method, params):
+            calls.append((method, params))
+            if method == "session/create_execution_context":
+                return {
+                    "executionContextId": "child-context",
+                    "runId": "child-run",
+                    "toolCallMeta": {"example.host/execution": "child-context"},
+                }
+            return {"closed": True}
+
+        parent._host_execution_requester = requester
         with patch("run_agent.AIAgent") as MockAgent:
-            mock_child = MagicMock()
-            mock_child.disabled_toolsets = []
-            mock_child.run_conversation.return_value = {
+            child = MagicMock()
+            child.session_id = "child-session"
+            child.run_conversation.return_value = {
                 "final_response": "ok",
                 "completed": True,
-                "api_calls": 1,
+                "api_calls": 0,
             }
-            MockAgent.return_value = mock_child
+            MockAgent.return_value = child
+            result = json.loads(delegate_task(goal="Inspect safely", parent_agent=parent))
 
-            delegate_task(
-                goal="Inspect the repository",
-                profile="card_coder",
-                parent_agent=parent,
-            )
-
-            _, kwargs = MockAgent.call_args
-            self.assertEqual(kwargs["model"], "gpt-5.6-terra")
-            self.assertEqual(kwargs["enabled_toolsets"], ["terminal"])
-            self.assertIn("Saved Coder prompt", kwargs["ephemeral_system_prompt"])
-            self.assertEqual(mock_child._host_delegate_profile_id, "card_coder")
-
-        with patch("run_agent.AIAgent") as MockAgent:
-            result = json.loads(
-                delegate_task(
-                    goal="Forge a profile",
-                    profile="not-saved",
-                    parent_agent=parent,
-                )
-            )
-            self.assertIn("Unknown delegate profile", result["error"])
-            MockAgent.assert_not_called()
+        self.assertNotIn("error", result)
+        self.assertEqual(calls[0][0], "session/create_execution_context")
+        self.assertEqual(calls[0][1]["parentExecutionContextId"], "root-context")
+        self.assertTrue(calls[0][1]["nativeChildId"].startswith("sa-0-"))
+        self.assertEqual(calls[-1][0], "session/finish_execution_context")
+        self.assertEqual(calls[-1][1]["executionContextId"], "child-context")
 
     def test_child_gets_dedicated_session_db_not_parents_handle(self):
         """#81267: children must not share the parent's SessionDB object.

@@ -1,5 +1,5 @@
-import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import path from 'node:path';
 
 import {
   buildHermesHostSessionProjection,
@@ -13,8 +13,8 @@ import {
 describe('Hermes ACP transport identity', () => {
   it('keeps each prepared profile in a stable isolated runtime home', () => {
     const root = 'C:\\Projects\\LiquidAIty\\main\\Hermes';
-    expect(resolveHermesCardRuntimeHome(root, 'card_main_chat')).toBe(
-      path.join(root, '.hermes', 'profiles', 'card_main_chat'),
+    expect(resolveHermesCardRuntimeHome(root, 'liquidaity-main')).toBe(
+      path.join(root, '.hermes', 'profiles', 'liquidaity-main'),
     );
     expect(() => resolveHermesCardRuntimeHome(root, '../escape')).toThrow('hermes_profile_invalid');
   });
@@ -60,7 +60,7 @@ describe('Hermes ACP transport identity', () => {
     expect(JSON.stringify(server)).not.toContain('0123456789abcdef0123456789abcdef');
   });
 
-  it('projects saved Hermes delegates into isolated native profiles on one MCP host', () => {
+  it('projects one Card-owned native and MCP surface without creating subagent Cards', () => {
     const projection = buildHermesHostSessionProjection({
       sessionKey: 'session-1',
       projectId: 'project-1',
@@ -69,130 +69,46 @@ describe('Hermes ACP transport identity', () => {
       parentRunId: 'main-run-1',
       cardId: 'card_main_chat',
       title: 'Main',
-      runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
+      runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
       prompt: 'Main prompt',
       provider: 'openai',
       modelKey: 'gpt-5.6-luna',
       providerModelId: 'gpt-5.6-luna',
       accessMode: 'chatgpt-account',
       tools: ['canvas.inspect'],
-      nativeTools: ['memory'],
+      nativeTools: ['delegate_task'],
       skills: [],
-      toolsets: ['memory'],
+      toolsets: ['memory', 'delegation'],
       mcpConnectionIds: [],
-      delegateProfiles: [{
-        cardId: 'card_coder',
-        title: 'Coder',
-        runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
-        prompt: 'Saved Coder prompt',
-        provider: 'openai',
-        modelKey: 'gpt-5.6-terra',
-        providerModelId: 'gpt-5.6-terra',
-        accessMode: 'chatgpt-account',
-        tools: ['cbm.search_graph'],
-        nativeTools: ['terminal'],
-        skills: ['repository-coder'],
-        toolsets: ['terminal'],
-        mcpConnectionIds: [],
-      }, {
-        cardId: 'card_hermes_steward',
-        title: 'Knowledge Helper',
-        runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
-        prompt: 'Saved Kanban prompt',
-        provider: 'openai',
-        modelKey: 'gpt-5.6-terra',
-        providerModelId: 'gpt-5.6-terra',
-        accessMode: 'chatgpt-account',
-        tools: ['knowgraph.search'],
-        nativeTools: ['memory'],
-        skills: ['research'],
-        toolsets: ['memory'],
-        mcpConnectionIds: [],
-      }],
       message: '# IDF\n\nInspect the repository.',
     }, {
       LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
       LIQUIDAITY_INTERNAL_MCP_URL: 'http://127.0.0.1:8765/mcp',
     }, 'root-context');
 
-    expect(projection.mcpServers).toHaveLength(3);
-    expect(projection.mcpServers.map((server) => server.url)).toEqual([
-      'http://127.0.0.1:8765/mcp',
-      'http://127.0.0.1:8765/mcp',
-      'http://127.0.0.1:8765/mcp',
-    ]);
+    expect(projection.mcpServers).toHaveLength(1);
     const sessionConfig = (projection.sessionMeta.hermes as any).sessionConfig;
-    expect(sessionConfig.enabledTools).toEqual(['memory', 'delegate_task']);
+    expect(sessionConfig.enabledToolsets).toEqual(expect.arrayContaining([
+      'memory',
+      'delegation',
+      expect.stringMatching(/^mcp-main-runtime-/),
+    ]));
+    expect(sessionConfig.enabledTools).toEqual(['delegate_task']);
+    expect(sessionConfig).not.toHaveProperty('delegateProfiles');
     expect(sessionConfig.executionContextId).toBe('root-context');
     expect(sessionConfig.toolCallMeta).toEqual({
       'liquidaity/execution': 'root-context',
     });
-    expect(sessionConfig.delegateProfiles).toEqual([
-      expect.objectContaining({
-        id: 'card_coder',
-        systemPrompt: 'Saved Coder prompt',
-        model: 'gpt-5.6-terra',
-        enabledTools: ['terminal'],
-        skills: ['repository-coder'],
-        enabledToolsets: expect.arrayContaining(['terminal']),
-      }),
-      expect.objectContaining({
-        id: 'card_hermes_steward',
-        systemPrompt: 'Saved Kanban prompt',
-        model: 'gpt-5.6-terra',
-        enabledTools: ['memory'],
-        skills: ['research'],
-        enabledToolsets: expect.arrayContaining(['memory']),
-      }),
-    ]);
 
-    const claims = projection.mcpServers.map((server: any) => {
-      const bearer = String(server.headers[0].value).replace(/^Bearer /, '');
-      return JSON.parse(Buffer.from(bearer.split('.')[1], 'base64url').toString('utf8'));
-    });
-    expect(claims).toEqual([
-      expect.objectContaining({
-        principal: expect.objectContaining({
-          callerCardId: 'card_main_chat', grantedTools: ['canvas.inspect'],
-          requiresExecutionContext: true,
-        }),
+    const bearer = String((projection.mcpServers[0] as any).headers[0].value)
+      .replace(/^Bearer /, '');
+    const claims = JSON.parse(Buffer.from(bearer.split('.')[1], 'base64url').toString('utf8'));
+    expect(claims).toEqual(expect.objectContaining({
+      principal: expect.objectContaining({
+        callerCardId: 'card_main_chat',
+        grantedTools: ['canvas.inspect'],
+        requiresExecutionContext: true,
       }),
-      expect.objectContaining({
-        principal: expect.objectContaining({
-          callerCardId: 'card_coder', grantedTools: ['cbm.search_graph'],
-          requiresExecutionContext: true,
-        }),
-      }),
-      expect.objectContaining({
-        principal: expect.objectContaining({
-          callerCardId: 'card_hermes_steward', grantedTools: ['knowgraph.search'],
-          callerRuntimeMode: 'kanban', requiresExecutionContext: true,
-        }),
-      }),
-    ]);
+    }));
   });
-
-  it('rejects a delegate that would require a different provider authority', () => {
-    const args: any = {
-      sessionKey: 'session-1', projectId: 'project-1', deckId: 'deck_builder',
-      conversationId: 'conversation-1', parentRunId: 'main-run-1',
-      cardId: 'card_main_chat', title: 'Main',
-      runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
-      prompt: '', provider: 'openai', modelKey: 'gpt-5.6-luna',
-      providerModelId: 'gpt-5.6-luna', accessMode: 'chatgpt-account',
-      tools: [], nativeTools: [], skills: [], toolsets: [], mcpConnectionIds: [],
-      message: '# IDF',
-      delegateProfiles: [{
-        cardId: 'card_paid', title: 'Paid',
-        runtime: { kind: 'hermes', mode: 'delegate', profile: 'paid' },
-        prompt: '', provider: 'openrouter', modelKey: 'model', providerModelId: 'model',
-        accessMode: 'openrouter-api', tools: [], nativeTools: [], skills: [],
-        toolsets: [], mcpConnectionIds: [],
-      }],
-    };
-    expect(() => buildHermesHostSessionProjection(args, {})).toThrow(
-      'hermes_delegate_provider_authority_mismatch:card_paid',
-    );
-  });
-
 });

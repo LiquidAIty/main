@@ -39,4 +39,19 @@ describe('BuilderChat', () => {
     fireEvent.click(send);
     expect(onSend).not.toHaveBeenCalled();
   });
+
+  it('keeps delegation and preview controls out of the chat composer', () => {
+    render(
+      <BuilderChat
+        messages={[]}
+        onSend={vi.fn()}
+        knowledgeProjectId="project-1"
+        colors={colors}
+      />,
+    );
+
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.getAllByRole('button')).toHaveLength(2);
+    expect(screen.getByPlaceholderText('Type a message…')).not.toBeNull();
+  });
 });

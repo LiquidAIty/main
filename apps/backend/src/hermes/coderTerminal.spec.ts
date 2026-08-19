@@ -1,7 +1,9 @@
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { resolveRepoRoot } from '../coder/workspaceRoot';
 
 import {
+  buildHermesOperatorTerminalLaunch,
   HermesCoderTerminalManager,
   HermesCoderTerminalSession,
   redactTerminalSecrets,
@@ -32,6 +34,27 @@ function sessionInfo(): ConsoleSessionInfo {
 }
 
 describe('Hermes Coder terminal boundary', () => {
+  it('launches a shell with the repo-owned Hermes CLI first on PATH', () => {
+    const launch = buildHermesOperatorTerminalLaunch();
+    const repoRoot = resolveRepoRoot();
+    const expectedCli = path.join(
+      repoRoot,
+      'Hermes',
+      'venv',
+      'Scripts',
+      process.platform === 'win32' ? 'hermes.exe' : 'hermes',
+    );
+    const pathKey = Object.keys(launch.env).find((key) => key.toLowerCase() === 'path');
+
+    expect(launch.hermesCli).toBe(expectedCli);
+    expect(launch.hermesHome).toBe(path.join(repoRoot, 'Hermes', '.hermes'));
+    expect(pathKey).toBeDefined();
+    expect(launch.env[pathKey!]?.split(path.delimiter)[0]).toBe(path.dirname(expectedCli));
+    expect(launch.env.HERMES_HOME).toBe(launch.hermesHome);
+    expect(launch.commandPath).toContain(`hermes=${expectedCli}`);
+    expect(launch.commandPath).not.toMatch(/AppData|Docker/i);
+  });
+
   it('rejects noninteractive execution instead of becoming another task runner', () => {
     const result = new HermesCoderTerminalManager().start({ mode: 'task' });
     expect(result).toEqual({
@@ -63,5 +86,26 @@ describe('Hermes Coder terminal boundary', () => {
     session.emitOutput('stdout', 'TOKEN=example_secret_123456789');
     expect(session.transcript()).toHaveLength(1);
     expect(session.transcript()[0]?.data).toBe('TOKEN= <redacted>');
+  });
+
+  it('uses the native Windows PTY kill contract when stopping a session', () => {
+    let onExit: ((event: { exitCode: number; signal?: number }) => void) | undefined;
+    const child = {
+      pid: 42,
+      onData: vi.fn(),
+      onExit: vi.fn((callback: (event: { exitCode: number; signal?: number }) => void) => {
+        onExit = callback;
+      }),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+    };
+    const session = new HermesCoderTerminalSession(sessionInfo());
+    session.attach(child);
+    session.markRunning();
+
+    expect(session.stop()).toBe(true);
+    expect(child.kill).toHaveBeenCalledWith(process.platform === 'win32' ? undefined : 'SIGTERM');
+    onExit?.({ exitCode: 0 });
   });
 });

@@ -68,13 +68,12 @@ start runtimes.
 `apps/backend/src/hermes/coderTerminal.ts` owns the Coder terminal lifecycle. Main, Coder, and Kanban
 share the genuine repo-owned Hermes codebase. Every persistent top-level Hermes Card process receives
 its own `HERMES_HOME`, working directory, session, and memory boundary. A native `delegate_task` child
-is ephemeral inside its owning parent's Hermes process. If it selects an authorized saved profile,
-its child Run belongs to that target Card; without a saved profile it belongs to the originating Card.
-Every child receives a distinct Run before execution and uses an opaque host-issued MCP 2 execution
-context. It receives the selected saved prompt/model/tool profile and a separate child session
-database, but currently inherits the parent's profile home. Do not describe that child as having
-independent persistent memory until Hermes exposes a safe per-agent home boundary or LiquidAIty runs
-it as another top-level Card process.
+is ephemeral inside its owning parent's Hermes process. It remains activity of that same saved Card,
+inherits the Card-bounded native and MCP tool surface through Hermes' native rules, and is not another
+saved Card or profile. Every child receives a distinct Run and `nativeChildId` before execution and
+uses an opaque host-issued MCP 2 execution context. It has a separate child session database but
+inherits the parent's profile home. Do not describe that child as having independent persistent memory
+or identity; a separately saved Main, Coder, or Helper Card instead runs as its own top-level profile.
 
 The backend injects server-owned Card, conversation, Run, and correlation identity. Hermes receives the
 exact materialized IDF plus saved-card context. No generic model call or another agent runtime hides
@@ -217,20 +216,23 @@ stays in the backend adapter whenever possible. Any Hermes edit must remain narr
 and justified against an unavailable upstream adapter/configuration hook.
 
 The current contained divergence tracks
-[`NousResearch/hermes-agent`](https://github.com/NousResearch/hermes-agent) at upstream commit
-`210cdb0ed35d4f7ef0957182312baaaa9e19bfbc`. ACP has no native host contract for publishing a bounded
-set of named child profiles, so `Hermes/acp_adapter/host_profiles.py` plus marked hooks in
-`acp_adapter/session.py`, `acp_adapter/server.py`, and `tools/delegate_tool.py` accept only trusted
-`_meta.hermes.sessionConfig`. The extension contains no LiquidAIty Card types or credentials: the
-backend maps saved Cards into ordinary Hermes prompt/model/toolset/tool/skill fields, gives each Card a
-separately scoped authenticated connection to the same official MCP host, and lets the model select
-only an opaque profile ID. Sessions without that metadata retain upstream Hermes behavior. Focused
-no-provider tests live in `Hermes/tests/acp_adapter/test_host_profiles.py` and
-`Hermes/tests/tools/test_delegate.py`. The generic child execution-context extension additionally
-touches `Hermes/tools/mcp_tool.py` so official MCP 2 per-call `meta=` carries only an opaque host-issued
-context ID. The complete rebase, rollback, and upstream-contribution plan is owned by
-`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. On each Hermes refresh, remove a divergence if upstream supplies
-the equivalent public hook; otherwise reapply only its marked symbols and rerun the registered tests.
+[`NousResearch/hermes-agent`](https://github.com/NousResearch/hermes-agent) release `v2026.8.18`
+(package version `0.20.4`) at upstream commit
+`e624e9fde561e1add9388384012b295fde669ade`. ACP has no native host contract for publishing a bounded
+session tool surface or allocating an execution context before a native child starts, so
+`Hermes/acp_adapter/host_profiles.py` plus marked hooks in `acp_adapter/session.py`,
+`acp_adapter/server.py`, and `tools/delegate_tool.py` accept only trusted
+`_meta.hermes.sessionConfig` and generic child lifecycle requests. The extension contains no
+LiquidAIty Card types, product policy, or credentials. The backend maps each top-level saved Card to
+ordinary Hermes profile, prompt, model, toolset, tool, skill, and MCP fields. Native subagents inherit
+that bounded parent surface and remain Runs of the owning Card. Sessions without the metadata retain
+upstream Hermes behavior. Focused no-provider tests live in
+`Hermes/tests/acp_adapter/test_host_profiles.py` and `Hermes/tests/tools/test_delegate.py`. The generic
+child execution-context extension additionally touches `Hermes/tools/mcp_tool.py` so official MCP 2
+per-call `meta=` carries only an opaque host-issued context ID. The complete rebase, rollback, and
+upstream-contribution plan is owned by `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. On each Hermes refresh,
+remove a divergence if upstream supplies the equivalent public hook; otherwise reapply only its marked
+symbols and rerun the registered tests.
 
 OpenClaude/LocalCoder is not a vendor boundary, package root, fallback, or supported runtime in Core v0.
 WorldSignals, Engraphis, and other imported roots remain isolated owners and are not ordinary cleanup

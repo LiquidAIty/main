@@ -673,116 +673,6 @@ def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
     assert "PRODUCED_ARTIFACT" in statements[0][0]
 
 
-def test_native_hermes_child_run_uses_saved_profile_card_and_parent_lineage(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    statements = []
-    parent = {
-        "run_id": "main-run",
-        "project_id": "project-one",
-        "deck_id": "deck-one",
-        "target_card_revision_id": "main-revision",
-        "runtime_kind": "hermes",
-        "runtime_mode": "main",
-        "provider": "openai",
-        "model_key": "main-model",
-        "provider_model_id": "main-model",
-        "access_mode": "chatgpt-account",
-        "saved_idf_id": None,
-        "saved_idf_revision": None,
-        "state": "running",
-        "card_id": "card_main_chat",
-    }
-    coder_revision = {
-        "revision_id": "coder-revision",
-        "runtime_kind": "hermes",
-        "runtime_mode": "delegate",
-        "provider": "openai",
-        "model_key": "coder-model",
-        "provider_model_id": "coder-model",
-        "access_mode": "chatgpt-account",
-    }
-
-    class Cursor:
-        rowcount = 1
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def execute(self, statement, params):
-            statements.append((statement, params))
-
-        def fetchall(self):
-            return [parent]
-
-        def fetchone(self):
-            return coder_revision
-
-    class Connection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def cursor(self, **_kwargs):
-            return Cursor()
-
-    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
-        "projectId": "project-one",
-        "deck": {
-            "nodes": [{
-                "id": "card_coder",
-                "kind": "agent",
-                "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
-            }],
-            "edges": [{
-                "source": "card_main_chat",
-                "target": "card_coder",
-                "edgeType": "flow",
-            }],
-        },
-    })
-    observed = []
-    monkeypatch.setattr(
-        card_domain,
-        "_observe_run_start",
-        lambda prepared, payload, **kwargs: observed.append((prepared, payload, kwargs)) or True,
-    )
-
-    result = card_domain.begin_native_hermes_child_run({
-        "runId": "child-run",
-        "correlationId": "child-correlation",
-        "rootRunId": "main-run",
-        "parentRunId": "main-run",
-        "projectId": "project-one",
-        "deckId": "deck-one",
-        "conversationId": "conversation-one",
-        "cardId": "card_coder",
-        "nativeChildId": "sa-coder",
-        "delegateProfileId": "card_coder",
-    })
-    assert result == {
-        "ok": True,
-        "runId": "child-run",
-        "parentRunId": "main-run",
-        "rootRunId": "main-run",
-        "cardId": "card_coder",
-        "nativeChildId": "sa-coder",
-        "telemetryWritten": True,
-    }
-    insert = next((params for query, params in statements if "INSERT INTO ag_catalog.agent_runs" in query))
-    assert insert[3] == "coder-revision"
-    assert insert[4:6] == ("hermes", "delegate")
-    assert observed[0][0]["cardContext"]["cardId"] == "card_coder"
-    assert observed[0][1]["originatingRunId"] == "main-run"
-    assert observed[0][1]["nativeChildId"] == "sa-coder"
-
-
 def test_native_hermes_ephemeral_child_keeps_originating_card_revision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -828,7 +718,12 @@ def test_native_hermes_ephemeral_child_keeps_originating_card_revision(
             return Cursor()
 
     monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(card_domain, "_observe_run_start", lambda *_args, **_kwargs: True)
+    observed = []
+    monkeypatch.setattr(
+        card_domain,
+        "_observe_run_start",
+        lambda prepared, payload, **kwargs: observed.append((prepared, payload, kwargs)) or True,
+    )
 
     result = card_domain.begin_native_hermes_child_run({
         "runId": "ephemeral-run",
@@ -849,6 +744,26 @@ def test_native_hermes_ephemeral_child_keeps_originating_card_revision(
     assert result["cardId"] == "card_main_chat"
     assert result["parentRunId"] == "main-run"
     assert result["nativeChildId"] == "sa-ephemeral"
+    assert observed[0][0]["cardContext"]["cardId"] == "card_main_chat"
+    assert observed[0][1] == {
+        "originatingRunId": "main-run",
+        "rootRunId": "main-run",
+        "conversationId": "conversation-one",
+        "nativeChildId": "sa-ephemeral",
+    }
+
+    with pytest.raises(card_domain.CardDomainError, match="hermes_child_parent_card_mismatch"):
+        card_domain.begin_native_hermes_child_run({
+            "runId": "forged-child-run",
+            "correlationId": "forged-child-correlation",
+            "rootRunId": "main-run",
+            "parentRunId": "main-run",
+            "projectId": "project-one",
+            "deckId": "deck-one",
+            "conversationId": "conversation-one",
+            "cardId": "card_coder",
+            "nativeChildId": "sa-forged",
+        })
 
 
 def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
