@@ -8,7 +8,7 @@ import {
 } from '../services/mcp/pythonAgentMcpClient';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { resolveSavedMcpConnections } from './mcpConnections';
-import { ensureHermesHolographicMemoryProfile } from './profileMemory';
+import { ensureHermesHolographicMemoryHome } from './profileMemory';
 import {
   createHermesChildExecutionContext,
   bindHermesRootExecutionSession,
@@ -17,7 +17,7 @@ import {
   registerHermesRootExecutionContext,
 } from './childExecutionContext';
 
-export { resolveHermesCardRuntimeHome } from './profileMemory';
+export { resolveHermesRuntimeHome } from './profileMemory';
 
 export type HermesTurnUsage = {
   providerInputTokens: number | null;
@@ -88,7 +88,20 @@ export type HermesTurnHandle = {
     };
   }>;
   resolved: { cardId: string; provider: string; modelKey: string; providerModelId: string };
-  runtime: { executable: string; pid: number | null; profileHome: string; transport: 'acp-stdio' };
+  runtime: {
+    executable: string;
+    pid: number | null;
+    hermesHome: string;
+    sessionId: string;
+    transport: 'acp-stdio';
+  };
+};
+
+export type HermesPreparedSession = HermesTurnHandle['runtime'] & {
+  cardId: string;
+  provider: string;
+  modelKey: string;
+  providerModelId: string;
 };
 
 type PendingRequest = {
@@ -103,14 +116,6 @@ type ActiveTurn = {
   permissionRequestIds: Map<string, number | string>;
   rootExecutionContextId: string;
 };
-
-function safeProfile(value: unknown): string {
-  const profile = String(value || '').trim().toLowerCase();
-  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile)) {
-    throw new Error('hermes_profile_invalid');
-  }
-  return profile;
-}
 
 function resolveHermesInstall(): { root: string; executable: string } {
   const root = path.join(resolveRepoRoot(), 'Hermes');
@@ -210,6 +215,8 @@ export function buildHermesHostSessionProjection(
           enabledTools: uniqueStrings([
             ...args.nativeTools,
           ]),
+          hostSessionKey: args.sessionKey,
+          systemPrompt: args.prompt,
           ...(executionContextId ? {
             executionContextId,
             toolCallMeta: executionToolCallMeta(executionContextId),
@@ -222,7 +229,7 @@ export function buildHermesHostSessionProjection(
 
 class AcpProcess {
   readonly executable: string;
-  readonly profileHome: string;
+  readonly hermesHome: string;
   readonly transport = 'acp-stdio' as const;
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<number, PendingRequest>();
@@ -234,16 +241,16 @@ class AcpProcess {
   private stderrTail: string[] = [];
   private ready: Promise<void>;
 
-  constructor(profile: string) {
+  constructor() {
     const install = resolveHermesInstall();
     this.executable = install.executable;
-    this.profileHome = ensureHermesHolographicMemoryProfile(install.root, profile);
+    this.hermesHome = ensureHermesHolographicMemoryHome(install.root);
     const childEnv = withoutInternalMcpSecret(process.env);
     this.child = spawn(this.executable, [], {
       cwd: install.root,
       env: {
         ...childEnv,
-        HERMES_HOME: this.profileHome,
+        HERMES_HOME: this.hermesHome,
         HERMES_ACP_SKIP_CONFIGURED_MCP: '1',
       },
       windowsHide: true,
@@ -462,7 +469,10 @@ class AcpProcess {
     return cwd;
   }
 
-  private async resolveSession(args: HermesTurnArgs, executionContextId: string): Promise<string> {
+  private async resolveSession(
+    args: HermesTurnArgs,
+    executionContextId: string,
+  ): Promise<{ sessionId: string; reused: boolean }> {
     const existing = this.sessionByKey.get(args.sessionKey);
     const cwd = this.sessionCwd(args.sessionKey, args.workingDirectory);
     const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(
@@ -471,15 +481,9 @@ class AcpProcess {
       executionContextId,
     );
     if (existing) {
-      await this.request('session/load', {
-        cwd,
-        sessionId: existing,
-        mcpServers,
-        _meta: sessionMeta,
-      });
-      return existing;
+      return { sessionId: existing, reused: true };
     }
-    const listed = await this.request('session/list', { cwd });
+    const listed = await this.request('session/list', { cwd, _meta: sessionMeta });
     const persisted = Array.isArray(listed?.sessions) ? listed.sessions[0]?.sessionId : null;
     if (persisted) {
       await this.request('session/load', {
@@ -489,7 +493,7 @@ class AcpProcess {
         _meta: sessionMeta,
       });
       this.sessionByKey.set(args.sessionKey, persisted);
-      return persisted;
+      return { sessionId: persisted, reused: true };
     }
     const created = await this.request('session/new', {
       cwd,
@@ -499,14 +503,35 @@ class AcpProcess {
     const sessionId = String(created?.sessionId || '');
     if (!sessionId) throw new Error('hermes_acp_session_id_missing');
     this.sessionByKey.set(args.sessionKey, sessionId);
-    return sessionId;
+    return { sessionId, reused: false };
+  }
+
+  private async configureModel(sessionId: string, args: HermesTurnArgs): Promise<void> {
+    const modelChoice = `${providerForHermes(args.provider, args.accessMode)}:${args.providerModelId}`;
+    if (this.configuredModelBySession.get(sessionId) === modelChoice) return;
+    await this.request('session/set_model', { sessionId, modelId: modelChoice });
+    this.configuredModelBySession.set(sessionId, modelChoice);
+  }
+
+  async prepareSession(args: HermesTurnArgs): Promise<HermesPreparedSession> {
+    await this.ready;
+    const { sessionId } = await this.resolveSession(args, '');
+    await this.configureModel(sessionId, args);
+    return {
+      cardId: args.cardId,
+      provider: args.provider,
+      modelKey: args.modelKey,
+      providerModelId: args.providerModelId,
+      executable: this.executable,
+      pid: this.pid,
+      hermesHome: this.hermesHome,
+      sessionId,
+      transport: this.transport,
+    };
   }
 
   async startTurn(args: HermesTurnArgs, onEvent: (event: HermesSessionEvent) => void): Promise<HermesTurnHandle> {
     await this.ready;
-    if (args.runtime.mode === 'kanban') {
-      throw new Error('hermes_acp_kanban_gateway_required');
-    }
     const provisionalSessionId = args.sessionKey;
     const rootContext = registerHermesRootExecutionContext({
       sessionId: provisionalSessionId,
@@ -521,14 +546,20 @@ class AcpProcess {
     let sessionId: string;
     let active: ActiveTurn;
     try {
-      sessionId = await this.resolveSession(args, rootContext.contextId);
+      ({ sessionId } = await this.resolveSession(args, rootContext.contextId));
       bindHermesRootExecutionSession(rootContext.contextId, sessionId);
       if (this.turns.has(sessionId)) throw new Error('hermes_session_turn_already_running');
-      const modelChoice = `${providerForHermes(args.provider, args.accessMode)}:${args.providerModelId}`;
-      if (this.configuredModelBySession.get(sessionId) !== modelChoice) {
-        await this.request('session/set_model', { sessionId, modelId: modelChoice });
-        this.configuredModelBySession.set(sessionId, modelChoice);
-      }
+      await this.configureModel(sessionId, args);
+      const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(
+        args,
+        process.env,
+        rootContext.contextId,
+      );
+      await this.request('_session/configure_host', {
+        sessionId,
+        mcpServers,
+        _meta: sessionMeta,
+      });
       active = {
         onEvent,
         fullText: '',
@@ -606,22 +637,20 @@ class AcpProcess {
       runtime: {
         executable: this.executable,
         pid: this.pid,
-        profileHome: this.profileHome,
+        hermesHome: this.hermesHome,
+        sessionId,
         transport: this.transport,
       },
     };
   }
 }
 
-const processes = new Map<string, AcpProcess>();
+let processOwner: AcpProcess | null = null;
 
-function processForProfile(profile: string): AcpProcess {
-  const normalized = safeProfile(profile);
-  const existing = processes.get(normalized);
-  if (existing) return existing;
-  const created = new AcpProcess(normalized);
-  processes.set(normalized, created);
-  return created;
+function sharedHermesProcess(): AcpProcess {
+  if (processOwner) return processOwner;
+  processOwner = new AcpProcess();
+  return processOwner;
 }
 
 export function deriveHermesSessionKey(projectId: string, conversationId: string, cardId: string): string {
@@ -632,10 +661,16 @@ export async function startHermesTurn(
   args: HermesTurnArgs,
   onEvent: (event: HermesSessionEvent) => void,
 ): Promise<HermesTurnHandle> {
-  return processForProfile(args.runtime.profile).startTurn(args, onEvent);
+  return sharedHermesProcess().startTurn(args, onEvent);
+}
+
+export async function prepareHermesSession(
+  args: HermesTurnArgs,
+): Promise<HermesPreparedSession> {
+  return sharedHermesProcess().prepareSession(args);
 }
 
 export function closeHermesRuntimes(): void {
-  for (const process of processes.values()) process.close();
-  processes.clear();
+  processOwner?.close();
+  processOwner = null;
 }

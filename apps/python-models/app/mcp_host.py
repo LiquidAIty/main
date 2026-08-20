@@ -40,6 +40,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from collections import deque
 from concurrent.futures import Future
 from contextvars import ContextVar
@@ -135,6 +136,10 @@ _CATALOG_DIAGNOSTIC_LOCK = threading.Lock()
 _LATEST_CATALOG_DIAGNOSTIC: dict[str, Any] | None = None
 _CATALOG_STATE = "initializing"
 _CATALOG_FAILURE: str | None = None
+_CATALOG_FAILURE_CODE: str | None = None
+_CATALOG_FAILURE_SUMMARY: str | None = None
+_CATALOG_COMPLETED_FAMILIES: tuple[str, ...] = ()
+_CATALOG_INITIALIZING_FAMILY: str | None = "liquidaity"
 _HTTP_CATALOG_TOOLS: tuple[Tool, ...] | None = None
 _HTTP_CATALOG_INITIALIZATION_TASK: asyncio.Task[None] | None = None
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
@@ -215,10 +220,12 @@ def _trace(event: str, **fields: Any) -> None:
     """Emit bounded MCP diagnostics to stderr without request or product data."""
     allowed = {
         "catalog_count",
+        "catalog_family",
         "catalog_hash",
         "client_hash",
         "completed",
         "exception_class",
+        "failure_code",
         "http_method",
         "mcp_method",
         "response_status",
@@ -270,11 +277,20 @@ def _catalog_diagnostics() -> dict[str, Any]:
         identity = dict(_LATEST_CATALOG_DIAGNOSTIC or {})
         state = _CATALOG_STATE
         failure = _CATALOG_FAILURE
+        failure_code = _CATALOG_FAILURE_CODE
+        failure_summary = _CATALOG_FAILURE_SUMMARY
+        completed_families = list(_CATALOG_COMPLETED_FAMILIES)
+        initializing_family = _CATALOG_INITIALIZING_FAMILY
     return {
+        "state": state,
         "catalogState": state,
         "catalogReady": state == "ready" and bool(identity),
         **({"catalogFailure": failure} if failure else {}),
-        **identity,
+        **({"failureCode": failure_code} if failure_code else {}),
+        **({"failureSummary": failure_summary} if failure_summary else {}),
+        "completedCatalogFamilies": completed_families,
+        "initializingCatalogFamily": initializing_family,
+        **(identity if state == "ready" else {}),
         "processId": _STARTUP_PROCESS_ID,
         "startupId": _STARTUP_ID,
         "sourceRevision": _STARTUP_SOURCE_REVISION,
@@ -326,6 +342,42 @@ def _sanitize_failure_detail(value: Any) -> str:
         detail,
     )
     return detail
+
+
+def _catalog_failure_details(error: Exception) -> tuple[str, str]:
+    """Return a stable failure code and an HTTP-safe bounded summary."""
+    detail = _sanitize_failure_detail(error)
+    if "CBM daemon could not start within 30000 ms" in str(error):
+        code = "native_cbm_daemon_start_timeout"
+    else:
+        match = re.match(r"^([a-z][a-z0-9_]+)(?::|$)", detail)
+        if match is not None:
+            code = match.group(1)
+        else:
+            with _CATALOG_DIAGNOSTIC_LOCK:
+                family = _CATALOG_INITIALIZING_FAMILY
+            code = (
+                f"{family}_catalog_initialization_failed"
+                if family
+                else "catalog_initialization_failed"
+            )
+    return code, f"{error.__class__.__name__}: {detail or 'no detail'}"
+
+
+def _set_catalog_initializing_family(family: str) -> None:
+    global _CATALOG_INITIALIZING_FAMILY
+    with _CATALOG_DIAGNOSTIC_LOCK:
+        _CATALOG_INITIALIZING_FAMILY = family
+    _trace("catalog_family_initializing", catalog_family=family, completed=False)
+
+
+def _complete_catalog_family(family: str) -> None:
+    global _CATALOG_COMPLETED_FAMILIES, _CATALOG_INITIALIZING_FAMILY
+    with _CATALOG_DIAGNOSTIC_LOCK:
+        if family not in _CATALOG_COMPLETED_FAMILIES:
+            _CATALOG_COMPLETED_FAMILIES = (*_CATALOG_COMPLETED_FAMILIES, family)
+        _CATALOG_INITIALIZING_FAMILY = None
+    _trace("catalog_family_ready", catalog_family=family, completed=True)
 
 
 def _typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any]:
@@ -1408,8 +1460,16 @@ def _open_native_cbm_client(
     args: list[str],
     cwd: str,
 ) -> tuple[_NativeStdioMcpClient, tuple[Tool, ...], list[str]]:
-    """Open one native CBM client, retrying its proven bootstrap race once."""
-    for attempt in range(2):
+    """Open one native CBM client within the existing request-time budget.
+
+    Native CBM 0.10.2 may leave its daemon starting after the attaching client
+    reaches the daemon's own 30-second handoff deadline. Reattach only for that
+    exact race, against the same Compose-owned authority, until the existing
+    catalog request budget is exhausted.
+    """
+    deadline = time.monotonic() + _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
+    attempt_limit = max(2, int(_NATIVE_CBM_REQUEST_TIMEOUT_SECONDS // 30))
+    for attempt in range(attempt_limit):
         client: _NativeStdioMcpClient | None = None
         try:
             client = _NativeStdioMcpClient(command, args, cwd)
@@ -1421,16 +1481,23 @@ def _open_native_cbm_client(
         except Exception as error:
             if client is not None:
                 client.close()
-            if attempt == 0 and _is_native_cbm_bootstrap_race(error):
+            if _is_native_cbm_bootstrap_race(error):
+                remaining = deadline - time.monotonic()
+                if attempt + 1 >= attempt_limit or remaining <= 0:
+                    raise RuntimeError(
+                        "native_cbm_daemon_start_timeout: native daemon did not "
+                        "become attachable within the catalog request budget"
+                    ) from error
                 _trace(
                     "native_cbm_bootstrap_retry",
                     exception_class=error.__class__.__name__,
                     result_category="dependency_retry",
                     completed=False,
                 )
+                time.sleep(min(1.0, remaining))
                 continue
             raise
-    raise RuntimeError("native_cbm_bootstrap_retry_exhausted")
+    raise RuntimeError("native_cbm_daemon_start_timeout")
 
 
 def _initialize_native_cbm_sync() -> None:
@@ -1898,13 +1965,20 @@ async def _materialize_complete_catalog() -> list[Tool]:
     allowlist = _configured_tool_allowlist()
     if allowlist is not None:
         tools = [tool for tool in tools if tool.name in allowlist]
+    _complete_catalog_family("liquidaity")
     native_catalogs: dict[str, list[Tool]] = {}
     if allowlist is None or any(name.startswith("engraphis.") for name in allowlist):
+        _set_catalog_initializing_family("engraphis")
         native_catalogs["engraphis"] = await _native_engraphis_tools()
+        _complete_catalog_family("engraphis")
     if allowlist is None or any(name.startswith("cbm.") for name in allowlist):
+        _set_catalog_initializing_family("cbm")
         native_catalogs["cbm"] = await _native_cbm_tools()
+        _complete_catalog_family("cbm")
     if allowlist is None or any(name.startswith("graphiti.") for name in allowlist):
+        _set_catalog_initializing_family("graphiti")
         native_catalogs["graphiti"] = await _native_graphiti_tools()
+        _complete_catalog_family("graphiti")
     for provider, native_tools in native_catalogs.items():
         tools.extend(_namespace_native_tools(provider, native_tools))
     if allowlist is not None:
@@ -1946,11 +2020,17 @@ async def _materialize_complete_catalog() -> list[Tool]:
 
 async def _initialize_http_catalog_once() -> None:
     """Freeze the complete public HTTP catalog once without delaying the bind."""
-    global _CATALOG_FAILURE, _CATALOG_STATE, _HTTP_CATALOG_TOOLS
+    global _CATALOG_COMPLETED_FAMILIES, _CATALOG_FAILURE, _CATALOG_FAILURE_CODE
+    global _CATALOG_FAILURE_SUMMARY, _CATALOG_INITIALIZING_FAMILY, _CATALOG_STATE
+    global _HTTP_CATALOG_TOOLS
     global _LATEST_CATALOG_DIAGNOSTIC
     with _CATALOG_DIAGNOSTIC_LOCK:
         _CATALOG_STATE = "initializing"
         _CATALOG_FAILURE = None
+        _CATALOG_FAILURE_CODE = None
+        _CATALOG_FAILURE_SUMMARY = None
+        _CATALOG_COMPLETED_FAMILIES = ()
+        _CATALOG_INITIALIZING_FAMILY = "liquidaity"
         _HTTP_CATALOG_TOOLS = None
         _LATEST_CATALOG_DIAGNOSTIC = None
     try:
@@ -1964,20 +2044,38 @@ async def _initialize_http_catalog_once() -> None:
             )
         catalog_count, catalog_hash = _catalog_identity(list(tools))
     except asyncio.CancelledError:
+        with _CATALOG_DIAGNOSTIC_LOCK:
+            if _CATALOG_STATE == "initializing":
+                _CATALOG_STATE = "failed"
+                _CATALOG_FAILURE = "CancelledError: catalog initialization cancelled"
+                _CATALOG_FAILURE_CODE = "catalog_initialization_cancelled"
+                _CATALOG_FAILURE_SUMMARY = _CATALOG_FAILURE
+                _HTTP_CATALOG_TOOLS = None
+                _LATEST_CATALOG_DIAGNOSTIC = None
         raise
     except Exception as error:
-        failure = (
-            f"{error.__class__.__name__}: {_sanitize_failure_detail(error)}"
-        )
+        failure_code, failure = _catalog_failure_details(error)
+        with _TRACE_LOCK:
+            print(
+                "[main-mcp] catalog initialization failed; full local traceback follows",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exception(
+                error.__class__, error, error.__traceback__, file=sys.stderr
+            )
         with _CATALOG_DIAGNOSTIC_LOCK:
             _CATALOG_STATE = "failed"
             _CATALOG_FAILURE = failure
+            _CATALOG_FAILURE_CODE = failure_code
+            _CATALOG_FAILURE_SUMMARY = failure
             _HTTP_CATALOG_TOOLS = None
             _LATEST_CATALOG_DIAGNOSTIC = None
         _trace(
             "catalog_initialization_failed",
             exception_class=error.__class__.__name__,
-            result_category="catalog_initialization_failed",
+            failure_code=failure_code,
+            result_category=failure_code,
             completed=True,
         )
         return
@@ -1989,7 +2087,59 @@ async def _initialize_http_catalog_once() -> None:
             "catalogHash": catalog_hash,
         }
         _CATALOG_FAILURE = None
+        _CATALOG_FAILURE_CODE = None
+        _CATALOG_FAILURE_SUMMARY = None
+        _CATALOG_INITIALIZING_FAMILY = None
         _CATALOG_STATE = "ready"
+
+
+def _observe_http_catalog_initialization(task: asyncio.Task[None]) -> None:
+    """Fail closed if the one initializer ends without publishing a terminal state."""
+    global _CATALOG_FAILURE, _CATALOG_FAILURE_CODE, _CATALOG_FAILURE_SUMMARY
+    global _CATALOG_STATE, _HTTP_CATALOG_TOOLS, _LATEST_CATALOG_DIAGNOSTIC
+    with _CATALOG_DIAGNOSTIC_LOCK:
+        if _CATALOG_STATE != "initializing":
+            return
+    if task.cancelled():
+        failure_code = "catalog_initialization_cancelled"
+        failure = "CancelledError: catalog initialization cancelled"
+        error: BaseException | None = None
+    else:
+        error = task.exception()
+        if error is None:
+            failure_code = "catalog_initializer_ended_without_state"
+            failure = "RuntimeError: catalog initializer ended without a terminal state"
+        elif isinstance(error, Exception):
+            failure_code, failure = _catalog_failure_details(error)
+        else:
+            failure_code = "catalog_initializer_crashed"
+            failure = f"{error.__class__.__name__}: {_sanitize_failure_detail(error)}"
+    with _CATALOG_DIAGNOSTIC_LOCK:
+        if _CATALOG_STATE != "initializing":
+            return
+        _CATALOG_STATE = "failed"
+        _CATALOG_FAILURE = failure
+        _CATALOG_FAILURE_CODE = failure_code
+        _CATALOG_FAILURE_SUMMARY = failure
+        _HTTP_CATALOG_TOOLS = None
+        _LATEST_CATALOG_DIAGNOSTIC = None
+    if error is not None:
+        with _TRACE_LOCK:
+            print(
+                "[main-mcp] catalog initializer crashed; full local traceback follows",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exception(
+                error.__class__, error, error.__traceback__, file=sys.stderr
+            )
+    _trace(
+        "catalog_initializer_terminated",
+        exception_class=error.__class__.__name__ if error is not None else None,
+        failure_code=failure_code,
+        result_category=failure_code,
+        completed=True,
+    )
 
 
 def _start_http_catalog_initialization() -> asyncio.Task[None]:
@@ -2001,6 +2151,7 @@ def _start_http_catalog_initialization() -> asyncio.Task[None]:
             _initialize_http_catalog_once(),
             name="liquidaity-mcp-catalog-initialization",
         )
+        task.add_done_callback(_observe_http_catalog_initialization)
         _HTTP_CATALOG_INITIALIZATION_TASK = task
     return task
 
@@ -2024,7 +2175,8 @@ def _http_catalog_or_error() -> list[Tool]:
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     """Return no HTTP catalog until the one complete frozen catalog is ready."""
-    global _CATALOG_FAILURE, _CATALOG_STATE
+    global _CATALOG_FAILURE, _CATALOG_FAILURE_CODE, _CATALOG_FAILURE_SUMMARY
+    global _CATALOG_INITIALIZING_FAMILY, _CATALOG_STATE
     if MCP_TRANSPORT == "streamable-http":
         tools = _http_catalog_or_error()
         principal = _internal_mcp_principal()
@@ -2040,15 +2192,19 @@ async def list_tools() -> list[Tool]:
     try:
         tools = await _materialize_complete_catalog()
     except Exception as error:
+        failure_code, failure = _catalog_failure_details(error)
         with _CATALOG_DIAGNOSTIC_LOCK:
             _CATALOG_STATE = "failed"
-            _CATALOG_FAILURE = (
-                f"{error.__class__.__name__}: {_sanitize_failure_detail(error)}"
-            )
+            _CATALOG_FAILURE = failure
+            _CATALOG_FAILURE_CODE = failure_code
+            _CATALOG_FAILURE_SUMMARY = failure
         raise
     with _CATALOG_DIAGNOSTIC_LOCK:
         _CATALOG_STATE = "ready"
         _CATALOG_FAILURE = None
+        _CATALOG_FAILURE_CODE = None
+        _CATALOG_FAILURE_SUMMARY = None
+        _CATALOG_INITIALIZING_FAMILY = None
     return tools
 
 

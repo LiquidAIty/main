@@ -19,23 +19,28 @@ vi.mock('./XtermView', async () => {
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-function session(): ConsoleSessionInfo {
+function session(state: ConsoleSessionInfo['state'] = 'ready'): ConsoleSessionInfo {
   return {
     id: 'coder-terminal-1',
-    targetRoot: 'C:/Projects/main',
+    ownerCardId: 'card_local_coder',
+    projectId: 'project-1',
+    deckId: 'deck_builder',
+    conversationId: 'main',
+    targetRoot: 'C:/Projects/LiquidAIty/main',
     mode: 'interactive',
-    state: 'running',
-    commandPath: 'hermes chat --cli --toolsets file,terminal,memory',
-    runtimeSource: 'hermes_installed',
-    transportMode: 'pty',
-    provider: null,
-    model: null,
+    state,
+    runtimeSource: 'saved_hermes_card',
+    transportMode: 'acp-stdio',
+    profile: 'coder',
+    provider: 'openai',
+    model: 'gpt-5.6-luna',
     interactiveSupported: true,
     pid: 42,
+    nativeSessionId: 'native-coder-session',
+    activeRunId: state === 'working' ? 'run-1' : null,
     startedAt: 'now',
-    exitedAt: null,
-    exitCode: null,
-    exitSignal: null,
+    updatedAt: 'now',
+    stoppedAt: null,
     warnings: [],
     error: null,
   };
@@ -47,7 +52,6 @@ function client(overrides: Partial<CoderTerminalClient> = {}): CoderTerminalClie
     listSessions: vi.fn(async () => []),
     getSession: vi.fn(async () => null),
     sendInput: vi.fn(async () => true),
-    resizeSession: vi.fn(async () => true),
     stopSession: vi.fn(async () => true),
     streamUrl: (id) => `/api/coder/hermes/coder-terminal/sessions/${id}/stream`,
     ...overrides,
@@ -71,42 +75,67 @@ async function render(element: React.ReactNode) {
   await act(async () => root?.render(element));
 }
 
+const identityProps = {
+  projectId: 'project-1',
+  deckId: 'deck_builder',
+  conversationId: 'main',
+};
+
 describe('CoderTerminalPanel', () => {
-  it('renders the saved Coder terminal without another agent identity', async () => {
-    await render(<CoderTerminalPanel open targetRoot="C:/Projects/main" client={client()} />);
-    expect(host?.textContent).toContain('Coder');
-    expect(host?.textContent).toContain('C:/Projects/main');
-    expect(host?.querySelector('[data-testid="coder-terminal-start"]')).not.toBeNull();
-  });
-
-  it('starts one interactive Hermes terminal session', async () => {
+  it('automatically acquires the saved Coder session with server-owned identity', async () => {
     const terminalClient = client();
-    await render(
-      <CoderTerminalPanel open targetRoot="C:/Projects/main" client={terminalClient} />,
-    );
-    const start = host?.querySelector('[data-testid="coder-terminal-start"]') as HTMLButtonElement;
-    await act(async () => start.click());
-    expect(terminalClient.startSession).toHaveBeenCalledWith(expect.objectContaining({
-      targetRoot: 'C:/Projects/main',
-      mode: 'interactive',
-    }));
-    expect(host?.querySelector('[data-testid="coder-terminal-status"]')?.textContent).toBe('Running');
-  });
-
-  it('uses xterm as the sole transcript surface without duplicate command controls', async () => {
     await render(
       <CoderTerminalPanel
         open
-        targetRoot="C:/Projects/main"
-        client={client()}
-        initialSession={session()}
-        initialTranscript={[{ seq: 1, stream: 'system', data: '# Exact IDF', at: 'now' }]}
+        targetRoot="C:/Projects/LiquidAIty/main"
+        client={terminalClient}
+        {...identityProps}
       />,
     );
+    await act(async () => undefined);
+    expect(terminalClient.startSession).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'main',
+      targetRoot: 'C:/Projects/LiquidAIty/main',
+      mode: 'interactive',
+    });
+    expect(host?.querySelector('[data-testid="coder-terminal-status"]')?.textContent).toBe('Ready');
     expect(host?.querySelector('[data-testid="coder-terminal-xterm"]')).not.toBeNull();
+  });
+
+  it('does not expose the removed shell, root, transport, or manual-start controls', async () => {
+    await render(
+      <CoderTerminalPanel
+        open
+        client={client()}
+        initialSession={session()}
+        initialTranscript={[{ seq: 1, stream: 'system', data: 'Coder ready.\r\n› ', at: 'now' }]}
+        {...identityProps}
+      />,
+    );
+    expect(host?.textContent).toContain('Coder');
+    expect(host?.textContent).not.toContain('Local process');
+    expect(host?.textContent).not.toContain('transport:');
+    expect(host?.textContent).not.toContain('root:');
+    expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
     expect(host?.querySelector('[data-testid="coder-terminal-transcript"]')).toBeNull();
     expect(host?.querySelector('[data-testid="coder-terminal-input"]')).toBeNull();
-    expect(host?.querySelector('[data-testid="coder-terminal-send"]')).toBeNull();
+  });
+
+  it('shows Stop only while a real Hermes turn is active', async () => {
+    await render(
+      <CoderTerminalPanel open client={client()} initialSession={session('working')} {...identityProps} />,
+    );
     expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).not.toBeNull();
+    expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
+  });
+
+  it('shows Restart only after a stopped or failed session', async () => {
+    await render(
+      <CoderTerminalPanel open client={client()} initialSession={session('stopped')} {...identityProps} />,
+    );
+    expect(host?.querySelector('[data-testid="coder-terminal-start"]')?.textContent).toBe('Restart');
+    expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
   });
 });

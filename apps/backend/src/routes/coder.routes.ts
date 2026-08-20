@@ -2,20 +2,17 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import {
   coderTerminalSessionManager,
-  type ConsoleMode,
+  type HermesCoderTerminalSession,
 } from '../hermes/coderTerminal';
 import {
   deriveHermesSessionKey,
-  providerForHermes,
+  prepareHermesSession,
   startHermesTurn,
   type HermesSessionEvent,
   type HermesTurnArgs,
   type HermesTurnHandle,
 } from '../hermes/mainAdapter';
-import {
-  runHermesKanbanCardTask,
-  waitForHermesKanbanCardTask,
-} from './hermesKanban.routes';
+import { resolveRepoRoot } from '../coder/workspaceRoot';
 import {
   getConversationMessages,
   listConversations,
@@ -39,6 +36,7 @@ import { listConfiguredModelOptions } from '../llm/models.config';
 import { resolveHermesExecutionContext } from '../hermes/childExecutionContext';
 
 const router = Router();
+const CODER_CARD_ID = 'card_local_coder';
 
 router.get('/input-data-dictionary/card-editor', async (_req, res) => {
   try {
@@ -249,68 +247,7 @@ async function startPreparedHermesTransport(
   args: PreparedHermesTransportArgs,
 ): Promise<HermesTurnHandle> {
   const turnArgs = resolvePreparedHermesTurnArgs(args);
-  if (turnArgs.runtime.mode === 'kanban') {
-    throw new Error('prepared_hermes_single_transport_required');
-  }
   return startHermesTurn(turnArgs, args.onEvent);
-}
-
-async function runPreparedHermesTransport(
-  args: PreparedHermesTransportArgs & { correlationId: string },
-): Promise<Awaited<HermesTurnHandle['done']>> {
-  const turnArgs = resolvePreparedHermesTurnArgs(args);
-  if (turnArgs.runtime.mode !== 'kanban') {
-    const handle = await startPreparedHermesTransport(args);
-    return handle.done;
-  }
-
-  const created = await runHermesKanbanCardTask({
-    projectId: args.projectId,
-    deckId: args.deckId,
-    correlationId: args.correlationId,
-    conversationId: args.conversationId,
-    parentRunId: args.parentRunId || args.conversationId,
-    cardId: turnArgs.cardId,
-    title: turnArgs.title,
-    prompt: turnArgs.prompt,
-    profile: turnArgs.runtime.profile,
-    provider: providerForHermes(turnArgs.provider, turnArgs.accessMode),
-    providerModelId: turnArgs.providerModelId,
-    skills: turnArgs.skills,
-    input: turnArgs.message,
-  });
-  const initialStatus = String(created.snapshot?.task?.status || '').trim().toLowerCase();
-  const completed = initialStatus === 'done'
-    ? created
-    : await waitForHermesKanbanCardTask(turnArgs.runtime.profile, created.taskId);
-  const nativeStatus = String(completed.snapshot?.task?.status || '').trim().toLowerCase();
-  const finalText = String(completed.snapshot?.task?.result || '');
-  if (nativeStatus !== 'done' || !finalText.trim()) {
-    throw new Error('hermes_kanban_card_completion_invalid');
-  }
-  const usage = {
-    providerInputTokens: null,
-    providerOutputTokens: null,
-    totalCostUsd: null,
-    usageAvailable: false,
-    usageSource: 'hermes_native_kanban_unavailable',
-    contextBreakdownJson: '',
-  };
-  args.onEvent({ kind: 'text', text: finalText });
-  args.onEvent({ kind: 'done', fullText: finalText, usage });
-  return {
-    finalText,
-    usage,
-    transport: {
-      threadId: completed.taskId,
-      turnId: completed.runId === null ? null : String(completed.runId),
-      authMode: null,
-      planType: 'hermes-auto-kanban',
-      nativeTaskId: completed.taskId,
-      nativeRunId: completed.runId,
-      nativeStatus,
-    },
-  };
 }
 
 // Thin configured-Card transport. Python owns Card/AGE/IDD validation,
@@ -380,19 +317,38 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
 
     let output = '';
     let transport: Record<string, unknown> | null = null;
+    let providerInputTokens: number | null = null;
+    let providerOutputTokens: number | null = null;
+    let totalCostUsd: number | null = null;
+    const coderTerminal = cardId === CODER_CARD_ID
+      ? coderTerminalSessionManager.find({
+        projectId,
+        deckId,
+        conversationId,
+        ownerCardId: cardId,
+      })
+      : undefined;
     try {
       if (prepared.runtimeOwner === 'hermes') {
-        const response = await runPreparedHermesTransport({
+        if (coderTerminal && !coderTerminal.beginTurn(correlationId)) {
+          throw new Error('hermes_coder_session_busy_or_stopped');
+        }
+        const handle = await startPreparedHermesTransport({
           prepared,
           projectId,
           deckId,
-          correlationId,
           conversationId,
-          parentRunId: originatingRunId,
-          onEvent: () => undefined,
+          parentRunId: correlationId,
+          ...(cardId === CODER_CARD_ID ? { workingDirectory: resolveRepoRoot() } : {}),
+          onEvent: (event) => coderTerminal?.receiveHermesEvent(event),
         });
+        coderTerminal?.attachControl(correlationId, handle);
+        const response = await handle.done;
         output = response.finalText;
         transport = response.transport;
+        providerInputTokens = response.usage.providerInputTokens;
+        providerOutputTokens = response.usage.providerOutputTokens;
+        totalCostUsd = response.usage.totalCostUsd;
       } else if (prepared.nativeRuntimeRequest) {
         const response = await dispatchConfiguredRuntime(prepared.nativeRuntimeRequest);
         if (!response.ok) throw new Error(response.error || 'configured_runtime_failed');
@@ -408,8 +364,12 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
           state: 'completed',
           providerThreadRef: transport?.threadId || null,
           providerTurnRef: transport?.turnId || null,
+          providerInputTokens,
+          providerOutputTokens,
+          totalCostUsd,
         }),
       }) as any;
+      coderTerminal?.completeTurn(correlationId);
       return res.json({
         ok: true,
         result: {
@@ -426,6 +386,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'configured_card_transport_failed';
+      coderTerminal?.markFailed(message);
       await requestPythonRailsJson('/domain/runs/finish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -834,32 +795,161 @@ router.get('/main/session/conversations', async (req, res) => {
   }
 });
 
-const CONSOLE_MODES: ConsoleMode[] = ['interactive', 'print', 'task', 'shell'];
-
-function parseConsoleMode(value: unknown): ConsoleMode {
-  return CONSOLE_MODES.includes(value as ConsoleMode) ? (value as ConsoleMode) : 'interactive';
+function isHermesAuthenticationRequired(reason: string): boolean {
+  return reason.includes('not_logged_in')
+    || reason.includes('authentication_required')
+    || reason.includes('relogin_required');
 }
 
-// ── Native terminal transports ─────────────────────────────────────────────
-// Route plumbing is shared, while Coder and installed Hermes keep separate
-// process managers and session namespaces.
+async function prepareCoderTerminalSession(
+  session: HermesCoderTerminalSession,
+): Promise<void> {
+  session.markPreparing();
+  const preview = await requestPythonRailsJson('/domain/cards/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      projectId: session.info.projectId,
+      deckId: session.info.deckId,
+      cardId: session.info.ownerCardId,
+      assignment: 'Prepare the saved Coder Card session without executing a model.',
+      conversationId: session.info.conversationId,
+    }),
+  }) as any;
+  const turnArgs = resolvePreparedHermesTurnArgs({
+    prepared: preview,
+    projectId: session.info.projectId,
+    deckId: session.info.deckId,
+    conversationId: session.info.conversationId,
+    parentRunId: session.info.id,
+    workingDirectory: resolveRepoRoot(),
+    onEvent: () => undefined,
+  });
+  if (turnArgs.cardId !== CODER_CARD_ID || turnArgs.runtime.mode !== 'delegate') {
+    throw new Error('saved_coder_hermes_profile_required');
+  }
+  const prepared = await prepareHermesSession(turnArgs);
+  session.info.profile = turnArgs.runtime.profile;
+  session.markReady(prepared);
+}
+
+async function runDirectCoderTerminalTurn(
+  session: HermesCoderTerminalSession,
+  message: string,
+  runId: string,
+): Promise<void> {
+  let runStarted = false;
+  try {
+    const preview = await requestPythonRailsJson('/domain/cards/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: session.info.projectId,
+        deckId: session.info.deckId,
+        cardId: session.info.ownerCardId,
+        assignment: message,
+        conversationId: session.info.conversationId,
+      }),
+    }) as any;
+    const prepared = await requestPythonRailsJson('/domain/runs/begin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: session.info.projectId,
+        deckId: session.info.deckId,
+        cardId: session.info.ownerCardId,
+        assignment: message,
+        conversationId: session.info.conversationId,
+        exactIdf: preview.exactIdf,
+        cardRevisionId: preview.cardRevisionId,
+        runId,
+        correlationId: runId,
+      }),
+    }) as any;
+    runStarted = true;
+    const handle = await startPreparedHermesTransport({
+      prepared,
+      projectId: session.info.projectId,
+      deckId: session.info.deckId,
+      conversationId: session.info.conversationId,
+      parentRunId: runId,
+      workingDirectory: resolveRepoRoot(),
+      onEvent: (event) => session.receiveHermesEvent(event),
+    });
+    if (!session.attachControl(runId, handle)) {
+      handle.cancel();
+      throw new Error('hermes_coder_terminal_control_attach_failed');
+    }
+    const completed = await handle.done;
+    await requestPythonRailsJson('/domain/runs/finish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        runId,
+        state: 'completed',
+        providerThreadRef: completed.transport.threadId,
+        providerTurnRef: completed.transport.turnId,
+        providerInputTokens: completed.usage.providerInputTokens,
+        providerOutputTokens: completed.usage.providerOutputTokens,
+        totalCostUsd: completed.usage.totalCostUsd,
+      }),
+    });
+    session.completeTurn(runId);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'hermes_coder_terminal_turn_failed';
+    const stopped = session.isStopped();
+    if (runStarted) {
+      await requestPythonRailsJson('/domain/runs/finish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          runId,
+          state: stopped ? 'cancelled' : 'failed',
+          errorCode: stopped ? 'hermes_turn_cancelled' : 'hermes_coder_terminal_turn_failed',
+          errorSummary: reason,
+        }),
+      }).catch(() => undefined);
+    }
+    if (stopped) return;
+    if (isHermesAuthenticationRequired(reason)) session.markAuthRequired(reason);
+    else session.markFailed(reason);
+  }
+}
+
+// ── Saved Coder Card terminal ──────────────────────────────────────────────
+// xterm is a direct controller for the same persistent Hermes ACP session used
+// by authorized Main -> Coder calls. It is deliberately not a shell or PTY.
 function mountConsoleSessionRoutes(
   prefix: string,
   manager: typeof coderTerminalSessionManager,
 ): void {
-  router.post(`${prefix}/sessions`, (req, res) => {
-    const started = manager.start({
+  router.post(`${prefix}/sessions`, async (req, res) => {
+    if (req.body?.mode && req.body.mode !== 'interactive') {
+      return res.status(400).json({ ok: false, error: 'hermes_coder_terminal_interactive_only', missing: [] });
+    }
+    const started = manager.acquire({
+      projectId: String(req.body?.projectId || '').trim(),
+      deckId: String(req.body?.deckId || BUILDER_DECK_ID).trim(),
+      conversationId: String(req.body?.conversationId || 'main').trim(),
       targetRoot: typeof req.body?.targetRoot === 'string' ? req.body.targetRoot : undefined,
-      mode: parseConsoleMode(req.body?.mode),
-      prompt: typeof req.body?.prompt === 'string' ? req.body.prompt : undefined,
+      mode: 'interactive',
     });
     if (!started.ok) {
       return res.status(424).json({ ok: false, error: started.error, missing: started.missing });
     }
-    const info = started.session.info;
-    return res.status(info.state === 'failed' ? 502 : 200).json({
-      ok: info.state !== 'failed',
-      session: info,
+    const session = started.session;
+    if (started.created || ['failed', 'stopped', 'auth_required'].includes(session.info.state)) {
+      try {
+        await prepareCoderTerminalSession(session);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'hermes_coder_terminal_prepare_failed';
+        if (isHermesAuthenticationRequired(reason)) session.markAuthRequired(reason);
+        else session.markFailed(reason);
+      }
+    }
+    return res.status(session.info.state === 'failed' ? 502 : 200).json({
+      ok: session.info.state !== 'failed',
+      session: session.info,
     });
   });
 
@@ -900,29 +990,19 @@ function mountConsoleSessionRoutes(
   router.post(`${prefix}/sessions/:id/input`, (req, res) => {
     const session = manager.get(req.params.id);
     if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
-    const data = typeof req.body?.data === 'string' ? req.body.data : '';
-    const delivered = session.write(data);
-    return res.status(delivered ? 200 : 409).json({
-      ok: delivered,
-      delivered,
-      interactiveSupported: session.info.interactiveSupported,
-    });
-  });
-
-  router.post(`${prefix}/sessions/:id/resize`, (req, res) => {
-    const session = manager.get(req.params.id);
-    if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
-    const cols = Number(req.body?.cols);
-    const rows = Number(req.body?.rows);
-    if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) {
-      return res.status(400).json({ ok: false, error: 'console_resize_invalid_dimensions' });
+    const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+    if (!message) return res.status(400).json({ ok: false, error: 'coder_terminal_message_required' });
+    if (session.info.state === 'waiting') {
+      const delivered = session.answerPermission(message);
+      return res.status(delivered ? 200 : 409).json({ ok: delivered, delivered });
     }
-    const resized = session.resize(Math.floor(cols), Math.floor(rows));
-    return res.status(resized ? 200 : 409).json({
-      ok: resized,
-      resized,
-      transportMode: session.info.transportMode,
-    });
+    const runId = `req_${randomUUID().slice(0, 8)}`;
+    const delivered = session.beginTurn(runId);
+    if (!delivered) {
+      return res.status(409).json({ ok: false, delivered: false, error: 'hermes_coder_session_not_ready' });
+    }
+    void runDirectCoderTerminalTurn(session, message, runId);
+    return res.status(202).json({ ok: true, delivered: true, runId });
   });
 
   router.post(`${prefix}/sessions/:id/stop`, (req, res) => {

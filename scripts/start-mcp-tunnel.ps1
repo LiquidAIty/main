@@ -31,113 +31,149 @@ $deadline = if ($TimeoutSeconds -gt 0) {
 } else {
     $null
 }
-$lastState = 'not checked'
-$lastCatalogFailure = ''
+$lastState = 'unreachable'
+$lastLoggedState = ''
+$pollMilliseconds = 500
+$maximumPollMilliseconds = 2000
 
 $http = [System.Net.Http.HttpClient]::new()
 $http.Timeout = [TimeSpan]::FromSeconds(2)
 
 try {
+    $catalogReady = $false
+    $catalogCount = 0
+    $catalogUniqueCount = 0
+    $catalogHash = ''
     while ($null -eq $deadline -or [DateTimeOffset]::UtcNow -lt $deadline) {
-        $tcpReady = $false
-        $metadataReady = $false
-        $anonymousRejected = $false
-        $challengeReady = $false
-        $catalogReady = $false
+        $readiness = $null
+        $readinessBody = ''
         $catalogState = 'unreachable'
-        $catalogCount = 0
-
-        $tcp = [System.Net.Sockets.TcpClient]::new()
         try {
-            $connect = $tcp.ConnectAsync('127.0.0.1', $McpPort)
-            $tcpReady = $connect.Wait(1000) -and $tcp.Connected
+            $readiness = $http.GetAsync($readinessUrl).GetAwaiter().GetResult()
+            $readinessBody = $readiness.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            $readinessPayload = $readinessBody | ConvertFrom-Json
+            $catalogState = [string]$readinessPayload.catalogState
+            $catalogCount = [int]$readinessPayload.publicToolCount
+            $catalogUniqueCount = [int]$readinessPayload.publicToolUniqueCount
+            $catalogHash = [string]$readinessPayload.catalogHash
+            $completedFamilies = @($readinessPayload.completedCatalogFamilies) -join ','
+            $initializingFamily = [string]$readinessPayload.initializingCatalogFamily
+            $catalogReady = (
+                [int]$readiness.StatusCode -eq 200 -and
+                [bool]$readinessPayload.catalogReady -and
+                $catalogState -eq 'ready' -and
+                $catalogCount -eq 69 -and
+                $catalogUniqueCount -eq 69 -and
+                -not [string]::IsNullOrWhiteSpace($catalogHash)
+            )
         } catch {
-            $tcpReady = $false
+            $catalogState = 'unreachable'
+            $catalogReady = $false
+            $catalogCount = 0
+            $catalogUniqueCount = 0
+            $catalogHash = ''
+            $completedFamilies = ''
+            $initializingFamily = ''
         } finally {
-            $tcp.Dispose()
-        }
-
-        if ($tcpReady) {
-            try {
-                $metadata = $http.GetAsync($metadataUrl).GetAwaiter().GetResult()
-                $metadataReady = [int]$metadata.StatusCode -eq 200
-                $metadata.Dispose()
-
-                $request = [System.Net.Http.HttpRequestMessage]::new(
-                    [System.Net.Http.HttpMethod]::Post,
-                    $mcpUrl
-                )
-                $request.Headers.Accept.ParseAdd('application/json, text/event-stream')
-                $request.Content = [System.Net.Http.StringContent]::new(
-                    '{}',
-                    [System.Text.Encoding]::UTF8,
-                    'application/json'
-                )
-                $anonymous = $http.SendAsync($request).GetAwaiter().GetResult()
-                $anonymousRejected = [int]$anonymous.StatusCode -eq 401
-                $challenge = $anonymous.Headers.WwwAuthenticate.ToString()
-                $challengeReady = (
-                    $challenge -match '^Bearer' -and
-                    $challenge -match 'scope="liquidaity\.main"' -and
-                    $challenge -match 'resource_metadata="https://'
-                )
-                $anonymous.Dispose()
-                $request.Dispose()
-
-                $readiness = $http.GetAsync($readinessUrl).GetAwaiter().GetResult()
-                $readinessBody = $readiness.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-                $readinessPayload = $readinessBody | ConvertFrom-Json
-                $catalogState = [string]$readinessPayload.catalogState
-                $catalogCount = [int]$readinessPayload.publicToolCount
-                $catalogReady = (
-                    [int]$readiness.StatusCode -eq 200 -and
-                    [bool]$readinessPayload.catalogReady -and
-                    $catalogState -eq 'ready' -and
-                    $catalogCount -eq 69 -and
-                    [int]$readinessPayload.publicToolUniqueCount -eq 69
-                )
-                if ($catalogState -eq 'failed') {
-                    $catalogFailure = [string]$readinessPayload.catalogFailure
-                    if ($catalogFailure -and $catalogFailure -ne $lastCatalogFailure) {
-                        Write-Host "MCP catalog initialization failed; tunnel remains unpublished: $catalogFailure"
-                        $lastCatalogFailure = $catalogFailure
-                    }
-                }
+            if ($null -ne $readiness) {
                 $readiness.Dispose()
-            } catch {
-                $metadataReady = $false
-                $anonymousRejected = $false
-                $challengeReady = $false
-                $catalogReady = $false
             }
         }
 
         $lastState = (
-            "tcp=$tcpReady metadata=$metadataReady " +
-            "anonymous401=$anonymousRejected challenge=$challengeReady " +
-            "catalogState=$catalogState catalogCount=$catalogCount catalogReady=$catalogReady"
+            "catalogState=$catalogState completed=$completedFamilies " +
+            "initializing=$initializingFamily catalogCount=$catalogCount"
         )
-        if (
-            $tcpReady -and
-            $metadataReady -and
-            $anonymousRejected -and
-            $challengeReady -and
-            $catalogReady
-        ) {
-            Write-Host "MCP local OAuth readiness passed: $lastState"
-            if ($ReadyOnly) {
-                exit 0
-            }
-            $tunnelUrl = $resourceUri.GetLeftPart([UriPartial]::Authority)
-            Write-Host "Starting reserved ngrok endpoint $tunnelUrl -> $localBaseUrl"
-            & ngrok http $localBaseUrl --url $tunnelUrl
-            exit $LASTEXITCODE
+        if ($lastState -ne $lastLoggedState) {
+            Write-Host "MCP readiness: $lastState"
+            $lastLoggedState = $lastState
+            $pollMilliseconds = 500
         }
 
-        Start-Sleep -Milliseconds 500
+        if ($catalogState -eq 'failed') {
+            Write-Host "MCP catalog initialization failed; tunnel remains unpublished: $readinessBody"
+            $failureCode = [string]$readinessPayload.failureCode
+            if ([string]::IsNullOrWhiteSpace($failureCode)) {
+                $failureCode = 'catalog_initialization_failed'
+            }
+            throw "MCP catalog initialization failed: $failureCode"
+        }
+        if ($catalogState -eq 'ready') {
+            if (-not $catalogReady) {
+                throw "MCP reported ready with an incomplete catalog: $lastState"
+            }
+            break
+        }
+
+        Start-Sleep -Milliseconds $pollMilliseconds
+        $pollMilliseconds = [Math]::Min(
+            $maximumPollMilliseconds,
+            [int][Math]::Ceiling($pollMilliseconds * 1.5)
+        )
     }
+
+    if (-not $catalogReady) {
+        throw "MCP complete local readiness failed after $TimeoutSeconds seconds: $lastState"
+    }
+
+    $metadata = $null
+    try {
+        $metadata = $http.GetAsync($metadataUrl).GetAwaiter().GetResult()
+        $metadataReady = [int]$metadata.StatusCode -eq 200
+    } finally {
+        if ($null -ne $metadata) {
+            $metadata.Dispose()
+        }
+    }
+    if (-not $metadataReady) {
+        throw 'MCP OAuth protected-resource metadata did not return 200 after readiness.'
+    }
+
+    $request = $null
+    $anonymous = $null
+    try {
+        $request = [System.Net.Http.HttpRequestMessage]::new(
+            [System.Net.Http.HttpMethod]::Post,
+            $mcpUrl
+        )
+        $request.Headers.Accept.ParseAdd('application/json, text/event-stream')
+        $request.Content = [System.Net.Http.StringContent]::new(
+            '{}',
+            [System.Text.Encoding]::UTF8,
+            'application/json'
+        )
+        $anonymous = $http.SendAsync($request).GetAwaiter().GetResult()
+        $anonymousRejected = [int]$anonymous.StatusCode -eq 401
+        $challenge = $anonymous.Headers.WwwAuthenticate.ToString()
+        $challengeReady = (
+            $challenge -match '^Bearer' -and
+            $challenge -match 'scope="liquidaity\.main"' -and
+            $challenge -match 'resource_metadata="https://'
+        )
+    } finally {
+        if ($null -ne $anonymous) {
+            $anonymous.Dispose()
+        }
+        if ($null -ne $request) {
+            $request.Dispose()
+        }
+    }
+    if (-not $anonymousRejected -or -not $challengeReady) {
+        throw 'MCP anonymous OAuth challenge was not the expected 401 after readiness.'
+    }
+
+    $lastState = (
+        "metadata=$metadataReady anonymous401=$anonymousRejected challenge=$challengeReady " +
+        "catalogState=ready catalogCount=$catalogCount catalogHash=$catalogHash"
+    )
+    Write-Host "MCP local OAuth readiness passed: $lastState"
+    if ($ReadyOnly) {
+        exit 0
+    }
+    $tunnelUrl = $resourceUri.GetLeftPart([UriPartial]::Authority)
+    Write-Host "Starting reserved ngrok endpoint $tunnelUrl -> $localBaseUrl"
+    & ngrok http $localBaseUrl --url $tunnelUrl
+    exit $LASTEXITCODE
 } finally {
     $http.Dispose()
 }
-
-throw "MCP complete local readiness failed after $TimeoutSeconds seconds: $lastState"

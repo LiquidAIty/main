@@ -7,16 +7,13 @@ import {
   deriveHermesSessionKey,
   providerForHermes,
   requireHermesCompletionText,
-  resolveHermesCardRuntimeHome,
+  resolveHermesRuntimeHome,
 } from './mainAdapter';
 
 describe('Hermes ACP transport identity', () => {
-  it('keeps each prepared profile in a stable isolated runtime home', () => {
+  it('uses one repo-owned Hermes home for every stable native session', () => {
     const root = 'C:\\Projects\\LiquidAIty\\main\\Hermes';
-    expect(resolveHermesCardRuntimeHome(root, 'liquidaity-main')).toBe(
-      path.join(root, '.hermes', 'profiles', 'liquidaity-main'),
-    );
-    expect(() => resolveHermesCardRuntimeHome(root, '../escape')).toThrow('hermes_profile_invalid');
+    expect(resolveHermesRuntimeHome(root)).toBe(path.join(root, '.hermes'));
   });
 
   it('mechanically maps prepared ChatGPT-account OpenAI transport to Hermes native OAuth', () => {
@@ -95,7 +92,9 @@ describe('Hermes ACP transport identity', () => {
     ]));
     expect(sessionConfig.enabledTools).toEqual(['delegate_task']);
     expect(sessionConfig).not.toHaveProperty('delegateProfiles');
+    expect(sessionConfig.hostSessionKey).toBe('session-1');
     expect(sessionConfig.executionContextId).toBe('root-context');
+    expect(sessionConfig.systemPrompt).toBe('Main prompt');
     expect(sessionConfig.toolCallMeta).toEqual({
       'liquidaity/execution': 'root-context',
     });

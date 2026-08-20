@@ -1,16 +1,16 @@
 import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   coderTerminalClient,
-  type ConsoleMode,
   type ConsoleOutputChunk,
+  type ConsoleSessionState,
   type ConsoleSessionInfo,
   type CoderTerminalClient,
 } from './coderTerminalClient';
 import XtermView from './XtermView';
 
-/** The saved Coder Card's genuine Hermes CLI terminal face. */
+/** The saved Coder Card's genuine Hermes ACP terminal face. */
 
-type ConsolePanelStatus = 'disconnected' | 'idle' | 'starting' | 'running' | 'failed' | 'complete';
+type ConsolePanelStatus = 'disconnected' | 'idle' | ConsoleSessionState;
 
 type CoderTerminalPanelProps = {
   open: boolean;
@@ -19,39 +19,35 @@ type CoderTerminalPanelProps = {
   placement?: 'overlay' | 'docked';
   testIdPrefix?: string;
   projectId?: string;
-  provider?: string | null;
-  model?: string | null;
+  deckId?: string;
+  conversationId?: string;
   onClose?: () => void;
   /** Injectable for tests. Defaults to the real backend client. */
   client?: CoderTerminalClient;
   /** Test seam: a session already known to the host. */
   initialSession?: ConsoleSessionInfo | null;
   initialTranscript?: ConsoleOutputChunk[];
-  /** Attach the newest live session exposed by this panel's injected client. */
-  attachExisting?: boolean;
   /** Optional host wording for lifecycle states. */
   idleLabel?: string;
-  completeLabel?: string;
   /** Test seam: EventSource constructor (undefined in jsdom = no live stream). */
   eventSourceImpl?: typeof EventSource;
 };
 
 function statusOf(session: ConsoleSessionInfo | null): ConsolePanelStatus {
   if (!session) return 'idle';
-  if (session.state === 'starting') return 'starting';
-  if (session.state === 'running') return 'running';
-  if (session.state === 'failed') return 'failed';
-  if (session.state === 'exited') return 'complete';
-  return 'idle';
+  return session.state;
 }
 
 const STATUS_LABEL: Record<ConsolePanelStatus, string> = {
   disconnected: 'Disconnected',
   idle: 'Idle',
   starting: 'Starting',
-  running: 'Running',
+  ready: 'Ready',
+  working: 'Working',
+  waiting: 'Waiting',
+  stopped: 'Stopped',
   failed: 'Failed',
-  complete: 'Complete',
+  auth_required: 'Login required',
 };
 
 function CoderTerminalPanelInner({
@@ -61,15 +57,13 @@ function CoderTerminalPanelInner({
   placement = 'overlay',
   testIdPrefix = 'coder-terminal',
   projectId,
-  provider,
-  model,
+  deckId,
+  conversationId,
   onClose,
   client = coderTerminalClient,
   initialSession = null,
   initialTranscript = [],
-  attachExisting = false,
   idleLabel = 'Idle',
-  completeLabel = 'Complete',
   eventSourceImpl,
 }: CoderTerminalPanelProps) {
   const [session, setSession] = useState<ConsoleSessionInfo | null>(initialSession);
@@ -79,13 +73,12 @@ function CoderTerminalPanelInner({
   const [busy, setBusy] = useState(false);
   const [disconnected, setDisconnected] = useState(false);
   const streamRef = useRef<EventSource | null>(null);
+  const attemptedIdentityRef = useRef('');
 
   const status = disconnected ? 'disconnected' : statusOf(session);
   const statusLabel = status === 'idle'
     ? idleLabel
-    : status === 'complete'
-      ? completeLabel
-      : STATUS_LABEL[status];
+    : STATUS_LABEL[status];
 
   const appendChunk = useCallback((chunk: ConsoleOutputChunk) => {
     setChunks((prev) => {
@@ -93,32 +86,6 @@ function CoderTerminalPanelInner({
       return [...prev, chunk].slice(-2000);
     });
   }, []);
-
-  useEffect(() => {
-    if (!open || !attachExisting || session) return;
-    let cancelled = false;
-    setDisconnected(false);
-    void client.listSessions()
-      .then(async (sessions) => {
-        const normalizedRoot = targetRoot.replace(/\\/g, '/').toLowerCase();
-        const live = sessions
-          .filter((candidate) =>
-            (candidate.state === 'running' || candidate.state === 'starting') &&
-            candidate.targetRoot.replace(/\\/g, '/').toLowerCase() === normalizedRoot)
-          .sort((left, right) => String(right.startedAt || '').localeCompare(String(left.startedAt || '')))[0];
-        if (!live || cancelled) return;
-        const detail = await client.getSession(live.id);
-        if (cancelled) return;
-        setSession(detail?.session ?? live);
-        setChunks(detail?.transcript ?? []);
-      })
-      .catch(() => {
-        if (!cancelled) setDisconnected(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [attachExisting, client, open, session, targetRoot]);
 
   // Subscribe to the live transcript stream for the active session.
   useEffect(() => {
@@ -147,16 +114,22 @@ function CoderTerminalPanelInner({
   }, [session?.id, client, appendChunk, eventSourceImpl]);
 
   const startSession = useCallback(
-    async (mode: ConsoleMode) => {
+    async () => {
+      if (!projectId || !deckId || !conversationId) {
+        setStartError('coder_terminal_identity_required');
+        return;
+      }
       setBusy(true);
+      setDisconnected(false);
       setStartError(null);
       setTerminalError(null);
       try {
         const result = await client.startSession({
+          projectId,
+          deckId,
+          conversationId,
           ...(targetRoot.trim() ? { targetRoot } : {}),
-          mode,
-          ...(provider ? { provider } : {}),
-          ...(model ? { model } : {}),
+          mode: 'interactive',
         });
         if (result.ok) {
           setSession(result.session);
@@ -172,21 +145,21 @@ function CoderTerminalPanelInner({
         setBusy(false);
       }
     },
-    [client, model, provider, targetRoot],
+    [client, conversationId, deckId, projectId, targetRoot],
   );
 
-  // Raw keystroke + resize forwarding from the xterm terminal.
-  const sendRaw = useCallback(
-    async (data: string) => {
+  useEffect(() => {
+    if (!open || session || busy || !projectId || !deckId || !conversationId) return;
+    const identity = `${projectId}:${deckId}:${conversationId}`;
+    if (attemptedIdentityRef.current === identity) return;
+    attemptedIdentityRef.current = identity;
+    void startSession();
+  }, [busy, conversationId, deckId, open, projectId, session, startSession]);
+
+  const sendLine = useCallback(
+    async (message: string) => {
       if (!session?.id) return;
-      await client.sendInput(session.id, data);
-    },
-    [client, session?.id],
-  );
-  const resizeSession = useCallback(
-    async (cols: number, rows: number) => {
-      if (!session?.id) return;
-      await client.resizeSession(session.id, cols, rows);
+      await client.sendInput(session.id, message);
     },
     [client, session?.id],
   );
@@ -240,30 +213,12 @@ function CoderTerminalPanelInner({
         ) : null}
       </header>
 
-      <div style={{ padding: '6px 12px', borderBottom: '1px solid #11181f', opacity: 0.85 }}>
-        <div data-testid={`${testIdPrefix}-target-root`}>
-          root: {session?.targetRoot || targetRoot || 'repository root'}
-        </div>
-        <div data-testid={`${testIdPrefix}-session-id`}>
-          session: {session?.id ?? '—'}
-          {projectId ? ` · project: ${projectId}` : ''}
-        </div>
-        {session?.model ? <div>model: {session.model}</div> : null}
-        {session ? (
-          <div data-testid={`${testIdPrefix}-transport`}>transport: {session.transportMode}</div>
-        ) : null}
-        <div style={{ color: '#f0a35e', marginTop: 2 }}>
-          Local process — runs with this machine&apos;s permissions. Not a sandbox.
-        </div>
-      </div>
-
-      {session && (status === 'running' || status === 'starting' || status === 'complete') ? (
+      {session ? (
         <XtermView
           key={session.id}
           chunks={chunks}
-          interactive={Boolean(session.interactiveSupported)}
-          onInput={sendRaw}
-          onResize={resizeSession}
+          interactive={status === 'ready' || status === 'waiting'}
+          onSubmit={sendLine}
           onError={setTerminalError}
         />
       ) : null}
@@ -277,20 +232,20 @@ function CoderTerminalPanelInner({
       ) : null}
 
       <footer style={{ padding: '6px 12px', borderTop: '1px solid #1c2733', display: 'flex', justifyContent: 'flex-end' }}>
-        {!session || status === 'complete' || status === 'failed' ? (
+        {session && (status === 'failed' || status === 'stopped' || status === 'auth_required') ? (
           <button
             type="button"
             data-testid={`${testIdPrefix}-start`}
             disabled={busy}
-            onClick={() => startSession('interactive')}
+            onClick={() => void startSession()}
           >
-            {session ? 'Restart' : 'Start terminal'}
+            Restart
           </button>
-        ) : (
+        ) : session && (status === 'working' || status === 'waiting') ? (
           <button type="button" data-testid={`${testIdPrefix}-stop`} onClick={() => void stopSession()}>
             Stop
           </button>
-        )}
+        ) : null}
       </footer>
     </section>
   );

@@ -1252,6 +1252,90 @@ def test_http_catalog_initialization_is_process_wide_once(monkeypatch):
     assert len(mcp_host._HTTP_CATALOG_TOOLS or ()) == catalog_size
 
 
+def test_http_catalog_task_cannot_end_in_false_initializing_state(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    async def incomplete_initializer():
+        return None
+
+    monkeypatch.setattr(
+        mcp_host, "_initialize_http_catalog_once", incomplete_initializer
+    )
+    monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
+    monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
+    monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE_CODE", None)
+    monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE_SUMMARY", None)
+    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", None)
+    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_INITIALIZATION_TASK", None)
+
+    async def check():
+        await mcp_host._start_http_catalog_initialization()
+        await asyncio.sleep(0)
+
+    asyncio.run(check())
+    diagnostics = mcp_host._catalog_diagnostics()
+    assert diagnostics["catalogState"] == "failed"
+    assert diagnostics["failureCode"] == "catalog_initializer_ended_without_state"
+    assert mcp_host._HTTP_CATALOG_TOOLS is None
+
+
+def test_http_catalog_initialization_has_no_arbitrary_30_second_deadline():
+    import inspect
+    import mcp_host
+
+    source = inspect.getsource(mcp_host._initialize_http_catalog_once)
+    assert "wait_for" not in source
+    assert "30" not in source
+
+
+def test_catalog_progress_names_completed_and_active_families(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    snapshots = []
+
+    async def engraphis_catalog():
+        snapshots.append(mcp_host._catalog_diagnostics())
+        return []
+
+    async def cbm_catalog():
+        snapshots.append(mcp_host._catalog_diagnostics())
+        return []
+
+    async def graphiti_catalog():
+        snapshots.append(mcp_host._catalog_diagnostics())
+        return []
+
+    monkeypatch.setattr(mcp_host, "_configured_tool_allowlist", lambda: None)
+    monkeypatch.setattr(mcp_host, "_native_engraphis_tools", engraphis_catalog)
+    monkeypatch.setattr(mcp_host, "_native_cbm_tools", cbm_catalog)
+    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", graphiti_catalog)
+    monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
+    monkeypatch.setattr(mcp_host, "_CATALOG_COMPLETED_FAMILIES", ())
+    monkeypatch.setattr(mcp_host, "_CATALOG_INITIALIZING_FAMILY", "liquidaity")
+
+    asyncio.run(mcp_host._materialize_complete_catalog())
+
+    assert [item["initializingCatalogFamily"] for item in snapshots] == [
+        "engraphis",
+        "cbm",
+        "graphiti",
+    ]
+    assert [item["completedCatalogFamilies"] for item in snapshots] == [
+        ["liquidaity"],
+        ["liquidaity", "engraphis"],
+        ["liquidaity", "engraphis", "cbm"],
+    ]
+    assert mcp_host._CATALOG_COMPLETED_FAMILIES == (
+        "liquidaity",
+        "engraphis",
+        "cbm",
+        "graphiti",
+    )
+    assert mcp_host._CATALOG_INITIALIZING_FAMILY is None
+
+
 def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
     import asyncio
     import httpx
@@ -1339,7 +1423,7 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
     assert calls == 1
 
 
-def test_http_catalog_failure_is_truthful_and_unpublished(monkeypatch):
+def test_http_catalog_failure_is_truthful_and_unpublished(monkeypatch, capsys):
     import asyncio
     import mcp_host
 
@@ -1355,11 +1439,22 @@ def test_http_catalog_failure_is_truthful_and_unpublished(monkeypatch):
 
     diagnostics = mcp_host._catalog_diagnostics()
     assert diagnostics["catalogState"] == "failed"
+    assert diagnostics["state"] == "failed"
     assert diagnostics["catalogReady"] is False
     assert diagnostics["catalogFailure"] == (
         "RuntimeError: native_graphiti_catalog_failed"
     )
+    assert diagnostics["failureCode"] == "native_graphiti_catalog_failed"
+    assert diagnostics["failureSummary"] == diagnostics["catalogFailure"]
+    assert diagnostics["completedCatalogFamilies"] == []
+    assert diagnostics["initializingCatalogFamily"] == "liquidaity"
+    assert "publicToolCount" not in diagnostics
+    assert "catalogHash" not in diagnostics
     assert mcp_host._HTTP_CATALOG_TOOLS is None
+    stderr = capsys.readouterr().err
+    assert "full local traceback follows" in stderr
+    assert "Traceback (most recent call last)" in stderr
+    assert "native_graphiti_catalog_failed" in stderr
 
 
 def test_stdio_accepts_protocol_before_catalog_provider_initialization(monkeypatch):
@@ -1641,7 +1736,7 @@ def test_native_cbm_client_failure_is_strict(monkeypatch):
         )
 
 
-def test_native_cbm_bootstrap_race_retries_once_on_the_same_authority(monkeypatch):
+def test_native_cbm_bootstrap_race_retries_within_budget_on_the_same_authority(monkeypatch):
     import mcp_host
 
     attempts = []
@@ -1654,7 +1749,7 @@ def test_native_cbm_bootstrap_race_retries_once_on_the_same_authority(monkeypatc
     class NativeClient:
         def __init__(self, command, args, cwd):
             attempts.append((command, list(args), cwd))
-            if len(attempts) == 1:
+            if len(attempts) < 3:
                 raise RuntimeError(
                     "native_cbm_process_exited:1:codebase-memory-mcp: "
                     "CBM daemon could not start within 30000 ms"
@@ -1667,6 +1762,7 @@ def test_native_cbm_bootstrap_race_retries_once_on_the_same_authority(monkeypatc
             pass
 
     monkeypatch.setattr(mcp_host, "_NativeStdioMcpClient", NativeClient)
+    monkeypatch.setattr(mcp_host.time, "sleep", lambda _seconds: None)
     client, tools, names = mcp_host._open_native_cbm_client(
         "docker", ["exec", "-i", "codegraph", "/opt/cbm/codebase-memory-mcp"], "repo"
     )
@@ -1674,8 +1770,8 @@ def test_native_cbm_bootstrap_race_retries_once_on_the_same_authority(monkeypatc
     assert isinstance(client, NativeClient)
     assert tools == (native_tool,)
     assert names == ["search_graph"]
-    assert len(attempts) == 2
-    assert attempts[0] == attempts[1]
+    assert len(attempts) == 3
+    assert attempts[0] == attempts[1] == attempts[2]
 
 
 def test_native_cbm_bootstrap_does_not_retry_other_failures(monkeypatch):
@@ -1710,7 +1806,9 @@ def test_native_cbm_second_bootstrap_race_fails_strictly(monkeypatch):
             )
 
     monkeypatch.setattr(mcp_host, "_NativeStdioMcpClient", NativeClient)
-    with pytest.raises(RuntimeError, match="CBM daemon could not start"):
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_REQUEST_TIMEOUT_SECONDS", 60.0)
+    monkeypatch.setattr(mcp_host.time, "sleep", lambda _seconds: None)
+    with pytest.raises(RuntimeError, match="native_cbm_daemon_start_timeout"):
         mcp_host._open_native_cbm_client("docker", [], "repo")
     assert attempts == 2
 
@@ -2265,8 +2363,16 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
     assert main_payload["ok"] is True
     expected_count, expected_hash = mcp_host._catalog_identity(authenticated)
     assert main_payload["diagnostics"] == {
+        "state": "ready",
         "catalogState": "ready",
         "catalogReady": True,
+        "completedCatalogFamilies": [
+            "liquidaity",
+            "engraphis",
+            "cbm",
+            "graphiti",
+        ],
+        "initializingCatalogFamily": None,
         "publicToolCount": expected_count,
         "publicToolUniqueCount": len({tool.name for tool in authenticated}),
         "catalogHash": expected_hash,
@@ -2288,6 +2394,16 @@ def test_tunnel_waits_for_complete_catalog_without_default_timeout():
     assert '$readinessUrl = "$localBaseUrl/health/ready"' in source
     assert "$catalogCount -eq 69" in source
     assert "$catalogReady" in source
+    loop_start = source.index("    while ($null -eq $deadline")
+    loop_end = source.index("\n    if (-not $catalogReady)", loop_start)
+    readiness_loop = source[loop_start:loop_end]
+    assert "$http.GetAsync($readinessUrl)" in readiness_loop
+    assert "$metadataUrl" not in readiness_loop
+    assert "$mcpUrl" not in readiness_loop
+    assert source.count("$http.GetAsync($metadataUrl)") == 1
+    assert source.count("$http.SendAsync($request)") == 1
+    assert 'if ($lastState -ne $lastLoggedState)' in readiness_loop
+    assert "$maximumPollMilliseconds" in readiness_loop
 
 
 def test_oauth_catalog_declares_security_before_main_context_resolution(monkeypatch):

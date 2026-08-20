@@ -315,15 +315,24 @@ class SessionManager:
         logger.info("Forked ACP session %s -> %s", session_id, new_id)
         return state
 
-    def list_sessions(self, cwd: str | None = None) -> List[Dict[str, Any]]:
+    def list_sessions(
+        self,
+        cwd: str | None = None,
+        host_session_key: str | None = None,
+    ) -> List[Dict[str, Any]]:
         """Return lightweight info dicts for all sessions (memory + database)."""
         normalized_cwd = _normalize_cwd_for_compare(cwd) if cwd else None
+        normalized_host_key = str(host_session_key or "").strip()
         db = self._get_db()
         persisted_rows: dict[str, dict[str, Any]] = {}
 
         if db is not None:
             try:
-                for row in db.list_sessions_rich(source="acp", limit=1000):
+                for row in db.list_sessions_rich(
+                    source="acp",
+                    session_key=normalized_host_key or None,
+                    limit=1000,
+                ):
                     persisted_rows[str(row["id"])] = dict(row)
             except Exception:
                 logger.debug("Failed to load ACP sessions from DB", exc_info=True)
@@ -335,6 +344,11 @@ class SessionManager:
             for s in self._sessions.values():
                 history_len = len(s.history)
                 if history_len <= 0:
+                    continue
+                state_host_key = str(
+                    (s.host_config or {}).get("hostSessionKey") or ""
+                ).strip()
+                if normalized_host_key and state_host_key != normalized_host_key:
                     continue
                 if normalized_cwd and _normalize_cwd_for_compare(s.cwd) != normalized_cwd:
                     continue
@@ -482,14 +496,26 @@ class SessionManager:
         try:
             # Ensure the session record exists.
             existing = db.get_session(state.session_id)
+            host_session_key = str(
+                (state.host_config or {}).get("hostSessionKey") or ""
+            ).strip() or None
             if existing is None:
                 db.create_session(
                     session_id=state.session_id,
                     source="acp",
                     model=model_str,
                     model_config={"cwd": state.cwd},
+                    session_key=host_session_key,
                 )
             else:
+                if host_session_key:
+                    # SessionDB's native upsert fills a missing session_key
+                    # without overwriting an existing routing identity.
+                    db.create_session(
+                        session_id=state.session_id,
+                        source="acp",
+                        session_key=host_session_key,
+                    )
                 # Update model_config (contains cwd) if changed.
                 try:
                     db.update_session_meta(state.session_id, cwd_json, model_str)

@@ -92,7 +92,9 @@ the exact IDF. The IDF carries task meaning and selected context, not runtime co
 - Card: `card_hermes_steward`
 - Hermes mode/profile: `kanban` / `liquidaity-hermes-steward`
 - Owns planning, native Kanban, research, memory, and KnowGraph work within its grants.
-- Has a separate identity, session, profile home, and memory from Main and Coder.
+- Has separate saved-Card identity, prompt, model, grants, and stable native session. Main, Coder, and
+  Kanban intentionally share the one native Hermes home, root OAuth/provider configuration,
+  `state.db`, and Holographic memory database.
 
 ### AutoGen
 

@@ -16,6 +16,7 @@ from typing import Any, Deque, Optional
 from urllib.parse import unquote, urlparse
 
 import acp
+from acp.exceptions import RequestError
 from acp.schema import (
     AgentCapabilities,
     AgentMessageChunk,
@@ -88,6 +89,31 @@ from tools.approval import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_host_extension_mcp_servers(value: Any) -> list[McpServerStdio | McpServerHttp | McpServerSse]:
+    """Validate ACP MCP server records carried by the generic host extension."""
+
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("hermes_host_mcp_servers_must_be_list")
+    if len(value) > 32:
+        raise ValueError("hermes_host_mcp_servers_too_many")
+    parsed: list[McpServerStdio | McpServerHttp | McpServerSse] = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            raise ValueError("hermes_host_mcp_server_must_be_object")
+        server_type = str(raw.get("type") or "").strip().lower()
+        if server_type == "http":
+            parsed.append(McpServerHttp.model_validate(raw))
+        elif server_type == "sse":
+            parsed.append(McpServerSse.model_validate(raw))
+        elif server_type == "stdio":
+            parsed.append(McpServerStdio.model_validate(raw))
+        else:
+            raise ValueError("hermes_host_mcp_server_type_invalid")
+    return parsed
 
 
 def _named_custom_provider_catalogs() -> list[tuple[str, str, list[tuple[str, str]]]]:
@@ -1446,6 +1472,58 @@ class HermesACPAgent(acp.Agent):
             return {"hermes": {"containsCompactionSummary": True}}
         return None
 
+    async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle the contained generic ACP host-session extension.
+
+        LIQUIDAITY VENDOR PATCH: ACP PromptRequest has no MCP-server field, and
+        calling session/load for every turn replays the full transcript.  This
+        extension refreshes one already-created native session while it is
+        idle.  It carries only standard ACP MCP server records plus the same
+        bounded ``_meta.hermes.sessionConfig`` accepted by session/new/load.
+        """
+
+        if method != "session/configure_host":
+            raise RequestError.method_not_found(f"_{method}")
+        if not isinstance(params, dict):
+            raise ValueError("hermes_host_extension_params_must_be_object")
+        unknown = sorted(set(params) - {"sessionId", "mcpServers", "_meta"})
+        if unknown:
+            raise ValueError(f"hermes_host_extension_unknown_field:{unknown[0]}")
+        session_id = str(params.get("sessionId") or "").strip()
+        if not session_id:
+            raise ValueError("hermes_host_extension_session_id_required")
+        state = self.session_manager.get_session(session_id)
+        if state is None:
+            raise ValueError("hermes_host_extension_session_not_found")
+        metadata = params.get("_meta") or {}
+        if not isinstance(metadata, dict):
+            raise ValueError("hermes_host_extension_meta_must_be_object")
+        host_config = parse_host_session_config(metadata)
+        if host_config is None:
+            raise ValueError("hermes_host_extension_session_config_required")
+        mcp_servers = _parse_host_extension_mcp_servers(params.get("mcpServers"))
+
+        with state.runtime_lock:
+            if state.is_running:
+                raise RuntimeError("hermes_host_config_turn_in_progress")
+            # Reserve the native session across asynchronous MCP registration.
+            # The calling ACP client awaits this request before prompting.
+            state.is_running = True
+        try:
+            await self._register_session_mcp_servers(state, mcp_servers)
+            with state.runtime_lock:
+                state.is_running = False
+                self.session_manager.configure_host_session(state, host_config)
+        except Exception:
+            with state.runtime_lock:
+                state.is_running = False
+            raise
+        return {
+            "configured": True,
+            "sessionId": session_id,
+            "toolCount": len(getattr(state.agent, "tools", None) or []),
+        }
+
     @staticmethod
     def _history_message_update(
         *,
@@ -1775,7 +1853,11 @@ class HermesACPAgent(acp.Agent):
         Server-side page size is capped at ``_LIST_SESSIONS_PAGE_SIZE``; when more
         results remain, ``next_cursor`` is set to the last returned ``session_id``.
         """
-        infos = self.session_manager.list_sessions(cwd=cwd)
+        host_config = parse_host_session_config(kwargs)
+        infos = self.session_manager.list_sessions(
+            cwd=cwd,
+            host_session_key=(host_config or {}).get("hostSessionKey"),
+        )
 
         if cursor:
             for idx, s in enumerate(infos):
@@ -2043,10 +2125,9 @@ class HermesACPAgent(acp.Agent):
         previous_approval_cb = None
         interactive_token = None
         edit_approval_token = None
-        previous_session_id = None
 
         def _run_agent() -> dict:
-            nonlocal previous_approval_cb, interactive_token, edit_approval_token, previous_session_id
+            nonlocal previous_approval_cb, interactive_token, edit_approval_token
             # Bind HERMES_SESSION_KEY for this session so per-session caches
             # (e.g. the interactive sudo password cache in tools.terminal_tool)
             # scope to the ACP session rather than leaking across sessions
@@ -2094,13 +2175,6 @@ class HermesACPAgent(acp.Agent):
             # contextvar (not os.environ) so concurrent executor workers don't
             # race on the flag (GHSA-96vc-wcxf-jjff).
             interactive_token = set_hermes_interactive_context(True)
-            # Propagate the originating ACP session id to tools that want to
-            # tag side-effects with it (e.g. ``kanban_create`` stamps it on
-            # the new task so clients can render a per-session board). Save
-            # and restore around the agent call so a re-used executor thread
-            # never leaks one session's id into the next session's tools.
-            previous_session_id = os.environ.get("HERMES_SESSION_ID")
-            os.environ["HERMES_SESSION_ID"] = session_id
             # Auto-titling fires inside the turn prologue now; give the agent
             # this session's notifier so a new title reaches the client as a
             # session-info update instead of waiting for the next one.
@@ -2130,11 +2204,6 @@ class HermesACPAgent(acp.Agent):
                 # Restore the interactive contextvar for this context.
                 if interactive_token is not None:
                     reset_hermes_interactive_context(interactive_token)
-                # Restore HERMES_SESSION_ID symmetrically.
-                if previous_session_id is None:
-                    os.environ.pop("HERMES_SESSION_ID", None)
-                else:
-                    os.environ["HERMES_SESSION_ID"] = previous_session_id
                 if approval_cb:
                     try:
                         from tools import terminal_tool as _terminal_tool

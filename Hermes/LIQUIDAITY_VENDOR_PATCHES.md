@@ -22,20 +22,28 @@ vendor.
 5. Update the upstream base, conflict notes, and contribution status below. Never carry an unexplained
    vendor diff forward.
 
-## Patch: trusted ACP session tool surface
+## Patch: trusted ACP session surface
 
-Purpose: let an ACP host constrain one Hermes session to native toolsets, explicit native tools, and
-the MCP toolsets registered for that session. The host configuration is received only through ACP's
-namespaced `_meta.hermes.sessionConfig`; it never accepts credentials and is never read from model
-tool arguments. Native `delegate_task` children remain ordinary Hermes subagents and inherit their
-owning agent's bounded surface through Hermes' native rules. This patch does not create named child
-profiles or persistent child identities.
+Purpose: let an ACP host constrain one Hermes session to a bounded system prompt, native toolsets,
+explicit native tools, and the MCP toolsets registered for that session. The host configuration is
+received only through ACP's namespaced `_meta.hermes.sessionConfig`; it never accepts credentials and
+is never read from model tool arguments. An idle existing session can be refreshed through the generic
+`_session/configure_host` method before the next standard `session/prompt`. The prompt uses Hermes'
+native `ephemeral_system_prompt`, so Hermes remains the prompt assembler and no second prompt store is
+created. One opaque `hostSessionKey` uses Hermes' existing `sessions.session_key` column solely to
+recover the correct native session after process restart when several sessions share a working
+directory. It contains no credential or product policy and does not compete with Hermes session
+identity. Native `delegate_task` children remain ordinary Hermes subagents and inherit their owning
+agent's bounded ceiling through Hermes' native rules. This patch does not create named child profiles
+or persistent child identities.
 
 Files and symbols:
 
-- `acp_adapter/host_profiles.py`: bounded metadata parsing and exact tool-surface publication.
+- `acp_adapter/host_profiles.py`: bounded metadata parsing and exact session-surface publication.
 - `acp_adapter/session.py`: retain ephemeral host configuration across agent reconstruction.
-- `acp_adapter/server.py`: read ACP metadata and reapply it after MCP registration/model switches.
+- `acp_adapter/server.py`: read ACP metadata, expose `_session/configure_host`, reapply configuration
+  after MCP registration/model switches, and preserve concurrent session identity with Hermes'
+  existing ContextVars rather than mutating process-global `HERMES_SESSION_ID`.
 - `tests/acp_adapter/test_host_profiles.py`: no-provider contract proof.
 
 Upstream behavior preserved: sessions without `_meta.hermes.sessionConfig` use the normal upstream ACP
@@ -45,16 +53,17 @@ tool surface than its parent.
 
 Contribution plan:
 
-1. Open an upstream design issue proposing a host-defined ACP session tool surface as an ACP
+1. Open an upstream design issue proposing a host-defined ACP session surface as an ACP
    extensibility feature, using generic Hermes vocabulary and the official `_meta` contract.
-2. Submit the parser and session-scoped tool hooks as one focused PR with tests showing
-   backward compatibility, bounded validation, and no credential transport.
+2. Submit the parser and session-scoped hooks as one focused PR with tests showing backward
+   compatibility, bounded validation, exact session-key recovery, and no credential transport.
 3. Replace this patch with the accepted upstream implementation at the first Hermes refresh that
    contains it; keep only LiquidAIty's host-side mapping.
 
-Rollback: remove this module and the marked hooks, then stop sending `hermes.sessionConfig`. Hermes
-returns to its upstream broad ACP tool surface and generic native delegation; LiquidAIty must fail
-closed rather than claim that saved Card grants bound the native session in that state.
+Rollback: remove this module and the marked hooks, then stop sending `hermes.sessionConfig` and
+`_session/configure_host`. Hermes returns to its upstream broad ACP surface and generic native
+delegation; LiquidAIty must fail closed rather than claim that a saved Card's prompt or grants bound
+the native session in that state.
 
 ## Patch: generic host-issued child execution context
 

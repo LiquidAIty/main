@@ -1,9 +1,7 @@
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { resolveRepoRoot } from '../coder/workspaceRoot';
 
 import {
-  buildHermesOperatorTerminalLaunch,
   HermesCoderTerminalManager,
   HermesCoderTerminalSession,
   redactTerminalSecrets,
@@ -14,59 +12,52 @@ function sessionInfo(): ConsoleSessionInfo {
   return {
     id: 'coder_terminal_test',
     ownerCardId: 'card_local_coder',
+    projectId: 'project-1',
+    deckId: 'deck_builder',
+    conversationId: 'main',
     targetRoot: process.cwd(),
     mode: 'interactive',
     state: 'starting',
-    commandPath: 'hermes chat --cli --toolsets file,terminal,memory',
-    runtimeSource: 'hermes_installed',
-    transportMode: 'pty',
+    runtimeSource: 'saved_hermes_card',
+    transportMode: 'acp-stdio',
+    profile: 'coder',
     provider: null,
     model: null,
     interactiveSupported: true,
     pid: null,
+    nativeSessionId: null,
+    activeRunId: null,
     startedAt: '2026-08-18T00:00:00.000Z',
-    exitedAt: null,
-    exitCode: null,
-    exitSignal: null,
+    updatedAt: '2026-08-18T00:00:00.000Z',
+    stoppedAt: null,
     warnings: [],
     error: null,
   };
 }
 
+const identity = {
+  projectId: 'project-1',
+  deckId: 'deck_builder',
+  conversationId: 'main',
+};
+
 describe('Hermes Coder terminal boundary', () => {
-  it('launches a shell with the repo-owned Hermes CLI first on PATH', () => {
-    const launch = buildHermesOperatorTerminalLaunch();
-    const repoRoot = resolveRepoRoot();
-    const expectedCli = path.join(
-      repoRoot,
-      'Hermes',
-      'venv',
-      'Scripts',
-      process.platform === 'win32' ? 'hermes.exe' : 'hermes',
-    );
-    const pathKey = Object.keys(launch.env).find((key) => key.toLowerCase() === 'path');
-
-    expect(launch.hermesCli).toBe(expectedCli);
-    expect(launch.hermesHome).toBe(path.join(repoRoot, 'Hermes', '.hermes'));
-    expect(pathKey).toBeDefined();
-    expect(launch.env[pathKey!]?.split(path.delimiter)[0]).toBe(path.dirname(expectedCli));
-    expect(launch.env.HERMES_HOME).toBe(launch.hermesHome);
-    expect(launch.commandPath).toContain(`hermes=${expectedCli}`);
-    expect(launch.commandPath).not.toMatch(/AppData|Docker/i);
-  });
-
-  it('rejects noninteractive execution instead of becoming another task runner', () => {
-    const result = new HermesCoderTerminalManager().start({ mode: 'task' });
+  it('requires server-owned project, deck, and conversation identity', () => {
+    const result = new HermesCoderTerminalManager().acquire({
+      projectId: '',
+      deckId: '',
+      conversationId: '',
+    });
     expect(result).toEqual({
       ok: false,
-      error: 'hermes_coder_terminal_interactive_only',
+      error: 'hermes_coder_terminal_identity_required',
       missing: [],
     });
   });
 
   it('fails honestly when the requested workspace root is missing', () => {
     const missing = path.join(process.cwd(), '__missing_coder_terminal_root__');
-    const result = new HermesCoderTerminalManager().start({ targetRoot: missing });
+    const result = new HermesCoderTerminalManager().acquire({ ...identity, targetRoot: missing });
     expect(result).toEqual({
       ok: false,
       error: `hermes_coder_terminal_target_root_missing:${missing}`,
@@ -74,7 +65,20 @@ describe('Hermes Coder terminal boundary', () => {
     });
   });
 
-  it('redacts secrets before terminal output is buffered or published', () => {
+  it('reuses one Card-bound terminal face for the stable native session identity', () => {
+    const manager = new HermesCoderTerminalManager();
+    const first = manager.acquire(identity);
+    const second = manager.acquire(identity);
+    const otherConversation = manager.acquire({ ...identity, conversationId: 'other' });
+    expect(first.ok && first.created).toBe(true);
+    expect(second.ok && second.created).toBe(false);
+    expect(first.ok && second.ok && first.session).toBe(second.ok ? second.session : null);
+    expect(first.ok && otherConversation.ok && first.session).not.toBe(
+      otherConversation.ok ? otherConversation.session : null,
+    );
+  });
+
+  it('redacts secrets before native Hermes output is buffered or published', () => {
     expect(redactTerminalSecrets('OPENAI_API_KEY=sk-example_secret_123456789')).toBe(
       'OPENAI_API_KEY= <redacted>',
     );
@@ -88,28 +92,57 @@ describe('Hermes Coder terminal boundary', () => {
     expect(session.transcript()[0]?.data).toBe('TOKEN= <redacted>');
   });
 
-  it('uses the native Windows PTY kill contract when stopping a session', () => {
-    let onExit: ((event: { exitCode: number; signal?: number }) => void) | undefined;
-    const child = {
-      pid: 42,
-      onData: vi.fn(),
-      onExit: vi.fn((callback: (event: { exitCode: number; signal?: number }) => void) => {
-        onExit = callback;
-      }),
-      write: vi.fn(),
-      resize: vi.fn(),
-      kill: vi.fn(),
-    };
+  it('forwards Hermes output and permission control through the same turn', () => {
     const session = new HermesCoderTerminalSession(sessionInfo());
-    session.attach(child);
-    session.markRunning();
+    const answer = vi.fn();
+    const cancel = vi.fn();
+    session.markReady({
+      cardId: 'card_local_coder',
+      provider: 'openai',
+      modelKey: 'gpt-5.6-luna',
+      providerModelId: 'gpt-5.6-luna',
+      executable: 'hermes-acp',
+      pid: 42,
+      hermesHome: 'C:/repo/Hermes/.hermes',
+      sessionId: 'native-coder-session',
+      transport: 'acp-stdio',
+    });
+    expect(session.beginTurn('run-1')).toBe(true);
+    expect(session.attachControl('run-1', { answer, cancel })).toBe(true);
+    session.receiveHermesEvent({ kind: 'text', text: 'working' });
+    session.receiveHermesEvent({
+      kind: 'permission',
+      promptId: 'permission-1',
+      question: 'Approve edit?',
+      promptType: '[]',
+    });
+    expect(session.info.state).toBe('waiting');
+    expect(session.answerPermission('allow')).toBe(true);
+    expect(answer).toHaveBeenCalledWith('permission-1', 'allow');
+    session.completeTurn('run-1');
+    expect(session.info.state).toBe('ready');
+    expect(session.info.nativeSessionId).toBe('native-coder-session');
+    expect(session.transcript().map((chunk) => chunk.data).join('')).toContain('working');
+  });
 
-    expect(session.write('Get-Location\r')).toBe(true);
-    expect(child.write).toHaveBeenCalledWith('Get-Location\r');
-    expect(session.resize(132, 41)).toBe(true);
-    expect(child.resize).toHaveBeenCalledWith(132, 41);
+  it('cancels only the active native Hermes turn', () => {
+    const session = new HermesCoderTerminalSession(sessionInfo());
+    const cancel = vi.fn();
+    session.markReady({
+      cardId: 'card_local_coder',
+      provider: 'openai',
+      modelKey: 'gpt-5.6-luna',
+      providerModelId: 'gpt-5.6-luna',
+      executable: 'hermes-acp',
+      pid: 42,
+      hermesHome: 'C:/repo/Hermes/.hermes',
+      sessionId: 'native-coder-session',
+      transport: 'acp-stdio',
+    });
+    expect(session.beginTurn('run-1')).toBe(true);
+    expect(session.attachControl('run-1', { answer: vi.fn(), cancel })).toBe(true);
     expect(session.stop()).toBe(true);
-    expect(child.kill).toHaveBeenCalledWith(process.platform === 'win32' ? undefined : 'SIGTERM');
-    onExit?.({ exitCode: 0 });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(session.info.state).toBe('stopped');
   });
 });

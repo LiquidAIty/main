@@ -18,6 +18,8 @@ from acp_adapter.host_profiles import (
     host_execution_scope,
     parse_host_session_config,
 )
+from acp_adapter.server import HermesACPAgent
+from acp_adapter.session import SessionManager
 
 
 def _definition(name: str) -> dict:
@@ -38,6 +40,8 @@ def _metadata() -> dict:
                 "enabledToolsets": ["memory", "mcp-main"],
                 "enabledTools": ["delegate_task"],
                 "executionContextId": "root-context",
+                "hostSessionKey": "project:conversation:card",
+                "systemPrompt": "Saved Card system prompt",
                 "toolCallMeta": {"liquidaity/execution": "root-context"},
             }
         }
@@ -50,6 +54,8 @@ def test_parser_accepts_only_namespaced_bounded_noncredential_configuration() ->
     assert parsed is not None
     assert parsed["enabledToolsets"] == ["memory", "mcp-main"]
     assert parsed["enabledTools"] == ["delegate_task"]
+    assert parsed["hostSessionKey"] == "project:conversation:card"
+    assert parsed["systemPrompt"] == "Saved Card system prompt"
     assert parsed["toolCallMeta"] == {"liquidaity/execution": "root-context"}
 
     generic = _metadata()
@@ -122,6 +128,7 @@ def test_saved_card_surface_is_the_exact_native_and_mcp_surface(
     apply_host_session_config(agent, parse_host_session_config(_metadata()))
 
     assert agent.valid_tool_names == {"memory", "mcp-main-tool", "delegate_task"}
+    assert agent.ephemeral_system_prompt == "Saved Card system prompt"
     assert agent.invalidations == 1
 
     blocked = SimpleNamespace(disabled_toolsets=["memory"])
@@ -178,3 +185,72 @@ def test_generic_child_execution_uses_only_host_issued_context_metadata() -> Non
 
 def test_unconfigured_upstream_agents_do_not_activate_the_host_extension() -> None:
     assert allocate_host_child_execution(MagicMock(), MagicMock()) is False
+
+
+class _NoopSessionDb:
+    def get_session(self, *_args, **_kwargs):
+        return None
+
+    def create_session(self, *_args, **_kwargs):
+        return None
+
+    def update_session(self, *_args, **_kwargs):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_configure_host_extension_refreshes_one_idle_native_session() -> None:
+    agent = SimpleNamespace(model="model", tools=[], enabled_toolsets=[], disabled_toolsets=[])
+    manager = SessionManager(agent_factory=lambda: agent, db=_NoopSessionDb())
+    state = manager.create_session(cwd=".")
+    acp_agent = HermesACPAgent(session_manager=manager)
+    captured: dict[str, object] = {}
+
+    async def register(current, servers):
+        captured["state"] = current
+        captured["servers"] = servers
+
+    def configure(current, config):
+        assert current.is_running is False
+        current.host_config = config
+        captured["config"] = config
+        return current
+
+    acp_agent._register_session_mcp_servers = register
+    manager.configure_host_session = configure
+    result = await acp_agent.ext_method("session/configure_host", {
+        "sessionId": state.session_id,
+        "mcpServers": [{
+            "type": "http",
+            "name": "official",
+            "url": "http://127.0.0.1:8765/mcp",
+            "headers": [{"name": "Authorization", "value": "Bearer opaque"}],
+        }],
+        "_meta": _metadata(),
+    })
+
+    assert result == {
+        "configured": True,
+        "sessionId": state.session_id,
+        "toolCount": 0,
+    }
+    assert state.is_running is False
+    assert captured["state"] is state
+    assert captured["servers"][0].name == "official"
+    assert captured["config"]["executionContextId"] == "root-context"
+
+
+@pytest.mark.asyncio
+async def test_configure_host_extension_fails_closed_during_an_active_turn() -> None:
+    agent = SimpleNamespace(model="model", tools=[], enabled_toolsets=[], disabled_toolsets=[])
+    manager = SessionManager(agent_factory=lambda: agent, db=_NoopSessionDb())
+    state = manager.create_session(cwd=".")
+    state.is_running = True
+    acp_agent = HermesACPAgent(session_manager=manager)
+
+    with pytest.raises(RuntimeError, match="hermes_host_config_turn_in_progress"):
+        await acp_agent.ext_method("session/configure_host", {
+            "sessionId": state.session_id,
+            "mcpServers": [],
+            "_meta": _metadata(),
+        })

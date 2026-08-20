@@ -1360,6 +1360,8 @@ export default function AgentBuilder(): React.ReactElement {
                 title="Coder"
                 testIdPrefix="coder-console"
                 projectId={typeof activeProject === 'string' ? activeProject : undefined}
+                deckId={BUILDER_DECK_ID}
+                conversationId={conversationId}
               />
             }
           />

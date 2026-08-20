@@ -62,29 +62,6 @@ const mcpClientMocks = vi.hoisted(() => ({
   listPythonAgentMcpCatalog: vi.fn(async (): Promise<any[]> => []),
 }));
 
-const kanbanMocks = vi.hoisted(() => ({
-  runHermesKanbanCardTask: vi.fn(async () => ({
-    taskId: 't_native-steward',
-    runId: 40,
-    snapshot: {
-      task: { id: 't_native-steward', status: 'running', result: null },
-      runs: [{ id: 40, status: 'running' }],
-    },
-  })),
-  waitForHermesKanbanCardTask: vi.fn(async () => ({
-    taskId: 't_native-steward',
-    runId: 41,
-    snapshot: {
-      task: {
-        id: 't_native-steward',
-        status: 'done',
-        result: 'Authentic native Kanban result.',
-      },
-      runs: [{ id: 41, status: 'done' }],
-    },
-  })),
-}));
-
 const orchestratorMocks = vi.hoisted(() => ({
   dispatchConfiguredRuntime: vi.fn(async (): Promise<any> => ({
     ok: true,
@@ -241,11 +218,6 @@ vi.mock('../hermes/mainAdapter', () => ({
       : provider
   ),
   startHermesTurn: chatSessionMocks.startHermesTurn,
-}));
-
-vi.mock('./hermesKanban.routes', () => ({
-  runHermesKanbanCardTask: kanbanMocks.runHermesKanbanCardTask,
-  waitForHermesKanbanCardTask: kanbanMocks.waitForHermesKanbanCardTask,
 }));
 
 vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
@@ -500,11 +472,9 @@ describe('coder routes', () => {
     }
   });
 
-  it('routes a saved auto-kanban Hermes card through the native Kanban owner', async () => {
+  it('routes the saved Kanban Card through its stable native Hermes ACP session', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.startHermesTurn.mockClear();
-    kanbanMocks.runHermesKanbanCardTask.mockClear();
-    kanbanMocks.waitForHermesKanbanCardTask.mockClear();
     const exactIdf = [
       '# LiquidAIty IDF',
       '',
@@ -539,47 +509,30 @@ describe('coder routes', () => {
         ok: true,
         result: {
           status: 'completed',
-          output: 'Authentic native Kanban result.',
+          output: 'Real assistant reply.',
           runtimeOwner: 'hermes',
-          transport: {
-            threadId: 't_native-steward',
-            turnId: '41',
-            planType: 'hermes-auto-kanban',
-            nativeTaskId: 't_native-steward',
-            nativeRunId: 41,
-            nativeStatus: 'done',
-          },
           receipt: { runId: 'corr-steward-1', state: 'completed' },
         },
       });
-      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
-      expect(kanbanMocks.runHermesKanbanCardTask).toHaveBeenCalledWith({
-        projectId: 'project-1',
-        deckId: 'deck_builder',
-        correlationId: 'corr-steward-1',
-        conversationId: 'conversation-main-1',
-        parentRunId: 'run-main-parent-1',
+      expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1);
+      expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).toMatchObject({
         cardId: 'card_hermes_steward',
         title: 'Hermes steward',
         prompt: 'Saved prompt',
-        profile: 'liquidaity-hermes-steward',
-        provider: 'openai-codex',
+        runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
+        provider: 'openai',
         providerModelId: 'gpt-5.6-luna',
         skills: ['documentation'],
-        input: exactIdf,
+        message: exactIdf,
       });
-      expect(kanbanMocks.waitForHermesKanbanCardTask).toHaveBeenCalledWith(
-        'liquidaity-hermes-steward',
-        't_native-steward',
-      );
       const finishCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
         ([endpoint, init]) => endpoint === '/domain/runs/finish'
           && JSON.parse(String(init?.body || '{}')).state === 'completed',
       );
       expect(JSON.parse(String(finishCall?.[1]?.body || '{}'))).toMatchObject({
         runId: 'corr-steward-1',
-        providerThreadRef: 't_native-steward',
-        providerTurnRef: '41',
+        providerThreadRef: null,
+        providerTurnRef: null,
       });
     } finally {
       await closeServer(server);

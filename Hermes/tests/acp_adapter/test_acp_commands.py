@@ -1,4 +1,7 @@
 import sys
+import asyncio
+import os
+import threading
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -135,10 +138,85 @@ async def test_acp_steer_slash_command_injects_into_running_agent():
     assert fake.runs == []
 
 
+@pytest.mark.asyncio
+async def test_one_acp_process_isolates_two_concurrent_native_session_contexts(monkeypatch):
+    barrier = threading.Barrier(2)
+    observations = []
+
+    class ConcurrentAgent(FakeAgent):
+        def run_conversation(self, *, user_message, conversation_history, task_id, **kwargs):
+            from gateway.session_context import get_session_env
+
+            barrier.wait(timeout=5)
+            observations.append((
+                task_id,
+                get_session_env("HERMES_SESSION_ID"),
+                os.environ.get("HERMES_SESSION_ID"),
+            ))
+            return super().run_conversation(
+                user_message=user_message,
+                conversation_history=conversation_history,
+                task_id=task_id,
+                **kwargs,
+            )
+
+    monkeypatch.setenv("HERMES_SESSION_ID", "process-sentinel")
+    manager = SessionManager(agent_factory=ConcurrentAgent, db=NoopDb())
+    acp_agent = HermesACPAgent(session_manager=manager)
+    acp_agent.on_connect(CaptureConn())
+    left = manager.create_session(cwd=".")
+    right = manager.create_session(cwd=".")
+
+    await asyncio.gather(
+        acp_agent.prompt(
+            session_id=left.session_id,
+            prompt=[TextContentBlock(type="text", text="left")],
+        ),
+        acp_agent.prompt(
+            session_id=right.session_id,
+            prompt=[TextContentBlock(type="text", text="right")],
+        ),
+    )
+
+    assert {item[0] for item in observations} == {left.session_id, right.session_id}
+    assert all(task_id == context_id for task_id, context_id, _ in observations)
+    assert all(process_id == "process-sentinel" for _, _, process_id in observations)
+    assert os.environ.get("HERMES_SESSION_ID") == "process-sentinel"
 
 
+def test_shared_home_recovers_exact_host_session_key_when_cwd_matches(tmp_path):
+    from hermes_state import SessionDB
 
+    db = SessionDB(db_path=tmp_path / "state.db")
+    try:
+        manager = SessionManager(agent_factory=FakeAgent, db=db)
+        left = manager.create_session(
+            cwd=str(tmp_path),
+            host_config={"hostSessionKey": "project:conversation:main"},
+        )
+        left.history = [{"role": "user", "content": "main history"}]
+        manager._persist(left)
+        right = manager.create_session(
+            cwd=str(tmp_path),
+            host_config={"hostSessionKey": "project:conversation:coder"},
+        )
+        right.history = [{"role": "user", "content": "coder history"}]
+        manager._persist(right)
 
+        restarted = SessionManager(agent_factory=FakeAgent, db=db)
+        main_rows = restarted.list_sessions(
+            cwd=str(tmp_path),
+            host_session_key="project:conversation:main",
+        )
+        coder_rows = restarted.list_sessions(
+            cwd=str(tmp_path),
+            host_session_key="project:conversation:coder",
+        )
+
+        assert [row["session_id"] for row in main_rows] == [left.session_id]
+        assert [row["session_id"] for row in coder_rows] == [right.session_id]
+    finally:
+        db.close()
 
 
 @pytest.mark.asyncio
@@ -161,9 +239,3 @@ async def test_acp_cancel_publishes_hard_stop_while_holding_runtime_lock():
     assert observed["lock_held"] is True
     assert state.cancel_event.is_set()
     assert state.interrupted_prompt_text == "original request"
-
-
-
-
-
-

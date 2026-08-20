@@ -8,22 +8,15 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 const execMocks = vi.hoisted(() => ({
   execFile: vi.fn(),
 }));
-const profileMemoryMocks = vi.hoisted(() => ({
-  ensureHermesHolographicMemoryProfile: vi.fn(),
-}));
-
 vi.mock('node:child_process', () => ({
   execFile: execMocks.execFile,
 }));
-vi.mock('../hermes/profileMemory', () => profileMemoryMocks);
 
 import router from './hermesKanban.routes';
 import {
   parseHermesJson,
   parseYamlishConfig,
   parseProfileTable,
-  runHermesKanbanCardTask,
-  waitForHermesKanbanCardTask,
 } from './hermesKanban.routes';
 
 function echo(fixture: unknown, exitCode = 0, stderr = '') {
@@ -78,58 +71,6 @@ describe('hermesKanban helpers', () => {
     expect(() => parseHermesJson('not json at all')).toThrow(/json_not_found/);
   });
 
-  it('bounded join returns the exact native done snapshot after re-reading Hermes', async () => {
-    let clock = 0;
-    const snapshots = [
-      { task: { id: 't_join', status: 'running', result: null }, runs: [{ id: 4 }] },
-      { task: { id: 't_join', status: 'done', result: 'synthesized' }, runs: [{ id: 5 }] },
-    ];
-    const runner = vi.fn(async () => ({
-      exitCode: 0,
-      stdout: JSON.stringify(snapshots.shift()),
-      stderr: '',
-    }));
-    const result = await waitForHermesKanbanCardTask('card_research', 't_join', {
-      runner,
-      now: () => clock,
-      pause: async (delayMs) => { clock += delayMs; },
-      pollMs: 10,
-      timeoutMs: 100,
-    });
-    expect(result).toEqual({
-      taskId: 't_join',
-      runId: 5,
-      snapshot: {
-        task: { id: 't_join', status: 'done', result: 'synthesized' },
-        runs: [{ id: 5 }],
-      },
-    });
-    expect(runner).toHaveBeenCalledTimes(2);
-  });
-
-  it('bounded join fails honestly on native blocked and timeout states', async () => {
-    const blockedRunner = vi.fn(async () => ({
-      exitCode: 0,
-      stdout: JSON.stringify({ task: { id: 't_blocked', status: 'blocked' }, runs: [] }),
-      stderr: '',
-    }));
-    await expect(waitForHermesKanbanCardTask('card_research', 't_blocked', {
-      runner: blockedRunner,
-      timeoutMs: 100,
-    })).rejects.toThrow('hermes_kanban_card_blocked');
-
-    const runningRunner = vi.fn(async () => ({
-      exitCode: 0,
-      stdout: JSON.stringify({ task: { id: 't_timeout', status: 'running' }, runs: [] }),
-      stderr: '',
-    }));
-    await expect(waitForHermesKanbanCardTask('card_research', 't_timeout', {
-      runner: runningRunner,
-      now: () => 0,
-      timeoutMs: 0,
-    })).rejects.toThrow('hermes_kanban_card_join_timeout');
-  });
-
   it('parseYamlishConfig decodes scalars without logic', () => {
     expect(
       parseYamlishConfig(
@@ -171,143 +112,6 @@ describe('hermesKanban helpers', () => {
       gateway: 'running',
     });
     expect(rows[1]).toMatchObject({ name: 'research', active: false, model: 'z-ai/glm-5.2', gateway: 'stopped' });
-  });
-});
-
-describe('saved-card native Hermes Kanban submission', () => {
-  beforeEach(() => {
-    execMocks.execFile.mockReset();
-    profileMemoryMocks.ensureHermesHolographicMemoryProfile.mockReset();
-  });
-
-  it('creates under the stable card profile and returns the exact native task/run snapshot', async () => {
-    const snapshot = {
-      task: {
-        id: 't_native123',
-        status: 'done',
-        result: 'native synthesized result',
-      },
-      latest_summary: 'native summary',
-      parents: [],
-      children: ['t_worker1'],
-      comments: [],
-      events: [{ kind: 'completed' }],
-      runs: [{ id: 6, status: 'done', outcome: 'completed' }],
-    };
-    execMocks.execFile.mockImplementation((_bin, args, _opts, cb) => {
-      if (args.includes('create')) {
-        cb(null, JSON.stringify({ id: 't_native123', status: 'ready' }), '');
-        return;
-      }
-      cb(null, JSON.stringify(snapshot), '');
-    });
-
-    const result = await runHermesKanbanCardTask({
-      projectId: 'project-1',
-      deckId: 'deck_builder',
-      correlationId: 'corr-1',
-      conversationId: 'conversation-1',
-      parentRunId: 'run-main-1',
-      cardId: 'card_hermes_steward',
-      title: 'Kanban',
-      prompt: 'Saved card instructions.',
-      profile: 'card_hermes_steward',
-      provider: 'openai-codex',
-      providerModelId: 'gpt-5.6-luna',
-      skills: ['planning', 'verification'],
-      input: 'Perform the bounded assignment.',
-    });
-
-    expect(result).toEqual({
-      taskId: 't_native123',
-      runId: 6,
-      snapshot,
-    });
-    expect(profileMemoryMocks.ensureHermesHolographicMemoryProfile).toHaveBeenCalledWith(
-      expect.stringMatching(/[\\/]Hermes$/i),
-      'card_hermes_steward',
-    );
-    const [, createArgs] = execMocks.execFile.mock.calls[0];
-    expect(createArgs).toEqual(expect.arrayContaining([
-      '-p',
-      'card_hermes_steward',
-      'kanban',
-      'create',
-      'Kanban',
-      '--assignee',
-      'card_hermes_steward',
-      '--created-by',
-      'card_hermes_steward',
-      '--model',
-      'gpt-5.6-luna',
-      '--provider',
-      'openai-codex',
-      '--skill',
-      'planning',
-      '--skill',
-      'verification',
-      '--json',
-    ]));
-    const bodyIndex = createArgs.indexOf('--body');
-    expect(createArgs[bodyIndex + 1]).toBe([
-      '[LIQUIDAITY_SAVED_CARD_INSTRUCTIONS]',
-      'Saved card instructions.',
-      '',
-      '[ASSIGNMENT]',
-      'Perform the bounded assignment.',
-    ].join('\n'));
-    const idempotencyIndex = createArgs.indexOf('--idempotency-key');
-    expect(createArgs[idempotencyIndex + 1]).toMatch(/^liquidaity-[a-f0-9]{64}$/);
-    const [, showArgs] = execMocks.execFile.mock.calls[1];
-    expect(showArgs).toEqual([
-      '-p',
-      'card_hermes_steward',
-      'kanban',
-      'show',
-      't_native123',
-      '--json',
-    ]);
-  });
-
-  it('does not expose native stderr through its failure contract', async () => {
-    const secret = 'sk-secret-value';
-    execMocks.execFile.mockImplementation(echo('', 1, `provider failed with ${secret}`));
-
-    await expect(runHermesKanbanCardTask({
-      projectId: 'project-1',
-      deckId: 'deck_builder',
-      correlationId: 'corr-secret',
-      conversationId: 'conversation-secret',
-      parentRunId: 'run-main-secret',
-      cardId: 'card_hermes_steward',
-      title: 'Kanban',
-      prompt: 'Saved card instructions.',
-      profile: 'card_hermes_steward',
-      provider: 'openai-codex',
-      providerModelId: 'gpt-5.6-luna',
-      skills: [],
-      input: 'Perform the bounded assignment.',
-    })).rejects.toThrow('hermes_kanban_card_create_failed');
-
-    try {
-      await runHermesKanbanCardTask({
-        projectId: 'project-1',
-        deckId: 'deck_builder',
-        correlationId: 'corr-secret-2',
-        conversationId: 'conversation-secret',
-        parentRunId: 'run-main-secret',
-        cardId: 'card_hermes_steward',
-        title: 'Kanban',
-        prompt: 'Saved card instructions.',
-        profile: 'card_hermes_steward',
-        provider: 'openai-codex',
-        providerModelId: 'gpt-5.6-luna',
-        skills: [],
-        input: 'Perform the bounded assignment.',
-      });
-    } catch (error) {
-      expect(String(error)).not.toContain(secret);
-    }
   });
 });
 

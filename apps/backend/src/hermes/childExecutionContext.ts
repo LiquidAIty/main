@@ -52,7 +52,7 @@ export function registerHermesRootExecutionContext(args: {
   deckId: string;
   conversationId: string;
   cardId: string;
-  runtimeMode: 'main' | 'delegate';
+  runtimeMode: 'main' | 'delegate' | 'kanban';
   grantedTools: string[];
   now?: number;
 }): HermesExecutionContext {

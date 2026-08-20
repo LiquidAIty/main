@@ -2,8 +2,6 @@ import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const PROFILE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-
 export const HOLOGRAPHIC_MEMORY_SETTINGS = [
   ['memory.provider', 'holographic'],
   ['plugins.hermes-memory-store.db_path', '$HERMES_HOME/memory_store.db'],
@@ -42,46 +40,38 @@ for key, value in desired:
         set_config_value(key, cli_value(value), force=True)
 `;
 
-function normalizeProfile(value: unknown): string {
-  const profile = String(value || '').trim().toLowerCase();
-  if (!PROFILE_PATTERN.test(profile)) {
-    throw new Error('hermes_profile_invalid');
-  }
-  return profile;
-}
-
 function resolveHermesPythonExecutable(hermesRoot: string): string {
   const windowsPython = path.join(hermesRoot, 'venv', 'Scripts', 'python.exe');
   if (existsSync(windowsPython)) return windowsPython;
   const posixPython = path.join(hermesRoot, 'venv', 'bin', 'python');
   if (existsSync(posixPython)) return posixPython;
-  throw new Error('hermes_profile_config_python_missing');
+  throw new Error('hermes_home_config_python_missing');
 }
 
-export function resolveHermesCardRuntimeHome(hermesRoot: string, profile: unknown): string {
-  return path.join(hermesRoot, '.hermes', 'profiles', normalizeProfile(profile));
+export function resolveHermesRuntimeHome(hermesRoot: string): string {
+  return path.join(hermesRoot, '.hermes');
 }
 
-export function resolveHermesHolographicMemoryDb(hermesRoot: string, profile: unknown): string {
-  return path.join(resolveHermesCardRuntimeHome(hermesRoot, profile), 'memory_store.db');
+export function resolveHermesHolographicMemoryDb(hermesRoot: string): string {
+  return path.join(resolveHermesRuntimeHome(hermesRoot), 'memory_store.db');
 }
 
 /**
  * Select the bundled Hermes Holographic provider through Hermes' own atomic
- * config writer. Existing profile config and built-in MEMORY.md/USER.md files
+ * config writer. Existing Hermes config and built-in MEMORY.md/USER.md files
  * remain owned by Hermes and are never copied or replaced here.
  */
-export function configureHermesHolographicMemoryProfile(
+export function configureHermesHolographicMemoryHome(
   hermesRoot: string,
-  profileHome: string,
+  hermesHome: string,
 ): void {
-  mkdirSync(profileHome, { recursive: true });
+  mkdirSync(hermesHome, { recursive: true });
   const result = spawnSync(
     resolveHermesPythonExecutable(hermesRoot),
     ['-c', CONFIGURE_HOLOGRAPHIC_MEMORY_SCRIPT, JSON.stringify(HOLOGRAPHIC_MEMORY_SETTINGS)],
     {
       cwd: hermesRoot,
-      env: { ...process.env, HERMES_HOME: profileHome },
+      env: { ...process.env, HERMES_HOME: hermesHome },
       encoding: 'utf8',
       windowsHide: true,
       timeout: 20_000,
@@ -89,15 +79,12 @@ export function configureHermesHolographicMemoryProfile(
     },
   );
   if (result.error || result.status !== 0) {
-    throw new Error('hermes_holographic_profile_config_failed');
+    throw new Error('hermes_holographic_home_config_failed');
   }
 }
 
-export function ensureHermesHolographicMemoryProfile(
-  hermesRoot: string,
-  profile: unknown,
-): string {
-  const profileHome = resolveHermesCardRuntimeHome(hermesRoot, profile);
-  configureHermesHolographicMemoryProfile(hermesRoot, profileHome);
-  return profileHome;
+export function ensureHermesHolographicMemoryHome(hermesRoot: string): string {
+  const hermesHome = resolveHermesRuntimeHome(hermesRoot);
+  configureHermesHolographicMemoryHome(hermesRoot, hermesHome);
+  return hermesHome;
 }

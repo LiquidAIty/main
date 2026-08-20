@@ -17,10 +17,10 @@ saved Cards and graph topology = identity and authority
 ```text
 React/Vite Agent Builder and Chat
   → Node/TypeScript HTTP, SSE, saved-state, and session transport
-     → persistent repo-owned Hermes ACP adapter
-        ├─ Main: profile liquidaity-main
-        ├─ Coder: profile coder
-        └─ Kanban: profile liquidaity-hermes-steward
+     → one persistent repo-owned Hermes ACP process and native home
+        ├─ Main: stable native session, logical profile liquidaity-main
+        ├─ Coder: stable native session, logical profile coder
+        └─ Kanban: stable native session, logical profile liquidaity-hermes-steward
      → official Python MCP client boundary
         → one official Python HTTP MCP host on :8765/mcp
            ├─ Card/IDF/AGE deterministic rails
@@ -66,14 +66,21 @@ start runtimes.
 
 `apps/backend/src/hermes/mainAdapter.ts` owns persistent Hermes ACP construction and sessions.
 `apps/backend/src/hermes/coderTerminal.ts` owns the Coder terminal lifecycle. Main, Coder, and Kanban
-share the genuine repo-owned Hermes codebase. Every persistent top-level Hermes Card process receives
-its own `HERMES_HOME`, working directory, session, and memory boundary. A native `delegate_task` child
-is ephemeral inside its owning parent's Hermes process. It remains activity of that same saved Card,
-inherits the Card-bounded native and MCP tool surface through Hermes' native rules, and is not another
-saved Card or profile. Every child receives a distinct Run and `nativeChildId` before execution and
-uses an opaque host-issued MCP 2 execution context. It has a separate child session database but
-inherits the parent's profile home. Do not describe that child as having independent persistent memory
-or identity; a separately saved Main, Coder, or Helper Card instead runs as its own top-level profile.
+share one genuine repo-owned Hermes process, one `Hermes/.hermes` native home, one root OAuth/provider
+configuration, one `state.db`, and one Holographic `memory_store.db`. Each saved Card maps to its own
+stable native Hermes session, working directory, saved model, system prompt, and bounded tool surface.
+The Card `profile` field is a stable logical product binding; it does not select another home or
+duplicate Hermes installation. A native `delegate_task` child is ephemeral inside its owning Card's
+session. It remains activity of that same saved Card, inherits a Card-bounded native and MCP ceiling
+through Hermes' native rules, and is not another saved Card or profile. Every child receives a
+distinct Run and `nativeChildId` before execution and uses an opaque host-issued MCP 2 execution
+context. Hermes may open a dedicated connection to the same shared `state.db` for a child's native
+transcript lifecycle; that is not independent Card memory or identity.
+
+The host derives one opaque key from Project, conversation, and Card identity. Hermes stores that key
+in its existing native `sessions.session_key` field so an ACP restart recovers the exact session even
+when Main and Coder share the repository working directory. The key is routing identity only; it is
+not a Card definition, credential, prompt, or second persistence authority.
 
 The backend injects server-owned Card, conversation, Run, and correlation identity. Hermes receives the
 exact materialized IDF plus saved-card context. No generic model call or another agent runtime hides
@@ -222,11 +229,13 @@ The current contained divergence tracks
 session tool surface or allocating an execution context before a native child starts, so
 `Hermes/acp_adapter/host_profiles.py` plus marked hooks in `acp_adapter/session.py`,
 `acp_adapter/server.py`, and `tools/delegate_tool.py` accept only trusted
-`_meta.hermes.sessionConfig` and generic child lifecycle requests. The extension contains no
-LiquidAIty Card types, product policy, or credentials. The backend maps each top-level saved Card to
-ordinary Hermes profile, prompt, model, toolset, tool, skill, and MCP fields. Native subagents inherit
-that bounded parent surface and remain Runs of the owning Card. Sessions without the metadata retain
-upstream Hermes behavior. Focused no-provider tests live in
+`_meta.hermes.sessionConfig`, the generic `_session/configure_host` ACP extension, and generic child
+lifecycle requests. The extension contains no LiquidAIty Card types, product policy, or credentials.
+The backend projects each top-level saved Card's prompt, model, native toolsets/tools, and official MCP
+connection into its stable native session. Native Hermes' `ephemeral_system_prompt` is the only
+session-scoped prompt hook; Hermes still owns prompt assembly. Native subagents inherit the bounded
+parent ceiling and remain Runs of the owning Card. Sessions without the metadata retain upstream
+Hermes behavior. Focused no-provider tests live in
 `Hermes/tests/acp_adapter/test_host_profiles.py` and `Hermes/tests/tools/test_delegate.py`. The generic
 child execution-context extension additionally touches `Hermes/tools/mcp_tool.py` so official MCP 2
 per-call `meta=` carries only an opaque host-issued context ID. The complete rebase, rollback, and

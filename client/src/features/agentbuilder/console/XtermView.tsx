@@ -5,17 +5,15 @@ import '@xterm/xterm/css/xterm.css';
 import type { ConsoleOutputChunk } from './coderTerminalClient';
 
 /**
- * xterm.js rendering of a Coder terminal session. Kept isolated so the
- * parent panel stays testable. This is the sole terminal renderer: raw PTY
- * output must never be displayed as plain text because it contains VT/ANSI
- * control sequences that only a terminal emulator can interpret correctly.
+ * xterm.js rendering of the saved Coder Card's native Hermes session. This is
+ * line-oriented ACP input, not a shell or PTY: xterm supplies terminal editing
+ * ergonomics while the backend sends each completed line as a Hermes turn.
  */
 
 type XtermViewProps = {
   chunks: ConsoleOutputChunk[];
   interactive: boolean;
-  onInput?: (data: string) => void;
-  onResize?: (cols: number, rows: number) => void;
+  onSubmit?: (message: string) => void;
   onError?: (message: string) => void;
   /** Render with a transparent background so text sits on the host panel. */
   transparent?: boolean;
@@ -24,18 +22,15 @@ type XtermViewProps = {
 export default function XtermView({
   chunks,
   interactive,
-  onInput,
-  onResize,
+  onSubmit,
   onError,
   transparent = false,
 }: XtermViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<{ term: Terminal; lastSequence: number } | null>(null);
-  const onInputRef = useRef(onInput);
-  const onResizeRef = useRef(onResize);
+  const onSubmitRef = useRef(onSubmit);
   const onErrorRef = useRef(onError);
-  onInputRef.current = onInput;
-  onResizeRef.current = onResize;
+  onSubmitRef.current = onSubmit;
   onErrorRef.current = onError;
 
   useEffect(() => {
@@ -44,18 +39,12 @@ export default function XtermView({
     let frame: number | null = null;
     let resizeObserver: ResizeObserver | null = null;
     let inputDisposable: { dispose(): void } | null = null;
-    let previousSize = '';
     let term: Terminal | null = null;
     const focusTerminal = () => term?.focus();
     const fit = () => {
       if (!term) return;
       try {
         fitAddon.fit();
-        const nextSize = `${term.cols}x${term.rows}`;
-        if (nextSize !== previousSize) {
-          previousSize = nextSize;
-          onResizeRef.current?.(term.cols, term.rows);
-        }
       } catch {
         // The next ResizeObserver/window resize callback retries once measurable.
       }
@@ -82,7 +71,38 @@ export default function XtermView({
       term.loadAddon(fitAddon);
       term.open(container);
       if (interactive) {
-        inputDisposable = term.onData((data) => onInputRef.current?.(data));
+        let line = '';
+        let previousWasCarriageReturn = false;
+        inputDisposable = term.onData((data) => {
+          for (const character of data) {
+            if (character === '\n' && previousWasCarriageReturn) {
+              previousWasCarriageReturn = false;
+              continue;
+            }
+            if (character === '\r' || character === '\n') {
+              previousWasCarriageReturn = character === '\r';
+              const message = line.trim();
+              if (message) {
+                term?.write('\r\n');
+                onSubmitRef.current?.(message);
+              }
+              line = '';
+              continue;
+            }
+            previousWasCarriageReturn = false;
+            if (character === '\u007f' || character === '\b') {
+              if (line) {
+                line = line.slice(0, -1);
+                term?.write('\b \b');
+              }
+              continue;
+            }
+            if (character >= ' ' && character !== '\u007f') {
+              line += character;
+              term?.write(character);
+            }
+          }
+        });
       }
       let lastSequence = 0;
       for (const chunk of chunks) {

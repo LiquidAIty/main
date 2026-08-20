@@ -30,6 +30,8 @@ _SESSION_FIELDS = {
     "enabledToolsets",
     "enabledTools",
     "executionContextId",
+    "hostSessionKey",
+    "systemPrompt",
     "toolCallMeta",
 }
 
@@ -120,6 +122,12 @@ def parse_host_session_config(metadata_kwargs: Mapping[str, Any]) -> dict[str, A
         "enabledToolsets": _bounded_string_list(raw.get("enabledToolsets"), "enabledToolsets"),
         "enabledTools": _bounded_string_list(raw.get("enabledTools"), "enabledTools"),
         "executionContextId": execution_context_id,
+        "hostSessionKey": _bounded_text(
+            raw.get("hostSessionKey"), "hostSessionKey", limit=512
+        ),
+        "systemPrompt": _bounded_text(
+            raw.get("systemPrompt"), "systemPrompt", limit=_MAX_PROMPT_CHARS
+        ),
         "toolCallMeta": normalized_tool_meta,
     }
 
@@ -135,6 +143,11 @@ def attach_host_session_config(agent: Any, config: dict[str, Any] | None) -> Non
     setattr(agent, "_host_tool_call_meta", (
         dict(normalized.get("toolCallMeta") or {}) if normalized else {}
     ))
+    if normalized is not None:
+        # Native Hermes appends this field to its effective system prompt at
+        # model-call time. It keeps the host-selected role session-scoped and
+        # non-persistent while Hermes retains prompt assembly ownership.
+        setattr(agent, "ephemeral_system_prompt", normalized.get("systemPrompt") or None)
 
 
 def attach_host_execution_requester(agent: Any, requester: Any, session_id: str) -> None:

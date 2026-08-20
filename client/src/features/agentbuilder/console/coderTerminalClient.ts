@@ -1,27 +1,39 @@
 /** Thin client for the saved Coder Card's Hermes terminal face. */
 
-export type ConsoleMode = 'interactive' | 'print' | 'task' | 'shell';
+export type ConsoleMode = 'interactive';
 
-type ConsoleSessionState = 'starting' | 'running' | 'exited' | 'failed';
+export type ConsoleSessionState =
+  | 'starting'
+  | 'ready'
+  | 'working'
+  | 'waiting'
+  | 'stopped'
+  | 'failed'
+  | 'auth_required';
 
-type ConsoleTransportMode = 'pty' | 'pipe';
+type ConsoleTransportMode = 'acp-stdio';
 
 export type ConsoleSessionInfo = {
   id: string;
+  ownerCardId: string;
+  projectId: string;
+  deckId: string;
+  conversationId: string;
   targetRoot: string;
-  mode: ConsoleMode;
+  mode: 'interactive';
   state: ConsoleSessionState;
-  commandPath: string;
-  runtimeSource: string;
+  runtimeSource: 'saved_hermes_card';
   transportMode: ConsoleTransportMode;
+  profile: string;
   provider: string | null;
   model: string | null;
-  interactiveSupported: boolean;
+  interactiveSupported: true;
   pid: number | null;
-  startedAt: string | null;
-  exitedAt: string | null;
-  exitCode: number | null;
-  exitSignal: string | null;
+  nativeSessionId: string | null;
+  activeRunId: string | null;
+  startedAt: string;
+  updatedAt: string;
+  stoppedAt: string | null;
   warnings: string[];
   error: string | null;
 };
@@ -48,17 +60,15 @@ async function postJson(base: string, path: string, body: unknown): Promise<Resp
 
 export type CoderTerminalClient = {
   startSession(request: {
+    projectId: string;
+    deckId: string;
+    conversationId: string;
     targetRoot?: string;
     mode?: ConsoleMode;
-    model?: string;
-    provider?: string;
-    prompt?: string;
-    args?: string[];
   }): Promise<StartSessionResult>;
   listSessions(): Promise<ConsoleSessionInfo[]>;
   getSession(id: string): Promise<{ session: ConsoleSessionInfo; transcript: ConsoleOutputChunk[] } | null>;
-  sendInput(id: string, data: string): Promise<boolean>;
-  resizeSession(id: string, cols: number, rows: number): Promise<boolean>;
+  sendInput(id: string, message: string): Promise<boolean>;
   stopSession(id: string): Promise<boolean>;
   streamUrl(id: string): string;
 };
@@ -98,15 +108,10 @@ export function createTerminalClient(base: string): CoderTerminalClient {
       transcript: (payload.transcript || []) as ConsoleOutputChunk[],
     };
   },
-  async sendInput(id, data) {
-    const response = await postJson(base, `/sessions/${encodeURIComponent(id)}/input`, { data });
+  async sendInput(id, message) {
+    const response = await postJson(base, `/sessions/${encodeURIComponent(id)}/input`, { message });
     const payload = await response.json().catch(() => ({}));
     return Boolean(payload?.delivered);
-  },
-  async resizeSession(id, cols, rows) {
-    const response = await postJson(base, `/sessions/${encodeURIComponent(id)}/resize`, { cols, rows });
-    const payload = await response.json().catch(() => ({}));
-    return Boolean(payload?.resized);
   },
   async stopSession(id) {
     const response = await postJson(base, `/sessions/${encodeURIComponent(id)}/stop`, {});

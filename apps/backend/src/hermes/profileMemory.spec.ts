@@ -13,10 +13,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 
 import {
-  configureHermesHolographicMemoryProfile,
+  configureHermesHolographicMemoryHome,
   HOLOGRAPHIC_MEMORY_SETTINGS,
-  resolveHermesCardRuntimeHome,
   resolveHermesHolographicMemoryDb,
+  resolveHermesRuntimeHome,
 } from './profileMemory';
 
 const HERMES_ROOT = path.join(resolveRepoRoot(), 'Hermes');
@@ -54,21 +54,20 @@ afterEach(() => {
   }
 });
 
-describe('Hermes Holographic profile configuration', () => {
-  it('resolves isolated profile homes and databases', () => {
-    const profiles = ['liquidaity-main', 'coder', 'liquidaity-hermes-steward'];
-    const homes = profiles.map((profile) => resolveHermesCardRuntimeHome(HERMES_ROOT, profile));
-    expect(homes[0]).toBe(path.join(HERMES_ROOT, '.hermes', 'profiles', 'liquidaity-main'));
-    expect(new Set(homes).size).toBe(3);
-    expect(new Set(homes.map((home) => path.join(home, 'state.db'))).size).toBe(3);
-    expect(new Set(homes.map((home) => path.join(home, 'memories', 'MEMORY.md'))).size).toBe(3);
-    expect(new Set(profiles.map((profile) => resolveHermesHolographicMemoryDb(HERMES_ROOT, profile))).size).toBe(3);
-    expect(() => resolveHermesCardRuntimeHome(HERMES_ROOT, '../escape')).toThrow(
-      'hermes_profile_invalid',
+describe('Hermes Holographic runtime configuration', () => {
+  it('resolves one shared Hermes home and native database set', () => {
+    const home = resolveHermesRuntimeHome(HERMES_ROOT);
+    expect(home).toBe(path.join(HERMES_ROOT, '.hermes'));
+    expect(path.join(home, 'state.db')).toBe(path.join(HERMES_ROOT, '.hermes', 'state.db'));
+    expect(path.join(home, 'memories', 'MEMORY.md')).toBe(
+      path.join(HERMES_ROOT, '.hermes', 'memories', 'MEMORY.md'),
+    );
+    expect(resolveHermesHolographicMemoryDb(HERMES_ROOT)).toBe(
+      path.join(HERMES_ROOT, '.hermes', 'memory_store.db'),
     );
   });
 
-  it('uses the upstream atomic config writer idempotently without replacing profile-owned files', () => {
+  it('uses the upstream atomic config writer idempotently without replacing home-owned files', () => {
     const home = newProfileHome();
     const memoryText = 'existing built-in memory\n';
     const userText = 'existing user profile\n';
@@ -82,7 +81,7 @@ describe('Hermes Holographic profile configuration', () => {
     writeFileSync(path.join(home, 'memories', 'USER.md'), userText, 'utf8');
     writeFileSync(path.join(home, 'auth.json'), authText, 'utf8');
 
-    configureHermesHolographicMemoryProfile(HERMES_ROOT, home);
+    configureHermesHolographicMemoryHome(HERMES_ROOT, home);
     const firstBytes = readFileSync(path.join(home, 'config.yaml'), 'utf8');
     const firstMtime = statSync(path.join(home, 'config.yaml')).mtimeMs;
     const raw = readRawHermesConfig(home);
@@ -103,7 +102,7 @@ describe('Hermes Holographic profile configuration', () => {
     expect(readFileSync(path.join(home, 'auth.json'), 'utf8')).toBe(authText);
     expect(firstBytes).not.toContain('existing-account-token');
 
-    configureHermesHolographicMemoryProfile(HERMES_ROOT, home);
+    configureHermesHolographicMemoryHome(HERMES_ROOT, home);
     expect(readFileSync(path.join(home, 'config.yaml'), 'utf8')).toBe(firstBytes);
     expect(statSync(path.join(home, 'config.yaml')).mtimeMs).toBe(firstMtime);
   });
