@@ -46,8 +46,14 @@ export type ConsoleOutputChunk = {
 };
 
 type StartSessionResult =
-  | { ok: true; session: ConsoleSessionInfo }
-  | { ok: false; error: string; missing: string[] };
+  | { ok: true; session: ConsoleSessionInfo; transcript: ConsoleOutputChunk[] }
+  | {
+    ok: false;
+    error: string;
+    missing: string[];
+    session?: ConsoleSessionInfo;
+    transcript?: ConsoleOutputChunk[];
+  };
 
 async function postJson(base: string, path: string, body: unknown): Promise<Response> {
   return fetch(`${base}${path}`, {
@@ -79,12 +85,20 @@ export function createTerminalClient(base: string): CoderTerminalClient {
     const response = await postJson(base, '/sessions', request);
     const payload = await response.json().catch(() => ({}));
     if (response.ok && payload?.ok) {
-      return { ok: true, session: payload.session as ConsoleSessionInfo };
+      return {
+        ok: true,
+        session: payload.session as ConsoleSessionInfo,
+        transcript: Array.isArray(payload.transcript) ? payload.transcript as ConsoleOutputChunk[] : [],
+      };
     }
     return {
       ok: false,
-      error: String(payload?.error || `console_start_failed_${response.status}`),
+      error: String(payload?.error || `coder_terminal_start_http_${response.status}`),
       missing: Array.isArray(payload?.missing) ? payload.missing.map(String) : [],
+      ...(payload?.session ? { session: payload.session as ConsoleSessionInfo } : {}),
+      ...(Array.isArray(payload?.transcript)
+        ? { transcript: payload.transcript as ConsoleOutputChunk[] }
+        : {}),
     };
   },
   async listSessions() {
@@ -111,11 +125,17 @@ export function createTerminalClient(base: string): CoderTerminalClient {
   async sendInput(id, message) {
     const response = await postJson(base, `/sessions/${encodeURIComponent(id)}/input`, { message });
     const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload?.delivered) {
+      throw new Error(String(payload?.error || `coder_terminal_input_failed_${response.status}`));
+    }
     return Boolean(payload?.delivered);
   },
   async stopSession(id) {
     const response = await postJson(base, `/sessions/${encodeURIComponent(id)}/stop`, {});
     const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(String(payload?.error || `coder_terminal_stop_failed_${response.status}`));
+    }
     return Boolean(payload?.stopped);
   },
   streamUrl(id) {

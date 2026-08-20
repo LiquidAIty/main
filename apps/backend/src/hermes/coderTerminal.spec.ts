@@ -107,6 +107,7 @@ describe('Hermes Coder terminal boundary', () => {
       sessionId: 'native-coder-session',
       transport: 'acp-stdio',
     });
+    expect(session.transcript()).toEqual([]);
     expect(session.beginTurn('run-1')).toBe(true);
     expect(session.attachControl('run-1', { answer, cancel })).toBe(true);
     session.receiveHermesEvent({ kind: 'text', text: 'working' });
@@ -123,6 +124,14 @@ describe('Hermes Coder terminal boundary', () => {
     expect(session.info.state).toBe('ready');
     expect(session.info.nativeSessionId).toBe('native-coder-session');
     expect(session.transcript().map((chunk) => chunk.data).join('')).toContain('working');
+  });
+
+  it('publishes an exact terminal failure once without canned status prose', () => {
+    const session = new HermesCoderTerminalSession(sessionInfo());
+    session.receiveHermesEvent({ kind: 'error', message: 'native failure' });
+    session.markFailed('native failure');
+    session.markFailed('native failure');
+    expect(session.transcript().map((chunk) => chunk.data)).toEqual(['native failure\r\n']);
   });
 
   it('cancels only the active native Hermes turn', () => {

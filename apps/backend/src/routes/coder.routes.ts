@@ -201,10 +201,10 @@ type PreparedHermesTransportArgs = {
   onEvent: (event: HermesSessionEvent) => void;
 };
 
-function resolvePreparedHermesTurnArgs(
+function resolveHermesTurnArgs(
   args: PreparedHermesTransportArgs,
+  transport: any,
 ): HermesTurnArgs {
-  const transport = args.prepared?.hermesTransport;
   const context = transport?.cardContext || {};
   const runtime = context.runtime;
   if (
@@ -241,6 +241,23 @@ function resolvePreparedHermesTurnArgs(
     message: String(transport.message || ''),
     ...(args.workingDirectory ? { workingDirectory: args.workingDirectory } : {}),
   };
+}
+
+function resolvePreparedHermesTurnArgs(
+  args: PreparedHermesTransportArgs,
+): HermesTurnArgs {
+  return resolveHermesTurnArgs(args, args.prepared?.hermesTransport);
+}
+
+function resolvePreviewHermesTurnArgs(
+  args: PreparedHermesTransportArgs,
+): HermesTurnArgs {
+  const preview = args.prepared || {};
+  return resolveHermesTurnArgs(args, {
+    cardContext: preview.cardContext,
+    systemPrompt: preview.providerProjection?.systemPrompt,
+    message: preview.exactIdf,
+  });
 }
 
 async function startPreparedHermesTransport(
@@ -342,7 +359,10 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
           ...(cardId === CODER_CARD_ID ? { workingDirectory: resolveRepoRoot() } : {}),
           onEvent: (event) => coderTerminal?.receiveHermesEvent(event),
         });
-        coderTerminal?.attachControl(correlationId, handle);
+        if (coderTerminal && !coderTerminal.attachControl(correlationId, handle)) {
+          handle.cancel();
+          throw new Error('hermes_coder_terminal_control_attach_failed');
+        }
         const response = await handle.done;
         output = response.finalText;
         transport = response.transport;
@@ -816,7 +836,7 @@ async function prepareCoderTerminalSession(
       conversationId: session.info.conversationId,
     }),
   }) as any;
-  const turnArgs = resolvePreparedHermesTurnArgs({
+  const turnArgs = resolvePreviewHermesTurnArgs({
     prepared: preview,
     projectId: session.info.projectId,
     deckId: session.info.deckId,
@@ -947,9 +967,12 @@ function mountConsoleSessionRoutes(
         else session.markFailed(reason);
       }
     }
-    return res.status(session.info.state === 'failed' ? 502 : 200).json({
-      ok: session.info.state !== 'failed',
+    const failed = session.info.state === 'failed' || session.info.state === 'auth_required';
+    return res.status(failed ? 502 : 200).json({
+      ok: !failed,
       session: session.info,
+      transcript: session.transcript(),
+      ...(failed ? { error: session.info.error || 'hermes_coder_terminal_prepare_failed', missing: [] } : {}),
     });
   });
 

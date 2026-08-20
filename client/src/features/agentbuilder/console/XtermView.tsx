@@ -13,7 +13,7 @@ import type { ConsoleOutputChunk } from './coderTerminalClient';
 type XtermViewProps = {
   chunks: ConsoleOutputChunk[];
   interactive: boolean;
-  onSubmit?: (message: string) => void;
+  onSubmit?: (message: string) => void | Promise<void>;
   onError?: (message: string) => void;
   /** Render with a transparent background so text sits on the host panel. */
   transparent?: boolean;
@@ -30,8 +30,10 @@ export default function XtermView({
   const termRef = useRef<{ term: Terminal; lastSequence: number } | null>(null);
   const onSubmitRef = useRef(onSubmit);
   const onErrorRef = useRef(onError);
+  const interactiveRef = useRef(interactive);
   onSubmitRef.current = onSubmit;
   onErrorRef.current = onError;
+  interactiveRef.current = interactive;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -64,46 +66,51 @@ export default function XtermView({
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
         allowTransparency: transparent,
         theme: { background: transparent ? 'rgba(0,0,0,0)' : '#0b0f14', foreground: '#d7e0ea' },
-        cursorBlink: interactive,
-        disableStdin: !interactive,
+        cursorBlink: interactiveRef.current,
+        disableStdin: !interactiveRef.current,
         scrollback: 5_000,
       });
       term.loadAddon(fitAddon);
       term.open(container);
-      if (interactive) {
-        let line = '';
-        let previousWasCarriageReturn = false;
-        inputDisposable = term.onData((data) => {
-          for (const character of data) {
-            if (character === '\n' && previousWasCarriageReturn) {
-              previousWasCarriageReturn = false;
-              continue;
-            }
-            if (character === '\r' || character === '\n') {
-              previousWasCarriageReturn = character === '\r';
-              const message = line.trim();
-              if (message) {
-                term?.write('\r\n');
-                onSubmitRef.current?.(message);
-              }
-              line = '';
-              continue;
-            }
+      let line = '';
+      let previousWasCarriageReturn = false;
+      inputDisposable = term.onData((data) => {
+        if (!interactiveRef.current) return;
+        for (const character of data) {
+          if (character === '\n' && previousWasCarriageReturn) {
             previousWasCarriageReturn = false;
-            if (character === '\u007f' || character === '\b') {
-              if (line) {
-                line = line.slice(0, -1);
-                term?.write('\b \b');
-              }
-              continue;
-            }
-            if (character >= ' ' && character !== '\u007f') {
-              line += character;
-              term?.write(character);
-            }
+            continue;
           }
-        });
-      }
+          if (character === '\r' || character === '\n') {
+            previousWasCarriageReturn = character === '\r';
+            const message = line.trim();
+            if (message) {
+              term?.write('\r\n');
+              try {
+                void Promise.resolve(onSubmitRef.current?.(message)).catch((error) => {
+                  onErrorRef.current?.(error instanceof Error ? error.message : String(error));
+                });
+              } catch (error) {
+                onErrorRef.current?.(error instanceof Error ? error.message : String(error));
+              }
+            }
+            line = '';
+            continue;
+          }
+          previousWasCarriageReturn = false;
+          if (character === '\u007f' || character === '\b') {
+            if (line) {
+              line = line.slice(0, -1);
+              term?.write('\b \b');
+            }
+            continue;
+          }
+          if (character >= ' ' && character !== '\u007f') {
+            line += character;
+            term?.write(character);
+          }
+        }
+      });
       let lastSequence = 0;
       for (const chunk of chunks) {
         term.write(chunk.data);
@@ -118,7 +125,7 @@ export default function XtermView({
         window.addEventListener('resize', scheduleFit);
       }
       scheduleFit();
-      if (interactive) term.focus();
+      if (interactiveRef.current) term.focus();
     } catch (error) {
       onErrorRef.current?.(
         `terminal_emulator_initialization_failed:${error instanceof Error ? error.message : String(error)}`,
@@ -133,7 +140,15 @@ export default function XtermView({
       term?.dispose();
       termRef.current = null;
     };
-  }, [interactive, transparent]);
+  }, [transparent]);
+
+  useEffect(() => {
+    const state = termRef.current;
+    if (!state) return;
+    state.term.options.disableStdin = !interactive;
+    state.term.options.cursorBlink = interactive;
+    if (interactive) state.term.focus();
+  }, [interactive]);
 
   // Stream newly arrived chunks into the live terminal.
   useEffect(() => {

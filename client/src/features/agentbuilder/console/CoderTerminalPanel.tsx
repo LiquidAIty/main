@@ -2,15 +2,12 @@ import { Component, useCallback, useEffect, useRef, useState, type ReactNode } f
 import {
   coderTerminalClient,
   type ConsoleOutputChunk,
-  type ConsoleSessionState,
   type ConsoleSessionInfo,
   type CoderTerminalClient,
 } from './coderTerminalClient';
 import XtermView from './XtermView';
 
 /** The saved Coder Card's genuine Hermes ACP terminal face. */
-
-type ConsolePanelStatus = 'disconnected' | 'idle' | ConsoleSessionState;
 
 type CoderTerminalPanelProps = {
   open: boolean;
@@ -27,27 +24,8 @@ type CoderTerminalPanelProps = {
   /** Test seam: a session already known to the host. */
   initialSession?: ConsoleSessionInfo | null;
   initialTranscript?: ConsoleOutputChunk[];
-  /** Optional host wording for lifecycle states. */
-  idleLabel?: string;
   /** Test seam: EventSource constructor (undefined in jsdom = no live stream). */
   eventSourceImpl?: typeof EventSource;
-};
-
-function statusOf(session: ConsoleSessionInfo | null): ConsolePanelStatus {
-  if (!session) return 'idle';
-  return session.state;
-}
-
-const STATUS_LABEL: Record<ConsolePanelStatus, string> = {
-  disconnected: 'Disconnected',
-  idle: 'Idle',
-  starting: 'Starting',
-  ready: 'Ready',
-  working: 'Working',
-  waiting: 'Waiting',
-  stopped: 'Stopped',
-  failed: 'Failed',
-  auth_required: 'Login required',
 };
 
 function CoderTerminalPanelInner({
@@ -63,7 +41,6 @@ function CoderTerminalPanelInner({
   client = coderTerminalClient,
   initialSession = null,
   initialTranscript = [],
-  idleLabel = 'Idle',
   eventSourceImpl,
 }: CoderTerminalPanelProps) {
   const [session, setSession] = useState<ConsoleSessionInfo | null>(initialSession);
@@ -75,10 +52,7 @@ function CoderTerminalPanelInner({
   const streamRef = useRef<EventSource | null>(null);
   const attemptedIdentityRef = useRef('');
 
-  const status = disconnected ? 'disconnected' : statusOf(session);
-  const statusLabel = status === 'idle'
-    ? idleLabel
-    : STATUS_LABEL[status];
+  const status = disconnected ? 'disconnected' : session?.state ?? 'idle';
 
   const appendChunk = useCallback((chunk: ConsoleOutputChunk) => {
     setChunks((prev) => {
@@ -93,6 +67,8 @@ function CoderTerminalPanelInner({
     if (!session?.id || !ESImpl) return;
     const source = new ESImpl(client.streamUrl(session.id));
     streamRef.current = source;
+    source.onopen = () => setDisconnected(false);
+    source.onerror = () => setDisconnected(true);
     source.addEventListener('chunk', (event) => {
       try {
         appendChunk(JSON.parse((event as MessageEvent).data));
@@ -133,7 +109,10 @@ function CoderTerminalPanelInner({
         });
         if (result.ok) {
           setSession(result.session);
-          setChunks([]);
+          setChunks(result.transcript);
+        } else if (result.session) {
+          setSession(result.session);
+          setChunks(result.transcript ?? []);
         } else {
           setStartError(`${result.error}${result.missing.length ? `: ${result.missing.join(', ')}` : ''}`);
         }
@@ -159,6 +138,7 @@ function CoderTerminalPanelInner({
   const sendLine = useCallback(
     async (message: string) => {
       if (!session?.id) return;
+      setTerminalError(null);
       await client.sendInput(session.id, message);
     },
     [client, session?.id],
@@ -166,7 +146,12 @@ function CoderTerminalPanelInner({
 
   const stopSession = useCallback(async () => {
     if (!session?.id) return;
-    await client.stopSession(session.id);
+    setTerminalError(null);
+    try {
+      await client.stopSession(session.id);
+    } catch (error) {
+      setTerminalError(error instanceof Error ? error.message : String(error));
+    }
   }, [client, session?.id]);
 
   if (!open) return null;
@@ -193,25 +178,17 @@ function CoderTerminalPanelInner({
         fontSize: 12,
       }}
     >
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '8px 12px',
-          borderBottom: '1px solid #1c2733',
-        }}
-      >
-        <strong style={{ flex: 1 }}>{title}</strong>
-        <span data-testid={`${testIdPrefix}-status`} style={{ opacity: 0.8 }}>
-          {statusLabel}
-        </span>
-        {onClose ? (
-          <button type="button" data-testid={`${testIdPrefix}-close`} onClick={onClose}>
-            ✕
-          </button>
-        ) : null}
-      </header>
+      {onClose ? (
+        <button
+          type="button"
+          aria-label={`Close ${title}`}
+          data-testid={`${testIdPrefix}-close`}
+          onClick={onClose}
+          style={{ position: 'absolute', right: 6, top: 6, zIndex: 1 }}
+        >
+          ✕
+        </button>
+      ) : null}
 
       {session ? (
         <XtermView
@@ -225,14 +202,14 @@ function CoderTerminalPanelInner({
 
       {!session ? <div style={{ flex: 1 }} /> : null}
 
-      {startError || terminalError || session?.error ? (
+      {startError || terminalError ? (
         <div data-testid={`${testIdPrefix}-error`} style={{ padding: '6px 12px', color: '#e06c75' }}>
-          {startError || terminalError || session?.error}
+          {startError || terminalError}
         </div>
       ) : null}
 
-      <footer style={{ padding: '6px 12px', borderTop: '1px solid #1c2733', display: 'flex', justifyContent: 'flex-end' }}>
-        {session && (status === 'failed' || status === 'stopped' || status === 'auth_required') ? (
+      {session && (status === 'failed' || status === 'stopped' || status === 'auth_required') ? (
+        <div style={{ position: 'absolute', right: 8, bottom: 8, zIndex: 1 }}>
           <button
             type="button"
             data-testid={`${testIdPrefix}-start`}
@@ -241,12 +218,14 @@ function CoderTerminalPanelInner({
           >
             Restart
           </button>
-        ) : session && (status === 'working' || status === 'waiting') ? (
+        </div>
+      ) : session && (status === 'working' || status === 'waiting') ? (
+        <div style={{ position: 'absolute', right: 8, bottom: 8, zIndex: 1 }}>
           <button type="button" data-testid={`${testIdPrefix}-stop`} onClick={() => void stopSession()}>
             Stop
           </button>
-        ) : null}
-      </footer>
+        </div>
+      ) : null}
     </section>
   );
 }

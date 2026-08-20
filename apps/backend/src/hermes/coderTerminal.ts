@@ -142,7 +142,6 @@ export class HermesCoderTerminalSession {
     this.info.error = null;
     this.active = null;
     this.permissionPromptId = null;
-    this.emitOutput('system', 'Coder ready.\r\n› ');
     this.touch();
   }
 
@@ -188,7 +187,9 @@ export class HermesCoderTerminalSession {
       return;
     }
     if (event.kind === 'error') {
-      this.emitOutput('stderr', `\r\n${event.message}\r\n`);
+      // The owning route closes the Run and publishes this exact terminal error
+      // once. ACP emits the same failure before rejecting the turn promise.
+      return;
     }
   }
 
@@ -207,7 +208,6 @@ export class HermesCoderTerminalSession {
     this.permissionPromptId = null;
     this.info.activeRunId = null;
     this.info.state = 'ready';
-    this.emitOutput('system', '\r\n› ');
     this.touch();
   }
 
@@ -217,18 +217,19 @@ export class HermesCoderTerminalSession {
     this.info.activeRunId = null;
     this.info.state = 'auth_required';
     this.info.error = reason;
-    this.emitOutput('system', 'Authentication required. Use the native Hermes login, then restart Coder.\r\n');
+    this.emitOutput('stderr', `${reason}\r\n`);
     this.touch();
   }
 
   markFailed(reason: string): void {
     if (this.info.state === 'stopped') return;
+    if (this.info.state === 'failed' && this.info.error === reason) return;
     this.active = null;
     this.permissionPromptId = null;
     this.info.activeRunId = null;
     this.info.state = 'failed';
     this.info.error = reason;
-    this.emitOutput('stderr', `\r\n${reason}\r\n`);
+    this.emitOutput('stderr', `${reason}\r\n`);
     this.touch();
   }
 
@@ -240,7 +241,6 @@ export class HermesCoderTerminalSession {
     this.info.activeRunId = null;
     this.info.state = 'stopped';
     this.info.stoppedAt = new Date().toISOString();
-    this.emitOutput('system', '\r\nStopped.\r\n');
     this.touch();
     return true;
   }

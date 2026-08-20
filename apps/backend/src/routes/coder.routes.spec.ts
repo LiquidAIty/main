@@ -40,9 +40,21 @@ const chatSessionMocks = vi.hoisted(() => {
     getConversationMessages: vi.fn(async () => []),
     listConversations: vi.fn(async () => []),
     lastCancel: vi.fn(),
+    prepareHermesSession: vi.fn(),
     startHermesTurn: vi.fn(),
     usage,
   };
+  mocks.prepareHermesSession.mockResolvedValue({
+    cardId: 'card_local_coder',
+    provider: 'openai',
+    modelKey: 'gpt-5.6-luna',
+    providerModelId: 'gpt-5.6-luna',
+    executable: 'C:/Projects/LiquidAIty/main/Hermes/venv/Scripts/hermes-acp.exe',
+    pid: 42,
+    hermesHome: 'C:/Projects/LiquidAIty/main/Hermes/.hermes',
+    sessionId: 'native-coder-session',
+    transport: 'acp-stdio',
+  });
   mocks.startHermesTurn.mockImplementation(async (_params: unknown, _onEvent: (event: any) => void) => ({
     done: Promise.resolve({ finalText: 'Real assistant reply.', usage }),
     cancel: mocks.lastCancel,
@@ -82,6 +94,7 @@ const orchestratorMocks = vi.hoisted(() => ({
     }
     if (endpoint === '/domain/cards/preview' || endpoint === '/domain/main/preview') {
       const cardId = endpoint === '/domain/main/preview' ? 'card_main_chat' : body.cardId;
+      const coderCard = cardId === 'card_local_coder';
       return {
         projectId: body.projectId,
         deckId: body.deckId,
@@ -90,15 +103,22 @@ const orchestratorMocks = vi.hoisted(() => ({
         runtimeOwner: 'hermes',
         cardContext: {
           cardId,
-          title: cardId === 'card_main_chat' ? 'Main' : 'Worker',
+          title: cardId === 'card_main_chat' ? 'Main' : coderCard ? 'Coder' : 'Worker',
           runtime: cardId === 'card_main_chat'
             ? { kind: 'hermes', mode: 'main', profile: 'default' }
-            : { kind: 'hermes', mode: 'delegate', profile: 'worker' },
+            : { kind: 'hermes', mode: 'delegate', profile: coderCard ? 'coder' : 'worker' },
           provider: 'openai',
           modelKey: 'gpt-5.6-luna',
           providerModelId: 'gpt-5.6-luna',
           accessMode: 'chatgpt-account',
-          tools: [],
+          tools: coderCard ? ['cbm.search_graph'] : [],
+          nativeTools: coderCard ? ['terminal'] : [],
+          skills: coderCard ? ['repository-coder'] : [],
+          toolsets: coderCard ? ['file', 'terminal'] : [],
+          mcpConnectionIds: [],
+        },
+        providerProjection: {
+          systemPrompt: coderCard ? 'Saved Coder prompt' : 'Saved prompt',
         },
       };
     }
@@ -217,6 +237,7 @@ vi.mock('../hermes/mainAdapter', () => ({
       ? 'openai-codex'
       : provider
   ),
+  prepareHermesSession: chatSessionMocks.prepareHermesSession,
   startHermesTurn: chatSessionMocks.startHermesTurn,
 }));
 
@@ -585,6 +606,167 @@ describe('coder routes', () => {
     }
   });
 
+  it('prepares the real saved Coder ACP session from the Card preview before reporting ready', async () => {
+    chatSessionMocks.prepareHermesSession.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/hermes/coder-terminal/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'terminal-project-ready',
+          deckId: 'deck_builder',
+          conversationId: 'terminal-conversation-ready',
+          mode: 'interactive',
+        }),
+      });
+      const payload = await response.json();
+      expect(response.status, JSON.stringify(payload)).toBe(200);
+      expect(payload).toMatchObject({
+        ok: true,
+        session: {
+          ownerCardId: 'card_local_coder',
+          state: 'ready',
+          profile: 'coder',
+          pid: 42,
+          nativeSessionId: 'native-coder-session',
+        },
+        transcript: [],
+      });
+      expect(chatSessionMocks.prepareHermesSession).toHaveBeenCalledTimes(1);
+      expect(chatSessionMocks.prepareHermesSession.mock.calls[0]?.[0]).toMatchObject({
+        cardId: 'card_local_coder',
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
+        prompt: 'Saved Coder prompt',
+        tools: ['cbm.search_graph'],
+        nativeTools: ['terminal'],
+        toolsets: ['file', 'terminal'],
+        sessionKey: 'terminal-project-ready:terminal-conversation-ready:card_local_coder',
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('returns the exact native terminal startup failure instead of a generic 502 label', async () => {
+    chatSessionMocks.prepareHermesSession.mockRejectedValueOnce(
+      new Error('hermes_acp_rpc_error:native_startup_failed'),
+    );
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/hermes/coder-terminal/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'terminal-project-failure',
+          deckId: 'deck_builder',
+          conversationId: 'terminal-conversation-failure',
+          mode: 'interactive',
+        }),
+      });
+      const payload = await response.json();
+      expect(response.status).toBe(502);
+      expect(payload).toMatchObject({
+        ok: false,
+        error: 'hermes_acp_rpc_error:native_startup_failed',
+        session: { state: 'failed' },
+      });
+      expect(payload.transcript.map((chunk: any) => chunk.data)).toEqual([
+        'hermes_acp_rpc_error:native_startup_failed\r\n',
+      ]);
+      expect(JSON.stringify(payload)).not.toContain('console_start_failed_502');
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('uses the same saved Coder Card session for direct input and Main assignment', async () => {
+    chatSessionMocks.startHermesTurn.mockImplementation(async (_params: unknown, onEvent: (event: any) => void) => {
+      onEvent({ kind: 'text', text: 'native coder output' });
+      return {
+        done: Promise.resolve({ finalText: 'native coder output', usage: chatSessionMocks.usage, transport: {} }),
+        cancel: chatSessionMocks.lastCancel,
+        answer: vi.fn(),
+        resolved: {
+          cardId: 'card_local_coder',
+          provider: 'openai',
+          modelKey: 'gpt-5.6-luna',
+          providerModelId: 'gpt-5.6-luna',
+        },
+      };
+    });
+    chatSessionMocks.startHermesTurn.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const startResponse = await fetch(`${baseUrl}/hermes/coder-terminal/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'terminal-project-shared',
+          deckId: 'deck_builder',
+          conversationId: 'main',
+          mode: 'interactive',
+        }),
+      });
+      const started = await startResponse.json();
+      expect(startResponse.status, JSON.stringify(started)).toBe(200);
+
+      const directResponse = await fetch(
+        `${baseUrl}/hermes/coder-terminal/sessions/${started.session.id}/input`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: 'Inspect one bounded symbol.' }),
+        },
+      );
+      expect(directResponse.status).toBe(202);
+      const directPayload = await directResponse.json();
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const finished = orchestratorMocks.requestPythonRailsJson.mock.calls.some(
+          ([endpoint, init]) => endpoint === '/domain/runs/finish'
+            && JSON.parse(String(init?.body || '{}')).runId === directPayload.runId,
+        );
+        if (finished) break;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      const assignedResponse = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'terminal-project-shared',
+          deckId: 'deck_builder',
+          cardId: 'card_local_coder',
+          senderCardId: 'card_main_chat',
+          originatingRunId: 'main-parent-run',
+          correlationId: 'main-coder-assignment',
+          conversationId: 'main',
+          input: 'Inspect a different bounded symbol.',
+          action: 'execute',
+          exactIdf: '# IDF\n\nInspect a different bounded symbol.',
+          cardRevisionId: 'revision:card_local_coder',
+        }),
+      });
+      expect(assignedResponse.status, await assignedResponse.text()).toBe(200);
+      expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(2);
+      const sessionKeys = chatSessionMocks.startHermesTurn.mock.calls.map(([args]) => args.sessionKey);
+      expect(sessionKeys).toEqual([
+        'terminal-project-shared:main:card_local_coder',
+        'terminal-project-shared:main:card_local_coder',
+      ]);
+      const terminalSession = await fetch(
+        `${baseUrl}/hermes/coder-terminal/sessions/${started.session.id}`,
+      ).then((response) => response.json());
+      expect(terminalSession.session.state).toBe('ready');
+      expect(terminalSession.transcript.map((chunk: any) => chunk.data)).toEqual([
+        'native coder output',
+        'native coder output',
+      ]);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it('sends the exact Python-prepared outer mission to native Mag One', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.dispatchConfiguredRuntime.mockClear();
@@ -889,7 +1071,7 @@ describe('coder routes', () => {
       }
     });
 
-    it('ignores late gRPC events after the SSE turn has completed', async () => {
+    it('ignores late ACP events after the SSE turn has completed', async () => {
       chatSessionMocks.lastCancel.mockClear();
       chatSessionMocks.startHermesTurn.mockImplementationOnce(async (_params: unknown, onEvent: (event: any) => void) => {
         const done = Promise.resolve({ finalText: 'Finished before late event.', usage: chatSessionMocks.usage });

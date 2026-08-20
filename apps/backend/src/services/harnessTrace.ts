@@ -29,7 +29,7 @@ function isCardDoorway(toolName: string): boolean {
 }
 
 /**
- * Format ONE real gRPC chat event into a concise trace line, or null when it
+ * Format ONE real Hermes ACP chat event into a concise trace line, or null when it
  * carries no lifecycle signal worth a line (streamed text chunks, the final `done`
  * text, the session id). Those are not fabricated away — they simply are not a
  * per-event lifecycle line; the request start/end are logged by the route itself.

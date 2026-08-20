@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 export function resolveRepoRoot(): string {
-  const configured = String(process.env.LIQUIDAITY_GRPC_CWD || '').trim();
+  const configured = String(process.env.LIQUIDAITY_REPO_ROOT || '').trim();
   if (configured) return path.resolve(configured);
 
   for (const start of [process.cwd(), __dirname]) {
@@ -20,11 +20,11 @@ export function resolveRepoRoot(): string {
       candidate = parent;
     }
   }
-  throw new Error('missing_required_config: LIQUIDAITY_GRPC_CWD');
+  throw new Error('liquidaity_repo_root_not_found');
 }
 
 /**
- * The working directory for a PRODUCT chat session (Main / Hermes over gRPC).
+ * The working directory for a product Main/Hermes ACP session.
  *
  * It must NOT be the repo root: the engine walks up from its working directory
  * loading project-memory files such as AGENTS.md, and a
@@ -32,8 +32,8 @@ export function resolveRepoRoot(): string {
  * into a PRODUCT conversation that never needed them. Main and Hermes drive the
  * project through MCP tools (Engraphis/Graphiti/CBM/canvas), not the
  * filesystem, so a neutral out-of-repo directory removes the memory walk with
- * zero capability loss. The Coder keeps its real repo root — it is spawned by
- * the backend via resolveRepoRoot(), a different process, unaffected by this.
+ * zero capability loss. The Coder keeps its real repo root through
+ * resolveRepoRoot().
  *
  * Deliberately outside the repo tree (and stable) so no repo instruction file sits
  * anywhere on the walk-up. Created if absent.

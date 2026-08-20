@@ -13,7 +13,11 @@ import type {
 vi.mock('./XtermView', async () => {
   const react = await import('react');
   return {
-    default: () => react.createElement('div', { 'data-testid': 'coder-terminal-xterm' }),
+    default: ({ chunks = [] }: { chunks?: Array<{ data: string }> }) => react.createElement(
+      'div',
+      { 'data-testid': 'coder-terminal-xterm' },
+      chunks.map((chunk) => chunk.data).join(''),
+    ),
   };
 });
 
@@ -48,7 +52,7 @@ function session(state: ConsoleSessionInfo['state'] = 'ready'): ConsoleSessionIn
 
 function client(overrides: Partial<CoderTerminalClient> = {}): CoderTerminalClient {
   return {
-    startSession: vi.fn(async () => ({ ok: true as const, session: session() })),
+    startSession: vi.fn(async () => ({ ok: true as const, session: session(), transcript: [] })),
     listSessions: vi.fn(async () => []),
     getSession: vi.fn(async () => null),
     sendInput: vi.fn(async () => true),
@@ -100,7 +104,7 @@ describe('CoderTerminalPanel', () => {
       targetRoot: 'C:/Projects/LiquidAIty/main',
       mode: 'interactive',
     });
-    expect(host?.querySelector('[data-testid="coder-terminal-status"]')?.textContent).toBe('Ready');
+    expect(host?.querySelector('[data-testid="coder-terminal-status"]')).toBeNull();
     expect(host?.querySelector('[data-testid="coder-terminal-xterm"]')).not.toBeNull();
   });
 
@@ -110,11 +114,12 @@ describe('CoderTerminalPanel', () => {
         open
         client={client()}
         initialSession={session()}
-        initialTranscript={[{ seq: 1, stream: 'system', data: 'Coder ready.\r\n› ', at: 'now' }]}
+        initialTranscript={[]}
         {...identityProps}
       />,
     );
-    expect(host?.textContent).toContain('Coder');
+    expect(host?.textContent).not.toContain('Coder');
+    expect(host?.textContent).not.toContain('Ready');
     expect(host?.textContent).not.toContain('Local process');
     expect(host?.textContent).not.toContain('transport:');
     expect(host?.textContent).not.toContain('root:');
@@ -137,5 +142,31 @@ describe('CoderTerminalPanel', () => {
     );
     expect(host?.querySelector('[data-testid="coder-terminal-start"]')?.textContent).toBe('Restart');
     expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
+  });
+
+  it('renders the exact native startup failure in xterm without the generic 502 label', async () => {
+    const failed = session('failed');
+    failed.error = 'hermes_acp_rpc_error:native_startup_failed';
+    await render(
+      <CoderTerminalPanel
+        open
+        client={client({
+          startSession: vi.fn(async () => ({
+            ok: false as const,
+            error: failed.error!,
+            missing: [],
+            session: failed,
+            transcript: [{ seq: 1, stream: 'stderr' as const, data: `${failed.error}\r\n`, at: 'now' }],
+          })),
+        })}
+        {...identityProps}
+      />,
+    );
+    await act(async () => undefined);
+    expect(host?.querySelector('[data-testid="coder-terminal-xterm"]')?.textContent).toBe(
+      'hermes_acp_rpc_error:native_startup_failed\r\n',
+    );
+    expect(host?.textContent).not.toContain('console_start_failed_502');
+    expect(host?.querySelector('[data-testid="coder-terminal-start"]')).not.toBeNull();
   });
 });
