@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from app.python_models import card_domain
-from app.python_models.idd import validate_idf_islands
-from app.python_models.idf import render_content_markdown
 
 
 def _agent(card_id: str, **overrides):
@@ -161,17 +157,17 @@ def test_enabled_flow_edge_materializes_bounded_target_without_inventing_tool_gr
         edges=[{"source": "parent", "target": "child", "edgeType": "flow"}],
     )
     assert preview["cardContext"]["tools"] == ["calculator"]
-    assert preview["providerProjection"]["enabledTools"] == ["calculator"]
+    assert preview["idf"]["enabledTools"] == ["calculator"]
     assert preview["delegationTargets"] == [{
         **_expected_delegate(),
         "nativeTools": ["terminal"],
         "skills": ["repository-coder"],
         "toolsets": ["terminal"],
     }]
-    assert "delegationTargets" not in preview["exactIdf"]
+    assert "delegationTargets" not in preview["idf"]
 
 
-def test_hermes_flow_target_projects_saved_profile_outside_exact_idf(
+def test_hermes_flow_target_projects_saved_profile_outside_model_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     preview = _delegation_preview(
@@ -181,14 +177,14 @@ def test_hermes_flow_target_projects_saved_profile_outside_exact_idf(
     )
     assert preview["runtimeOwner"] == "hermes"
     assert preview["cardContext"]["tools"] == ["calculator"]
-    assert "card.run_assistant_agent" not in preview["providerProjection"]["enabledTools"]
+    assert "card.run_assistant_agent" not in preview["idf"]["enabledTools"]
     assert preview["delegationTargets"] == [{
         **_expected_delegate(),
         "nativeTools": ["terminal"],
         "skills": ["repository-coder"],
         "toolsets": ["terminal"],
     }]
-    assert "delegationTargets" not in preview["exactIdf"]
+    assert "delegationTargets" not in preview["idf"]
 
 
 def test_no_flow_edge_materializes_no_delegation_transport(
@@ -196,7 +192,7 @@ def test_no_flow_edge_materializes_no_delegation_transport(
 ) -> None:
     preview = _delegation_preview(monkeypatch, edges=[])
     assert preview["cardContext"]["tools"] == ["calculator"]
-    assert preview["providerProjection"]["enabledTools"] == ["calculator"]
+    assert preview["idf"]["enabledTools"] == ["calculator"]
     assert preview["delegationTargets"] == []
 
 
@@ -283,7 +279,7 @@ def test_disabled_flow_edge_materializes_no_delegation_transport(
         }],
     )
     assert "card.run_assistant_agent" not in preview["cardContext"]["tools"]
-    assert "card.run_assistant_agent" not in preview["providerProjection"]["enabledTools"]
+    assert "card.run_assistant_agent" not in preview["idf"]["enabledTools"]
     assert preview["delegationTargets"] == []
 
 
@@ -402,7 +398,7 @@ def _destination_payload(card_id: str) -> dict:
         "deckId": "deck-one",
         "cardId": card_id,
         "senderCardId": "sender",
-        "assignment": "Use every declaration in this IDF.",
+        "assignment": "Use every supplied declaration.",
         "contextMarkdown": (
             "[MCP]\nname=calculator\n[/MCP]\n\n"
             "[JSON]\n"
@@ -420,79 +416,35 @@ def _destination_payload(card_id: str) -> dict:
     }
 
 
-def test_same_exact_idf_is_destination_independent_for_different_authorized_cards(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _destination_fixture(monkeypatch)
-    hermes_preview = card_domain.materialize_invocation(_destination_payload("hermes"))
-    assert hermes_preview["cardContext"]["cardId"] == "hermes"
-    assert hermes_preview["providerProjection"]["systemPrompt"] == "Hermes saved prompt"
-    assert hermes_preview["providerProjection"]["enabledTools"] == ["calculator"]
-    exact = "\n" + hermes_preview["exactIdf"] + "\n "
-    assert "[MCP]\nname=calculator\n[/MCP]" in exact
-    assert '"recipientCardId":"not-authority"' in exact
-    assert '"type": "serialized-card"' in exact
-    assert '"cardId": "hermes"' in exact
-    assert '"tools": [\n      "calculator"' in exact
-    assert '"toolDefinitions"' not in exact
-    assert hermes_preview["providerProjection"]["toolDefinitions"]
-    assert "flow-hermes" not in exact
-    assert "flow-autogen" not in exact
-
-    hermes_validated = card_domain.validate_exact_invocation({
-        **_destination_payload("hermes"),
-        "cardRevisionId": "revision-2",
-        "exactIdf": exact,
-    })
-    autogen_validated = card_domain.validate_exact_invocation({
-        **_destination_payload("autogen"),
-        "cardRevisionId": "revision-3",
-        "exactIdf": exact,
-    })
-    assert hermes_validated["exactIdf"] == exact
-    assert autogen_validated["exactIdf"] == exact
-    assert autogen_validated["providerProjection"]["message"] == exact
-    assert autogen_validated["cardContext"]["cardId"] == "autogen"
-    assert autogen_validated["runtimeOwner"] == "autogen"
-
-
-def test_idf_text_cannot_choose_recipient_runtime_or_create_a_flow_edge(
+def test_receiving_card_materializes_its_own_exact_call_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     loaded = _destination_fixture(monkeypatch)
-    exact = card_domain.materialize_invocation(_destination_payload("hermes"))["exactIdf"]
+    hermes = card_domain.materialize_invocation(_destination_payload("hermes"))
+    autogen = card_domain.materialize_invocation(_destination_payload("autogen"))
+
+    assert hermes["idf"]["systemPrompt"] == "Hermes saved prompt"
+    assert hermes["idf"]["runtime"] == {
+        "kind": "hermes", "mode": "delegate", "profile": "research",
+    }
+    assert hermes["idf"]["enabledTools"] == ["calculator"]
+    assert autogen["idf"]["systemPrompt"] == "AutoGen saved prompt"
+    assert autogen["idf"]["runtime"] == {"kind": "autogen", "mode": "assistant"}
+    assert autogen["idf"]["enabledTools"] == ["current_datetime"]
+    assert hermes["idf"]["message"] == autogen["idf"]["message"]
+    assert hermes["idf"]["nativeReferences"][0]["nativeId"] == "episode:one"
+    assert "cardId" not in hermes["idf"]
+    assert "runId" not in hermes["idf"]
+    assert "flow-hermes" not in str(hermes["idf"])
+
     loaded["deck"]["edges"] = [
         edge for edge in loaded["deck"]["edges"] if edge["target"] != "autogen"
     ]
-    with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
-        card_domain.validate_exact_invocation({
-            **_destination_payload("autogen"),
-            "cardRevisionId": "revision-3",
-            "exactIdf": exact,
-        })
-    assert all(edge["target"] != "autogen" for edge in loaded["deck"]["edges"])
-
-    validated = card_domain.validate_exact_invocation({
-        **_destination_payload("hermes"),
-        "cardRevisionId": "revision-2",
-        "exactIdf": exact,
-    })
-    assert validated["cardContext"]["cardId"] == "hermes"
-    assert validated["runtimeOwner"] == "hermes"
-
-
-def test_idf_tool_text_does_not_expand_external_runtime_grants(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _destination_fixture(monkeypatch)
-    exact = card_domain.materialize_invocation(_destination_payload("hermes"))["exactIdf"]
-    validated = card_domain.validate_exact_invocation({
-        **_destination_payload("hermes"),
-        "cardRevisionId": "revision-2",
-        "exactIdf": exact.replace("name=calculator", "name=current_datetime"),
-    })
-    assert "name=current_datetime" in validated["exactIdf"]
-    assert validated["providerProjection"]["enabledTools"] == ["calculator"]
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="card_invocation_edge_authority_required",
+    ):
+        card_domain.materialize_invocation(_destination_payload("autogen"))
 
 
 def test_native_reference_uses_the_idd_shape_provenance_and_hard_bounds() -> None:
@@ -519,7 +471,7 @@ def test_native_reference_uses_the_idd_shape_provenance_and_hard_bounds() -> Non
         card_domain._normalized_native_references([{**reference, "reason": "x" * 66_000}])
 
 
-def test_main_chat_preparation_never_materializes_or_consumes_an_idf(
+def test_main_chat_materializes_once_without_serialized_card_or_run_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import engraphis.backends.embedder_st as embedder_st
@@ -562,67 +514,41 @@ def test_main_chat_preparation_never_materializes_or_consumes_an_idf(
     prepared = card_domain.prepare_main_chat({
         "projectId": "project-one",
         "deckId": "deck-one",
-        "message": "Help me author an IDF for another agent.",
+        "message": "Help me prepare work for another agent.",
     })
-    assert "exactIdf" not in prepared
     assert "assignment" not in prepared
-    assert prepared["message"] == "Help me author an IDF for another agent."
-    assert "serialized-card" not in json.dumps(prepared)
-    assert "# LiquidAIty IDF" not in json.dumps(prepared)
-    assert prepared["providerProjection"] == {
-        "systemPrompt": main["prompt"],
-        "enabledTools": ["canvas.inspect"],
-        "message": "Help me author an IDF for another agent.",
+    assert prepared["message"] == "Help me prepare work for another agent."
+    assert prepared["idf"]["systemPrompt"] == main["prompt"]
+    assert prepared["idf"]["message"] == "Help me prepare work for another agent."
+    assert prepared["idf"]["enabledTools"] == ["canvas.inspect"]
+    assert prepared["idf"]["runtime"] == {
+        "kind": "hermes", "mode": "main", "profile": "default",
     }
+    assert "cardId" not in prepared["idf"]
+    assert "runId" not in prepared["idf"]
+    assert "serialized-card" not in str(prepared["idf"])
     assert "toolDefinitions" not in prepared["cardContext"]
     inserted: dict[str, object] = {}
     monkeypatch.setattr(
         card_domain,
-        "_insert_prompt_free_run",
+        "_insert_run",
         lambda value, **kwargs: inserted.update({"prepared": value, **kwargs}),
     )
     monkeypatch.setattr(card_domain, "_observe_run_start", lambda *args, **kwargs: True)
     begun = card_domain.begin_main_chat_run({
         "projectId": "project-one",
         "deckId": "deck-one",
-        "message": "Help me author an IDF for another agent.",
+        "message": "Help me prepare work for another agent.",
         "cardRevisionId": "main-revision",
         "runId": "run-main-one",
         "correlationId": "run-main-one",
         "conversationId": "conversation-one",
     })
-    assert "exactIdf" not in begun
-    assert begun["savedIdf"] is None
-    assert begun["hermesTransport"]["message"] == "Help me author an IDF for another agent."
-    assert begun["hermesTransport"]["systemPrompt"] == main["prompt"]
-    assert inserted["saved_idf_id"] is None
-    assert inserted["saved_idf_revision"] is None
-
-
-def test_saved_idf_inspection_reads_exact_non_directional_body_without_routing() -> None:
-    card_context = {
-        "cardId": "portable",
-        "title": "Portable",
-        "prompt": "Portable instructions.",
-        "runtime": {"kind": "autogen", "mode": "assistant"},
-        "accessMode": "openrouter-api",
-        "provider": "openrouter",
-        "providerModelId": "model-one",
-        "tools": ["calculator"],
-    }
-    exact = render_content_markdown(
-        system_text="Portable instructions.",
-        user_text="repeatable assignment",
-        card_context=card_context,
-        dynamic_context_markdown="[KNOWN_CONTEXT]\nselected fact\n[/KNOWN_CONTEXT]",
-        native_references=[],
+    assert begun["hermesTransport"]["idf"] == begun["idf"]
+    assert begun["hermesTransport"]["idf"]["message"] == (
+        "Help me prepare work for another agent."
     )
-    inspection = card_domain._inspect_saved_idf(exact)
-    assert inspection["assignment"] == "repeatable assignment"
-    assert inspection["instructionText"] == "Portable instructions."
-    assert inspection["cardContext"] == card_context
-    assert inspection["runtimeOwner"] == "autogen"
-    assert inspection["providerProjection"]["message"] == exact
+    assert inserted["prepared"]["idf"] == begun["idf"]
 
 
 def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
@@ -657,15 +583,13 @@ def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
         "projectId": "project-one",
         "deckId": "deck-one",
         "cardContext": {"cardId": "card-one", "tools": ["calculator"]},
-        "idfInspection": {
-            "nativeReferences": [{
-                "authority": "KnowGraph",
-                "nativeId": "episode:exact",
-                "reason": "present in the edited exact IDF",
-                "asOf": "2026-08-17T00:00:00Z",
-                "required": True,
-            }],
-        },
+        "idf": {"nativeReferences": [{
+            "authority": "KnowGraph",
+            "nativeId": "episode:selected",
+            "reason": "selected for the call",
+            "asOf": "2026-08-17T00:00:00Z",
+            "required": True,
+        }]},
     }
     assert card_domain._observe_run_start(
         prepared,
@@ -717,8 +641,6 @@ def test_native_hermes_ephemeral_child_keeps_originating_card_revision(
         "model_key": "main-model",
         "provider_model_id": "main-model",
         "access_mode": "chatgpt-account",
-        "saved_idf_id": "idf-one",
-        "saved_idf_revision": 3,
         "state": "running",
         "card_id": "card_main_chat",
     }
@@ -769,7 +691,7 @@ def test_native_hermes_ephemeral_child_keeps_originating_card_revision(
     insert = next(params for query, params in statements if "INSERT INTO ag_catalog.agent_runs" in query)
     assert insert[3] == "main-revision"
     assert insert[4:6] == ("hermes", "main")
-    assert insert[11:13] == ("idf-one", 3)
+    assert len(insert) == 11
     assert result["cardId"] == "card_main_chat"
     assert result["parentRunId"] == "main-run"
     assert result["nativeChildId"] == "sa-ephemeral"
@@ -1025,110 +947,9 @@ def test_native_attention_observation_requires_existing_run_card_identity(monkey
     assert not any(
         key in params
         for _query, params in statements
-        for key in ("prompt", "result", "content", "exactIdf")
+        for key in ("prompt", "result", "content", "modelInput")
     )
 
     before = len(statements)
     assert card_domain.observe_native_attention({**event, "cardId": None}) is False
     assert len(statements) == before
-
-
-def test_mag_one_instruction_idf_uses_only_canonical_persistence_and_never_runs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[str, dict]] = []
-    exact_idf = "exact inspector-visible IDF bytes"
-
-    def materialize(payload):
-        calls.append(("materialize", dict(payload)))
-        return {
-            "projectId": "project-one",
-            "deckId": "deck-one",
-            "cardRevisionId": "22222222-2222-4222-8222-222222222222",
-            "cardContext": {"cardId": "card-mag-one"},
-            "exactIdf": exact_idf,
-        }
-
-    def save(payload):
-        calls.append(("save", dict(payload)))
-        return {
-            "savedIdf": {
-                "idfId": "11111111-1111-4111-8111-111111111111",
-                "revision": 1,
-                "contentMarkdown": exact_idf,
-            },
-            "inspection": {"assignment": "proposed mission", "runtimeOwner": "mag_one"},
-        }
-
-    monkeypatch.setattr(card_domain, "materialize_magentic_invocation", materialize)
-    monkeypatch.setattr(card_domain, "save_idf_revision", save)
-
-    result = card_domain.save_magentic_instructions({
-        "projectId": "project-one",
-        "deckId": "deck-one",
-        "senderCardId": "card-main",
-        "instructions": "proposed mission",
-    })
-
-    assert result["idfId"] == "11111111-1111-4111-8111-111111111111"
-    assert result["started"] is False
-    assert calls[0] == (
-        "materialize",
-        {
-            "projectId": "project-one",
-            "deckId": "deck-one",
-            "senderCardId": "card-main",
-            "assignment": "proposed mission",
-        },
-    )
-    assert calls[1][0] == "save"
-    assert calls[1][1]["exactIdf"] == exact_idf
-    assert calls[1][1]["provenanceKind"] == "agent"
-    assert "runId" not in calls[1][1]
-
-
-def test_run_mag_one_saved_idf_is_revalidated_without_changing_exact_bytes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    exact_idf = "exact inspector-visible IDF bytes"
-    captured: list[dict] = []
-    monkeypatch.setattr(
-        card_domain,
-        "load_saved_idf_revision",
-        lambda *_args: {
-            "savedIdf": {
-                "idfId": "11111111-1111-4111-8111-111111111111",
-                "revision": 1,
-                "projectId": "project-one",
-                "deckId": "deck-one",
-                "targetCardId": "card-mag-one",
-                "targetCardRevisionId": "22222222-2222-4222-8222-222222222222",
-                "contentMarkdown": exact_idf,
-            },
-            "inspection": {"assignment": "proposed mission", "runtimeOwner": "mag_one"},
-        },
-    )
-
-    def validate(payload):
-        captured.append(dict(payload))
-        return {
-            "projectId": "project-one",
-            "deckId": "deck-one",
-            "assignment": "proposed mission",
-            "exactIdf": payload["exactIdf"],
-            "cardRevisionId": payload["cardRevisionId"],
-            "cardContext": {"cardId": "card-mag-one"},
-        }
-
-    monkeypatch.setattr(card_domain, "validate_exact_invocation", validate)
-    prepared = card_domain.load_magentic_saved_invocation({
-        "projectId": "project-one",
-        "deckId": "deck-one",
-        "senderCardId": "card-main",
-        "idfId": "11111111-1111-4111-8111-111111111111",
-    })
-
-    assert captured[0]["senderCardId"] == "card-main"
-    assert captured[0]["exactIdf"] == exact_idf
-    assert prepared["exactIdf"] == exact_idf
-    assert prepared["savedIdf"]["idfId"] == "11111111-1111-4111-8111-111111111111"

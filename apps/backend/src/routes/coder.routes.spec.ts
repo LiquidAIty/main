@@ -113,7 +113,6 @@ const orchestratorMocks = vi.hoisted(() => ({
   dispatchConfiguredRuntime: vi.fn(async (): Promise<any> => ({
     ok: true,
     runId: 'run-mag-one',
-    idfId: 'transient:run-mag-one',
     finalResponseText: 'Native Mag One response.',
   })),
   requestPythonRailsJson: vi.fn(async (endpoint: string, init?: RequestInit): Promise<any> => {
@@ -122,7 +121,7 @@ const orchestratorMocks = vi.hoisted(() => ({
     if (endpoint === '/idd/tools/materialize') return { references: body.tools };
     if (endpoint === '/idd/card-editor/materialize') {
       return {
-        dictionary: { name: 'LiquidAIty', version: 1, idfFormat: 'mixed-markdown' },
+        dictionary: { name: 'LiquidAIty', version: 1, idfFormat: 'card-model-call' },
         fields: [{ name: 'provider', label: 'Provider', path: 'provider', control: 'select' }],
         catalogs: { 'configured-models': body.models },
       };
@@ -135,7 +134,7 @@ const orchestratorMocks = vi.hoisted(() => ({
         projectId: body.projectId,
         deckId: body.deckId,
         cardRevisionId: `revision:${cardId}`,
-        ...(mainChat ? { message: String(body.message || '') } : { exactIdf: `# IDF\n\n${body.assignment}` }),
+        ...(mainChat ? { message: String(body.message || '') } : {}),
         runtimeOwner: 'hermes',
         cardContext: {
           cardId,
@@ -153,9 +152,25 @@ const orchestratorMocks = vi.hoisted(() => ({
           toolsets: coderCard ? ['file', 'terminal'] : [],
           mcpConnectionIds: [],
         },
-        providerProjection: {
+        idf: {
           systemPrompt: coderCard ? 'Saved Coder prompt' : 'Saved prompt',
-          ...(mainChat ? { message: String(body.message || '') } : {}),
+          message: String(mainChat ? body.message || '' : body.assignment || ''),
+          runtime: cardId === 'card_main_chat'
+            ? { kind: 'hermes', mode: 'main', profile: 'default' }
+            : { kind: 'hermes', mode: 'delegate', profile: coderCard ? 'coder' : 'worker' },
+          provider: {
+            accessMode: 'chatgpt-account', provider: 'openai',
+            modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
+          },
+          runtimeOptions: {},
+          enabledTools: coderCard ? ['cbm.search_graph'] : [],
+          toolDefinitions: [],
+          nativeTools: coderCard ? ['terminal'] : [],
+          skills: coderCard ? ['repository-coder'] : [],
+          toolsets: coderCard ? ['file', 'terminal'] : [],
+          mcpConnectionIds: [],
+          nativeReferences: [],
+          images: [],
         },
       };
     }
@@ -168,8 +183,28 @@ const orchestratorMocks = vi.hoisted(() => ({
         cardRevisionId: body.cardRevisionId,
         runtimeOwner: 'hermes',
         hermesTransport: {
-          systemPrompt: 'Saved prompt',
-          message: mainChat ? body.message : body.exactIdf,
+          idf: {
+            systemPrompt: coderCard ? 'Saved Coder prompt' : 'Saved prompt',
+            message: String(mainChat ? body.message || '' : body.assignment || ''),
+            runtime: body.cardId === 'card_main_chat'
+              ? { kind: 'hermes', mode: 'main', profile: 'default' }
+              : coderCard
+                ? { kind: 'hermes', mode: 'delegate', profile: 'coder' }
+                : { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
+            provider: {
+              accessMode: 'chatgpt-account', provider: 'openai',
+              modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
+            },
+            runtimeOptions: {},
+            enabledTools: autoKanban ? ['graphiti.search_nodes'] : coderCard ? ['cbm.search_graph'] : [],
+            toolDefinitions: [],
+            nativeTools: autoKanban ? ['memory'] : coderCard ? ['terminal'] : [],
+            skills: autoKanban ? ['documentation'] : coderCard ? ['repository-coder'] : [],
+            toolsets: coderCard ? ['file', 'terminal'] : [],
+            mcpConnectionIds: [],
+            nativeReferences: [],
+            images: [],
+          },
           delegationTargets: body.cardId === 'card_main_chat' ? [{
             cardId: 'card_local_coder',
             title: 'Coder',
@@ -211,44 +246,6 @@ const orchestratorMocks = vi.hoisted(() => ({
     }
     if (endpoint === '/domain/agentgraph/inspect') {
       return { ok: true, runs: [] };
-    }
-    if (endpoint === '/domain/idfs/save') {
-      return {
-        ok: true,
-        savedIdf: {
-          idfId: '11111111-1111-4111-8111-111111111111',
-          revision: 1,
-          projectId: body.projectId,
-          deckId: body.deckId,
-          targetCardId: body.cardId,
-          targetCardRevisionId: body.cardRevisionId,
-          contentMarkdown: body.exactIdf,
-          contentSha256: 'a'.repeat(64),
-        },
-      };
-    }
-    if (endpoint.startsWith('/domain/idfs/project-1/revision/')) {
-      return {
-        ok: true,
-        savedIdf: {
-          idfId: '11111111-1111-4111-8111-111111111111',
-          revision: 1,
-          contentMarkdown: '# IDF\n\nRepeatable input.',
-        },
-        inspection: { assignment: 'Repeatable input.' },
-      };
-    }
-    if (endpoint.startsWith('/domain/idfs/project-1/deck_builder')) {
-      return {
-        ok: true,
-        projectId: 'project-1',
-        deckId: 'deck_builder',
-        savedIdfs: [{
-          idfId: '11111111-1111-4111-8111-111111111111',
-          revision: 1,
-          targetCardId: 'card_worker',
-        }],
-      };
     }
     return {};
   }),
@@ -477,7 +474,7 @@ describe('coder routes', () => {
           status: 'previewed',
           invocation: {
             cardRevisionId: 'revision:card_worker',
-            exactIdf: '# IDF\n\nUse the stored handoff.',
+            idf: { message: 'Use the stored handoff.' },
           },
         },
       });
@@ -491,10 +488,9 @@ describe('coder routes', () => {
     }
   });
 
-  it('executes only the exact Inspector invocation accepted by Python rails', async () => {
+  it('executes the one Python materialization for the current Card input', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.startHermesTurn.mockClear();
-    const exactIdf = '\n# IDF\n\nUse saved Main.\n ';
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
@@ -508,7 +504,6 @@ describe('coder routes', () => {
           conversationId: 'main',
           input: 'Use saved Main.',
           action: 'execute',
-          exactIdf,
           cardRevisionId: 'revision:card_main_chat',
         }),
       });
@@ -524,12 +519,14 @@ describe('coder routes', () => {
       });
       expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1);
       expect(chatSessionMocks.startHermesTurn.mock.calls[0][0]).toMatchObject({
-        message: exactIdf,
+        message: 'Use saved Main.',
       });
       const beginCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
         ([endpoint]) => endpoint === '/domain/runs/begin',
       );
-      expect(JSON.parse(String(beginCall?.[1]?.body || '{}')).exactIdf).toBe(exactIdf);
+      expect(JSON.parse(String(beginCall?.[1]?.body || '{}'))).toMatchObject({
+        assignment: 'Use saved Main.',
+      });
     } finally {
       await closeServer(server);
     }
@@ -538,15 +535,6 @@ describe('coder routes', () => {
   it('routes the saved Kanban Card through its stable native Hermes ACP session', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.startHermesTurn.mockClear();
-    const exactIdf = [
-      '# LiquidAIty IDF',
-      '',
-      'profile: liquidaity-hermes-steward',
-      'nativeTools: memory',
-      'tools: graphiti.search_nodes',
-      '',
-      'Prepare one bounded documentation result.',
-    ].join('\n');
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
@@ -562,7 +550,6 @@ describe('coder routes', () => {
           senderCardId: 'card_main_chat',
           input: 'Prepare one bounded documentation result.',
           action: 'execute',
-          exactIdf,
           cardRevisionId: 'revision:card_hermes_steward',
         }),
       });
@@ -586,7 +573,7 @@ describe('coder routes', () => {
         provider: 'openai',
         providerModelId: 'gpt-5.6-luna',
         skills: ['documentation'],
-        message: exactIdf,
+        message: 'Prepare one bounded documentation result.',
       });
       const finishCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
         ([endpoint, init]) => endpoint === '/domain/runs/finish'
@@ -602,10 +589,9 @@ describe('coder routes', () => {
     }
   });
 
-  it('runs the preserved Coder Card through its Hermes profile and exact IDF', async () => {
+  it('runs the preserved Coder Card through one Python materialization', async () => {
     chatSessionMocks.startHermesTurn.mockClear();
     orchestratorMocks.dispatchConfiguredRuntime.mockClear();
-    const exactIdf = '# IDF\n\nInspect the bounded code slice.';
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
@@ -620,7 +606,6 @@ describe('coder routes', () => {
           conversationId: 'main',
           input: 'Inspect the bounded code slice.',
           action: 'execute',
-          exactIdf,
           cardRevisionId: 'revision:card_local_coder',
         }),
       });
@@ -632,7 +617,7 @@ describe('coder routes', () => {
         runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
         tools: ['cbm.search_graph'],
         toolsets: ['file', 'terminal'],
-        message: exactIdf,
+        message: 'Inspect the bounded code slice.',
       });
       expect(orchestratorMocks.dispatchConfiguredRuntime).not.toHaveBeenCalled();
       await expect(response.json()).resolves.toMatchObject({
@@ -809,7 +794,6 @@ describe('coder routes', () => {
           conversationId: 'main',
           input: 'Inspect a different bounded symbol.',
           action: 'execute',
-          exactIdf: '# IDF\n\nInspect a different bounded symbol.',
           cardRevisionId: 'revision:card_local_coder',
         }),
       });
@@ -847,34 +831,35 @@ describe('coder routes', () => {
       session: {
         sessionId: 'deck_builder:card_magentic:corr-mag-1',
         projectId: 'project-1',
+        deckId: 'deck_builder',
+        cardId: 'card_magentic',
         turnId: 'corr-mag-1',
         runId: 'corr-mag-1',
         route: 'deck_runtime',
         orchestrator: 'magentic_one',
-        modelProvider: 'openrouter',
-        modelKey: 'deepseek/deepseek-v4-pro-0813',
-        providerModelId: 'deepseek/deepseek-v4-pro-0813',
         startedAt: '2026-08-17T00:00:00Z',
       },
       idf: {
-        idfId: 'transient:corr-mag-1',
-        projectId: 'project-1',
-        deckId: 'deck_builder',
-        conversationId: 'main',
-        runId: 'corr-mag-1',
-        originatingCardId: 'card_magentic',
-        version: 1,
-        systemText: 'Saved Mag One prompt',
-        userText: 'Coordinate the mission.',
-        cardContext: {},
-        dynamicContextMarkdown: '',
+        systemPrompt: 'Saved Mag One prompt',
+        message: 'Coordinate the mission.',
+        runtime: { kind: 'autogen', mode: 'magentic_one' },
+        provider: {
+          accessMode: 'openrouter-api',
+          provider: 'openrouter',
+          modelKey: 'deepseek/deepseek-v4-pro-0813',
+          providerModelId: 'deepseek/deepseek-v4-pro-0813',
+        },
+        runtimeOptions: {},
+        enabledTools: [],
+        toolDefinitions: [],
+        nativeTools: [],
+        skills: [],
+        toolsets: [],
+        mcpConnectionIds: [],
         nativeReferences: [],
-        modelInputMarkdown: '# IDF\n\nCoordinate the mission.',
-        contentMarkdown: '# IDF\n\nCoordinate the mission.',
-        contentSha256: 'a'.repeat(64),
-        createdAt: '2026-08-17T00:00:00Z',
+        images: [],
       },
-      cardRuntime: {},
+      participants: [],
     };
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
       expect(endpoint).toBe('/domain/runs/begin');
@@ -897,7 +882,6 @@ describe('coder routes', () => {
           conversationId: 'main',
           input: 'Coordinate the mission.',
           action: 'execute',
-          exactIdf: '# IDF\n\nCoordinate the mission.',
           cardRevisionId: 'revision:card_magentic',
         }),
       });
@@ -910,49 +894,6 @@ describe('coder routes', () => {
           output: 'Native Mag One response.',
         },
       });
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  it('forwards explicit saved-IDF writes and reads only to Python rails', async () => {
-    orchestratorMocks.requestPythonRailsJson.mockClear();
-    const exactIdf = '\n# IDF\n\nRepeatable input.\n ';
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const saveResponse = await fetch(`${baseUrl}/mcp-bridge/idfs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: 'project-1',
-          deckId: 'deck_builder',
-          cardId: 'card_worker',
-          assignment: 'Repeatable input.',
-          cardRevisionId: 'revision:card_worker',
-          exactIdf,
-        }),
-      });
-      expect(saveResponse.status).toBe(200);
-      await expect(saveResponse.json()).resolves.toMatchObject({
-        ok: true,
-        savedIdf: { revision: 1, targetCardId: 'card_worker' },
-      });
-      const saveCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
-        ([endpoint]) => endpoint === '/domain/idfs/save',
-      );
-      expect(JSON.parse(String(saveCall?.[1]?.body || '{}')).exactIdf).toBe(exactIdf);
-
-      const listResponse = await fetch(
-        `${baseUrl}/mcp-bridge/idfs?projectId=project-1&deckId=deck_builder&cardId=card_worker`,
-      );
-      expect(listResponse.status).toBe(200);
-      await expect(listResponse.json()).resolves.toMatchObject({
-        savedIdfs: [{ revision: 1, targetCardId: 'card_worker' }],
-      });
-      expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledWith(
-        '/domain/idfs/project-1/deck_builder?cardId=card_worker',
-        { method: 'GET' },
-      );
     } finally {
       await closeServer(server);
     }
@@ -1105,7 +1046,7 @@ describe('coder routes', () => {
       }
     });
 
-    it('uses Python-owned prompt-free run lifecycle without a post-chat graph handoff', async () => {
+    it('uses one Python materialization and keeps telemetry out of the model input', async () => {
       orchestratorMocks.requestPythonRailsJson.mockClear();
       chatSessionMocks.startHermesTurn.mockClear();
       chatSessionMocks.lastCancel.mockClear();
@@ -1132,22 +1073,18 @@ describe('coder routes', () => {
           prompt: chatSessionMocks.startHermesTurn.mock.calls[0][0].prompt,
           message: chatSessionMocks.startHermesTurn.mock.calls[0][0].message,
         });
-        expect(modelInput).not.toContain('# LiquidAIty IDF');
-        expect(modelInput).not.toContain('# IDF');
         expect(modelInput).not.toContain('serialized-card');
         expect(modelInput).not.toContain('cardContext');
+        expect(modelInput).not.toContain('runId');
+        expect(modelInput).not.toContain('correlationId');
         expect(modelInput.match(/Saved prompt/g)).toHaveLength(1);
         const railsCalls = orchestratorMocks.requestPythonRailsJson.mock.calls;
         expect(railsCalls.map(([endpoint]) => endpoint)).toEqual([
-          '/domain/main/prepare',
           '/domain/main/runs/begin',
           '/domain/runs/finish',
         ]);
         expect(railsCalls[0]?.[1]?.body).toContain('"message":"hello"');
-        expect(railsCalls[1]?.[1]?.body).toContain('"message":"hello"');
-        expect(railsCalls[0]?.[1]?.body).not.toContain('exactIdf');
-        expect(railsCalls[1]?.[1]?.body).not.toContain('exactIdf');
-        expect(railsCalls[2]?.[1]?.body).toContain('"state":"completed"');
+        expect(railsCalls[1]?.[1]?.body).toContain('"state":"completed"');
 
         // The obsolete post-chat pair handoff must never fire from this route.
         expect(mcpClientMocks.callPythonAgentMcpTool).not.toHaveBeenCalled();

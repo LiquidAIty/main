@@ -1,14 +1,14 @@
 type ConfiguredRuntimeSession = {
   sessionId: string;
   projectId: string;
+  deckId: string;
+  cardId: string;
+  conversationId?: string;
   turnId: string;
   runId?: string;
   parentRunId?: string;
   route: string;
   orchestrator: 'magentic_one' | 'assistant_agent';
-  modelProvider: string;
-  modelKey: string;
-  providerModelId: string;
   startedAt: string;
 };
 
@@ -16,8 +16,8 @@ const AUTOGEN_DISPATCH_ENDPOINT = '/autogen/dispatch';
 
 export type ConfiguredRuntimeRequest = {
   session: ConfiguredRuntimeSession;
-  idf: import('../../contracts/runtimeContracts').InputDataFile;
-  cardRuntime?: Record<string, unknown>;
+  idf: import('../../contracts/runtimeContracts').Idf;
+  participants?: Array<Record<string, unknown>>;
 };
 
 export type NativeRuntimeMessage = {
@@ -29,7 +29,6 @@ export type NativeRuntimeMessage = {
 export type ConfiguredRuntimeResponse = {
   ok: boolean;
   runId: string;
-  idfId: string;
   resultId?: string | null;
   // Real last AutoGen message text (transport invariant only; not rendered in chat).
   finalResponseText?: string;

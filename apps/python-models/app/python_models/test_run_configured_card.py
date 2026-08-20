@@ -1,99 +1,67 @@
-"""Focused canonical-IDF single-card runtime coverage. No provider calls."""
+"""Focused single-Card runtime coverage. No provider calls."""
 
 import asyncio
-from hashlib import sha256
 from types import SimpleNamespace
 
-import pytest
-
 from app.python_models import magentic_agentchat as mac
-from app.python_models.idf import render_content_markdown
-from app.python_models.orchestration_contracts import (
-    CardRuntimeConfig,
-    CardRuntimeParticipant,
-    InputDataFile,
-    ProjectSession,
-    RuntimeRequest,
-)
+from app.python_models.idf import materialize_idf
+from app.python_models.orchestration_contracts import ProjectSession, RuntimeRequest
 
 MODEL = "deepseek/deepseek-v4-flash-0731"
 
 
-def _transient_idf(*, card_context: dict, user_text: str) -> InputDataFile:
-    references = [{
-        "authority": "knowgraph", "nativeId": "node:1",
-        "reason": "bounded runtime context", "asOf": "2026-08-14T00:00:00Z",
-        "required": True,
-    }]
-    content = render_content_markdown(
-        system_text="saved system",
-        user_text=user_text,
-        card_context=card_context,
-        dynamic_context_markdown="bounded context",
-        native_references=references,
-    )
-    return InputDataFile(
-        idfId="idf:one", projectId="p", deckId="d", conversationId="c",
-        runId="run:one", originatingCardId="card:one", version=1,
-        systemText="saved system", userText=user_text, cardContext=card_context,
-        dynamicContextMarkdown="bounded context", nativeReferences=references,
-        modelInputMarkdown=content, contentMarkdown=content,
-        contentSha256=sha256(content.encode("utf-8")).hexdigest(),
-        createdAt="2026-08-14T00:00:00Z",
-    )
-
-
-def _context(*, user_text: str = "run", runtime_mode: str = "assistant",
-             participants: list[CardRuntimeParticipant] | None = None,
-             orchestrator: str = "assistant_agent") -> RuntimeRequest:
-    card = CardRuntimeConfig(
-        cardId="card:one", title="One",
-        runtime={"kind": "autogen", "mode": runtime_mode},
-        prompt="saved system", accessMode="openrouter-api",
-    )
-    resolved_participants = participants if participants is not None else [
-        CardRuntimeParticipant(
-            cardId="card:one", title="One",
-            runtime={"kind": "autogen", "mode": "assistant"},
-            provider="openrouter", accessMode="openrouter-api", providerModelId=MODEL,
-        )
-    ]
-    document = _transient_idf(
-        card_context=card.model_dump(exclude_none=True),
-        user_text=user_text,
-    )
+def _context(
+    *,
+    user_text: str = "run",
+    runtime_mode: str = "assistant",
+    orchestrator: str = "assistant_agent",
+    enabled_tools: list[str] | None = None,
+) -> RuntimeRequest:
+    tools = ["calculator"] if enabled_tools is None else enabled_tools
     return RuntimeRequest(
         session=ProjectSession(
-            sessionId="s", projectId="p", turnId="turn:one", runId="run:one",
-            route="single_card", orchestrator=orchestrator,
-            modelProvider="openrouter", modelKey=MODEL, providerModelId=MODEL,
-            startedAt="now",
+            sessionId="s", projectId="p", deckId="d", cardId="card:one",
+            conversationId="c", turnId="turn:one", runId="run:one",
+            route="single_card", orchestrator=orchestrator, startedAt="now",
         ),
-        idf=document,
-        cardRuntime=card,
-        participants=resolved_participants,
+        idf=materialize_idf(
+            system_prompt="saved system",
+            dynamic_input=user_text,
+            context_markdown="bounded context",
+            runtime={"kind": "autogen", "mode": runtime_mode},
+            provider={
+                "accessMode": "openrouter-api", "provider": "openrouter",
+                "modelKey": MODEL, "providerModelId": MODEL,
+            },
+            enabled_tools=tools,
+            tool_definitions=[{"name": name} for name in tools],
+            native_references=[{
+                "authority": "knowgraph", "nativeId": "node:1",
+                "reason": "bounded runtime context",
+                "asOf": "2026-08-14T00:00:00Z", "required": True,
+            }],
+        ),
     )
 
 
-@pytest.mark.parametrize(
-    ("context", "error"),
-    [
-        (_context(runtime_mode="magentic_one"), "single_card_runtime_invalid"),
-        (_context(orchestrator="magentic_one"), "single_card_orchestrator_invalid"),
-        (_context(participants=[]), "single_card_participant_count_invalid: 0"),
-        (_context(participants=[_context().participants[0]] * 2), "single_card_participant_count_invalid: 2"),
-    ],
-)
-def test_structural_guard_rejects_invalid_runtime_without_model(context, error):
-    assert error in str(mac._validate_single_card_context(context))
+def test_structural_guard_rejects_invalid_runtime_without_model() -> None:
+    assert "single_card_runtime_invalid" in str(
+        mac._validate_single_card_context(_context(runtime_mode="magentic_one"))
+    )
+    assert "single_card_orchestrator_invalid" in str(
+        mac._validate_single_card_context(_context(orchestrator="magentic_one"))
+    )
 
 
-def test_single_card_consumes_exact_idf_model_input(monkeypatch):
-    observed: list[str] = []
+def test_single_card_consumes_one_python_materialization(monkeypatch) -> None:
+    observed: list[dict] = []
 
     class Agent:
+        def __init__(self, **kwargs):
+            observed.append(kwargs)
+
         async def run(self, *, task):
-            observed.append(task)
+            observed.append({"task": task})
             return SimpleNamespace(messages=[SimpleNamespace(content="native answer")])
 
     class Client:
@@ -102,51 +70,32 @@ def test_single_card_consumes_exact_idf_model_input(monkeypatch):
 
     context = _context()
     monkeypatch.setattr(mac, "_build_model_client", lambda _config: Client())
-    monkeypatch.setattr(mac, "_build_participants", lambda *_args, **_kwargs: [Agent()])
+    monkeypatch.setattr(mac, "AssistantAgent", Agent)
     result = asyncio.run(mac.run_configured_card(context))
 
     assert result.ok is True
     assert result.runId == "run:one"
-    assert result.idfId == "idf:one"
-    assert observed == [context.idf.modelInputMarkdown]
-    assert "bounded context" in observed[0]
-    assert '"authority": "knowgraph"' in observed[0]
-    assert '"nativeId": "node:1"' in observed[0]
+    assert observed[0]["system_message"] == context.idf.systemPrompt
+    assert observed[1] == {"task": context.idf.message}
+    assert context.idf.message == "bounded context\n\nrun"
+    assert "card:one" not in context.idf.message
 
 
-def test_runtime_rejects_card_config_outside_idf_without_echoing_values() -> None:
-    context = _context()
-    secret = "sk-secret-that-must-never-appear"
-    assert context.idf.cardContext is not None
-    context.idf.cardContext["prompt"] = secret
-
-    try:
-        asyncio.run(mac.run_configured_card(context))
-    except RuntimeError as error:
-        assert str(error) == "runtime_idf_card_context_mismatch"
-        assert secret not in str(error)
-    else:
-        raise AssertionError("runtime accepted card configuration outside the IDF")
-
-
-def test_single_card_error_never_echoes_idf_secret(monkeypatch):
+def test_single_card_error_never_echoes_dynamic_input(monkeypatch) -> None:
     secret = "sk-secret-value-that-must-not-escape"
     context = _context(user_text=secret)
-
-    class Agent:
-        async def run(self, *, task):
-            raise RuntimeError(task)
-
-    monkeypatch.setattr(mac, "_build_model_client", lambda _config: object())
-    monkeypatch.setattr(mac, "_build_participants", lambda *_args, **_kwargs: [Agent()])
+    monkeypatch.setattr(
+        mac,
+        "_build_model_client",
+        lambda _config: (_ for _ in ()).throw(RuntimeError(secret)),
+    )
     result = asyncio.run(mac.run_configured_card(context))
     assert result.error == "single_card_run_failed"
     assert secret not in result.model_dump_json()
 
 
-def test_unknown_saved_tool_fails_loudly():
-    participant = _context().participants[0].model_copy(
-        update={"tools": ["not-a-real-tool"]}
-    )
-    with pytest.raises(Exception, match="not-a-real-tool"):
-        mac._build_participants(_context(participants=[participant]), object())
+def test_unknown_saved_tool_fails_loudly_without_provider_call(monkeypatch) -> None:
+    context = _context(enabled_tools=["not-a-real-tool"])
+    monkeypatch.setattr(mac, "_build_model_client", lambda _config: object())
+    result = asyncio.run(mac.run_configured_card(context))
+    assert result.error == "single_card_run_failed"

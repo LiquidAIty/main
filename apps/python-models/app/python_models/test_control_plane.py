@@ -143,17 +143,6 @@ class TestRunAssistantAgent:
 
         def backend(method, path, payload=None):
             calls.append((method, path, payload))
-            if payload["action"] == "materialize":
-                return {
-                    "ok": True,
-                    "result": {
-                        "status": "previewed",
-                        "invocation": {
-                            "exactIdf": "# IDF\n\nhi",
-                            "cardRevisionId": "revision:c",
-                        },
-                    },
-                }
             return {"ok": True, "result": {"status": "completed"}}
 
         monkeypatch.setattr(cp, "_backend_json", backend)
@@ -163,18 +152,15 @@ class TestRunAssistantAgent:
         method, path, payload = calls[0]
         assert path == "/api/coder/mcp-bridge/run_configured_card"
         assert sorted(payload.keys()) == ["action", "cardId", "correlationId", "deckId", "input", "projectId"]
-        assert payload["action"] == "materialize"
-        executed = calls[1][2]
-        assert executed["action"] == "execute"
-        assert executed["exactIdf"] == "# IDF\n\nhi"
-        assert executed["cardRevisionId"] == "revision:c"
+        assert payload["action"] == "execute"
+        assert payload["input"] == "hi"
 
         asyncio.run(cp.card_run_assistant_agent({
             "projectId": "p", "deckId": "d", "cardId": "c",
             "correlationId": "y", "conversationId": "conv-1",
             "input": "use the handoff",
         }))
-        forwarded = calls[3][2]
+        forwarded = calls[1][2]
         assert forwarded["conversationId"] == "conv-1"
 
     def test_materialization_rejection_preserves_the_authority_error(self, monkeypatch):
@@ -199,24 +185,13 @@ class TestRunAssistantAgent:
             }))
 
         assert len(calls) == 1
-        assert calls[0][2]["action"] == "materialize"
+        assert calls[0][2]["action"] == "execute"
 
     def test_trusted_inter_agent_call_forwards_native_parent_run(self, monkeypatch):
         calls = []
 
         def backend(method, path, payload=None):
             calls.append((method, path, payload))
-            if payload["action"] == "materialize":
-                return {
-                    "ok": True,
-                    "result": {
-                        "status": "previewed",
-                        "invocation": {
-                            "exactIdf": "# IDF\n\nFind one primary source.",
-                            "cardRevisionId": "revision:card_research_agent",
-                        },
-                    },
-                }
             return {
                 "ok": True,
                 "result": {
@@ -239,26 +214,18 @@ class TestRunAssistantAgent:
             "input": "Find one primary source.",
         }))
 
-        assert calls[1][2]["originatingRunId"] == "main-turn-1"
-        assert calls[1][2]["senderCardId"] == "card_hermes_steward"
-        assert calls[1][2]["input"] == "Find one primary source."
-        assert calls[1][2]["exactIdf"] == "# IDF\n\nFind one primary source."
+        assert calls[0][2]["originatingRunId"] == "main-turn-1"
+        assert calls[0][2]["senderCardId"] == "card_hermes_steward"
+        assert calls[0][2]["input"] == "Find one primary source."
+        assert set(calls[0][2]) == {
+            "action", "projectId", "deckId", "cardId", "correlationId",
+            "conversationId", "senderCardId", "originatingRunId", "input",
+        }
         assert response["result"]["status"] == "completed"
 
 
     def test_inter_agent_failure_records_backend_error(self, monkeypatch):
         def backend(_method, _path, payload=None):
-            if payload["action"] == "materialize":
-                return {
-                    "ok": True,
-                    "result": {
-                        "status": "previewed",
-                        "invocation": {
-                            "exactIdf": "# IDF\n\nFind one primary source.",
-                            "cardRevisionId": "revision:card_research_agent",
-                        },
-                    },
-                }
             return {
                 "ok": False,
                 "error": "configured_card_failed",
@@ -283,17 +250,6 @@ class TestRunAssistantAgent:
 
     def test_plain_standalone_call_uses_same_doorway(self, monkeypatch):
         def backend(_method, _path, payload=None):
-            if payload["action"] == "materialize":
-                return {
-                    "ok": True,
-                    "result": {
-                        "status": "previewed",
-                        "invocation": {
-                            "exactIdf": "# IDF\n\nRun independently.",
-                            "cardRevisionId": "revision:card_research_agent",
-                        },
-                    },
-                }
             return {
                 "ok": True,
                 "result": {"status": "completed", "output": "standalone"},

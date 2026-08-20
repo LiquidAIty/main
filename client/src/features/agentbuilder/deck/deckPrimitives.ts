@@ -102,7 +102,6 @@ export const HERMES_CARD_TOOLS = [
   'graphiti.add_memory',
   'graphiti.add_triplet',
   'agentgraph.inspect',
-  'write_mag_one_instructions',
 ] as const;
 
 export function normalizeCardRuntime(value: unknown): CardRuntime | null {

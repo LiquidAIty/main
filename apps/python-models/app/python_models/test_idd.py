@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from app.python_models.idd import (
     IddValidationError,
     load_input_data_dictionary,
@@ -9,7 +7,7 @@ from app.python_models.idd import (
     materialize_catalog,
     materialize_tool_catalog,
     required_tool_caller_runtime,
-    validate_idf_islands,
+    validate_input_islands,
     validate_record,
 )
 
@@ -18,7 +16,7 @@ def test_literal_idd_is_the_only_loaded_rule_catalog() -> None:
     dictionary = load_input_data_dictionary()
 
     assert dictionary["dictionary"]["name"] == "LiquidAIty"
-    assert dictionary["dictionary"]["idfFormat"] == "mixed-markdown"
+    assert dictionary["dictionary"]["idfFormat"] == "card-model-call"
     assert dictionary["dictionary"]["unknownIslands"] == "inert"
     assert {item["name"] for item in dictionary["records"]} == {
         "card-context", "model-option", "native-reference",
@@ -37,24 +35,6 @@ def test_literal_idd_is_the_only_loaded_rule_catalog() -> None:
     }
 
 
-def test_owner_authored_example_idf_validates_as_the_canonical_mixed_format() -> None:
-    example = Path(__file__).resolve().parents[4] / "LiquidAIty_example.idf"
-    islands = validate_idf_islands(example.read_text(encoding="utf-8"))
-
-    assert {name: len(values) for name, values in islands.items()} == {
-        "SYSTEM": 1,
-        "CARD": 1,
-        "SQL": 2,
-        "CYPHER": 1,
-        "MCP": 2,
-        "SCRIPT": 1,
-        "JSON": 1,
-        "SEARCH_TERMS": 1,
-        "KNOWN_CONTEXT": 1,
-        "RETURN": 1,
-    }
-
-
 def test_idd_accepts_loose_text_and_native_language_islands() -> None:
     markdown = """Ordinary Markdown can appear before, between, and after islands.
 
@@ -68,8 +48,8 @@ role: planning, research, memory
 [/CARD]
 
 [SQL]
-SELECT content_markdown FROM ag_catalog.saved_idf_revisions
-WHERE idf_id = :idf_id AND revision = :revision;
+SELECT title FROM ag_catalog.cards
+WHERE card_id = :card_id;
 [/SQL]
 
 Continue the sentence after the query result.
@@ -83,7 +63,7 @@ result = unique[:25]
 [/JSON]
 """
 
-    islands = validate_idf_islands(markdown)
+    islands = validate_input_islands(markdown)
 
     assert islands["CARD"][0]["content"].startswith("name: Research Helper")
     assert islands["SQL"][0]["content"].startswith("SELECT")
@@ -95,7 +75,7 @@ def test_unknown_future_islands_are_inert_until_the_idd_defines_them() -> None:
 This remains ordinary inert context.
 [/FUTURE_NATIVE_LANGUAGE]"""
 
-    assert validate_idf_islands(markdown) == {}
+    assert validate_input_islands(markdown) == {}
 
 
 def test_idd_errors_never_echo_values() -> None:
@@ -115,13 +95,13 @@ def test_idd_errors_never_echo_values() -> None:
         assert str(error) == "idd_record_field_invalid:card-context.runtime"
         assert secret not in str(error)
     else:
-        raise AssertionError("invalid structured IDF record was accepted")
+        raise AssertionError("invalid structured input record was accepted")
 
 
 def test_script_language_is_required_without_echoing_script_content() -> None:
     secret = "sk-secret-that-must-never-appear"
     try:
-        validate_idf_islands(f"[SCRIPT]\n{secret}\n[/SCRIPT]")
+        validate_input_islands(f"[SCRIPT]\n{secret}\n[/SCRIPT]")
     except IddValidationError as error:
         assert str(error) == "idd_island_attribute_required:SCRIPT"
         assert secret not in str(error)
@@ -198,9 +178,8 @@ def test_explicit_tool_permissions_come_from_the_idd() -> None:
         for group in dictionary["toolGroups"]
         for tool in group["tools"]
     }
-    assert {"agentgraph.inspect", "write_mag_one_instructions"}.issubset(tool_names)
+    assert {"agentgraph.inspect", "run_mag_one"}.issubset(tool_names)
     assert required_tool_caller_runtime("run_mag_one") == {"kind": "hermes", "mode": "main"}
-    assert required_tool_caller_runtime("write_mag_one_instructions") is None
     assert required_tool_caller_runtime("cbm.search_graph") is None
 
 

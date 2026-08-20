@@ -89,12 +89,8 @@ const AgentManager = lazy(async () => {
   const mod = await import('../components/AgentManager');
   return { default: mod.AgentManager };
 });
-import type {
-  SavedIdfSummary,
-  StandaloneCardTestResult,
-} from '../components/AgentManager';
+import type { StandaloneCardTestResult } from '../components/AgentManager';
 
-type StandaloneCardInvocation = NonNullable<StandaloneCardTestResult['invocation']>;
 import { resolveCbmProjectName } from '../components/codegraph/resolveCodeGraphProjectIdentity';
 
 // AgentPage (MVP): left icon rail + main chat + right tabs (Plan, Links, Knowledge, Dashboard)
@@ -550,9 +546,6 @@ export default function AgentBuilder(): React.ReactElement {
   const [standaloneTestPrompt, setStandaloneTestPrompt] = useState('');
   const [standaloneTestBusy, setStandaloneTestBusy] = useState(false);
   const [standaloneTestResult, setStandaloneTestResult] = useState<StandaloneCardTestResult | null>(null);
-  const [savedIdfs, setSavedIdfs] = useState<SavedIdfSummary[]>([]);
-  const [savedIdfKey, setSavedIdfKey] = useState('');
-  const [savedIdfBusy, setSavedIdfBusy] = useState(false);
   const standaloneTestRequestRef = useRef<string | null>(null);
   const standaloneTestUnavailableReason = useMemo(
     () => getStandaloneCardUnavailableReason(selectedCard),
@@ -568,46 +561,10 @@ export default function AgentBuilder(): React.ReactElement {
     setStandaloneTestPrompt('');
     setStandaloneTestBusy(false);
     setStandaloneTestResult(null);
-    setSavedIdfKey('');
   }, [selectedCardId]);
 
-  const refreshSavedIdfs = useCallback(async () => {
-    if (!selectedCard || !canvasProjectId) {
-      setSavedIdfs([]);
-      return;
-    }
-    const params = new URLSearchParams({
-      projectId: canvasProjectId,
-      deckId: BUILDER_DECK_ID,
-      cardId: selectedCard.id,
-    });
-    const response = await fetch(`/api/coder/mcp-bridge/idfs?${params}`, {
-      credentials: 'include',
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !Array.isArray(payload?.savedIdfs)) {
-      throw new Error(String(payload?.error || `saved_idf_list_http_${response.status}`));
-    }
-    setSavedIdfs(payload.savedIdfs);
-  }, [canvasProjectId, selectedCard]);
-
-  useEffect(() => {
-    let active = true;
-    if (!selectedCard || !canvasProjectId) {
-      setSavedIdfs([]);
-      return () => { active = false; };
-    }
-    void refreshSavedIdfs().catch((error) => {
-      if (active) {
-        setSavedIdfs([]);
-        setDeckStatusMessage(error instanceof Error ? error.message : 'Saved IDFs unavailable.');
-      }
-    });
-    return () => { active = false; };
-  }, [canvasProjectId, refreshSavedIdfs, selectedCard]);
-
   const executeStandaloneInvocation = useCallback(async (
-    invocation: StandaloneCardInvocation,
+    input: string,
   ) => {
     if (!selectedCard || !canvasProjectId || standaloneTestBusy || standaloneTestUnavailableReason) return;
     const correlationId = `card-run-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
@@ -625,12 +582,8 @@ export default function AgentBuilder(): React.ReactElement {
           deckId: BUILDER_DECK_ID,
           cardId: selectedCard.id,
           correlationId,
-          input: invocation.assignment,
+          input,
           conversationId,
-          exactIdf: invocation.exactIdf,
-          cardRevisionId: invocation.cardRevisionId,
-          savedIdfId: invocation.savedIdf?.idfId,
-          savedIdfRevision: invocation.savedIdf?.revision,
         }),
       });
       const payload = await response.json().catch(() => null);
@@ -644,14 +597,13 @@ export default function AgentBuilder(): React.ReactElement {
           output: String(result.output || ''),
           error: result.error ? String(result.error) : null,
           toolCallCount: typeof result.toolCallCount === 'number' ? result.toolCallCount : null,
-          tools: Array.isArray(result.tools) ? result.tools.map((tool: unknown) => String(tool)) : [],
+          tools: Array.isArray(result.invocation?.idf?.enabledTools)
+            ? result.invocation.idf.enabledTools.map((tool: unknown) => String(tool))
+            : [],
           provider: selectedCard.runtimeOptions?.provider || null,
           model: selectedCard.runtimeOptions?.modelKey || null,
           runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
-          invocation: {
-            ...invocation,
-            savedIdf: result.savedIdf || invocation.savedIdf || null,
-          },
+          invocation: result.invocation || null,
           receipt: result.receipt || null,
         });
         setDeckStatusMessage(
@@ -667,7 +619,6 @@ export default function AgentBuilder(): React.ReactElement {
           toolCallCount: null, tools: [], provider: selectedCard.runtimeOptions?.provider || null,
           model: selectedCard.runtimeOptions?.modelKey || null,
           runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
-          invocation,
         });
         setDeckStatusMessage(error instanceof Error ? error.message : 'Standalone card test failed.');
       }
@@ -691,19 +642,16 @@ export default function AgentBuilder(): React.ReactElement {
       !canvasProjectId ||
       standaloneTestBusy ||
       standaloneTestUnavailableReason ||
-      !standaloneTestResult?.invocation ||
-      standaloneTestResult.invocation.assignment !== standaloneTestPrompt.trim()
+      !standaloneTestPrompt.trim()
     ) {
       return;
     }
-    const invocation = standaloneTestResult.invocation;
-    await executeStandaloneInvocation(invocation);
+    await executeStandaloneInvocation(standaloneTestPrompt.trim());
   }, [
     executeStandaloneInvocation,
     selectedCard,
     standaloneTestBusy,
     standaloneTestPrompt,
-    standaloneTestResult,
     standaloneTestUnavailableReason,
   ]);
 
@@ -772,141 +720,6 @@ export default function AgentBuilder(): React.ReactElement {
     }
   }, [canvasProjectId, conversationId, selectedCard, standaloneTestBusy, standaloneTestPrompt, standaloneTestUnavailableReason]);
 
-  const saveStandaloneIdf = useCallback(async (runAfterSave: boolean) => {
-    const invocation = standaloneTestResult?.invocation;
-    if (!selectedCard || !canvasProjectId || !invocation || savedIdfBusy || standaloneTestBusy) return;
-    setSavedIdfBusy(true);
-    try {
-      const response = await fetch('/api/coder/mcp-bridge/idfs', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: canvasProjectId,
-          deckId: BUILDER_DECK_ID,
-          cardId: selectedCard.id,
-          assignment: invocation.assignment,
-          exactIdf: invocation.exactIdf,
-          cardRevisionId: invocation.cardRevisionId,
-          provenanceKind: 'inspector',
-          idfId: invocation.savedIdf?.idfId,
-        }),
-      });
-      const payload = await response.json().catch(() => null);
-      const saved = payload?.savedIdf as SavedIdfSummary | undefined;
-      if (!response.ok || !saved?.idfId || !Number.isInteger(saved.revision)) {
-        throw new Error(String(payload?.error || `saved_idf_write_http_${response.status}`));
-      }
-      const savedInvocation: StandaloneCardInvocation = {
-        ...invocation,
-        ephemeral: false,
-        exactIdf: String(saved.contentMarkdown || invocation.exactIdf),
-        savedIdf: saved,
-      };
-      setSavedIdfKey(`${saved.idfId}:${saved.revision}`);
-      setStandaloneTestResult((current) => ({
-        status: 'saved',
-        output: current?.output || '',
-        error: null,
-        toolCallCount: current?.toolCallCount ?? null,
-        tools: current?.tools || [],
-        provider: current?.provider || null,
-        model: current?.model || null,
-        runtimeLabel: current?.runtimeLabel || null,
-        invocation: savedInvocation,
-        receipt: current?.receipt || null,
-      }));
-      setDeckStatusMessage(`Saved IDF ${saved.idfId} revision ${saved.revision}.`);
-      await refreshSavedIdfs();
-      if (runAfterSave) await executeStandaloneInvocation(savedInvocation);
-    } catch (error) {
-      setDeckStatusMessage(error instanceof Error ? error.message : 'IDF save failed.');
-    } finally {
-      setSavedIdfBusy(false);
-    }
-  }, [
-    canvasProjectId,
-    executeStandaloneInvocation,
-    refreshSavedIdfs,
-    savedIdfBusy,
-    selectedCard,
-    standaloneTestBusy,
-    standaloneTestResult,
-  ]);
-
-  const loadStandaloneIdf = useCallback(async () => {
-    if (!selectedCard || !canvasProjectId || !savedIdfKey || savedIdfBusy) return;
-    const separator = savedIdfKey.lastIndexOf(':');
-    const idfId = savedIdfKey.slice(0, separator);
-    const revision = Number(savedIdfKey.slice(separator + 1));
-    if (!idfId || !Number.isInteger(revision) || revision < 1) return;
-    setSavedIdfBusy(true);
-    try {
-      const params = new URLSearchParams({
-        projectId: canvasProjectId,
-        idfId,
-        revision: String(revision),
-      });
-      const response = await fetch(`/api/coder/mcp-bridge/idfs?${params}`, {
-        credentials: 'include',
-      });
-      const payload = await response.json().catch(() => null);
-      const saved = payload?.savedIdf as SavedIdfSummary | undefined;
-      const inspection = payload?.inspection;
-      if (
-        !response.ok
-        || !saved?.contentMarkdown
-        || saved.targetCardId !== selectedCard.id
-        || !inspection?.assignment
-        || !inspection?.cardContext
-      ) {
-        throw new Error(String(payload?.error || `saved_idf_load_http_${response.status}`));
-      }
-      const invocation: StandaloneCardInvocation = {
-        ephemeral: false,
-        assignment: String(inspection.assignment),
-        cardRevisionId: saved.targetCardRevisionId,
-        cardRevision: saved.targetCardRevision,
-        cardRevisionSha256: saved.targetCardRevisionSha256,
-        runtimeOwner: String(inspection.runtimeOwner || ''),
-        exactIdf: saved.contentMarkdown,
-        cardContext: inspection.cardContext,
-        runtimeFacet: { owner: String(inspection.runtimeOwner || '') },
-        providerProjection: inspection.providerProjection || {},
-        savedIdf: saved,
-      };
-      setStandaloneTestPrompt(invocation.assignment);
-      setStandaloneTestResult({
-        status: 'saved', output: '', error: null, toolCallCount: null,
-        tools: Array.isArray(invocation.cardContext.tools) ? invocation.cardContext.tools.map(String) : [],
-        provider: typeof invocation.cardContext.provider === 'string' ? invocation.cardContext.provider : null,
-        model: typeof invocation.cardContext.providerModelId === 'string' ? invocation.cardContext.providerModelId : null,
-        runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
-        invocation,
-      });
-      setDeckStatusMessage(`Loaded IDF ${saved.idfId} revision ${saved.revision}.`);
-    } catch (error) {
-      setDeckStatusMessage(error instanceof Error ? error.message : 'IDF load failed.');
-    } finally {
-      setSavedIdfBusy(false);
-    }
-  }, [canvasProjectId, savedIdfBusy, savedIdfKey, selectedCard]);
-
-  const exportStandaloneIdf = useCallback(() => {
-    const invocation = standaloneTestResult?.invocation;
-    if (!selectedCard || !invocation?.exactIdf) return;
-    const suffix = invocation.savedIdf
-      ? `${invocation.savedIdf.idfId}-r${invocation.savedIdf.revision}`
-      : 'transient';
-    const safeCardId = selectedCard.id.replace(/[^A-Za-z0-9._-]+/g, '-');
-    const blob = new Blob([invocation.exactIdf], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `${safeCardId}-${suffix}.idf`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  }, [selectedCard, standaloneTestResult]);
   const builderTabs = useMemo(() => {
     if (selectedCard) return [...BUILDER_NODE_TABS];
     return [...BUILDER_PROJECT_TABS];
@@ -1168,41 +981,16 @@ export default function AgentBuilder(): React.ReactElement {
                       setStandaloneTestPrompt(value);
                       setStandaloneTestResult(null);
                     }}
-                    onChangeMaterializedIdf={(value) => {
-                      setStandaloneTestResult((current) =>
-                        current?.invocation
-                          ? {
-                              ...current,
-                              invocation: { ...current.invocation, exactIdf: value },
-                            }
-                          : current,
-                      );
-                    }}
                     onMaterializeCard={() => {
                       void materializeStandaloneCard();
                     }}
-                    onSaveIdf={() => {
-                      void saveStandaloneIdf(false);
-                    }}
-                    onSaveAndRunIdf={() => {
-                      void saveStandaloneIdf(true);
-                    }}
-                    onExportIdf={exportStandaloneIdf}
-                    onLoadSavedIdf={() => {
-                      void loadStandaloneIdf();
-                    }}
-                    onChangeSavedIdfKey={setSavedIdfKey}
-                    savedIdfKey={savedIdfKey}
-                    savedIdfs={savedIdfs}
-                    savedIdfBusy={savedIdfBusy}
                     onRunCard={() => {
                       void runStandaloneCardTest();
                     }}
                     runBusy={standaloneTestBusy}
                     runDisabled={
                       !showStandaloneTestControls ||
-                      !standaloneTestResult?.invocation ||
-                      standaloneTestResult.invocation.assignment !== standaloneTestPrompt.trim()
+                      !standaloneTestPrompt.trim()
                     }
                     runResult={standaloneTestResult}
                     saveDeckStatusMessage={deckStatusMessage}

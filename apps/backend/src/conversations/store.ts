@@ -1,4 +1,4 @@
-// Legacy conversation data is read-only after the transient-IDF cutover.
+// Native runtime conversation history remains separate from transient model input.
 // New Main/Card turns keep live UI/runtime state and Python owns prompt-free
 // durable Runs; TypeScript must not write transcripts or domain lifecycle.
 import { pool } from '../db/pool';

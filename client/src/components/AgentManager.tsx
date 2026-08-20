@@ -177,17 +177,8 @@ interface AgentManagerProps {
   }) => void;
   promptTestInput?: string;
   onChangePromptTestInput?: (value: string) => void;
-  onChangeMaterializedIdf?: (value: string) => void;
   onRunCard?: () => void;
   onMaterializeCard?: () => void;
-  onSaveIdf?: () => void;
-  onSaveAndRunIdf?: () => void;
-  onExportIdf?: () => void;
-  onLoadSavedIdf?: () => void;
-  onChangeSavedIdfKey?: (value: string) => void;
-  savedIdfKey?: string;
-  savedIdfs?: SavedIdfSummary[];
-  savedIdfBusy?: boolean;
   runBusy?: boolean;
   runDisabled?: boolean;
   runResult?: StandaloneCardTestResult | null;
@@ -235,31 +226,24 @@ export type StandaloneCardTestResult = {
     cardRevision: number;
     cardRevisionSha256: string;
     runtimeOwner: string;
-    exactIdf: string;
+    idf: {
+      systemPrompt: string;
+      message: string;
+      runtime: Record<string, unknown>;
+      provider: Record<string, unknown>;
+      runtimeOptions: Record<string, unknown>;
+      enabledTools: string[];
+      toolDefinitions: Array<Record<string, unknown>>;
+      nativeTools: string[];
+      skills: string[];
+      toolsets: string[];
+      mcpConnectionIds: string[];
+      nativeReferences: Array<Record<string, unknown>>;
+      images: Array<Record<string, unknown>>;
+    };
     cardContext: Record<string, unknown>;
-    runtimeFacet: Record<string, unknown>;
-    providerProjection: Record<string, unknown>;
-    savedIdf?: SavedIdfSummary | null;
   } | null;
   receipt?: Record<string, unknown> | null;
-};
-
-export type SavedIdfSummary = {
-  idfId: string;
-  revision: number;
-  projectId: string;
-  deckId: string;
-  targetCardId: string;
-  targetCardRevisionId: string;
-  targetCardRevision: number;
-  targetCardRevisionSha256: string;
-  iddVersion: number;
-  iddSha256: string;
-  contentSha256: string;
-  state: string;
-  provenanceKind: string;
-  createdAt: string;
-  contentMarkdown?: string;
 };
 
 type SaveCardStatus = 'idle' | 'saving' | 'saved' | 'failed';
@@ -417,17 +401,8 @@ export function AgentManager({
   activeTab,
   promptTestInput,
   onChangePromptTestInput,
-  onChangeMaterializedIdf,
   onRunCard,
   onMaterializeCard,
-  onSaveIdf,
-  onSaveAndRunIdf,
-  onExportIdf,
-  onLoadSavedIdf,
-  onChangeSavedIdfKey,
-  savedIdfKey = '',
-  savedIdfs = [],
-  savedIdfBusy = false,
   runBusy = false,
   runDisabled = false,
   runResult = null,
@@ -1617,7 +1592,7 @@ export function AgentManager({
             {saveCardStatus === 'saving' ? 'Saving…' : saveCardStatus === 'saved' ? 'Saved' : 'Save Card Version'}
           </button>
           <span style={{ color: '#80969F', fontSize: 10.5 }}>
-            Stable Card fields only; the dynamic assignment and IDF are not copied into the Card.
+            Stable Card fields are versioned; the dynamic input remains in this Card workspace.
           </span>
           {saveCardStatus === 'failed' && saveCardErrorMessage ? (
             <span role="alert" data-testid="agent-manager-save-error" style={{ color: '#FFA2A2', fontSize: 11.5 }}>
@@ -1649,30 +1624,7 @@ export function AgentManager({
             }}
           />
           <div style={{ color: '#80969F', fontSize: 10.5 }}>
-            Materialize combines this input with the saved Card. The exact visible IDF below is sent unchanged.
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8 }}>
-            <select
-              aria-label="Saved IDF revision"
-              value={savedIdfKey}
-              onChange={(event) => onChangeSavedIdfKey?.(event.target.value)}
-              disabled={savedIdfBusy || savedIdfs.length === 0}
-            >
-              <option value="">{savedIdfs.length ? 'Select saved IDF' : 'No saved IDFs for this Card'}</option>
-              {savedIdfs.map((saved) => (
-                <option key={`${saved.idfId}:${saved.revision}`} value={`${saved.idfId}:${saved.revision}`}>
-                  {saved.idfId.slice(0, 8)} · revision {saved.revision} · {saved.createdAt.slice(0, 10)}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={onLoadSavedIdf}
-              disabled={savedIdfBusy || !savedIdfKey}
-              data-testid="agent-manager-load-idf"
-            >
-              {savedIdfBusy ? 'Working…' : 'Load IDF'}
-            </button>
+            Python combines this input with the saved Card into the one exact model call shown below.
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
             <button
@@ -1681,7 +1633,7 @@ export function AgentManager({
               disabled={runBusy || !String(promptTestInput || '').trim()}
               data-testid="agent-manager-materialize"
             >
-              {runBusy ? 'Working…' : 'Materialize IDF'}
+              {runBusy ? 'Working…' : 'Preview IDF'}
             </button>
             <button
               type="button"
@@ -1704,30 +1656,6 @@ export function AgentManager({
               }}
             >
               {runBusy ? 'Running…' : 'Run transient'}
-            </button>
-            <button
-              type="button"
-              onClick={onSaveIdf}
-              disabled={savedIdfBusy || runBusy || !runResult?.invocation}
-              data-testid="agent-manager-save-idf"
-            >
-              Save IDF
-            </button>
-            <button
-              type="button"
-              onClick={onSaveAndRunIdf}
-              disabled={savedIdfBusy || runBusy || !runResult?.invocation}
-              data-testid="agent-manager-save-run-idf"
-            >
-              Save &amp; Run
-            </button>
-            <button
-              type="button"
-              onClick={onExportIdf}
-              disabled={!runResult?.invocation?.exactIdf}
-              data-testid="agent-manager-export-idf"
-            >
-              Export .idf
             </button>
           </div>
         </div> : null}
@@ -1753,17 +1681,14 @@ export function AgentManager({
             {runResult.invocation ? (
               <>
                 <div style={{ color: '#8FC8D1' }}>
-                  {runResult.invocation.savedIdf
-                    ? `Saved IDF ${runResult.invocation.savedIdf.idfId} · revision ${runResult.invocation.savedIdf.revision}`
-                    : 'Transient IDF'}
-                  {' · '}Card revision {runResult.invocation.cardRevision} · {runResult.invocation.runtimeOwner}
+                  Transient IDF · Card revision {runResult.invocation.cardRevision} · {runResult.invocation.runtimeOwner}
                 </div>
                 <details open>
                   <summary style={{ cursor: 'pointer', color: '#D5E4E8' }}>Exact in-memory IDF</summary>
                   <textarea
                     aria-label="Exact temporary IDF"
-                    value={runResult.invocation.exactIdf}
-                    onChange={(event) => onChangeMaterializedIdf?.(event.target.value)}
+                    value={JSON.stringify(runResult.invocation.idf, null, 2)}
+                    readOnly
                     rows={18}
                     style={{
                       width: '100%',
@@ -1781,17 +1706,11 @@ export function AgentManager({
                     }}
                   />
                 </details>
-                <details>
-                  <summary style={{ cursor: 'pointer', color: '#D5E4E8' }}>Provider wire fields and tool grants</summary>
-                  <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#B8C8CD' }}>
-                    {JSON.stringify(runResult.invocation.providerProjection || {}, null, 2)}
-                  </pre>
-                </details>
               </>
             ) : null}
             {runResult.receipt ? (
               <details>
-                <summary style={{ cursor: 'pointer', color: '#D5E4E8' }}>Prompt-free run receipt</summary>
+                <summary style={{ cursor: 'pointer', color: '#D5E4E8' }}>Run telemetry receipt</summary>
                 <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#B8C8CD' }}>
                   {JSON.stringify(runResult.receipt, null, 2)}
                 </pre>

@@ -203,7 +203,6 @@ type PreparedHermesTransportArgs = {
   conversationId: string;
   parentRunId?: string;
   workingDirectory?: string;
-  userMessage?: string;
   onEvent: (event: HermesSessionEvent) => void;
 };
 
@@ -212,12 +211,10 @@ function resolveHermesTurnArgs(
   transport: any,
 ): HermesTurnArgs {
   const context = transport?.cardContext || {};
-  const transportedMessage = String(transport.message || '');
-  const userMessage = typeof args.userMessage === 'string' && args.userMessage
-    ? args.userMessage
-    : transportedMessage;
-  const systemPrompt = String(transport.systemPrompt || '');
-  const runtime = context.runtime;
+  const idf = transport?.idf || {};
+  const hasIdf = Boolean(transport?.idf && typeof transport.idf === 'object');
+  const runtime = hasIdf ? idf.runtime : context.runtime;
+  const provider = hasIdf ? idf.provider : context;
   if (
     args.prepared?.runtimeOwner !== 'hermes'
     || runtime?.kind !== 'hermes'
@@ -230,16 +227,22 @@ function resolveHermesTurnArgs(
     cardId: String(context.cardId || ''),
     title: String(context.title || ''),
     runtime,
-    prompt: systemPrompt,
-    provider: String(context.provider || ''),
-    modelKey: String(context.modelKey || ''),
-    providerModelId: String(context.providerModelId || ''),
-    accessMode: context.accessMode,
-    tools: Array.isArray(context.tools) ? context.tools : [],
-    nativeTools: Array.isArray(context.nativeTools) ? context.nativeTools : [],
-    skills: Array.isArray(context.skills) ? context.skills : [],
-    toolsets: Array.isArray(context.toolsets) ? context.toolsets : [],
-    mcpConnectionIds: Array.isArray(context.mcpConnectionIds) ? context.mcpConnectionIds : [],
+    prompt: String(hasIdf ? idf.systemPrompt : context.prompt || ''),
+    provider: String(provider?.provider || ''),
+    modelKey: String(provider?.modelKey || ''),
+    providerModelId: String(provider?.providerModelId || ''),
+    accessMode: provider?.accessMode,
+    tools: Array.isArray(idf.enabledTools)
+      ? idf.enabledTools
+      : Array.isArray(context.tools) ? context.tools : [],
+    nativeTools: Array.isArray(hasIdf ? idf.nativeTools : context.nativeTools)
+      ? (hasIdf ? idf.nativeTools : context.nativeTools) : [],
+    skills: Array.isArray(hasIdf ? idf.skills : context.skills)
+      ? (hasIdf ? idf.skills : context.skills) : [],
+    toolsets: Array.isArray(hasIdf ? idf.toolsets : context.toolsets)
+      ? (hasIdf ? idf.toolsets : context.toolsets) : [],
+    mcpConnectionIds: Array.isArray(hasIdf ? idf.mcpConnectionIds : context.mcpConnectionIds)
+      ? (hasIdf ? idf.mcpConnectionIds : context.mcpConnectionIds) : [],
     sessionKey: deriveHermesSessionKey(
       args.projectId,
       args.conversationId,
@@ -249,7 +252,7 @@ function resolveHermesTurnArgs(
     deckId: args.deckId,
     conversationId: args.conversationId,
     parentRunId: args.parentRunId || args.conversationId,
-    message: userMessage,
+    message: String(hasIdf ? idf.message : ''),
     ...(args.workingDirectory ? { workingDirectory: args.workingDirectory } : {}),
   };
 }
@@ -266,8 +269,7 @@ function resolvePreviewHermesTurnArgs(
   const preview = args.prepared || {};
   return resolveHermesTurnArgs(args, {
     cardContext: preview.cardContext,
-    systemPrompt: preview.providerProjection?.systemPrompt,
-    message: preview.providerProjection?.message,
+    idf: preview.idf,
   });
 }
 
@@ -278,10 +280,9 @@ async function startPreparedHermesTransport(
   return startHermesTurn(turnArgs, args.onEvent);
 }
 
-// Thin configured-Card transport. Python owns Card/AGE/IDD validation,
-// transient IDF materialization, runtime-owner selection, and prompt-free run
-// persistence. This route only forwards materialization data or moves the accepted
-// bytes through the already-canonical Hermes ACP / Python AutoGen transports.
+// Thin configured-Card transport. Python owns Card/AGE/IDD validation, the one
+// transient IDF materializer, runtime-owner selection, and separate Run
+// persistence. This route never rebuilds the model call.
 router.post('/mcp-bridge/run_configured_card', async (req, res) => {
   const body = req.body || {};
   const action = body.action;
@@ -310,6 +311,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     conversationId,
     contextMarkdown: typeof body.contextMarkdown === 'string' ? body.contextMarkdown : '',
     nativeReferences: Array.isArray(body.nativeReferences) ? body.nativeReferences : [],
+    images: Array.isArray(body.images) ? body.images : [],
     tools: Array.isArray(body.tools) ? body.tools : undefined,
     outputRequirements: typeof body.outputRequirements === 'string' ? body.outputRequirements : '',
   };
@@ -324,22 +326,15 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       return res.json({ ok: true, result: { status: 'previewed', invocation: preview } });
     }
 
-    const exactIdf = typeof body.exactIdf === 'string' ? body.exactIdf : '';
     const cardRevisionId = String(body.cardRevisionId || '').trim();
-    if (!exactIdf.trim() || !cardRevisionId) {
-      return res.status(400).json({ ok: false, error: 'exact_inspector_invocation_required' });
-    }
     const prepared = await requestPythonRailsJson('/domain/runs/begin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...transientRequest,
-        exactIdf,
-        cardRevisionId,
+        cardRevisionId: cardRevisionId || undefined,
         runId: correlationId,
         correlationId,
-        savedIdfId: typeof body.savedIdfId === 'string' ? body.savedIdfId : undefined,
-        savedIdfRevision: Number.isInteger(body.savedIdfRevision) ? body.savedIdfRevision : undefined,
       }),
     }) as any;
 
@@ -393,7 +388,16 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
           cardId,
           runtimeOwner: prepared.runtimeOwner,
           cardRevisionId: prepared.cardRevisionId,
-          savedIdf: prepared.savedIdf || null,
+          invocation: {
+            ephemeral: true,
+            assignment: input,
+            cardRevisionId: prepared.cardRevisionId,
+            cardRevision: prepared.cardRevision,
+            cardRevisionSha256: prepared.cardRevisionSha256,
+            runtimeOwner: prepared.runtimeOwner,
+            idf: prepared.idf,
+            cardContext: prepared.cardContext,
+          },
           output,
           transport,
           receipt: finished.receipt || null,
@@ -415,51 +419,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     }
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'run_configured_card_failed' });
-  }
-});
-
-// Thin explicit saved-IDF transport. Python rails validates the exact Card
-// authority, hashes the UTF-8 body, versions it, and owns every SQL write.
-router.get('/mcp-bridge/idfs', async (req, res) => {
-  const projectId = String(req.query.projectId || '').trim();
-  const deckId = String(req.query.deckId || '').trim();
-  const cardId = String(req.query.cardId || '').trim();
-  const idfId = String(req.query.idfId || '').trim();
-  const revision = Number(req.query.revision);
-  if (!projectId) return res.status(400).json({ ok: false, error: 'project_id_required' });
-  try {
-    const endpoint = idfId
-      ? `/domain/idfs/${encodeURIComponent(projectId)}/revision/${encodeURIComponent(idfId)}${Number.isInteger(revision) && revision > 0 ? `?revision=${revision}` : ''}`
-      : `/domain/idfs/${encodeURIComponent(projectId)}/${encodeURIComponent(deckId)}${cardId ? `?cardId=${encodeURIComponent(cardId)}` : ''}`;
-    if (!idfId && !deckId) return res.status(400).json({ ok: false, error: 'deck_id_required' });
-    const result = await requestPythonRailsJson(endpoint, { method: 'GET' });
-    return res.json(result);
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'saved_idf_read_failed' });
-  }
-});
-
-router.post('/mcp-bridge/idfs', async (req, res) => {
-  const body = req.body || {};
-  if (
-    !String(body.projectId || '').trim()
-    || !String(body.deckId || '').trim()
-    || !String(body.cardId || '').trim()
-    || !String(body.assignment || '').trim()
-    || !String(body.cardRevisionId || '').trim()
-    || !String(body.exactIdf || '').trim()
-  ) {
-    return res.status(400).json({ ok: false, error: 'saved_idf_args_incomplete' });
-  }
-  try {
-    const result = await requestPythonRailsJson('/domain/idfs/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    return res.json(result);
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'saved_idf_save_failed' });
   }
 });
 
@@ -547,26 +506,14 @@ router.post('/main/session/chat', async (req, res) => {
   const correlationId = `req_${randomUUID().slice(0, 8)}`;
   let prepared: any;
   try {
-    const preview = await requestPythonRailsJson('/domain/main/prepare', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId,
-        deckId,
-        message,
-        conversationId,
-      }),
-    }) as any;
     prepared = await requestPythonRailsJson('/domain/main/runs/begin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         projectId,
         deckId,
-        cardId: preview.cardContext?.cardId,
         message,
         conversationId,
-        cardRevisionId: preview.cardRevisionId,
         runId: correlationId,
         correlationId,
       }),
@@ -638,7 +585,6 @@ router.post('/main/session/chat', async (req, res) => {
       conversationId,
       parentRunId: correlationId,
       workingDirectory,
-      userMessage: message,
       onEvent: async (event) => {
         if (turnFinished) return;
         if (event.kind === 'done') {
@@ -837,33 +783,6 @@ async function startCoderTerminalSession(session: HermesCoderTerminalSession): P
   const runId = `req_${randomUUID().slice(0, 8)}`;
   let runStarted = false;
   try {
-    const preview = await requestPythonRailsJson('/domain/cards/preview', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId: session.info.projectId,
-        deckId: session.info.deckId,
-        cardId: session.info.ownerCardId,
-        assignment,
-        conversationId: session.info.conversationId,
-      }),
-    }) as any;
-    const turnArgs = resolvePreviewHermesTurnArgs({
-      prepared: preview,
-      projectId: session.info.projectId,
-      deckId: session.info.deckId,
-      conversationId: session.info.conversationId,
-      parentRunId: runId,
-      workingDirectory: session.info.targetRoot,
-      onEvent: () => undefined,
-    });
-    if (turnArgs.cardId !== CODER_CARD_ID || turnArgs.runtime.mode !== 'delegate') {
-      throw new Error('saved_coder_hermes_profile_required');
-    }
-    if (turnArgs.accessMode !== 'chatgpt-account') {
-      throw new Error('saved_coder_chatgpt_account_required');
-    }
-
     const begun = await requestPythonRailsJson('/domain/runs/begin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -873,14 +792,27 @@ async function startCoderTerminalSession(session: HermesCoderTerminalSession): P
         cardId: session.info.ownerCardId,
         assignment,
         conversationId: session.info.conversationId,
-        exactIdf: preview.exactIdf,
-        cardRevisionId: preview.cardRevisionId,
         runId,
         correlationId: runId,
       }),
     }) as any;
     const activeRunId = String(begun?.runId || runId);
     runStarted = true;
+    const turnArgs = resolvePreparedHermesTurnArgs({
+      prepared: begun,
+      projectId: session.info.projectId,
+      deckId: session.info.deckId,
+      conversationId: session.info.conversationId,
+      parentRunId: activeRunId,
+      workingDirectory: session.info.targetRoot,
+      onEvent: () => undefined,
+    });
+    if (turnArgs.cardId !== CODER_CARD_ID || turnArgs.runtime.mode !== 'delegate') {
+      throw new Error('saved_coder_hermes_profile_required');
+    }
+    if (turnArgs.accessMode !== 'chatgpt-account') {
+      throw new Error('saved_coder_chatgpt_account_required');
+    }
 
     const mcp = resolvePythonAgentMcpServerSpec({
       kind: 'card-runtime',

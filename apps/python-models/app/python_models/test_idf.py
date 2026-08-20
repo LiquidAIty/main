@@ -1,54 +1,123 @@
 from __future__ import annotations
 
-from app.python_models import idf
-from app.python_models.idd import validate_idf_islands
+import inspect
+
+from app.python_models.idf import Idf, materialize_idf
 
 
-def test_legacy_idf_module_is_read_only() -> None:
-    assert callable(idf.read_input_data_file)
-    assert not hasattr(idf, "create_input_data_file")
-    assert not hasattr(idf, "revise_input_data_file")
-    assert not hasattr(idf, "approve_input_data_file")
-
-
-def test_legacy_idf_read_validates_required_identity_without_a_database_write() -> None:
-    try:
-        idf.read_input_data_file(project_id="", idf_id="legacy-idf")
-    except idf.InputDataFileError as error:
-        assert str(error) == "idf_project_id_invalid"
-    else:
-        raise AssertionError("missing legacy Project identity was accepted")
-
-
-def test_transient_renderer_preserves_exact_non_directional_content() -> None:
-    card_context = {
-        "cardId": "card-one",
-        "title": "One",
-        "prompt": "stable system",
-        "runtime": {"kind": "autogen", "mode": "assistant"},
-        "accessMode": "openrouter-api",
-        "provider": "openrouter",
-        "providerModelId": "model-one",
-        "tools": ["graphiti.search_nodes"],
-    }
-    rendered = idf.render_content_markdown(
-        system_text="stable system",
-        user_text="temporary assignment",
-        card_context=card_context,
-        dynamic_context_markdown="temporary context",
+def test_materializer_combines_only_card_state_and_current_input() -> None:
+    result = materialize_idf(
+        system_prompt="saved system prompt",
+        dynamic_input="current assignment",
+        runtime={"kind": "hermes", "mode": "kanban", "profile": "helper"},
+        provider={
+            "accessMode": "chatgpt-account", "provider": "openai-codex",
+            "modelKey": "gpt-5.6-luna", "providerModelId": "gpt-5.6-luna",
+        },
+        runtime_options={"reasoningEffort": "medium"},
+        context_markdown="selected native context",
+        output_requirements="return a bounded answer",
+        enabled_tools=["graphiti.search_nodes"],
+        tool_definitions=[{
+            "name": "graphiti.search_nodes",
+            "description": "Search KnowGraph",
+            "inputSchema": {"type": "object"},
+        }],
+        native_tools=["memory"],
+        skills=["research"],
+        toolsets=["kanban"],
+        mcp_connection_ids=["official"],
         native_references=[{
             "authority": "KnowGraph",
             "nativeId": "node-one",
-            "reason": "answer the selected question",
-            "asOf": "2026-08-14T00:00:00Z",
-            "required": True,
+            "reason": "selected by the caller",
         }],
     )
-    islands = validate_idf_islands(rendered)
-    assert islands["SYSTEM"][0]["content"] == "stable system"
-    assert "temporary assignment" in rendered
-    assert "temporary context" in rendered
-    assert "[CARD]" in rendered
-    assert '"type": "serialized-card"' in rendered
-    assert '"cardId": "card-one"' in rendered
-    assert '"nativeId": "node-one"' in rendered
+
+    assert result == Idf(
+        systemPrompt="saved system prompt",
+        message=(
+            "selected native context\n\n"
+            "current assignment\n\n"
+            "Output requirements:\nreturn a bounded answer"
+        ),
+        runtime={"kind": "hermes", "mode": "kanban", "profile": "helper"},
+        provider={
+            "accessMode": "chatgpt-account", "provider": "openai-codex",
+            "modelKey": "gpt-5.6-luna", "providerModelId": "gpt-5.6-luna",
+        },
+        runtimeOptions={"reasoningEffort": "medium"},
+        enabledTools=["graphiti.search_nodes"],
+        toolDefinitions=[{
+            "name": "graphiti.search_nodes",
+            "description": "Search KnowGraph",
+            "inputSchema": {"type": "object"},
+        }],
+        nativeTools=["memory"],
+        skills=["research"],
+        toolsets=["kanban"],
+        mcpConnectionIds=["official"],
+        nativeReferences=[{
+            "authority": "KnowGraph",
+            "nativeId": "node-one",
+            "reason": "selected by the caller",
+        }],
+        images=[],
+    )
+
+
+def test_materializer_does_not_add_card_run_receipt_or_persistence_data() -> None:
+    result = materialize_idf(
+        system_prompt="stable",
+        dynamic_input="dynamic",
+        runtime={"kind": "autogen", "mode": "assistant"},
+        provider={
+            "accessMode": "openrouter-api", "provider": "openrouter",
+            "modelKey": "model", "providerModelId": "model",
+        },
+        enabled_tools=[],
+        tool_definitions=[],
+    ).model_dump()
+
+    assert result == {
+        "systemPrompt": "stable",
+        "message": "dynamic",
+        "runtime": {"kind": "autogen", "mode": "assistant"},
+        "provider": {
+            "accessMode": "openrouter-api", "provider": "openrouter",
+            "modelKey": "model", "providerModelId": "model",
+        },
+        "runtimeOptions": {},
+        "enabledTools": [],
+        "toolDefinitions": [],
+        "nativeTools": [],
+        "skills": [],
+        "toolsets": [],
+        "mcpConnectionIds": [],
+        "nativeReferences": [],
+        "images": [],
+    }
+    source = inspect.getsource(materialize_idf)
+    for forbidden in (
+        "cardId", "runId", "receipt", "hash", "revision", "approve", "persist",
+    ):
+        assert forbidden not in source
+
+
+def test_empty_dynamic_model_input_is_rejected() -> None:
+    try:
+        materialize_idf(
+            system_prompt="stable",
+            dynamic_input="   ",
+            runtime={"kind": "autogen", "mode": "assistant"},
+            provider={
+                "accessMode": "openrouter-api", "provider": "openrouter",
+                "modelKey": "model", "providerModelId": "model",
+            },
+            enabled_tools=[],
+            tool_definitions=[],
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("empty model input was accepted")

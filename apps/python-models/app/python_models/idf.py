@@ -1,184 +1,78 @@
-"""Read-only access to legacy persisted Input Data File rows.
+"""The one canonical transient Input Data File materializer.
 
-Current Card invocations are materialized transiently by ``card_domain`` and
-are never written here. The legacy table remains readable for recovery and
-historical inspection until a separately approved cleanup.
+An IDF is the exact model-call input assembled from a saved Card's stable
+system prompt and granted tools plus the current dynamic input. It is created
+in memory, inspected as the same fields the adapter consumes, and discarded.
+This module does not persist, version, hash, approve, route, or authorize it.
 """
 
 from __future__ import annotations
 
-import json
-from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Annotated, Any
 
-from app.python_models.idd import IddValidationError, validate_record
-from app.python_models.postgres import connect_postgres
+from pydantic import BaseModel, Field, StringConstraints
 
 
-class InputDataFileError(ValueError):
-    """Typed failure while reading a legacy IDF row."""
+RequiredText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-_NON_DIRECTIONAL_CARD_FIELDS = {
-    "cardId", "title", "prompt", "runtime", "provider", "accessMode", "modelKey",
-    "providerModelId", "tools",
-    "nativeTools", "skills", "toolsets", "mcpConnectionIds",
-    "runtimeOptions",
-}
+class Idf(BaseModel):
+    """Exact transient fields supplied to one model/runtime call."""
+
+    systemPrompt: str = ""
+    message: RequiredText
+    runtime: dict[str, Any]
+    provider: dict[str, Any]
+    runtimeOptions: dict[str, Any] = Field(default_factory=dict)
+    enabledTools: list[str] = Field(default_factory=list)
+    toolDefinitions: list[dict[str, Any]] = Field(default_factory=list)
+    nativeTools: list[str] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)
+    toolsets: list[str] = Field(default_factory=list)
+    mcpConnectionIds: list[str] = Field(default_factory=list)
+    nativeReferences: list[dict[str, Any]] = Field(default_factory=list)
+    images: list[dict[str, Any]] = Field(default_factory=list)
 
 
-def _serialized_card(card_context: dict[str, Any]) -> dict[str, Any]:
-    """Keep the working Card while excluding topology and recipient state."""
-    serialized = {
-        key: value for key, value in card_context.items()
-        if key in _NON_DIRECTIONAL_CARD_FIELDS
-    }
-    try:
-        return validate_record("card-context", serialized)
-    except IddValidationError as error:
-        raise InputDataFileError(str(error)) from error
+def materialize_idf(
+    *,
+    system_prompt: str,
+    dynamic_input: str,
+    runtime: dict[str, Any],
+    provider: dict[str, Any],
+    runtime_options: dict[str, Any] | None = None,
+    enabled_tools: list[str],
+    tool_definitions: list[dict[str, Any]],
+    native_tools: list[str] | None = None,
+    skills: list[str] | None = None,
+    toolsets: list[str] | None = None,
+    mcp_connection_ids: list[str] | None = None,
+    context_markdown: str = "",
+    output_requirements: str = "",
+    native_references: list[dict[str, Any]] | None = None,
+    images: list[dict[str, Any]] | None = None,
+) -> Idf:
+    """Combine stable Card fields with one dynamic input without extra state."""
 
-
-def _render_card_context(card_context: dict[str, Any]) -> str:
-    runtime = card_context["runtime"]
-    lines = [
-        f"id: {card_context['cardId']}",
-        f"name: {card_context['title']}",
-        f"runtime: {runtime['kind']}/{runtime['mode']}",
+    sections = [
+        value.strip()
+        for value in (context_markdown, dynamic_input)
+        if isinstance(value, str) and value.strip()
     ]
-    profile = runtime.get("profile")
-    if isinstance(profile, str) and profile:
-        lines.append(f"profile: {profile}")
-    provider = card_context.get("provider")
-    model = card_context.get("providerModelId") or card_context.get("modelKey")
-    if provider or model:
-        lines.append(f"model: {provider or 'saved-provider'}/{model or 'saved-model'}")
-    for key in ("tools", "nativeTools", "skills", "toolsets", "mcpConnectionIds"):
-        values = card_context.get(key)
-        if isinstance(values, list) and values:
-            lines.append(f"{key}: {', '.join(str(value) for value in values)}")
-    return "\n".join(lines)
-
-
-def _native_reference_island(native_references: list[dict[str, Any]]) -> str:
-    return "[JSON]\n" + json.dumps(
-        {"type": "native-references", "references": native_references},
-        ensure_ascii=False,
-        sort_keys=True,
-        indent=2,
-    ) + "\n[/JSON]"
-
-
-def render_content_markdown(
-    *,
-    system_text: str,
-    user_text: str,
-    card_context: dict[str, Any],
-    dynamic_context_markdown: str,
-    native_references: list[dict[str, Any]],
-) -> str:
-    """Render one self-contained Card plus context without a destination map."""
-    sections = ["# LiquidAIty Input Data File"]
-    if system_text:
-        sections.append(f"[SYSTEM]\n{system_text}\n[/SYSTEM]")
-    serialized_card = _serialized_card(card_context)
-    sections.extend([
-        "[CARD]\n" + _render_card_context(serialized_card) + "\n[/CARD]",
-        "## Serialized Working Card",
-        "[JSON]\n" + json.dumps(
-            {"type": "serialized-card", "card": serialized_card},
-            ensure_ascii=False,
-            sort_keys=True,
-            indent=2,
-        ) + "\n[/JSON]",
-    ])
-    if dynamic_context_markdown:
-        sections.extend(["## Dynamic Context", dynamic_context_markdown])
-    if native_references:
-        sections.extend(["## Native Imports", _native_reference_island(native_references)])
-    sections.extend(["## Current Input", user_text])
-    return "\n\n".join(sections)
-
-
-def _required_text(value: Any, field: str) -> str:
-    text = str(value or "").strip()
-    if not text:
-        raise InputDataFileError(f"idf_{field}_invalid")
-    return text
-
-
-@contextmanager
-def _connection_scope(connection: Any | None) -> Iterator[Any]:
-    if connection is not None:
-        yield connection
-        return
-    with connect_postgres(autocommit=False) as owned:
-        yield owned
-
-
-def _row_to_document(row: Any) -> dict[str, Any]:
-    structured_context = dict(row[11] or {})
-    card_context = structured_context.get("cardContext")
-    if card_context is not None:
-        try:
-            card_context = validate_record("card-context", card_context)
-        except IddValidationError as error:
-            raise InputDataFileError(str(error)) from error
-    created_at = row[15]
-    approved_at = row[18]
-    return {
-        "idfId": str(row[0]),
-        "projectId": str(row[1]),
-        "deckId": str(row[2]),
-        "conversationId": str(row[3]),
-        "runId": str(row[4]),
-        "originatingCardId": str(row[5]),
-        "version": int(row[6]),
-        "systemText": str(row[7]),
-        "userText": str(row[8]),
-        "cardContext": card_context,
-        "dynamicContextMarkdown": str(row[9]),
-        "nativeReferences": list(row[10] or []),
-        "modelInputMarkdown": str(row[12]),
-        "contentMarkdown": str(row[13]),
-        "contentSha256": str(row[14]),
-        "createdAt": created_at.isoformat().replace("+00:00", "Z")
-        if hasattr(created_at, "isoformat") else str(created_at),
-        "purpose": str(row[16]),
-        "approvalStatus": str(row[17]),
-        "approvedAt": approved_at.isoformat().replace("+00:00", "Z")
-        if approved_at is not None and hasattr(approved_at, "isoformat")
-        else (str(approved_at) if approved_at else None),
-        "approvedSha256": str(row[19]) if row[19] else None,
-        "supersedesIdfId": str(row[20]) if row[20] else None,
-        "jobContext": dict(row[21]) if row[21] is not None else None,
-    }
-
-
-def read_input_data_file(
-    *,
-    project_id: str,
-    idf_id: str,
-    connection: Any | None = None,
-) -> dict[str, Any]:
-    """Read one legacy row without making it current execution authority."""
-    project_id = _required_text(project_id, "project_id")
-    idf_id = _required_text(idf_id, "idf_id")
-    with _connection_scope(connection) as conn, conn.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT idf_id, project_id, deck_id, conversation_id, run_id,
-                   originating_card_id, version, system_text, user_text,
-                   dynamic_context_markdown, native_references, structured_context,
-                   model_input_markdown, content_markdown,
-                   content_sha256, created_at, purpose, approval_status,
-                   approved_at, approved_sha256, supersedes_idf_id, job_context
-            FROM ag_catalog.input_data_files
-            WHERE project_id=%s AND idf_id=%s
-            """,
-            (project_id, idf_id),
-        )
-        row = cursor.fetchone()
-    if row is None:
-        raise InputDataFileError(f"idf_not_found: {idf_id}")
-    return _row_to_document(row)
+    if output_requirements.strip():
+        sections.append(f"Output requirements:\n{output_requirements.strip()}")
+    return Idf(
+        systemPrompt=system_prompt,
+        message="\n\n".join(sections),
+        runtime=dict(runtime),
+        provider=dict(provider),
+        runtimeOptions=dict(runtime_options or {}),
+        enabledTools=list(enabled_tools),
+        toolDefinitions=list(tool_definitions),
+        nativeTools=list(native_tools or []),
+        skills=list(skills or []),
+        toolsets=list(toolsets or []),
+        mcpConnectionIds=list(mcp_connection_ids or []),
+        nativeReferences=list(native_references or []),
+        images=list(images or []),
+    )

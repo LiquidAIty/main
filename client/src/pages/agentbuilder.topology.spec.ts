@@ -161,17 +161,15 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(coder?.runtimeOptions?.tools).toContain('cbm.search_graph');
     expect(coder?.runtimeOptions?.tools).not.toEqual(expect.arrayContaining([
       'run_mag_one',
-      'write_mag_one_instructions',
       'graphiti.add_memory',
     ]));
     expect(coder?.prompt).toContain('You are Coder');
     expect(coder?.prompt).toContain('Do not create hidden agents');
 
-    expect(steward?.runtimeOptions?.tools).toContain('write_mag_one_instructions');
     expect(steward?.runtimeOptions?.tools).not.toContain('run_mag_one');
     expect(steward?.runtimeOptions?.toolsets ?? []).toEqual([]);
     expect(steward?.prompt).toContain('Do not use a repository-writing terminal');
-    expect(steward?.prompt).toContain('Coder writes the exact IDF');
+    expect(steward?.prompt).toContain('Prepare bounded Mag One input for Main');
 
     expect(magOne).toMatchObject({
       runtime: { kind: 'autogen', mode: 'magentic_one' },

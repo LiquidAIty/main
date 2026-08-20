@@ -1750,7 +1750,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
                 "Card relationships plus available run, native-reference attention, lineage, "
                 "tool, and artifact telemetry. runId selects one current Run. The retired "
                 "assignmentId field is accepted only to report honestly that it is no longer "
-                "a current AgentGraph identity. No prompt or raw IDF is returned."
+                "a current AgentGraph identity. No prompt or model input is returned."
             ),
             inputSchema={
                 "type": "object",
@@ -1790,10 +1790,9 @@ async def _materialize_complete_catalog() -> list[Tool]:
         Tool(
             name="run_mag_one",
             description=(
-                "Main Chat only: submit one existing canonical saved IDF identity for the "
-                "AGE-connected Magentic-One Card and invoke native MagenticOneGroupChat. "
-                "The saved exact IDF is reloaded and revalidated against current Card revision "
-                "and magentic_control authority before execution. "
+                "Main Chat only: submit one dynamic input to the AGE-connected Magentic-One "
+                "Card and invoke native MagenticOneGroupChat. Python materializes the saved "
+                "Card plus this input exactly once before execution. "
                 "The backend resolves the live worker roster from blue SIDE connections; never type "
                 "a roster. Execute only on an explicit user request — Hermes never launches Mag One."
             ),
@@ -1802,26 +1801,10 @@ async def _materialize_complete_catalog() -> list[Tool]:
                 "properties": {
                     "projectId": {"type": "string"},
                     "deckId": {"type": "string"},
-                    "idfId": {"type": "string"},
+                    "input": {"type": "string"},
                     "conversationId": {"type": "string"},
                 },
-                "required": ["idfId", "projectId", "deckId"],
-            },
-        ),
-        Tool(
-            name="write_mag_one_instructions",
-            description=(
-                "Persist the exact proposed Mag One instructions through the canonical saved-IDF "
-                "owner for Main review. Returns a stable idfId for a later run_mag_one call and "
-                "never starts Mag One or any other runtime."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "instructions": {"type": "string"},
-                },
-                "required": ["instructions"],
-                "additionalProperties": False,
+                "required": ["input", "projectId", "deckId"],
             },
         ),
         Tool(
@@ -1935,7 +1918,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
                 "server injects projectId/correlationId/conversationId; the model supplies the "
                 "bound cardId plus the task input only. conversationId is the real live "
                 "conversation this run belongs to, when one exists. The backend persists one "
-                "canonical IDF before the selected runtime receives the input."
+                "one transient Card input before the selected runtime receives it."
             ),
             inputSchema={
                 "type": "object",
@@ -2311,13 +2294,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "projectWide",
     },
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
-    "run_mag_one": {"projectId", "deckId", "idfId", "conversationId"},
-    "write_mag_one_instructions": {
-        "projectId",
-        "deckId",
-        "conversationId",
-        "instructions",
-    },
+    "run_mag_one": {"projectId", "deckId", "input", "conversationId"},
     "canvas.inspect": {"projectId", "deckId"},
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
@@ -2481,60 +2458,19 @@ async def _dispatch_tool(
             )
         ]
     if name == "run_mag_one":
-        from app.python_models.card_domain import (
-            CardDomainError,
-            load_magentic_saved_invocation,
+        return await _bridge(
+            "run_configured_card",
+            {
+                "action": "execute",
+                "projectId": str(args.get("projectId") or ""),
+                "deckId": str(args.get("deckId") or ""),
+                "senderCardId": caller_card_id,
+                "correlationId": f"mag_one:{uuid4()}",
+                "conversationId": str(args.get("conversationId") or "main"),
+                "input": str(args.get("input") or ""),
+            },
         )
 
-        try:
-            prepared = await asyncio.to_thread(
-                load_magentic_saved_invocation,
-                {
-                    "projectId": str(args.get("projectId") or ""),
-                    "deckId": str(args.get("deckId") or ""),
-                    "senderCardId": caller_card_id,
-                    "idfId": str(args.get("idfId") or ""),
-                },
-            )
-            saved_idf = prepared["savedIdf"]
-            return await _bridge(
-                "run_configured_card",
-                {
-                    "action": "execute",
-                    "projectId": prepared["projectId"],
-                    "deckId": prepared["deckId"],
-                    "cardId": prepared["cardContext"]["cardId"],
-                    "senderCardId": caller_card_id,
-                    "correlationId": f"mag_one:{uuid4()}",
-                    "conversationId": str(args.get("conversationId") or "main"),
-                    "input": prepared["assignment"],
-                    "exactIdf": prepared["exactIdf"],
-                    "cardRevisionId": prepared["cardRevisionId"],
-                    "savedIdfId": saved_idf["idfId"],
-                    "savedIdfRevision": saved_idf["revision"],
-                },
-            )
-        except CardDomainError as err:
-            return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
-    if name == "write_mag_one_instructions":
-        from app.python_models.card_domain import (
-            CardDomainError,
-            save_magentic_instructions,
-        )
-
-        try:
-            saved = await asyncio.to_thread(
-                save_magentic_instructions,
-                {
-                    "projectId": str(args.get("projectId") or ""),
-                    "deckId": str(args.get("deckId") or ""),
-                    "senderCardId": caller_card_id,
-                    "instructions": str(args.get("instructions") or ""),
-                },
-            )
-            return [TextContent(type="text", text=json.dumps(saved))]
-        except CardDomainError as err:
-            return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
     if name == "main.context":
         if context is None:
             return [

@@ -1,7 +1,7 @@
 """Real AutoGen/Magentic-One adapter.
 
-This module is a thin bridge from the canonical IDF runtime request into real
-``MagenticOneGroupChat`` execution. It does not recreate Magentic-One prompts
+This module is a thin bridge from a server-resolved Card runtime request into
+real ``MagenticOneGroupChat`` execution. It does not recreate Magentic-One prompts
 or task-ledger internals in app code.
 
 It also hosts ``run_configured_card``: the smallest single-card runtime
@@ -30,7 +30,6 @@ from app.python_models.tool_registry import DEFAULT_TOOL_REGISTRY
 from app.python_models.orchestration_contracts import (
     RuntimeRequest,
     OrchestratorRunResponse,
-    require_idf_card_runtime,
 )
 
 
@@ -50,8 +49,6 @@ def _as_text(value: Any) -> str:
 
 
 def connected_agent_names(context: RuntimeRequest) -> list[str]:
-    if context.cardRuntime is None:
-        return []
     names: list[str] = []
     for participant in context.participants or []:
         title = _as_text(getattr(participant, "title", ""))
@@ -137,14 +134,12 @@ class McpSavedCardAgent(BaseChatAgent):
         call = asyncio.create_task(
             call_saved_card_via_mcp(
                 project_id=self._context.session.projectId,
-                deck_id=_as_text(
-                    (self._context.cardRuntime.runtimeOptions or {}).get("deckId")
-                ),
-                conversation_id=self._context.idf.conversationId,
+                deck_id=self._context.session.deckId,
+                conversation_id=_as_text(self._context.session.conversationId) or "active",
                 parent_run_id=self._outer_run_id,
-                caller_card_id=self._context.cardRuntime.cardId,
-                caller_runtime_kind=self._context.cardRuntime.runtime.kind,
-                caller_runtime_mode=self._context.cardRuntime.runtime.mode,
+                caller_card_id=self._context.session.cardId,
+                caller_runtime_kind=_as_text(self._context.idf.runtime.get("kind")),
+                caller_runtime_mode=_as_text(self._context.idf.runtime.get("mode")),
                 target_card_id=self._card_id,
                 input_text=input_text,
             )
@@ -175,7 +170,6 @@ class McpSavedCardAgent(BaseChatAgent):
                     "cardId": self._card_id,
                     "childRunId": child_run_id,
                     "originatingRunId": self._outer_run_id,
-                    "idfId": self._context.idf.idfId,
                 },
             )
         )
@@ -183,73 +177,28 @@ class McpSavedCardAgent(BaseChatAgent):
 
 def _build_participants(
     context: RuntimeRequest,
-    model_client: Any,
     *,
-    extra_tools: list[Any] | None = None,
-    saved_card_workers: bool = False,
     outer_run_id: str = "",
 ) -> list[BaseChatAgent]:
-    card = context.cardRuntime
-    if card is None:
-        return []
     participants: list[BaseChatAgent] = []
     used_names: set[str] = set()
     configured_participants = context.participants or []
-    if not saved_card_workers and isinstance(model_client, (list, tuple)) and len(model_client) != len(
-        configured_participants
-    ):
-        raise RuntimeError(
-            "card_runtime_participant_model_count_mismatch: "
-            f"participants={len(configured_participants)} clients={len(model_client)}"
-        )
     for i, participant in enumerate(configured_participants):
         card_id = _as_text(getattr(participant, "cardId", ""))
         title = _as_text(getattr(participant, "title", "")) or card_id
         name = _safe_agent_name(title or f"Agent {i + 1}", i, used_names)
         description = f"{participant.runtime.kind}/{participant.runtime.mode}"
-        system_prompt = _as_text(getattr(participant, "prompt", ""))
-
-        if saved_card_workers:
-            if not outer_run_id:
-                raise RuntimeError("magentic_outer_run_id_required")
-            participants.append(
-                McpSavedCardAgent(
-                    name=name,
-                    description=description,
-                    context=context,
-                    card_id=card_id,
-                    outer_run_id=outer_run_id,
-                )
+        if not outer_run_id:
+            raise RuntimeError("magentic_outer_run_id_required")
+        participants.append(
+            McpSavedCardAgent(
+                name=name,
+                description=description,
+                context=context,
+                card_id=card_id,
+                outer_run_id=outer_run_id,
             )
-            continue
-
-        selected_tools = [
-            _as_text(tool)
-            for tool in (getattr(participant, "tools", []) or [])
-            if _as_text(tool)
-        ]
-        kwargs: dict[str, Any] = {
-            "name": name,
-            "description": description,
-            "model_client": model_client[i]
-            if isinstance(model_client, (list, tuple))
-            else model_client,
-        }
-        if system_prompt:
-            kwargs["system_message"] = system_prompt
-
-        # Attach exactly the card-selected tools as real AutoGen FunctionTools via
-        # the existing ToolRegistry. Resolving does NOT call the tool — Mag One
-        # decides whether to invoke it. Empty selection -> no tools (unchanged
-        # behavior). Unknown/disabled IDs fail loudly through resolve_selected
-        # rather than being silently dropped.
-        tools = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools) if selected_tools else []
-        if extra_tools:
-            tools = [*tools, *extra_tools]
-        if tools:
-            kwargs["tools"] = tools
-
-        participants.append(AssistantAgent(**kwargs))
+        )
 
     if participants:
         return participants
@@ -264,20 +213,15 @@ def _validate_single_card_context(context: RuntimeRequest) -> str | None:
     decides meaning — only shape: exactly one configured participant, the
     single-card runtime type, and a non-empty task.
     """
-    card = context.cardRuntime
-    if card is None:
-        return "card_runtime_missing"
-    if card.runtime.kind != "autogen" or card.runtime.mode != "assistant":
+    runtime = context.idf.runtime
+    if runtime.get("kind") != "autogen" or runtime.get("mode") != "assistant":
         return (
             "single_card_runtime_invalid: runtime="
-            f"{card.runtime.kind}/{card.runtime.mode}"
+            f"{runtime.get('kind')}/{runtime.get('mode')}"
         )
     if context.session.orchestrator != "assistant_agent":
         return f"single_card_orchestrator_invalid: orchestrator={context.session.orchestrator}"
-    count = len(context.participants or [])
-    if count != 1:
-        return f"single_card_participant_count_invalid: {count}"
-    if not _as_text(context.idf.userText):
+    if not _as_text(context.idf.message):
         return "empty_user_message"
     return None
 
@@ -331,8 +275,7 @@ def _tool_evidence_from_result(result: Any) -> list[dict[str, str]]:
 
 
 async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunResponse:
-    """Run one configured saved card using the exact canonical IDF fields."""
-    require_idf_card_runtime(context)
+    """Run one configured saved Card with its transient model input."""
     guard = _validate_single_card_context(context)
     run_id = _as_text(context.session.runId) or context.session.turnId
     if guard:
@@ -340,35 +283,38 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
             ok=False,
             session=context.session,
             runId=run_id,
-            idfId=context.idf.idfId,
             finalResponseText="",
             error=guard,
         )
 
-    single = context.participants[0]
     client = None
     try:
+        provider = context.idf.provider
+        options = context.idf.runtimeOptions
         client = _build_model_client(
             AutoGenAgentConfig(
-                provider=single.provider,
-                provider_model_id=single.providerModelId,
-                temperature=single.temperature,
-                max_tokens=single.maxTokens,
-                reasoning_effort=single.reasoningEffort,
+                provider=_as_text(provider.get("provider")),
+                provider_model_id=_as_text(provider.get("providerModelId")),
+                temperature=options.get("temperature"),
+                max_tokens=options.get("maxTokens"),
+                reasoning_effort=options.get("reasoningEffort"),
             )
         )
-        participants = _build_participants(context, client)
-        agent = participants[0]
-        # IDD validated this field once. The adapter passes the exact stored
-        # current input; it does not rebuild an assignment-shaped prompt.
-        result = await agent.run(task=context.idf.modelInputMarkdown)
+        selected_tools = context.idf.enabledTools
+        tools = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools) if selected_tools else []
+        agent = AssistantAgent(
+            name="Configured_Card",
+            model_client=client,
+            system_message=context.idf.systemPrompt,
+            **({"tools": tools} if tools else {}),
+        )
+        result = await agent.run(task=context.idf.message)
         final_text = _final_text_from_result(result)
         if not final_text:
             return OrchestratorRunResponse(
                 ok=False,
                 session=context.session,
                 runId=run_id,
-                idfId=context.idf.idfId,
                 finalResponseText="",
                 error="single_card_empty_response",
             )
@@ -376,7 +322,6 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
             ok=True,
             session=context.session,
             runId=run_id,
-            idfId=context.idf.idfId,
             finalResponseText=final_text,
         )
     except Exception:
@@ -384,7 +329,6 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
             ok=False,
             session=context.session,
             runId=run_id,
-            idfId=context.idf.idfId,
             finalResponseText="",
             error="single_card_run_failed",
         )
@@ -399,7 +343,7 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
 
 
 def _read_max_turns(context: RuntimeRequest) -> int | None:
-    runtime_options = getattr(context.cardRuntime, "runtimeOptions", None) or {}
+    runtime_options = context.idf.runtimeOptions
     if not isinstance(runtime_options, dict) or "maxTurns" not in runtime_options:
         return None
     raw = runtime_options["maxTurns"]
@@ -424,20 +368,22 @@ def _magentic_completion_status(
 async def run_native_magentic_mission(
     context: RuntimeRequest,
 ) -> OrchestratorRunResponse:
-    """Run native Magentic-One with the exact canonical IDF and saved roster."""
-    if context.cardRuntime is None:
-        raise RuntimeError("card_runtime_missing")
+    """Run native Magentic-One with the saved roster and transient task text."""
+    runtime = context.idf.runtime
+    if runtime.get("kind") != "autogen" or runtime.get("mode") != "magentic_one":
+        raise RuntimeError("orchestrator_card_required")
     run_id = _as_text(context.session.runId) or context.session.turnId
-    task = context.idf.modelInputMarkdown
+    task = context.idf.message
 
     client = None
     participant_clients: list[Any] = []
     try:
-        runtime_options = context.cardRuntime.runtimeOptions or {}
+        runtime_options = context.idf.runtimeOptions
+        provider = context.idf.provider
         client = _build_model_client(
             AutoGenAgentConfig(
-                provider=context.session.modelProvider,
-                provider_model_id=context.session.providerModelId,
+                provider=_as_text(provider.get("provider")),
+                provider_model_id=_as_text(provider.get("providerModelId")),
                 temperature=runtime_options.get("temperature"),
                 max_tokens=runtime_options.get("maxTokens"),
                 reasoning_effort=runtime_options.get("reasoningEffort"),
@@ -445,8 +391,6 @@ async def run_native_magentic_mission(
         )
         participants = _build_participants(
             context,
-            [],
-            saved_card_workers=True,
             outer_run_id=run_id,
         )
         team_options: dict[str, Any] = {
@@ -496,7 +440,6 @@ async def run_native_magentic_mission(
             "[magentic] run_stream meta:",
             {
                 "run_id": run_id,
-                "idf_id": context.idf.idfId,
                 "messages": len(autogen_messages),
                 "events": len(autogen_events),
                 "message_types": sorted({m["type"] for m in autogen_messages}),
@@ -510,7 +453,6 @@ async def run_native_magentic_mission(
             ok=ok,
             session=context.session,
             runId=run_id,
-            idfId=context.idf.idfId,
             stopReason=stop_reason,
             finalResponseText=final_response_text,
             autogenMessages=autogen_messages,
@@ -522,7 +464,6 @@ async def run_native_magentic_mission(
             ok=False,
             session=context.session,
             runId=run_id,
-            idfId=context.idf.idfId,
             finalResponseText="",
             error="magentic_run_failed",
         )

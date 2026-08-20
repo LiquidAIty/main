@@ -677,13 +677,12 @@ def test_official_dispatch_emits_no_attention_for_non_graph_result(monkeypatch):
     assert observed == []
 
 
-def test_restored_agentgraph_and_magentic_idf_tools_dispatch_without_running(
+def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
     monkeypatch,
 ):
     import asyncio
     import mcp_host
     from app import control_plane
-    from app.python_models import card_domain
 
     context = {
         "projectId": "project-1",
@@ -699,37 +698,11 @@ def test_restored_agentgraph_and_magentic_idf_tools_dispatch_without_running(
         calls.append(("agentgraph.inspect", dict(args)))
         return {"ok": True, "authority": "postgresql-age-agentgraph", "runs": []}
 
-    def save_instructions(payload):
-        calls.append(("write_mag_one_instructions", dict(payload)))
-        return {
-            "ok": True,
-            "idfId": "11111111-1111-4111-8111-111111111111",
-            "revision": 1,
-            "started": False,
-        }
-
-    def load_invocation(payload):
-        calls.append(("run_mag_one.load", dict(payload)))
-        return {
-            "projectId": "project-1",
-            "deckId": "deck_builder",
-            "assignment": "exact proposed mission",
-            "exactIdf": "exact inspector-visible IDF bytes",
-            "cardRevisionId": "22222222-2222-4222-8222-222222222222",
-            "cardContext": {"cardId": "card_mag_one"},
-            "savedIdf": {
-                "idfId": "11111111-1111-4111-8111-111111111111",
-                "revision": 1,
-            },
-        }
-
     async def bridge(path, payload):
         calls.append((path, dict(payload)))
         return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
 
     monkeypatch.setattr(control_plane, "agentgraph_inspect", inspect)
-    monkeypatch.setattr(card_domain, "save_magentic_instructions", save_instructions)
-    monkeypatch.setattr(card_domain, "load_magentic_saved_invocation", load_invocation)
     monkeypatch.setattr(mcp_host, "_bridge", bridge)
 
     inspected = asyncio.run(
@@ -747,48 +720,23 @@ def test_restored_agentgraph_and_magentic_idf_tools_dispatch_without_running(
         },
     )
 
-    written = asyncio.run(
-        mcp_host._dispatch_tool(
-            "write_mag_one_instructions",
-            {"instructions": "exact proposed mission"},
-        )
-    )
-    assert json.loads(written[0].text) == {
-        "ok": True,
-        "idfId": "11111111-1111-4111-8111-111111111111",
-        "revision": 1,
-        "started": False,
-    }
-    assert calls[-1] == (
-        "write_mag_one_instructions",
-        {
-            "projectId": "project-1",
-            "deckId": "deck_builder",
-            "senderCardId": "card_main_chat",
-            "instructions": "exact proposed mission",
-        },
-    )
-
     executed = asyncio.run(
         mcp_host._dispatch_tool(
             "run_mag_one",
-            {"idfId": "11111111-1111-4111-8111-111111111111"},
+            {"input": "exact proposed mission"},
         )
     )
     assert json.loads(executed[0].text) == {"ok": True}
-    assert calls[-2] == (
-        "run_mag_one.load",
-        {
-            "projectId": "project-1",
-            "deckId": "deck_builder",
-            "senderCardId": "card_main_chat",
-            "idfId": "11111111-1111-4111-8111-111111111111",
-        },
-    )
     assert calls[-1][0] == "run_configured_card"
-    assert calls[-1][1]["exactIdf"] == "exact inspector-visible IDF bytes"
-    assert calls[-1][1]["savedIdfId"] == "11111111-1111-4111-8111-111111111111"
-    assert calls[-1][1]["savedIdfRevision"] == 1
+    assert calls[-1][1] == {
+        "action": "execute",
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "senderCardId": "card_main_chat",
+        "correlationId": calls[-1][1]["correlationId"],
+        "conversationId": "external-mcp:grant-1",
+        "input": "exact proposed mission",
+    }
 
 
 def test_lifecycle_errors_remain_typed_and_distinct(monkeypatch):
@@ -952,14 +900,10 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
             "instructionId"
             not in by_name["card.run_assistant_agent"].inputSchema["properties"]
         )
-        assert "write_mag_one_instructions" in by_name
         assert by_name["run_mag_one"].inputSchema["required"] == [
-            "idfId",
+            "input",
             "projectId",
             "deckId",
-        ]
-        assert by_name["write_mag_one_instructions"].inputSchema["required"] == [
-            "instructions"
         ]
         assert "minProperties" not in str(
             by_name["card.update_configuration"].inputSchema
@@ -1017,14 +961,11 @@ def test_catalog_identity_covers_the_complete_frozen_tool_descriptor():
     assert mcp_host._catalog_identity([original])[1] != mcp_host._catalog_identity([changed])[1]
 
 
-def test_mag_one_instruction_tools_use_the_canonical_saved_idf_contract():
+def test_mag_one_uses_direct_transient_input_contract():
     import mcp_host
 
-    assert mcp_host._ALLOWED_KEYS["write_mag_one_instructions"] == {
-        "projectId", "deckId", "conversationId", "instructions",
-    }
     assert mcp_host._ALLOWED_KEYS["run_mag_one"] == {
-        "projectId", "deckId", "idfId", "conversationId",
+        "projectId", "deckId", "input", "conversationId",
     }
 
 
@@ -1925,7 +1866,6 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
             assert len(first_catalog) == len(set(first_catalog))
             assert "main.context" in first_catalog
             assert "agentgraph.inspect" in first_catalog
-            assert "write_mag_one_instructions" in first_catalog
             assert "coder.status" not in first_catalog
             assert first_context == second_context == context
         finally:
@@ -2138,7 +2078,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         ), f"advertised but undispatchable: {tool.name}"
     assert "main.context" in by_name
     assert "agentgraph.inspect" in by_name
-    assert "write_mag_one_instructions" in by_name
     assert "coder.status" not in by_name
     assert "card.run_assistant_agent" in by_name
     assert "run_coder_subagent" not in by_name

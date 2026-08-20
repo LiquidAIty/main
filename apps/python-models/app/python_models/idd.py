@@ -470,7 +470,7 @@ def _attributes(name: str, raw: str | None, definition: dict[str, Any]) -> dict[
     return parsed
 
 
-def validate_idf_islands(markdown: str) -> dict[str, list[dict[str, Any]]]:
+def validate_input_islands(markdown: str) -> dict[str, list[dict[str, Any]]]:
     """Validate IDD-known bracket islands; ordinary text and unknown tags stay inert."""
     found: dict[str, list[dict[str, Any]]] = {}
     lines = markdown.splitlines()

@@ -13,17 +13,15 @@ from app.python_models.magentic_agentchat import (
 from app.python_models.orchestration_contracts import (
     RuntimeRequest,
     OrchestratorRunResponse,
-    CardRuntimeConfig,
-    require_idf_card_runtime,
 )
 
 
 async def orchestrate_runtime(context: RuntimeRequest) -> OrchestratorRunResponse:
-    card_runtime = require_idf_card_runtime(context)
-    if card_runtime.runtime.kind != "autogen" or card_runtime.runtime.mode != "magentic_one":
+    runtime = context.idf.runtime
+    if runtime.get("kind") != "autogen" or runtime.get("mode") != "magentic_one":
         raise RuntimeError(
             "orchestrator_card_required: runtime="
-            f"{card_runtime.runtime.kind}/{card_runtime.runtime.mode}"
+            f"{runtime.get('kind')}/{runtime.get('mode')}"
         )
 
     # Native Magentic-One owns its private Task and Progress Ledgers. Python rails
@@ -31,18 +29,17 @@ async def orchestrate_runtime(context: RuntimeRequest) -> OrchestratorRunRespons
     return await run_native_magentic_mission(context)
 
 
-def _configured_runtime_handler(card_runtime: CardRuntimeConfig):
-    if card_runtime.runtime.kind == "autogen" and card_runtime.runtime.mode == "assistant":
+def _configured_runtime_handler(runtime: dict[str, object]):
+    if runtime.get("kind") == "autogen" and runtime.get("mode") == "assistant":
         return run_configured_card
-    if card_runtime.runtime.kind == "autogen" and card_runtime.runtime.mode == "magentic_one":
+    if runtime.get("kind") == "autogen" and runtime.get("mode") == "magentic_one":
         return orchestrate_runtime
     raise RuntimeError(
         "configured_card_runtime_unsupported: runtime="
-        f"{card_runtime.runtime.kind}/{card_runtime.runtime.mode}"
+        f"{runtime.get('kind')}/{runtime.get('mode')}"
     )
 
 
 async def dispatch_configured_runtime(context: RuntimeRequest) -> OrchestratorRunResponse:
-    """Dispatch an exact IDF using only its Python-validated Card runtime."""
-    card_runtime = require_idf_card_runtime(context)
-    return await _configured_runtime_handler(card_runtime)(context)
+    """Dispatch one transient model input through its saved Card runtime."""
+    return await _configured_runtime_handler(context.idf.runtime)(context)

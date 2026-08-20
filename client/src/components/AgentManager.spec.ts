@@ -89,7 +89,7 @@ describe('AgentManager active builder config', () => {
     expect(coder.toolsets).toEqual(['file', 'terminal']);
   });
 
-  it('separates stable Card versions from transient and explicitly saved IDFs', () => {
+  it('keeps stable Card versions separate from transient Card input', () => {
     const filePath = path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx');
     const source = readFileSync(filePath, 'utf8');
 
@@ -97,13 +97,12 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain("data-testid=\"agent-manager-run\"");
     expect(source).toContain('Save Card Version');
     expect(source).toContain('Run transient');
-    expect(source).toContain('data-testid="agent-manager-save-idf"');
-    expect(source).toContain('data-testid="agent-manager-save-run-idf"');
-    expect(source).toContain('data-testid="agent-manager-export-idf"');
+    expect(source).not.toContain('agent-manager-save-idf');
+    expect(source).not.toContain('agent-manager-export-idf');
     expect(source).not.toContain('Run Test');
   });
 
-  it('displays and edits the exact Python-materialized IDF without assembling context in TypeScript', () => {
+  it('previews the exact Python materialization without assembling it in TypeScript', () => {
     const filePath = path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx');
     const source = readFileSync(filePath, 'utf8');
     const pageSource = readFileSync(
@@ -112,10 +111,10 @@ describe('AgentManager active builder config', () => {
     );
 
     expect(source).toContain('Dynamic context / input');
-    expect(source).toContain('The exact visible IDF below is sent unchanged.');
-    expect(source).toContain('value={runResult.invocation.exactIdf}');
-    expect(source).toContain('onChangeMaterializedIdf?.(event.target.value)');
-    expect(pageSource).toContain('exactIdf: invocation.exactIdf');
+    expect(source).toContain('Python combines this input with the saved Card');
+    expect(source).toContain('value={JSON.stringify(runResult.invocation.idf, null, 2)}');
+    expect(source).toContain('readOnly');
+    expect(pageSource).toContain('invocation: result.invocation || null');
   });
 
   it('keeps the card identity fields without adding another persistence path', () => {

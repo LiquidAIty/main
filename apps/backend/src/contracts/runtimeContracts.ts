@@ -1,15 +1,15 @@
-export type InputDataFile = {
-  idfId: string;
-  projectId: string;
-  deckId: string;
-  conversationId: string;
-  runId: string;
-  originatingCardId: string;
-  version: number;
-  systemText: string;
-  userText: string;
-  cardContext: Record<string, unknown> | null;
-  dynamicContextMarkdown: string;
+export type Idf = {
+  systemPrompt: string;
+  message: string;
+  runtime: Record<string, unknown>;
+  provider: Record<string, unknown>;
+  runtimeOptions: Record<string, unknown>;
+  enabledTools: string[];
+  toolDefinitions: Array<Record<string, unknown>>;
+  nativeTools: string[];
+  skills: string[];
+  toolsets: string[];
+  mcpConnectionIds: string[];
   nativeReferences: Array<{
     authority: string;
     nativeId: string;
@@ -17,8 +17,5 @@ export type InputDataFile = {
     asOf: string;
     required: boolean;
   }>;
-  modelInputMarkdown: string;
-  contentMarkdown: string;
-  contentSha256: string;
-  createdAt: string;
+  images: Array<Record<string, unknown>>;
 };

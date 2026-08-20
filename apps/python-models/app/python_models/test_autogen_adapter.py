@@ -1,78 +1,53 @@
-"""Focused native Magentic-One/IDF adapter coverage. No provider calls."""
+"""Focused native Magentic-One/Card-input adapter coverage. No provider calls."""
 
 import asyncio
 import inspect
-from hashlib import sha256
 from types import SimpleNamespace
 
 import pytest
 
 from app.python_models import magentic_agentchat as mac
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
-from app.python_models.idf import render_content_markdown
+from app.python_models.idf import materialize_idf
 from app.python_models.orchestration_contracts import (
-    CardRuntimeConfig,
-    CardRuntimeParticipant,
-    InputDataFile,
     ProjectSession,
+    RuntimeParticipant,
     RuntimeRequest,
 )
 
 MODEL = "deepseek/deepseek-v4-flash-0731"
 
 
-def _transient_idf(*, card_context: dict, system_text: str, user_text: str) -> InputDataFile:
-    content = render_content_markdown(
-        system_text=system_text,
-        user_text=user_text,
-        card_context=card_context,
-        dynamic_context_markdown="native context",
-        native_references=[],
-    )
-    return InputDataFile(
-        idfId="idf:mag", projectId="p", deckId="d", conversationId="c",
-        runId="mag:one", originatingCardId="mag:card", version=1,
-        systemText=system_text, userText=user_text, cardContext=card_context,
-        dynamicContextMarkdown="native context", nativeReferences=[],
-        modelInputMarkdown=content, contentMarkdown=content,
-        contentSha256=sha256(content.encode("utf-8")).hexdigest(),
-        createdAt="2026-08-14T00:00:00Z",
-    )
-
-
 def _context() -> RuntimeRequest:
     participants = [
-        CardRuntimeParticipant(
+        RuntimeParticipant(
             cardId="signals", title="WorldSignals",
-            runtime={"kind": "autogen", "mode": "assistant"}, provider="openrouter",
-            accessMode="openrouter-api", providerModelId=MODEL,
+            runtime={"kind": "autogen", "mode": "assistant"},
         ),
-        CardRuntimeParticipant(
+        RuntimeParticipant(
             cardId="trading", title="Trading",
-            runtime={"kind": "autogen", "mode": "assistant"}, provider="openrouter",
-            accessMode="openrouter-api", providerModelId=MODEL,
+            runtime={"kind": "autogen", "mode": "assistant"},
         ),
     ]
-    card_runtime = CardRuntimeConfig(
-        cardId="mag:card", title="Mag One",
-        runtime={"kind": "autogen", "mode": "magentic_one"},
-        prompt="saved orchestrator system", provider="openrouter",
-        accessMode="openrouter-api", modelKey=MODEL, providerModelId=MODEL,
-        runtimeOptions={"deckId": "d"},
-    )
-    idf = _transient_idf(
-        card_context=card_runtime.model_dump(exclude_none=True),
-        system_text="saved orchestrator system",
-        user_text="approved task",
-    )
     return RuntimeRequest(
         session=ProjectSession(
-            sessionId="s", projectId="p", turnId="t", runId="mag:one", route="r",
-            orchestrator="magentic_one", modelProvider="openrouter", modelKey=MODEL,
-            providerModelId=MODEL, startedAt="now",
+            sessionId="s", projectId="p", deckId="d", cardId="mag:card",
+            conversationId="c", turnId="t",
+            runId="mag:one", route="r", orchestrator="magentic_one",
+            startedAt="now",
         ),
-        idf=idf,
-        cardRuntime=card_runtime,
+        idf=materialize_idf(
+            system_prompt="saved orchestrator system",
+            dynamic_input="approved task",
+            context_markdown="native context",
+            runtime={"kind": "autogen", "mode": "magentic_one"},
+            provider={
+                "accessMode": "openrouter-api", "provider": "openrouter",
+                "modelKey": MODEL, "providerModelId": MODEL,
+            },
+            enabled_tools=[],
+            tool_definitions=[],
+        ),
         participants=participants,
     )
 
@@ -89,7 +64,7 @@ def test_connected_agents_are_saved_display_names():
     assert mac.connected_agent_names(_context()) == ["WorldSignals", "Trading"]
 
 
-def test_native_mag_one_consumes_exact_idf_and_returns_native_ids(monkeypatch):
+def test_native_mag_one_consumes_canonical_card_input_and_returns_native_ids(monkeypatch):
     tasks: list[str] = []
 
     class Client:
@@ -115,16 +90,19 @@ def test_native_mag_one_consumes_exact_idf_and_returns_native_ids(monkeypatch):
 
     assert result.ok is True
     assert result.runId == "mag:one"
-    assert result.idfId == "idf:mag"
     assert result.finalResponseText == "native final"
-    assert tasks == [context.idf.modelInputMarkdown]
+    assert tasks == [context.idf.message]
 
 
 def test_native_mag_one_failure_does_not_echo_secret(monkeypatch):
     secret = "provider-secret-must-not-escape"
     context = _context()
-    context.idf.modelInputMarkdown = secret
-    monkeypatch.setattr(mac, "_build_model_client", lambda _config: (_ for _ in ()).throw(RuntimeError(secret)))
+    context.idf.message = secret
+    monkeypatch.setattr(
+        mac,
+        "_build_model_client",
+        lambda _config: (_ for _ in ()).throw(RuntimeError(secret)),
+    )
     result = asyncio.run(mac.run_native_magentic_mission(context))
     assert result.error == "magentic_run_failed"
     assert secret not in result.model_dump_json()
@@ -157,7 +135,6 @@ def test_saved_card_worker_uses_official_mcp_and_returns_native_output(monkeypat
         "cardId": "signals",
         "childRunId": "child-run-1",
         "originatingRunId": "mag:one",
-        "idfId": "idf:mag",
     }
     assert calls == [{
         "project_id": "p",
@@ -174,10 +151,7 @@ def test_saved_card_worker_uses_official_mcp_and_returns_native_output(monkeypat
 
 def test_native_mag_one_wraps_every_saved_worker_without_worker_model_clients():
     participants = mac._build_participants(
-        _context(),
-        [],
-        saved_card_workers=True,
-        outer_run_id="mag:one",
+        _context(), outer_run_id="mag:one",
     )
     assert [type(agent) for agent in participants] == [
         mac.McpSavedCardAgent,

@@ -15,20 +15,17 @@ from app.python_models.autogen_orchestrator import dispatch_configured_runtime
 from app.python_models.card_domain import (
     CardDomainError,
     begin_main_chat_run,
-    begin_prompt_free_run,
+    begin_run,
     begin_native_hermes_child_run,
     describe_magentic_agents,
-    finish_prompt_free_run,
+    finish_run,
     inspect_agentgraph,
     list_decks,
-    list_saved_idfs,
     load_deck,
-    load_saved_idf_revision,
     materialize_invocation,
     prepare_main_chat,
     record_explicit_artifact,
     save_deck,
-    save_idf_revision,
 )
 from app.python_models.idd import (
     IddValidationError,
@@ -109,7 +106,7 @@ def idd_tools_materialize(payload: dict[str, Any]):
 
 # ---------------------------------------------------------------------------
 # Stable Card/deck authority and transient communication preparation.
-# These internal rails endpoints never persist prompts, IDFs, provider bodies,
+# These internal rails endpoints never persist prompts, provider bodies,
 # selected context, or ordinary model output.
 # ---------------------------------------------------------------------------
 
@@ -173,36 +170,10 @@ def domain_mag_one_agents(project_id: str, deck_id: str):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
-@app.get("/domain/idfs/{project_id}/{deck_id}")
-def domain_saved_idf_list(project_id: str, deck_id: str, cardId: str | None = None):
-    try:
-        return list_saved_idfs(project_id, deck_id, cardId)
-    except CardDomainError as err:
-        status = 404 if str(err) == "project_not_found" else 409
-        raise HTTPException(status_code=status, detail=str(err)) from err
-
-
-@app.get("/domain/idfs/{project_id}/revision/{idf_id}")
-def domain_saved_idf_read(project_id: str, idf_id: str, revision: int | None = None):
-    try:
-        return load_saved_idf_revision(project_id, idf_id, revision)
-    except CardDomainError as err:
-        status = 404 if str(err) in {"project_not_found", "saved_idf_not_found"} else 409
-        raise HTTPException(status_code=status, detail=str(err)) from err
-
-
-@app.post("/domain/idfs/save")
-def domain_saved_idf_save(payload: dict[str, Any]):
-    try:
-        return save_idf_revision(payload)
-    except (CardDomainError, IddValidationError) as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
 @app.post("/domain/runs/begin")
 def domain_run_begin(payload: dict[str, Any]):
     try:
-        return begin_prompt_free_run(payload)
+        return begin_run(payload)
     except (CardDomainError, IddValidationError) as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 
@@ -218,7 +189,7 @@ def domain_main_run_begin(payload: dict[str, Any]):
 @app.post("/domain/runs/finish")
 def domain_run_finish(payload: dict[str, Any]):
     try:
-        return finish_prompt_free_run(payload)
+        return finish_run(payload)
     except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 
@@ -294,15 +265,3 @@ def thinkgraph_neighborhood(projectId: str, canonicalId: str):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err
 
-
-@app.get("/idf/documents/{idf_id:path}")
-def idf_read(idf_id: str, projectId: str):
-    """Legacy read-only access. No current invocation path writes this store."""
-    from app.python_models.idf import InputDataFileError, read_input_data_file
-
-    try:
-        return {"ok": True, "idf": read_input_data_file(project_id=projectId, idf_id=idf_id)}
-    except InputDataFileError as err:
-        raise HTTPException(status_code=404, detail=str(err)) from err
-    except Exception as err:
-        raise HTTPException(status_code=500, detail="idf_read_failed") from err

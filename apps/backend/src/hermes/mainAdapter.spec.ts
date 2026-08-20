@@ -77,7 +77,7 @@ describe('Hermes ACP transport identity', () => {
       skills: [],
       toolsets: ['memory', 'delegation'],
       mcpConnectionIds: [],
-      message: '# IDF\n\nInspect the repository.',
+      message: 'Inspect the repository.',
     }, {
       LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
       LIQUIDAITY_INTERNAL_MCP_URL: 'http://127.0.0.1:8765/mcp',

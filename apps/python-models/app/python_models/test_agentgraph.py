@@ -1,4 +1,4 @@
-"""PostgreSQL integration proof for the canonical IDF replacement boundary."""
+"""PostgreSQL connection and fresh-schema boundary proof."""
 
 import psycopg
 import pytest
@@ -58,40 +58,3 @@ def test_invalid_database_url_error_never_echoes_secret(monkeypatch) -> None:
 
     assert str(failure.value) == "invalid_config: DATABASE_URL"
     assert secret not in str(failure.value)
-
-
-def test_saved_idf_schema_is_relational_and_legacy_prompt_stores_are_read_only() -> None:
-    provider_config.ensure_env_loaded(force=True)
-    with connect_postgres() as connection, connection.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT table_name, column_name, data_type
-            FROM information_schema.columns
-            WHERE table_schema='ag_catalog'
-              AND table_name IN ('saved_idfs', 'saved_idf_revisions')
-            ORDER BY table_name, ordinal_position
-            """
-        )
-        columns = {(table, column): data_type for table, column, data_type in cursor.fetchall()}
-        assert columns[("saved_idfs", "idf_id")] == "uuid"
-        assert columns[("saved_idf_revisions", "content_markdown")] == "text"
-        assert columns[("saved_idf_revisions", "content_sha256")] == "text"
-        assert not any(data_type == "jsonb" for data_type in columns.values())
-
-        cursor.execute(
-            """
-            SELECT table_name, privilege_type
-            FROM information_schema.role_table_grants
-            WHERE table_schema='ag_catalog'
-              AND grantee='liquidaity-user'
-              AND table_name IN (
-                'input_data_files', 'agent_assignments',
-                'agent_context_references', 'agent_results'
-              )
-            """
-        )
-        legacy_privileges = set(cursor.fetchall())
-        assert all(
-            privilege == "SELECT"
-            for _table, privilege in legacy_privileges
-        )

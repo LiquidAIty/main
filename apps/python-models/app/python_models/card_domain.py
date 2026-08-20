@@ -1,7 +1,7 @@
-"""Stable Card/deck authority and transient IDF preparation.
+"""Stable Card/deck authority and transient runtime-input preparation.
 
 PostgreSQL owns stable Project, Deck, Card revision, runtime, grants, layout, and
-prompt-free Run identities. AGE owns Card relationships. Dynamic communication
+Run identities. AGE owns Card relationships. Dynamic communication
 is materialized and validated in memory and is never written by this module.
 """
 
@@ -11,19 +11,15 @@ import json
 from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from psycopg.rows import dict_row
 
 from app.python_models.idd import (
-    IDD_PATH,
     IddValidationError,
-    load_input_data_dictionary,
     materialize_tool_catalog,
-    validate_record,
-    validate_idf_islands,
 )
-from app.python_models.idf import render_content_markdown
+from app.python_models.idf import materialize_idf
 from app.python_models.postgres import connect_postgres
 from app.python_models.tool_registry import tool_manifest
 
@@ -1348,14 +1344,6 @@ def _prepare_invocation(
             raise CardDomainError(
                 f"configured_tool_unknown:{unknown_delegate_tools[0]}"
             )
-    if include_tool_definitions:
-        card_context["toolDefinitions"] = tool_definitions
-    provider_projection = {
-        "systemPrompt": system_text,
-        "enabledTools": effective_tools,
-    }
-    if include_tool_definitions:
-        provider_projection["toolDefinitions"] = tool_definitions
     return {
         "ok": True,
         "ephemeral": True,
@@ -1371,45 +1359,54 @@ def _prepare_invocation(
         "assignment": assignment,
         "cardContext": card_context,
         "delegationTargets": direct_subagents,
-        "providerProjection": provider_projection,
+        "_systemPrompt": system_text,
+        "_enabledTools": effective_tools,
+        "_toolDefinitions": tool_definitions if include_tool_definitions else [],
     }
 
 
 def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     prepared = _prepare_invocation(payload)
     output_requirements = prepared.pop("_outputRequirements")
-    system_text = prepared["providerProjection"]["systemPrompt"]
+    system_text = prepared.pop("_systemPrompt")
     assignment = prepared["assignment"]
-    card_context = prepared["cardContext"]
-    tool_definitions = prepared["providerProjection"]["toolDefinitions"]
-    effective_tools = prepared["providerProjection"]["enabledTools"]
-    dynamic_context = str(payload.get("contextMarkdown") or "")
+    tool_definitions = prepared.pop("_toolDefinitions")
+    effective_tools = prepared.pop("_enabledTools")
     references = _normalized_native_references(payload.get("nativeReferences"))
-    dynamic_sections = dynamic_context
-    if output_requirements:
-        dynamic_sections = (dynamic_sections + "\n\n" if dynamic_sections else "") + f"[RETURN]\n{output_requirements}\n[/RETURN]"
-    exact_idf = render_content_markdown(
-        system_text=system_text,
-        user_text=assignment,
-        card_context=card_context,
-        dynamic_context_markdown=dynamic_sections,
+    context = prepared["cardContext"]
+    images = payload.get("images") or []
+    if not isinstance(images, list) or any(not isinstance(item, dict) for item in images):
+        raise CardDomainError("images_invalid")
+    idf = materialize_idf(
+        system_prompt=system_text,
+        dynamic_input=assignment,
+        runtime=context["runtime"],
+        provider={
+            "accessMode": context["accessMode"],
+            "provider": context["provider"],
+            "modelKey": context["modelKey"],
+            "providerModelId": context["providerModelId"],
+        },
+        runtime_options=context["runtimeOptions"],
+        enabled_tools=effective_tools,
+        tool_definitions=tool_definitions,
+        native_tools=context["nativeTools"],
+        skills=context["skills"],
+        toolsets=context["toolsets"],
+        mcp_connection_ids=context["mcpConnectionIds"],
+        context_markdown=str(payload.get("contextMarkdown") or ""),
+        output_requirements=output_requirements,
         native_references=references,
+        images=images,
     )
-    validate_idf_islands(exact_idf)
     return {
         **prepared,
-        "exactIdf": exact_idf,
-        "providerProjection": {
-            "systemPrompt": system_text,
-            "message": exact_idf,
-            "toolDefinitions": tool_definitions,
-            "enabledTools": effective_tools,
-        },
+        "idf": idf.model_dump(),
     }
 
 
 def prepare_main_chat(payload: dict[str, Any]) -> dict[str, Any]:
-    """Prepare saved Main authority without turning ordinary chat into an IDF."""
+    """Prepare saved Main authority and the natural user message."""
     project_ref = _required_text(payload.get("projectId"), "project_id")
     deck_id = _required_text(payload.get("deckId"), "deck_id")
     loaded = _load_deck_internal(project_ref, deck_id)
@@ -1427,16 +1424,36 @@ def prepare_main_chat(payload: dict[str, Any]) -> dict[str, Any]:
         "deckId": deck_id,
         "cardId": main_cards[0]["id"],
         "assignment": message,
-    }, require_assignment=False, include_tool_definitions=False)
+    }, require_assignment=False, include_tool_definitions=True)
     prepared.pop("_outputRequirements", None)
     prepared.pop("assignment", None)
+    if not message:
+        prepared.pop("_systemPrompt", None)
+        prepared.pop("_enabledTools", None)
+        prepared.pop("_toolDefinitions", None)
+        return prepared
+    idf = materialize_idf(
+        system_prompt=prepared.pop("_systemPrompt"),
+        dynamic_input=message,
+        runtime=prepared["cardContext"]["runtime"],
+        provider={
+            "accessMode": prepared["cardContext"]["accessMode"],
+            "provider": prepared["cardContext"]["provider"],
+            "modelKey": prepared["cardContext"]["modelKey"],
+            "providerModelId": prepared["cardContext"]["providerModelId"],
+        },
+        runtime_options=prepared["cardContext"]["runtimeOptions"],
+        enabled_tools=prepared.pop("_enabledTools"),
+        tool_definitions=prepared.pop("_toolDefinitions"),
+        native_tools=prepared["cardContext"]["nativeTools"],
+        skills=prepared["cardContext"]["skills"],
+        toolsets=prepared["cardContext"]["toolsets"],
+        mcp_connection_ids=prepared["cardContext"]["mcpConnectionIds"],
+    )
     return {
         **prepared,
         "message": message,
-        "providerProjection": {
-            **prepared["providerProjection"],
-            "message": message,
-        },
+        "idf": idf.model_dump(),
     }
 
 
@@ -1518,18 +1535,8 @@ def describe_magentic_agents(project_ref: str, deck_id: str) -> dict[str, Any]:
     }
 
 
-def _autogen_participant(card: dict[str, Any], known_tools: set[str]) -> dict[str, Any]:
-    options = _json_object(card.get("runtimeOptions"), "runtime_options")
-    provider = _required_text(options.get("provider"), "participant_provider")
-    model = _required_text(
-        options.get("providerModelId") or options.get("modelKey"),
-        "participant_model",
-    )
-    access_mode = _required_text(options.get("accessMode"), "participant_access_mode")
-    selected_tools = _string_list(options.get("tools"), "tools")
-    unknown = [tool for tool in selected_tools if tool not in known_tools]
-    if unknown:
-        raise CardDomainError(f"configured_tool_unknown:{unknown[0]}")
+def _autogen_participant(card: dict[str, Any]) -> dict[str, Any]:
+    """Project only saved worker identity; its Card materializes when invoked."""
     runtime = _card_runtime(card)
     if runtime != {"kind": "autogen", "mode": "assistant"}:
         raise CardDomainError("magentic_worker_runtime_invalid")
@@ -1537,417 +1544,24 @@ def _autogen_participant(card: dict[str, Any], known_tools: set[str]) -> dict[st
         "cardId": card["id"],
         "title": card.get("title") or card["id"],
         "runtime": runtime,
-        "tools": selected_tools,
-        "prompt": str(card.get("prompt") or ""),
-        "provider": provider,
-        "accessMode": access_mode,
-        "providerModelId": model,
-        "reasoningEffort": options.get("reasoningEffort"),
-        "temperature": options.get("temperature"),
-        "maxTokens": options.get("maxTokens"),
     }
 
 
-def validate_exact_invocation(payload: dict[str, Any]) -> dict[str, Any]:
-    exact_idf_value = payload.get("exactIdf")
-    if not isinstance(exact_idf_value, str) or not exact_idf_value.strip():
-        raise CardDomainError("exact_idf_required")
-    exact_idf = exact_idf_value
-    expected_revision = _required_text(payload.get("cardRevisionId"), "card_revision_id")
-    preview = materialize_invocation(payload)
-    if preview["cardRevisionId"] != expected_revision:
+def prepare_run_invocation(payload: dict[str, Any]) -> dict[str, Any]:
+    """Resolve one saved Card and materialize its current transient input."""
+
+    prepared = materialize_invocation(payload)
+    expected_revision = str(payload.get("cardRevisionId") or "").strip()
+    if expected_revision and prepared["cardRevisionId"] != expected_revision:
         raise CardDomainError("card_revision_changed")
-    idf_inspection = _validate_exact_idf(preview, exact_idf)
-    return {
-        **preview,
-        "exactIdf": exact_idf,
-        "providerProjection": {
-            **preview["providerProjection"],
-            "message": exact_idf,
-        },
-        "idfInspection": idf_inspection,
-        "validatedForDispatch": True,
-    }
+    return prepared
 
 
-def _validate_exact_idf(preview: dict[str, Any], exact_idf: str) -> dict[str, Any]:
-    """Validate one exact IDF without making its destination part of the document."""
-    islands = validate_idf_islands(exact_idf)
-    del preview
-    if "\n\n## Current Input\n\n" not in exact_idf:
-        raise CardDomainError("exact_idf_input_missing")
-    assignment = exact_idf.split("\n\n## Current Input\n\n", 1)[1]
-    if not assignment.strip():
-        raise CardDomainError("exact_idf_input_missing")
-    serialized_cards: list[dict[str, Any]] = []
-    native_references: list[dict[str, Any]] = []
-    for island in islands.get("JSON", []):
-        value = json.loads(island["content"])
-        if value.get("type") == "resolved-card-invocation":
-            raise CardDomainError("exact_idf_orchestration_envelope_forbidden")
-        if value.get("type") == "serialized-card":
-            try:
-                serialized_cards.append(validate_record("card-context", value.get("card")))
-            except IddValidationError as error:
-                raise CardDomainError(str(error)) from error
-        if value.get("type") == "native-references":
-            references = value.get("references")
-            if not isinstance(references, list):
-                raise CardDomainError("native_references_invalid")
-            native_references.extend(references)
-    if len(serialized_cards) != 1:
-        raise CardDomainError("exact_idf_serialized_card_invalid")
-    system_values = [island["content"] for island in islands.get("SYSTEM", [])]
-    return {
-        "assignment": assignment,
-        "instructionText": system_values[0] if system_values else "",
-        "cardContext": serialized_cards[0],
-        "nativeReferences": _normalized_native_references(native_references),
-        "message": exact_idf,
-    }
-
-
-def _uuid(value: Any, field: str) -> UUID:
-    try:
-        return UUID(_required_text(value, field))
-    except (TypeError, ValueError, AttributeError) as error:
-        raise CardDomainError(f"{field}_invalid") from error
-
-
-def _idd_identity() -> tuple[int, str]:
-    document = load_input_data_dictionary()
-    metadata = document.get("dictionary") if isinstance(document, dict) else None
-    version = metadata.get("version") if isinstance(metadata, dict) else None
-    if not isinstance(version, int) or version < 1:
-        raise CardDomainError("idd_version_invalid")
-    try:
-        digest = sha256(IDD_PATH.read_bytes()).hexdigest()
-    except OSError as error:
-        raise CardDomainError("idd_load_failed") from error
-    return version, digest
-
-
-def _saved_idf_payload(row: dict[str, Any], *, include_content: bool) -> dict[str, Any]:
-    payload = {
-        "idfId": str(row["idf_id"]),
-        "revision": int(row["revision"]),
-        "projectId": str(row["project_id"]),
-        "deckId": str(row["deck_id"]),
-        "targetCardId": str(row["target_card_id"]),
-        "targetCardRevisionId": str(row["target_card_revision_id"]),
-        "targetCardRevision": int(row["target_card_revision_number"]),
-        "targetCardRevisionSha256": str(row["target_card_revision_sha256"]),
-        "iddVersion": int(row["idd_version"]),
-        "iddSha256": str(row["idd_sha256"]),
-        "contentSha256": str(row["content_sha256"]),
-        "state": str(row["state"]),
-        "provenanceKind": str(row["provenance_kind"]),
-        "createdAt": row["created_at"].isoformat(),
-    }
-    if include_content:
-        payload["contentMarkdown"] = str(row["content_markdown"])
-    return payload
-
-
-def _inspect_saved_idf(content: str) -> dict[str, Any]:
-    """Mechanically inspect a saved non-directional body without deriving routing."""
-    islands = validate_idf_islands(content)
-    input_marker = "\n\n## Current Input\n\n"
-    assignment = content.split(input_marker, 1)[1] if input_marker in content else ""
-    system_values = [island["content"] for island in islands.get("SYSTEM", [])]
-    serialized_cards: list[dict[str, Any]] = []
-    legacy_cards: list[dict[str, Any]] = []
-    native_references: list[dict[str, Any]] = []
-    for island in islands.get("JSON", []):
-        value = json.loads(island["content"])
-        if value.get("type") == "resolved-card-invocation" and isinstance(value.get("cardContext"), dict):
-            legacy_cards.append(value["cardContext"])
-        if value.get("type") == "serialized-card":
-            try:
-                serialized_cards.append(validate_record("card-context", value.get("card")))
-            except IddValidationError as error:
-                raise CardDomainError(str(error)) from error
-        if value.get("type") == "native-references":
-            references = value.get("references")
-            if not isinstance(references, list):
-                raise CardDomainError("native_references_invalid")
-            native_references.extend(references)
-    contexts = serialized_cards or legacy_cards
-    if not assignment.strip() or len(system_values) > 1 or len(contexts) != 1:
-        raise CardDomainError("saved_idf_structure_invalid")
-    context = contexts[0]
-    runtime_owner = _runtime_owner(context)
-    return {
-        "assignment": assignment,
-        "instructionText": system_values[0] if system_values else "",
-        "cardContext": context,
-        "runtimeOwner": runtime_owner,
-        "nativeReferences": _normalized_native_references(native_references),
-        "providerProjection": {
-            "systemPrompt": system_values[0] if system_values else "",
-            "message": content,
-            "toolDefinitions": context.get("toolDefinitions") or [],
-            "enabledTools": context.get("tools") or [],
-        },
-        "message": content,
-    }
-
-
-def save_idf_revision(payload: dict[str, Any]) -> dict[str, Any]:
-    """Persist one explicit immutable IDF revision after current Card validation."""
-    prepared = validate_exact_invocation(payload)
-    content = prepared["exactIdf"]
-    provenance = str(payload.get("provenanceKind") or "inspector").strip()
-    if provenance not in {"inspector", "main", "agent", "import"}:
-        raise CardDomainError("saved_idf_provenance_invalid")
-    requested_id = payload.get("idfId")
-    idf_id = _uuid(requested_id, "idf_id") if requested_id else uuid4()
-    idd_version, idd_sha = _idd_identity()
-    content_sha = _sha(content)
-    project_id = UUID(prepared["projectId"])
-    deck_id = prepared["deckId"]
-    card_id = prepared["cardContext"]["cardId"]
-    card_revision_id = UUID(prepared["cardRevisionId"])
-
-    with connect_postgres(autocommit=False) as connection:
-        with connection.cursor(row_factory=dict_row) as cursor:
-            cursor.execute(
-                """
-                SELECT idf_id, project_id, deck_id, target_card_id,
-                       head_revision, state
-                FROM ag_catalog.saved_idfs
-                WHERE idf_id=%s
-                FOR UPDATE
-                """,
-                (idf_id,),
-            )
-            identity = cursor.fetchone()
-            if identity is None:
-                revision = 1
-                cursor.execute(
-                    """
-                    INSERT INTO ag_catalog.saved_idfs (
-                      idf_id, project_id, deck_id, target_card_id,
-                      head_revision, state
-                    ) VALUES (%s,%s,%s,%s,1,'saved')
-                    """,
-                    (idf_id, project_id, deck_id, card_id),
-                )
-            else:
-                if (
-                    str(identity["project_id"]) != str(project_id)
-                    or identity["deck_id"] != deck_id
-                    or identity["target_card_id"] != card_id
-                ):
-                    raise CardDomainError("saved_idf_identity_mismatch")
-                if identity["state"] != "saved":
-                    raise CardDomainError("saved_idf_not_active")
-                revision = int(identity["head_revision"]) + 1
-                cursor.execute(
-                    """
-                    UPDATE ag_catalog.saved_idfs
-                    SET head_revision=%s, updated_at=NOW()
-                    WHERE idf_id=%s
-                    """,
-                    (revision, idf_id),
-                )
-            cursor.execute(
-                """
-                INSERT INTO ag_catalog.saved_idf_revisions (
-                  idf_id, revision, project_id, deck_id, target_card_id,
-                  target_card_revision_id, idd_version, idd_sha256,
-                  content_markdown, content_sha256, provenance_kind
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                RETURNING idf_id, revision, project_id, deck_id,
-                          target_card_id, target_card_revision_id, idd_version,
-                          idd_sha256, content_markdown, content_sha256,
-                          provenance_kind, created_at
-                """,
-                (
-                    idf_id, revision, project_id, deck_id, card_id,
-                    card_revision_id, idd_version, idd_sha, content,
-                    content_sha, provenance,
-                ),
-            )
-            row = dict(cursor.fetchone())
-            row["state"] = "saved"
-            row["target_card_revision_number"] = prepared["cardRevision"]
-            row["target_card_revision_sha256"] = prepared["cardRevisionSha256"]
-    return {
-        "ok": True,
-        "savedIdf": _saved_idf_payload(row, include_content=True),
-        "inspection": _inspect_saved_idf(content),
-    }
-
-
-def list_saved_idfs(project_ref: str, deck_id: str, card_id: str | None = None) -> dict[str, Any]:
-    """List bounded metadata; exact bodies load only on explicit selection."""
-    project_ref = _required_text(project_ref, "project_id")
-    deck_id = _required_text(deck_id, "deck_id")
-    card_id = str(card_id or "").strip()
-    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        project = _resolve_project(cursor, project_ref)
-        cursor.execute(
-            """
-            SELECT identity.idf_id, revision.revision, revision.project_id,
-                   revision.deck_id, revision.target_card_id,
-                   revision.target_card_revision_id, revision.idd_version,
-                   revision.idd_sha256, revision.content_sha256,
-                   revision.provenance_kind, revision.created_at,
-                   identity.state, card_revision.revision_number AS target_card_revision_number,
-                   card_revision.revision_sha256 AS target_card_revision_sha256
-            FROM ag_catalog.saved_idfs identity
-            JOIN ag_catalog.saved_idf_revisions revision
-              ON revision.idf_id=identity.idf_id
-            JOIN ag_catalog.agent_card_revisions card_revision
-              ON card_revision.revision_id=revision.target_card_revision_id
-            WHERE identity.project_id=%s AND identity.deck_id=%s
-              AND (%s='' OR identity.target_card_id=%s)
-            ORDER BY identity.updated_at DESC, identity.idf_id, revision.revision DESC
-            LIMIT 100
-            """,
-            (project["id"], deck_id, card_id, card_id),
-        )
-        rows = [
-            _saved_idf_payload(dict(row), include_content=False)
-            for row in cursor.fetchall()
-        ]
-    return {"ok": True, "projectId": str(project["id"]), "deckId": deck_id, "savedIdfs": rows}
-
-
-def load_saved_idf_revision(
-    project_ref: str,
-    idf_ref: str,
-    revision: int | None = None,
-) -> dict[str, Any]:
-    project_ref = _required_text(project_ref, "project_id")
-    idf_id = _uuid(idf_ref, "idf_id")
-    if revision is not None and (not isinstance(revision, int) or revision < 1):
-        raise CardDomainError("idf_revision_invalid")
-    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        project = _resolve_project(cursor, project_ref)
-        cursor.execute(
-            """
-            SELECT revision.idf_id, revision.revision, revision.project_id,
-                   revision.deck_id, revision.target_card_id,
-                   revision.target_card_revision_id, revision.idd_version,
-                   revision.idd_sha256, revision.content_markdown,
-                   revision.content_sha256, revision.provenance_kind,
-                   revision.created_at, identity.state,
-                   card_revision.revision_number AS target_card_revision_number,
-                   card_revision.revision_sha256 AS target_card_revision_sha256
-            FROM ag_catalog.saved_idfs identity
-            JOIN ag_catalog.saved_idf_revisions revision
-              ON revision.idf_id=identity.idf_id
-             AND revision.revision=COALESCE(%s, identity.head_revision)
-            JOIN ag_catalog.agent_card_revisions card_revision
-              ON card_revision.revision_id=revision.target_card_revision_id
-            WHERE identity.idf_id=%s AND identity.project_id=%s
-            """,
-            (revision, idf_id, project["id"]),
-        )
-        row = cursor.fetchone()
-    if row is None:
-        raise CardDomainError("saved_idf_not_found")
-    materialized = dict(row)
-    if _sha(str(materialized["content_markdown"])) != materialized["content_sha256"]:
-        raise CardDomainError("saved_idf_hash_mismatch")
-    return {
-        "ok": True,
-        "savedIdf": _saved_idf_payload(materialized, include_content=True),
-        "inspection": _inspect_saved_idf(str(materialized["content_markdown"])),
-    }
-
-
-def save_magentic_instructions(payload: dict[str, Any]) -> dict[str, Any]:
-    """Materialize and persist one reviewed Mag One instruction IDF without running it."""
-    instructions = _required_text(payload.get("instructions"), "instructions")
-    sender_card_id = _required_text(payload.get("senderCardId"), "sender_card_id")
-    preview = materialize_magentic_invocation({
-        "projectId": _required_text(payload.get("projectId"), "project_id"),
-        "deckId": _required_text(payload.get("deckId"), "deck_id"),
-        "senderCardId": sender_card_id,
-        "assignment": instructions,
-    })
-    saved = save_idf_revision({
-        "projectId": preview["projectId"],
-        "deckId": preview["deckId"],
-        "cardId": preview["cardContext"]["cardId"],
-        "senderCardId": sender_card_id,
-        "assignment": instructions,
-        "exactIdf": preview["exactIdf"],
-        "cardRevisionId": preview["cardRevisionId"],
-        "provenanceKind": "agent",
-    })
-    saved_idf = saved["savedIdf"]
-    return {
-        "ok": True,
-        "idfId": saved_idf["idfId"],
-        "revision": saved_idf["revision"],
-        "savedIdf": saved_idf,
-        "inspection": saved["inspection"],
-        "started": False,
-    }
-
-
-def load_magentic_saved_invocation(payload: dict[str, Any]) -> dict[str, Any]:
-    """Reload and revalidate one saved Mag One IDF against current Card/AGE authority."""
-    project_ref = _required_text(payload.get("projectId"), "project_id")
-    deck_id = _required_text(payload.get("deckId"), "deck_id")
-    sender_card_id = _required_text(payload.get("senderCardId"), "sender_card_id")
-    idf_id = _required_text(payload.get("idfId"), "idf_id")
-    loaded = load_saved_idf_revision(project_ref, idf_id)
-    saved_idf = loaded["savedIdf"]
-    inspection = loaded["inspection"]
-    if saved_idf["deckId"] != deck_id:
-        raise CardDomainError("saved_idf_deck_mismatch")
-    if inspection.get("runtimeOwner") != "mag_one":
-        raise CardDomainError("saved_idf_not_magentic")
-    prepared = validate_exact_invocation({
-        "projectId": saved_idf["projectId"],
-        "deckId": saved_idf["deckId"],
-        "cardId": saved_idf["targetCardId"],
-        "senderCardId": sender_card_id,
-        "assignment": inspection["assignment"],
-        "exactIdf": saved_idf["contentMarkdown"],
-        "cardRevisionId": saved_idf["targetCardRevisionId"],
-    })
-    return {
-        **prepared,
-        "savedIdf": saved_idf,
-    }
-
-
-def _saved_idf_run_reference(
-    payload: dict[str, Any],
-    prepared: dict[str, Any],
-) -> tuple[UUID | None, int | None]:
-    idf_ref = str(payload.get("savedIdfId") or "").strip()
-    revision_value = payload.get("savedIdfRevision")
-    if not idf_ref and revision_value is None:
-        return None, None
-    if not idf_ref or not isinstance(revision_value, int) or revision_value < 1:
-        raise CardDomainError("saved_idf_run_reference_invalid")
-    idf_id = _uuid(idf_ref, "saved_idf_id")
-    loaded = load_saved_idf_revision(prepared["projectId"], str(idf_id), revision_value)["savedIdf"]
-    if (
-        loaded["deckId"] != prepared["deckId"]
-        or loaded["targetCardId"] != prepared["cardContext"]["cardId"]
-        or loaded["targetCardRevisionId"] != prepared["cardRevisionId"]
-        or loaded["contentMarkdown"] != prepared["exactIdf"]
-        or loaded["contentSha256"] != _sha(prepared["exactIdf"])
-    ):
-        raise CardDomainError("saved_idf_run_content_mismatch")
-    return idf_id, revision_value
-
-
-def _insert_prompt_free_run(
+def _insert_run(
     prepared: dict[str, Any],
     *,
     run_id: str,
     correlation_id: str,
-    saved_idf_id: UUID | None = None,
-    saved_idf_revision: int | None = None,
 ) -> None:
     context = prepared["cardContext"]
     with connect_postgres() as connection, connection.cursor() as cursor:
@@ -1957,8 +1571,8 @@ def _insert_prompt_free_run(
               run_id, project_id, deck_id, target_card_revision_id,
               runtime_kind, runtime_mode,
               provider, model_key, provider_model_id, access_mode, correlation_id,
-              saved_idf_id, saved_idf_revision, state, started_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
+              state, started_at
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
             """,
             (
                 run_id, prepared["projectId"], prepared["deckId"],
@@ -1966,27 +1580,19 @@ def _insert_prompt_free_run(
                 context["runtime"]["mode"], context.get("provider"),
                 context.get("modelKey"), context.get("providerModelId"),
                 context.get("accessMode"), correlation_id,
-                saved_idf_id, saved_idf_revision,
             ),
         )
 
-
 def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
-    """Begin an ordinary Main chat Run without creating or consuming an IDF."""
+    """Begin Main with the same canonical transient Card input as every call."""
     message = _required_text(payload.get("message"), "message")
     prepared = prepare_main_chat({**payload, "message": message})
-    expected_revision = _required_text(payload.get("cardRevisionId"), "card_revision_id")
-    if prepared["cardRevisionId"] != expected_revision:
+    expected_revision = str(payload.get("cardRevisionId") or "").strip()
+    if expected_revision and prepared["cardRevisionId"] != expected_revision:
         raise CardDomainError("card_revision_changed")
     run_id = _required_text(payload.get("runId"), "run_id")
     correlation_id = _required_text(payload.get("correlationId"), "correlation_id")
-    _insert_prompt_free_run(
-        prepared,
-        run_id=run_id,
-        correlation_id=correlation_id,
-        saved_idf_id=None,
-        saved_idf_revision=None,
-    )
+    _insert_run(prepared, run_id=run_id, correlation_id=correlation_id)
     telemetry_written = _observe_run_start(
         prepared,
         payload,
@@ -1998,40 +1604,43 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
         **prepared,
         "runId": run_id,
         "correlationId": correlation_id,
-        "savedIdf": None,
         "telemetryWritten": telemetry_written,
         "nativeRuntimeRequest": None,
         "hermesTransport": {
             "profile": context["runtime"].get("profile"),
             "mode": context["runtime"]["mode"],
-            "systemPrompt": prepared["providerProjection"]["systemPrompt"],
-            "message": message,
+            "idf": prepared["idf"],
             "cardContext": context,
             "delegationTargets": prepared.get("delegationTargets") or [],
         },
     }
 
 
-def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
-    prepared = validate_exact_invocation(payload)
+def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
+    """Create one Run around the single Python-materialized Card input."""
+
+    prepared = prepare_run_invocation(payload)
     run_id = _required_text(payload.get("runId"), "run_id")
     correlation_id = _required_text(payload.get("correlationId"), "correlation_id")
-    saved_idf_id, saved_idf_revision = _saved_idf_run_reference(payload, prepared)
     context = prepared["cardContext"]
-    idf_inspection = prepared["idfInspection"]
     owner = prepared["runtimeOwner"]
     native_runtime_request = None
     if owner in {"autogen", "mag_one"}:
-        selected_tools = list(context.get("tools") or [])
-        exact_idf = prepared["exactIdf"]
         if owner == "mag_one":
             loaded = _load_deck_internal(prepared["projectId"], prepared["deckId"])
             cards = {card["id"]: card for card in loaded["deck"]["nodes"]}
             worker_ids: list[str] = []
             for edge in loaded["deck"]["edges"]:
-                if edge["edgeType"] != "magentic_option" or context["cardId"] not in {edge["source"], edge["target"]}:
+                if (
+                    edge["edgeType"] != "magentic_option"
+                    or context["cardId"] not in {edge["source"], edge["target"]}
+                ):
                     continue
-                worker_id = edge["target"] if edge["source"] == context["cardId"] else edge["source"]
+                worker_id = (
+                    edge["target"]
+                    if edge["source"] == context["cardId"]
+                    else edge["source"]
+                )
                 worker = cards.get(worker_id)
                 if (
                     worker is not None
@@ -2039,29 +1648,21 @@ def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
                     and _is_magentic_worker_card(worker)
                 ):
                     worker_ids.append(worker_id)
-            known_tools = {item["canonicalId"] for item in materialize_tool_catalog(tool_manifest())}
-            participants = [_autogen_participant(cards[worker_id], known_tools) for worker_id in worker_ids]
+            participants = [
+                _autogen_participant(cards[worker_id])
+                for worker_id in worker_ids
+            ]
             if not participants:
                 raise CardDomainError("magentic_runtime_no_connected_participants")
         else:
-            participants = [{
-                "cardId": context["cardId"],
-                "title": context["title"],
-                "runtime": context["runtime"],
-                "tools": selected_tools,
-                "prompt": prepared["providerProjection"]["systemPrompt"],
-                "provider": context.get("provider"),
-                "accessMode": context.get("accessMode"),
-                "providerModelId": context.get("providerModelId") or context.get("modelKey"),
-                "reasoningEffort": (context.get("runtimeOptions") or {}).get("reasoningEffort"),
-                "temperature": (context.get("runtimeOptions") or {}).get("temperature"),
-                "maxTokens": (context.get("runtimeOptions") or {}).get("maxTokens"),
-            }]
-        card_runtime = context
+            participants = []
         native_runtime_request = {
             "session": {
                 "sessionId": f"{prepared['deckId']}:{context['cardId']}:{run_id}",
                 "projectId": prepared["projectId"],
+                "deckId": prepared["deckId"],
+                "cardId": context["cardId"],
+                "conversationId": str(payload.get("conversationId") or "active"),
                 "turnId": correlation_id,
                 "runId": run_id,
                 **(
@@ -2070,42 +1671,15 @@ def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
                     else {}
                 ),
                 "route": "deck_runtime" if owner == "mag_one" else "single_card",
-                "orchestrator": "magentic_one" if owner == "mag_one" else "assistant_agent",
-                "modelProvider": context.get("provider"),
-                "modelKey": context.get("modelKey"),
-                "providerModelId": context.get("providerModelId") or context.get("modelKey"),
+                "orchestrator": (
+                    "magentic_one" if owner == "mag_one" else "assistant_agent"
+                ),
                 "startedAt": _now().isoformat(),
             },
-            # This is an in-memory transport shape for the existing native
-            # AutoGen adapter. Its transient identity/hash is never persisted.
-            "idf": {
-                "idfId": f"transient:{run_id}",
-                "projectId": prepared["projectId"],
-                "deckId": prepared["deckId"],
-                "conversationId": str(payload.get("conversationId") or "active"),
-                "runId": run_id,
-                "originatingCardId": context["cardId"],
-                "version": 1,
-                "systemText": idf_inspection["instructionText"],
-                "userText": idf_inspection["assignment"],
-                "cardContext": card_runtime,
-                "dynamicContextMarkdown": str(payload.get("contextMarkdown") or ""),
-                "nativeReferences": idf_inspection["nativeReferences"],
-                "modelInputMarkdown": exact_idf,
-                "contentMarkdown": exact_idf,
-                "contentSha256": _sha(exact_idf),
-                "createdAt": _now().isoformat(),
-            },
-            "cardRuntime": card_runtime,
+            "idf": prepared["idf"],
             "participants": participants,
         }
-    _insert_prompt_free_run(
-        prepared,
-        run_id=run_id,
-        correlation_id=correlation_id,
-        saved_idf_id=saved_idf_id,
-        saved_idf_revision=saved_idf_revision,
-    )
+    _insert_run(prepared, run_id=run_id, correlation_id=correlation_id)
     telemetry_written = _observe_run_start(
         prepared,
         payload,
@@ -2116,17 +1690,12 @@ def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
         **prepared,
         "runId": run_id,
         "correlationId": correlation_id,
-        "savedIdf": (
-            {"idfId": str(saved_idf_id), "revision": saved_idf_revision}
-            if saved_idf_id is not None else None
-        ),
         "telemetryWritten": telemetry_written,
         "nativeRuntimeRequest": native_runtime_request,
         "hermesTransport": {
             "profile": context["runtime"].get("profile"),
             "mode": context["runtime"]["mode"],
-            "systemPrompt": prepared["providerProjection"]["systemPrompt"],
-            "message": prepared["exactIdf"],
+            "idf": prepared["idf"],
             "cardContext": context,
             "delegationTargets": prepared.get("delegationTargets") or [],
         } if owner == "hermes" else None,
@@ -2215,11 +1784,10 @@ def _observe_run_start(
 
 
 def begin_native_hermes_child_run(payload: dict[str, Any]) -> dict[str, Any]:
-    """Create a prompt-free child Run for one native Hermes delegation.
+    """Create an execution-only child Run for one native Hermes delegation.
 
-    The owning saved Card and exact-IDF reference are inherited from the active
-    parent Run.  No child prompt, alternate Card definition, or model input is
-    accepted at this boundary.
+    The owning saved Card is inherited from the active parent Run. No child
+    prompt, alternate Card definition, or model input is accepted here.
     """
     run_id = _required_text(payload.get("runId"), "run_id")
     correlation_id = _required_text(payload.get("correlationId"), "correlation_id")
@@ -2261,9 +1829,8 @@ def begin_native_hermes_child_run(payload: dict[str, Any]) -> dict[str, Any]:
             INSERT INTO ag_catalog.agent_runs (
               run_id, project_id, deck_id, target_card_revision_id,
               runtime_kind, runtime_mode, provider, model_key, provider_model_id,
-              access_mode, correlation_id, saved_idf_id, saved_idf_revision,
-              state, started_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
+              access_mode, correlation_id, state, started_at
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
             """,
             (
                 run_id, root["project_id"], root["deck_id"],
@@ -2271,7 +1838,6 @@ def begin_native_hermes_child_run(payload: dict[str, Any]) -> dict[str, Any]:
                 target_owner["runtime_kind"], target_owner["runtime_mode"],
                 target_owner["provider"], target_owner["model_key"],
                 target_owner["provider_model_id"], target_owner["access_mode"], correlation_id,
-                root.get("saved_idf_id"), root.get("saved_idf_revision"),
             ),
         )
     prepared = {
@@ -2301,7 +1867,7 @@ def begin_native_hermes_child_run(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def finish_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
+def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
     run_id = _required_text(payload.get("runId"), "run_id")
     state = _required_text(payload.get("state"), "state")
     if state not in {"completed", "failed", "cancelled"}:
@@ -2331,8 +1897,7 @@ def finish_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
                    access_mode, correlation_id, provider_thread_ref,
                    provider_turn_ref, state, started_at, finished_at,
                    error_code, error_summary, provider_input_tokens,
-                   provider_output_tokens, total_cost_usd,
-                   saved_idf_id, saved_idf_revision
+                   provider_output_tokens, total_cost_usd
             FROM ag_catalog.agent_runs WHERE run_id=%s
             """,
             (run_id,),

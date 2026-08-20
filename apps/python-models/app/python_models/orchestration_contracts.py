@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
+from app.python_models.idf import Idf
+
 
 RequiredRuntimeString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-
-
-def _reject_default_model_value(value: str | None) -> str | None:
-    if value is not None and str(value).strip().lower() == "default":
-        raise ValueError("provider_model_default_forbidden")
-    return value
 
 
 class ToolSpec(BaseModel):
@@ -42,6 +38,9 @@ class ToolSpec(BaseModel):
 class ProjectSession(BaseModel):
     sessionId: str
     projectId: str
+    deckId: str
+    cardId: str
+    conversationId: str | None = None
     turnId: str
     # The backend's run identity when the caller supplies one.
     runId: str | None = None
@@ -51,20 +50,7 @@ class ProjectSession(BaseModel):
         "magentic_one",
         "assistant_agent",
     ] = "magentic_one"
-    modelProvider: RequiredRuntimeString
-    modelKey: RequiredRuntimeString
-    providerModelId: RequiredRuntimeString
     startedAt: str
-
-    _no_default_models = field_validator("modelProvider", "modelKey", "providerModelId")(
-        _reject_default_model_value
-    )
-
-
-class HermesRuntime(BaseModel):
-    kind: Literal["hermes"]
-    mode: Literal["main", "delegate", "kanban"]
-    profile: RequiredRuntimeString
 
 
 class AutoGenRuntime(BaseModel):
@@ -72,40 +58,10 @@ class AutoGenRuntime(BaseModel):
     mode: Literal["assistant", "magentic_one"]
 
 
-CardRuntime = Annotated[
-    Union[HermesRuntime, AutoGenRuntime],
-    Field(discriminator="kind"),
-]
-
-
-class CardRuntimeConfig(BaseModel):
-    cardId: str
-    title: str
-    runtime: CardRuntime
-    prompt: str = ""
-    provider: str | None = None
-    accessMode: Literal["chatgpt-account", "openai-api", "openrouter-api"]
-    modelKey: str | None = None
-    providerModelId: str | None = None
-    runtimeOptions: dict = Field(default_factory=dict)
-
-
-class CardRuntimeParticipant(BaseModel):
+class RuntimeParticipant(BaseModel):
     cardId: str
     title: str
     runtime: AutoGenRuntime
-    tools: list[str] = Field(default_factory=list)
-    prompt: str = ""
-    provider: RequiredRuntimeString
-    accessMode: Literal["chatgpt-account", "openai-api", "openrouter-api"]
-    providerModelId: RequiredRuntimeString
-    reasoningEffort: Literal["low", "medium", "high", "xhigh"] | None = None
-    temperature: float | None = None
-    maxTokens: int | None = None
-
-    _no_default_models = field_validator("provider", "providerModelId")(
-        _reject_default_model_value
-    )
 
 
 class AutoGenMessage(BaseModel):
@@ -129,48 +85,16 @@ class NativeReference(BaseModel):
     required: bool = False
 
 
-class InputDataFile(BaseModel):
-    """Transport representation of one assembled model-input document."""
-
-    idfId: RequiredRuntimeString
-    projectId: RequiredRuntimeString
-    deckId: RequiredRuntimeString
-    conversationId: RequiredRuntimeString
-    runId: RequiredRuntimeString
-    originatingCardId: RequiredRuntimeString
-    version: int = Field(ge=1)
-    systemText: str = ""
-    userText: RequiredRuntimeString
-    cardContext: dict[str, Any] | None = None
-    dynamicContextMarkdown: str = ""
-    nativeReferences: list[NativeReference] = Field(default_factory=list)
-    modelInputMarkdown: RequiredRuntimeString
-    contentMarkdown: RequiredRuntimeString
-    contentSha256: RequiredRuntimeString
-    createdAt: RequiredRuntimeString
-
-
 class RuntimeRequest(BaseModel):
     session: ProjectSession
-    idf: InputDataFile
-    cardRuntime: CardRuntimeConfig | None = None
-    participants: list[CardRuntimeParticipant] = Field(default_factory=list)
-
-
-def require_idf_card_runtime(context: RuntimeRequest) -> CardRuntimeConfig:
-    """Return the runtime config only when it is the exact IDF card snapshot."""
-    if context.cardRuntime is None:
-        raise RuntimeError("card_runtime_missing")
-    if context.idf.cardContext != context.cardRuntime.model_dump(exclude_none=True):
-        raise RuntimeError("runtime_idf_card_context_mismatch")
-    return context.cardRuntime
+    idf: Idf
+    participants: list[RuntimeParticipant] = Field(default_factory=list)
 
 
 class OrchestratorRunResponse(BaseModel):
     ok: bool
     session: ProjectSession
     runId: str
-    idfId: str
     resultId: str | None = None
     stopReason: str | None = None
     # finalResponseText is the real last AutoGen message text (never an app-authored

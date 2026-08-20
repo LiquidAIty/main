@@ -1,14 +1,14 @@
 # LiquidAIty Input Data Definition
 #
-# One repository-owned catalog for the structured records and mixed-language
-# islands that may appear inside a LiquidAIty IDF. The file uses TOML syntax so
+# One repository-owned catalog for Card editor fields, tool contracts, and the
+# typed islands that dynamic model input may use. The file uses TOML syntax so
 # Python rails can interpret it with the standard library. It is not JSON, and
 # TypeScript/Python contain no generated copy of these definitions.
 
 [dictionary]
 name = "LiquidAIty"
 version = 2
-idfFormat = "mixed-markdown"
+idfFormat = "card-model-call"
 islandStyle = "bracketed-native-language"
 unknownIslands = "inert"
 
@@ -160,18 +160,11 @@ required = ["projectId"]
 [[toolGroups.tools]]
 name = "run_mag_one"
 displayName = "Run Magentic-One"
-description = "Load one canonical saved Mag One IDF and invoke its native runtime after current authority validation."
-parameters = ["projectId", "deckId", "idfId", "conversationId"]
-required = ["idfId", "projectId", "deckId"]
+description = "Run the saved Mag One Card with one dynamic input after current authority validation."
+parameters = ["projectId", "deckId", "input", "conversationId"]
+required = ["input", "projectId", "deckId"]
 requiredCallerRuntimeKind = "hermes"
 requiredCallerRuntimeMode = "main"
-
-[[toolGroups.tools]]
-name = "write_mag_one_instructions"
-displayName = "Write Mag One instructions"
-description = "Persist exact proposed Mag One instructions as one canonical saved IDF without starting a runtime."
-parameters = ["projectId", "deckId", "conversationId", "instructions"]
-required = ["instructions"]
 
 [[toolGroups.tools]]
 name = "canvas.inspect"
@@ -683,7 +676,7 @@ required = []
 [[records]]
 name = "card-context"
 allowUnknownFields = false
-description = "Transient resolved saved-card/runtime projection inside one in-memory IDF."
+description = "Resolved saved-card/runtime projection used for structural validation."
 
 [[records.fields]]
 name = "cardId"
@@ -769,7 +762,7 @@ required = false
 [[records]]
 name = "native-reference"
 allowUnknownFields = false
-description = "One transient pointer to native graph data selected for an IDF. The native graph remains authority."
+description = "One transient pointer to native graph data selected for a model call. The native graph remains authority."
 
 [[records.fields]]
 name = "authority"

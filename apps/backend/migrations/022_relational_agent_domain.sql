@@ -1,6 +1,6 @@
--- Stable Project/Deck/Card persistence for the transient-IDF MVP.
+-- Stable Project/Deck/Card persistence for the runtime MVP.
 --
--- Dynamic prompts, hydrated context, materialized IDFs, provider requests,
+-- Dynamic prompts, hydrated context, provider requests,
 -- ordinary responses, and transcripts are intentionally absent. The existing
 -- legacy tables and project JSONB are preserved read-only until cutover proof.
 -- React Flow Card relationships live only in AGE after an explicit one-time
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS ag_catalog.agent_card_revisions (
     enabled_location IN ('default', 'card', 'runtime-options')
   ),
   -- Bounded provider/runtime extension fields only; never a complete Card,
-  -- IDF, prompt envelope, topology document, or orchestration state.
+  -- prompt envelope, topology document, or orchestration state.
   runtime_extension_config JSONB NOT NULL DEFAULT '{}'::jsonb
     CHECK (jsonb_typeof(runtime_extension_config) = 'object'),
   revision_sha256 TEXT NOT NULL,
@@ -303,21 +303,6 @@ GRANT SELECT, INSERT, UPDATE
      agentgraph."USED",
      agentgraph."USED_TOOL",
      agentgraph."PRODUCED_ARTIFACT"
-  TO "liquidaity-user";
--- Transitional durable-IDF topology remains historical read-only data.
-REVOKE INSERT, UPDATE, DELETE ON
-  agentgraph."Assignment",
-  agentgraph."InputDataFile",
-  agentgraph."Result",
-  agentgraph."USES_IDF",
-  agentgraph."PRODUCED"
-  FROM "liquidaity-user";
-GRANT SELECT ON
-  agentgraph."Assignment",
-  agentgraph."InputDataFile",
-  agentgraph."Result",
-  agentgraph."USES_IDF",
-  agentgraph."PRODUCED"
   TO "liquidaity-user";
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA agentgraph TO "liquidaity-user";
 
