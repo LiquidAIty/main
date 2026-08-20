@@ -1,7 +1,6 @@
 import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   coderTerminalClient,
-  type ConsoleOutputChunk,
   type ConsoleSessionInfo,
   type CoderTerminalClient,
 } from './coderTerminalClient';
@@ -23,9 +22,6 @@ type CoderTerminalPanelProps = {
   client?: CoderTerminalClient;
   /** Test seam: a session already known to the host. */
   initialSession?: ConsoleSessionInfo | null;
-  initialTranscript?: ConsoleOutputChunk[];
-  /** Test seam: EventSource constructor (undefined in jsdom = no live stream). */
-  eventSourceImpl?: typeof EventSource;
 };
 
 function CoderTerminalPanelInner({
@@ -40,55 +36,35 @@ function CoderTerminalPanelInner({
   onClose,
   client = coderTerminalClient,
   initialSession = null,
-  initialTranscript = [],
-  eventSourceImpl,
 }: CoderTerminalPanelProps) {
   const [session, setSession] = useState<ConsoleSessionInfo | null>(initialSession);
-  const [chunks, setChunks] = useState<ConsoleOutputChunk[]>(initialTranscript);
   const [startError, setStartError] = useState<string | null>(null);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [disconnected, setDisconnected] = useState(false);
-  const streamRef = useRef<EventSource | null>(null);
-  const attemptedIdentityRef = useRef('');
   const inputQueueRef = useRef<Promise<unknown>>(Promise.resolve());
 
-  const status = disconnected ? 'disconnected' : session?.state ?? 'idle';
+  const status = session?.state ?? 'idle';
 
-  const appendChunk = useCallback((chunk: ConsoleOutputChunk) => {
-    setChunks((prev) => {
-      if (prev.some((current) => current.seq === chunk.seq)) return prev;
-      return [...prev, chunk].slice(-2000);
-    });
-  }, []);
-
-  // Subscribe to the live transcript stream for the active session.
   useEffect(() => {
-    const ESImpl = eventSourceImpl ?? (typeof EventSource !== 'undefined' ? EventSource : undefined);
-    if (!session?.id || !ESImpl) return;
-    const source = new ESImpl(client.streamUrl(session.id));
-    streamRef.current = source;
-    source.onopen = () => setDisconnected(false);
-    source.onerror = () => setDisconnected(true);
-    source.addEventListener('chunk', (event) => {
-      try {
-        appendChunk(JSON.parse((event as MessageEvent).data));
-      } catch {
-        /* ignore malformed frame */
-      }
-    });
-    source.addEventListener('lifecycle', (event) => {
-      try {
-        setSession(JSON.parse((event as MessageEvent).data) as ConsoleSessionInfo);
-      } catch {
-        /* ignore malformed frame */
-      }
-    });
+    if (!open || session || !projectId || !deckId || !conversationId) return;
+    let cancelled = false;
+    void client.listSessions().then((sessions) => {
+      if (cancelled) return;
+      const live = sessions.find((candidate) => (
+        candidate.projectId === projectId
+        && candidate.deckId === deckId
+        && candidate.conversationId === conversationId
+        && candidate.ownerCardId === 'card_local_coder'
+        && candidate.runtimeSource === 'repository_hermes_cli'
+        && ['starting', 'running'].includes(candidate.state)
+        && Boolean(candidate.pid)
+      ));
+      if (live) setSession(live);
+    }).catch(() => undefined);
     return () => {
-      source.close();
-      streamRef.current = null;
+      cancelled = true;
     };
-  }, [session?.id, client, appendChunk, eventSourceImpl]);
+  }, [client, conversationId, deckId, open, projectId, session]);
 
   const startSession = useCallback(
     async () => {
@@ -97,7 +73,6 @@ function CoderTerminalPanelInner({
         return;
       }
       setBusy(true);
-      setDisconnected(false);
       setStartError(null);
       setTerminalError(null);
       try {
@@ -110,10 +85,9 @@ function CoderTerminalPanelInner({
         });
         if (result.ok) {
           setSession(result.session);
-          setChunks(result.transcript);
         } else if (result.session) {
           setSession(result.session);
-          setChunks(result.transcript ?? []);
+          setStartError(result.error);
         } else {
           setStartError(`${result.error}${result.missing.length ? `: ${result.missing.join(', ')}` : ''}`);
         }
@@ -128,13 +102,19 @@ function CoderTerminalPanelInner({
     [client, conversationId, deckId, projectId, targetRoot],
   );
 
-  useEffect(() => {
-    if (!open || session || busy || !projectId || !deckId || !conversationId) return;
-    const identity = `${projectId}:${deckId}:${conversationId}`;
-    if (attemptedIdentityRef.current === identity) return;
-    attemptedIdentityRef.current = identity;
-    void startSession();
-  }, [busy, conversationId, deckId, open, projectId, session, startSession]);
+  const connectOutput = useCallback(
+    async (onData: (data: string) => void, signal: AbortSignal) => {
+      if (!session?.id) return;
+      await client.streamOutput(session.id, onData, signal);
+    },
+    [client, session?.id],
+  );
+
+  const refreshSession = useCallback(async () => {
+    if (!session?.id) return;
+    const refreshed = await client.getSession(session.id);
+    if (refreshed) setSession(refreshed);
+  }, [client, session?.id]);
 
   const sendData = useCallback(
     async (data: string) => {
@@ -161,6 +141,7 @@ function CoderTerminalPanelInner({
     setTerminalError(null);
     try {
       await client.stopSession(session.id);
+      setSession((current) => current ? { ...current, state: 'stopping' } : current);
     } catch (error) {
       setTerminalError(error instanceof Error ? error.message : String(error));
     }
@@ -203,14 +184,28 @@ function CoderTerminalPanelInner({
       ) : null}
 
       {session ? (
-        <XtermView
-          key={session.id}
-          chunks={chunks}
-          interactive={status === 'starting' || status === 'running'}
-          onData={sendData}
-          onResize={resizeTerminal}
-          onError={setTerminalError}
-        />
+        <>
+          <div
+            data-testid={`${testIdPrefix}-process`}
+            style={{ padding: '5px 8px', color: '#8fa6bc', overflowWrap: 'anywhere' }}
+          >
+            {session.executable || 'Hermes CLI'}
+            {session.pid ? ` · PID ${session.pid}` : ` · ${session.state}`}
+          </div>
+          <XtermView
+            key={session.id}
+            interactive={status === 'starting' || status === 'running'}
+            connectOutput={status === 'starting' || status === 'running' ? connectOutput : undefined}
+            onData={sendData}
+            onResize={resizeTerminal}
+            onOutputClosed={refreshSession}
+            onError={(message) => {
+              if (message === 'The operation was aborted.') return;
+              setTerminalError(message);
+            }}
+            launchError={session.error || startError}
+          />
+        </>
       ) : null}
 
       {!session ? <div style={{ flex: 1 }} /> : null}
@@ -221,7 +216,18 @@ function CoderTerminalPanelInner({
         </div>
       ) : null}
 
-      {session && (status === 'failed' || status === 'stopped') ? (
+      {!session ? (
+        <div style={{ position: 'absolute', right: 8, bottom: 8, zIndex: 1 }}>
+          <button
+            type="button"
+            data-testid={`${testIdPrefix}-start`}
+            disabled={busy}
+            onClick={() => void startSession()}
+          >
+            Start
+          </button>
+        </div>
+      ) : session && (status === 'failed' || status === 'stopped') ? (
         <div style={{ position: 'absolute', right: 8, bottom: 8, zIndex: 1 }}>
           <button
             type="button"

@@ -46,15 +46,13 @@ function sessionInfo(): ConsoleSessionInfo {
     targetRoot: process.cwd(),
     mode: 'interactive',
     state: 'starting',
-    runtimeSource: 'saved_hermes_card',
+    runtimeSource: 'repository_hermes_cli',
     transportMode: 'pty',
     profile: 'coder',
-    provider: null,
-    model: null,
+    executable: null,
+    hermesHome: null,
     interactiveSupported: true,
     pid: null,
-    nativeSessionId: null,
-    activeRunId: null,
     startedAt: '2026-08-18T00:00:00.000Z',
     updatedAt: '2026-08-18T00:00:00.000Z',
     stoppedAt: null,
@@ -66,11 +64,10 @@ function sessionInfo(): ConsoleSessionInfo {
 function launch(onExit?: HermesCoderPtyLaunch['onExit']): HermesCoderPtyLaunch {
   return {
     executable: 'C:/repo/Hermes/venv/Scripts/hermes.exe',
-    args: ['-p', 'coder', 'chat', '--cli'],
+    args: ['-p', 'coder', 'chat', '--cli', '--in', 'C:/repo'],
     env: { HERMES_HOME: 'C:/repo/Hermes/.hermes' },
-    provider: 'openai-codex',
-    model: 'gpt-5.6-luna',
-    runId: 'run-1',
+    profile: 'coder',
+    hermesHome: 'C:/repo/Hermes/.hermes',
     onExit,
   };
 }
@@ -113,7 +110,7 @@ describe('Hermes Coder real PTY boundary', () => {
 
     expect(factory).toHaveBeenCalledWith(
       'C:/repo/Hermes/venv/Scripts/hermes.exe',
-      ['-p', 'coder', 'chat', '--cli'],
+      ['-p', 'coder', 'chat', '--cli', '--in', 'C:/repo'],
       expect.objectContaining({
         cwd: process.cwd(),
         env: { HERMES_HOME: 'C:/repo/Hermes/.hermes' },
@@ -124,9 +121,9 @@ describe('Hermes Coder real PTY boundary', () => {
       state: 'running',
       transportMode: 'pty',
       pid: 42,
-      activeRunId: 'run-1',
-      provider: 'openai-codex',
-      model: 'gpt-5.6-luna',
+      executable: 'C:/repo/Hermes/venv/Scripts/hermes.exe',
+      hermesHome: 'C:/repo/Hermes/.hermes',
+      profile: 'coder',
     });
   });
 
@@ -137,18 +134,17 @@ describe('Hermes Coder real PTY boundary', () => {
       (() => child) as unknown as PtyFactory,
     );
     session.start(launch());
+    const output: string[] = [];
+    const unsubscribe = session.subscribeOutput((data) => output.push(data));
 
     expect(session.write('inspect symbol\r')).toBe(true);
     expect(child.write).toHaveBeenCalledOnce();
     expect(child.write).toHaveBeenCalledWith('inspect symbol\r');
     child.emitData('\u001b[32mHermes native output\u001b[0m\r\n');
-    expect(session.transcript()).toEqual([
-      expect.objectContaining({
-        seq: 1,
-        stream: 'pty',
-        data: '\u001b[32mHermes native output\u001b[0m\r\n',
-      }),
-    ]);
+    expect(output).toEqual(['\u001b[32mHermes native output\u001b[0m\r\n']);
+    unsubscribe();
+    child.emitData('not replayed');
+    expect(output).toHaveLength(1);
   });
 
   it('resizes and stops the real child process', () => {
@@ -188,6 +184,13 @@ describe('Hermes Coder real PTY boundary', () => {
     const replacement = manager.acquire(identity);
     expect(replacement.ok && replacement.created).toBe(true);
     expect(replacement.ok && replacement.session).not.toBe(first.session);
+    if (!replacement.ok) return;
+    replacement.session.start(launch());
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(replacement.session.info.pid).toBe(42);
+    expect(replacement.session.info.executable).toBe(
+      'C:/repo/Hermes/venv/Scripts/hermes.exe',
+    );
   });
 
   it('publishes the native exit result once and preserves truthful failure state', () => {
@@ -206,8 +209,6 @@ describe('Hermes Coder real PTY boundary', () => {
       state: 'failed',
       error: 'hermes_cli_exited:17:9',
       pid: null,
-      activeRunId: null,
     });
-    expect(session.transcript()).toEqual([]);
   });
 });

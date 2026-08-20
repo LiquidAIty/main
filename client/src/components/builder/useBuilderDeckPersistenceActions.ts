@@ -72,6 +72,10 @@ export function useBuilderDeckPersistenceActions({
       setDeckStatusMessage("Open a canvas before saving.");
       return;
     }
+    if (!deckRevision) {
+      setDeckStatusMessage("Reload the canonical canvas before saving.");
+      return;
+    }
 
     const requestedDeckVersion = deck.version;
     setDeckSaveBusy(true);

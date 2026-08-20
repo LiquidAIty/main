@@ -60,7 +60,13 @@ export default function useAgentBuilderAutosave({
   setDeckStatusMessage,
 }: UseAgentBuilderAutosaveArgs) {
   useEffect(() => {
-    if (!canvasProjectId || !stateLoaded || deckLoadBusy || deckLoadError) return;
+    if (
+      !canvasProjectId
+      || !stateLoaded
+      || !deckRevision
+      || deckLoadBusy
+      || deckLoadError
+    ) return;
     const boardFingerprint = JSON.stringify({
       nodes: deck.nodes,
       edges: deck.edges,

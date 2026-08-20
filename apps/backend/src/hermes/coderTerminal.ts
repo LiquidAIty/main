@@ -9,13 +9,6 @@ export type ConsoleMode = 'interactive';
 export type ConsoleSessionState = 'starting' | 'running' | 'stopping' | 'stopped' | 'failed';
 export type ConsoleTransportMode = 'pty';
 
-export type ConsoleOutputChunk = {
-  seq: number;
-  stream: 'pty';
-  data: string;
-  at: string;
-};
-
 export type ConsoleSessionInfo = {
   id: string;
   ownerCardId: string;
@@ -25,15 +18,13 @@ export type ConsoleSessionInfo = {
   targetRoot: string;
   mode: 'interactive';
   state: ConsoleSessionState;
-  runtimeSource: 'saved_hermes_card';
+  runtimeSource: 'repository_hermes_cli';
   transportMode: ConsoleTransportMode;
   profile: string;
-  provider: string | null;
-  model: string | null;
+  executable: string | null;
+  hermesHome: string | null;
   interactiveSupported: true;
   pid: number | null;
-  nativeSessionId: null;
-  activeRunId: string | null;
   startedAt: string;
   updatedAt: string;
   stoppedAt: string | null;
@@ -55,9 +46,8 @@ export type HermesCoderPtyLaunch = {
   executable: string;
   args: string[];
   env: NodeJS.ProcessEnv;
-  provider: string;
-  model: string;
-  runId: string;
+  profile: string;
+  hermesHome: string;
   cols?: number;
   rows?: number;
   onExit?: (result: { exitCode: number; signal?: number; stopped: boolean }) => void;
@@ -69,9 +59,6 @@ export type PtyFactory = (
   args: string[],
   options: IWindowsPtyForkOptions,
 ) => PtyLike;
-
-const DEFAULT_MAX_BUFFER_CHARS = 200_000;
-const MAX_CHUNK_CHARS = 16_000;
 
 export function resolveHermesCliInstall(): { root: string; executable: string } {
   const root = path.join(resolveRepoRoot(), 'Hermes');
@@ -96,16 +83,12 @@ function terminalIdentity(request: StartConsoleSessionRequest): string {
  */
 export class HermesCoderTerminalSession {
   private readonly emitter = new EventEmitter();
-  private readonly buffer: ConsoleOutputChunk[] = [];
-  private bufferChars = 0;
-  private sequence = 0;
   private process: PtyLike | null = null;
   private stopRequested = false;
 
   constructor(
     readonly info: ConsoleSessionInfo,
     private readonly ptyFactory: PtyFactory = spawnPty,
-    private readonly maxBufferChars = DEFAULT_MAX_BUFFER_CHARS,
   ) {
     this.emitter.setMaxListeners(64);
   }
@@ -114,9 +97,9 @@ export class HermesCoderTerminalSession {
     if (this.process && this.isLive()) throw new Error('hermes_coder_terminal_already_running');
     this.stopRequested = false;
     this.info.state = 'starting';
-    this.info.provider = launch.provider;
-    this.info.model = launch.model;
-    this.info.activeRunId = launch.runId;
+    this.info.profile = launch.profile;
+    this.info.executable = launch.executable;
+    this.info.hermesHome = launch.hermesHome;
     this.info.error = null;
     this.info.stoppedAt = null;
     this.touch();
@@ -140,7 +123,6 @@ export class HermesCoderTerminalSession {
       this.process = null;
       const stopped = this.stopRequested;
       this.info.pid = null;
-      this.info.activeRunId = null;
       this.info.stoppedAt = new Date().toISOString();
       this.info.state = stopped || exitCode === 0 ? 'stopped' : 'failed';
       this.info.error = stopped || exitCode === 0
@@ -154,7 +136,6 @@ export class HermesCoderTerminalSession {
   markFailed(reason: string): void {
     this.process = null;
     this.info.pid = null;
-    this.info.activeRunId = null;
     this.info.state = 'failed';
     this.info.error = reason;
     this.info.stoppedAt = new Date().toISOString();
@@ -177,9 +158,9 @@ export class HermesCoderTerminalSession {
   stop(): boolean {
     if (!this.process || !this.isLive()) return false;
     this.stopRequested = true;
-    this.process.kill();
     this.info.state = 'stopping';
     this.touch();
+    this.process.kill();
     return true;
   }
 
@@ -191,46 +172,22 @@ export class HermesCoderTerminalSession {
     return Boolean(this.process);
   }
 
-  subscribe(
-    listener: (
-      event:
-        | { kind: 'chunk'; chunk: ConsoleOutputChunk }
-        | { kind: 'lifecycle'; info: ConsoleSessionInfo },
-    ) => void,
-  ): () => void {
-    for (const chunk of this.buffer) listener({ kind: 'chunk', chunk });
-    const onChunk = (chunk: ConsoleOutputChunk) => listener({ kind: 'chunk', chunk });
-    const onLifecycle = (info: ConsoleSessionInfo) => listener({ kind: 'lifecycle', info });
-    this.emitter.on('chunk', onChunk);
-    this.emitter.on('lifecycle', onLifecycle);
+  subscribeOutput(listener: (data: string) => void): () => void {
+    this.emitter.on('output', listener);
     return () => {
-      this.emitter.off('chunk', onChunk);
-      this.emitter.off('lifecycle', onLifecycle);
+      this.emitter.off('output', listener);
     };
   }
 
-  transcript(): ConsoleOutputChunk[] {
-    return [...this.buffer];
+  subscribeLifecycle(listener: (info: ConsoleSessionInfo) => void): () => void {
+    this.emitter.on('lifecycle', listener);
+    return () => {
+      this.emitter.off('lifecycle', listener);
+    };
   }
 
   private emitPtyOutput(raw: string): void {
-    for (let offset = 0; offset < raw.length; offset += MAX_CHUNK_CHARS) {
-      const data = raw.slice(offset, offset + MAX_CHUNK_CHARS);
-      if (!data) continue;
-      const chunk: ConsoleOutputChunk = {
-        seq: ++this.sequence,
-        stream: 'pty',
-        data,
-        at: new Date().toISOString(),
-      };
-      this.buffer.push(chunk);
-      this.bufferChars += data.length;
-      while (this.bufferChars > this.maxBufferChars && this.buffer.length > 1) {
-        const removed = this.buffer.shift();
-        if (removed) this.bufferChars -= removed.data.length;
-      }
-      this.emitter.emit('chunk', chunk);
-    }
+    if (raw) this.emitter.emit('output', raw);
   }
 
   private touch(): void {
@@ -278,15 +235,13 @@ export class HermesCoderTerminalManager {
       targetRoot,
       mode: 'interactive',
       state: 'starting',
-      runtimeSource: 'saved_hermes_card',
+      runtimeSource: 'repository_hermes_cli',
       transportMode: 'pty',
       profile: request.profile || 'coder',
-      provider: null,
-      model: null,
+      executable: null,
+      hermesHome: null,
       interactiveSupported: true,
       pid: null,
-      nativeSessionId: null,
-      activeRunId: null,
       startedAt: now,
       updatedAt: now,
       stoppedAt: null,

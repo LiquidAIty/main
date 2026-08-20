@@ -7,7 +7,6 @@ import {
 } from '../hermes/coderTerminal';
 import {
   deriveHermesSessionKey,
-  providerForHermes,
   readHermesHistory,
   startHermesTurn,
   type HermesSessionEvent,
@@ -26,10 +25,8 @@ import {
   requestPythonRailsJson,
 } from '../services/autogen/pythonRailsClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
-import { resolvePythonAgentMcpServerSpec } from '../services/mcp/pythonAgentMcpClient';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import {
-  configureHermesCardProfile,
   resolveHermesRuntimeHome,
 } from '../hermes/profileMemory';
 import {
@@ -825,154 +822,30 @@ router.get('/main/session/conversations', async (req, res) => {
   }
 });
 
-function uniqueNonEmpty(values: string[]): string[] {
-  return values
-    .map((value) => String(value || '').trim())
-    .filter((value, index, all) => Boolean(value) && all.indexOf(value) === index);
-}
-
-async function startCoderTerminalSession(session: HermesCoderTerminalSession): Promise<void> {
-  const assignment = 'Start the saved Coder Card interactive Hermes CLI.';
-  const runId = `req_${randomUUID().slice(0, 8)}`;
-  let runStarted = false;
-  try {
-    const begun = await requestPythonRailsJson('/domain/runs/begin', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId: session.info.projectId,
-        deckId: session.info.deckId,
-        cardId: session.info.ownerCardId,
-        assignment,
-        conversationId: session.info.conversationId,
-        runId,
-        correlationId: runId,
-      }),
-    }) as any;
-    const activeRunId = String(begun?.runId || runId);
-    runStarted = true;
-    const turnArgs = resolvePreparedHermesTurnArgs({
-      prepared: begun,
-      projectId: session.info.projectId,
-      deckId: session.info.deckId,
-      conversationId: session.info.conversationId,
-      parentRunId: activeRunId,
-      workingDirectory: session.info.targetRoot,
-      onEvent: () => undefined,
-    });
-    if (turnArgs.cardId !== CODER_CARD_ID || turnArgs.runtime.mode !== 'delegate') {
-      throw new Error('saved_coder_hermes_profile_required');
-    }
-    if (turnArgs.accessMode !== 'chatgpt-account') {
-      throw new Error('saved_coder_chatgpt_account_required');
-    }
-
-    const mcp = resolvePythonAgentMcpServerSpec({
-      kind: 'card-runtime',
-      projectId: session.info.projectId,
-      deckId: session.info.deckId,
-      conversationId: session.info.conversationId,
-      parentRunId: activeRunId,
-      callerCardId: session.info.ownerCardId,
-      callerRuntimeKind: 'hermes',
-      callerRuntimeMode: 'delegate',
-      grantedTools: turnArgs.tools.filter((name) => name !== 'web_search'),
-      // A literal CLI cannot attach trusted ACP per-call execution metadata.
-      // The short-lived token itself remains Card-, conversation-, and Run-scoped.
-      requiresExecutionContext: false,
-    });
-    const authorization = String(mcp.headers.Authorization || '');
-    if (!authorization.startsWith('Bearer ')) throw new Error('coder_terminal_mcp_bearer_missing');
-
-    const install = resolveHermesCliInstall();
-    const provider = providerForHermes(turnArgs.provider, turnArgs.accessMode);
-    const tokenEnv = 'LIQUIDAITY_CODER_MCP_BEARER';
-    configureHermesCardProfile({
-      hermesRoot: install.root,
-      profile: turnArgs.runtime.profile,
-      prompt: turnArgs.prompt,
-      provider,
-      model: turnArgs.providerModelId,
-      mcpUrl: mcp.url,
-      mcpTools: turnArgs.tools.filter((name) => name !== 'web_search'),
-      mcpTokenEnv: tokenEnv,
-    });
-    const toolsets = uniqueNonEmpty([
-      ...turnArgs.toolsets,
-      ...(turnArgs.nativeTools.includes('memory') ? ['memory'] : []),
-      ...(turnArgs.tools.length ? ['liquidaity'] : []),
-    ]);
-    const args = [
-      '-p', turnArgs.runtime.profile,
+function startCoderTerminalSession(session: HermesCoderTerminalSession): void {
+  const install = resolveHermesCliInstall();
+  const hermesHome = resolveHermesRuntimeHome(install.root);
+  const profile = session.info.profile || 'coder';
+  session.start({
+    executable: install.executable,
+    args: [
+      '-p', profile,
       'chat',
       '--cli',
       '--in', session.info.targetRoot,
-      '--provider', provider,
-      '-m', turnArgs.providerModelId,
-      ...(toolsets.length ? ['-t', toolsets.join(',')] : []),
-    ];
-    let finished = false;
-    const finish = async (
-      state: 'completed' | 'failed' | 'cancelled',
-      errorSummary?: string,
-    ): Promise<void> => {
-      if (finished) return;
-      finished = true;
-      await requestPythonRailsJson('/domain/runs/finish', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          runId: activeRunId,
-          state,
-          ...(errorSummary ? {
-            errorCode: state === 'cancelled' ? 'hermes_cli_cancelled' : 'hermes_cli_failed',
-            errorSummary,
-          } : {}),
-        }),
-      }).catch(() => undefined);
-    };
-    session.info.profile = turnArgs.runtime.profile;
-    session.start({
-      executable: install.executable,
-      args,
-      env: {
-        ...withoutInternalMcpSecret(process.env),
-        HERMES_HOME: resolveHermesRuntimeHome(install.root),
-        [tokenEnv]: authorization.slice('Bearer '.length),
-      },
-      provider,
-      model: turnArgs.providerModelId,
-      runId: activeRunId,
-      onExit: ({ exitCode, signal, stopped }) => {
-        const errorSummary = exitCode === 0 || stopped
-          ? undefined
-          : `hermes_cli_exited:${exitCode}:${signal ?? 'none'}`;
-        void finish(stopped ? 'cancelled' : exitCode === 0 ? 'completed' : 'failed', errorSummary);
-      },
-    });
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'hermes_coder_terminal_start_failed';
-    if (runStarted) {
-      await requestPythonRailsJson('/domain/runs/finish', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          runId,
-          state: 'failed',
-          errorCode: 'hermes_cli_start_failed',
-          errorSummary: reason,
-        }),
-      }).catch(() => undefined);
-    }
-    session.markFailed(reason);
-    throw error;
-  }
+    ],
+    env: {
+      ...withoutInternalMcpSecret(process.env),
+      HERMES_HOME: hermesHome,
+    },
+    profile,
+    hermesHome,
+  });
 }
 
-// ── Saved Coder Card terminal ──────────────────────────────────────────────
-// xterm forwards bytes to and from one real Hermes CLI ConPTY. Main -> Coder
-// assignments remain a separate authorized ACP transport for the same Card and
-// profile; their events are never replayed into this terminal.
+// ── Repository Hermes control center ───────────────────────────────────────
+// xterm forwards bytes to and from one real Hermes CLI ConPTY. Card/ACP model
+// execution is separate and is never materialized or replayed into this shell.
 function mountConsoleSessionRoutes(
   prefix: string,
   manager: typeof coderTerminalSessionManager,
@@ -994,7 +867,7 @@ function mountConsoleSessionRoutes(
     const session = started.session;
     if (started.created) {
       try {
-        await startCoderTerminalSession(session);
+        startCoderTerminalSession(session);
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'hermes_coder_terminal_prepare_failed';
         session.markFailed(reason);
@@ -1004,7 +877,6 @@ function mountConsoleSessionRoutes(
     return res.status(failed ? 502 : 200).json({
       ok: !failed,
       session: session.info,
-      transcript: session.transcript(),
       ...(failed ? { error: session.info.error || 'hermes_coder_terminal_prepare_failed', missing: [] } : {}),
     });
   });
@@ -1016,29 +888,39 @@ function mountConsoleSessionRoutes(
   router.get(`${prefix}/sessions/:id`, (req, res) => {
     const session = manager.get(req.params.id);
     if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
-    return res.json({ ok: true, session: session.info, transcript: session.transcript() });
+    return res.json({ ok: true, session: session.info });
   });
 
-  router.get(`${prefix}/sessions/:id/stream`, (req, res) => {
+  router.get(`${prefix}/sessions/:id/pty`, (req, res) => {
     const session = manager.get(req.params.id);
     if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
+    if (!session.isLive()) {
+      return res.status(409).json({ ok: false, error: 'hermes_coder_terminal_not_running' });
+    }
     res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
+      'Content-Type': 'application/octet-stream',
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
     });
-    res.write(`event: info\ndata: ${JSON.stringify(session.info)}\n\n`);
-    const unsubscribe = session.subscribe((event) => {
-      if (event.kind === 'chunk') {
-        res.write(`event: chunk\ndata: ${JSON.stringify(event.chunk)}\n\n`);
-      } else {
-        res.write(`event: lifecycle\ndata: ${JSON.stringify(event.info)}\n\n`);
+    res.flushHeaders();
+    const unsubscribeOutput = session.subscribeOutput((data) => {
+      if (!res.destroyed && !res.writableEnded) res.write(data);
+    });
+    const unsubscribeLifecycle = session.subscribeLifecycle((info) => {
+      if (['stopped', 'failed'].includes(info.state) && !res.writableEnded) {
+        res.end();
       }
     });
-    req.on('close', () => {
-      unsubscribe();
-      res.end();
+    if (!session.isLive() && !res.writableEnded) res.end();
+    const detach = () => {
+      unsubscribeOutput();
+      unsubscribeLifecycle();
+    };
+    res.once('close', detach);
+    req.once('aborted', () => {
+      detach();
+      if (!res.writableEnded) res.end();
     });
     return undefined;
   });

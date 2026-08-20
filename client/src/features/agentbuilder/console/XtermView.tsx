@@ -2,40 +2,50 @@ import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import type { ConsoleOutputChunk } from './coderTerminalClient';
 
 /**
- * xterm.js rendering of the saved Coder Card's native Hermes pseudoterminal.
+ * xterm.js rendering of the repository Hermes CLI pseudoterminal.
  * Input bytes go directly to ConPTY and only ConPTY output is rendered.
  */
 
 type XtermViewProps = {
-  chunks: ConsoleOutputChunk[];
   interactive: boolean;
+  connectOutput?: (onData: (data: string) => void, signal: AbortSignal) => Promise<void>;
   onData?: (data: string) => void | Promise<void>;
   onResize?: (cols: number, rows: number) => void | Promise<void>;
+  onOutputClosed?: () => void | Promise<void>;
   onError?: (message: string) => void;
+  launchError?: string | null;
   /** Render with a transparent background so text sits on the host panel. */
   transparent?: boolean;
 };
 
 export default function XtermView({
-  chunks,
   interactive,
+  connectOutput,
   onData,
   onResize,
+  onOutputClosed,
   onError,
+  launchError = null,
   transparent = false,
 }: XtermViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const termRef = useRef<{ term: Terminal; lastSequence: number } | null>(null);
+  const termRef = useRef<{ term: Terminal } | null>(null);
   const onDataRef = useRef(onData);
   const onResizeRef = useRef(onResize);
+  const connectOutputRef = useRef(connectOutput);
+  const onOutputClosedRef = useRef(onOutputClosed);
   const onErrorRef = useRef(onError);
+  const launchErrorRef = useRef(launchError);
+  const renderedLaunchErrorRef = useRef<string | null>(null);
   const interactiveRef = useRef(interactive);
   onDataRef.current = onData;
   onResizeRef.current = onResize;
+  connectOutputRef.current = connectOutput;
+  onOutputClosedRef.current = onOutputClosed;
   onErrorRef.current = onError;
+  launchErrorRef.current = launchError;
   interactiveRef.current = interactive;
 
   useEffect(() => {
@@ -44,6 +54,7 @@ export default function XtermView({
     let frame: number | null = null;
     let resizeObserver: ResizeObserver | null = null;
     let inputDisposable: { dispose(): void } | null = null;
+    const outputController = new AbortController();
     let term: Terminal | null = null;
     let lastSize = '';
     const focusTerminal = () => term?.focus();
@@ -93,12 +104,25 @@ export default function XtermView({
           onErrorRef.current?.(error instanceof Error ? error.message : String(error));
         }
       });
-      let lastSequence = 0;
-      for (const chunk of chunks) {
-        term.write(chunk.data);
-        lastSequence = Math.max(lastSequence, chunk.seq);
+      termRef.current = { term };
+      if (launchErrorRef.current) {
+        term.write(`${launchErrorRef.current}\r\n`);
+        renderedLaunchErrorRef.current = launchErrorRef.current;
       }
-      termRef.current = { term, lastSequence };
+      if (connectOutputRef.current) {
+        void connectOutputRef.current(
+          (data) => term?.write(data),
+          outputController.signal,
+        ).then(() => {
+          if (!outputController.signal.aborted) {
+            return onOutputClosedRef.current?.();
+          }
+          return undefined;
+        }).catch((error) => {
+          if (outputController.signal.aborted) return;
+          onErrorRef.current?.(error instanceof Error ? error.message : String(error));
+        });
+      }
       container.addEventListener('pointerdown', focusTerminal);
       if (typeof ResizeObserver !== 'undefined') {
         resizeObserver = new ResizeObserver(scheduleFit);
@@ -119,6 +143,7 @@ export default function XtermView({
       window.removeEventListener('resize', scheduleFit);
       container.removeEventListener('pointerdown', focusTerminal);
       inputDisposable?.dispose();
+      outputController.abort();
       term?.dispose();
       termRef.current = null;
     };
@@ -132,16 +157,12 @@ export default function XtermView({
     if (interactive) state.term.focus();
   }, [interactive]);
 
-  // Stream newly arrived chunks into the live terminal.
   useEffect(() => {
     const state = termRef.current;
-    if (!state) return;
-    for (const chunk of chunks) {
-      if (chunk.seq <= state.lastSequence) continue;
-      state.term.write(chunk.data);
-      state.lastSequence = chunk.seq;
-    }
-  }, [chunks]);
+    if (!state || !launchError || renderedLaunchErrorRef.current === launchError) return;
+    state.term.write(`${launchError}\r\n`);
+    renderedLaunchErrorRef.current = launchError;
+  }, [launchError]);
 
   return (
     <div

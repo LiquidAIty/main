@@ -275,6 +275,15 @@ export default function AgentBuilder(): React.ReactElement {
   } = useAgentBuilderDeck({
     createInitialDeck: buildProjectlessDeckDocument,
   });
+  const [stateLoaded, setStateLoaded] = useState(false);
+  const canonicalDeckReady = Boolean(
+    canvasProjectId
+      && stateLoaded
+      && !deckLoadBusy
+      && !deckLoadError
+      && deckRevision
+      && deck.id === BUILDER_DECK_ID,
+  );
   const currentDeckRef = useRef(deck);
   useEffect(() => {
     currentDeckRef.current = deck;
@@ -404,8 +413,6 @@ export default function AgentBuilder(): React.ReactElement {
     onMagOneInstructionsProposed: handleMagOneInstructionsProposed,
     onTurnFinished: graphAttention.finishAttentionScope,
   });
-  const [stateLoaded, setStateLoaded] = useState(false);
-
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
     tick();
@@ -518,9 +525,7 @@ export default function AgentBuilder(): React.ReactElement {
     canvasProjectId,
     projectsApi: PROJECTS_API,
     builderDeckId: BUILDER_DECK_ID,
-    currentDeckRef,
     emptyMessages: EMPTY_PROJECT_MESSAGES,
-    buildProjectlessDeckDocument,
     resolveProjectDeckLoadResult,
     formatBuilderStatusMessage,
     recordDeckWriteReason,
@@ -817,7 +822,10 @@ export default function AgentBuilder(): React.ReactElement {
   }, [openDrawer, recordUiOnlyAction, workspaceView]);
 
   const handleQuickAddAssistNode = useCallback(() => {
-    if (!deck) return;
+    if (!canonicalDeckReady) {
+      setDeckStatusMessage('Wait for the canonical canvas to load before adding a Card.');
+      return;
+    }
     const { nextDeck, nextNode } = buildQuickAddAssistCard(deck);
     recordDeckWriteReason('deck-quick-add');
     setDeck(nextDeck);
@@ -839,6 +847,7 @@ export default function AgentBuilder(): React.ReactElement {
     );
   }, [
     BUILDER_NODE_TABS,
+    canonicalDeckReady,
     deck,
     recordDeckWriteReason,
     setBuilderCanvasFocusRequest,
@@ -1063,14 +1072,14 @@ export default function AgentBuilder(): React.ReactElement {
                     recordDeckWriteReason('save-board-now');
                     void handleSaveDeck();
                   }}
-                  disabled={deckSaveBusy || deckLoadBusy || !canvasProjectId}
+                  disabled={deckSaveBusy || !canonicalDeckReady}
                   style={graphDrawerButtonStyle({
                     opacity:
-                      deckSaveBusy || deckLoadBusy || !canvasProjectId
+                      deckSaveBusy || !canonicalDeckReady
                         ? 0.58
                         : 1,
                     cursor:
-                      deckSaveBusy || deckLoadBusy || !canvasProjectId
+                      deckSaveBusy || !canonicalDeckReady
                         ? 'not-allowed'
                         : 'pointer',
                   })}
@@ -1113,12 +1122,12 @@ export default function AgentBuilder(): React.ReactElement {
   }, [activeProject]);
 
   const inspectorDrawerRole = useMemo<'agent' | 'worldsignal' | null>(() => {
-    if (workspaceView === 'canvas' && selectedCard) return 'agent';
+    if (workspaceView === 'canvas' && canonicalDeckReady && selectedCard) return 'agent';
     // The canonical Inspector also serves the WorldSignals companion surface —
     // same drawer, same renderer, section requested by the vendor controls.
     if (workspaceView === 'worldsignal' && worldSignalInspectorSection) return 'worldsignal';
     return null;
-  }, [selectedCard, workspaceView, worldSignalInspectorSection]);
+  }, [canonicalDeckReady, selectedCard, workspaceView, worldSignalInspectorSection]);
   const isInspectorDrawerVisible =
     inspectorDrawerRole === 'worldsignal'
       ? true
@@ -1202,7 +1211,7 @@ export default function AgentBuilder(): React.ReactElement {
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
     const isHermesWorkspace = workspaceView === 'hermes';
-    const canvasPane = (
+    const canvasPane = canonicalDeckReady ? (
       <AgentCanvasPane
         surfaceRole={surfaceRole}
         shellStyle={getSurfaceShellStyle(compact)}
@@ -1219,6 +1228,25 @@ export default function AgentBuilder(): React.ReactElement {
         inspectMode={false}
         focusZone={canvasFocusZone}
       />
+    ) : (
+      <div
+        role={deckLoadError ? 'alert' : 'status'}
+        data-testid="canonical-canvas-load-state"
+        style={graphDrawerSectionStyle({
+          height: '100%',
+          display: 'grid',
+          placeItems: 'center',
+          border: 0,
+          borderRadius: 0,
+          color: deckLoadError
+            ? 'rgba(255,162,162,0.95)'
+            : GRAPH_THEME.drawer.inputMuted,
+        })}
+      >
+        {deckLoadError
+          ? `Canonical canvas unavailable: ${deckLoadError}`
+          : 'Loading canonical canvas…'}
+      </div>
     );
     return (
       <div

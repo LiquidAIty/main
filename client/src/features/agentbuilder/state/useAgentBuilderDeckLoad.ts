@@ -16,11 +16,8 @@ type UseAgentBuilderDeckLoadArgs = {
   canvasProjectId: string;
   projectsApi: string;
   builderDeckId: string;
-  currentDeckRef: MutableRefObject<DeckDocument>;
   emptyMessages: AgentBuilderChatMessage[];
-  buildProjectlessDeckDocument: () => DeckDocument;
   resolveProjectDeckLoadResult: (
-    currentDeck: DeckDocument,
     persistedDeck: DeckDocument | null,
   ) => LoadResult;
   formatBuilderStatusMessage: (
@@ -44,9 +41,7 @@ export default function useAgentBuilderDeckLoad({
   canvasProjectId,
   projectsApi,
   builderDeckId,
-  currentDeckRef,
   emptyMessages,
-  buildProjectlessDeckDocument,
   resolveProjectDeckLoadResult,
   formatBuilderStatusMessage,
   recordDeckWriteReason,
@@ -64,7 +59,6 @@ export default function useAgentBuilderDeckLoad({
   useEffect(() => {
     if (!canvasProjectId) {
       recordDeckWriteReason('builder-await-project');
-      setDeck(buildProjectlessDeckDocument());
       setDeckRevision(null);
       setDeckLoadError(null);
       setMessages([...emptyMessages]);
@@ -109,10 +103,17 @@ export default function useAgentBuilderDeckLoad({
           payload.data?.deck && typeof payload.data.deck === 'object'
             ? (payload.data.deck as DeckDocument)
             : null;
-        const loadResult = resolveProjectDeckLoadResult(
-          currentDeckRef.current,
-          savedDeck,
-        );
+        const loadResult = resolveProjectDeckLoadResult(savedDeck);
+        if (loadResult.deck.id !== builderDeckId) {
+          throw new Error('deck_identity_mismatch');
+        }
+        const loadedRevision =
+          typeof payload.data?.meta?.deckRevision === 'string'
+            ? payload.data.meta.deckRevision
+            : null;
+        if (!loadedRevision) {
+          throw new Error('deck_revision_missing');
+        }
 
         recordDeckWriteReason('deck-load');
         setDeck(loadResult.deck);
@@ -123,11 +124,7 @@ export default function useAgentBuilderDeckLoad({
           edges: persistedDeck.edges,
         });
         lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(persistedDeck);
-        setDeckRevision(
-          typeof payload.data?.meta?.deckRevision === 'string'
-            ? payload.data.meta.deckRevision
-            : null,
-        );
+        setDeckRevision(loadedRevision);
         setStateLoaded(true);
         setDeckLoadError(null);
         setDeckStatusMessage('Canvas loaded.');
@@ -148,7 +145,9 @@ export default function useAgentBuilderDeckLoad({
         recordDeckWriteReason('deck-load-error');
         setDeckRevision(null);
         setMessages([...emptyMessages]);
-        setStateLoaded(true);
+        // A failed or incomplete request never promotes the in-memory bootstrap
+        // document (or any unsaved quick-add mutation) to a loaded canvas.
+        setStateLoaded(false);
         const errorMessage =
           typeof err === 'object' && err !== null && 'message' in err
             ? (err as { message?: unknown }).message
@@ -170,10 +169,8 @@ export default function useAgentBuilderDeckLoad({
       controller.abort();
     };
   }, [
-    buildProjectlessDeckDocument,
     builderDeckId,
     canvasProjectId,
-    currentDeckRef,
     emptyMessages,
     formatBuilderStatusMessage,
     lastPersistedBoardFingerprintRef,

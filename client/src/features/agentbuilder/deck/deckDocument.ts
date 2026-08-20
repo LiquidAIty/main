@@ -136,7 +136,6 @@ export function resolveProjectDeckPayload(
 }
 
 export function resolveProjectDeckLoadResult(
-  _currentDeck: DeckDocument,
   deckPayload: Partial<DeckDocument> | null | undefined,
 ): {
   deck: DeckDocument;

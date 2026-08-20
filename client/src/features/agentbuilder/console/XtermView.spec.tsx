@@ -59,6 +59,9 @@ afterEach(async () => {
 describe('XtermView real PTY transport', () => {
   it('renders only PTY output and forwards raw input without local echo or line parsing', async () => {
     const onData = vi.fn(async () => undefined);
+    const connectOutput = vi.fn(async (onOutput: (data: string) => void) => {
+      onOutput('\u001b[32mnative\u001b[0m\r\n');
+    });
     host = document.createElement('div');
     document.body.appendChild(host);
     root = createRoot(host);
@@ -66,19 +69,20 @@ describe('XtermView real PTY transport', () => {
       root?.render(
         <XtermView
           interactive
-          chunks={[{ seq: 1, stream: 'pty', data: 'native\r\n', at: 'now' }]}
+          connectOutput={connectOutput}
           onData={onData}
         />,
       );
     });
 
     expect(terminalMocks.options.convertEol).toBe(false);
-    expect(terminalMocks.writes).toEqual(['native\r\n']);
+    expect(connectOutput).toHaveBeenCalledOnce();
+    expect(terminalMocks.writes).toEqual(['\u001b[32mnative\u001b[0m\r\n']);
     await act(async () => {
       terminalMocks.dataListener?.('abc\u007f\r');
       await Promise.resolve();
     });
     expect(onData).toHaveBeenCalledWith('abc\u007f\r');
-    expect(terminalMocks.writes).toEqual(['native\r\n']);
+    expect(terminalMocks.writes).toEqual(['\u001b[32mnative\u001b[0m\r\n']);
   });
 });

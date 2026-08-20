@@ -716,6 +716,8 @@ describe('coder routes', () => {
   it('starts the saved Coder Card as a real Hermes CLI ConPTY', async () => {
     ptyMocks.spawn.mockClear();
     mcpClientMocks.resolvePythonAgentMcpServerSpec.mockClear();
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    chatSessionMocks.startHermesTurn.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/hermes/coder-terminal/sessions`, {
@@ -737,12 +739,11 @@ describe('coder routes', () => {
           state: 'running',
           transportMode: 'pty',
           profile: 'coder',
-          provider: 'openai-codex',
-          model: 'gpt-5.6-luna',
+          runtimeSource: 'repository_hermes_cli',
+          executable: expect.stringMatching(/Hermes[\\/]venv[\\/]Scripts[\\/]hermes\.exe$/),
+          hermesHome: expect.stringMatching(/Hermes[\\/]\.hermes$/),
           pid: expect.any(Number),
-          nativeSessionId: null,
         },
-        transcript: [],
       });
       expect(ptyMocks.spawn).toHaveBeenCalledTimes(1);
       expect(ptyMocks.spawn.mock.calls[0]?.[0]).toMatch(/Hermes[\\/]venv[\\/]Scripts[\\/]hermes\.exe$/);
@@ -751,24 +752,17 @@ describe('coder routes', () => {
         'chat',
         '--cli',
         '--in', expect.any(String),
-        '--provider', 'openai-codex',
-        '-m', 'gpt-5.6-luna',
-        '-t', 'file,terminal,liquidaity',
       ]);
       expect(ptyMocks.spawn.mock.calls[0]?.[2]).toMatchObject({
         useConpty: true,
         env: expect.objectContaining({
-          LIQUIDAITY_CODER_MCP_BEARER: 'test-coder-terminal-token',
+          HERMES_HOME: expect.stringMatching(/Hermes[\\/]\.hermes$/),
         }),
       });
-      expect(mcpClientMocks.resolvePythonAgentMcpServerSpec).toHaveBeenCalledWith(
-        expect.objectContaining({
-          callerCardId: 'card_local_coder',
-          callerRuntimeMode: 'delegate',
-          grantedTools: ['cbm.search_graph'],
-          requiresExecutionContext: false,
-        }),
-      );
+      expect(ptyMocks.spawn.mock.calls[0]?.[0]).not.toMatch(/powershell/i);
+      expect(mcpClientMocks.resolvePythonAgentMcpServerSpec).not.toHaveBeenCalled();
+      expect(orchestratorMocks.requestPythonRailsJson).not.toHaveBeenCalled();
+      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }
@@ -796,7 +790,6 @@ describe('coder routes', () => {
         ok: false,
         error: 'native_conpty_start_failed',
         session: { state: 'failed' },
-        transcript: [],
       });
       expect(JSON.stringify(payload)).not.toContain('console_start_failed_502');
     } finally {
@@ -837,7 +830,20 @@ describe('coder routes', () => {
       const started = await startResponse.json();
       expect(startResponse.status, JSON.stringify(started)).toBe(200);
       const child = ptyMocks.children[childIndex];
-      child.emitData('real Hermes PTY output\r\n');
+      const outputController = new AbortController();
+      const outputResponse = await fetch(
+        `${baseUrl}/hermes/coder-terminal/sessions/${started.session.id}/pty`,
+        { signal: outputController.signal },
+      );
+      expect(outputResponse.status).toBe(200);
+      expect(outputResponse.headers.get('content-type')).toBe('application/octet-stream');
+      const reader = outputResponse.body?.getReader();
+      expect(reader).toBeDefined();
+      child.emitData('\u001b[32mreal Hermes PTY output\u001b[0m\r\n');
+      const output = await reader!.read();
+      expect(new TextDecoder().decode(output.value)).toBe(
+        '\u001b[32mreal Hermes PTY output\u001b[0m\r\n',
+      );
 
       const directResponse = await fetch(
         `${baseUrl}/hermes/coder-terminal/sessions/${started.session.id}/input`,
@@ -888,9 +894,7 @@ describe('coder routes', () => {
         `${baseUrl}/hermes/coder-terminal/sessions/${started.session.id}`,
       ).then((response) => response.json());
       expect(terminalSession.session.state).toBe('running');
-      expect(terminalSession.transcript.map((chunk: any) => chunk.data)).toEqual([
-        'real Hermes PTY output\r\n',
-      ]);
+      expect(terminalSession).not.toHaveProperty('transcript');
 
       const stopResponse = await fetch(
         `${baseUrl}/hermes/coder-terminal/sessions/${started.session.id}/stop`,
@@ -899,6 +903,7 @@ describe('coder routes', () => {
       expect(stopResponse.status).toBe(200);
       expect(child.kill).toHaveBeenCalledOnce();
       child.emitExit(0);
+      outputController.abort();
     } finally {
       await closeServer(server);
     }

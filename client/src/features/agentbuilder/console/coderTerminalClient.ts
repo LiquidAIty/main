@@ -20,15 +20,13 @@ export type ConsoleSessionInfo = {
   targetRoot: string;
   mode: 'interactive';
   state: ConsoleSessionState;
-  runtimeSource: 'saved_hermes_card';
+  runtimeSource: 'repository_hermes_cli';
   transportMode: ConsoleTransportMode;
   profile: string;
-  provider: string | null;
-  model: string | null;
+  executable: string | null;
+  hermesHome: string | null;
   interactiveSupported: true;
   pid: number | null;
-  nativeSessionId: string | null;
-  activeRunId: string | null;
   startedAt: string;
   updatedAt: string;
   stoppedAt: string | null;
@@ -36,21 +34,13 @@ export type ConsoleSessionInfo = {
   error: string | null;
 };
 
-export type ConsoleOutputChunk = {
-  seq: number;
-  stream: 'pty';
-  data: string;
-  at: string;
-};
-
 type StartSessionResult =
-  | { ok: true; session: ConsoleSessionInfo; transcript: ConsoleOutputChunk[] }
+  | { ok: true; session: ConsoleSessionInfo }
   | {
     ok: false;
     error: string;
     missing: string[];
     session?: ConsoleSessionInfo;
-    transcript?: ConsoleOutputChunk[];
   };
 
 async function postJson(base: string, path: string, body: unknown): Promise<Response> {
@@ -71,11 +61,15 @@ export type CoderTerminalClient = {
     mode?: ConsoleMode;
   }): Promise<StartSessionResult>;
   listSessions(): Promise<ConsoleSessionInfo[]>;
-  getSession(id: string): Promise<{ session: ConsoleSessionInfo; transcript: ConsoleOutputChunk[] } | null>;
+  getSession(id: string): Promise<ConsoleSessionInfo | null>;
+  streamOutput(
+    id: string,
+    onData: (data: string) => void,
+    signal: AbortSignal,
+  ): Promise<void>;
   sendInput(id: string, data: string): Promise<boolean>;
   resize(id: string, cols: number, rows: number): Promise<boolean>;
   stopSession(id: string): Promise<boolean>;
-  streamUrl(id: string): string;
 };
 
 export function createTerminalClient(base: string): CoderTerminalClient {
@@ -87,7 +81,6 @@ export function createTerminalClient(base: string): CoderTerminalClient {
       return {
         ok: true,
         session: payload.session as ConsoleSessionInfo,
-        transcript: Array.isArray(payload.transcript) ? payload.transcript as ConsoleOutputChunk[] : [],
       };
     }
     return {
@@ -95,9 +88,6 @@ export function createTerminalClient(base: string): CoderTerminalClient {
       error: String(payload?.error || `coder_terminal_start_http_${response.status}`),
       missing: Array.isArray(payload?.missing) ? payload.missing.map(String) : [],
       ...(payload?.session ? { session: payload.session as ConsoleSessionInfo } : {}),
-      ...(Array.isArray(payload?.transcript)
-        ? { transcript: payload.transcript as ConsoleOutputChunk[] }
-        : {}),
     };
   },
   async listSessions() {
@@ -116,10 +106,28 @@ export function createTerminalClient(base: string): CoderTerminalClient {
     if (!response.ok) return null;
     const payload = await response.json().catch(() => null);
     if (!payload?.ok) return null;
-    return {
-      session: payload.session as ConsoleSessionInfo,
-      transcript: (payload.transcript || []) as ConsoleOutputChunk[],
-    };
+    return payload.session as ConsoleSessionInfo;
+  },
+  async streamOutput(id, onData, signal) {
+    const response = await fetch(`${base}/sessions/${encodeURIComponent(id)}/pty`, {
+      credentials: 'include',
+      signal,
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(String(payload?.error || `coder_terminal_stream_failed_${response.status}`));
+    }
+    if (!response.body) throw new Error('coder_terminal_stream_body_missing');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const data = decoder.decode(value, { stream: true });
+      if (data) onData(data);
+    }
+    const finalData = decoder.decode();
+    if (finalData) onData(finalData);
   },
   async sendInput(id, data) {
     const response = await postJson(base, `/sessions/${encodeURIComponent(id)}/input`, { data });
@@ -147,9 +155,6 @@ export function createTerminalClient(base: string): CoderTerminalClient {
       throw new Error(String(payload?.error || `coder_terminal_stop_failed_${response.status}`));
     }
     return Boolean(payload?.stopped);
-  },
-  streamUrl(id) {
-    return `${base}/sessions/${encodeURIComponent(id)}/stream`;
   },
   };
 }

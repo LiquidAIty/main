@@ -355,21 +355,7 @@ describe('agentbuilder authoring flow', () => {
   });
 
   it('fails project load when the saved deck is missing', () => {
-    const currentDeck: DeckDocument = {
-      id: 'deck_builder',
-      name: 'Current Deck',
-      promptTemplates: [],
-      version: 3,
-      nodes: [
-        createCard('card_current_a', { kind: 'hermes', mode: 'main', profile: 'current-main' }, {
-          templateId: 'template_main_chat',
-          title: 'Current A',
-        }),
-      ],
-      edges: [],
-    };
-
-    expect(() => resolveProjectDeckLoadResult(currentDeck, null)).toThrow('deck_not_found');
+    expect(() => resolveProjectDeckLoadResult(null)).toThrow('deck_not_found');
   });
 
   it('does not add template edges to a real deck that saved with no edges', () => {
