@@ -55,18 +55,103 @@ def _values(records: list[dict[str, Any]], *keys: str) -> list[str]:
     return result
 
 
+def _all_values(records: list[dict[str, Any]], *keys: str) -> list[str]:
+    """Return every explicitly named value from native result records."""
+    result: list[str] = []
+    for record in records:
+        for key in keys:
+            value = _text(record.get(key))
+            if value:
+                result.append(value)
+    return result
+
+
+def _tabular_records(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Decode current CBM ``cols``/``rows`` results without interpreting prose."""
+
+    records: list[dict[str, Any]] = []
+
+    def append_rows(
+        columns: Any,
+        rows: Any,
+        *,
+        qualified_name_prefix: str = "",
+        file_path: str = "",
+    ) -> None:
+        if not (
+            isinstance(columns, list)
+            and all(isinstance(column, str) for column in columns)
+            and isinstance(rows, list)
+        ):
+            return
+        for row in rows:
+            if isinstance(row, dict):
+                record = dict(row)
+            elif isinstance(row, list):
+                record = {
+                    column: row[index]
+                    for index, column in enumerate(columns)
+                    if index < len(row)
+                }
+            else:
+                continue
+            name = _text(record.get("name"))
+            if (
+                qualified_name_prefix
+                and name
+                and not _text(record.get("qualified_name") or record.get("qn"))
+            ):
+                record["qualified_name"] = f"{qualified_name_prefix}.{name}"
+            if file_path and not _text(record.get("file") or record.get("file_path")):
+                record["file_path"] = file_path
+            records.append(record)
+
+    columns = payload.get("cols")
+    append_rows(columns, payload.get("rows"))
+    groups = payload.get("groups")
+    if isinstance(groups, list):
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            append_rows(
+                group.get("cols") or columns,
+                group.get("rows"),
+                qualified_name_prefix=_text(
+                    group.get("prefix")
+                    or group.get("qn_prefix")
+                    or group.get("qualified_name_prefix")
+                ),
+                file_path=_text(group.get("file") or group.get("file_path")),
+            )
+    return records
+
+
 def _extract_codegraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
+    table_records = _tabular_records(payload)
     if tool_name == "cbm.search_graph":
-        return _values(_records(payload, "results", "semantic_results"), "qualified_name"), []
+        records = [*_records(payload, "results", "semantic_results"), *table_records]
+        return _all_values(records, "qualified_name", "qn", "file_path", "file"), []
     if tool_name == "cbm.trace_path":
-        return _values(_records(payload, "callers", "callees"), "qualified_name"), []
+        records = [*_records(payload, "callers", "callees"), *table_records]
+        return _all_values(records, "qualified_name", "qn", "file_path", "file"), []
     if tool_name == "cbm.search_code":
-        return _values(_records(payload, "results"), "qualified_name"), []
+        records = [*_records(payload, "results"), *table_records]
+        raw_matches = payload.get("raw_matches")
+        if isinstance(raw_matches, dict):
+            records.extend(_tabular_records(raw_matches))
+        nodes = _all_values(records, "qualified_name", "qn", "file_path", "file")
+        files = payload.get("files")
+        if isinstance(files, list):
+            nodes.extend(_text(item) for item in files if _text(item))
+        return nodes, []
     if tool_name == "cbm.get_code_snippet":
-        qualified_name = _text(payload.get("qualified_name"))
-        return ([qualified_name] if qualified_name else []), []
+        return _all_values(
+            [payload, *table_records],
+            "qualified_name", "qn", "file_path", "file",
+        ), []
     if tool_name == "cbm.query_graph":
-        return _values(_records(payload, "rows", "results"), "qualified_name"), []
+        records = [*_records(payload, "rows", "results"), *table_records]
+        return _all_values(records, "qualified_name", "qn", "file_path", "file"), []
     if tool_name in {"cbm.list_projects", "cbm.index_status", "cbm.index_repository", "cbm.delete_project"}:
         projects = _values(_records(payload, "projects"), "name", "project")
         project = _text(payload.get("project") or payload.get("name"))

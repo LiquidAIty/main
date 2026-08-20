@@ -303,6 +303,21 @@ export default function AgentBuilder(): React.ReactElement {
   } = useAgentBuilderSelection({
     deck,
   });
+  const [transientCardInputs, setTransientCardInputs] = useState<Record<string, string>>({});
+  const standaloneTestPrompt = selectedCardId
+    ? transientCardInputs[selectedCardId] || ''
+    : '';
+  const setStandaloneTestPrompt = useCallback((value: string) => {
+    if (!selectedCardId) return;
+    setTransientCardInputs((current) => {
+      if (!value) {
+        const next = { ...current };
+        delete next[selectedCardId];
+        return next;
+      }
+      return { ...current, [selectedCardId]: value };
+    });
+  }, [selectedCardId]);
   // WorldSignals → canonical Inspector: the companion surface requests a
   // section and provides state adapters; the ONE workspace drawer below
   // renders it. No second inspector, no drawer inside the map region.
@@ -330,6 +345,23 @@ export default function AgentBuilder(): React.ReactElement {
     useState<KnowledgeSurfaceKind>('knowgraph');
   const conversationId = 'main';
   const graphAttention = useAgentBuilderGraphAttention({ projectId: activeProject });
+  const handleMagOneInstructionsProposed = useCallback((proposal: {
+    targetCardId: string;
+    instructions: string;
+  }) => {
+    const target = deck.nodes.find((card) => card.id === proposal.targetCardId);
+    if (!target || target.runtime.kind !== 'autogen' || target.runtime.mode !== 'magentic_one') {
+      setDeckStatusMessage('Mag One proposal target is not an active saved Mag One Card.');
+      return;
+    }
+    setTransientCardInputs((current) => ({
+      ...current,
+      [target.id]: proposal.instructions,
+    }));
+    setSelectedCardId(target.id);
+    setTab('Invocation');
+    setDeckStatusMessage(`${target.title} transient input is ready for review.`);
+  }, [deck.nodes, setDeckStatusMessage, setSelectedCardId, setTab]);
 
   // CodeGraph repository identity is resolved from the authoritative CBM index.
   // The canonical ready project wins over stale same-root validation indexes.
@@ -369,6 +401,7 @@ export default function AgentBuilder(): React.ReactElement {
     workspaceView,
     onUserTurnStarted: graphAttention.startAttentionScope,
     onNativeTurnEvent: graphAttention.observeNativeTurnEvent,
+    onMagOneInstructionsProposed: handleMagOneInstructionsProposed,
     onTurnFinished: graphAttention.finishAttentionScope,
   });
   const [stateLoaded, setStateLoaded] = useState(false);
@@ -543,7 +576,6 @@ export default function AgentBuilder(): React.ReactElement {
     selectedCardId,
     setDeck,
   });
-  const [standaloneTestPrompt, setStandaloneTestPrompt] = useState('');
   const [standaloneTestBusy, setStandaloneTestBusy] = useState(false);
   const [standaloneTestResult, setStandaloneTestResult] = useState<StandaloneCardTestResult | null>(null);
   const standaloneTestRequestRef = useRef<string | null>(null);
@@ -558,7 +590,6 @@ export default function AgentBuilder(): React.ReactElement {
     && !(selectedCard?.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'main');
   useEffect(() => {
     standaloneTestRequestRef.current = null;
-    setStandaloneTestPrompt('');
     setStandaloneTestBusy(false);
     setStandaloneTestResult(null);
   }, [selectedCardId]);
@@ -592,8 +623,9 @@ export default function AgentBuilder(): React.ReactElement {
         throw new Error(String(payload?.error || `standalone_card_test_http_${response.status}`));
       }
       if (standaloneTestRequestRef.current === correlationId) {
+        const status = String(result.status || (response.ok ? 'completed' : 'failed'));
         setStandaloneTestResult({
-          status: String(result.status || (response.ok ? 'completed' : 'failed')),
+          status,
           output: String(result.output || ''),
           error: result.error ? String(result.error) : null,
           toolCallCount: typeof result.toolCallCount === 'number' ? result.toolCallCount : null,
@@ -611,6 +643,13 @@ export default function AgentBuilder(): React.ReactElement {
             ? String(result.error)
             : `${selectedCard.title} run ${String(result.status || 'completed')}.`,
         );
+        if (!result.error && status === 'completed') {
+          setTransientCardInputs((current) => {
+            const next = { ...current };
+            delete next[selectedCard.id];
+            return next;
+          });
+        }
       }
     } catch (error) {
       if (standaloneTestRequestRef.current === correlationId) {
@@ -689,14 +728,14 @@ export default function AgentBuilder(): React.ReactElement {
           output: String(result.output || ''),
           error: result.error ? String(result.error) : null,
           toolCallCount: typeof result.toolCallCount === 'number' ? result.toolCallCount : null,
-          tools: Array.isArray(result.invocation.cardContext?.tools)
-            ? result.invocation.cardContext.tools.map(String)
+          tools: Array.isArray(result.invocation.idf?.enabledTools)
+            ? result.invocation.idf.enabledTools.map(String)
             : [],
-          provider: result.invocation.cardContext?.provider
-            ? String(result.invocation.cardContext.provider)
+          provider: result.invocation.idf?.provider?.provider
+            ? String(result.invocation.idf.provider.provider)
             : selectedCard.runtimeOptions?.provider || null,
-          model: result.invocation.cardContext?.providerModelId
-            ? String(result.invocation.cardContext.providerModelId)
+          model: result.invocation.idf?.provider?.providerModelId
+            ? String(result.invocation.idf.provider.providerModelId)
             : selectedCard.runtimeOptions?.modelKey || null,
           runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
           invocation: result.invocation,

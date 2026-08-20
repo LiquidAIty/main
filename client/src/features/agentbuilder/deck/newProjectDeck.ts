@@ -101,6 +101,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       constraints: [
         'Work only inside the configured project root and the assignment scope.',
         'Use Codebase Memory first for code structure, then direct-read the exact current source.',
+        'For a symbol lookup: exact symbol search -> production definition -> qualified source-body read -> direct current-source confirmation -> answer -> stop.',
         'Require approval for destructive, external, credential, provider, Git-mutation, or otherwise irreversible actions.',
         'Do not create hidden agents, use native delegate_task, control Mag One, invent results, or fall back to another runtime/provider.',
         'Use only tools granted on this saved Card. Missing authority fails honestly.',
@@ -129,7 +130,8 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       constraints: [
         'Use only the capabilities saved on this card. Do not use ordinary web search.',
         'Do not use a repository-writing terminal when operating as the planning and KnowGraph helper.',
-        'Prepare bounded Mag One input for Main; Main owns review, approval, and dispatch.',
+        'Use write_mag_one_instructions to return exact proposed transient Mag One Card input; it never saves or runs it.',
+        'Main owns review, placement in the Mag One Card input field, approval, and dispatch.',
         'Progressive research starts from sourced KnowGraph records and preserves provenance.',
         'Do not invent sources, graph writes, tool results, worker results, or Kanban activity.',
         'Your direct execution remains one real persistent saved-card session. Kanban is an execution mode on an ordinary card, not your identity.',

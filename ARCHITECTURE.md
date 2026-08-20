@@ -23,7 +23,7 @@ React/Vite Agent Builder and Chat
         └─ Kanban: stable native session, logical profile liquidaity-hermes-steward
      → official Python MCP client boundary
         → one official Python HTTP MCP host on :8765/mcp
-           ├─ Card/IDF/AGE deterministic rails
+           ├─ Card call/IDD/AGE deterministic rails
            ├─ AutoGen AssistantAgent
            ├─ AutoGen MagenticOneGroupChat
            ├─ ThinkGraph/Engraphis
@@ -59,7 +59,7 @@ The current default topology preserves:
 - Main → Magentic-One: `magentic_control`
 - explicit production-agent → Magentic-One edges: `magentic_option`
 
-AGE/ReactFlow relationships authorize who may call whom. They do not select providers, rewrite IDF, or
+AGE/ReactFlow relationships authorize who may call whom. They do not select providers, rewrite model input, or
 start runtimes.
 
 ## Hermes ownership
@@ -82,9 +82,9 @@ in its existing native `sessions.session_key` field so an ACP restart recovers t
 when Main and Coder share the repository working directory. The key is routing identity only; it is
 not a Card definition, credential, prompt, or second persistence authority.
 
-The backend injects server-owned Card, conversation, Run, and correlation identity. Hermes receives the
-exact materialized IDF plus saved-card context. No generic model call or another agent runtime hides
-behind Hermes.
+The backend injects server-owned Card, conversation, Run, and correlation identity. Hermes receives one
+Python-materialized Card call plus minimal Card identity. No generic model call or another agent runtime
+hides behind Hermes.
 
 ## AutoGen ownership
 
@@ -97,8 +97,8 @@ product. Python rails install its three packages directly from that tree and own
 - team Cards use native `MagenticOneGroupChat`.
 
 Saved Card configuration and graph edges define participants. LiquidAIty does not reconstruct private
-Task/Progress Ledgers or add a TypeScript participant classifier. Mag One receives an approved exact
-IDF through the official MCP/Card boundary; it does not consume Main's internal subagents.
+Task/Progress Ledgers or add a TypeScript participant classifier. Mag One receives approved transient
+Card input through the official MCP/Card boundary; it does not consume Main's internal subagents.
 
 The initial checked-in fork has no internal AutoGen divergence. Product authority and adaptation stay
 in `apps/python-models`; any later fork edit must be registered in
@@ -118,22 +118,26 @@ migration.
 Unknown tools, missing grants, unsupported runtimes, provider failures, and missing relationships fail
 honestly. There is no alias, provider substitution, duplicate registry, or direct-database shortcut.
 
-## IDD and exact IDF
+## IDD and transient Card calls
 
 `LiquidAIty.idd` is the one native input declaration language. It defines legal variables, types,
-constraints, tools, native operations, and output forms.
-
-For one call, Python rails materialize an exact transient Markdown IDF from saved Card context and the
-bounded values/native references selected for that communication. The Inspector-visible bytes are the
-bytes delivered to the runtime, subject only to mechanical protocol formatting. The IDF is not a
-manifest, task database, runtime router, or graph.
+constraints, tools, native operations, and output forms. The canonical one-call materialization law is
+defined only in `AGENTS.md`; this file maps component ownership without defining another format.
 
 ```text
-capability = Card grants ∩ IDD requirements ∩ IDF claims ∩ AGE relationship ∩ approval
+capability = Card grants ∩ IDD requirements ∩ current input selections ∩ AGE relationship ∩ approval
 ```
 
-Routing IDs and telemetry remain outside IDF. PostgreSQL may save an IDF revision only through the
-explicit canonical save path.
+Routing IDs and telemetry remain outside the transient call. PostgreSQL does not save transient call
+input by default.
+
+`write_mag_one_instructions` is a proposal tool, not another materializer or store. It resolves the
+one saved Mag One Card read-only and returns that Card identity with the exact proposed mission. In an
+active Agent Builder session, the existing Hermes tool-result/SSE path places the text in unsaved
+per-Card React state for the Mag One input field. Outside that UI it returns the same identity and text.
+It creates no Run, revision, hash, approval, or saved prompt and never starts AutoGen. The outer Mag One
+Card is materialized only when it is run; each saved worker Card then materializes its own task through
+the same receiving-Card path.
 
 ## Graph owners
 
@@ -172,9 +176,9 @@ writes, and run completion/failure. Answer prose and hidden reasoning are never 
 
 ## Persistence
 
-- PostgreSQL: Projects, saved Cards/revisions, provider/model references, conversations, prompt-free
-  Runs, explicit IDF revisions, and artifact metadata.
-- AGE on PostgreSQL: saved Card relationships and prompt-free execution/reference observations.
+- PostgreSQL: Projects, saved Cards/revisions, provider/model references, conversations, Runs, and
+  artifact metadata.
+- AGE on PostgreSQL: saved Card relationships and execution/reference observations.
 - Neo4j: KnowGraph.
 - Engraphis SQLite: ThinkGraph.
 - Native CBM owner: CodeGraph.
@@ -194,7 +198,7 @@ first-party command after install; it is never enabled as an install hook.
 
 Python dependency owners remain:
 
-- `apps/python-models/requirements.txt` for official MCP, deterministic Card/IDF/AGE rails, AutoGen,
+- `apps/python-models/requirements.txt` for official MCP, deterministic Card/IDD/AGE rails, AutoGen,
   and the local Engraphis integration;
 - `services/knowgraph/requirements.txt` for Graphiti/Neo4j;
 - `services/esn_rls/requirements.txt` for the separately retained ESN service boundary.
@@ -252,7 +256,7 @@ targets.
 - Complete loaded-runtime and user-visible model proof is a separate approved run.
 - Native Hermes child Run/AGE attribution has no-provider contract proof; loaded-runtime execution and
   persistence readback remain for the separately approved live session.
-- Reveal pacing, stacked 3D presentation, and IDF-consumption illumination remain incomplete.
+- Reveal pacing, stacked 3D presentation, and transient-call consumption illumination remain incomplete.
 - Engraphis semantic embeddings are deferred and must remain lazy/offline when revisited.
 - Some stable route and Card IDs retain historical words for persistence/caller compatibility; they are
   classified legacy identifiers, not active architectures.

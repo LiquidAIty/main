@@ -32,8 +32,7 @@ any inherited prompt, and any pattern you observe in surrounding code.
 
    **The ONLY system is:** saved ReactFlow agent cards and topology + ordinary card-owned Hermes
    Main/delegate/Kanban execution + native AutoGen/Mag One for connected production teams. Storage
-   authority: **PostgreSQL = saved-card state, explicit
-   saved-IDF revisions, prompt-free runs, and artifact metadata**; **AgentGraph = LiquidAIty's
+   authority: **PostgreSQL = saved-card state, Runs, and artifact metadata**; **AgentGraph = LiquidAIty's
    relationship and execution graph implemented on Apache AGE/PostgreSQL, never runtime control**;
    **KnowGraph = Python + Neo4j**; **ThinkGraph = SQL/SQLite Engraphis through bounded Python tools**;
    **CodeGraph = CBM**. Therefore any TS that ingests, extracts, chunks, plans, scores, researches,
@@ -167,7 +166,7 @@ The items below are the major deletion events. Every one "worked" before it was 
 - **2026-07-05 (later still) — one team-run entrypoint + CBM-is-not-a-gate (2 commits, ~-812 lines).**
   - **Deleted `executeDeck` + the whole mission chain.** `executeDeck` was a SECOND Mag One team-run
     path — it called the same `runCardWithContract(magentic_one card)` as `run_mag_one`, just wrapped in
-    `mission` metadata. There is ONE team-run entrypoint: `run_mag_one` (approved exact-IDF task).
+    `mission` metadata. There is ONE team-run entrypoint: `run_mag_one` (approved transient Card input).
     At that point the deck-run route was reduced to Canvas Single Assist; it was removed completely
     in the later 2026-07-24 runtime cleanup. Removed the entire dead mission + `WorkspaceHarness`
     type cluster (`MissionSpec`/`MissionRun`/`MissionDeckPatch`/`MissionRunStatus`/`DeckRunMissionMetadata`/
@@ -183,16 +182,16 @@ The items below are the major deletion events. Every one "worked" before it was 
 - **2026-07-23 through 2026-08-02 — context-system archaeology correction.**
   - Git proves that the AGE `AgentContext`, registered-query/GraphView, runtime-assignment/profile,
     claim-token, and delivered-context-manifest implementations were successive experiments, not a
-    completed IDF/IDD system. They coupled model context to caller/receiver identity and duplicated
+    completed Card/IDD input system. They coupled model context to caller/receiver identity and duplicated
     native graph/runtime state.
   - The cleanup removed substantial detours but incorrectly retained or later restored a smaller
     assignment/claim/begin/finish control core. Commit history is the record; canonical architecture
     must not describe that remainder as a protected runtime contract.
   - Do not restore `ContextPack`, `unified_context.py`, `DeliveredContextManifest`, registered-query
     registries, GraphViews, or assignment authorization merely because they once rendered model text.
-    Reuse only individually proven validation/parameterization ideas at the one IDD/IDF boundary.
-  Lesson: IDF is the exact transient assembled model-context document by default; an explicit Save IDF
-  action may preserve an immutable revision. IDD describes valid input. AgentGraph/AGE may describe
+    Reuse only individually proven validation/parameterization ideas at the one Card/IDD boundary.
+  Lesson: model input is transient by default; there is no automatic save/revision path. IDD describes
+  valid input. AgentGraph/AGE may describe
   consumption/production, but no assignment, receiver, claim, or graph write may
   authorize or fail Hermes, Mag One, or Coder.
 
@@ -250,11 +249,11 @@ The items below are the major deletion events. Every one "worked" before it was 
   "for later" and later never comes. Do not create either. If you split a file, delete the original and prove
   every piece has a live importer. If you scaffold, wire it now or don't write it.
 
-- **Do not revive GraphView or prompt-packet projection.** Native graph references may be instantiated
-  inside a transient IDF and related by prompt-free AgentGraph/AGE lineage. A separate
+- **Do not revive GraphView or prompt-packet projection.** Native graph references may be selected for
+  one transient Card call and related by AgentGraph/AGE lineage. A separate
   projection/manifest/context-pack
   authority is a second prompt system. References point to native authorities; bounded resolved data
-  enters the actual IDF only when the model call needs it.
+  enters the actual model call only when it needs the data.
 
 - **2026-07-30 — Native graph-catalog federation and fake-wrapper purge: 26 files,
   +539 / -1,935 lines before this log entry.**

@@ -167,6 +167,13 @@ requiredCallerRuntimeKind = "hermes"
 requiredCallerRuntimeMode = "main"
 
 [[toolGroups.tools]]
+name = "write_mag_one_instructions"
+displayName = "Prepare Mag One input"
+description = "Return exact proposed transient input for the Mag One Card. Persist nothing and start no runtime."
+parameters = ["instructions"]
+required = ["instructions"]
+
+[[toolGroups.tools]]
 name = "canvas.inspect"
 displayName = "Inspect canvas"
 description = "Read a bounded saved card and wire view."

@@ -45,6 +45,75 @@ def test_cbm_search_graph_emits_only_exact_returned_ids_and_keeps_result_unchang
     assert result.model_dump() == before
 
 
+def test_current_cbm_tabular_results_emit_exact_symbol_and_file_references() -> None:
+    result = CallToolResult(
+        content=[TextContent(type="text", text="current native CBM result")],
+        structuredContent={
+            "cols": ["qn", "label", "file", "lines"],
+            "rows": [[
+                "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
+                "Function",
+                "apps/python-models/app/python_models/idf.py",
+                "37-78",
+            ]],
+        },
+    )
+    before = copy.deepcopy(result.model_dump())
+
+    event = native_attention.build_native_attention_event(
+        "cbm.search_code",
+        result,
+        {
+            "projectId": "project-one",
+            "deckId": "deck-one",
+            "conversationId": "conversation-one",
+            "parentRunId": "coder-run-one",
+            "mainCardId": "card_local_coder",
+        },
+    )
+
+    assert event is not None
+    assert event["nativeNodeIds"] == [
+        "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
+        "apps/python-models/app/python_models/idf.py",
+    ]
+    assert event["runId"] == "coder-run-one"
+    assert event["cardId"] == "card_local_coder"
+    assert result.model_dump() == before
+
+
+def test_current_cbm_grouped_and_files_results_preserve_only_returned_objects() -> None:
+    grouped = CallToolResult(
+        content=[],
+        structuredContent={
+            "cols": ["name", "label", "lines"],
+            "groups": [{
+                "prefix": "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf",
+                "file": "apps/python-models/app/python_models/idf.py",
+                "rows": [["materialize_idf", "Function", "37-78"]],
+            }],
+        },
+    )
+    grouped_event = native_attention.build_native_attention_event(
+        "cbm.search_graph", grouped, None,
+    )
+    assert grouped_event is not None
+    assert grouped_event["nativeNodeIds"] == [
+        "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
+        "apps/python-models/app/python_models/idf.py",
+    ]
+
+    files_event = native_attention.build_native_attention_event(
+        "cbm.search_code",
+        _result({"files": ["apps/python-models/app/python_models/idf.py"]}),
+        None,
+    )
+    assert files_event is not None
+    assert files_event["nativeNodeIds"] == [
+        "apps/python-models/app/python_models/idf.py",
+    ]
+
+
 def test_alias_is_canonical_and_unknown_identity_stays_null() -> None:
     event = native_attention.build_native_attention_event(
         "mcp__main_runtime_abcd__cbm_search_graph",

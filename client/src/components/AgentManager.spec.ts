@@ -117,6 +117,27 @@ describe('AgentManager active builder config', () => {
     expect(pageSource).toContain('invocation: result.invocation || null');
   });
 
+  it('places the exact Mag One proposal in unsaved per-Card input state', () => {
+    const pageSource = readFileSync(
+      path.resolve(process.cwd(), 'client/src/pages/agentbuilder.tsx'),
+      'utf8',
+    );
+    const chatSource = readFileSync(
+      path.resolve(
+        process.cwd(),
+        'client/src/features/agentbuilder/console/useAgentBuilderMainChat.ts',
+      ),
+      'utf8',
+    );
+
+    expect(chatSource).toContain("event.toolName === 'write_mag_one_instructions'");
+    expect(chatSource).toContain('onMagOneInstructionsProposed');
+    expect(pageSource).toContain('const [transientCardInputs, setTransientCardInputs]');
+    expect(pageSource).toContain('[target.id]: proposal.instructions');
+    expect(pageSource).toContain('onMagOneInstructionsProposed: handleMagOneInstructionsProposed');
+    expect(pageSource).not.toContain('persistTransientCardInputs');
+  });
+
   it('keeps the card identity fields without adding another persistence path', () => {
     const filePath = path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx');
     const source = readFileSync(filePath, 'utf8');

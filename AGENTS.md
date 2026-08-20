@@ -574,40 +574,48 @@ knowledge movement.
 
 ## IDF and IDD law
 
-IDF is the actual transient assembled model-context document for one communication. It contains the
-concrete saved-card context and the instantiated dynamic prompt/query/script/reference content selected
-for that call, including bounded resolved native data when required. Python rails materializes it in
-memory; the exact Inspector-visible document—not a reconstructed receipt, envelope, manifest, or
-telemetry record—is transported to the actual model/runtime call and discarded afterward. Runtime
-adapters may format it mechanically; they must not independently invent conflicting context semantics.
+There is exactly one IDF meaning and implementation:
 
-IDD is the Input Data Dictionary: the one literal repo-root `LiquidAIty.idd` native declaration
-language for constructing, validating, rendering, and editing structured input where structure is
-useful. It may declare named variables, types/defaults/constraints, tools, native operations, and
-output forms. Python rails interprets that file mechanically; TypeScript and Python must not contain a
-copied competing dictionary. An IDF instantiates only the declarations used by that communication;
-the entire IDD is not appended to the model payload. IDF remains
-loose Markdown for prompts, current input, search terms, handoffs, summaries, and ordinary context;
-only explicitly cataloged bracketed native-language islands are typed.
+```text
+saved Card stable fields
++ current transient dynamic input
++ deliberately selected rich data, native references, and images
++ effective granted tools
+= exact transient model/framework request
+```
 
-Verified history matters here. Git archaeology found no completed historical PostgreSQL IDF assembler
-or shared model-consumer path to restore. The July `ContextPack`, `unified_context.py` /
-`DeliveredContextManifest`, AGE `AgentContext`, and registered-query subsystems were different,
-assignment-coupled or duplicate experiments. The broader IDF/IDD law entered canonical docs in commit
-`fe6daa9d` on 2026-08-10. The old TypeScript `toolInputDataDictionary.ts` name was removed. Live MCP and
-private Python registry contracts now feed the literal IDD mechanically; `toolCatalogProjection.ts`
-only indexes/searches the resulting IDD records and owns no vocabulary or semantic metadata. The IDD,
-transient Markdown assembler, relational Card domain, Inspector preview, Hermes transport, and AutoGen
-equality guard are CURRENT. General named-variable declaration/instantiation, typed SQL/Cypher/script
-execution, selected live-schema
-materialization into each IDF, the full editor, and additional AgentGraph/AGE execution observation
-remain TARGET / INCOMPLETE.
+A saved Card becomes the IDF only when its dynamic input is filled and the Card is run.
+`apps/python-models/app/python_models/idf.py::materialize_idf` is the only materializer. It produces the
+exact Inspector-visible fields consumed once by Hermes or AutoGen/Mag One: system instructions,
+dynamic message, runtime/provider/model/options, effective MCP/native tools, skills/toolsets,
+connections, selected context/references/images, and requested output requirements. The object exists
+in memory for one call and is discarded.
+
+Card identity, revision identity, sender/target routing, Project/conversation/Run/correlation identity,
+AGE data, telemetry, receipts, hashes, approval state, and runtime lineage stay outside the IDF. No
+adapter may rebuild, wrap, serialize, validate, hash, save, rematerialize, or reinterpret it. Adapters
+may only project its existing fields mechanically into the native Hermes or AutoGen API shape. There is
+no saved-IDF library, revision, approval copy, envelope, manifest, or alternate TypeScript assembler.
+
+Cards remain one product concept. Their explicit Hermes or AutoGen runtime binding is saved Card
+configuration, not a separate Card type or a second runtime payload. A sending user or agent supplies
+only dynamic input and selected references; the receiving Card owns materialization. Mag One workers
+receive their dynamic task through the saved-worker Card doorway, so each worker Card materializes its
+own one-call IDF.
+
+IDD is the Input Data Dictionary: the one literal repo-root `LiquidAIty.idd` declaration language for
+constructing and editing structured input where structure is useful. It may declare named variables,
+types/defaults/constraints, tools, native operations, and output forms. Python rails interprets that
+file mechanically; TypeScript and Python must not contain a copied competing dictionary. Only the
+declarations selected for the current communication enter its IDF; the whole IDD never enters a model
+request. Ordinary prompt prose stays Markdown, while explicitly cataloged native-language islands may
+be typed.
 
 Authority is:
 
 ```text
 saved card capability ceiling
-∩ run/input-scoped instantiated values and references
+∩ current input and deliberately selected values/references
 ∩ IDD operation requirements
 ∩ user approval where applicable
 ```
@@ -640,9 +648,9 @@ models, grants, runtimes, or authorities fail honestly. No model/provider/tool f
 
 The underlying Project graphs remain durable in their native owners. A caller selects bounded
 references/context for one invocation; that selection and the materialized IDF remain transient.
-PostgreSQL persists stable Card state, prompt-free run status, and explicit artifact metadata. AGE owns
-saved Card relationships and may observe prompt-free execution identities. Neither replaces saved-card
-configuration or native runtime truth.
+PostgreSQL persists stable Card state, Run status, and explicit artifact metadata. AGE owns saved Card
+relationships and may observe execution identities. Neither replaces saved-card configuration or
+native runtime truth.
 
 ---
 

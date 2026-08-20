@@ -24,11 +24,11 @@ LiquidAIty maintains this fork as the native Python execution engine for saved A
 
 - saved single-assistant Cards project into native `AssistantAgent` configuration;
 - the saved Mag One Card projects into native `MagenticOneGroupChat` configuration;
-- Python rails resolves saved Card, exact IDF, IDD, tool-grant, provider/model, and AGE-edge authority;
+- Python rails resolves saved Card, transient call input, IDD, tool-grant, provider/model, and AGE-edge authority;
 - AutoGen owns its native agent/team lifecycle and returns native results/events.
 
 AutoGen must not query ReactFlow or product PostgreSQL/AGE authority, reconstruct Cards, reinterpret
-IDF, or expose private Magentic-One ledgers as product state.
+Card-call format, or expose private Magentic-One ledgers as product state.
 
 `apps/python-models/requirements.txt` installs all three packages from this checked-in tree. Wheel
 fallbacks and runtime `sys.path` substitution are forbidden.

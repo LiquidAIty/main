@@ -234,19 +234,17 @@ class TestRunAssistantAgent:
 
         monkeypatch.setattr(cp, "_backend_json", backend)
 
-        asyncio.run(cp.card_run_assistant_agent({
-            "projectId": "p",
-            "deckId": "deck_builder",
-            "cardId": "card_research_agent",
-            "correlationId": "search-run-failed",
-            "conversationId": "conv-1",
-            "originatingAgentId": "card_hermes_steward",
-            "originatingRunId": "main-turn-1",
-            "input": "Find one primary source.",
-        }))
-
-        # The Python saved-card runner is the one result writer. The doorway
-        # never copies or reinterprets the backend result.
+        with pytest.raises(cp.ControlPlaneError, match="^configured_card_failed$"):
+            asyncio.run(cp.card_run_assistant_agent({
+                "projectId": "p",
+                "deckId": "deck_builder",
+                "cardId": "card_research_agent",
+                "correlationId": "search-run-failed",
+                "conversationId": "conv-1",
+                "originatingAgentId": "card_hermes_steward",
+                "originatingRunId": "main-turn-1",
+                "input": "Find one primary source.",
+            }))
 
     def test_plain_standalone_call_uses_same_doorway(self, monkeypatch):
         def backend(_method, _path, payload=None):

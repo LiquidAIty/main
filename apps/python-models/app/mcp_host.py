@@ -1808,6 +1808,21 @@ async def _materialize_complete_catalog() -> list[Tool]:
             },
         ),
         Tool(
+            name="write_mag_one_instructions",
+            description=(
+                "Return exact proposed transient input for the Mag One Card so Main can review "
+                "and place it in the Card input field. This tool persists nothing and starts no runtime."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "instructions": {"type": "string", "minLength": 1},
+                },
+                "required": ["instructions"],
+                "additionalProperties": False,
+            },
+        ),
+        Tool(
             name="canvas.inspect",
             description=(
                 "Bounded saved canvas/deck view: cards (id, title, runtime binding/type, tools) and wires. "
@@ -2295,6 +2310,9 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     },
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "input", "conversationId"},
+    "write_mag_one_instructions": {
+        "projectId", "deckId", "conversationId", "instructions",
+    },
     "canvas.inspect": {"projectId", "deckId"},
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
@@ -2470,6 +2488,26 @@ async def _dispatch_tool(
                 "input": str(args.get("input") or ""),
             },
         )
+    if name == "write_mag_one_instructions":
+        instructions = str(args.get("instructions") or "")
+        if not instructions.strip():
+            return [TextContent(type="text", text=json.dumps({
+                "ok": False,
+                "error": "instructions_required",
+            }))]
+        from app.python_models.card_domain import resolve_magentic_card_identity
+
+        target = resolve_magentic_card_identity(
+            str(args.get("projectId") or ""),
+            str(args.get("deckId") or ""),
+        )
+        return [TextContent(type="text", text=json.dumps({
+            "ok": True,
+            **target,
+            "instructions": instructions,
+            "persisted": False,
+            "started": False,
+        }))]
 
     if name == "main.context":
         if context is None:

@@ -130,54 +130,50 @@ const orchestratorMocks = vi.hoisted(() => ({
       const mainChat = endpoint === '/domain/main/prepare';
       const cardId = mainChat ? 'card_main_chat' : body.cardId;
       const coderCard = cardId === 'card_local_coder';
+      const runtime = cardId === 'card_main_chat'
+        ? { kind: 'hermes', mode: 'main', profile: 'default' }
+        : { kind: 'hermes', mode: 'delegate', profile: coderCard ? 'coder' : 'worker' };
+      const provider = {
+        accessMode: 'chatgpt-account', provider: 'openai',
+        modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
+      };
+      const callConfiguration = {
+        systemPrompt: coderCard ? 'Saved Coder prompt' : 'Saved prompt',
+        runtime,
+        provider,
+        runtimeOptions: {},
+        enabledTools: coderCard ? ['cbm.search_graph'] : [],
+        nativeTools: coderCard ? ['terminal'] : [],
+        skills: coderCard ? ['repository-coder'] : [],
+        toolsets: coderCard ? ['file', 'terminal'] : [],
+        mcpConnectionIds: [],
+      };
       return {
         projectId: body.projectId,
         deckId: body.deckId,
         cardRevisionId: `revision:${cardId}`,
         ...(mainChat ? { message: String(body.message || '') } : {}),
         runtimeOwner: 'hermes',
-        cardContext: {
+        cardIdentity: {
           cardId,
           title: cardId === 'card_main_chat' ? 'Main' : coderCard ? 'Coder' : 'Worker',
-          runtime: cardId === 'card_main_chat'
-            ? { kind: 'hermes', mode: 'main', profile: 'default' }
-            : { kind: 'hermes', mode: 'delegate', profile: coderCard ? 'coder' : 'worker' },
-          provider: 'openai',
-          modelKey: 'gpt-5.6-luna',
-          providerModelId: 'gpt-5.6-luna',
-          accessMode: 'chatgpt-account',
-          tools: coderCard ? ['cbm.search_graph'] : [],
-          nativeTools: coderCard ? ['terminal'] : [],
-          skills: coderCard ? ['repository-coder'] : [],
-          toolsets: coderCard ? ['file', 'terminal'] : [],
-          mcpConnectionIds: [],
         },
-        idf: {
-          systemPrompt: coderCard ? 'Saved Coder prompt' : 'Saved prompt',
-          message: String(mainChat ? body.message || '' : body.assignment || ''),
-          runtime: cardId === 'card_main_chat'
-            ? { kind: 'hermes', mode: 'main', profile: 'default' }
-            : { kind: 'hermes', mode: 'delegate', profile: coderCard ? 'coder' : 'worker' },
-          provider: {
-            accessMode: 'chatgpt-account', provider: 'openai',
-            modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
-          },
-          runtimeOptions: {},
-          enabledTools: coderCard ? ['cbm.search_graph'] : [],
-          toolDefinitions: [],
-          nativeTools: coderCard ? ['terminal'] : [],
-          skills: coderCard ? ['repository-coder'] : [],
-          toolsets: coderCard ? ['file', 'terminal'] : [],
-          mcpConnectionIds: [],
-          nativeReferences: [],
-          images: [],
-        },
+        ...(mainChat && !body.message
+          ? { sessionProfile: callConfiguration }
+          : { idf: {
+              ...callConfiguration,
+              message: String(mainChat ? body.message || '' : body.assignment || ''),
+              toolDefinitions: [],
+              nativeReferences: [],
+              images: [],
+            } }),
       };
     }
     if (endpoint === '/domain/runs/begin' || endpoint === '/domain/main/runs/begin') {
       const mainChat = endpoint === '/domain/main/runs/begin';
-      const autoKanban = body.cardId === 'card_hermes_steward';
-      const coderCard = body.cardId === 'card_local_coder';
+      const cardId = mainChat ? 'card_main_chat' : body.cardId;
+      const autoKanban = cardId === 'card_hermes_steward';
+      const coderCard = cardId === 'card_local_coder';
       return {
         runId: body.runId,
         cardRevisionId: body.cardRevisionId,
@@ -186,7 +182,7 @@ const orchestratorMocks = vi.hoisted(() => ({
           idf: {
             systemPrompt: coderCard ? 'Saved Coder prompt' : 'Saved prompt',
             message: String(mainChat ? body.message || '' : body.assignment || ''),
-            runtime: body.cardId === 'card_main_chat'
+            runtime: cardId === 'card_main_chat'
               ? { kind: 'hermes', mode: 'main', profile: 'default' }
               : coderCard
                 ? { kind: 'hermes', mode: 'delegate', profile: 'coder' }
@@ -205,7 +201,7 @@ const orchestratorMocks = vi.hoisted(() => ({
             nativeReferences: [],
             images: [],
           },
-          delegationTargets: body.cardId === 'card_main_chat' ? [{
+          delegationTargets: cardId === 'card_main_chat' ? [{
             cardId: 'card_local_coder',
             title: 'Coder',
             runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
@@ -220,23 +216,9 @@ const orchestratorMocks = vi.hoisted(() => ({
             toolsets: ['terminal'],
             mcpConnectionIds: [],
           }] : [],
-          cardContext: {
-            cardId: body.cardId,
-            title: body.cardId === 'card_main_chat' ? 'Main' : coderCard ? 'Coder' : 'Hermes steward',
-            runtime: body.cardId === 'card_main_chat'
-              ? { kind: 'hermes', mode: 'main', profile: 'default' }
-              : coderCard
-                ? { kind: 'hermes', mode: 'delegate', profile: 'coder' }
-                : { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
-            provider: 'openai',
-            modelKey: 'gpt-5.6-luna',
-            providerModelId: 'gpt-5.6-luna',
-            accessMode: 'chatgpt-account',
-            tools: autoKanban ? ['graphiti.search_nodes'] : coderCard ? ['cbm.search_graph'] : [],
-            nativeTools: autoKanban ? ['memory'] : [],
-            skills: autoKanban ? ['documentation'] : [],
-            toolsets: coderCard ? ['file', 'terminal'] : [],
-            mcpConnectionIds: [],
+          cardIdentity: {
+            cardId,
+            title: cardId === 'card_main_chat' ? 'Main' : coderCard ? 'Coder' : 'Hermes steward',
           },
         },
       };
@@ -627,6 +609,104 @@ describe('coder routes', () => {
           runtimeOwner: 'hermes',
           output: 'Real assistant reply.',
         },
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('cancels only the disconnected configured Hermes turn, finalizes once, and ignores late completion', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    let resolveTurn: (value: any) => void = () => undefined;
+    const done = new Promise<any>((resolve) => {
+      resolveTurn = resolve;
+    });
+    const cancel = vi.fn();
+    const otherCancel = vi.fn();
+    chatSessionMocks.startHermesTurn.mockResolvedValueOnce({
+      done,
+      cancel,
+      answer: vi.fn(),
+      resolved: {
+        cardId: 'card_local_coder',
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        providerModelId: 'gpt-5.6-luna',
+      },
+    });
+    chatSessionMocks.startHermesTurn.mockResolvedValueOnce({
+      done: Promise.resolve({
+        finalText: 'other card completed',
+        usage: chatSessionMocks.usage,
+        transport: {},
+      }),
+      cancel: otherCancel,
+      answer: vi.fn(),
+      resolved: {
+        cardId: 'card_hermes_steward',
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        providerModelId: 'gpt-5.6-luna',
+      },
+    });
+    const controller = new AbortController();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const request = fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'card_local_coder',
+          correlationId: 'corr-coder-cancelled',
+          conversationId: 'main',
+          input: 'Inspect one symbol.',
+          action: 'execute',
+        }),
+      }).catch((error) => error);
+      await vi.waitFor(() => expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1));
+      const otherResponse = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'card_hermes_steward',
+          correlationId: 'corr-helper-completed',
+          conversationId: 'helper',
+          input: 'Prepare one bounded note.',
+          action: 'execute',
+        }),
+      });
+      expect(otherResponse.status).toBe(200);
+      controller.abort();
+      await request;
+      await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
+      expect(otherCancel).not.toHaveBeenCalled();
+      await vi.waitFor(() => {
+        const finishCalls = orchestratorMocks.requestPythonRailsJson.mock.calls
+          .filter(([endpoint]) => endpoint === '/domain/runs/finish')
+          .map(([, init]) => JSON.parse(String(init?.body || '{}')))
+          .filter((body) => body.runId === 'corr-coder-cancelled');
+        expect(finishCalls).toEqual([{
+          runId: 'corr-coder-cancelled',
+          state: 'cancelled',
+        }]);
+      });
+      resolveTurn({
+        finalText: 'late coder completion',
+        usage: chatSessionMocks.usage,
+        transport: {},
+      });
+      await vi.waitFor(() => {
+        const finishCalls = orchestratorMocks.requestPythonRailsJson.mock.calls
+          .filter(([endpoint]) => endpoint === '/domain/runs/finish')
+          .map(([, init]) => JSON.parse(String(init?.body || '{}')))
+          .filter((body) => body.runId === 'corr-coder-cancelled');
+        expect(finishCalls).toHaveLength(1);
+        expect(finishCalls[0]?.state).toBe('cancelled');
       });
     } finally {
       await closeServer(server);
@@ -1155,9 +1235,7 @@ describe('coder routes', () => {
     });
 
     it('does not call the model when Python rails cannot begin the run', async () => {
-      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
       orchestratorMocks.requestPythonRailsJson
-        .mockImplementationOnce(railsImplementation)
         .mockRejectedValueOnce(new Error('database unavailable'));
       chatSessionMocks.startHermesTurn.mockClear();
       const { server, baseUrl } = await createApiServer();
@@ -1182,7 +1260,6 @@ describe('coder routes', () => {
     it('withholds the done event when Python run completion fails', async () => {
       const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
       orchestratorMocks.requestPythonRailsJson
-        .mockImplementationOnce(railsImplementation)
         .mockImplementationOnce(railsImplementation)
         .mockRejectedValueOnce(new Error('write failed'));
       const { server, baseUrl } = await createApiServer();

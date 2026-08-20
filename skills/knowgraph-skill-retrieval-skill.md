@@ -8,7 +8,7 @@
 
 ## Vector Summary
 
-Retrieve relevant reusable learning from Neo4j/SkillGraph for actual IDF assembly and active CoderPacket
+Retrieve relevant reusable learning from Neo4j/SkillGraph for actual Card-call assembly and active CoderPacket
 creation.
 
 ## Procedure
@@ -17,7 +17,7 @@ creation.
 2. Match skills using user intent, current `PLAN.md`, active prompt, subsystem, CBM nodes, and
    guardrails.
 3. Retrieve relevant procedures, failures, proof rules, and query patterns.
-4. Feed selected relevant learning into the actual IDF or active CoderPacket as appropriate.
+4. Feed selected relevant learning into the actual transient Card call or active CoderPacket as appropriate.
 5. Keep retrieval bounded and report warnings honestly.
 
 ## Guardrails

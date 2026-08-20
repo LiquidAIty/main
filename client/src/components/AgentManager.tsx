@@ -221,7 +221,6 @@ export type StandaloneCardTestResult = {
   runtimeLabel?: string | null;
   invocation?: {
     ephemeral: boolean;
-    assignment: string;
     cardRevisionId: string;
     cardRevision: number;
     cardRevisionSha256: string;
@@ -241,7 +240,7 @@ export type StandaloneCardTestResult = {
       nativeReferences: Array<Record<string, unknown>>;
       images: Array<Record<string, unknown>>;
     };
-    cardContext: Record<string, unknown>;
+    cardIdentity: { cardId: string; title?: string };
   } | null;
   receipt?: Record<string, unknown> | null;
 };

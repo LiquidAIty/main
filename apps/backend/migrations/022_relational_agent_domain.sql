@@ -170,7 +170,7 @@ CREATE TABLE IF NOT EXISTS ag_catalog.autogen_card_facets (
   max_turns INTEGER CHECK (max_turns IS NULL OR max_turns > 0)
 );
 
--- Prompt-free run status only. Assignment/delegation and parent/child identity
+-- Input-free run status only. Assignment/delegation and parent/child identity
 -- are AGE relationships, not relational columns.
 CREATE TABLE IF NOT EXISTS ag_catalog.agent_runs (
   run_id TEXT PRIMARY KEY,

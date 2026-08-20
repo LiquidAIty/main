@@ -357,4 +357,6 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         raise
 
+    if response.get("ok") is False:
+        raise ControlPlaneError(str(response.get("error") or "configured_card_run_failed"))
     return response

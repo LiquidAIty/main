@@ -7,9 +7,8 @@ from app.python_models.orchestration_contracts import (
 
 def _session() -> ProjectSession:
     return ProjectSession(
-        sessionId="s", projectId="p", turnId="t", route="r",
-        modelProvider="openrouter", modelKey="deepseek/deepseek-v4-flash-0731",
-        providerModelId="deepseek/deepseek-v4-flash-0731", startedAt="now",
+        sessionId="s", projectId="p", deckId="d", cardId="c",
+        turnId="t", route="r", startedAt="now",
     )
 
 

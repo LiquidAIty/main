@@ -17,7 +17,9 @@ from psycopg.rows import dict_row
 
 from app.python_models.idd import (
     IddValidationError,
+    load_input_data_dictionary,
     materialize_tool_catalog,
+    validate_record,
 )
 from app.python_models.idf import materialize_idf
 from app.python_models.postgres import connect_postgres
@@ -1313,25 +1315,29 @@ def _prepare_invocation(
             raise CardDomainError("coder_write_mode_invalid")
         runtime_options["writeMode"] = write_mode
     direct_subagents = _direct_subagents(card_id, cards, loaded["deck"]["edges"])
-    card_context = {
-        "cardId": card_id, "title": card["title"], "prompt": common_prompt,
-        "runtime": runtime, "accessMode": str(options.get("accessMode") or ""),
-        "provider": provider,
-        "modelKey": model_key,
-        "providerModelId": provider_model_id,
-        "tools": requested_tools,
+    card_identity = {"cardId": card_id, "title": card["title"]}
+    call_config = {
+        "systemPrompt": common_prompt,
+        "runtime": runtime,
+        "provider": {
+            "accessMode": str(options.get("accessMode") or ""),
+            "provider": provider,
+            "modelKey": model_key,
+            "providerModelId": provider_model_id,
+        },
+        "runtimeOptions": runtime_options,
+        "enabledTools": requested_tools,
         "nativeTools": _string_list(options.get("nativeTools"), "native_tools"),
         "skills": _string_list(options.get("skills"), "skills"),
         "toolsets": _string_list(options.get("toolsets"), "toolsets"),
         "mcpConnectionIds": _string_list(options.get("mcpConnectionIds"), "mcp_connection_ids"),
-        "runtimeOptions": runtime_options,
     }
     try:
         catalog = materialize_tool_catalog(tool_manifest())
     except IddValidationError as error:
         raise CardDomainError(str(error)) from error
     by_id = {item["canonicalId"]: item for item in catalog}
-    effective_tools = list(card_context["tools"])
+    effective_tools = list(call_config["enabledTools"])
     unknown_tools = [name for name in effective_tools if name not in by_id]
     if unknown_tools:
         raise CardDomainError(f"configured_tool_unknown:{unknown_tools[0]}")
@@ -1357,10 +1363,9 @@ def _prepare_invocation(
             payload.get("outputRequirements") or card.get("outputContract") or ""
         ),
         "assignment": assignment,
-        "cardContext": card_context,
+        "cardIdentity": card_identity,
         "delegationTargets": direct_subagents,
-        "_systemPrompt": system_text,
-        "_enabledTools": effective_tools,
+        "_callConfig": call_config,
         "_toolDefinitions": tool_definitions if include_tool_definitions else [],
     }
 
@@ -1368,32 +1373,25 @@ def _prepare_invocation(
 def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     prepared = _prepare_invocation(payload)
     output_requirements = prepared.pop("_outputRequirements")
-    system_text = prepared.pop("_systemPrompt")
-    assignment = prepared["assignment"]
+    call_config = prepared.pop("_callConfig")
+    assignment = prepared.pop("assignment")
     tool_definitions = prepared.pop("_toolDefinitions")
-    effective_tools = prepared.pop("_enabledTools")
     references = _normalized_native_references(payload.get("nativeReferences"))
-    context = prepared["cardContext"]
     images = payload.get("images") or []
     if not isinstance(images, list) or any(not isinstance(item, dict) for item in images):
         raise CardDomainError("images_invalid")
     idf = materialize_idf(
-        system_prompt=system_text,
+        system_prompt=call_config["systemPrompt"],
         dynamic_input=assignment,
-        runtime=context["runtime"],
-        provider={
-            "accessMode": context["accessMode"],
-            "provider": context["provider"],
-            "modelKey": context["modelKey"],
-            "providerModelId": context["providerModelId"],
-        },
-        runtime_options=context["runtimeOptions"],
-        enabled_tools=effective_tools,
+        runtime=call_config["runtime"],
+        provider=call_config["provider"],
+        runtime_options=call_config["runtimeOptions"],
+        enabled_tools=call_config["enabledTools"],
         tool_definitions=tool_definitions,
-        native_tools=context["nativeTools"],
-        skills=context["skills"],
-        toolsets=context["toolsets"],
-        mcp_connection_ids=context["mcpConnectionIds"],
+        native_tools=call_config["nativeTools"],
+        skills=call_config["skills"],
+        toolsets=call_config["toolsets"],
+        mcp_connection_ids=call_config["mcpConnectionIds"],
         context_markdown=str(payload.get("contextMarkdown") or ""),
         output_requirements=output_requirements,
         native_references=references,
@@ -1418,42 +1416,47 @@ def prepare_main_chat(payload: dict[str, Any]) -> dict[str, Any]:
     if len(main_cards) != 1:
         raise CardDomainError("main_card_identity_ambiguous")
     message = str(payload.get("message") or "")
+    if message:
+        return materialize_invocation({
+            **payload,
+            "projectId": loaded["projectId"],
+            "deckId": deck_id,
+            "cardId": main_cards[0]["id"],
+            "assignment": message,
+        })
     prepared = _prepare_invocation({
         **payload,
         "projectId": loaded["projectId"],
         "deckId": deck_id,
         "cardId": main_cards[0]["id"],
-        "assignment": message,
+        "assignment": "",
     }, require_assignment=False, include_tool_definitions=True)
     prepared.pop("_outputRequirements", None)
     prepared.pop("assignment", None)
-    if not message:
-        prepared.pop("_systemPrompt", None)
-        prepared.pop("_enabledTools", None)
-        prepared.pop("_toolDefinitions", None)
-        return prepared
-    idf = materialize_idf(
-        system_prompt=prepared.pop("_systemPrompt"),
-        dynamic_input=message,
-        runtime=prepared["cardContext"]["runtime"],
-        provider={
-            "accessMode": prepared["cardContext"]["accessMode"],
-            "provider": prepared["cardContext"]["provider"],
-            "modelKey": prepared["cardContext"]["modelKey"],
-            "providerModelId": prepared["cardContext"]["providerModelId"],
-        },
-        runtime_options=prepared["cardContext"]["runtimeOptions"],
-        enabled_tools=prepared.pop("_enabledTools"),
-        tool_definitions=prepared.pop("_toolDefinitions"),
-        native_tools=prepared["cardContext"]["nativeTools"],
-        skills=prepared["cardContext"]["skills"],
-        toolsets=prepared["cardContext"]["toolsets"],
-        mcp_connection_ids=prepared["cardContext"]["mcpConnectionIds"],
+    call_config = prepared.pop("_callConfig")
+    prepared.pop("_toolDefinitions")
+    return {**prepared, "sessionProfile": call_config}
+
+
+def resolve_magentic_card_identity(project_ref: str, deck_id: str) -> dict[str, str]:
+    """Resolve the one saved Mag One Card without materializing or running it."""
+    loaded = _load_deck_internal(
+        _required_text(project_ref, "project_id"),
+        _required_text(deck_id, "deck_id"),
     )
+    targets = [
+        card for card in loaded["deck"]["nodes"]
+        if _card_enabled(card)
+        and _card_runtime(card) == {"kind": "autogen", "mode": "magentic_one"}
+    ]
+    if len(targets) != 1:
+        raise CardDomainError("magentic_card_identity_ambiguous")
+    target = targets[0]
     return {
-        **prepared,
-        "message": message,
-        "idf": idf.model_dump(),
+        "projectId": str(loaded["projectId"]),
+        "deckId": deck_id,
+        "targetCardId": str(target["id"]),
+        "targetCardTitle": str(target.get("title") or "Mag One"),
     }
 
 
@@ -1563,7 +1566,9 @@ def _insert_run(
     run_id: str,
     correlation_id: str,
 ) -> None:
-    context = prepared["cardContext"]
+    idf = prepared["idf"]
+    runtime = idf["runtime"]
+    provider = idf["provider"]
     with connect_postgres() as connection, connection.cursor() as cursor:
         cursor.execute(
             """
@@ -1576,10 +1581,10 @@ def _insert_run(
             """,
             (
                 run_id, prepared["projectId"], prepared["deckId"],
-                prepared["cardRevisionId"], context["runtime"]["kind"],
-                context["runtime"]["mode"], context.get("provider"),
-                context.get("modelKey"), context.get("providerModelId"),
-                context.get("accessMode"), correlation_id,
+                prepared["cardRevisionId"], runtime["kind"],
+                runtime["mode"], provider.get("provider"),
+                provider.get("modelKey"), provider.get("providerModelId"),
+                provider.get("accessMode"), correlation_id,
             ),
         )
 
@@ -1599,7 +1604,6 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
         run_id=run_id,
         correlation_id=correlation_id,
     )
-    context = prepared["cardContext"]
     return {
         **prepared,
         "runId": run_id,
@@ -1607,10 +1611,8 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
         "telemetryWritten": telemetry_written,
         "nativeRuntimeRequest": None,
         "hermesTransport": {
-            "profile": context["runtime"].get("profile"),
-            "mode": context["runtime"]["mode"],
             "idf": prepared["idf"],
-            "cardContext": context,
+            "cardIdentity": prepared["cardIdentity"],
             "delegationTargets": prepared.get("delegationTargets") or [],
         },
     }
@@ -1622,7 +1624,7 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
     prepared = prepare_run_invocation(payload)
     run_id = _required_text(payload.get("runId"), "run_id")
     correlation_id = _required_text(payload.get("correlationId"), "correlation_id")
-    context = prepared["cardContext"]
+    card_identity = prepared["cardIdentity"]
     owner = prepared["runtimeOwner"]
     native_runtime_request = None
     if owner in {"autogen", "mag_one"}:
@@ -1633,12 +1635,12 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
             for edge in loaded["deck"]["edges"]:
                 if (
                     edge["edgeType"] != "magentic_option"
-                    or context["cardId"] not in {edge["source"], edge["target"]}
+                    or card_identity["cardId"] not in {edge["source"], edge["target"]}
                 ):
                     continue
                 worker_id = (
                     edge["target"]
-                    if edge["source"] == context["cardId"]
+                    if edge["source"] == card_identity["cardId"]
                     else edge["source"]
                 )
                 worker = cards.get(worker_id)
@@ -1658,10 +1660,10 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
             participants = []
         native_runtime_request = {
             "session": {
-                "sessionId": f"{prepared['deckId']}:{context['cardId']}:{run_id}",
+                "sessionId": f"{prepared['deckId']}:{card_identity['cardId']}:{run_id}",
                 "projectId": prepared["projectId"],
                 "deckId": prepared["deckId"],
-                "cardId": context["cardId"],
+                "cardId": card_identity["cardId"],
                 "conversationId": str(payload.get("conversationId") or "active"),
                 "turnId": correlation_id,
                 "runId": run_id,
@@ -1693,10 +1695,8 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
         "telemetryWritten": telemetry_written,
         "nativeRuntimeRequest": native_runtime_request,
         "hermesTransport": {
-            "profile": context["runtime"].get("profile"),
-            "mode": context["runtime"]["mode"],
             "idf": prepared["idf"],
-            "cardContext": context,
+            "cardIdentity": card_identity,
             "delegationTargets": prepared.get("delegationTargets") or [],
         } if owner == "hermes" else None,
     }
@@ -1712,7 +1712,8 @@ def _observe_run_start(
     """Write identity-only AGE telemetry without affecting durable Run state."""
     try:
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-            context = prepared["cardContext"]
+            identity = prepared["cardIdentity"]
+            runtime = (prepared.get("idf") or {}).get("runtime") or {}
             _age_rows(
                 cursor,
                 """
@@ -1733,10 +1734,10 @@ def _observe_run_start(
                     "projectId": prepared["projectId"],
                     "deckId": prepared["deckId"],
                     "correlationId": correlation_id,
-                    "cardId": context["cardId"],
+                    "cardId": identity["cardId"],
                     "nativeChildId": str(payload.get("nativeChildId") or "").strip() or None,
                     "nativeProfileId": (
-                        str((context.get("runtime") or {}).get("profile") or "").strip()
+                        str(runtime.get("profile") or "").strip()
                         or None
                     ),
                     "conversationId": str(payload.get("conversationId") or "").strip() or None,
@@ -1759,7 +1760,7 @@ def _observe_run_start(
                         "projectId": prepared["projectId"],
                         "deckId": prepared["deckId"],
                         "senderId": sender_id,
-                        "targetId": context["cardId"],
+                        "targetId": identity["cardId"],
                         "runId": run_id,
                         "correlationId": correlation_id,
                     },
@@ -1843,7 +1844,7 @@ def begin_native_hermes_child_run(payload: dict[str, Any]) -> dict[str, Any]:
     prepared = {
         "projectId": project_id,
         "deckId": deck_id,
-        "cardContext": {"cardId": card_id},
+        "cardIdentity": {"cardId": card_id},
     }
     telemetry_written = _observe_run_start(
         prepared,

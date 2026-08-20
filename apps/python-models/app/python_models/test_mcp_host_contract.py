@@ -647,6 +647,72 @@ def test_child_scoped_dispatch_attaches_attention_to_the_real_child_run_and_card
     assert observed == [attention]
 
 
+def test_coder_root_context_is_active_before_native_cbm_dispatch_and_persists_exact_refs(
+    monkeypatch,
+):
+    import asyncio
+    import mcp_host
+    from app.python_models import card_domain
+    from mcp.types import CallToolResult, TextContent
+
+    context = {
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "conversationId": "coder-conversation-one",
+        "parentRunId": "coder-run-one",
+        "rootRunId": "coder-run-one",
+        "mainCardId": "card_local_coder",
+        "nativeChildId": "",
+        "grantedTools": ["cbm.search_code"],
+    }
+    dispatched_contexts = []
+    observed = []
+    native_result = CallToolResult(
+        content=[TextContent(type="text", text="current native CBM result")],
+        structuredContent={
+            "cols": ["qn", "label", "file", "lines"],
+            "rows": [[
+                "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
+                "Function",
+                "apps/python-models/app/python_models/idf.py",
+                "37-78",
+            ]],
+        },
+    )
+
+    async def dispatch(_name, _arguments):
+        dispatched_contexts.append(mcp_host._authenticated_main_context())
+        return native_result
+
+    monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
+    monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda _name: True)
+    monkeypatch.setattr(mcp_host, "_request_execution_context", lambda: dict(context))
+    monkeypatch.setattr(
+        card_domain,
+        "observe_native_attention",
+        lambda event: observed.append(dict(event)) or True,
+    )
+
+    result = asyncio.run(mcp_host.call_tool(
+        "cbm.search_code",
+        {"project": "C-Projects-LiquidAIty-main", "pattern": "materialize_idf"},
+    ))
+
+    assert dispatched_contexts == [context]
+    assert isinstance(result, CallToolResult)
+    assert result.content[0].text == "current native CBM result"
+    assert result.meta is not None
+    attention = result.meta["nativeAttention"]
+    assert attention["runId"] == "coder-run-one"
+    assert attention["cardId"] == "card_local_coder"
+    assert attention["toolName"] == "cbm.search_code"
+    assert attention["nativeNodeIds"] == [
+        "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
+        "apps/python-models/app/python_models/idf.py",
+    ]
+    assert observed == [attention]
+
+
 def test_official_dispatch_emits_no_attention_for_non_graph_result(monkeypatch):
     import asyncio
     import mcp_host
@@ -683,6 +749,7 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
     import asyncio
     import mcp_host
     from app import control_plane
+    from app.python_models import card_domain
 
     context = {
         "projectId": "project-1",
@@ -704,6 +771,16 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
 
     monkeypatch.setattr(control_plane, "agentgraph_inspect", inspect)
     monkeypatch.setattr(mcp_host, "_bridge", bridge)
+    monkeypatch.setattr(
+        card_domain,
+        "resolve_magentic_card_identity",
+        lambda project_id, deck_id: {
+            "projectId": project_id,
+            "deckId": deck_id,
+            "targetCardId": "card_mag_one",
+            "targetCardTitle": "Magentic-One",
+        },
+    )
 
     inspected = asyncio.run(
         mcp_host._dispatch_tool("agentgraph.inspect", {"runId": "run-1", "limit": 5})
@@ -719,6 +796,23 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
             "conversationId": "external-mcp:grant-1",
         },
     )
+
+    proposed = asyncio.run(
+        mcp_host._dispatch_tool(
+            "write_mag_one_instructions",
+            {"instructions": "  exact proposed mission\nwith formatting  "},
+        )
+    )
+    assert json.loads(proposed[0].text) == {
+        "ok": True,
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "targetCardId": "card_mag_one",
+        "targetCardTitle": "Magentic-One",
+        "instructions": "  exact proposed mission\nwith formatting  ",
+        "persisted": False,
+        "started": False,
+    }
 
     executed = asyncio.run(
         mcp_host._dispatch_tool(
@@ -905,6 +999,9 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
             "projectId",
             "deckId",
         ]
+        assert by_name["write_mag_one_instructions"].inputSchema["required"] == [
+            "instructions",
+        ]
         assert "minProperties" not in str(
             by_name["card.update_configuration"].inputSchema
         )
@@ -917,6 +1014,7 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
         }
         assert "main.context" in by_name
         assert "agentgraph.inspect" in by_name
+        assert "write_mag_one_instructions" in by_name
         assert "coder.status" not in by_name
         assert all(
             tool.inputSchema.get("additionalProperties") is False
@@ -961,11 +1059,14 @@ def test_catalog_identity_covers_the_complete_frozen_tool_descriptor():
     assert mcp_host._catalog_identity([original])[1] != mcp_host._catalog_identity([changed])[1]
 
 
-def test_mag_one_uses_direct_transient_input_contract():
+def test_mag_one_tools_use_direct_transient_input_contract():
     import mcp_host
 
     assert mcp_host._ALLOWED_KEYS["run_mag_one"] == {
         "projectId", "deckId", "input", "conversationId",
+    }
+    assert mcp_host._ALLOWED_KEYS["write_mag_one_instructions"] == {
+        "projectId", "deckId", "conversationId", "instructions",
     }
 
 
@@ -1866,6 +1967,7 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
             assert len(first_catalog) == len(set(first_catalog))
             assert "main.context" in first_catalog
             assert "agentgraph.inspect" in first_catalog
+            assert "write_mag_one_instructions" in first_catalog
             assert "coder.status" not in first_catalog
             assert first_context == second_context == context
         finally:
@@ -2078,6 +2180,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         ), f"advertised but undispatchable: {tool.name}"
     assert "main.context" in by_name
     assert "agentgraph.inspect" in by_name
+    assert "write_mag_one_instructions" in by_name
     assert "coder.status" not in by_name
     assert "card.run_assistant_agent" in by_name
     assert "run_coder_subagent" not in by_name

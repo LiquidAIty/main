@@ -10,7 +10,7 @@ deferred until the static baseline and explicitly approved live proofs pass.
 3. The child Run records actual tool use, exact native references, parent/correlation identity, cost,
    duration, success/failure, and AGE lineage.
 4. Main delegates one bounded research/board task to Kanban and proves separate profile memory.
-5. Main approves one exact IDF and hands it to native Magentic-One through the official MCP boundary.
+5. Main approves one transient Mag One Card input and hands it to native Magentic-One through the official MCP boundary.
 
 These calls require explicit approval. Structural tests must not be presented as live proof.
 
@@ -19,7 +19,7 @@ These calls require explicit approval. Structural tests must not be presented as
 - Tune progressive reveal pacing so fast native reads remain understandable without slowing agents.
 - Add optional stacked 3D layers for ThinkGraph, KnowGraph, CodeGraph, and AgentGraph while preserving
   separate native authorities.
-- Illuminate exact IDF consumption only when a runtime receipt proves the referenced native objects
+- Illuminate transient call consumption only when a runtime receipt proves the referenced native objects
   were delivered or opened.
 - Add inspector detail for graph reads/writes, traversals, selections, handoffs, and artifacts without
   exposing hidden chain-of-thought.
@@ -34,7 +34,7 @@ These calls require explicit approval. Structural tests must not be presented as
 
 ## Engraphis
 
-- Keep semantic embeddings outside startup and IDF materialization.
+- Keep semantic embeddings outside startup and Card-call materialization.
 - When revisited, use one lazy local-only singleton and the existing compatible cached model.
 - If the model is absent, fail only semantic recall; never use deterministic fake vectors.
 - Evaluate whether Engraphis earns its place after real ThinkGraph use rather than through startup

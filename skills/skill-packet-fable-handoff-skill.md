@@ -3,7 +3,7 @@
 @skill id=skill-packet-fable-handoff
 @type Skill
 @status active
-@related_to idf-context
+@related_to card-call-context
 @related_to spec-as-prompt
 @related_to coder-report-protocol
 @requires fresh_cbm_index
@@ -17,7 +17,7 @@ The prompt itself is both spec and task.
 
 1. Retrieve relevant skills and fresh code evidence.
 2. Build one active CoderPacket prompt from user intent, `PLAN.md`, and bounded selected evidence from
-   the actual IDF/context authorities.
+   the actual Card-call/context authorities.
 3. Include requirements, scope, proof, blockers, and stop conditions.
 4. Send the prompt to the coder only after user Go.
 5. Require a structured CoderReport.

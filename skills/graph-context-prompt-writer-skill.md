@@ -3,14 +3,14 @@
 @skill id=graph-context-prompt-writer
 @type Skill
 @status active
-@related_to idf-context
+@related_to card-call-context
 @related_to spec-as-prompt
 @related_to codegraph-context-reader
 @requires fresh_cbm_index
 
 ## Vector Summary
 
-Turn bounded IDF/native-context evidence into one active CoderPacket prompt that is both the
+Turn bounded native-context evidence into one active CoderPacket prompt that is both the
 spec and task. The user describes the desired outcome; the user does not prompt a prompt.
 
 ## Procedure

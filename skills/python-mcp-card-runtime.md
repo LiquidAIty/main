@@ -25,7 +25,7 @@ canvas card (deck_builder)            ← identity, prompt, model, enabled, tool
 ## Rules
 
 - **Authority is saved-card configuration plus explicit runtime input.** The saved card owns the
-  capability ceiling; the current IDF instantiates valid values/references under IDD rules.
+  capability ceiling; the current transient Card call instantiates valid values/references under IDD rules.
   One saved enabled `FLOW` relationship authorizes only the source Card's bounded delegation to that
   exact connected target and mechanically exposes the standard delegation transport. It grants no
   ordinary tool or target permission. Other AgentGraph/AGE observations do not authorize a runtime.
@@ -40,9 +40,9 @@ canvas card (deck_builder)            ← identity, prompt, model, enabled, tool
 - **MCP host = thin stdio transport** (`apps/python-models/app/mcp_host.py`, official
   `mcp` SDK) bridging to `/api/coder/mcp-bridge/*`. No product logic in the host;
   structural argument allow-lists reject smuggled prompts/models/patches.
-- **Canonical model context = the exact transient Inspector-visible IDF.** Runtime-specific adapters
+- **Canonical model context = the exact transient Inspector-visible Card call.** Runtime-specific adapters
   may mechanically frame it, but may not rebuild another context packet or append IDD definitions to
-  the prompt. Only an explicit Save IDF action stores an immutable revision.
+  the prompt. Dynamic input is not saved by default.
 
 ## Runtime split
 

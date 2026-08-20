@@ -156,7 +156,7 @@ def test_enabled_flow_edge_materializes_bounded_target_without_inventing_tool_gr
         monkeypatch,
         edges=[{"source": "parent", "target": "child", "edgeType": "flow"}],
     )
-    assert preview["cardContext"]["tools"] == ["calculator"]
+    assert preview["cardIdentity"] == {"cardId": "parent", "title": "parent"}
     assert preview["idf"]["enabledTools"] == ["calculator"]
     assert preview["delegationTargets"] == [{
         **_expected_delegate(),
@@ -176,7 +176,7 @@ def test_hermes_flow_target_projects_saved_profile_outside_model_input(
         parent_runtime={"kind": "hermes", "mode": "main", "profile": "main"},
     )
     assert preview["runtimeOwner"] == "hermes"
-    assert preview["cardContext"]["tools"] == ["calculator"]
+    assert preview["cardIdentity"] == {"cardId": "parent", "title": "parent"}
     assert "card.run_assistant_agent" not in preview["idf"]["enabledTools"]
     assert preview["delegationTargets"] == [{
         **_expected_delegate(),
@@ -191,7 +191,7 @@ def test_no_flow_edge_materializes_no_delegation_transport(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     preview = _delegation_preview(monkeypatch, edges=[])
-    assert preview["cardContext"]["tools"] == ["calculator"]
+    assert preview["cardIdentity"] == {"cardId": "parent", "title": "parent"}
     assert preview["idf"]["enabledTools"] == ["calculator"]
     assert preview["delegationTargets"] == []
 
@@ -266,6 +266,33 @@ def test_saved_magentic_control_edge_is_required_to_resolve_mag_one(
         card_domain.materialize_magentic_invocation(payload)
 
 
+def test_mag_one_identity_resolves_without_materializing_or_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mag_one = _agent("mag-one", runtime={"kind": "autogen", "mode": "magentic_one"})
+    mag_one["title"] = "Magentic-One"
+    mag_one["_cardRevisionId"] = "revision-mag-one"
+    mag_one["_cardRevision"] = 1
+    mag_one["_cardRevisionSha256"] = "sha-mag-one"
+    loaded = {
+        "projectId": "00000000-0000-0000-0000-000000000001",
+        "deck": {"nodes": [mag_one], "edges": []},
+    }
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: loaded)
+    monkeypatch.setattr(
+        card_domain,
+        "materialize_invocation",
+        lambda *_args, **_kwargs: pytest.fail("proposal identity must not materialize"),
+    )
+
+    assert card_domain.resolve_magentic_card_identity("project-one", "deck-one") == {
+        "projectId": loaded["projectId"],
+        "deckId": "deck-one",
+        "targetCardId": "mag-one",
+        "targetCardTitle": "Magentic-One",
+    }
+
+
 def test_disabled_flow_edge_materializes_no_delegation_transport(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -278,7 +305,7 @@ def test_disabled_flow_edge_materializes_no_delegation_transport(
             "enabled": False,
         }],
     )
-    assert "card.run_assistant_agent" not in preview["cardContext"]["tools"]
+    assert "card.run_assistant_agent" not in preview["idf"]["enabledTools"]
     assert "card.run_assistant_agent" not in preview["idf"]["enabledTools"]
     assert preview["delegationTargets"] == []
 
@@ -309,7 +336,7 @@ def test_disabled_missing_or_invalid_flow_target_is_not_eligible(
         edges=[{"source": "parent", "target": "missing", "edgeType": "flow"}],
     )
     assert missing["delegationTargets"] == []
-    assert "card.run_assistant_agent" not in missing["cardContext"]["tools"]
+    assert "card.run_assistant_agent" not in missing["idf"]["enabledTools"]
 
 
 def test_stable_card_has_one_prompt_and_one_explicit_runtime() -> None:
@@ -511,13 +538,21 @@ def test_main_chat_materializes_once_without_serialized_card_or_run_data(
             "deck": {"nodes": [main], "edges": []},
         },
     )
+    materializations: list[str] = []
+    real_materialize = card_domain.materialize_idf
+
+    def count_materialization(**kwargs):
+        materializations.append(str(kwargs["dynamic_input"]))
+        return real_materialize(**kwargs)
+
+    monkeypatch.setattr(card_domain, "materialize_idf", count_materialization)
     prepared = card_domain.prepare_main_chat({
         "projectId": "project-one",
         "deckId": "deck-one",
         "message": "Help me prepare work for another agent.",
     })
     assert "assignment" not in prepared
-    assert prepared["message"] == "Help me prepare work for another agent."
+    assert "message" not in prepared
     assert prepared["idf"]["systemPrompt"] == main["prompt"]
     assert prepared["idf"]["message"] == "Help me prepare work for another agent."
     assert prepared["idf"]["enabledTools"] == ["canvas.inspect"]
@@ -527,7 +562,8 @@ def test_main_chat_materializes_once_without_serialized_card_or_run_data(
     assert "cardId" not in prepared["idf"]
     assert "runId" not in prepared["idf"]
     assert "serialized-card" not in str(prepared["idf"])
-    assert "toolDefinitions" not in prepared["cardContext"]
+    assert prepared["cardIdentity"] == {"cardId": "main", "title": "main"}
+    assert materializations == ["Help me prepare work for another agent."]
     inserted: dict[str, object] = {}
     monkeypatch.setattr(
         card_domain,
@@ -549,6 +585,10 @@ def test_main_chat_materializes_once_without_serialized_card_or_run_data(
         "Help me prepare work for another agent."
     )
     assert inserted["prepared"]["idf"] == begun["idf"]
+    assert materializations == [
+        "Help me prepare work for another agent.",
+        "Help me prepare work for another agent.",
+    ]
 
 
 def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
@@ -582,8 +622,8 @@ def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
     prepared = {
         "projectId": "project-one",
         "deckId": "deck-one",
-        "cardContext": {"cardId": "card-one", "tools": ["calculator"]},
-        "idf": {"nativeReferences": [{
+        "cardIdentity": {"cardId": "card-one"},
+        "idf": {"runtime": {"kind": "hermes", "mode": "main", "profile": "main"}, "nativeReferences": [{
             "authority": "KnowGraph",
             "nativeId": "episode:selected",
             "reason": "selected for the call",
@@ -695,7 +735,7 @@ def test_native_hermes_ephemeral_child_keeps_originating_card_revision(
     assert result["cardId"] == "card_main_chat"
     assert result["parentRunId"] == "main-run"
     assert result["nativeChildId"] == "sa-ephemeral"
-    assert observed[0][0]["cardContext"]["cardId"] == "card_main_chat"
+    assert observed[0][0]["cardIdentity"]["cardId"] == "card_main_chat"
     assert observed[0][1] == {
         "originatingRunId": "main-run",
         "rootRunId": "main-run",
@@ -921,12 +961,15 @@ def test_native_attention_observation_requires_existing_run_card_identity(monkey
         "projectId": "project-one",
         "deckId": "deck-one",
         "conversationId": "conversation-one",
-        "runId": "run-one",
-        "cardId": "card-one",
+        "runId": "coder-run-one",
+        "cardId": "card_local_coder",
         "authority": "codegraph",
         "operation": "read",
         "toolName": "cbm.search_graph",
-        "nativeNodeIds": ["pkg._runtime_owner"],
+        "nativeNodeIds": [
+            "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
+            "apps/python-models/app/python_models/idf.py",
+        ],
         "nativeEdgeIds": ["edge-one"],
         "resultHash": "a" * 64,
         "truncated": False,
@@ -938,10 +981,22 @@ def test_native_attention_observation_requires_existing_run_card_identity(monkey
     assert "EXECUTED_BY" in statements[0][0]
     assert "UNWIND $references" in statements[1][0]
     assert "USED" in statements[1][0]
-    assert statements[0][1]["nativeNodeIds"] == ["pkg._runtime_owner"]
+    assert statements[0][1]["runId"] == "coder-run-one"
+    assert statements[0][1]["cardId"] == "card_local_coder"
+    assert statements[0][1]["nativeNodeIds"] == [
+        "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
+        "apps/python-models/app/python_models/idf.py",
+    ]
     assert statements[0][1]["nativeEdgeIds"] == ["edge-one"]
     assert statements[1][1]["references"] == [
-        {"nativeId": "pkg._runtime_owner", "nativeKind": "node"},
+        {
+            "nativeId": "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
+            "nativeKind": "node",
+        },
+        {
+            "nativeId": "apps/python-models/app/python_models/idf.py",
+            "nativeKind": "node",
+        },
         {"nativeId": "edge-one", "nativeKind": "edge"},
     ]
     assert not any(

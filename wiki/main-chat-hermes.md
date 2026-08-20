@@ -24,7 +24,7 @@ Main Chat (liquidaity-main)
 └─ magentic_control → Magentic-One
 ```
 
-The backend owns conversation/Run/correlation identity and transports the exact materialized IDF.
+The backend owns conversation/Run/correlation identity and transports one Python-materialized Card call.
 Hermes-native delegation may choose only saved connected Cards supplied by the host. Missing Cards,
 relationships, tools, profiles, models, or credentials fail without fallback.
 
@@ -36,7 +36,7 @@ persistence ID only; no LocalCoder/OpenClaude runtime exists.
 - backend Main adapter/session/profile/memory tests;
 - Coder terminal lifecycle tests;
 - saved topology and runtime-binding tests;
-- exact-IDF preview/transport tests;
+- exact transient-input preview/transport tests;
 - one separately approved live Main → Coder proof with child Run and AGE lineage.
 
 ## Limitations

@@ -21,6 +21,7 @@ type UseAgentBuilderMainChatArgs = {
   workspaceView: string;
   onUserTurnStarted?: (turn: MainChatTurnStarted) => void;
   onNativeTurnEvent?: (turn: MainChatTurnEvent) => void;
+  onMagOneInstructionsProposed?: (proposal: MagOneInstructionsProposal) => void;
   onTurnFinished?: (turn: MainChatTurnFinished) => void;
 };
 
@@ -38,6 +39,11 @@ export type MainChatTurnEvent = {
   runId: string;
   event: NativeSessionEvent;
   observedAt: string;
+};
+
+export type MagOneInstructionsProposal = {
+  targetCardId: string;
+  instructions: string;
 };
 
 export type MainChatTurnFinished = {
@@ -60,6 +66,48 @@ function notifyObserver<T>(observer: ((value: T) => void) | undefined, value: T)
   }
 }
 
+export function parseMagOneInstructionsProposal(
+  output: unknown,
+  depth = 0,
+): MagOneInstructionsProposal | null {
+  if (depth > 8 || output == null) return null;
+  if (typeof output === 'string') {
+    try {
+      return parseMagOneInstructionsProposal(JSON.parse(output), depth + 1);
+    } catch {
+      return null;
+    }
+  }
+  if (Array.isArray(output)) {
+    for (const item of output) {
+      const proposal = parseMagOneInstructionsProposal(item, depth + 1);
+      if (proposal) return proposal;
+    }
+    return null;
+  }
+  if (typeof output !== 'object') return null;
+  const record = output as Record<string, unknown>;
+  if (
+    record.ok === true
+    && record.persisted === false
+    && record.started === false
+    && typeof record.targetCardId === 'string'
+    && record.targetCardId.length > 0
+    && typeof record.instructions === 'string'
+    && record.instructions.trim().length > 0
+  ) {
+    return {
+      targetCardId: record.targetCardId,
+      instructions: record.instructions,
+    };
+  }
+  for (const key of ['content', 'result', 'structuredContent', 'text', 'output']) {
+    const proposal = parseMagOneInstructionsProposal(record[key], depth + 1);
+    if (proposal) return proposal;
+  }
+  return null;
+}
+
 export default function useAgentBuilderMainChat({
   canvasProjectId,
   deckId,
@@ -67,6 +115,7 @@ export default function useAgentBuilderMainChat({
   initialMessages,
   onUserTurnStarted,
   onNativeTurnEvent,
+  onMagOneInstructionsProposed,
   onTurnFinished,
 }: UseAgentBuilderMainChatArgs) {
   const [nativeSessionBusy, setNativeSessionBusy] = useState(false);
@@ -177,6 +226,14 @@ export default function useAgentBuilderMainChat({
               event,
               observedAt: new Date().toISOString(),
             });
+            if (
+              event.kind === 'tool_result'
+              && event.toolName === 'write_mag_one_instructions'
+              && event.isError !== true
+            ) {
+              const proposal = parseMagOneInstructionsProposal(event.output);
+              if (proposal) notifyObserver(onMagOneInstructionsProposed, proposal);
+            }
             if (event.kind === 'text') {
               appendAssistantText(
                 String((event as { text?: unknown }).text || ''),
@@ -231,6 +288,7 @@ export default function useAgentBuilderMainChat({
       deckId,
       nativeSessionBusy,
       onNativeTurnEvent,
+      onMagOneInstructionsProposed,
       onTurnFinished,
       onUserTurnStarted,
     ],

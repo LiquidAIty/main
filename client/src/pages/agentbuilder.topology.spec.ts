@@ -167,9 +167,10 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(coder?.prompt).toContain('Do not create hidden agents');
 
     expect(steward?.runtimeOptions?.tools).not.toContain('run_mag_one');
+    expect(steward?.runtimeOptions?.tools).toContain('write_mag_one_instructions');
     expect(steward?.runtimeOptions?.toolsets ?? []).toEqual([]);
     expect(steward?.prompt).toContain('Do not use a repository-writing terminal');
-    expect(steward?.prompt).toContain('Prepare bounded Mag One input for Main');
+    expect(steward?.prompt).toContain('Use write_mag_one_instructions');
 
     expect(magOne).toMatchObject({
       runtime: { kind: 'autogen', mode: 'magentic_one' },

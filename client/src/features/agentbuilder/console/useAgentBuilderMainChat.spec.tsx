@@ -74,4 +74,47 @@ describe('Main chat live observation callbacks', () => {
     ]);
     expect(JSON.stringify(result.current.messages)).not.toContain('private provider reasoning');
   });
+
+  it('forwards the exact transient Mag One proposal from the native tool result', async () => {
+    const onMagOneInstructionsProposed = vi.fn();
+    mocks.streamSession.mockImplementation(async (args) => {
+      args.onEvent({
+        kind: 'tool_result',
+        toolName: 'write_mag_one_instructions',
+        isError: false,
+        output: JSON.stringify({
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              ok: true,
+              targetCardId: 'card_mag_one',
+              instructions: '  exact mission\nwith formatting  ',
+              persisted: false,
+              started: false,
+            }),
+          }],
+        }),
+      });
+      args.onEvent({ kind: 'text', text: 'Proposal ready.' });
+      return { finalText: 'Proposal ready.' };
+    });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'main',
+      initialMessages: [],
+      workspaceView: 'chat',
+      onMagOneInstructionsProposed,
+    }));
+
+    await act(async () => {
+      await result.current.requestMainText('Prepare the mission.');
+    });
+
+    expect(onMagOneInstructionsProposed).toHaveBeenCalledOnce();
+    expect(onMagOneInstructionsProposed).toHaveBeenCalledWith({
+      targetCardId: 'card_mag_one',
+      instructions: '  exact mission\nwith formatting  ',
+    });
+  });
 });

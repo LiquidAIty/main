@@ -11,9 +11,8 @@ roots:
     - apps/backend/src/routes/coder.routes.ts
     - client/src/components/AgentManager.tsx
   symbols:
-    - materialize_invocation / validate_exact_invocation
-    - begin_prompt_free_run / finish_prompt_free_run
-    - save_idf_revision / load_saved_idf_revision
+    - materialize_invocation
+    - begin_run / finish_run
     - AgentManager
 ---
 
@@ -28,10 +27,9 @@ Must remain true:
 - missing cards, models, tools, and runtimes fail explicitly;
 - no role inference, model substitution, tool injection, or compatibility normalization;
 - TypeScript transports typed saved configuration but does not interpret task content;
-- the Inspector IDF carries the actual bounded model input; Run is transient by default;
-- Save IDF explicitly stores only the exact Markdown as an immutable relational revision, while Save
-  Card Version persists stable Card fields and never copies the dynamic assignment into the Card;
-- AgentGraph/AGE owns saved Card relationships and may observe prompt-free native references/results but cannot
+- the Inspector previews the actual bounded transient model input; Run is transient by default;
+- Save Card Version persists stable Card fields and never copies dynamic input into the Card;
+- AgentGraph/AGE owns saved Card relationships and may observe native references/results but cannot
   gate execution;
 - standalone card execution does not silently consult canvas edges;
 - Mag One participant eligibility comes only from saved `magentic_option` edges.
@@ -43,4 +41,4 @@ npx vitest run apps/backend/src/routes/coder.routes.spec.ts apps/backend/src/dec
 apps\python-models\.venv\Scripts\python.exe -m pytest -q apps/python-models/app/python_models/test_card_domain.py apps/python-models/app/python_models/test_agentgraph.py
 ```
 
-Unproven: paid model execution through the canonical Inspector IDF consumer path.
+Unproven: paid model execution through the canonical transient Card-call consumer path.

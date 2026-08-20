@@ -60,6 +60,62 @@ describe('Hermes child execution attribution', () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps concurrent saved Coder root Runs isolated before their first MCP call', () => {
+    const first = registerHermesRootExecutionContext({
+      sessionId: 'coder-session-one',
+      runId: 'coder-run-one',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'coder-conversation-one',
+      cardId: 'card_local_coder',
+      runtimeMode: 'delegate',
+      grantedTools: ['cbm.get_code_snippet', 'cbm.search_graph'],
+    });
+    const second = registerHermesRootExecutionContext({
+      sessionId: 'coder-session-two',
+      runId: 'coder-run-two',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'coder-conversation-two',
+      cardId: 'card_local_coder',
+      runtimeMode: 'delegate',
+      grantedTools: ['cbm.get_code_snippet', 'cbm.search_graph'],
+    });
+    const principal = (runId: string, conversationId: string) => ({
+      kind: 'card-runtime',
+      requiresExecutionContext: true,
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId,
+      parentRunId: runId,
+      callerCardId: 'card_local_coder',
+      callerRuntimeKind: 'hermes',
+      callerRuntimeMode: 'delegate',
+      grantedTools: ['cbm.get_code_snippet', 'cbm.search_graph'],
+    });
+
+    expect(resolveHermesExecutionContext({
+      contextId: first.contextId,
+      principal: principal('coder-run-one', 'coder-conversation-one'),
+    })).toMatchObject({
+      runId: 'coder-run-one',
+      conversationId: 'coder-conversation-one',
+      cardId: 'card_local_coder',
+    });
+    expect(resolveHermesExecutionContext({
+      contextId: second.contextId,
+      principal: principal('coder-run-two', 'coder-conversation-two'),
+    })).toMatchObject({
+      runId: 'coder-run-two',
+      conversationId: 'coder-conversation-two',
+      cardId: 'card_local_coder',
+    });
+    expect(() => resolveHermesExecutionContext({
+      contextId: first.contextId,
+      principal: principal('coder-run-two', 'coder-conversation-two'),
+    })).toThrow('hermes_execution_context_principal_mismatch');
+  });
+
   it('keeps an ephemeral child on the originating saved Card with a distinct Run', async () => {
     const parent = root();
     const child = await createHermesChildExecutionContext({

@@ -11,7 +11,7 @@ Chat / GPT plugin
   → Main Chat Card (Hermes, profile liquidaity-main)
      ├─ flow → Coder Card (Hermes delegate, profile coder, terminal under Chat)
      ├─ flow → Kanban Card (Hermes, profile liquidaity-hermes-steward)
-     └─ magentic_control → reviewed exact IDF → native AutoGen Magentic-One
+     └─ magentic_control → reviewed transient Card input → native AutoGen Magentic-One
 
 Direct Assistant Card
   → native AutoGen AssistantAgent
@@ -35,8 +35,8 @@ the Hermes-backed Coder; they do not identify a runtime.
 - Main delegates only across saved AGE/ReactFlow relationships.
 - The official Python MCP host is the shared tool doorway. Its catalog is discovered dynamically;
   documentation and tests must not promise a permanent numeric tool count.
-- IDD declares legal inputs and operations. A saved Card grants a ceiling. The exact transient IDF
-  claims bounded values, tools, and native references for one communication.
+- IDD declares legal inputs and operations. A saved Card grants a ceiling. One transient Card call
+  carries bounded values, tools, and native references for one communication.
 - Python rails own deterministic runtime work, AutoGen, Magentic-One, native tools, and graph adapters.
 - ThinkGraph, KnowGraph, CodeGraph, and AgentGraph have separate owners and never become one copied
   graph.
@@ -50,7 +50,7 @@ the Hermes-backed Coder; they do not identify a runtime.
 - A completed Main response through the saved Hermes profile and saved account/model.
 - Native Main-to-Coder delegation with truthful child Run, tool, native-reference, and AGE lineage.
 - Main-to-Kanban execution and separate-session memory behavior.
-- Reviewed exact-IDF handoff to one native Magentic-One run.
+- Reviewed transient-input handoff to one native Magentic-One run.
 - End-to-end Reveal pacing for graph consumption, traversal, handoff, and writes.
 - Engraphis semantic recall. Nonsemantic ThinkGraph operations remain the near-term boundary.
 
@@ -62,13 +62,13 @@ Structural tests are not substitutes for these live proofs.
 effective capability
   = saved Card capability ceiling
   ∩ IDD operation requirements
-  ∩ run-scoped IDF claims and native references
+  ∩ current input selections and native references
   ∩ saved AGE/ReactFlow relationship
   ∩ explicit user approval where required
 ```
 
 Routing metadata, sender/target Card IDs, Run IDs, conversation IDs, and correlation IDs stay outside
-the exact IDF. The IDF carries task meaning and selected context, not runtime control.
+the transient Card call. The call carries task meaning and selected context, not runtime control.
 
 ## Runtime roles
 
@@ -153,13 +153,13 @@ alternate startup instructions.
 2. Prove Main alone with one bounded, explicitly approved model call.
 3. Prove Main → Coder and truthful child lineage.
 4. Prove Main → Kanban with separate session/memory.
-5. Prove exact IDF → native Magentic-One.
+5. Prove transient Mag One Card input → native Magentic-One.
 6. Prove native graph attention and Reveal from real read/write events.
 7. Only then reduce remaining legacy names, tune the UI, or expand memory behavior.
 
 ## Core v0 acceptance
 
-- One Card authority, one IDD, one transient exact-IDF assembler, one official Python MCP host.
+- One Card authority, one IDD, one transient Python call materializer, one official Python MCP host.
 - One canonical `dev:fresh` tree and one root npm workspace lock.
 - Hermes Main/Coder/Kanban, AutoGen Assistant/Mag One, and four graph authorities remain distinct.
 - No OpenClaude/LocalCoder/Bun implementation, package root, lock, fallback, or downloader.

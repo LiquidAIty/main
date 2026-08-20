@@ -3,7 +3,7 @@
 @skill id=skillgraph-neo4j-indexing
 @type Skill
 @status active
-@related_to idf-context
+@related_to card-call-context
 @requires fresh_cbm_index
 
 ## Vector Summary
@@ -15,7 +15,7 @@ or coding.
 
 1. Search skills by task meaning, current plan, subsystem, CBM nodes, and guardrails.
 2. Retrieve procedures, proof rules, failures, and reusable lessons.
-3. Use relevant skills in the actual IDF and CoderPacket.
+3. Use relevant skills in the actual transient Card call and CoderPacket.
 4. Update skills only when learning is reusable.
 5. Re-ingest skills as a complete deterministic projection replacement and prove retrieval after
    changes.
