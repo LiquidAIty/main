@@ -13,9 +13,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 
 import {
+  configureHermesCardProfile,
   configureHermesHolographicMemoryHome,
   HOLOGRAPHIC_MEMORY_SETTINGS,
   resolveHermesHolographicMemoryDb,
+  resolveHermesProfileHome,
   resolveHermesRuntimeHome,
 } from './profileMemory';
 
@@ -117,5 +119,43 @@ describe('Hermes Holographic runtime configuration', () => {
       ['plugins.hermes-memory-store.hrr_dim', 1024],
       ['plugins.hermes-memory-store.temporal_decay_half_life', 0],
     ]);
+  });
+
+  it('projects Card prompt, model, and bounded MCP grants into one native profile', () => {
+    const runtimeHome = mkdtempSync(path.join(tmpdir(), 'liquidaity-hermes-profiles-'));
+    tempHomes.push(runtimeHome);
+    const profileHome = configureHermesCardProfile({
+      hermesRoot: HERMES_ROOT,
+      runtimeHome,
+      profile: 'coder',
+      prompt: 'Saved Coder prompt',
+      provider: 'openai-codex',
+      model: 'gpt-5.6-luna',
+      mcpUrl: 'http://127.0.0.1:8765/mcp',
+      mcpTools: ['cbm.search_graph', 'cbm.trace_path'],
+      mcpTokenEnv: 'LIQUIDAITY_CODER_MCP_BEARER',
+    });
+    const raw = readRawHermesConfig(profileHome);
+
+    expect(profileHome).toBe(path.join(runtimeHome, 'profiles', 'coder'));
+    expect(readFileSync(path.join(profileHome, 'SOUL.md'), 'utf8')).toBe('Saved Coder prompt');
+    expect(raw.model).toEqual({ default: 'gpt-5.6-luna', provider: 'openai-codex' });
+    expect(raw.mcp_servers.liquidaity).toEqual({
+      url: 'http://127.0.0.1:8765/mcp',
+      headers: { Authorization: 'Bearer ${LIQUIDAITY_CODER_MCP_BEARER}' },
+      tools: {
+        include: ['cbm.search_graph', 'cbm.trace_path'],
+        resources: false,
+        prompts: false,
+      },
+      connect_timeout: 30,
+    });
+    expect(JSON.stringify(raw)).not.toContain('test-coder-terminal-token');
+  });
+
+  it('rejects a profile name that could escape the native profile root', () => {
+    expect(() => resolveHermesProfileHome(HERMES_ROOT, '../coder')).toThrow(
+      'hermes_profile_name_invalid',
+    );
   });
 });

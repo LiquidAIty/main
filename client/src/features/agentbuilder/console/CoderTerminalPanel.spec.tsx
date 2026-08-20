@@ -23,7 +23,7 @@ vi.mock('./XtermView', async () => {
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-function session(state: ConsoleSessionInfo['state'] = 'ready'): ConsoleSessionInfo {
+function session(state: ConsoleSessionInfo['state'] = 'running'): ConsoleSessionInfo {
   return {
     id: 'coder-terminal-1',
     ownerCardId: 'card_local_coder',
@@ -34,14 +34,14 @@ function session(state: ConsoleSessionInfo['state'] = 'ready'): ConsoleSessionIn
     mode: 'interactive',
     state,
     runtimeSource: 'saved_hermes_card',
-    transportMode: 'acp-stdio',
+    transportMode: 'pty',
     profile: 'coder',
     provider: 'openai',
     model: 'gpt-5.6-luna',
     interactiveSupported: true,
     pid: 42,
     nativeSessionId: 'native-coder-session',
-    activeRunId: state === 'working' ? 'run-1' : null,
+    activeRunId: state === 'running' ? 'run-1' : null,
     startedAt: 'now',
     updatedAt: 'now',
     stoppedAt: null,
@@ -56,6 +56,7 @@ function client(overrides: Partial<CoderTerminalClient> = {}): CoderTerminalClie
     listSessions: vi.fn(async () => []),
     getSession: vi.fn(async () => null),
     sendInput: vi.fn(async () => true),
+    resize: vi.fn(async () => true),
     stopSession: vi.fn(async () => true),
     streamUrl: (id) => `/api/coder/hermes/coder-terminal/sessions/${id}/stream`,
     ...overrides,
@@ -128,9 +129,9 @@ describe('CoderTerminalPanel', () => {
     expect(host?.querySelector('[data-testid="coder-terminal-input"]')).toBeNull();
   });
 
-  it('shows Stop only while a real Hermes turn is active', async () => {
+  it('shows Stop only while the real Hermes process is active', async () => {
     await render(
-      <CoderTerminalPanel open client={client()} initialSession={session('working')} {...identityProps} />,
+      <CoderTerminalPanel open client={client()} initialSession={session('running')} {...identityProps} />,
     );
     expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).not.toBeNull();
     expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
@@ -156,7 +157,7 @@ describe('CoderTerminalPanel', () => {
             error: failed.error!,
             missing: [],
             session: failed,
-            transcript: [{ seq: 1, stream: 'stderr' as const, data: `${failed.error}\r\n`, at: 'now' }],
+            transcript: [{ seq: 1, stream: 'pty' as const, data: `${failed.error}\r\n`, at: 'now' }],
           })),
         })}
         {...identityProps}

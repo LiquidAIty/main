@@ -2,21 +2,20 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import {
   coderTerminalSessionManager,
+  resolveHermesCliInstall,
   type HermesCoderTerminalSession,
 } from '../hermes/coderTerminal';
 import {
   deriveHermesSessionKey,
-  prepareHermesSession,
+  providerForHermes,
+  readHermesHistory,
   startHermesTurn,
   type HermesSessionEvent,
   type HermesTurnArgs,
   type HermesTurnHandle,
 } from '../hermes/mainAdapter';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
-import {
-  getConversationMessages,
-  listConversations,
-} from '../conversations/store';
+import { listConversations } from '../conversations/store';
 import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/harnessTrace';
 // The app's one canonical Agent Canvas deck id, defined once on the deck store.
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
@@ -27,6 +26,12 @@ import {
   requestPythonRailsJson,
 } from '../services/autogen/pythonRailsClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
+import { resolvePythonAgentMcpServerSpec } from '../services/mcp/pythonAgentMcpClient';
+import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
+import {
+  configureHermesCardProfile,
+  resolveHermesRuntimeHome,
+} from '../hermes/profileMemory';
 import {
   indexToolCatalogReferences,
   searchToolCatalogReferences,
@@ -198,6 +203,7 @@ type PreparedHermesTransportArgs = {
   conversationId: string;
   parentRunId?: string;
   workingDirectory?: string;
+  userMessage?: string;
   onEvent: (event: HermesSessionEvent) => void;
 };
 
@@ -206,6 +212,11 @@ function resolveHermesTurnArgs(
   transport: any,
 ): HermesTurnArgs {
   const context = transport?.cardContext || {};
+  const transportedMessage = String(transport.message || '');
+  const userMessage = typeof args.userMessage === 'string' && args.userMessage
+    ? args.userMessage
+    : transportedMessage;
+  const systemPrompt = String(transport.systemPrompt || '');
   const runtime = context.runtime;
   if (
     args.prepared?.runtimeOwner !== 'hermes'
@@ -219,7 +230,7 @@ function resolveHermesTurnArgs(
     cardId: String(context.cardId || ''),
     title: String(context.title || ''),
     runtime,
-    prompt: String(transport.systemPrompt || ''),
+    prompt: systemPrompt,
     provider: String(context.provider || ''),
     modelKey: String(context.modelKey || ''),
     providerModelId: String(context.providerModelId || ''),
@@ -238,7 +249,7 @@ function resolveHermesTurnArgs(
     deckId: args.deckId,
     conversationId: args.conversationId,
     parentRunId: args.parentRunId || args.conversationId,
-    message: String(transport.message || ''),
+    message: userMessage,
     ...(args.workingDirectory ? { workingDirectory: args.workingDirectory } : {}),
   };
 }
@@ -256,7 +267,7 @@ function resolvePreviewHermesTurnArgs(
   return resolveHermesTurnArgs(args, {
     cardContext: preview.cardContext,
     systemPrompt: preview.providerProjection?.systemPrompt,
-    message: preview.exactIdf,
+    message: preview.providerProjection?.message,
   });
 }
 
@@ -337,19 +348,8 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     let providerInputTokens: number | null = null;
     let providerOutputTokens: number | null = null;
     let totalCostUsd: number | null = null;
-    const coderTerminal = cardId === CODER_CARD_ID
-      ? coderTerminalSessionManager.find({
-        projectId,
-        deckId,
-        conversationId,
-        ownerCardId: cardId,
-      })
-      : undefined;
     try {
       if (prepared.runtimeOwner === 'hermes') {
-        if (coderTerminal && !coderTerminal.beginTurn(correlationId)) {
-          throw new Error('hermes_coder_session_busy_or_stopped');
-        }
         const handle = await startPreparedHermesTransport({
           prepared,
           projectId,
@@ -357,12 +357,8 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
           conversationId,
           parentRunId: correlationId,
           ...(cardId === CODER_CARD_ID ? { workingDirectory: resolveRepoRoot() } : {}),
-          onEvent: (event) => coderTerminal?.receiveHermesEvent(event),
+          onEvent: () => undefined,
         });
-        if (coderTerminal && !coderTerminal.attachControl(correlationId, handle)) {
-          handle.cancel();
-          throw new Error('hermes_coder_terminal_control_attach_failed');
-        }
         const response = await handle.done;
         output = response.finalText;
         transport = response.transport;
@@ -389,7 +385,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
           totalCostUsd,
         }),
       }) as any;
-      coderTerminal?.completeTurn(correlationId);
       return res.json({
         ok: true,
         result: {
@@ -406,7 +401,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'configured_card_transport_failed';
-      coderTerminal?.markFailed(message);
       await requestPythonRailsJson('/domain/runs/finish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -524,13 +518,12 @@ async function readPreparedMainCardContext(
   projectId: string,
   deckId: string,
 ): Promise<Record<string, any>> {
-  const prepared = await requestPythonRailsJson('/domain/main/preview', {
+  const prepared = await requestPythonRailsJson('/domain/main/prepare', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       projectId,
       deckId,
-      assignment: 'Inspect the saved Main runtime configuration without executing a model.',
     }),
   }) as any;
   if (prepared.runtimeOwner !== 'hermes' || !prepared.cardContext) {
@@ -554,26 +547,25 @@ router.post('/main/session/chat', async (req, res) => {
   const correlationId = `req_${randomUUID().slice(0, 8)}`;
   let prepared: any;
   try {
-    const preview = await requestPythonRailsJson('/domain/main/preview', {
+    const preview = await requestPythonRailsJson('/domain/main/prepare', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         projectId,
         deckId,
-        assignment: message,
+        message,
         conversationId,
       }),
     }) as any;
-    prepared = await requestPythonRailsJson('/domain/runs/begin', {
+    prepared = await requestPythonRailsJson('/domain/main/runs/begin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         projectId,
         deckId,
         cardId: preview.cardContext?.cardId,
-        assignment: message,
+        message,
         conversationId,
-        exactIdf: preview.exactIdf,
         cardRevisionId: preview.cardRevisionId,
         runId: correlationId,
         correlationId,
@@ -646,6 +638,7 @@ router.post('/main/session/chat', async (req, res) => {
       conversationId,
       parentRunId: correlationId,
       workingDirectory,
+      userMessage: message,
       onEvent: async (event) => {
         if (turnFinished) return;
         if (event.kind === 'done') {
@@ -774,16 +767,34 @@ router.post('/main/session/answer', async (req, res) => {
 // empty transcript. A persistence failure remains a visible typed failure.
 router.get('/main/session/history', async (req, res) => {
   const projectId = String(req.query?.projectId || '');
+  const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
   const conversationId = String(req.query?.conversationId || 'default');
   if (!projectId) {
     return res.status(400).json({ ok: false, error: 'projectId_required', messages: [] });
   }
   try {
-    const stored = await getConversationMessages(projectId, conversationId);
-    const messages = stored
-      .filter((m) => m.role === 'user' || m.role === 'assistant')
-      .map((m) => ({ role: m.role as 'user' | 'assistant', text: m.content }));
-    return res.json({ ok: true, messages });
+    const preview = await requestPythonRailsJson('/domain/main/prepare', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        deckId,
+        conversationId,
+      }),
+    }) as any;
+    const turnArgs = resolvePreviewHermesTurnArgs({
+      prepared: preview,
+      projectId,
+      deckId,
+      conversationId,
+      parentRunId: `history:${conversationId}`,
+      onEvent: () => undefined,
+    });
+    if (turnArgs.cardId !== 'card_main_chat' || turnArgs.runtime.mode !== 'main') {
+      throw new Error('main_hermes_card_not_runnable');
+    }
+    const history = await readHermesHistory(turnArgs);
+    return res.json({ ok: true, sessionId: history.sessionId, messages: history.messages });
   } catch (error) {
     logHarnessTrace(
       `[harness] history read failed project=${projectId} conversation=${conversationId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
@@ -815,49 +826,15 @@ router.get('/main/session/conversations', async (req, res) => {
   }
 });
 
-function isHermesAuthenticationRequired(reason: string): boolean {
-  return reason.includes('not_logged_in')
-    || reason.includes('authentication_required')
-    || reason.includes('relogin_required');
+function uniqueNonEmpty(values: string[]): string[] {
+  return values
+    .map((value) => String(value || '').trim())
+    .filter((value, index, all) => Boolean(value) && all.indexOf(value) === index);
 }
 
-async function prepareCoderTerminalSession(
-  session: HermesCoderTerminalSession,
-): Promise<void> {
-  session.markPreparing();
-  const preview = await requestPythonRailsJson('/domain/cards/preview', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      projectId: session.info.projectId,
-      deckId: session.info.deckId,
-      cardId: session.info.ownerCardId,
-      assignment: 'Prepare the saved Coder Card session without executing a model.',
-      conversationId: session.info.conversationId,
-    }),
-  }) as any;
-  const turnArgs = resolvePreviewHermesTurnArgs({
-    prepared: preview,
-    projectId: session.info.projectId,
-    deckId: session.info.deckId,
-    conversationId: session.info.conversationId,
-    parentRunId: session.info.id,
-    workingDirectory: resolveRepoRoot(),
-    onEvent: () => undefined,
-  });
-  if (turnArgs.cardId !== CODER_CARD_ID || turnArgs.runtime.mode !== 'delegate') {
-    throw new Error('saved_coder_hermes_profile_required');
-  }
-  const prepared = await prepareHermesSession(turnArgs);
-  session.info.profile = turnArgs.runtime.profile;
-  session.markReady(prepared);
-}
-
-async function runDirectCoderTerminalTurn(
-  session: HermesCoderTerminalSession,
-  message: string,
-  runId: string,
-): Promise<void> {
+async function startCoderTerminalSession(session: HermesCoderTerminalSession): Promise<void> {
+  const assignment = 'Start the saved Coder Card interactive Hermes CLI.';
+  const runId = `req_${randomUUID().slice(0, 8)}`;
   let runStarted = false;
   try {
     const preview = await requestPythonRailsJson('/domain/cards/preview', {
@@ -867,18 +844,34 @@ async function runDirectCoderTerminalTurn(
         projectId: session.info.projectId,
         deckId: session.info.deckId,
         cardId: session.info.ownerCardId,
-        assignment: message,
+        assignment,
         conversationId: session.info.conversationId,
       }),
     }) as any;
-    const prepared = await requestPythonRailsJson('/domain/runs/begin', {
+    const turnArgs = resolvePreviewHermesTurnArgs({
+      prepared: preview,
+      projectId: session.info.projectId,
+      deckId: session.info.deckId,
+      conversationId: session.info.conversationId,
+      parentRunId: runId,
+      workingDirectory: session.info.targetRoot,
+      onEvent: () => undefined,
+    });
+    if (turnArgs.cardId !== CODER_CARD_ID || turnArgs.runtime.mode !== 'delegate') {
+      throw new Error('saved_coder_hermes_profile_required');
+    }
+    if (turnArgs.accessMode !== 'chatgpt-account') {
+      throw new Error('saved_coder_chatgpt_account_required');
+    }
+
+    const begun = await requestPythonRailsJson('/domain/runs/begin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         projectId: session.info.projectId,
         deckId: session.info.deckId,
         cardId: session.info.ownerCardId,
-        assignment: message,
+        assignment,
         conversationId: session.info.conversationId,
         exactIdf: preview.exactIdf,
         cardRevisionId: preview.cardRevisionId,
@@ -886,59 +879,115 @@ async function runDirectCoderTerminalTurn(
         correlationId: runId,
       }),
     }) as any;
+    const activeRunId = String(begun?.runId || runId);
     runStarted = true;
-    const handle = await startPreparedHermesTransport({
-      prepared,
+
+    const mcp = resolvePythonAgentMcpServerSpec({
+      kind: 'card-runtime',
       projectId: session.info.projectId,
       deckId: session.info.deckId,
       conversationId: session.info.conversationId,
-      parentRunId: runId,
-      workingDirectory: resolveRepoRoot(),
-      onEvent: (event) => session.receiveHermesEvent(event),
+      parentRunId: activeRunId,
+      callerCardId: session.info.ownerCardId,
+      callerRuntimeKind: 'hermes',
+      callerRuntimeMode: 'delegate',
+      grantedTools: turnArgs.tools.filter((name) => name !== 'web_search'),
+      // A literal CLI cannot attach trusted ACP per-call execution metadata.
+      // The short-lived token itself remains Card-, conversation-, and Run-scoped.
+      requiresExecutionContext: false,
     });
-    if (!session.attachControl(runId, handle)) {
-      handle.cancel();
-      throw new Error('hermes_coder_terminal_control_attach_failed');
-    }
-    const completed = await handle.done;
-    await requestPythonRailsJson('/domain/runs/finish', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        runId,
-        state: 'completed',
-        providerThreadRef: completed.transport.threadId,
-        providerTurnRef: completed.transport.turnId,
-        providerInputTokens: completed.usage.providerInputTokens,
-        providerOutputTokens: completed.usage.providerOutputTokens,
-        totalCostUsd: completed.usage.totalCostUsd,
-      }),
+    const authorization = String(mcp.headers.Authorization || '');
+    if (!authorization.startsWith('Bearer ')) throw new Error('coder_terminal_mcp_bearer_missing');
+
+    const install = resolveHermesCliInstall();
+    const provider = providerForHermes(turnArgs.provider, turnArgs.accessMode);
+    const tokenEnv = 'LIQUIDAITY_CODER_MCP_BEARER';
+    configureHermesCardProfile({
+      hermesRoot: install.root,
+      profile: turnArgs.runtime.profile,
+      prompt: turnArgs.prompt,
+      provider,
+      model: turnArgs.providerModelId,
+      mcpUrl: mcp.url,
+      mcpTools: turnArgs.tools.filter((name) => name !== 'web_search'),
+      mcpTokenEnv: tokenEnv,
     });
-    session.completeTurn(runId);
+    const toolsets = uniqueNonEmpty([
+      ...turnArgs.toolsets,
+      ...(turnArgs.nativeTools.includes('memory') ? ['memory'] : []),
+      ...(turnArgs.tools.length ? ['liquidaity'] : []),
+    ]);
+    const args = [
+      '-p', turnArgs.runtime.profile,
+      'chat',
+      '--cli',
+      '--in', session.info.targetRoot,
+      '--provider', provider,
+      '-m', turnArgs.providerModelId,
+      ...(toolsets.length ? ['-t', toolsets.join(',')] : []),
+    ];
+    let finished = false;
+    const finish = async (
+      state: 'completed' | 'failed' | 'cancelled',
+      errorSummary?: string,
+    ): Promise<void> => {
+      if (finished) return;
+      finished = true;
+      await requestPythonRailsJson('/domain/runs/finish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          runId: activeRunId,
+          state,
+          ...(errorSummary ? {
+            errorCode: state === 'cancelled' ? 'hermes_cli_cancelled' : 'hermes_cli_failed',
+            errorSummary,
+          } : {}),
+        }),
+      }).catch(() => undefined);
+    };
+    session.info.profile = turnArgs.runtime.profile;
+    session.start({
+      executable: install.executable,
+      args,
+      env: {
+        ...withoutInternalMcpSecret(process.env),
+        HERMES_HOME: resolveHermesRuntimeHome(install.root),
+        [tokenEnv]: authorization.slice('Bearer '.length),
+      },
+      provider,
+      model: turnArgs.providerModelId,
+      runId: activeRunId,
+      onExit: ({ exitCode, signal, stopped }) => {
+        const errorSummary = exitCode === 0 || stopped
+          ? undefined
+          : `hermes_cli_exited:${exitCode}:${signal ?? 'none'}`;
+        void finish(stopped ? 'cancelled' : exitCode === 0 ? 'completed' : 'failed', errorSummary);
+      },
+    });
   } catch (error) {
-    const reason = error instanceof Error ? error.message : 'hermes_coder_terminal_turn_failed';
-    const stopped = session.isStopped();
+    const reason = error instanceof Error ? error.message : 'hermes_coder_terminal_start_failed';
     if (runStarted) {
       await requestPythonRailsJson('/domain/runs/finish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           runId,
-          state: stopped ? 'cancelled' : 'failed',
-          errorCode: stopped ? 'hermes_turn_cancelled' : 'hermes_coder_terminal_turn_failed',
+          state: 'failed',
+          errorCode: 'hermes_cli_start_failed',
           errorSummary: reason,
         }),
       }).catch(() => undefined);
     }
-    if (stopped) return;
-    if (isHermesAuthenticationRequired(reason)) session.markAuthRequired(reason);
-    else session.markFailed(reason);
+    session.markFailed(reason);
+    throw error;
   }
 }
 
 // ── Saved Coder Card terminal ──────────────────────────────────────────────
-// xterm is a direct controller for the same persistent Hermes ACP session used
-// by authorized Main -> Coder calls. It is deliberately not a shell or PTY.
+// xterm forwards bytes to and from one real Hermes CLI ConPTY. Main -> Coder
+// assignments remain a separate authorized ACP transport for the same Card and
+// profile; their events are never replayed into this terminal.
 function mountConsoleSessionRoutes(
   prefix: string,
   manager: typeof coderTerminalSessionManager,
@@ -958,16 +1007,15 @@ function mountConsoleSessionRoutes(
       return res.status(424).json({ ok: false, error: started.error, missing: started.missing });
     }
     const session = started.session;
-    if (started.created || ['failed', 'stopped', 'auth_required'].includes(session.info.state)) {
+    if (started.created) {
       try {
-        await prepareCoderTerminalSession(session);
+        await startCoderTerminalSession(session);
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'hermes_coder_terminal_prepare_failed';
-        if (isHermesAuthenticationRequired(reason)) session.markAuthRequired(reason);
-        else session.markFailed(reason);
+        session.markFailed(reason);
       }
     }
-    const failed = session.info.state === 'failed' || session.info.state === 'auth_required';
+    const failed = session.info.state === 'failed';
     return res.status(failed ? 502 : 200).json({
       ok: !failed,
       session: session.info,
@@ -1013,19 +1061,27 @@ function mountConsoleSessionRoutes(
   router.post(`${prefix}/sessions/:id/input`, (req, res) => {
     const session = manager.get(req.params.id);
     if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
-    const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
-    if (!message) return res.status(400).json({ ok: false, error: 'coder_terminal_message_required' });
-    if (session.info.state === 'waiting') {
-      const delivered = session.answerPermission(message);
-      return res.status(delivered ? 200 : 409).json({ ok: delivered, delivered });
+    const data = typeof req.body?.data === 'string' ? req.body.data : '';
+    if (!data || data.length > 65_536) {
+      return res.status(400).json({ ok: false, error: 'coder_terminal_data_required' });
     }
-    const runId = `req_${randomUUID().slice(0, 8)}`;
-    const delivered = session.beginTurn(runId);
-    if (!delivered) {
-      return res.status(409).json({ ok: false, delivered: false, error: 'hermes_coder_session_not_ready' });
-    }
-    void runDirectCoderTerminalTurn(session, message, runId);
-    return res.status(202).json({ ok: true, delivered: true, runId });
+    const delivered = session.write(data);
+    return res.status(delivered ? 200 : 409).json({
+      ok: delivered,
+      delivered,
+      ...(delivered ? {} : { error: 'hermes_coder_terminal_not_running' }),
+    });
+  });
+
+  router.post(`${prefix}/sessions/:id/resize`, (req, res) => {
+    const session = manager.get(req.params.id);
+    if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
+    const resized = session.resize(Number(req.body?.cols), Number(req.body?.rows));
+    return res.status(resized ? 200 : 409).json({
+      ok: resized,
+      resized,
+      ...(resized ? {} : { error: 'hermes_coder_terminal_resize_rejected' }),
+    });
   });
 
   router.post(`${prefix}/sessions/:id/stop`, (req, res) => {

@@ -111,10 +111,9 @@ export async function streamSession(args: {
 }
 
 /**
- * Load legacy project-scoped transcript rows when they exist. New MVP turns
- * remain in the current UI session and are not appended to this store. A
- * A valid fresh conversation resolves to an empty array. Transport, persistence,
- * and malformed-response failures remain visible to the caller.
+ * Reload the saved Main Card's native Hermes session history. A fresh native
+ * conversation resolves to an empty array; transport and malformed-response
+ * failures remain visible to the caller.
  */
 export async function loadSessionHistory(args: {
   projectId: string;

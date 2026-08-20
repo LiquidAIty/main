@@ -14,6 +14,7 @@ from app.python_models.alpaca_market_data import (
 from app.python_models.autogen_orchestrator import dispatch_configured_runtime
 from app.python_models.card_domain import (
     CardDomainError,
+    begin_main_chat_run,
     begin_prompt_free_run,
     begin_native_hermes_child_run,
     describe_magentic_agents,
@@ -23,8 +24,8 @@ from app.python_models.card_domain import (
     list_saved_idfs,
     load_deck,
     load_saved_idf_revision,
-    materialize_main_invocation,
     materialize_invocation,
+    prepare_main_chat,
     record_explicit_artifact,
     save_deck,
     save_idf_revision,
@@ -156,10 +157,10 @@ def domain_card_preview(payload: dict[str, Any]):
         raise HTTPException(status_code=400, detail=str(err)) from err
 
 
-@app.post("/domain/main/preview")
-def domain_main_preview(payload: dict[str, Any]):
+@app.post("/domain/main/prepare")
+def domain_main_prepare(payload: dict[str, Any]):
     try:
-        return materialize_main_invocation(payload)
+        return prepare_main_chat(payload)
     except (CardDomainError, IddValidationError) as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 
@@ -202,6 +203,14 @@ def domain_saved_idf_save(payload: dict[str, Any]):
 def domain_run_begin(payload: dict[str, Any]):
     try:
         return begin_prompt_free_run(payload)
+    except (CardDomainError, IddValidationError) as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/domain/main/runs/begin")
+def domain_main_run_begin(payload: dict[str, Any]):
+    try:
+        return begin_main_chat_run(payload)
     except (CardDomainError, IddValidationError) as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 

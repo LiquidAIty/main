@@ -5,15 +5,15 @@ import '@xterm/xterm/css/xterm.css';
 import type { ConsoleOutputChunk } from './coderTerminalClient';
 
 /**
- * xterm.js rendering of the saved Coder Card's native Hermes session. This is
- * line-oriented ACP input, not a shell or PTY: xterm supplies terminal editing
- * ergonomics while the backend sends each completed line as a Hermes turn.
+ * xterm.js rendering of the saved Coder Card's native Hermes pseudoterminal.
+ * Input bytes go directly to ConPTY and only ConPTY output is rendered.
  */
 
 type XtermViewProps = {
   chunks: ConsoleOutputChunk[];
   interactive: boolean;
-  onSubmit?: (message: string) => void | Promise<void>;
+  onData?: (data: string) => void | Promise<void>;
+  onResize?: (cols: number, rows: number) => void | Promise<void>;
   onError?: (message: string) => void;
   /** Render with a transparent background so text sits on the host panel. */
   transparent?: boolean;
@@ -22,16 +22,19 @@ type XtermViewProps = {
 export default function XtermView({
   chunks,
   interactive,
-  onSubmit,
+  onData,
+  onResize,
   onError,
   transparent = false,
 }: XtermViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<{ term: Terminal; lastSequence: number } | null>(null);
-  const onSubmitRef = useRef(onSubmit);
+  const onDataRef = useRef(onData);
+  const onResizeRef = useRef(onResize);
   const onErrorRef = useRef(onError);
   const interactiveRef = useRef(interactive);
-  onSubmitRef.current = onSubmit;
+  onDataRef.current = onData;
+  onResizeRef.current = onResize;
   onErrorRef.current = onError;
   interactiveRef.current = interactive;
 
@@ -42,11 +45,19 @@ export default function XtermView({
     let resizeObserver: ResizeObserver | null = null;
     let inputDisposable: { dispose(): void } | null = null;
     let term: Terminal | null = null;
+    let lastSize = '';
     const focusTerminal = () => term?.focus();
     const fit = () => {
       if (!term) return;
       try {
         fitAddon.fit();
+        const size = `${term.cols}x${term.rows}`;
+        if (size !== lastSize) {
+          lastSize = size;
+          void Promise.resolve(onResizeRef.current?.(term.cols, term.rows)).catch((error) => {
+            onErrorRef.current?.(error instanceof Error ? error.message : String(error));
+          });
+        }
       } catch {
         // The next ResizeObserver/window resize callback retries once measurable.
       }
@@ -61,7 +72,7 @@ export default function XtermView({
     const fitAddon = new FitAddon();
     try {
       term = new Terminal({
-        convertEol: true,
+        convertEol: false,
         fontSize: 12,
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
         allowTransparency: transparent,
@@ -72,43 +83,14 @@ export default function XtermView({
       });
       term.loadAddon(fitAddon);
       term.open(container);
-      let line = '';
-      let previousWasCarriageReturn = false;
       inputDisposable = term.onData((data) => {
         if (!interactiveRef.current) return;
-        for (const character of data) {
-          if (character === '\n' && previousWasCarriageReturn) {
-            previousWasCarriageReturn = false;
-            continue;
-          }
-          if (character === '\r' || character === '\n') {
-            previousWasCarriageReturn = character === '\r';
-            const message = line.trim();
-            if (message) {
-              term?.write('\r\n');
-              try {
-                void Promise.resolve(onSubmitRef.current?.(message)).catch((error) => {
-                  onErrorRef.current?.(error instanceof Error ? error.message : String(error));
-                });
-              } catch (error) {
-                onErrorRef.current?.(error instanceof Error ? error.message : String(error));
-              }
-            }
-            line = '';
-            continue;
-          }
-          previousWasCarriageReturn = false;
-          if (character === '\u007f' || character === '\b') {
-            if (line) {
-              line = line.slice(0, -1);
-              term?.write('\b \b');
-            }
-            continue;
-          }
-          if (character >= ' ' && character !== '\u007f') {
-            line += character;
-            term?.write(character);
-          }
+        try {
+          void Promise.resolve(onDataRef.current?.(data)).catch((error) => {
+            onErrorRef.current?.(error instanceof Error ? error.message : String(error));
+          });
+        } catch (error) {
+          onErrorRef.current?.(error instanceof Error ? error.message : String(error));
         }
       });
       let lastSequence = 0;

@@ -104,6 +104,11 @@ export type HermesPreparedSession = HermesTurnHandle['runtime'] & {
   providerModelId: string;
 };
 
+export type HermesHistoryMessage = {
+  role: 'user' | 'assistant';
+  text: string;
+};
+
 type PendingRequest = {
   resolve(value: any): void;
   reject(error: Error): void;
@@ -236,12 +241,14 @@ class AcpProcess {
   private readonly turns = new Map<string, ActiveTurn>();
   private readonly sessionByKey = new Map<string, string>();
   private readonly configuredModelBySession = new Map<string, string>();
+  private readonly historyCollectors = new Map<string, HermesHistoryMessage[]>();
   private nextRequestId = 1;
   private stdoutBuffer = '';
   private stderrTail: string[] = [];
   private ready: Promise<void>;
+  private terminated = false;
 
-  constructor() {
+  constructor(private readonly onClosed: (owner: AcpProcess) => void) {
     const install = resolveHermesInstall();
     this.executable = install.executable;
     this.hermesHome = ensureHermesHolographicMemoryHome(install.root);
@@ -280,6 +287,10 @@ class AcpProcess {
 
   get pid(): number | null {
     return this.child.pid ?? null;
+  }
+
+  get alive(): boolean {
+    return !this.terminated && !this.child.killed && this.child.stdin.writable;
   }
 
   close(): void {
@@ -391,10 +402,21 @@ class AcpProcess {
 
   private receiveUpdate(params: any): void {
     const sessionId = String(params?.sessionId || '');
-    const turn = this.turns.get(sessionId);
-    if (!turn) return;
     const update = params?.update || {};
     const kind = String(update.sessionUpdate || '');
+    const history = this.historyCollectors.get(sessionId);
+    if (history && (kind === 'user_message_chunk' || kind === 'agent_message_chunk')) {
+      const text = textContent(update);
+      if (text) {
+        history.push({
+          role: kind === 'user_message_chunk' ? 'user' : 'assistant',
+          text,
+        });
+      }
+      return;
+    }
+    const turn = this.turns.get(sessionId);
+    if (!turn) return;
     if (kind === 'agent_message_chunk') {
       const text = textContent(update);
       if (text) {
@@ -452,10 +474,13 @@ class AcpProcess {
   }
 
   private failAll(error: Error): void {
+    if (this.terminated) return;
+    this.terminated = true;
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
     for (const turn of this.turns.values()) turn.onEvent({ kind: 'error', message: error.message });
     this.turns.clear();
+    this.onClosed(this);
   }
 
   private sessionCwd(sessionKey: string, requested?: string): string {
@@ -528,6 +553,36 @@ class AcpProcess {
       sessionId,
       transport: this.transport,
     };
+  }
+
+  async readHistory(args: HermesTurnArgs): Promise<{
+    sessionId: string | null;
+    messages: HermesHistoryMessage[];
+  }> {
+    await this.ready;
+    const cwd = this.sessionCwd(args.sessionKey, args.workingDirectory);
+    const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(args, process.env, '');
+    const listed = await this.request('session/list', { cwd, _meta: sessionMeta });
+    const sessionId = String(
+      Array.isArray(listed?.sessions) ? listed.sessions[0]?.sessionId || '' : '',
+    );
+    if (!sessionId) return { sessionId: null, messages: [] };
+    if (this.turns.has(sessionId)) throw new Error('hermes_session_turn_already_running');
+
+    const messages: HermesHistoryMessage[] = [];
+    this.historyCollectors.set(sessionId, messages);
+    try {
+      await this.request('session/load', {
+        cwd,
+        sessionId,
+        mcpServers,
+        _meta: sessionMeta,
+      });
+      this.sessionByKey.set(args.sessionKey, sessionId);
+      return { sessionId, messages };
+    } finally {
+      this.historyCollectors.delete(sessionId);
+    }
   }
 
   async startTurn(args: HermesTurnArgs, onEvent: (event: HermesSessionEvent) => void): Promise<HermesTurnHandle> {
@@ -648,8 +703,10 @@ class AcpProcess {
 let processOwner: AcpProcess | null = null;
 
 function sharedHermesProcess(): AcpProcess {
-  if (processOwner) return processOwner;
-  processOwner = new AcpProcess();
+  if (processOwner?.alive) return processOwner;
+  processOwner = new AcpProcess((closed) => {
+    if (processOwner === closed) processOwner = null;
+  });
   return processOwner;
 }
 
@@ -668,6 +725,12 @@ export async function prepareHermesSession(
   args: HermesTurnArgs,
 ): Promise<HermesPreparedSession> {
   return sharedHermesProcess().prepareSession(args);
+}
+
+export async function readHermesHistory(
+  args: HermesTurnArgs,
+): Promise<{ sessionId: string | null; messages: HermesHistoryMessage[] }> {
+  return sharedHermesProcess().readHistory(args);
 }
 
 export function closeHermesRuntimes(): void {

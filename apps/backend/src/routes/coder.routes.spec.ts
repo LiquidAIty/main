@@ -41,6 +41,7 @@ const chatSessionMocks = vi.hoisted(() => {
     listConversations: vi.fn(async () => []),
     lastCancel: vi.fn(),
     prepareHermesSession: vi.fn(),
+    readHermesHistory: vi.fn(async () => ({ sessionId: null, messages: [] })),
     startHermesTurn: vi.fn(),
     usage,
   };
@@ -72,7 +73,41 @@ const chatSessionMocks = vi.hoisted(() => {
 const mcpClientMocks = vi.hoisted(() => ({
   callPythonAgentMcpTool: vi.fn(async () => ({ ok: true })),
   listPythonAgentMcpCatalog: vi.fn(async (): Promise<any[]> => []),
+  resolvePythonAgentMcpServerSpec: vi.fn(() => ({
+    type: 'http',
+    url: 'http://127.0.0.1:8765/mcp',
+    headers: { Authorization: 'Bearer test-coder-terminal-token' },
+  })),
 }));
+
+const ptyMocks = vi.hoisted(() => {
+  const children: any[] = [];
+  const spawn = vi.fn((_file: string, _args: string[], _options: Record<string, unknown>) => {
+    const dataListeners: Array<(data: string) => void> = [];
+    const exitListeners: Array<(event: { exitCode: number; signal?: number }) => void> = [];
+    const child = {
+      pid: 4242 + children.length,
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      onData: (listener: (data: string) => void) => {
+        dataListeners.push(listener);
+        return { dispose: () => undefined };
+      },
+      onExit: (listener: (event: { exitCode: number; signal?: number }) => void) => {
+        exitListeners.push(listener);
+        return { dispose: () => undefined };
+      },
+      emitData: (data: string) => dataListeners.forEach((listener) => listener(data)),
+      emitExit: (exitCode: number, signal?: number) => (
+        exitListeners.forEach((listener) => listener({ exitCode, signal }))
+      ),
+    };
+    children.push(child);
+    return child;
+  });
+  return { children, spawn };
+});
 
 const orchestratorMocks = vi.hoisted(() => ({
   dispatchConfiguredRuntime: vi.fn(async (): Promise<any> => ({
@@ -92,14 +127,15 @@ const orchestratorMocks = vi.hoisted(() => ({
         catalogs: { 'configured-models': body.models },
       };
     }
-    if (endpoint === '/domain/cards/preview' || endpoint === '/domain/main/preview') {
-      const cardId = endpoint === '/domain/main/preview' ? 'card_main_chat' : body.cardId;
+    if (endpoint === '/domain/cards/preview' || endpoint === '/domain/main/prepare') {
+      const mainChat = endpoint === '/domain/main/prepare';
+      const cardId = mainChat ? 'card_main_chat' : body.cardId;
       const coderCard = cardId === 'card_local_coder';
       return {
         projectId: body.projectId,
         deckId: body.deckId,
         cardRevisionId: `revision:${cardId}`,
-        exactIdf: `# IDF\n\n${body.assignment}`,
+        ...(mainChat ? { message: String(body.message || '') } : { exactIdf: `# IDF\n\n${body.assignment}` }),
         runtimeOwner: 'hermes',
         cardContext: {
           cardId,
@@ -119,10 +155,12 @@ const orchestratorMocks = vi.hoisted(() => ({
         },
         providerProjection: {
           systemPrompt: coderCard ? 'Saved Coder prompt' : 'Saved prompt',
+          ...(mainChat ? { message: String(body.message || '') } : {}),
         },
       };
     }
-    if (endpoint === '/domain/runs/begin') {
+    if (endpoint === '/domain/runs/begin' || endpoint === '/domain/main/runs/begin') {
+      const mainChat = endpoint === '/domain/main/runs/begin';
       const autoKanban = body.cardId === 'card_hermes_steward';
       const coderCard = body.cardId === 'card_local_coder';
       return {
@@ -131,7 +169,7 @@ const orchestratorMocks = vi.hoisted(() => ({
         runtimeOwner: 'hermes',
         hermesTransport: {
           systemPrompt: 'Saved prompt',
-          message: body.exactIdf,
+          message: mainChat ? body.message : body.exactIdf,
           delegationTargets: body.cardId === 'card_main_chat' ? [{
             cardId: 'card_local_coder',
             title: 'Coder',
@@ -238,13 +276,17 @@ vi.mock('../hermes/mainAdapter', () => ({
       : provider
   ),
   prepareHermesSession: chatSessionMocks.prepareHermesSession,
+  readHermesHistory: chatSessionMocks.readHermesHistory,
   startHermesTurn: chatSessionMocks.startHermesTurn,
 }));
 
 vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
   callPythonAgentMcpTool: mcpClientMocks.callPythonAgentMcpTool,
   listPythonAgentMcpCatalog: mcpClientMocks.listPythonAgentMcpCatalog,
+  resolvePythonAgentMcpServerSpec: mcpClientMocks.resolvePythonAgentMcpServerSpec,
 }));
+
+vi.mock('node-pty', () => ({ spawn: ptyMocks.spawn }));
 
 vi.mock('../services/autogen/pythonRailsClient', () => orchestratorMocks);
 
@@ -377,22 +419,22 @@ describe('coder routes', () => {
   });
 
   it('returns an empty history only for a successful empty read', async () => {
-    chatSessionMocks.getConversationMessages.mockResolvedValueOnce([]);
+    chatSessionMocks.readHermesHistory.mockResolvedValueOnce({ sessionId: null, messages: [] });
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(
         `${baseUrl}/main/session/history?projectId=project-1&conversationId=main`,
       );
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({ ok: true, messages: [] });
+      await expect(response.json()).resolves.toEqual({ ok: true, sessionId: null, messages: [] });
     } finally {
       await closeServer(server);
     }
   });
 
-  it('returns a typed failure when conversation persistence cannot be read', async () => {
-    chatSessionMocks.getConversationMessages.mockRejectedValueOnce(
-      new Error('database_connection_lost'),
+  it('returns a typed failure when native Hermes history cannot be read', async () => {
+    chatSessionMocks.readHermesHistory.mockRejectedValueOnce(
+      new Error('hermes_acp_transport_closed'),
     );
     const { server, baseUrl } = await createApiServer();
     try {
@@ -606,8 +648,9 @@ describe('coder routes', () => {
     }
   });
 
-  it('prepares the real saved Coder ACP session from the Card preview before reporting ready', async () => {
-    chatSessionMocks.prepareHermesSession.mockClear();
+  it('starts the saved Coder Card as a real Hermes CLI ConPTY', async () => {
+    ptyMocks.spawn.mockClear();
+    mcpClientMocks.resolvePythonAgentMcpServerSpec.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/hermes/coder-terminal/sessions`, {
@@ -626,32 +669,50 @@ describe('coder routes', () => {
         ok: true,
         session: {
           ownerCardId: 'card_local_coder',
-          state: 'ready',
+          state: 'running',
+          transportMode: 'pty',
           profile: 'coder',
-          pid: 42,
-          nativeSessionId: 'native-coder-session',
+          provider: 'openai-codex',
+          model: 'gpt-5.6-luna',
+          pid: expect.any(Number),
+          nativeSessionId: null,
         },
         transcript: [],
       });
-      expect(chatSessionMocks.prepareHermesSession).toHaveBeenCalledTimes(1);
-      expect(chatSessionMocks.prepareHermesSession.mock.calls[0]?.[0]).toMatchObject({
-        cardId: 'card_local_coder',
-        runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
-        prompt: 'Saved Coder prompt',
-        tools: ['cbm.search_graph'],
-        nativeTools: ['terminal'],
-        toolsets: ['file', 'terminal'],
-        sessionKey: 'terminal-project-ready:terminal-conversation-ready:card_local_coder',
+      expect(ptyMocks.spawn).toHaveBeenCalledTimes(1);
+      expect(ptyMocks.spawn.mock.calls[0]?.[0]).toMatch(/Hermes[\\/]venv[\\/]Scripts[\\/]hermes\.exe$/);
+      expect(ptyMocks.spawn.mock.calls[0]?.[1]).toEqual([
+        '-p', 'coder',
+        'chat',
+        '--cli',
+        '--in', expect.any(String),
+        '--provider', 'openai-codex',
+        '-m', 'gpt-5.6-luna',
+        '-t', 'file,terminal,liquidaity',
+      ]);
+      expect(ptyMocks.spawn.mock.calls[0]?.[2]).toMatchObject({
+        useConpty: true,
+        env: expect.objectContaining({
+          LIQUIDAITY_CODER_MCP_BEARER: 'test-coder-terminal-token',
+        }),
       });
+      expect(mcpClientMocks.resolvePythonAgentMcpServerSpec).toHaveBeenCalledWith(
+        expect.objectContaining({
+          callerCardId: 'card_local_coder',
+          callerRuntimeMode: 'delegate',
+          grantedTools: ['cbm.search_graph'],
+          requiresExecutionContext: false,
+        }),
+      );
     } finally {
       await closeServer(server);
     }
   });
 
   it('returns the exact native terminal startup failure instead of a generic 502 label', async () => {
-    chatSessionMocks.prepareHermesSession.mockRejectedValueOnce(
-      new Error('hermes_acp_rpc_error:native_startup_failed'),
-    );
+    ptyMocks.spawn.mockImplementationOnce(() => {
+      throw new Error('native_conpty_start_failed');
+    });
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/hermes/coder-terminal/sessions`, {
@@ -668,34 +729,34 @@ describe('coder routes', () => {
       expect(response.status).toBe(502);
       expect(payload).toMatchObject({
         ok: false,
-        error: 'hermes_acp_rpc_error:native_startup_failed',
+        error: 'native_conpty_start_failed',
         session: { state: 'failed' },
+        transcript: [],
       });
-      expect(payload.transcript.map((chunk: any) => chunk.data)).toEqual([
-        'hermes_acp_rpc_error:native_startup_failed\r\n',
-      ]);
       expect(JSON.stringify(payload)).not.toContain('console_start_failed_502');
     } finally {
       await closeServer(server);
     }
   });
 
-  it('uses the same saved Coder Card session for direct input and Main assignment', async () => {
-    chatSessionMocks.startHermesTurn.mockImplementation(async (_params: unknown, onEvent: (event: any) => void) => {
-      onEvent({ kind: 'text', text: 'native coder output' });
-      return {
-        done: Promise.resolve({ finalText: 'native coder output', usage: chatSessionMocks.usage, transport: {} }),
-        cancel: chatSessionMocks.lastCancel,
-        answer: vi.fn(),
-        resolved: {
-          cardId: 'card_local_coder',
-          provider: 'openai',
-          modelKey: 'gpt-5.6-luna',
-          providerModelId: 'gpt-5.6-luna',
-        },
-      };
-    });
+  it('forwards raw terminal bytes only to PTY and keeps Main assignment on real ACP', async () => {
+    chatSessionMocks.startHermesTurn.mockImplementation(async () => ({
+      done: Promise.resolve({
+        finalText: 'native coder output',
+        usage: chatSessionMocks.usage,
+        transport: {},
+      }),
+      cancel: chatSessionMocks.lastCancel,
+      answer: vi.fn(),
+      resolved: {
+        cardId: 'card_local_coder',
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        providerModelId: 'gpt-5.6-luna',
+      },
+    }));
     chatSessionMocks.startHermesTurn.mockClear();
+    const childIndex = ptyMocks.children.length;
     const { server, baseUrl } = await createApiServer();
     try {
       const startResponse = await fetch(`${baseUrl}/hermes/coder-terminal/sessions`, {
@@ -710,25 +771,30 @@ describe('coder routes', () => {
       });
       const started = await startResponse.json();
       expect(startResponse.status, JSON.stringify(started)).toBe(200);
+      const child = ptyMocks.children[childIndex];
+      child.emitData('real Hermes PTY output\r\n');
 
       const directResponse = await fetch(
         `${baseUrl}/hermes/coder-terminal/sessions/${started.session.id}/input`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: 'Inspect one bounded symbol.' }),
+          body: JSON.stringify({ data: 'Inspect one bounded symbol.\r' }),
         },
       );
-      expect(directResponse.status).toBe(202);
-      const directPayload = await directResponse.json();
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        const finished = orchestratorMocks.requestPythonRailsJson.mock.calls.some(
-          ([endpoint, init]) => endpoint === '/domain/runs/finish'
-            && JSON.parse(String(init?.body || '{}')).runId === directPayload.runId,
-        );
-        if (finished) break;
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      }
+      expect(directResponse.status).toBe(200);
+      expect(child.write).toHaveBeenCalledWith('Inspect one bounded symbol.\r');
+
+      const resizeResponse = await fetch(
+        `${baseUrl}/hermes/coder-terminal/sessions/${started.session.id}/resize`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cols: 166, rows: 47 }),
+        },
+      );
+      expect(resizeResponse.status).toBe(200);
+      expect(child.resize).toHaveBeenCalledWith(166, 47);
 
       const assignedResponse = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
         method: 'POST',
@@ -748,20 +814,27 @@ describe('coder routes', () => {
         }),
       });
       expect(assignedResponse.status, await assignedResponse.text()).toBe(200);
-      expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(2);
-      const sessionKeys = chatSessionMocks.startHermesTurn.mock.calls.map(([args]) => args.sessionKey);
-      expect(sessionKeys).toEqual([
-        'terminal-project-shared:main:card_local_coder',
-        'terminal-project-shared:main:card_local_coder',
-      ]);
+      expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1);
+      expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).toMatchObject({
+        cardId: 'card_local_coder',
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
+      });
+      expect(child.write).toHaveBeenCalledTimes(1);
       const terminalSession = await fetch(
         `${baseUrl}/hermes/coder-terminal/sessions/${started.session.id}`,
       ).then((response) => response.json());
-      expect(terminalSession.session.state).toBe('ready');
+      expect(terminalSession.session.state).toBe('running');
       expect(terminalSession.transcript.map((chunk: any) => chunk.data)).toEqual([
-        'native coder output',
-        'native coder output',
+        'real Hermes PTY output\r\n',
       ]);
+
+      const stopResponse = await fetch(
+        `${baseUrl}/hermes/coder-terminal/sessions/${started.session.id}/stop`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      );
+      expect(stopResponse.status).toBe(200);
+      expect(child.kill).toHaveBeenCalledOnce();
+      child.emitExit(0);
     } finally {
       await closeServer(server);
     }
@@ -1051,16 +1124,29 @@ describe('coder routes', () => {
         expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1);
         expect(chatSessionMocks.startHermesTurn.mock.calls[0][0]).toMatchObject({
           sessionKey: 'project-1:main:card_main_chat',
-          message: '# IDF\n\nhello',
+          message: 'hello',
+          prompt: 'Saved prompt',
           runtime: { kind: 'hermes', mode: 'main', profile: 'default' },
         });
+        const modelInput = JSON.stringify({
+          prompt: chatSessionMocks.startHermesTurn.mock.calls[0][0].prompt,
+          message: chatSessionMocks.startHermesTurn.mock.calls[0][0].message,
+        });
+        expect(modelInput).not.toContain('# LiquidAIty IDF');
+        expect(modelInput).not.toContain('# IDF');
+        expect(modelInput).not.toContain('serialized-card');
+        expect(modelInput).not.toContain('cardContext');
+        expect(modelInput.match(/Saved prompt/g)).toHaveLength(1);
         const railsCalls = orchestratorMocks.requestPythonRailsJson.mock.calls;
         expect(railsCalls.map(([endpoint]) => endpoint)).toEqual([
-          '/domain/main/preview',
-          '/domain/runs/begin',
+          '/domain/main/prepare',
+          '/domain/main/runs/begin',
           '/domain/runs/finish',
         ]);
-        expect(railsCalls[1]?.[1]?.body).toContain('"exactIdf":"# IDF\\n\\nhello"');
+        expect(railsCalls[0]?.[1]?.body).toContain('"message":"hello"');
+        expect(railsCalls[1]?.[1]?.body).toContain('"message":"hello"');
+        expect(railsCalls[0]?.[1]?.body).not.toContain('exactIdf');
+        expect(railsCalls[1]?.[1]?.body).not.toContain('exactIdf');
         expect(railsCalls[2]?.[1]?.body).toContain('"state":"completed"');
 
         // The obsolete post-chat pair handoff must never fire from this route.

@@ -1240,11 +1240,20 @@ def _normalized_native_references(value: Any) -> list[dict[str, Any]]:
     return normalized
 
 
-def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
+def _prepare_invocation(
+    payload: dict[str, Any],
+    *,
+    require_assignment: bool = True,
+    include_tool_definitions: bool = True,
+) -> dict[str, Any]:
     project_ref = _required_text(payload.get("projectId"), "project_id")
     deck_id = _required_text(payload.get("deckId"), "deck_id")
     card_id = _required_text(payload.get("cardId"), "card_id")
-    assignment = _required_text(payload.get("assignment"), "assignment")
+    assignment = (
+        _required_text(payload.get("assignment"), "assignment")
+        if require_assignment
+        else str(payload.get("assignment") or "")
+    )
     loaded = _load_deck_internal(project_ref, deck_id)
     cards = {card["id"]: card for card in loaded["deck"]["nodes"]}
     card = cards.get(card_id)
@@ -1291,9 +1300,6 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     owner = _runtime_owner(card)
     common_prompt = str(card.get("prompt") or "")
     system_text = common_prompt
-    dynamic_context = str(payload.get("contextMarkdown") or "")
-    output_requirements = str(payload.get("outputRequirements") or card.get("outputContract") or "")
-    references = _normalized_native_references(payload.get("nativeReferences"))
     provider = str(options.get("provider") or "")
     model_key = str(options.get("modelKey") or "")
     provider_model_id = str(options.get("providerModelId") or model_key)
@@ -1342,7 +1348,43 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
             raise CardDomainError(
                 f"configured_tool_unknown:{unknown_delegate_tools[0]}"
             )
-    card_context["toolDefinitions"] = tool_definitions
+    if include_tool_definitions:
+        card_context["toolDefinitions"] = tool_definitions
+    provider_projection = {
+        "systemPrompt": system_text,
+        "enabledTools": effective_tools,
+    }
+    if include_tool_definitions:
+        provider_projection["toolDefinitions"] = tool_definitions
+    return {
+        "ok": True,
+        "ephemeral": True,
+        "projectId": loaded["projectId"],
+        "deckId": deck_id,
+        "cardRevisionId": card["_cardRevisionId"],
+        "cardRevision": card["_cardRevision"],
+        "cardRevisionSha256": card["_cardRevisionSha256"],
+        "runtimeOwner": owner,
+        "_outputRequirements": str(
+            payload.get("outputRequirements") or card.get("outputContract") or ""
+        ),
+        "assignment": assignment,
+        "cardContext": card_context,
+        "delegationTargets": direct_subagents,
+        "providerProjection": provider_projection,
+    }
+
+
+def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
+    prepared = _prepare_invocation(payload)
+    output_requirements = prepared.pop("_outputRequirements")
+    system_text = prepared["providerProjection"]["systemPrompt"]
+    assignment = prepared["assignment"]
+    card_context = prepared["cardContext"]
+    tool_definitions = prepared["providerProjection"]["toolDefinitions"]
+    effective_tools = prepared["providerProjection"]["enabledTools"]
+    dynamic_context = str(payload.get("contextMarkdown") or "")
+    references = _normalized_native_references(payload.get("nativeReferences"))
     dynamic_sections = dynamic_context
     if output_requirements:
         dynamic_sections = (dynamic_sections + "\n\n" if dynamic_sections else "") + f"[RETURN]\n{output_requirements}\n[/RETURN]"
@@ -1355,17 +1397,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     )
     validate_idf_islands(exact_idf)
     return {
-        "ok": True,
-        "ephemeral": True,
-        "projectId": loaded["projectId"],
-        "deckId": deck_id,
-        "cardRevisionId": card["_cardRevisionId"],
-        "cardRevision": card["_cardRevision"],
-        "cardRevisionSha256": card["_cardRevisionSha256"],
-        "runtimeOwner": owner,
-        "assignment": assignment,
-        "cardContext": card_context,
-        "delegationTargets": direct_subagents,
+        **prepared,
         "exactIdf": exact_idf,
         "providerProjection": {
             "systemPrompt": system_text,
@@ -1376,8 +1408,8 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def materialize_main_invocation(payload: dict[str, Any]) -> dict[str, Any]:
-    """Resolve the one saved Main Card inside an explicitly selected Deck."""
+def prepare_main_chat(payload: dict[str, Any]) -> dict[str, Any]:
+    """Prepare saved Main authority without turning ordinary chat into an IDF."""
     project_ref = _required_text(payload.get("projectId"), "project_id")
     deck_id = _required_text(payload.get("deckId"), "deck_id")
     loaded = _load_deck_internal(project_ref, deck_id)
@@ -1388,12 +1420,24 @@ def materialize_main_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     ]
     if len(main_cards) != 1:
         raise CardDomainError("main_card_identity_ambiguous")
-    return materialize_invocation({
+    message = str(payload.get("message") or "")
+    prepared = _prepare_invocation({
         **payload,
         "projectId": loaded["projectId"],
         "deckId": deck_id,
         "cardId": main_cards[0]["id"],
-    })
+        "assignment": message,
+    }, require_assignment=False, include_tool_definitions=False)
+    prepared.pop("_outputRequirements", None)
+    prepared.pop("assignment", None)
+    return {
+        **prepared,
+        "message": message,
+        "providerProjection": {
+            **prepared["providerProjection"],
+            "message": message,
+        },
+    }
 
 
 def materialize_magentic_invocation(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1897,6 +1941,77 @@ def _saved_idf_run_reference(
     return idf_id, revision_value
 
 
+def _insert_prompt_free_run(
+    prepared: dict[str, Any],
+    *,
+    run_id: str,
+    correlation_id: str,
+    saved_idf_id: UUID | None = None,
+    saved_idf_revision: int | None = None,
+) -> None:
+    context = prepared["cardContext"]
+    with connect_postgres() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO ag_catalog.agent_runs (
+              run_id, project_id, deck_id, target_card_revision_id,
+              runtime_kind, runtime_mode,
+              provider, model_key, provider_model_id, access_mode, correlation_id,
+              saved_idf_id, saved_idf_revision, state, started_at
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
+            """,
+            (
+                run_id, prepared["projectId"], prepared["deckId"],
+                prepared["cardRevisionId"], context["runtime"]["kind"],
+                context["runtime"]["mode"], context.get("provider"),
+                context.get("modelKey"), context.get("providerModelId"),
+                context.get("accessMode"), correlation_id,
+                saved_idf_id, saved_idf_revision,
+            ),
+        )
+
+
+def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
+    """Begin an ordinary Main chat Run without creating or consuming an IDF."""
+    message = _required_text(payload.get("message"), "message")
+    prepared = prepare_main_chat({**payload, "message": message})
+    expected_revision = _required_text(payload.get("cardRevisionId"), "card_revision_id")
+    if prepared["cardRevisionId"] != expected_revision:
+        raise CardDomainError("card_revision_changed")
+    run_id = _required_text(payload.get("runId"), "run_id")
+    correlation_id = _required_text(payload.get("correlationId"), "correlation_id")
+    _insert_prompt_free_run(
+        prepared,
+        run_id=run_id,
+        correlation_id=correlation_id,
+        saved_idf_id=None,
+        saved_idf_revision=None,
+    )
+    telemetry_written = _observe_run_start(
+        prepared,
+        payload,
+        run_id=run_id,
+        correlation_id=correlation_id,
+    )
+    context = prepared["cardContext"]
+    return {
+        **prepared,
+        "runId": run_id,
+        "correlationId": correlation_id,
+        "savedIdf": None,
+        "telemetryWritten": telemetry_written,
+        "nativeRuntimeRequest": None,
+        "hermesTransport": {
+            "profile": context["runtime"].get("profile"),
+            "mode": context["runtime"]["mode"],
+            "systemPrompt": prepared["providerProjection"]["systemPrompt"],
+            "message": message,
+            "cardContext": context,
+            "delegationTargets": prepared.get("delegationTargets") or [],
+        },
+    }
+
+
 def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
     prepared = validate_exact_invocation(payload)
     run_id = _required_text(payload.get("runId"), "run_id")
@@ -1984,25 +2099,13 @@ def begin_prompt_free_run(payload: dict[str, Any]) -> dict[str, Any]:
             "cardRuntime": card_runtime,
             "participants": participants,
         }
-    with connect_postgres() as connection, connection.cursor() as cursor:
-        cursor.execute(
-            """
-            INSERT INTO ag_catalog.agent_runs (
-              run_id, project_id, deck_id, target_card_revision_id,
-              runtime_kind, runtime_mode,
-              provider, model_key, provider_model_id, access_mode, correlation_id,
-              saved_idf_id, saved_idf_revision, state, started_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
-            """,
-            (
-                run_id, prepared["projectId"], prepared["deckId"],
-                prepared["cardRevisionId"], context["runtime"]["kind"],
-                context["runtime"]["mode"], context.get("provider"),
-                context.get("modelKey"), context.get("providerModelId"),
-                context.get("accessMode"), correlation_id,
-                saved_idf_id, saved_idf_revision,
-            ),
-        )
+    _insert_prompt_free_run(
+        prepared,
+        run_id=run_id,
+        correlation_id=correlation_id,
+        saved_idf_id=saved_idf_id,
+        saved_idf_revision=saved_idf_revision,
+    )
     telemetry_written = _observe_run_start(
         prepared,
         payload,

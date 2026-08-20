@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.python_models import card_domain
@@ -517,7 +519,7 @@ def test_native_reference_uses_the_idd_shape_provenance_and_hard_bounds() -> Non
         card_domain._normalized_native_references([{**reference, "reason": "x" * 66_000}])
 
 
-def test_main_materialization_contains_the_saved_card_without_routing_data(
+def test_main_chat_preparation_never_materializes_or_consumes_an_idf(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import engraphis.backends.embedder_st as embedder_st
@@ -527,17 +529,17 @@ def test_main_materialization_contains_the_saved_card_without_routing_data(
     monkeypatch.setattr(
         embedder_st,
         "_construct_local_sentence_transformer",
-        lambda *args, **kwargs: pytest.fail("IDF materialization initialized Engraphis"),
+        lambda *args, **kwargs: pytest.fail("Main preparation initialized Engraphis"),
     )
     monkeypatch.setattr(
         engraphis_engine,
         "get_embedder",
-        lambda *args, **kwargs: pytest.fail("IDF materialization constructed embedder"),
+        lambda *args, **kwargs: pytest.fail("Main preparation constructed embedder"),
     )
     monkeypatch.setattr(
         engraphis_mcp.MemoryService,
         "create",
-        lambda *args, **kwargs: pytest.fail("IDF materialization opened Engraphis"),
+        lambda *args, **kwargs: pytest.fail("Main preparation opened Engraphis"),
     )
     main = _agent(
         "main", runtime={"kind": "hermes", "mode": "main", "profile": "default"}
@@ -557,17 +559,44 @@ def test_main_materialization_contains_the_saved_card_without_routing_data(
             "deck": {"nodes": [main], "edges": []},
         },
     )
-    preview = card_domain.materialize_main_invocation({
+    prepared = card_domain.prepare_main_chat({
         "projectId": "project-one",
         "deckId": "deck-one",
-        "assignment": "Reason over the supplied IDF.",
+        "message": "Help me author an IDF for another agent.",
     })
-    assert "main-revision" not in preview["exactIdf"]
-    assert '"cardId": "main"' in preview["exactIdf"]
-    assert "canvas.inspect" in preview["exactIdf"]
-    assert '"toolDefinitions"' not in preview["exactIdf"]
-    assert "delegationTargets" not in preview["exactIdf"]
-    assert preview["providerProjection"]["enabledTools"] == ["canvas.inspect"]
+    assert "exactIdf" not in prepared
+    assert "assignment" not in prepared
+    assert prepared["message"] == "Help me author an IDF for another agent."
+    assert "serialized-card" not in json.dumps(prepared)
+    assert "# LiquidAIty IDF" not in json.dumps(prepared)
+    assert prepared["providerProjection"] == {
+        "systemPrompt": main["prompt"],
+        "enabledTools": ["canvas.inspect"],
+        "message": "Help me author an IDF for another agent.",
+    }
+    assert "toolDefinitions" not in prepared["cardContext"]
+    inserted: dict[str, object] = {}
+    monkeypatch.setattr(
+        card_domain,
+        "_insert_prompt_free_run",
+        lambda value, **kwargs: inserted.update({"prepared": value, **kwargs}),
+    )
+    monkeypatch.setattr(card_domain, "_observe_run_start", lambda *args, **kwargs: True)
+    begun = card_domain.begin_main_chat_run({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "message": "Help me author an IDF for another agent.",
+        "cardRevisionId": "main-revision",
+        "runId": "run-main-one",
+        "correlationId": "run-main-one",
+        "conversationId": "conversation-one",
+    })
+    assert "exactIdf" not in begun
+    assert begun["savedIdf"] is None
+    assert begun["hermesTransport"]["message"] == "Help me author an IDF for another agent."
+    assert begun["hermesTransport"]["systemPrompt"] == main["prompt"]
+    assert inserted["saved_idf_id"] is None
+    assert inserted["saved_idf_revision"] is None
 
 
 def test_saved_idf_inspection_reads_exact_non_directional_body_without_routing() -> None:

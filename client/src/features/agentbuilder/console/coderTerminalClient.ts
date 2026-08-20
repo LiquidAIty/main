@@ -4,14 +4,12 @@ export type ConsoleMode = 'interactive';
 
 export type ConsoleSessionState =
   | 'starting'
-  | 'ready'
-  | 'working'
-  | 'waiting'
+  | 'running'
+  | 'stopping'
   | 'stopped'
-  | 'failed'
-  | 'auth_required';
+  | 'failed';
 
-type ConsoleTransportMode = 'acp-stdio';
+type ConsoleTransportMode = 'pty';
 
 export type ConsoleSessionInfo = {
   id: string;
@@ -40,7 +38,7 @@ export type ConsoleSessionInfo = {
 
 export type ConsoleOutputChunk = {
   seq: number;
-  stream: 'stdout' | 'stderr' | 'system';
+  stream: 'pty';
   data: string;
   at: string;
 };
@@ -74,7 +72,8 @@ export type CoderTerminalClient = {
   }): Promise<StartSessionResult>;
   listSessions(): Promise<ConsoleSessionInfo[]>;
   getSession(id: string): Promise<{ session: ConsoleSessionInfo; transcript: ConsoleOutputChunk[] } | null>;
-  sendInput(id: string, message: string): Promise<boolean>;
+  sendInput(id: string, data: string): Promise<boolean>;
+  resize(id: string, cols: number, rows: number): Promise<boolean>;
   stopSession(id: string): Promise<boolean>;
   streamUrl(id: string): string;
 };
@@ -122,13 +121,24 @@ export function createTerminalClient(base: string): CoderTerminalClient {
       transcript: (payload.transcript || []) as ConsoleOutputChunk[],
     };
   },
-  async sendInput(id, message) {
-    const response = await postJson(base, `/sessions/${encodeURIComponent(id)}/input`, { message });
+  async sendInput(id, data) {
+    const response = await postJson(base, `/sessions/${encodeURIComponent(id)}/input`, { data });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload?.delivered) {
       throw new Error(String(payload?.error || `coder_terminal_input_failed_${response.status}`));
     }
     return Boolean(payload?.delivered);
+  },
+  async resize(id, cols, rows) {
+    const response = await postJson(base, `/sessions/${encodeURIComponent(id)}/resize`, {
+      cols,
+      rows,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload?.resized) {
+      throw new Error(String(payload?.error || `coder_terminal_resize_failed_${response.status}`));
+    }
+    return Boolean(payload?.resized);
   },
   async stopSession(id) {
     const response = await postJson(base, `/sessions/${encodeURIComponent(id)}/stop`, {});

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -64,11 +64,12 @@ export function resolveHermesHolographicMemoryDb(hermesRoot: string): string {
 export function configureHermesHolographicMemoryHome(
   hermesRoot: string,
   hermesHome: string,
+  settings: ReadonlyArray<readonly [string, unknown]> = HOLOGRAPHIC_MEMORY_SETTINGS,
 ): void {
   mkdirSync(hermesHome, { recursive: true });
   const result = spawnSync(
     resolveHermesPythonExecutable(hermesRoot),
-    ['-c', CONFIGURE_HOLOGRAPHIC_MEMORY_SCRIPT, JSON.stringify(HOLOGRAPHIC_MEMORY_SETTINGS)],
+    ['-c', CONFIGURE_HOLOGRAPHIC_MEMORY_SCRIPT, JSON.stringify(settings)],
     {
       cwd: hermesRoot,
       env: { ...process.env, HERMES_HOME: hermesHome },
@@ -81,6 +82,65 @@ export function configureHermesHolographicMemoryHome(
   if (result.error || result.status !== 0) {
     throw new Error('hermes_holographic_home_config_failed');
   }
+}
+
+export function resolveHermesProfileHome(
+  hermesRoot: string,
+  profile: string,
+  runtimeHome = resolveHermesRuntimeHome(hermesRoot),
+): string {
+  const normalized = String(profile || '').trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(normalized)) {
+    throw new Error('hermes_profile_name_invalid');
+  }
+  return path.join(runtimeHome, 'profiles', normalized);
+}
+
+/**
+ * Mechanically project Card-owned prompt/model/tool authority into one native
+ * Hermes profile. Hermes continues to own its session, memory, auth, and tool
+ * loops; the persisted profile contains only public configuration and an
+ * environment-variable placeholder for its short-lived MCP bearer.
+ */
+export function configureHermesCardProfile(args: {
+  hermesRoot: string;
+  profile: string;
+  prompt: string;
+  provider: string;
+  model: string;
+  mcpUrl: string;
+  mcpTools: string[];
+  mcpTokenEnv: string;
+  runtimeHome?: string;
+}): string {
+  if (!/^[A-Z][A-Z0-9_]{2,127}$/.test(args.mcpTokenEnv)) {
+    throw new Error('hermes_profile_mcp_token_env_invalid');
+  }
+  const profileHome = resolveHermesProfileHome(
+    args.hermesRoot,
+    args.profile,
+    args.runtimeHome,
+  );
+  const settings: Array<readonly [string, unknown]> = [
+    ...HOLOGRAPHIC_MEMORY_SETTINGS,
+    ['model.default', args.model],
+    ['model.provider', args.provider],
+    ['mcp_servers.liquidaity.url', args.mcpUrl],
+    [
+      'mcp_servers.liquidaity.headers.Authorization',
+      `Bearer ${'${'}${args.mcpTokenEnv}}`,
+    ],
+    ['mcp_servers.liquidaity.tools.include', [...args.mcpTools]],
+    ['mcp_servers.liquidaity.tools.resources', false],
+    ['mcp_servers.liquidaity.tools.prompts', false],
+    ['mcp_servers.liquidaity.connect_timeout', 30],
+  ];
+  configureHermesHolographicMemoryHome(args.hermesRoot, profileHome, settings);
+  const soulPath = path.join(profileHome, 'SOUL.md');
+  const prompt = String(args.prompt || '');
+  const current = existsSync(soulPath) ? readFileSync(soulPath, 'utf8') : null;
+  if (current !== prompt) writeFileSync(soulPath, prompt, 'utf8');
+  return profileHome;
 }
 
 export function ensureHermesHolographicMemoryHome(hermesRoot: string): string {

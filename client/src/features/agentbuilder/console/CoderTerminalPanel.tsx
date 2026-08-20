@@ -7,7 +7,7 @@ import {
 } from './coderTerminalClient';
 import XtermView from './XtermView';
 
-/** The saved Coder Card's genuine Hermes ACP terminal face. */
+/** The saved Coder Card's genuine Hermes CLI pseudoterminal. */
 
 type CoderTerminalPanelProps = {
   open: boolean;
@@ -51,6 +51,7 @@ function CoderTerminalPanelInner({
   const [disconnected, setDisconnected] = useState(false);
   const streamRef = useRef<EventSource | null>(null);
   const attemptedIdentityRef = useRef('');
+  const inputQueueRef = useRef<Promise<unknown>>(Promise.resolve());
 
   const status = disconnected ? 'disconnected' : session?.state ?? 'idle';
 
@@ -135,11 +136,22 @@ function CoderTerminalPanelInner({
     void startSession();
   }, [busy, conversationId, deckId, open, projectId, session, startSession]);
 
-  const sendLine = useCallback(
-    async (message: string) => {
+  const sendData = useCallback(
+    async (data: string) => {
       if (!session?.id) return;
       setTerminalError(null);
-      await client.sendInput(session.id, message);
+      const sessionId = session.id;
+      const queued = inputQueueRef.current.then(() => client.sendInput(sessionId, data));
+      inputQueueRef.current = queued.catch(() => undefined);
+      await queued;
+    },
+    [client, session?.id],
+  );
+
+  const resizeTerminal = useCallback(
+    async (cols: number, rows: number) => {
+      if (!session?.id) return;
+      await client.resize(session.id, cols, rows);
     },
     [client, session?.id],
   );
@@ -194,8 +206,9 @@ function CoderTerminalPanelInner({
         <XtermView
           key={session.id}
           chunks={chunks}
-          interactive={status === 'ready' || status === 'waiting'}
-          onSubmit={sendLine}
+          interactive={status === 'starting' || status === 'running'}
+          onData={sendData}
+          onResize={resizeTerminal}
           onError={setTerminalError}
         />
       ) : null}
@@ -208,7 +221,7 @@ function CoderTerminalPanelInner({
         </div>
       ) : null}
 
-      {session && (status === 'failed' || status === 'stopped' || status === 'auth_required') ? (
+      {session && (status === 'failed' || status === 'stopped') ? (
         <div style={{ position: 'absolute', right: 8, bottom: 8, zIndex: 1 }}>
           <button
             type="button"
@@ -219,7 +232,7 @@ function CoderTerminalPanelInner({
             Restart
           </button>
         </div>
-      ) : session && (status === 'working' || status === 'waiting') ? (
+      ) : session && (status === 'starting' || status === 'running') ? (
         <div style={{ position: 'absolute', right: 8, bottom: 8, zIndex: 1 }}>
           <button type="button" data-testid={`${testIdPrefix}-stop`} onClick={() => void stopSession()}>
             Stop
