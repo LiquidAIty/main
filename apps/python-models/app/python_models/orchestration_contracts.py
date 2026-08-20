@@ -13,15 +13,15 @@ RequiredRuntimeString = Annotated[str, StringConstraints(strip_whitespace=True, 
 class ToolSpec(BaseModel):
     """Canonical typed description of a tool the runtime may expose (T001).
 
-    The agent card Tools tab is the only source of selected tool access; the
-    ToolRegistry resolves only enabled, schema-complete specs. Empty names and
-    missing or incomplete schemas are rejected here so invalid specs can never
-    be registered.
+    Read/write authority is explicit data, never inferred from the name or
+    description. Read tools form the IDD read plane; write tools additionally
+    require Card selection. Empty names and incomplete schemas are rejected.
     """
 
     name: RequiredRuntimeString
     description: RequiredRuntimeString
     enabled: bool = True
+    access: Literal["read", "write"]
     inputSchema: dict[str, Any]
     outputSchema: dict[str, Any]
 

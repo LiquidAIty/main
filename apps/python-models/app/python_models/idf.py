@@ -20,6 +20,7 @@ class Idf(BaseModel):
     """Exact transient fields supplied to one model/runtime call."""
 
     systemPrompt: str = ""
+    graphSeed: str = ""
     message: RequiredText
     runtime: dict[str, Any]
     provider: dict[str, Any]
@@ -48,6 +49,7 @@ def materialize_idf(
     toolsets: list[str] | None = None,
     mcp_connection_ids: list[str] | None = None,
     context_markdown: str = "",
+    graph_seed: str = "",
     output_requirements: str = "",
     native_references: list[dict[str, Any]] | None = None,
     images: list[dict[str, Any]] | None = None,
@@ -63,6 +65,7 @@ def materialize_idf(
         sections.append(f"Output requirements:\n{output_requirements.strip()}")
     return Idf(
         systemPrompt=system_prompt,
+        graphSeed=graph_seed,
         message="\n\n".join(sections),
         runtime=dict(runtime),
         provider=dict(provider),

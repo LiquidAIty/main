@@ -163,6 +163,22 @@ describe('Hermes Coder real PTY boundary', () => {
     expect(session.write('no')).toBe(false);
     child.emitExit(0);
     expect(session.info.state).toBe('stopped');
+    expect(session.resize(180, 55)).toBe(false);
+    expect(child.resize).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects invalid dimensions before they reach ConPTY', () => {
+    const child = new FakePty();
+    const session = new HermesCoderTerminalSession(
+      sessionInfo(),
+      (() => child) as unknown as PtyFactory,
+    );
+    session.start(launch());
+
+    expect(session.resize(0, 20)).toBe(false);
+    expect(session.resize(80, 0)).toBe(false);
+    expect(session.resize(80.5, 20)).toBe(false);
+    expect(child.resize).not.toHaveBeenCalled();
   });
 
   it('reuses only a live Card-bound PTY and replaces an exited process', () => {

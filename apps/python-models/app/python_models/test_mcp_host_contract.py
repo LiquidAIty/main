@@ -852,7 +852,9 @@ def test_lifecycle_errors_remain_typed_and_distinct(monkeypatch):
             "service": "service unavailable",
             "internal": "unexpected handler failure",
         }.items():
-            result = await mcp_host.call_tool("test", {"error": message})
+            # Exercise failure classification through a declared read-plane tool so
+            # the access gate remains part of the contract under test.
+            result = await mcp_host.call_tool("canvas.inspect", {"error": message})
             results[name] = json.loads(result.content[0].text)
         return results
 
@@ -872,8 +874,8 @@ def test_timed_out_call_does_not_block_completed_sibling(monkeypatch):
     import asyncio
     import mcp_host
 
-    async def dispatch(name, _arguments):
-        if name == "slow":
+    async def dispatch(name, arguments):
+        if arguments.get("speed") == "slow":
             await asyncio.sleep(60)
         return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True, "name": name}))]
 
@@ -881,13 +883,16 @@ def test_timed_out_call_does_not_block_completed_sibling(monkeypatch):
     monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 0.02)
 
     async def check():
-        slow = asyncio.create_task(mcp_host.call_tool("slow", {}))
-        sibling = await asyncio.wait_for(mcp_host.call_tool("sibling", {}), timeout=0.5)
+        slow = asyncio.create_task(mcp_host.call_tool("canvas.inspect", {"speed": "slow"}))
+        sibling = await asyncio.wait_for(
+            mcp_host.call_tool("agentgraph.inspect", {"speed": "sibling"}),
+            timeout=0.5,
+        )
         timed_out = await asyncio.wait_for(slow, timeout=0.5)
         return sibling, timed_out
 
     sibling, timed_out = asyncio.run(check())
-    assert json.loads(sibling[0].text) == {"ok": True, "name": "sibling"}
+    assert json.loads(sibling[0].text) == {"ok": True, "name": "agentgraph.inspect"}
     assert timed_out.isError is True
     assert json.loads(timed_out.content[0].text)["failureCode"] == "timeout"
 
@@ -1550,6 +1555,12 @@ def test_native_engraphis_hung_call_does_not_block_later_native_dispatch(monkeyp
         return None
 
     monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
+    native_access = mcp_host.tool_access
+    monkeypatch.setattr(
+        mcp_host,
+        "tool_access",
+        lambda name: "read" if name == "engraphis.hung" else native_access(name),
+    )
     monkeypatch.setattr(
         mcp_host,
         "_NATIVE_ENGRAPHIS_NAMES",
@@ -1601,6 +1612,16 @@ def test_native_engraphis_failure_is_typed_and_the_next_call_succeeds(monkeypatc
             }))]
 
     native = NativeMcp()
+    native_access = mcp_host.tool_access
+    monkeypatch.setattr(
+        mcp_host,
+        "tool_access",
+        lambda name: (
+            "read"
+            if name in {"engraphis.normal_call", "engraphis.native_failure"}
+            else native_access(name)
+        ),
+    )
     monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_MCP", native)
     monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_TOOLS", ())
     monkeypatch.setattr(
@@ -2229,7 +2250,11 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert {"graphiti.get_status", "graphiti.search_nodes"}.issubset(by_name)
     assert "run_mag_one" in by_name
     card_tool = by_name["card.run_assistant_agent"]
-    assert set(card_tool.inputSchema["properties"]) == {"cardId", "input"}
+    assert set(card_tool.inputSchema["properties"]) == {
+        "cardId",
+        "input",
+        "dataAnchors",
+    }
     assert set(card_tool.inputSchema["required"]) == {"cardId", "input"}
     assert "saved runtime adapter" in card_tool.description
     assert "instructionId" not in by_name["card.run_assistant_agent"].inputSchema["properties"]
@@ -2238,8 +2263,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert by_name["cbm.search_graph"].description == "Native search description."
     assert by_name["cbm.search_graph"].inputSchema == native_cbm_tools[0].inputSchema
-    assert by_name["cbm.search_graph"].annotations is None
-    assert by_name["graphiti.search_nodes"].annotations is None
+    assert by_name["cbm.search_graph"].annotations.readOnlyHint is True
+    assert by_name["graphiti.search_nodes"].annotations.readOnlyHint is True
 
     active_scopes[:] = ["main"]
     main_names = {tool.name for tool in asyncio.run(mcp_host.list_tools())}

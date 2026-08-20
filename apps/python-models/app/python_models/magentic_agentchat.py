@@ -48,6 +48,16 @@ def _as_text(value: Any) -> str:
     return str(value).strip()
 
 
+def _model_task(context: RuntimeRequest) -> str:
+    """Mechanically join Python-materialized graph data and dynamic input once."""
+    return "\n\n".join(
+        value for value in (
+            _as_text(context.idf.graphSeed),
+            _as_text(context.idf.message),
+        ) if value
+    )
+
+
 def connected_agent_names(context: RuntimeRequest) -> list[str]:
     names: list[str] = []
     for participant in context.participants or []:
@@ -301,14 +311,14 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
             )
         )
         selected_tools = context.idf.enabledTools
-        tools = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools) if selected_tools else []
+        tools = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools)
         agent = AssistantAgent(
             name="Configured_Card",
             model_client=client,
             system_message=context.idf.systemPrompt,
             **({"tools": tools} if tools else {}),
         )
-        result = await agent.run(task=context.idf.message)
+        result = await agent.run(task=_model_task(context))
         final_text = _final_text_from_result(result)
         if not final_text:
             return OrchestratorRunResponse(
@@ -373,7 +383,7 @@ async def run_native_magentic_mission(
     if runtime.get("kind") != "autogen" or runtime.get("mode") != "magentic_one":
         raise RuntimeError("orchestrator_card_required")
     run_id = _as_text(context.session.runId) or context.session.turnId
-    task = context.idf.message
+    task = _model_task(context)
 
     client = None
     participant_clients: list[Any] = []

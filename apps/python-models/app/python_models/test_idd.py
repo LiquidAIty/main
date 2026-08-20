@@ -20,7 +20,7 @@ def test_literal_idd_is_the_only_loaded_rule_catalog() -> None:
     assert dictionary["dictionary"]["unknownIslands"] == "inert"
     assert {item["name"] for item in dictionary["records"]} == {
         "card-context", "model-option", "native-reference",
-        "tool-catalog-reference",
+        "tool-catalog-reference", "data-anchor-reference", "graph-hook",
     }
     assert {item["name"] for item in dictionary["catalogs"]} == {
         "configured-models", "native-tools",
@@ -158,6 +158,7 @@ def test_live_mcp_contract_is_ingested_into_the_one_permanent_idd_vocabulary() -
     assert by_id["graphiti.search_nodes"]["availability"] == "disabled"
     live = by_id["cbm.search_graph"]
     assert live["availability"] == "available"
+    assert live["access"] == "read"
     assert live["contracts"] == [{
         "sourceId": "cbm",
         "nativeName": "search_graph",
@@ -181,6 +182,10 @@ def test_explicit_tool_permissions_come_from_the_idd() -> None:
     assert {"agentgraph.inspect", "run_mag_one"}.issubset(tool_names)
     assert required_tool_caller_runtime("run_mag_one") == {"kind": "hermes", "mode": "main"}
     assert required_tool_caller_runtime("cbm.search_graph") is None
+    from app.python_models.idd import readable_tool_ids, writable_tool_ids
+    assert "cbm.search_graph" in readable_tool_ids()
+    assert "cbm.index_repository" in writable_tool_ids()
+    assert "write_mag_one_instructions" in readable_tool_ids()
 
 
 def test_materialized_catalog_errors_do_not_echo_secret_values() -> None:

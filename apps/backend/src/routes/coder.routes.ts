@@ -243,7 +243,9 @@ function resolveHermesTurnArgs(
     deckId: args.deckId,
     conversationId: args.conversationId,
     parentRunId: args.parentRunId || args.conversationId,
-    message: String(idf.message || ''),
+    message: [String(idf.graphSeed || '').trim(), String(idf.message || '').trim()]
+      .filter(Boolean)
+      .join('\n\n'),
     ...(args.workingDirectory ? { workingDirectory: args.workingDirectory } : {}),
   };
 }
@@ -330,6 +332,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     conversationId,
     contextMarkdown: typeof body.contextMarkdown === 'string' ? body.contextMarkdown : '',
     nativeReferences: Array.isArray(body.nativeReferences) ? body.nativeReferences : [],
+    dataAnchors: Array.isArray(body.dataAnchors) ? body.dataAnchors : [],
     images: Array.isArray(body.images) ? body.images : [],
     tools: Array.isArray(body.tools) ? body.tools : undefined,
     outputRequirements: typeof body.outputRequirements === 'string' ? body.outputRequirements : '',

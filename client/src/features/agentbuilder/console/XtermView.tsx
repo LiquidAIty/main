@@ -60,8 +60,13 @@ export default function XtermView({
     const focusTerminal = () => term?.focus();
     const fit = () => {
       if (!term) return;
+      const bounds = container.getBoundingClientRect();
+      if (bounds.width <= 0 || bounds.height <= 0) return;
       try {
         fitAddon.fit();
+        if (!Number.isInteger(term.cols) || !Number.isInteger(term.rows) || term.cols < 2 || term.rows < 1) {
+          return;
+        }
         const size = `${term.cols}x${term.rows}`;
         if (size !== lastSize) {
           lastSize = size;
@@ -130,6 +135,7 @@ export default function XtermView({
       } else {
         window.addEventListener('resize', scheduleFit);
       }
+      window.addEventListener('liquidaity:terminal-layout-settled', scheduleFit);
       scheduleFit();
       if (interactiveRef.current) term.focus();
     } catch (error) {
@@ -141,6 +147,7 @@ export default function XtermView({
       if (frame !== null) window.cancelAnimationFrame(frame);
       resizeObserver?.disconnect();
       window.removeEventListener('resize', scheduleFit);
+      window.removeEventListener('liquidaity:terminal-layout-settled', scheduleFit);
       container.removeEventListener('pointerdown', focusTerminal);
       inputDisposable?.dispose();
       outputController.abort();

@@ -256,6 +256,7 @@ describe('AgentManager active builder config', () => {
       displayName: `Tool ${index}`,
       sourceIds: ['catalog'],
       availability: 'available' as const,
+      access: 'write' as const,
     }));
     const page = allReferences.slice(4_000, 4_100);
     const selected = buildInputDictionarySelectedRows(
@@ -278,6 +279,7 @@ describe('AgentManager active builder config', () => {
           canonicalId: 'retired.tool',
           sourceIds: ['main_mcp'],
           availability: 'disabled',
+          access: 'write',
         }],
         [],
       ),
@@ -289,21 +291,22 @@ describe('AgentManager active builder config', () => {
     ]);
   });
 
-  it('recognizes a declared private Python capability as a valid Card selection', () => {
+  it('recognizes a declared private Python write capability as a valid Card selection', () => {
     expect(
       buildInputDictionarySelectedRows(
         [{
-          canonicalId: 'calculator',
+          canonicalId: 'card.update_configuration',
           kind: 'tool',
           sourceIds: ['python_runtime'],
-          displayName: 'Calculator',
+          displayName: 'Update Card configuration',
           availability: 'available',
+          access: 'write',
         }],
         [],
       ),
     ).toEqual([
       expect.objectContaining({
-        name: 'calculator',
+        name: 'card.update_configuration',
         kind: 'tool',
         sourceIds: ['python_runtime'],
         availability: 'available',

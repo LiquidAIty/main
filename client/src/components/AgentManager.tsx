@@ -80,6 +80,7 @@ export type InputDictionaryToolReference = {
   displayName?: string;
   shortDescription?: string;
   availability: 'available' | 'disabled';
+  access: 'read' | 'write';
 };
 
 export type InputDictionaryToolPage = {
@@ -772,12 +773,13 @@ export function AgentManager({
   );
   const savedToolNames = parseListText(toolsText);
   const selectedToolRows = buildInputDictionarySelectedRows(
-    toolDictionaryPage.selectedKnownReferences,
+    toolDictionaryPage.selectedKnownReferences.filter((reference) => reference.access === 'write'),
     toolDictionaryPage.unresolvedSelectedIds,
   );
   const availableToolRows = toolDictionaryPage.references.filter((reference) =>
     !savedToolNames.includes(reference.canonicalId) &&
-    reference.availability === 'available',
+    reference.availability === 'available' &&
+    reference.access === 'write',
   );
   const toggleTool = (name: string, checked: boolean) => {
     setToolsText(toggleSavedToolAssignment(savedToolNames, name, checked).join('\n'));

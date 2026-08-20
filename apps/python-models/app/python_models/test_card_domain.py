@@ -157,7 +157,7 @@ def test_enabled_flow_edge_materializes_bounded_target_without_inventing_tool_gr
         edges=[{"source": "parent", "target": "child", "edgeType": "flow"}],
     )
     assert preview["cardIdentity"] == {"cardId": "parent", "title": "parent"}
-    assert preview["idf"]["enabledTools"] == ["calculator"]
+    assert preview["idf"]["enabledTools"] == []
     assert preview["delegationTargets"] == [{
         **_expected_delegate(),
         "nativeTools": ["terminal"],
@@ -192,7 +192,7 @@ def test_no_flow_edge_materializes_no_delegation_transport(
 ) -> None:
     preview = _delegation_preview(monkeypatch, edges=[])
     assert preview["cardIdentity"] == {"cardId": "parent", "title": "parent"}
-    assert preview["idf"]["enabledTools"] == ["calculator"]
+    assert preview["idf"]["enabledTools"] == []
     assert preview["delegationTargets"] == []
 
 
@@ -454,10 +454,10 @@ def test_receiving_card_materializes_its_own_exact_call_data(
     assert hermes["idf"]["runtime"] == {
         "kind": "hermes", "mode": "delegate", "profile": "research",
     }
-    assert hermes["idf"]["enabledTools"] == ["calculator"]
+    assert hermes["idf"]["enabledTools"] == []
     assert autogen["idf"]["systemPrompt"] == "AutoGen saved prompt"
     assert autogen["idf"]["runtime"] == {"kind": "autogen", "mode": "assistant"}
-    assert autogen["idf"]["enabledTools"] == ["current_datetime"]
+    assert autogen["idf"]["enabledTools"] == []
     assert hermes["idf"]["message"] == autogen["idf"]["message"]
     assert hermes["idf"]["nativeReferences"][0]["nativeId"] == "episode:one"
     assert "cardId" not in hermes["idf"]
@@ -496,6 +496,92 @@ def test_native_reference_uses_the_idd_shape_provenance_and_hard_bounds() -> Non
         )
     with pytest.raises(card_domain.CardDomainError, match="native_reference_text_limit_exceeded"):
         card_domain._normalized_native_references([{**reference, "reason": "x" * 66_000}])
+
+
+def test_saved_hook_and_handoff_anchor_resolve_before_one_materialization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loaded = _destination_fixture(monkeypatch)
+    target = next(card for card in loaded["deck"]["nodes"] if card["id"] == "hermes")
+    target["runtimeOptions"]["graphHooks"] = [{
+        "authority": "ThinkGraph",
+        "nativeId": "hook:one",
+        "reason": "saved start point",
+        "order": 1,
+        "boundedExpansion": 0,
+        "required": True,
+    }]
+    resolved: list[dict] = []
+
+    def resolve(project_id, anchors):
+        assert project_id == loaded["projectId"]
+        resolved.extend(anchors)
+        return "actual current graph data", [{
+            "authority": "ThinkGraph", "nativeId": anchor["nativeId"],
+            "reason": anchor["reason"], "asOf": "current", "required": anchor["required"],
+        } for anchor in anchors]
+
+    monkeypatch.setattr(card_domain, "resolve_data_anchors", resolve)
+    payload = {
+        **_destination_payload("hermes"),
+        "dataAnchors": [{
+            "authority": "ThinkGraph",
+            "nativeId": "handoff:one",
+            "reason": "selected by sender",
+            "priority": 10,
+            "boundedExpansion": 0,
+            "required": True,
+        }],
+    }
+    preview = card_domain.materialize_invocation(payload)
+
+    assert [anchor["nativeId"] for anchor in resolved] == ["hook:one", "handoff:one"]
+    assert preview["idf"]["graphSeed"] == "actual current graph data"
+    assert [reference["nativeId"] for reference in preview["idf"]["nativeReferences"]] == [
+        "episode:one", "hook:one", "handoff:one",
+    ]
+
+    loaded["deck"]["edges"] = []
+    resolved.clear()
+    with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
+        card_domain.materialize_invocation(payload)
+    assert resolved == []
+
+
+def test_context_cascade_rejects_duplicate_and_recursive_handoffs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loaded = _destination_fixture(monkeypatch)
+    target = next(card for card in loaded["deck"]["nodes"] if card["id"] == "hermes")
+    target["runtimeOptions"]["graphHooks"] = [{
+        "authority": "ThinkGraph",
+        "nativeId": "same:one",
+        "reason": "saved start point",
+        "order": 1,
+        "boundedExpansion": 0,
+        "required": True,
+    }]
+    payload = {
+        **_destination_payload("hermes"),
+        "dataAnchors": [{
+            "authority": "ThinkGraph",
+            "nativeId": "same:one",
+            "reason": "sender selected the same object",
+            "priority": 1,
+            "boundedExpansion": 0,
+            "required": True,
+        }],
+    }
+    with pytest.raises(card_domain.CardDomainError, match="data_anchor_duplicate"):
+        card_domain.materialize_invocation(payload)
+
+    payload["dataAnchors"] = []
+    payload["senderCardId"] = "hermes"
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="card_invocation_self_handoff_forbidden",
+    ):
+        card_domain.materialize_invocation(payload)
 
 
 def test_main_chat_materializes_once_without_serialized_card_or_run_data(
@@ -555,7 +641,7 @@ def test_main_chat_materializes_once_without_serialized_card_or_run_data(
     assert "message" not in prepared
     assert prepared["idf"]["systemPrompt"] == main["prompt"]
     assert prepared["idf"]["message"] == "Help me prepare work for another agent."
-    assert prepared["idf"]["enabledTools"] == ["canvas.inspect"]
+    assert prepared["idf"]["enabledTools"] == []
     assert prepared["idf"]["runtime"] == {
         "kind": "hermes", "mode": "main", "profile": "default",
     }

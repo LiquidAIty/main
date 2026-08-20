@@ -29,27 +29,36 @@ async function render() {
 }
 
 describe('HarnessChatPanel Coder dock', () => {
-  it('keeps Main Chat usable while the terminal starts collapsed', async () => {
+  it('keeps Main Chat and the terminal mounted and visible together', async () => {
     const host = await render();
     expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
     const handle = host.querySelector('[data-testid="chat-coder-terminal-handle"]') as HTMLButtonElement;
-    expect(handle.getAttribute('aria-expanded')).toBe('false');
+    expect(handle.getAttribute('aria-expanded')).toBe('true');
     expect(host.querySelector('[data-testid="chat-coder-terminal-region"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="coder-terminal-instance"]')).not.toBeNull();
   });
 
-  it('slides up and down without unmounting the persistent terminal', async () => {
+  it('resizes without unmounting Chat or the persistent terminal', async () => {
     const host = await render();
     const handle = host.querySelector('[data-testid="chat-coder-terminal-handle"]') as HTMLButtonElement;
     const terminal = host.querySelector('[data-testid="coder-terminal-instance"]');
-    await act(async () => handle.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await act(async () => {
+      handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientY: 300 }));
+    });
+    expect((host.querySelector('[data-testid="chat-coder-terminal-region"]') as HTMLDivElement).style.userSelect)
+      .toBe('none');
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientY: 400 }));
+      window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    });
     expect(handle.getAttribute('aria-expanded')).toBe('true');
+    expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="coder-terminal-instance"]')).toBe(terminal);
-    await act(async () => handle.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    expect(handle.getAttribute('aria-expanded')).toBe('false');
-    expect(host.querySelector('[data-testid="coder-terminal-instance"]')).toBe(terminal);
+    expect((host.querySelector('[data-testid="chat-coder-terminal-region"]') as HTMLDivElement).style.userSelect)
+      .toBe('auto');
   });
 
-  it('makes ChatGPT the sole Main at full height and restores native Main when pulled down', async () => {
+  it('clamps terminal growth so Chat never disappears', async () => {
     const host = await render();
     const panel = host.querySelector('[data-testid="harness-chat-panel"]') as HTMLDivElement;
     panel.getBoundingClientRect = () => ({
@@ -64,8 +73,8 @@ describe('HarnessChatPanel Coder dock', () => {
       window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientY: 0 }));
       window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
-    expect(panel.getAttribute('data-main-mode')).toBe('chatgpt');
-    expect(host.querySelector('[data-testid="main-chat"]')).toBeNull();
+    expect(panel.getAttribute('data-main-mode')).toBe('native');
+    expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="coder-terminal-instance"]')).toBe(terminal);
 
     await act(async () => {

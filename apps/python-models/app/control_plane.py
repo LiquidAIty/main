@@ -342,6 +342,11 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
         **({"senderCardId": originating_agent_id} if originating_agent_id else {}),
         **({"originatingRunId": originating_run_id} if originating_run_id else {}),
         "input": instruction,
+        **(
+            {"dataAnchors": args["dataAnchors"]}
+            if isinstance(args.get("dataAnchors"), list)
+            else {}
+        ),
     }
 
     try:

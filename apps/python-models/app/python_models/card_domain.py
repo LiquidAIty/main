@@ -19,9 +19,11 @@ from app.python_models.idd import (
     IddValidationError,
     load_input_data_dictionary,
     materialize_tool_catalog,
+    tool_access,
     validate_record,
 )
 from app.python_models.idf import materialize_idf
+from app.python_models.data_anchor import DataAnchorError, resolve_data_anchors
 from app.python_models.postgres import connect_postgres
 from app.python_models.tool_registry import tool_manifest
 
@@ -1202,6 +1204,7 @@ def _direct_subagents(
 
 _NATIVE_REFERENCE_LIMIT = 32
 _NATIVE_REFERENCE_TEXT_LIMIT = 65_536
+_DATA_ANCHOR_LIMIT = 16
 
 
 def _normalized_native_references(value: Any) -> list[dict[str, Any]]:
@@ -1238,6 +1241,50 @@ def _normalized_native_references(value: Any) -> list[dict[str, Any]]:
     return normalized
 
 
+def _normalized_data_anchors(value: Any, *, record_name: str) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise CardDomainError("data_anchors_invalid")
+    if len(value) > _DATA_ANCHOR_LIMIT:
+        raise CardDomainError("data_anchor_limit_exceeded")
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise CardDomainError("data_anchor_invalid")
+        try:
+            anchor = validate_record(record_name, item)
+        except IddValidationError as error:
+            raise CardDomainError(str(error)) from error
+        authority = _required_text(anchor.get("authority"), "data_anchor_authority")
+        native_id = _required_text(anchor.get("nativeId"), "data_anchor_native_id")
+        identity = (authority, native_id)
+        if identity in seen:
+            raise CardDomainError("data_anchor_duplicate")
+        seen.add(identity)
+        bounded_expansion = anchor.get("boundedExpansion")
+        if bounded_expansion < 0 or bounded_expansion > 3:
+            raise CardDomainError("data_anchor_expansion_invalid")
+        normalized.append({
+            "authority": authority,
+            "nativeId": native_id,
+            "reason": _required_text(anchor.get("reason"), "data_anchor_reason")[:2_000],
+            "priority": int(anchor.get("priority", 0)),
+            "boundedExpansion": bounded_expansion,
+            "required": anchor.get("required") is True,
+            "_inputOrder": index,
+        })
+    return normalized
+
+
+def _normalized_graph_hooks(value: Any) -> list[dict[str, Any]]:
+    hooks = _normalized_data_anchors(value, record_name="graph-hook")
+    for index, hook in enumerate(value or []):
+        hooks[index]["priority"] = -int(hook["order"])
+    return sorted(hooks, key=lambda item: (-item["priority"], item["_inputOrder"]))
+
+
 def _prepare_invocation(
     payload: dict[str, Any],
     *,
@@ -1261,6 +1308,8 @@ def _prepare_invocation(
         raise CardDomainError("card_disabled")
     sender_id = str(payload.get("senderCardId") or "").strip()
     if sender_id:
+        if sender_id == card_id:
+            raise CardDomainError("card_invocation_self_handoff_forbidden")
         sender = cards.get(sender_id)
         target_runtime = _card_runtime(card)
         sender_runtime = _card_runtime(sender) if sender is not None else None
@@ -1290,6 +1339,7 @@ def _prepare_invocation(
         if sender is None or not authorized:
             raise CardDomainError("card_invocation_edge_authority_required")
     options = _json_object(card.get("runtimeOptions"), "runtime_options")
+    graph_hooks = _normalized_graph_hooks(options.get("graphHooks"))
     ceiling = _string_list(options.get("tools"), "tools")
     requested_tools = _string_list(payload.get("tools"), "tools") if payload.get("tools") is not None else ceiling
     if not set(requested_tools).issubset(set(ceiling)):
@@ -1341,7 +1391,9 @@ def _prepare_invocation(
     unknown_tools = [name for name in effective_tools if name not in by_id]
     if unknown_tools:
         raise CardDomainError(f"configured_tool_unknown:{unknown_tools[0]}")
-    tool_definitions = [by_id[name] for name in effective_tools]
+    write_tools = [name for name in effective_tools if tool_access(name) == "write"]
+    call_config["enabledTools"] = write_tools
+    tool_definitions = [by_id[name] for name in write_tools]
     for delegate in direct_subagents:
         unknown_delegate_tools = [
             name for name in delegate["tools"] if name not in by_id
@@ -1350,6 +1402,9 @@ def _prepare_invocation(
             raise CardDomainError(
                 f"configured_tool_unknown:{unknown_delegate_tools[0]}"
             )
+        delegate["tools"] = [
+            name for name in delegate["tools"] if tool_access(name) == "write"
+        ]
     return {
         "ok": True,
         "ephemeral": True,
@@ -1367,6 +1422,7 @@ def _prepare_invocation(
         "delegationTargets": direct_subagents,
         "_callConfig": call_config,
         "_toolDefinitions": tool_definitions if include_tool_definitions else [],
+        "_graphHooks": graph_hooks,
     }
 
 
@@ -1376,7 +1432,34 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     call_config = prepared.pop("_callConfig")
     assignment = prepared.pop("assignment")
     tool_definitions = prepared.pop("_toolDefinitions")
+    graph_hooks = prepared.pop("_graphHooks")
     references = _normalized_native_references(payload.get("nativeReferences"))
+    incoming_anchors = _normalized_data_anchors(
+        payload.get("dataAnchors"), record_name="data-anchor-reference"
+    )
+    incoming_anchors.sort(key=lambda item: (-item["priority"], item["_inputOrder"]))
+    anchors = [*graph_hooks, *incoming_anchors]
+    anchor_identities = [
+        (anchor["authority"], anchor["nativeId"]) for anchor in anchors
+    ]
+    if len(anchor_identities) != len(set(anchor_identities)):
+        raise CardDomainError("data_anchor_duplicate")
+    for anchor in anchors:
+        anchor.pop("_inputOrder", None)
+        anchor.pop("priority", None)
+    try:
+        graph_seed, anchor_references = resolve_data_anchors(
+            prepared["projectId"], anchors
+        )
+    except DataAnchorError as error:
+        raise CardDomainError(str(error)) from error
+    existing_reference_ids = {
+        (reference["authority"], reference["nativeId"]) for reference in references
+    }
+    references.extend(
+        reference for reference in anchor_references
+        if (reference["authority"], reference["nativeId"]) not in existing_reference_ids
+    )
     images = payload.get("images") or []
     if not isinstance(images, list) or any(not isinstance(item, dict) for item in images):
         raise CardDomainError("images_invalid")
@@ -1393,6 +1476,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         toolsets=call_config["toolsets"],
         mcp_connection_ids=call_config["mcpConnectionIds"],
         context_markdown=str(payload.get("contextMarkdown") or ""),
+        graph_seed=graph_seed,
         output_requirements=output_requirements,
         native_references=references,
         images=images,

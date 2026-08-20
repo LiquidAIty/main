@@ -165,7 +165,6 @@ export function buildHermesOfficialMcpServer(
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, unknown> | null {
   const granted = args.tools.filter((name) => name !== 'web_search');
-  if (granted.length === 0) return null;
   const shared = resolvePythonAgentMcpServerSpec({
     kind: 'card-runtime',
     projectId: args.projectId,

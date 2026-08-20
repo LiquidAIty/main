@@ -135,6 +135,7 @@ namePrefix = ""
 sourceId = "main_mcp"
 kind = "tool"
 publication = "external-mcp"
+defaultAccess = "read"
 
 [[toolGroups.tools]]
 name = "main.context"
@@ -159,6 +160,7 @@ required = ["projectId"]
 
 [[toolGroups.tools]]
 name = "run_mag_one"
+access = "write"
 displayName = "Run Magentic-One"
 description = "Run the saved Mag One Card with one dynamic input after current authority validation."
 parameters = ["projectId", "deckId", "input", "conversationId"]
@@ -182,6 +184,7 @@ required = ["projectId", "deckId"]
 
 [[toolGroups.tools]]
 name = "card.update_configuration"
+access = "write"
 displayName = "Update card configuration"
 description = "Update the strict allowlist of saved card configuration fields."
 parameters = ["projectId", "deckId", "cardId", "updates"]
@@ -189,6 +192,7 @@ required = ["projectId", "deckId", "cardId", "updates"]
 
 [[toolGroups.tools]]
 name = "canvas.upsert_wire"
+access = "write"
 displayName = "Upsert canvas wire"
 description = "Create, update, or remove one saved flow or Mag One option wire."
 parameters = ["projectId", "deckId", "op", "wire"]
@@ -203,9 +207,10 @@ required = ["query"]
 
 [[toolGroups.tools]]
 name = "card.run_assistant_agent"
+access = "write"
 displayName = "Run saved Card"
 description = "Run one saved external Card through current Card grants and AGE relationship authority."
-parameters = ["projectId", "deckId", "cardId", "correlationId", "conversationId", "originatingAgentId", "originatingRunId", "input"]
+parameters = ["projectId", "deckId", "cardId", "correlationId", "conversationId", "originatingAgentId", "originatingRunId", "input", "dataAnchors"]
 required = ["cardId", "input"]
 
 [[toolGroups]]
@@ -214,11 +219,19 @@ namePrefix = "cbm."
 sourceId = "cbm"
 kind = "tool"
 publication = "external-mcp"
+defaultAccess = "read"
 
 [[toolGroups.tools]]
 name = "delete_project"
+access = "write"
 description = "Delete one named CBM projection."
 parameters = ["project"]
+required = ["project"]
+
+[[toolGroups.tools]]
+name = "check_index_coverage"
+description = "Read authoritative indexing coverage for exact files or bounded repository scopes."
+parameters = ["paths", "project", "scope_limit", "scope_offset", "scopes"]
 required = ["project"]
 
 [[toolGroups.tools]]
@@ -247,6 +260,7 @@ required = ["project"]
 
 [[toolGroups.tools]]
 name = "index_repository"
+access = "write"
 description = "Build or refresh a CodeGraph project projection."
 parameters = ["mode", "repo_path"]
 required = ["repo_path"]
@@ -259,6 +273,7 @@ required = ["project"]
 
 [[toolGroups.tools]]
 name = "ingest_traces"
+access = "write"
 description = "Add runtime traces to CodeGraph."
 parameters = ["project", "traces"]
 required = ["project", "traces"]
@@ -271,6 +286,7 @@ required = []
 
 [[toolGroups.tools]]
 name = "manage_adr"
+access = "write"
 description = "Read or update a CodeGraph architecture decision record."
 parameters = ["content", "mode", "project", "sections"]
 required = ["project"]
@@ -305,6 +321,7 @@ namePrefix = "engraphis."
 sourceId = "engraphis"
 kind = "tool"
 publication = "external-mcp"
+defaultAccess = "read"
 
 [[toolGroups.tools]]
 name = "answer"
@@ -332,6 +349,7 @@ required = ["repo", "source", "target", "workspace"]
 
 [[toolGroups.tools]]
 name = "consolidate"
+access = "write"
 description = "Consolidate project reasoning memory."
 parameters = ["dry_run", "profiles", "repo", "supersede_sources", "workspace"]
 required = ["workspace"]
@@ -344,12 +362,14 @@ required = ["repo", "workspace"]
 
 [[toolGroups.tools]]
 name = "correct"
+access = "write"
 description = "Correct one reasoning-memory record."
 parameters = ["memory_id", "new_content", "reason", "workspace"]
 required = ["memory_id", "new_content", "workspace"]
 
 [[toolGroups.tools]]
 name = "end_session"
+access = "write"
 description = "End a reasoning-memory session."
 parameters = ["open_threads", "outcome", "session_id", "summary"]
 required = ["session_id"]
@@ -368,36 +388,42 @@ required = ["workspace"]
 
 [[toolGroups.tools]]
 name = "forget"
+access = "write"
 description = "Forget one reasoning-memory record."
 parameters = ["memory_id", "reason", "workspace"]
 required = ["memory_id", "workspace"]
 
 [[toolGroups.tools]]
 name = "index_repo"
+access = "write"
 description = "Index repository content into project reasoning."
 parameters = ["languages"]
 required = []
 
 [[toolGroups.tools]]
 name = "ingest"
+access = "write"
 description = "Ingest one typed project reasoning item."
 parameters = ["mtype", "repo", "scope", "session_id", "workspace"]
 required = ["workspace"]
 
 [[toolGroups.tools]]
 name = "ingest_postgres_schema"
+access = "write"
 description = "Ingest a PostgreSQL schema into project reasoning."
 parameters = ["dsn", "repo", "workspace"]
 required = ["dsn", "repo", "workspace"]
 
 [[toolGroups.tools]]
 name = "link"
+access = "write"
 description = "Link two project reasoning records."
 parameters = ["a", "b", "layer", "reason", "relation", "workspace"]
 required = ["a", "b", "workspace"]
 
 [[toolGroups.tools]]
 name = "pin"
+access = "write"
 description = "Pin or unpin a reasoning-memory record."
 parameters = ["memory_id", "pinned", "workspace"]
 required = ["memory_id", "workspace"]
@@ -410,6 +436,7 @@ required = ["workspace"]
 
 [[toolGroups.tools]]
 name = "promote"
+access = "write"
 description = "Promote one reasoning-memory record to another scope."
 parameters = ["memory_id", "repo", "target_scope"]
 required = ["memory_id", "target_scope"]
@@ -446,12 +473,14 @@ required = ["workspace"]
 
 [[toolGroups.tools]]
 name = "record_event"
+access = "write"
 description = "Record a typed project reasoning event."
 parameters = ["content", "kind", "repo", "session_id", "workspace"]
 required = ["content", "kind"]
 
 [[toolGroups.tools]]
 name = "remember"
+access = "write"
 description = "Store a typed project reasoning memory."
 parameters = ["claim_kind", "content", "keywords", "kind", "mtype", "repo", "scope", "session_id", "subject_key", "title", "trusted", "valid_from", "workspace"]
 required = ["content"]
@@ -464,6 +493,7 @@ required = ["query", "repo", "workspace"]
 
 [[toolGroups.tools]]
 name = "start_session"
+access = "write"
 description = "Start or resume a project reasoning session."
 parameters = ["agent", "force_new", "goal", "repo", "workspace"]
 required = []
@@ -498,39 +528,46 @@ namePrefix = "graphiti."
 sourceId = "graphiti"
 kind = "tool"
 publication = "external-mcp"
+defaultAccess = "read"
 
 [[toolGroups.tools]]
 name = "add_memory"
+access = "write"
 description = "Add a provenance-bearing KnowGraph episode."
 parameters = ["custom_extraction_instructions", "episode_body", "excluded_entity_types", "name", "previous_episode_uuids", "reference_time", "saga", "saga_previous_episode_uuid", "source", "source_description", "update_communities", "uuid"]
 required = ["episode_body", "name"]
 
 [[toolGroups.tools]]
 name = "add_triplet"
+access = "write"
 description = "Add one explicit KnowGraph source-edge-target fact."
 parameters = ["edge_name", "fact", "source_node_name", "source_node_uuid", "target_node_name", "target_node_uuid"]
 required = ["edge_name", "fact", "source_node_name", "target_node_name"]
 
 [[toolGroups.tools]]
 name = "build_communities"
+access = "write"
 description = "Build KnowGraph communities."
 parameters = []
 required = []
 
 [[toolGroups.tools]]
 name = "clear_graph"
+access = "write"
 description = "Clear the configured KnowGraph authority."
 parameters = []
 required = []
 
 [[toolGroups.tools]]
 name = "delete_entity_edge"
+access = "write"
 description = "Delete one KnowGraph entity edge by native ID."
 parameters = ["uuid"]
 required = ["uuid"]
 
 [[toolGroups.tools]]
 name = "delete_episode"
+access = "write"
 description = "Delete one KnowGraph episode by native ID."
 parameters = ["uuid"]
 required = ["uuid"]
@@ -573,6 +610,7 @@ required = ["query"]
 
 [[toolGroups.tools]]
 name = "summarize_saga"
+access = "write"
 description = "Summarize one named KnowGraph saga."
 parameters = ["saga_name"]
 required = ["saga_name"]
@@ -583,6 +621,7 @@ namePrefix = ""
 sourceId = "python_autogen"
 kind = "tool"
 publication = "private-runtime"
+defaultAccess = "read"
 
 [[toolGroups.tools]]
 name = "calculator"
@@ -642,6 +681,7 @@ required = ["query"]
 
 [[toolGroups.tools]]
 name = "worldsignals.batch"
+access = "write"
 namespace = "worldsignals"
 sourceId = "worldsignals"
 description = "Run a bounded batch of WorldSignals commands."
@@ -658,6 +698,7 @@ required = []
 
 [[toolGroups.tools]]
 name = "worldsignals.command"
+access = "write"
 namespace = "worldsignals"
 sourceId = "worldsignals"
 description = "Run one declared WorldSignals command."
@@ -797,6 +838,42 @@ type = "boolean"
 required = true
 
 [[records]]
+name = "graph-hook"
+allowUnknownFields = false
+description = "A saved ordered pre-model native graph read."
+
+[[records.fields]]
+name = "authority"
+type = "string"
+required = true
+values = ["ThinkGraph", "KnowGraph", "CodeGraph"]
+
+[[records.fields]]
+name = "nativeId"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "reason"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "order"
+type = "integer"
+required = true
+
+[[records.fields]]
+name = "boundedExpansion"
+type = "integer"
+required = true
+
+[[records.fields]]
+name = "required"
+type = "boolean"
+required = true
+
+[[records]]
 name = "model-option"
 allowUnknownFields = false
 description = "One current provider/model choice materialized for the card editor."
@@ -869,6 +946,12 @@ required = true
 values = ["available", "disabled"]
 
 [[records.fields]]
+name = "access"
+type = "string"
+required = true
+values = ["read", "write"]
+
+[[records.fields]]
 name = "contracts"
 type = "object-array"
 required = true
@@ -882,6 +965,42 @@ required = false
 name = "requiredCallerRuntimeMode"
 type = "string"
 required = false
+
+[[records]]
+name = "data-anchor-reference"
+allowUnknownFields = false
+description = "One bounded native graph object selected as the start of a model request."
+
+[[records.fields]]
+name = "authority"
+type = "string"
+required = true
+values = ["ThinkGraph", "KnowGraph", "CodeGraph"]
+
+[[records.fields]]
+name = "nativeId"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "reason"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "priority"
+type = "integer"
+required = true
+
+[[records.fields]]
+name = "boundedExpansion"
+type = "integer"
+required = true
+
+[[records.fields]]
+name = "required"
+type = "boolean"
+required = true
 
 # These definitions drive the existing card editor. Options from a catalog are
 # materialized from that catalog's native authority and validated above; they

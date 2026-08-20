@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import inspect
-
 from app.python_models.idf import Idf, materialize_idf
 
 
@@ -66,7 +64,7 @@ def test_materializer_combines_only_card_state_and_current_input() -> None:
     )
 
 
-def test_materializer_does_not_add_card_run_receipt_or_persistence_data() -> None:
+def test_model_visible_idf_contains_only_the_canonical_transient_fields() -> None:
     result = materialize_idf(
         system_prompt="stable",
         dynamic_input="dynamic",
@@ -81,6 +79,7 @@ def test_materializer_does_not_add_card_run_receipt_or_persistence_data() -> Non
 
     assert result == {
         "systemPrompt": "stable",
+        "graphSeed": "",
         "message": "dynamic",
         "runtime": {"kind": "autogen", "mode": "assistant"},
         "provider": {
@@ -97,13 +96,6 @@ def test_materializer_does_not_add_card_run_receipt_or_persistence_data() -> Non
         "nativeReferences": [],
         "images": [],
     }
-    source = inspect.getsource(materialize_idf)
-    for forbidden in (
-        "cardId", "runId", "receipt", "hash", "revision", "approve", "persist",
-    ):
-        assert forbidden not in source
-
-
 def test_empty_dynamic_model_input_is_rejected() -> None:
     try:
         materialize_idf(

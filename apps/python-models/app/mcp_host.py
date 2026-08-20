@@ -85,6 +85,7 @@ def _startup_source_identity() -> tuple[str, str]:
     return revision, source_sha256
 
 from app.python_models.provider_config import ensure_env_loaded
+from app.python_models.idd import readable_tool_ids, tool_access
 from mcp.server import Server
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
@@ -740,7 +741,13 @@ def _request_execution_context() -> dict[str, Any] | None:
 def _request_tool_is_allowed(name: str) -> bool:
     if not _tool_is_allowed(name):
         return False
+    access = tool_access(name)
     principal = _internal_mcp_principal()
+    # The public host preserves the canonical unknown-tool error from dispatch.
+    # An internal Card-scoped connection fails closed before dispatch because it
+    # may call only operations declared by the literal IDD.
+    if access is None:
+        return principal is None
     if principal is None:
         return True
     kind = str(principal.get("kind") or "")
@@ -750,6 +757,8 @@ def _request_tool_is_allowed(name: str) -> bool:
         return name == "card.run_assistant_agent"
     if kind != "card-runtime":
         return False
+    if access == "read":
+        return True
     active = _ACTIVE_AUTHENTICATED_CONTEXT.get()
     if principal.get("requiresExecutionContext") is True:
         grants = active.get("grantedTools") if isinstance(active, dict) else None
@@ -855,6 +864,18 @@ def _bind_repo_tool_source(tool: Tool) -> Tool:
         "connectionKind": "external-mcp",
     }
     payload["_meta"] = meta
+    return Tool.model_validate(payload)
+
+
+def _bind_idd_access(tool: Tool) -> Tool:
+    """Publish the literal IDD access plane as standard MCP annotations."""
+    access = tool_access(tool.name)
+    if access is None:
+        raise RuntimeError(f"mcp_tool_missing_idd_access:{tool.name}")
+    payload = tool.model_dump(by_alias=True, exclude_none=True)
+    annotations = dict(payload.get("annotations") or {})
+    annotations["readOnlyHint"] = access == "read"
+    payload["annotations"] = annotations
     return Tool.model_validate(payload)
 
 
@@ -1952,6 +1973,31 @@ async def _materialize_complete_catalog() -> list[Tool]:
                         "description": "Server-owned parent Harness turn identity for an inter-agent doorway call.",
                     },
                     "input": {"type": "string"},
+                    "dataAnchors": {
+                        "type": "array",
+                        "maxItems": 16,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "authority": {
+                                    "type": "string",
+                                    "enum": ["ThinkGraph", "KnowGraph", "CodeGraph"],
+                                },
+                                "nativeId": {"type": "string", "minLength": 1},
+                                "reason": {"type": "string", "minLength": 1},
+                                "priority": {"type": "integer"},
+                                "boundedExpansion": {
+                                    "type": "integer", "minimum": 0, "maximum": 3,
+                                },
+                                "required": {"type": "boolean"},
+                            },
+                            "required": [
+                                "authority", "nativeId", "reason", "priority",
+                                "boundedExpansion", "required",
+                            ],
+                            "additionalProperties": False,
+                        },
+                    },
                 },
                 "required": ["cardId", "input"],
             },
@@ -1979,6 +2025,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
         _complete_catalog_family("graphiti")
     for provider, native_tools in native_catalogs.items():
         tools.extend(_namespace_native_tools(provider, native_tools))
+    tools = [_bind_idd_access(tool) for tool in tools]
     if allowlist is not None:
         tools = [tool for tool in tools if tool.name in allowlist]
     names = [tool.name for tool in tools]
@@ -2186,7 +2233,8 @@ async def list_tools() -> list[Tool]:
         allowed = {
             str(value).strip() for value in grants or [] if str(value).strip()
         } if isinstance(grants, list) else set()
-        return [tool for tool in tools if tool.name in allowed]
+        readable = readable_tool_ids()
+        return [tool for tool in tools if tool.name in readable or tool.name in allowed]
     try:
         tools = await _materialize_complete_catalog()
     except Exception as error:

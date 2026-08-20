@@ -10,14 +10,19 @@ import type {
   ConsoleSessionInfo,
 } from './coderTerminalClient';
 
+const xtermProps = vi.hoisted(() => ({ current: null as Record<string, any> | null }));
+
 vi.mock('./XtermView', async () => {
   const react = await import('react');
   return {
-    default: ({ launchError }: { launchError?: string | null }) => react.createElement(
-      'div',
-      { 'data-testid': 'coder-terminal-xterm' },
-      launchError || '',
-    ),
+    default: (props: Record<string, any>) => {
+      xtermProps.current = props;
+      return react.createElement(
+        'div',
+        { 'data-testid': 'coder-terminal-xterm' },
+        props.launchError || '',
+      );
+    },
   };
 });
 
@@ -69,6 +74,7 @@ afterEach(async () => {
   host?.remove();
   root = null;
   host = null;
+  xtermProps.current = null;
 });
 
 async function render(element: React.ReactNode) {
@@ -121,9 +127,7 @@ describe('CoderTerminalPanel', () => {
     );
     await act(async () => Promise.resolve());
     expect(terminalClient.startSession).not.toHaveBeenCalled();
-    expect(host?.querySelector('[data-testid="coder-terminal-process"]')?.textContent).toContain(
-      'Hermes/venv/Scripts/hermes.exe · PID 42',
-    );
+    expect(host?.querySelector('[data-testid="coder-terminal-process"]')).toBeNull();
     expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).not.toBeNull();
   });
 
@@ -144,9 +148,8 @@ describe('CoderTerminalPanel', () => {
     expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
     expect(host?.querySelector('[data-testid="coder-terminal-transcript"]')).toBeNull();
     expect(host?.querySelector('[data-testid="coder-terminal-input"]')).toBeNull();
-    expect(host?.querySelector('[data-testid="coder-terminal-process"]')?.textContent).toContain(
-      'Hermes/venv/Scripts/hermes.exe · PID 42',
-    );
+    expect(host?.textContent).not.toContain('Hermes/venv/Scripts/hermes.exe');
+    expect(host?.textContent).not.toContain('PID 42');
   });
 
   it('shows Stop only while the real Hermes process is active', async () => {
@@ -157,11 +160,32 @@ describe('CoderTerminalPanel', () => {
     expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
   });
 
+  it('coalesces valid live resizes and never resizes a stopped session', async () => {
+    const resize = vi.fn(async () => true);
+    const terminalClient = client({ resize });
+    await render(
+      <CoderTerminalPanel open client={terminalClient} initialSession={session('running')} {...identityProps} />,
+    );
+    await act(async () => {
+      await xtermProps.current?.onResize?.(120, 30);
+      await xtermProps.current?.onResize?.(120, 30);
+    });
+    expect(resize).toHaveBeenCalledOnce();
+    expect(resize).toHaveBeenCalledWith('coder-terminal-1', 120, 30);
+
+    await act(async () => root?.render(
+      <CoderTerminalPanel key="stopped" open client={terminalClient} initialSession={session('stopped')} {...identityProps} />,
+    ));
+    expect(xtermProps.current?.onResize).toBeUndefined();
+  });
+
   it('shows Restart only after a stopped or failed session', async () => {
     await render(
       <CoderTerminalPanel open client={client()} initialSession={session('stopped')} {...identityProps} />,
     );
-    expect(host?.querySelector('[data-testid="coder-terminal-start"]')?.textContent).toBe('Restart');
+    expect(host?.querySelector('[data-testid="coder-terminal-start"]')?.getAttribute('aria-label')).toBe(
+      'Restart Hermes terminal',
+    );
     expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
   });
 
@@ -188,6 +212,7 @@ describe('CoderTerminalPanel', () => {
       'hermes_acp_rpc_error:native_startup_failed',
     );
     expect(host?.textContent).not.toContain('console_start_failed_502');
+    expect(host?.querySelector('[data-testid="coder-terminal-error"]')).toBeNull();
     expect(host?.querySelector('[data-testid="coder-terminal-start"]')).not.toBeNull();
   });
 });

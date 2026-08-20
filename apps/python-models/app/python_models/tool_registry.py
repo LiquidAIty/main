@@ -1,10 +1,10 @@
-"""T001 ToolRegistry: typed, loud-failing card tool resolution.
+"""T001 ToolRegistry: typed, loud-failing runtime tool resolution.
 
-The agent card Tools tab is the only allowed source of tool access. The
-registry exposes only selected, enabled, schema-complete ToolSpecs and fails
-loudly for unknown, disabled, unselected, empty-name, or schema-missing
-tools. There is no fallback, substitution, guessing, auto-selection, or tool
-invention.
+The literal IDD exposes enabled read operations to every Card. The Card Tools
+tab selects only write/effect authority. The registry combines those planes,
+validates every selected name, and fails loudly for unknown, disabled,
+duplicate, empty-name, or schema-missing tools. There is no fallback,
+substitution, guessing, auto-selection, or tool invention.
 
 The real tool callables (``tool_current_datetime``, ``tool_calculator``) live
 here and keep executing through real AutoGen ``FunctionTool`` behavior;
@@ -183,7 +183,7 @@ async def get_paper_account_readiness_tool() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 class ToolRegistry:
-    """Resolves selected card tools to real FunctionTools, loudly or not at all."""
+    """Resolves the IDD read plane plus Card-selected write FunctionTools."""
 
     def __init__(self) -> None:
         self._specs: dict[str, ToolSpec] = {}
@@ -227,14 +227,30 @@ class ToolRegistry:
         )
 
     def resolve_selected(self, selected_names: list[str]) -> list[FunctionTool]:
-        """Resolve exactly the card Tools tab selection.
+        """Resolve the read plane plus exactly the Card-selected write plane.
 
-        Registered but unselected tools are never returned; any invalid
-        selection aborts the whole resolution rather than degrading silently.
+        Card selection is still validated exactly, including redundant legacy
+        read selections. Unselected write tools are never returned.
         """
+        selected: list[str] = []
+        seen_selected: set[str] = set()
+        for name in selected_names or []:
+            canonical = str(name or "").strip()
+            if canonical in seen_selected:
+                raise RuntimeError(f"card_tool_runtime_name_collision: {canonical}")
+            self.resolve_one(canonical)
+            seen_selected.add(canonical)
+            selected.append(canonical)
+        effective_names = [
+            name for name in self.known_names()
+            if self._specs[name].enabled and self._specs[name].access == "read"
+        ] + [
+            name for name in selected
+            if self._specs[name].access == "write"
+        ]
         resolved: list[FunctionTool] = []
         runtime_names: set[str] = set()
-        for name in selected_names or []:
+        for name in effective_names:
             tool = self.resolve_one(name)
             if tool.name in runtime_names:
                 raise RuntimeError(f"card_tool_runtime_name_collision: {tool.name}")
@@ -256,6 +272,7 @@ def build_default_tool_registry() -> ToolRegistry:
                     "returns that command's current parameter schema."
                 ),
                 enabled=True,
+                access="read",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -272,12 +289,13 @@ def build_default_tool_registry() -> ToolRegistry:
             ),
             worldsignals_capabilities,
         ),
-        (ToolSpec(name="worldsignals.command", description="Run one real command from the WorldSignals command manifest.", enabled=True, inputSchema={"type": "object", "properties": {"command": {"type": "string"}, "arguments": {"type": "object"}}, "required": ["command"], "additionalProperties": False}, outputSchema={"type": "object"}), worldsignals_command),
+        (ToolSpec(name="worldsignals.command", description="Run one real command from the WorldSignals command manifest.", enabled=True, access="write", inputSchema={"type": "object", "properties": {"command": {"type": "string"}, "arguments": {"type": "object"}}, "required": ["command"], "additionalProperties": False}, outputSchema={"type": "object"}), worldsignals_command),
         (
             ToolSpec(
                 name="worldsignals.batch",
                 description="Run up to twenty real WorldSignals commands through its batch channel.",
                 enabled=True,
+                access="write",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -302,8 +320,8 @@ def build_default_tool_registry() -> ToolRegistry:
             ),
             worldsignals_batch,
         ),
-        (ToolSpec(name="worldsignals.poll", description="Poll completed command results and pending WorldSignals tasks.", enabled=True, inputSchema={"type": "object", "properties": {}, "required": [], "additionalProperties": False}, outputSchema={"type": "object"}), worldsignals_poll),
-        (ToolSpec(name="worldsignals.stream_events", description="Read a bounded set of real-time events from the WorldSignals SSE channel.", enabled=True, inputSchema={"type": "object", "properties": {"max_events": {"type": "integer", "minimum": 1, "maximum": 20, "default": 1}, "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 30, "default": 15}}, "required": [], "additionalProperties": False}, outputSchema={"type": "object"}), worldsignals_stream_events),
+        (ToolSpec(name="worldsignals.poll", description="Poll completed command results and pending WorldSignals tasks.", enabled=True, access="read", inputSchema={"type": "object", "properties": {}, "required": [], "additionalProperties": False}, outputSchema={"type": "object"}), worldsignals_poll),
+        (ToolSpec(name="worldsignals.stream_events", description="Read a bounded set of real-time events from the WorldSignals SSE channel.", enabled=True, access="read", inputSchema={"type": "object", "properties": {"max_events": {"type": "integer", "minimum": 1, "maximum": 20, "default": 1}, "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 30, "default": 15}}, "required": [], "additionalProperties": False}, outputSchema={"type": "object"}), worldsignals_stream_events),
     ]:
         registry.register(spec, adapter)
     registry.register(
@@ -311,6 +329,7 @@ def build_default_tool_registry() -> ToolRegistry:
             name="current_datetime",
             description="Return the current UTC date and time in ISO-8601 format.",
             enabled=True,
+            access="read",
             inputSchema={"type": "object", "properties": {}, "required": []},
             outputSchema={"type": "string", "description": "ISO-8601 UTC datetime"},
         ),
@@ -321,6 +340,7 @@ def build_default_tool_registry() -> ToolRegistry:
             name="calculator",
             description="Evaluate a basic arithmetic expression and return the numeric result.",
             enabled=True,
+            access="read",
             inputSchema={
                 "type": "object",
                 "properties": {"expression": {"type": "string"}},
@@ -341,6 +361,7 @@ def build_default_tool_registry() -> ToolRegistry:
                 "when a task needs external web sources."
             ),
             enabled=True,
+            access="read",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -370,6 +391,7 @@ def build_default_tool_registry() -> ToolRegistry:
                 "when the SEC provider is not configured; never fabricates filings."
             ),
             enabled=True,
+            access="read",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -417,6 +439,7 @@ def build_default_tool_registry() -> ToolRegistry:
                 "when paper credentials are not configured; never fabricates a snapshot."
             ),
             enabled=True,
+            access="read",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -451,6 +474,7 @@ def build_default_tool_registry() -> ToolRegistry:
                 "endpoint. Returns provider_unconfigured when paper credentials are not configured."
             ),
             enabled=True,
+            access="read",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -487,6 +511,7 @@ def build_default_tool_registry() -> ToolRegistry:
                 "are not configured; never fabricates account state."
             ),
             enabled=True,
+            access="read",
             inputSchema={"type": "object", "properties": {}, "required": []},
             outputSchema={
                 "type": "object",
@@ -523,6 +548,10 @@ def tool_manifest(registry: ToolRegistry | None = None) -> list[dict[str, Any]]:
             "connectionKind": "private-runtime",
             "description": spec.description,
             "enabled": spec.enabled,
+            "access": spec.access,
+            "annotations": {
+                "readOnlyHint": spec.access == "read",
+            },
             "inputSchema": spec.inputSchema,
             "outputSchema": spec.outputSchema,
         })

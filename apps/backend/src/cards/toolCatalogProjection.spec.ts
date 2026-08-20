@@ -16,6 +16,7 @@ function reference(index: number): ToolCatalogReference {
     displayName: `Tool ${index}`,
     shortDescription: `Read repository slice ${index}`,
     availability: 'available',
+    access: 'read',
     contracts: [{
       sourceId: 'cbm',
       nativeName: `tool_${String(index).padStart(5, '0')}`,

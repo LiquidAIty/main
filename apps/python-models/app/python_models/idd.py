@@ -244,7 +244,7 @@ def materialize_catalog(name: str, values: Any) -> list[dict[str, Any]]:
 
 
 def _declared_tool_references() -> dict[str, dict[str, Any]]:
-    """Read permanent tool declarations from the literal IDD without adding policy."""
+    """Read permanent tool declarations and their explicit access plane."""
     groups = load_input_data_dictionary().get("toolGroups")
     if not isinstance(groups, list):
         raise IddValidationError("idd_tool_groups_invalid")
@@ -257,6 +257,7 @@ def _declared_tool_references() -> dict[str, dict[str, Any]]:
         source_id = group.get("sourceId")
         group_kind = group.get("kind")
         publication = group.get("publication")
+        default_access = group.get("defaultAccess")
         tools = group.get("tools")
         if (
             not isinstance(namespace, str)
@@ -264,6 +265,7 @@ def _declared_tool_references() -> dict[str, dict[str, Any]]:
             or not isinstance(source_id, str)
             or group_kind not in {"tool", "agent"}
             or publication not in {"external-mcp", "private-runtime"}
+            or default_access not in {"read", "write"}
             or not isinstance(tools, list)
         ):
             raise IddValidationError("idd_tool_group_invalid")
@@ -274,6 +276,9 @@ def _declared_tool_references() -> dict[str, dict[str, Any]]:
             if not isinstance(native_name, str) or not native_name:
                 raise IddValidationError("idd_tool_declaration_name_invalid")
             canonical_id = name_prefix + native_name
+            access = tool.get("access", default_access)
+            if access not in {"read", "write"}:
+                raise IddValidationError("idd_tool_access_invalid")
             required_kind = tool.get("requiredCallerRuntimeKind")
             required_mode = tool.get("requiredCallerRuntimeMode")
             if (required_kind is None) != (required_mode is None) or (
@@ -291,6 +296,8 @@ def _declared_tool_references() -> dict[str, dict[str, Any]]:
             if current is not None:
                 if current["kind"] != tool.get("kind", group_kind):
                     raise IddValidationError("idd_tool_declaration_kind_conflict")
+                if current["access"] != access:
+                    raise IddValidationError("idd_tool_access_conflict")
                 current_requirement = (
                     current.get("requiredCallerRuntimeKind"),
                     current.get("requiredCallerRuntimeMode"),
@@ -315,6 +322,7 @@ def _declared_tool_references() -> dict[str, dict[str, Any]]:
                 "displayName": tool.get("displayName", canonical_id),
                 "shortDescription": tool.get("description", ""),
                 "availability": "disabled",
+                "access": access,
                 "contracts": [],
             }
             if required_kind is not None:
@@ -336,6 +344,27 @@ def required_tool_caller_runtime(name: str) -> dict[str, str] | None:
     if not isinstance(kind, str) or not kind or not isinstance(mode, str) or not mode:
         return None
     return {"kind": kind, "mode": mode}
+
+
+def tool_access(name: str) -> str | None:
+    """Return explicit IDD access metadata; never infer it from prose or names."""
+    reference = _declared_tool_references().get(name)
+    access = reference.get("access") if reference is not None else None
+    return access if access in {"read", "write"} else None
+
+
+def readable_tool_ids() -> frozenset[str]:
+    return frozenset(
+        name for name, reference in _declared_tool_references().items()
+        if reference["access"] == "read"
+    )
+
+
+def writable_tool_ids() -> frozenset[str]:
+    return frozenset(
+        name for name, reference in _declared_tool_references().items()
+        if reference["access"] == "write"
+    )
 
 
 def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
@@ -408,17 +437,13 @@ def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
             contract["securitySchemes"] = deepcopy(security_schemes)
         reference = references.get(canonical_id)
         if reference is None:
-            reference = {
-                "canonicalId": canonical_id,
-                "kind": kind,
-                "namespace": namespace,
-                "sourceIds": [],
-                "displayName": raw.get("title") or canonical_id,
-                "shortDescription": raw.get("description", ""),
-                "availability": "disabled",
-                "contracts": [],
-            }
-            references[canonical_id] = reference
+            raise IddValidationError(f"idd_tool_discovery_undeclared:{canonical_id}")
+        read_only_hint = annotations.get("readOnlyHint") if annotations is not None else None
+        if read_only_hint is not None and (
+            not isinstance(read_only_hint, bool)
+            or read_only_hint is not (reference["access"] == "read")
+        ):
+            raise IddValidationError(f"idd_tool_access_contract_conflict:{canonical_id}")
         if source_id not in reference["sourceIds"]:
             reference["sourceIds"].append(source_id)
         reference["contracts"].append(contract)

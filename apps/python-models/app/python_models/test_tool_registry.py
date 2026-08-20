@@ -47,6 +47,7 @@ def test_duplicate_registry_identity_is_rejected():
         name="one_tool",
         description="One test tool.",
         enabled=True,
+        access="read",
         inputSchema={"type": "object", "properties": {}, "required": []},
         outputSchema={"type": "string"},
     )
