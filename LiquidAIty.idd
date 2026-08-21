@@ -227,7 +227,7 @@ name = "card.run_assistant_agent"
 access = "write"
 displayName = "Run saved Card"
 description = "Run one saved external Card through current Card grants and AGE relationship authority."
-parameters = ["projectId", "deckId", "cardId", "correlationId", "conversationId", "originatingAgentId", "originatingRunId", "input", "keyContext", "visibleMessages", "priorResults", "dataAnchors", "outputRequirements"]
+parameters = ["projectId", "deckId", "cardId", "correlationId", "conversationId", "originatingAgentId", "originatingRunId", "input", "dataAnchors"]
 required = ["cardId", "input"]
 
 [[toolGroups]]

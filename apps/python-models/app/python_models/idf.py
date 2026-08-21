@@ -48,19 +48,14 @@ def materialize_idf(
     skills: list[str] | None = None,
     toolsets: list[str] | None = None,
     mcp_connection_ids: list[str] | None = None,
-    context_markdown: str = "",
     graph_seed: str = "",
     output_requirements: str = "",
     native_references: list[dict[str, Any]] | None = None,
     images: list[dict[str, Any]] | None = None,
 ) -> Idf:
-    """Combine stable Card fields with one dynamic input without extra state."""
+    """Combine stable Card fields with one mission and resolved graph data."""
 
-    sections = [
-        value.strip()
-        for value in (context_markdown, dynamic_input)
-        if isinstance(value, str) and value.strip()
-    ]
+    sections = [dynamic_input.strip()] if dynamic_input.strip() else []
     if output_requirements.strip():
         sections.append(f"Output requirements:\n{output_requirements.strip()}")
     return Idf(

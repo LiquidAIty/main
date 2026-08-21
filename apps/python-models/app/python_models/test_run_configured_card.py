@@ -27,7 +27,7 @@ def _context(
         idf=materialize_idf(
             system_prompt="saved system",
             dynamic_input=user_text,
-            context_markdown="bounded context",
+            graph_seed="current native graph data",
             runtime={"kind": "autogen", "mode": runtime_mode},
             provider={
                 "accessMode": "openrouter-api", "provider": "openrouter",
@@ -79,8 +79,8 @@ def test_single_card_consumes_one_python_materialization(monkeypatch) -> None:
     attached_names = {tool.name for tool in observed[0]["tools"]}
     assert "web_search" in attached_names
     assert "calculator" in attached_names
-    assert observed[1] == {"task": context.idf.message}
-    assert context.idf.message == "bounded context\n\nrun"
+    assert observed[1] == {"task": "current native graph data\n\nrun"}
+    assert context.idf.message == "run"
     assert "card:one" not in context.idf.message
 
 

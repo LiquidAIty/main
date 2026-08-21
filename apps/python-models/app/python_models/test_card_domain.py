@@ -426,19 +426,6 @@ def _destination_payload(card_id: str) -> dict:
         "cardId": card_id,
         "senderCardId": "sender",
         "assignment": "Use every supplied declaration.",
-        "keyContext": "Continue only from the bounded current handoff.",
-        "visibleMessages": [
-            {"role": "user", "content": "Please verify the current source."},
-            {"role": "assistant", "content": "I found one source-backed starting point."},
-        ],
-        "priorResults": [{
-            "authority": "KnowGraph",
-            "nativeId": "episode:one",
-            "reason": "selected evidence",
-            "asOf": "2026-08-17T00:00:00Z",
-            "required": True,
-        }],
-        "outputRequirements": "Return the declared result.",
     }
 
 
@@ -458,9 +445,9 @@ def test_receiving_card_materializes_its_own_exact_call_data(
     assert autogen["idf"]["runtime"] == {"kind": "autogen", "mode": "assistant"}
     assert autogen["idf"]["enabledTools"] == []
     assert hermes["idf"]["message"] == autogen["idf"]["message"]
-    assert "Continue only from the bounded current handoff." in hermes["idf"]["message"]
-    assert "Inspect the supplied current graph data" in hermes["idf"]["message"]
-    assert hermes["idf"]["nativeReferences"][0]["nativeId"] == "episode:one"
+    assert hermes["idf"]["message"] == "Use every supplied declaration."
+    assert hermes["idf"]["graphSeed"] == ""
+    assert hermes["idf"]["nativeReferences"] == []
     assert "cardId" not in hermes["idf"]
     assert "runId" not in hermes["idf"]
     assert "flow-hermes" not in str(hermes["idf"])
@@ -475,28 +462,30 @@ def test_receiving_card_materializes_its_own_exact_call_data(
         card_domain.materialize_invocation(_destination_payload("autogen"))
 
 
-def test_native_reference_uses_the_idd_shape_provenance_and_hard_bounds() -> None:
-    reference = {
-        "authority": "KnowGraph",
-        "nativeId": "episode:one",
-        "reason": "selected evidence for this invocation",
-        "asOf": "2026-08-16T12:00:00Z",
-        "required": True,
-    }
-    assert card_domain._normalized_native_references([reference]) == [reference]
-    with pytest.raises(card_domain.CardDomainError, match="idd_record_field_required:native-reference.reason"):
-        card_domain._normalized_native_references([{
-            "authority": "KnowGraph",
-            "nativeId": "episode:one",
-            "asOf": "2026-08-16T12:00:00Z",
-            "required": True,
-        }])
-    with pytest.raises(card_domain.CardDomainError, match="native_reference_limit_exceeded"):
-        card_domain._normalized_native_references(
-            [{**reference, "nativeId": f"episode:{index}"} for index in range(33)]
-        )
-    with pytest.raises(card_domain.CardDomainError, match="native_reference_text_limit_exceeded"):
-        card_domain._normalized_native_references([{**reference, "reason": "x" * 66_000}])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("contextMarkdown", "copied parent context"),
+        ("nativeReferences", [{"nativeId": "unresolved"}]),
+        ("keyContext", "arbitrary caller summary"),
+        ("visibleMessages", [{"role": "user", "content": "old chat"}]),
+        ("priorResults", [{"nativeId": "copied-result"}]),
+        ("outputRequirements", "caller-authored extra prompt"),
+        ("tools", ["calculator"]),
+    ],
+)
+def test_invocation_rejects_every_non_graph_context_field(
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    _destination_fixture(monkeypatch)
+    payload = {**_destination_payload("hermes"), field: value}
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match=f"invocation_context_field_forbidden:{field}",
+    ):
+        card_domain.materialize_invocation(payload)
 
 
 def test_saved_hook_and_handoff_anchor_resolve_before_one_materialization(
@@ -540,7 +529,7 @@ def test_saved_hook_and_handoff_anchor_resolve_before_one_materialization(
     assert [anchor["nativeId"] for anchor in resolved] == ["hook:one", "handoff:one"]
     assert preview["idf"]["graphSeed"] == "actual current graph data"
     assert [reference["nativeId"] for reference in preview["idf"]["nativeReferences"]] == [
-        "episode:one", "hook:one", "handoff:one",
+        "hook:one", "handoff:one",
     ]
 
     loaded["deck"]["edges"] = []
@@ -708,7 +697,7 @@ def test_context_cascade_rejects_duplicate_and_recursive_handoffs(
         card_domain.materialize_invocation(payload)
 
 
-def test_explicit_subagent_context_is_bounded_transient_and_retaskable(
+def test_explicit_card_mission_is_transient_and_retaskable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     loaded = _destination_fixture(monkeypatch)
@@ -719,12 +708,10 @@ def test_explicit_subagent_context_is_bounded_transient_and_retaskable(
     first = card_domain.materialize_invocation({
         **_destination_payload("hermes"),
         "assignment": "Research the first bounded question.",
-        "keyContext": "Use current graph evidence for the first question.",
     })
     second = card_domain.materialize_invocation({
         **_destination_payload("hermes"),
         "assignment": "Retask the same saved Kanban Card with a second question.",
-        "keyContext": "The first result was weak; verify the missing point only.",
     })
 
     assert first["cardIdentity"]["cardId"] == second["cardIdentity"]["cardId"] == "hermes"
@@ -733,28 +720,6 @@ def test_explicit_subagent_context_is_bounded_transient_and_retaskable(
     assert "Research the first bounded question" not in second["idf"]["message"]
     assert second["delegationTargets"] == []
     assert "card.run_assistant_agent" not in second["idf"]["enabledTools"]
-
-    too_many = _destination_payload("hermes")
-    too_many["visibleMessages"] = [
-        {"role": "user", "content": f"message {index}"} for index in range(7)
-    ]
-    with pytest.raises(card_domain.CardDomainError, match="card_handoff_visible_message_limit_exceeded"):
-        card_domain.materialize_invocation(too_many)
-
-    too_large = _destination_payload("hermes")
-    too_large["visibleMessages"] = [{"role": "user", "content": "x" * 3_001}]
-    with pytest.raises(card_domain.CardDomainError, match="card_handoff_visible_message_token_limit_exceeded"):
-        card_domain.materialize_invocation(too_large)
-
-
-def test_explicit_subagent_context_rejects_unbounded_parent_context(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _destination_fixture(monkeypatch)
-    payload = _destination_payload("hermes")
-    payload["contextMarkdown"] = "complete parent transcript"
-    with pytest.raises(card_domain.CardDomainError, match="unbounded_card_handoff_context_rejected"):
-        card_domain.materialize_invocation(payload)
 
 
 def test_main_and_coder_can_explicitly_retask_one_non_delegating_kanban_card(
@@ -786,9 +751,7 @@ def test_main_and_coder_can_explicitly_retask_one_non_delegating_kanban_card(
         return card_domain.materialize_invocation({
             "projectId": "project-one", "deckId": "deck_builder",
             "cardId": "kanban", "senderCardId": sender,
-            "assignment": task, "keyContext": "Inspect supplied evidence first.",
-            "visibleMessages": [], "priorResults": [],
-            "outputRequirements": "Return evidence, gaps, and native references.",
+            "assignment": task,
         })
 
     assert invoke("main", "Research the current question.")["cardIdentity"]["cardId"] == "kanban"

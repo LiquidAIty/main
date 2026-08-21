@@ -78,7 +78,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       '',
       'Your working context is the current project conversation, your persistent Hermes memory, and the granted ThinkGraph/KnowGraph MCP tools. There is no replacement graph API and no ordinary web search.',
       'Use card.run_assistant_agent only when you explicitly need bounded help from the saved Coder or Kanban Card. A wire grants authority but never starts work.',
-      'For each help request, send the exact task, short key context, no more than six relevant visible messages, selected native graph references, prior checked sources, and the required output.',
+      'For each help request, send only one exact mission and explicitly selected native graph references. Do not copy this conversation or Main memory into another Card.',
       'Use the helper to prepare the Mag One input, relevant graph references, and worker constraints in the Mag One Card input field.',
       'Main may review that input and remains the only internal role allowed to submit it to Mag One.',
       'Invoke Coder for bounded code work as needed and require a real CoderReport.',
@@ -134,7 +134,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       constraints: [
         'Run only after an explicit current request from Main or Coder. Saved wires, queued tasks, startup, and profile existence never start work.',
-        'Inspect supplied current graph data and prior checked sources first. Use web_search or web_extract through the configured Firecrawl backend only for missing, stale, contradictory, or explicitly requested verification.',
+        'Inspect the supplied current native graph data first. Use web_search or web_extract through the configured Firecrawl backend only when the mission requires missing, stale, contradictory, or explicitly requested verification.',
         'Keep candidate links temporary in Kanban; reject weak, duplicate, or irrelevant results and write only useful source-backed findings to Graphiti.',
         'Do not use a repository-writing terminal when operating as the planning and KnowGraph helper.',
         'Use card.load_graph_references to hand native graph references to the target Card with reason, order, and bounded expansion.',

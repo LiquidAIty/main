@@ -78,14 +78,14 @@ describe('AgentManager active builder config', () => {
       maxTokens: '',
       maxTurns: '',
       promptTemplate: '',
-      toolsText: 'cbm.search_graph',
+      toolsText: 'card.update_configuration',
       skillsText: '',
       toolsetsText: 'file\nterminal',
       mcpConnectionIdsText: '',
     });
     expect(coder.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'coder' });
     expect(coder.access_mode).toBe('chatgpt-account');
-    expect(coder.tools).toEqual(['cbm.search_graph']);
+    expect(coder.tools).toEqual(['card.update_configuration']);
     expect(coder.toolsets).toEqual(['file', 'terminal']);
   });
 

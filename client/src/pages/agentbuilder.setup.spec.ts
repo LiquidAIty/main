@@ -87,7 +87,7 @@ describe('agentbuilder authoring flow', () => {
     }))).toEqual([
       { source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
       { source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' },
-      { source: 'card_hermes_steward', target: 'card_worldsignals_agent', edgeType: 'flow' },
+      { source: 'card_local_coder', target: 'card_hermes_steward', edgeType: 'flow' },
       {
         source: 'card_main_chat',
         target: 'card_magentic',
@@ -98,11 +98,17 @@ describe('agentbuilder authoring flow', () => {
         target: 'card_magentic',
         edgeType: 'magentic_option',
       },
+      {
+        source: 'card_trading_workbench',
+        target: 'card_magentic',
+        edgeType: 'magentic_option',
+      },
     ]);
     const systemCoder = INITIAL_DECK.nodes.find((node) => node.id === 'card_local_coder');
     expect(systemCoder?.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'coder' });
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_magentic')?.runtime).toEqual({ kind: 'autogen', mode: 'magentic_one' });
-    expect(systemCoder?.runtimeOptions?.tools).toContain('cbm.search_graph');
+    expect(systemCoder?.runtimeOptions?.tools).toContain('card.update_configuration');
+    expect(systemCoder?.runtimeOptions?.tools).not.toContain('cbm.search_graph');
     expect(systemCoder?.runtimeOptions?.tools).not.toContain('run_local_coder');
     expect(systemCoder?.runtimeOptions?.toolsets).toEqual(['file', 'terminal']);
     expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_local_coder' && edge.edgeType === 'magentic_option')).toBe(false);

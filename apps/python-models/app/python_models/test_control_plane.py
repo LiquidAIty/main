@@ -349,22 +349,9 @@ class TestRunAssistantAgent:
             "dataAnchors": anchors,
         }))
         assert calls[2][2]["dataAnchors"] == anchors
-
-        bounded_context = {
-            "keyContext": "Use the current checked source.",
-            "visibleMessages": [{"role": "user", "content": "Verify the missing point."}],
-            "priorResults": [{
-                "authority": "KnowGraph", "nativeId": "episode-1",
-                "reason": "already checked", "asOf": "current", "required": False,
-            }],
-            "outputRequirements": "Return one cited finding.",
-        }
-        asyncio.run(cp.card_run_assistant_agent({
-            "projectId": "p", "deckId": "d", "cardId": "c",
-            "correlationId": "bounded", "input": "continue",
-            **bounded_context,
-        }))
-        assert {key: calls[3][2][key] for key in bounded_context} == bounded_context
+        assert sorted(calls[2][2]) == [
+            "action", "cardId", "correlationId", "dataAnchors", "deckId", "input", "projectId",
+        ]
 
     def test_materialization_rejection_preserves_the_authority_error(self, monkeypatch):
         calls = []

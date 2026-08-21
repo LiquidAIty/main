@@ -600,26 +600,6 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
             if isinstance(args.get("dataAnchors"), list)
             else {}
         ),
-        **(
-            {"keyContext": args["keyContext"]}
-            if isinstance(args.get("keyContext"), str)
-            else {}
-        ),
-        **(
-            {"visibleMessages": args["visibleMessages"]}
-            if isinstance(args.get("visibleMessages"), list)
-            else {}
-        ),
-        **(
-            {"priorResults": args["priorResults"]}
-            if isinstance(args.get("priorResults"), list)
-            else {}
-        ),
-        **(
-            {"outputRequirements": args["outputRequirements"]}
-            if isinstance(args.get("outputRequirements"), str)
-            else {}
-        ),
     }
 
     try:

@@ -13,7 +13,7 @@ def test_materializer_combines_only_card_state_and_current_input() -> None:
             "modelKey": "gpt-5.6-luna", "providerModelId": "gpt-5.6-luna",
         },
         runtime_options={"reasoningEffort": "medium"},
-        context_markdown="selected native context",
+        graph_seed="selected current native graph data",
         output_requirements="return a bounded answer",
         enabled_tools=["graphiti.search_nodes"],
         tool_definitions=[{
@@ -34,8 +34,8 @@ def test_materializer_combines_only_card_state_and_current_input() -> None:
 
     assert result == Idf(
         systemPrompt="saved system prompt",
+        graphSeed="selected current native graph data",
         message=(
-            "selected native context\n\n"
             "current assignment\n\n"
             "Output requirements:\nreturn a bounded answer"
         ),

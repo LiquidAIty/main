@@ -2365,10 +2365,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "cardId",
         "input",
         "dataAnchors",
-        "keyContext",
-        "visibleMessages",
-        "priorResults",
-        "outputRequirements",
     }
     assert set(card_tool.inputSchema["required"]) == {"cardId", "input"}
     assert "saved runtime adapter" in card_tool.description
@@ -2494,13 +2490,11 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
         "cardId": "coder-card",
         "input": "Approved exact task.",
-        "keyContext": "Use the current saved Card and bounded source context.",
-        "visibleMessages": [{"role": "user", "content": "Check the missing point."}],
-        "priorResults": [{
+        "dataAnchors": [{
             "authority": "CodeGraph", "nativeId": "module.symbol",
-            "reason": "already inspected", "asOf": "current", "required": False,
+            "reason": "start from this production symbol", "priority": 1,
+            "boundedExpansion": 1, "resultLimit": 8, "required": True,
         }],
-        "outputRequirements": "Return the verified result and stop.",
     }))
     path, payload = calls[-1]
     assert path == "card_run_assistant_agent"
@@ -2509,10 +2503,10 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert payload["conversationId"] == "external-mcp:grant-1"
     assert payload["originatingAgentId"] == "card_main_chat"
     assert payload["originatingRunId"] == "external-main:grant-1"
-    assert payload["keyContext"].startswith("Use the current saved Card")
-    assert payload["visibleMessages"][0]["role"] == "user"
-    assert payload["priorResults"][0]["nativeId"] == "module.symbol"
-    assert payload["outputRequirements"] == "Return the verified result and stop."
+    assert payload["dataAnchors"][0]["nativeId"] == "module.symbol"
+    assert not {
+        "keyContext", "visibleMessages", "priorResults", "outputRequirements",
+    }.intersection(payload)
 
 def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(monkeypatch):
     import asyncio

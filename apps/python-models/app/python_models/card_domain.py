@@ -1293,135 +1293,24 @@ def _direct_card_targets(
     return direct
 
 
-_NATIVE_REFERENCE_LIMIT = 32
-_NATIVE_REFERENCE_TEXT_LIMIT = 65_536
 _DATA_ANCHOR_LIMIT = 16
-_CARD_HANDOFF_VISIBLE_MESSAGE_LIMIT = 6
-_CARD_HANDOFF_VISIBLE_MESSAGE_TOKEN_UPPER_BOUND = 3_000
-_CARD_HANDOFF_KEY_CONTEXT_LIMIT = 8_000
+_FORBIDDEN_INVOCATION_CONTEXT_FIELDS = (
+    "contextMarkdown",
+    "nativeReferences",
+    "keyContext",
+    "visibleMessages",
+    "priorResults",
+    "outputRequirements",
+    "tools",
+)
 
 
-def _normalized_native_references(value: Any) -> list[dict[str, Any]]:
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        raise CardDomainError("native_references_invalid")
-    if len(value) > _NATIVE_REFERENCE_LIMIT:
-        raise CardDomainError("native_reference_limit_exceeded")
-    normalized: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
-    for item in value:
-        if not isinstance(item, dict):
-            raise CardDomainError("native_reference_invalid")
-        try:
-            reference = validate_record("native-reference", item)
-        except IddValidationError as error:
-            raise CardDomainError(str(error)) from error
-        authority = _required_text(reference.get("authority"), "native_reference_authority")
-        native_id = _required_text(reference.get("nativeId"), "native_reference_id")
-        identity = (authority, native_id)
-        if identity in seen:
-            raise CardDomainError("native_reference_duplicate")
-        seen.add(identity)
-        normalized.append({
-            "authority": authority,
-            "nativeId": native_id,
-            "reason": _required_text(reference.get("reason"), "native_reference_reason"),
-            "asOf": _required_text(reference.get("asOf"), "native_reference_as_of"),
-            "required": reference.get("required") is True,
-        })
-    if len(_canonical_json(normalized).encode("utf-8")) > _NATIVE_REFERENCE_TEXT_LIMIT:
-        raise CardDomainError("native_reference_text_limit_exceeded")
-    return normalized
+def _reject_non_graph_invocation_context(payload: dict[str, Any]) -> None:
+    """Fail closed when a caller tries to bypass mission + graph references."""
 
-
-def _normalized_visible_messages(value: Any) -> list[dict[str, str]]:
-    """Validate caller-selected visible messages with a dependency-free token ceiling.
-
-    UTF-8 byte length is a conservative upper bound on byte-pair token count:
-    one token cannot represent less than one input byte.  The resulting limit
-    can be stricter than 3,000 provider tokens, but it can never exceed them.
-    """
-
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        raise CardDomainError("card_handoff_visible_messages_invalid")
-    if len(value) > _CARD_HANDOFF_VISIBLE_MESSAGE_LIMIT:
-        raise CardDomainError("card_handoff_visible_message_limit_exceeded")
-    normalized: list[dict[str, str]] = []
-    for item in value:
-        if not isinstance(item, dict):
-            raise CardDomainError("card_handoff_visible_message_invalid")
-        role = str(item.get("role") or "").strip().lower()
-        if role not in {"user", "assistant"}:
-            raise CardDomainError("card_handoff_visible_message_role_invalid")
-        content = _required_text(item.get("content"), "card_handoff_visible_message_content")
-        normalized.append({"role": role, "content": content})
-    rendered = "\n\n".join(
-        f"{message['role']}: {message['content']}" for message in normalized
-    )
-    if len(rendered.encode("utf-8")) > _CARD_HANDOFF_VISIBLE_MESSAGE_TOKEN_UPPER_BOUND:
-        raise CardDomainError("card_handoff_visible_message_token_limit_exceeded")
-    return normalized
-
-
-def _bounded_card_handoff_context(
-    payload: dict[str, Any],
-    *,
-    required: bool,
-) -> tuple[str, list[dict[str, Any]]]:
-    """Render one transient explicit help context; persist and infer nothing."""
-
-    if not required:
-        return str(payload.get("contextMarkdown") or ""), []
-
-    sender_card_id = str(payload.get("senderCardId") or "").strip()
-    context_fields_present = any(
-        payload.get(field) not in (None, "", [])
-        for field in ("keyContext", "visibleMessages", "priorResults")
-    )
-    if context_fields_present and not sender_card_id:
-        raise CardDomainError("card_handoff_context_requires_sender")
-    if not sender_card_id:
-        return str(payload.get("contextMarkdown") or ""), []
-
-    if payload.get("contextMarkdown") not in (None, ""):
-        raise CardDomainError("unbounded_card_handoff_context_rejected")
-    key_context = _required_text(payload.get("keyContext"), "card_handoff_key_context")
-    if len(key_context.encode("utf-8")) > _CARD_HANDOFF_KEY_CONTEXT_LIMIT:
-        raise CardDomainError("card_handoff_key_context_limit_exceeded")
-    messages = _normalized_visible_messages(payload.get("visibleMessages"))
-    prior_results = _normalized_native_references(payload.get("priorResults"))
-    output_requirements = _required_text(
-        payload.get("outputRequirements"), "card_handoff_output_requirements"
-    )
-
-    sections = [f"### Key context\n{key_context}"]
-    if messages:
-        sections.append(
-            "### Relevant visible chat\n"
-            + "\n\n".join(
-                f"**{message['role'].title()}**\n{message['content']}"
-                for message in messages
-            )
-        )
-    if prior_results:
-        sections.append(
-            "### Prior checked results and sources\n"
-            + "\n".join(
-                "- "
-                f"{reference['authority']}:{reference['nativeId']} — "
-                f"{reference['reason']} (checked {reference['asOf']})"
-                for reference in prior_results
-            )
-        )
-    sections.append(
-        "### Research continuity\n"
-        "Inspect the supplied current graph data and prior checked sources first. "
-        "Research only missing, stale, contradictory, or explicitly requested verification."
-    )
-    return "\n\n".join(sections), prior_results
+    for field in _FORBIDDEN_INVOCATION_CONTEXT_FIELDS:
+        if field in payload:
+            raise CardDomainError(f"invocation_context_field_forbidden:{field}")
 
 
 def _normalized_data_anchors(value: Any, *, record_name: str) -> list[dict[str, Any]]:
@@ -1678,7 +1567,6 @@ def _prepare_invocation(
     if not _card_enabled(card):
         raise CardDomainError("card_disabled")
     sender_id = str(payload.get("senderCardId") or "").strip()
-    bounded_context_required = False
     if sender_id:
         if sender_id == card_id:
             raise CardDomainError("card_invocation_self_handoff_forbidden")
@@ -1708,18 +1596,12 @@ def _prepare_invocation(
                 and edge.get("enabled") is not False
                 for edge in loaded["deck"]["edges"]
             )
-        bounded_context_required = not (
-            target_runtime == {"kind": "autogen", "mode": "magentic_one"}
-            or sender_runtime == {"kind": "autogen", "mode": "magentic_one"}
-        )
         if sender is None or not authorized:
             raise CardDomainError("card_invocation_edge_authority_required")
     options = _json_object(card.get("runtimeOptions"), "runtime_options")
     graph_hooks = _normalized_graph_hooks(options.get("graphHooks"))
     ceiling = _string_list(options.get("tools"), "tools")
-    requested_tools = _string_list(payload.get("tools"), "tools") if payload.get("tools") is not None else ceiling
-    if not set(requested_tools).issubset(set(ceiling)):
-        raise CardDomainError("invocation_tool_ceiling_exceeded")
+    requested_tools = ceiling
     runtime = _card_runtime(card)
     owner = _runtime_owner(card)
     common_prompt = str(card.get("prompt") or "")
@@ -1790,39 +1672,25 @@ def _prepare_invocation(
         "cardRevision": card["_cardRevision"],
         "cardRevisionSha256": card["_cardRevisionSha256"],
         "runtimeOwner": owner,
-        "_outputRequirements": str(
-            payload.get("outputRequirements") or card.get("outputContract") or ""
-        ),
+        "_outputRequirements": str(card.get("outputContract") or ""),
         "assignment": assignment,
         "cardIdentity": card_identity,
         "delegationTargets": direct_card_targets,
         "_callConfig": call_config,
         "_toolDefinitions": tool_definitions if include_tool_definitions else [],
         "_graphHooks": graph_hooks,
-        "_boundedContextRequired": bounded_context_required,
     }
 
 
 def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
+    _reject_non_graph_invocation_context(payload)
     prepared = _prepare_invocation(payload)
     output_requirements = prepared.pop("_outputRequirements")
     call_config = prepared.pop("_callConfig")
     assignment = prepared.pop("assignment")
     tool_definitions = prepared.pop("_toolDefinitions")
     graph_hooks = prepared.pop("_graphHooks")
-    bounded_context_required = prepared.pop("_boundedContextRequired")
-    context_markdown, prior_results = _bounded_card_handoff_context(
-        payload,
-        required=bounded_context_required,
-    )
-    references = _normalized_native_references(payload.get("nativeReferences"))
-    reference_identities = {
-        (reference["authority"], reference["nativeId"]) for reference in references
-    }
-    references.extend(
-        reference for reference in prior_results
-        if (reference["authority"], reference["nativeId"]) not in reference_identities
-    )
+    references: list[dict[str, Any]] = []
     incoming_anchors = _normalized_data_anchors(
         payload.get("dataAnchors"), record_name="data-anchor-reference"
     )
@@ -1872,7 +1740,6 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         skills=call_config["skills"],
         toolsets=call_config["toolsets"],
         mcp_connection_ids=call_config["mcpConnectionIds"],
-        context_markdown=context_markdown,
         graph_seed=graph_seed,
         output_requirements=output_requirements,
         native_references=references,

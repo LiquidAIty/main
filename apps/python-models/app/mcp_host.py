@@ -2055,8 +2055,9 @@ async def _materialize_complete_catalog() -> list[Tool]:
                 "exist on this path — extra arguments are rejected structurally. deckId defaults to "
                 "the canonical Agent Canvas deck. On the Harness saved-card doorway path, the "
                 "server injects projectId/correlationId/conversationId; the model supplies the "
-                "bound cardId plus the task input only. conversationId is the real live "
-                "conversation this run belongs to, when one exists. The backend persists one "
+                "bound cardId, one mission, and optional selected native graph references only. "
+                "conversationId is the real live "
+                "conversation this run belongs to, when one exists. Python materializes one "
                 "transient Card input before the selected runtime receives it."
             ),
             inputSchema={
@@ -2076,46 +2077,6 @@ async def _materialize_complete_catalog() -> list[Tool]:
                         "description": "Server-owned parent Harness turn identity for an inter-agent doorway call.",
                     },
                     "input": {"type": "string"},
-                    "keyContext": {
-                        "type": "string",
-                        "description": "Short caller-selected context for this explicit invocation only.",
-                    },
-                    "visibleMessages": {
-                        "type": "array",
-                        "maxItems": 6,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "role": {"type": "string", "enum": ["user", "assistant"]},
-                                "content": {"type": "string", "minLength": 1},
-                            },
-                            "required": ["role", "content"],
-                            "additionalProperties": False,
-                        },
-                    },
-                    "priorResults": {
-                        "type": "array",
-                        "maxItems": 32,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "authority": {
-                                    "type": "string",
-                                    "enum": ["ThinkGraph", "KnowGraph", "CodeGraph"],
-                                },
-                                "nativeId": {"type": "string", "minLength": 1},
-                                "reason": {"type": "string", "minLength": 1},
-                                "asOf": {"type": "string", "minLength": 1},
-                                "required": {"type": "boolean"},
-                            },
-                            "required": ["authority", "nativeId", "reason", "asOf", "required"],
-                            "additionalProperties": False,
-                        },
-                    },
-                    "outputRequirements": {
-                        "type": "string",
-                        "description": "Exact required result for this explicit invocation.",
-                    },
                     "dataAnchors": {
                         "type": "array",
                         "maxItems": 16,
@@ -2534,10 +2495,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "originatingRunId",
         "input",
         "dataAnchors",
-        "keyContext",
-        "visibleMessages",
-        "priorResults",
-        "outputRequirements",
     },
     "web_search": {"query", "max_results"},
 }

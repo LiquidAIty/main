@@ -39,7 +39,7 @@ def _context() -> RuntimeRequest:
         idf=materialize_idf(
             system_prompt="saved orchestrator system",
             dynamic_input="approved task",
-            context_markdown="native context",
+            graph_seed="current native graph data",
             runtime={"kind": "autogen", "mode": "magentic_one"},
             provider={
                 "accessMode": "openrouter-api", "provider": "openrouter",
@@ -91,7 +91,7 @@ def test_native_mag_one_consumes_canonical_card_input_and_returns_native_ids(mon
     assert result.ok is True
     assert result.runId == "mag:one"
     assert result.finalResponseText == "native final"
-    assert tasks == [context.idf.message]
+    assert tasks == ["current native graph data\n\napproved task"]
 
 
 def test_native_mag_one_failure_does_not_echo_secret(monkeypatch):
