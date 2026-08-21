@@ -254,3 +254,77 @@ async def test_configure_host_extension_fails_closed_during_an_active_turn() -> 
             "mcpServers": [],
             "_meta": _metadata(),
         })
+
+
+@pytest.mark.asyncio
+async def test_trusted_host_model_selection_pins_native_codex_responses() -> None:
+    original = SimpleNamespace(
+        model="gpt-5.6-luna",
+        provider="openai-codex",
+        base_url="https://chatgpt.com/backend-api/codex",
+        api_mode="codex_app_server",
+        tools=[],
+        enabled_toolsets=[],
+        disabled_toolsets=[],
+    )
+    replacement = SimpleNamespace(
+        model="gpt-5.6-luna",
+        provider="openai-codex",
+        base_url=original.base_url,
+        api_mode="codex_responses",
+        tools=[],
+        enabled_toolsets=[],
+        disabled_toolsets=[],
+    )
+    manager = SessionManager(agent_factory=lambda: original, db=_NoopSessionDb())
+    state = manager.create_session(cwd=".", host_config=parse_host_session_config(_metadata()))
+    manager._make_agent = MagicMock(return_value=replacement)
+    manager.configure_host_session = MagicMock(return_value=state)
+    manager.save_session = MagicMock()
+    acp_agent = HermesACPAgent(session_manager=manager)
+    acp_agent._resolve_model_selection = MagicMock(
+        return_value=("openai-codex", "gpt-5.6-luna")
+    )
+
+    await acp_agent.set_session_model(
+        "openai-codex:gpt-5.6-luna",
+        state.session_id,
+        apiMode="codex_responses",
+        openaiRuntime="auto",
+    )
+
+    assert state.agent is replacement
+    assert state.agent.api_mode == "codex_responses"
+    manager._make_agent.assert_called_once_with(
+        session_id=state.session_id,
+        cwd=state.cwd,
+        model="gpt-5.6-luna",
+        requested_provider="openai-codex",
+        base_url=original.base_url,
+        api_mode="codex_responses",
+        host_config=state.host_config,
+    )
+    manager.configure_host_session.assert_called_once_with(state, state.host_config)
+    manager.save_session.assert_called_once_with(state.session_id)
+
+
+@pytest.mark.asyncio
+async def test_native_runtime_selection_rejects_app_server_conflict() -> None:
+    agent = SimpleNamespace(
+        model="gpt-5.6-luna",
+        provider="openai-codex",
+        tools=[],
+        enabled_toolsets=[],
+        disabled_toolsets=[],
+    )
+    manager = SessionManager(agent_factory=lambda: agent, db=_NoopSessionDb())
+    state = manager.create_session(cwd=".")
+    acp_agent = HermesACPAgent(session_manager=manager)
+
+    with pytest.raises(ValueError, match="hermes_host_openai_runtime_conflict"):
+        await acp_agent.set_session_model(
+            "openai-codex:gpt-5.6-luna",
+            state.session_id,
+            apiMode="codex_app_server",
+            openaiRuntime="auto",
+        )

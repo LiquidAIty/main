@@ -78,13 +78,20 @@ Files and symbols:
   `allocate_host_child_execution`, `finish_host_child_execution`, `host_execution_scope`, and
   `current_host_tool_call_meta`.
 - `acp_adapter/server.py`: attaches one generic ACP extension requester and scopes the root run.
+  Its existing `session/set_model` boundary also accepts a trusted public
+  `apiMode` plus `openaiRuntime=auto`, so a host can explicitly retain Hermes'
+  native model loop without changing OAuth or provider ownership. Omission
+  preserves upstream model-switch behavior.
 - `tools/delegate_tool.py`: allocates every child context before execution, scopes native child work,
   and closes the context once for completion, failure, interruption, or stop.
-- `tools/mcp_tool.py`: passes the host-issued metadata through upstream MCP 2
-  `ClientSession.call_tool(..., meta=...)`; calls without host metadata retain the exact upstream
-  invocation.
+- `tools/mcp_tool.py`: snapshots the host-issued metadata in the synchronous
+  tool handler before Hermes crosses to its dedicated MCP event-loop thread,
+  then passes it through upstream MCP 2
+  `ClientSession.call_tool(..., meta=...)`; calls without host metadata retain
+  the exact upstream invocation.
 - `tests/acp_adapter/test_host_profiles.py` and `tests/tools/test_mcp_tool.py`: focused no-provider
-  allocation, scoping, closure, credential-absence, and MCP 2 forwarding proof.
+  allocation, scoping, closure, credential-absence, cross-thread propagation,
+  and MCP 2 forwarding proof.
 
 Public contract: the ACP host may implement `session/create_execution_context` and
 `session/finish_execution_context`. The create result contains only an opaque context ID and

@@ -5783,6 +5783,16 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
                     )
                 return tool_error(f"MCP server '{server_name}' is not connected")
 
+        # LIQUIDAITY VENDOR PATCH: snapshot trusted host metadata before the
+        # sync handler crosses onto Hermes' dedicated MCP event-loop thread.
+        # ContextVars do not automatically propagate across that boundary;
+        # reading inside ``_call`` silently lost the root/child execution
+        # context and made the official server fail closed.  The snapshot is
+        # per invocation and remains opaque to model-authored arguments.
+        from acp_adapter.host_profiles import current_host_tool_call_meta
+
+        execution_meta = current_host_tool_call_meta()
+
         async def _call():
             _mark_server_call_started(server)
             async with server._rpc_lock:
@@ -5795,9 +5805,6 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
                     # LIQUIDAITY VENDOR PATCH: MCP 2.0 carries trusted host
                     # execution identity as per-call metadata. It never enters
                     # model-authored tool arguments or shared mutable headers.
-                    from acp_adapter.host_profiles import current_host_tool_call_meta
-
-                    execution_meta = current_host_tool_call_meta()
                     if execution_meta:
                         result = await server.session.call_tool(
                             tool_name,

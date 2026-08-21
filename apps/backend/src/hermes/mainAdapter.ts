@@ -8,7 +8,10 @@ import {
 } from '../services/mcp/pythonAgentMcpClient';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { resolveSavedMcpConnections } from './mcpConnections';
-import { ensureHermesHolographicMemoryHome } from './profileMemory';
+import {
+  ensureHermesHolographicMemoryHome,
+  HERMES_NATIVE_OPENAI_RUNTIME,
+} from './profileMemory';
 import {
   createHermesChildExecutionContext,
   bindHermesRootExecutionSession,
@@ -135,6 +138,26 @@ export function providerForHermes(provider: string, accessMode?: CardAccessMode)
   const normalized = String(provider || '').trim().toLowerCase();
   if (normalized === 'openai' && accessMode === 'chatgpt-account') return 'openai-codex';
   return normalized;
+}
+
+export function modelSelectionForHermes(args: Pick<
+  HermesRuntimeConfig,
+  'provider' | 'accessMode' | 'providerModelId'
+>): {
+  modelId: string;
+  apiMode?: 'codex_responses';
+  openaiRuntime?: typeof HERMES_NATIVE_OPENAI_RUNTIME;
+} {
+  const provider = providerForHermes(args.provider, args.accessMode);
+  const modelId = `${provider}:${args.providerModelId}`;
+  if (provider === 'openai-codex' && args.accessMode === 'chatgpt-account') {
+    return {
+      modelId,
+      apiMode: 'codex_responses',
+      openaiRuntime: HERMES_NATIVE_OPENAI_RUNTIME,
+    };
+  }
+  return { modelId };
 }
 
 function textContent(update: any): string {
@@ -531,10 +554,11 @@ class AcpProcess {
   }
 
   private async configureModel(sessionId: string, args: HermesTurnArgs): Promise<void> {
-    const modelChoice = `${providerForHermes(args.provider, args.accessMode)}:${args.providerModelId}`;
-    if (this.configuredModelBySession.get(sessionId) === modelChoice) return;
-    await this.request('session/set_model', { sessionId, modelId: modelChoice });
-    this.configuredModelBySession.set(sessionId, modelChoice);
+    const selection = modelSelectionForHermes(args);
+    const cacheKey = JSON.stringify(selection);
+    if (this.configuredModelBySession.get(sessionId) === cacheKey) return;
+    await this.request('session/set_model', { sessionId, ...selection });
+    this.configuredModelBySession.set(sessionId, cacheKey);
   }
 
   async prepareSession(args: HermesTurnArgs): Promise<HermesPreparedSession> {

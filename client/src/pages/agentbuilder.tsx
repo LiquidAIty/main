@@ -89,10 +89,12 @@ import type {
   KnowledgeGraphKind,
 } from '../types/agentgraph';
 
+const loadAgentManager = () => import('../components/AgentManager');
 const AgentManager = lazy(async () => {
-  const mod = await import('../components/AgentManager');
+  const mod = await loadAgentManager();
   return { default: mod.AgentManager };
 });
+void loadAgentManager();
 import type { StandaloneCardTestResult } from '../components/AgentManager';
 
 import { resolveCbmProjectName } from '../components/codegraph/resolveCodeGraphProjectIdentity';

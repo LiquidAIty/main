@@ -139,7 +139,12 @@ describe('Hermes Holographic runtime configuration', () => {
 
     expect(profileHome).toBe(path.join(runtimeHome, 'profiles', 'coder'));
     expect(readFileSync(path.join(profileHome, 'SOUL.md'), 'utf8')).toBe('Saved Coder prompt');
-    expect(raw.model).toEqual({ default: 'gpt-5.6-luna', provider: 'openai-codex' });
+    expect(raw.model).toEqual({
+      default: 'gpt-5.6-luna',
+      provider: 'openai-codex',
+      api_mode: 'codex_responses',
+      openai_runtime: 'auto',
+    });
     expect(raw.mcp_servers.liquidaity).toEqual({
       url: 'http://127.0.0.1:8765/mcp',
       headers: { Authorization: 'Bearer ${LIQUIDAITY_CODER_MCP_BEARER}' },

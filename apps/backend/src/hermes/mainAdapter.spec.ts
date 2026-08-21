@@ -5,6 +5,7 @@ import {
   buildHermesHostSessionProjection,
   buildHermesOfficialMcpServer,
   deriveHermesSessionKey,
+  modelSelectionForHermes,
   providerForHermes,
   requireHermesCompletionText,
   resolveHermesRuntimeHome,
@@ -19,6 +20,24 @@ describe('Hermes ACP transport identity', () => {
   it('mechanically maps prepared ChatGPT-account OpenAI transport to Hermes native OAuth', () => {
     expect(providerForHermes('openai', 'chatgpt-account')).toBe('openai-codex');
     expect(providerForHermes('openrouter', 'openrouter-api')).toBe('openrouter');
+  });
+
+  it('projects Main, Kanban, and Coder onto Hermes native Codex Responses', () => {
+    for (const [cardId, mode, profile] of [
+      ['card_main_chat', 'main', 'liquidaity-main'],
+      ['card_hermes_steward', 'kanban', 'liquidaity-hermes-steward'],
+      ['card_local_coder', 'delegate', 'coder'],
+    ] as const) {
+      expect(modelSelectionForHermes({
+        provider: 'openai',
+        accessMode: 'chatgpt-account',
+        providerModelId: 'gpt-5.6-luna',
+      }), `${cardId}:${mode}:${profile}`).toEqual({
+        modelId: 'openai-codex:gpt-5.6-luna',
+        apiMode: 'codex_responses',
+        openaiRuntime: 'auto',
+      });
+    }
   });
 
   it('derives one transport session key from resolved identities', () => {
@@ -109,5 +128,50 @@ describe('Hermes ACP transport identity', () => {
         requiresExecutionContext: true,
       }),
     }));
+  });
+
+  it('keeps Coder native tools, memory, skills, code execution, and delegation', () => {
+    const projection = buildHermesHostSessionProjection({
+      sessionKey: 'coder-session-1',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'conversation-1',
+      parentRunId: 'coder-run-1',
+      cardId: 'card_local_coder',
+      title: 'Coder',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
+      prompt: 'Saved Coder prompt',
+      provider: 'openai',
+      modelKey: 'gpt-5.6-luna',
+      providerModelId: 'gpt-5.6-luna',
+      accessMode: 'chatgpt-account',
+      tools: ['cbm.search_graph', 'cbm.trace_path'],
+      nativeTools: ['delegate_task', 'terminal', 'read_file', 'python'],
+      skills: ['software-development/test-driven-development'],
+      toolsets: ['memory', 'delegation', 'skills', 'terminal', 'file', 'code_execution'],
+      mcpConnectionIds: [],
+      message: 'Inspect one symbol.',
+    }, {
+      LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
+      LIQUIDAITY_INTERNAL_MCP_URL: 'http://127.0.0.1:8765/mcp',
+    }, 'coder-context');
+
+    const sessionConfig = (projection.sessionMeta.hermes as any).sessionConfig;
+    expect(sessionConfig.enabledTools).toEqual([
+      'delegate_task',
+      'terminal',
+      'read_file',
+      'python',
+    ]);
+    expect(sessionConfig.enabledToolsets).toEqual(expect.arrayContaining([
+      'memory',
+      'delegation',
+      'skills',
+      'terminal',
+      'file',
+      'code_execution',
+      expect.stringMatching(/^mcp-main-runtime-/),
+    ]));
+    expect(sessionConfig.executionContextId).toBe('coder-context');
   });
 });

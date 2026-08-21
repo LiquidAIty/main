@@ -12,6 +12,11 @@ export const HOLOGRAPHIC_MEMORY_SETTINGS = [
   ['plugins.hermes-memory-store.temporal_decay_half_life', 0],
 ] as const;
 
+// Hermes documents `auto` as its native AIAgent loop. The only alternative,
+// `codex_app_server`, hands the turn to a separate Codex subprocess and is not
+// part of LiquidAIty's runtime contract.
+export const HERMES_NATIVE_OPENAI_RUNTIME = 'auto' as const;
+
 const CONFIGURE_HOLOGRAPHIC_MEMORY_SCRIPT = String.raw`
 import json
 import sys
@@ -125,6 +130,10 @@ export function configureHermesCardProfile(args: {
     ...HOLOGRAPHIC_MEMORY_SETTINGS,
     ['model.default', args.model],
     ['model.provider', args.provider],
+    ['model.openai_runtime', HERMES_NATIVE_OPENAI_RUNTIME],
+    ...(args.provider === 'openai-codex'
+      ? ([['model.api_mode', 'codex_responses']] as const)
+      : []),
     ['mcp_servers.liquidaity.url', args.mcpUrl],
     [
       'mcp_servers.liquidaity.headers.Authorization',
@@ -145,6 +154,9 @@ export function configureHermesCardProfile(args: {
 
 export function ensureHermesHolographicMemoryHome(hermesRoot: string): string {
   const hermesHome = resolveHermesRuntimeHome(hermesRoot);
-  configureHermesHolographicMemoryHome(hermesRoot, hermesHome);
+  configureHermesHolographicMemoryHome(hermesRoot, hermesHome, [
+    ...HOLOGRAPHIC_MEMORY_SETTINGS,
+    ['model.openai_runtime', HERMES_NATIVE_OPENAI_RUNTIME],
+  ]);
   return hermesHome;
 }

@@ -577,6 +577,8 @@ class TestToolHandler:
             _servers.pop("test_srv", None)
 
     def test_trusted_host_execution_meta_is_forwarded_per_call(self):
+        import contextvars
+
         from acp_adapter.host_profiles import host_execution_scope
         from tools.mcp_tool import _make_tool_handler, _servers
 
@@ -590,9 +592,16 @@ class TestToolHandler:
             _host_tool_call_meta={"liquidaity/execution": "context-child-1"}
         )
 
+        def run_without_caller_context(coro_or_factory, timeout=30):
+            coro = coro_or_factory() if callable(coro_or_factory) else coro_or_factory
+            return contextvars.Context().run(asyncio.run, coro)
+
         try:
             handler = _make_tool_handler("test_srv", "greet", 120)
-            with host_execution_scope(child), self._patch_mcp_loop():
+            with host_execution_scope(child), patch(
+                "tools.mcp_tool._run_on_mcp_loop",
+                side_effect=run_without_caller_context,
+            ):
                 result = json.loads(handler({"name": "world"}))
             assert result["result"] == "hello child"
             mock_session.call_tool.assert_called_once_with(
