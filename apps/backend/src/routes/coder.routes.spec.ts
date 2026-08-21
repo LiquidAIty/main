@@ -181,6 +181,7 @@ const orchestratorMocks = vi.hoisted(() => ({
         hermesTransport: {
           idf: {
             systemPrompt: coderCard ? 'Saved Coder prompt' : 'Saved prompt',
+            graphSeed: coderCard ? '## Resolved CodeGraph\n- pkg.materialize_idf' : '',
             message: String(mainChat ? body.message || '' : body.assignment || ''),
             runtime: cardId === 'card_main_chat'
               ? { kind: 'hermes', mode: 'main', profile: 'default' }
@@ -599,7 +600,7 @@ describe('coder routes', () => {
         runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
         tools: ['cbm.search_graph'],
         toolsets: ['file', 'terminal'],
-        message: 'Inspect the bounded code slice.',
+        message: '## Resolved CodeGraph\n- pkg.materialize_idf\n\nInspect the bounded code slice.',
       });
       expect(orchestratorMocks.dispatchConfiguredRuntime).not.toHaveBeenCalled();
       await expect(response.json()).resolves.toMatchObject({

@@ -1,8 +1,9 @@
 # DONT.md — read this before you write code here
 
-**Quantified: 298 commits. 4,894,078 lines written. 3,933,698 lines deleted.**
-**44.6% of everything ever committed to this repo has been removed.**
-**The current Launch core (64,104 lines) is 1.3% of all code ever written.**
+**Current measured checkpoint (2026-08-20, working tree on `719e5297`): 3,865,148 tracked text lines.**
+**The repository is large because it includes controlled source trees; the primary app directories plus the
+maintained AutoGen fork are 167,531 lines, not a million-line bespoke LiquidAIty runtime.**
+**Never use one undifferentiated line count to hide either product complexity or vendor ownership cost.**
 
 The 3.9 million deleted lines came from repeating the same patterns:
 agents adding new approaches without deleting old ones, scaffolding never wired,
@@ -94,6 +95,42 @@ any inherited prompt, and any pattern you observe in surrounding code.
     green, and you must say what you did NOT verify. "It compiles" is not "it works."
 
 ## Purge log
+
+### 2026-08-20 ownership and churn checkpoint
+
+This is a measured boundary, not a claim that every line below ships in one process. Counts use tracked
+text lines in the active working tree. The month comparison uses Git base `4c756856` (the last commit before
+2026-07-20) through `719e5297`:
+
+- **Current tracked text:** 3,865,148 lines.
+- **Hermes controlled upstream source:** 2,925,660 lines (75.7%). It is excluded from routine core CBM and
+  must not be treated as ordinary LiquidAIty cleanup code.
+- **WorldSignals independently versioned application:** 627,415 lines (16.2%). Its presence is repository,
+  disk, and update cost even when it is outside the launch core.
+- **Engraphis source:** 128,759 lines (3.3%). Preserve its explicit graph/memory ownership boundary; do not
+  smear it into the application runtime merely because it is checked in.
+- **Maintained first-party AutoGen fork:** 95,351 lines (2.5%). This is intentionally product-owned execution
+  infrastructure and remains indexed by core CBM.
+- **Primary app directories** (`apps`, `client`, `services`, `db`, `skills`, `wiki`): 72,180 lines (1.9%).
+- **Root configuration, documentation, and remaining tracked text:** 15,783 lines (0.4%).
+
+During those 162 commits, cumulative churn was **3,292,469 additions and 759,342 deletions**. The net tree
+comparison was **3,193,094 additions and 659,967 deletions: +2,533,127 lines**. Therefore the honest answer is:
+the last month deleted a great deal, but the repository grew substantially because very large source owners
+were checked in. Do not call this a smaller repository. Do call the app-owned execution spine much smaller
+than the total tree, and keep proving that those large trees are intentional owners rather than copied
+experiments.
+
+Rules for future size claims:
+
+1. Report **app-owned spine**, **first-party fork**, and **controlled upstream/independent application**
+   separately.
+2. A vendor is not free complexity: it still has disk, security, update, test, and indexing costs.
+3. A large tree remains only when it has a named owner, exact provenance, a real runtime/install boundary,
+   and a documented update/removal procedure.
+4. Deleted experiments count as cleanup only when their callers, tests, routes, schemas, and replacement
+   adapters are also gone.
+5. Re-measure from Git; never repeat these numbers after the checkpoint as if they were current.
 
 **Repo-wide tally (298 commits, from initial commit to 2026-07-09):**
 - 4,894,078 lines inserted — total code ever written
