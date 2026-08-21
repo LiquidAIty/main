@@ -21,6 +21,7 @@ type UseAgentBuilderMainChatArgs = {
   conversationId: string;
   initialMessages: AgentBuilderChatMessage[];
   workspaceView: string;
+  dataAnchors?: LoadedCardGraphReference['reference'][];
   onUserTurnStarted?: (turn: MainChatTurnStarted) => void;
   onNativeTurnEvent?: (turn: MainChatTurnEvent) => void;
   onCardInvocationStaged?: (invocation: StagedCardInvocationLoaded) => void;
@@ -262,6 +263,7 @@ export default function useAgentBuilderMainChat({
   deckId,
   conversationId,
   initialMessages,
+  dataAnchors = [],
   onUserTurnStarted,
   onNativeTurnEvent,
   onCardInvocationStaged,
@@ -368,6 +370,15 @@ export default function useAgentBuilderMainChat({
           deckId,
           conversationId,
           message: trimmed,
+          dataAnchors: dataAnchors.map((anchor) => ({
+            authority: anchor.authority,
+            nativeId: anchor.nativeId,
+            reason: anchor.reason,
+            priority: anchor.order === 0 ? 0 : -anchor.order,
+            boundedExpansion: anchor.boundedExpansion,
+            resultLimit: anchor.resultLimit,
+            required: anchor.required,
+          })),
           onEvent: (event) => {
             notifyObserver(onNativeTurnEvent, {
               projectId: canvasProjectId,
@@ -445,6 +456,7 @@ export default function useAgentBuilderMainChat({
     [
       canvasProjectId,
       conversationId,
+      dataAnchors,
       deckId,
       nativeSessionBusy,
       onNativeTurnEvent,

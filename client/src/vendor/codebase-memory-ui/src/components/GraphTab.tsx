@@ -20,9 +20,10 @@ interface GraphTabProps {
   project: string | null;
   attentionData: GraphData;
   onExpand?: (node: GraphNode) => Promise<void>;
+  onUseAsContext?: (node: GraphNode) => void;
 }
 
-export function GraphTab({ project, attentionData, onExpand }: GraphTabProps) {
+export function GraphTab({ project, attentionData, onExpand, onUseAsContext }: GraphTabProps) {
   const data = attentionData;
   const [highlightedIds, setHighlightedIds] = useState<Set<number> | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -280,6 +281,16 @@ export function GraphTab({ project, attentionData, onExpand }: GraphTabProps) {
                     }}
                   >
                     {expanding ? 'Expanding…' : 'Expand from native CodeGraph'}
+                  </Button>
+                ) : null}
+                {onUseAsContext ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => onUseAsContext(selectedNode)}
+                  >
+                    Attach native reference to Main
                   </Button>
                 ) : null}
                 {expandError ? <p className="text-[10px] text-red-300">{expandError}</p> : null}

@@ -535,6 +535,30 @@ function nativeAttentionEvents(value: unknown): NativeAttentionEvent[] {
     }));
 }
 
+router.get('/main/session/attention', async (req, res) => {
+  const projectId = String(req.query?.projectId || '').trim();
+  const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
+  if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
+  try {
+    const inspection = await requestPythonRailsJson('/domain/agentgraph/inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, deckId, limit: 50 }),
+    });
+    return res.json({
+      ok: true,
+      events: nativeAttentionEvents(inspection)
+        .filter((event) => event.projectId === projectId && event.deckId === deckId)
+        .filter((event) => event.authority !== 'agentgraph'),
+    });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'native_attention_read_failed',
+    });
+  }
+});
+
 async function readPreparedMainSessionProfile(
   projectId: string,
   deckId: string,
@@ -578,6 +602,7 @@ router.post('/main/session/chat', async (req, res) => {
         conversationId,
         runId: correlationId,
         correlationId,
+        dataAnchors: Array.isArray(req.body?.dataAnchors) ? req.body.dataAnchors : [],
       }),
     });
   } catch (error) {

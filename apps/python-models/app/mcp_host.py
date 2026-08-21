@@ -146,6 +146,7 @@ _HTTP_CATALOG_INITIALIZATION_TASK: asyncio.Task[None] | None = None
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
 _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS = 300.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
+_LOCAL_EMBEDDING_TOOL_TIMEOUT_SECONDS = 300.0
 _PUBLIC_MCP_NAME = "LiquidAIty"
 _PUBLIC_MCP_DESCRIPTION = (
     "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
@@ -2478,16 +2479,22 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
                     field for field in required if field not in _SERVER_OWNED_ARGUMENTS
                 ]
             payload["inputSchema"] = schema
-        elif native_system == "graphiti":
+        elif native_system in {"engraphis", "graphiti"}:
             schema = copy.deepcopy(tool.inputSchema)
             properties = schema.get("properties")
+            server_owned_scope_fields = (
+                {"workspace", "repo"}
+                if native_system == "engraphis"
+                else {"group_id", "group_ids"}
+            )
             if isinstance(properties, dict):
-                properties.pop("group_id", None)
-                properties.pop("group_ids", None)
+                for field in server_owned_scope_fields:
+                    properties.pop(field, None)
             required = schema.get("required")
             if isinstance(required, list):
                 schema["required"] = [
-                    field for field in required if field not in {"group_id", "group_ids"}
+                    field for field in required
+                    if field not in server_owned_scope_fields
                 ]
             payload["inputSchema"] = schema
         payload["securitySchemes"] = security_schemes
@@ -2571,11 +2578,45 @@ async def _dispatch_tool(
         await _initialize_native_engraphis()
         native_name = "engraphis_" + name.removeprefix(_NATIVE_PREFIXES["engraphis"])
         if native_name in _NATIVE_ENGRAPHIS_NAMES:
+            native_args = dict(arguments or {})
+            if context is not None:
+                supplied_scope = sorted({"workspace", "repo"} & native_args.keys())
+                if supplied_scope:
+                    return [
+                        TextContent(
+                            type="text",
+                            text=json.dumps({
+                                "ok": False,
+                                "error": (
+                                    "caller_identity_rejected: "
+                                    + ",".join(supplied_scope)
+                                ),
+                            }),
+                        )
+                    ]
+                native_tool = next(
+                    (
+                        tool
+                        for tool in (_NATIVE_ENGRAPHIS_TOOLS or ())
+                        if tool.name == native_name
+                    ),
+                    None,
+                )
+                native_properties = (
+                    native_tool.inputSchema.get("properties", {})
+                    if native_tool is not None
+                    and isinstance(native_tool.inputSchema, dict)
+                    else {}
+                )
+                if "workspace" in native_properties:
+                    native_args["workspace"] = str(context["projectId"])
+                if "repo" in native_properties:
+                    native_args["repo"] = "thinkgraph"
             result = await asyncio.to_thread(
                 asyncio.run,
                 _native_engraphis_mcp().call_tool(
                     native_name,
-                    dict(arguments or {}),
+                    native_args,
                 ),
             )
             return _normalize_native_tool_result(result, dependency="engraphis")
@@ -2854,6 +2895,11 @@ def _attach_execution_receipt(
 def _mcp_tool_timeout_seconds(name: str) -> float:
     if name in {"cbm.index_repository", "card.run_assistant_agent"}:
         return _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
+    if name == "engraphis.remember":
+        # The first explicit semantic write owns Engraphis' offline lazy model
+        # initialization.  Do not report failure while its worker can still
+        # complete and commit the requested write after the generic timeout.
+        return _LOCAL_EMBEDDING_TOOL_TIMEOUT_SECONDS
     return _MCP_CALL_TIMEOUT_SECONDS
 
 

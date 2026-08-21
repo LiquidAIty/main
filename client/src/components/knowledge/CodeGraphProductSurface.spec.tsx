@@ -97,6 +97,7 @@ function ProductGraphsHarness() {
             }}
             attentionErrors={{}}
             onExpandAttentionNode={vi.fn()}
+            onUseAttentionNode={vi.fn()}
             onKindChange={vi.fn()}
           />
         )}

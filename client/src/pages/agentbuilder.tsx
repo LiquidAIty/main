@@ -22,6 +22,7 @@ import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWor
 import useAgentBuilderWorkspaceLayout from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
+import type { GraphProjectionNode } from '../components/knowledge/NativeAuthorityGraphSurface';
 import CoderTerminalPanel from '../features/agentbuilder/console/CoderTerminalPanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
 import HermesKanbanWorkspace from '../features/hermeskanban/HermesKanbanWorkspace';
@@ -321,6 +322,12 @@ export default function AgentBuilder(): React.ReactElement {
   const [transientCardInputs, setTransientCardInputs] = useState<Record<string, string>>({});
   const [transientCardGraphContext, setTransientCardGraphContext] =
     useState<Record<string, LoadedCardGraphReference[]>>({});
+  const mainCardId = useMemo(
+    () => deck.nodes.find((card) => (
+      card.runtime.kind === 'hermes' && card.runtime.mode === 'main'
+    ))?.id || null,
+    [deck.nodes],
+  );
   const standaloneTestPrompt = selectedCardId
     ? transientCardInputs[selectedCardId] || ''
     : '';
@@ -362,6 +369,97 @@ export default function AgentBuilder(): React.ReactElement {
     useState<KnowledgeSurfaceKind>('knowgraph');
   const conversationId = 'main';
   const graphAttention = useAgentBuilderGraphAttention({ projectId: activeProject });
+  useEffect(() => {
+    if (!activeProject) return undefined;
+    const controller = new AbortController();
+    const params = new URLSearchParams({ projectId: activeProject, deckId: BUILDER_DECK_ID });
+    void fetch(`/api/coder/main/session/attention?${params.toString()}`, {
+      credentials: 'include',
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !Array.isArray(payload?.events)) {
+          throw new Error(String(payload?.error || `native_attention_http_${response.status}`));
+        }
+        graphAttention.restoreAttentionEvents(payload.events.map((event: Record<string, unknown>) => ({
+          ...event,
+          kind: 'native_attention' as const,
+        })));
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          console.warn('[NATIVE_GRAPH_ATTENTION_READBACK]', error);
+        }
+      });
+    return () => controller.abort();
+  }, [activeProject, graphAttention.restoreAttentionEvents]);
+  const handleUseAttentionNode = useCallback((
+    authority: 'thinkgraph' | 'knowgraph' | 'codegraph',
+    node: GraphProjectionNode,
+  ) => {
+    if (!mainCardId) {
+      setDeckStatusMessage('Main Card is unavailable for graph context selection.');
+      return;
+    }
+    const nativeId = String(node.canonicalId || node.id || '').trim();
+    if (!nativeId) {
+      setDeckStatusMessage('Selected graph object has no native identity.');
+      return;
+    }
+    const authorityName = ({
+      thinkgraph: 'ThinkGraph',
+      knowgraph: 'KnowGraph',
+      codegraph: 'CodeGraph',
+    } as const)[authority];
+    const sourceProjection = graphAttention.projections[authority];
+    const relatedEdges = sourceProjection.edges.filter(
+      (edge) => edge.source === node.id || edge.target === node.id,
+    );
+    const relatedNodeIds = new Set<string>([node.id]);
+    for (const edge of relatedEdges) {
+      relatedNodeIds.add(edge.source);
+      relatedNodeIds.add(edge.target);
+    }
+    setTransientCardGraphContext((current) => {
+      const existing = current[mainCardId] || [];
+      const replacementKey = `${authorityName}:${nativeId}`;
+      const next: LoadedCardGraphReference = {
+        targetCardId: mainCardId,
+        reference: {
+          authority: authorityName,
+          nativeId,
+          reason: 'Explicitly selected by the user as grounding for the next Main invocation.',
+          order: existing.length,
+          boundedExpansion: authority === 'thinkgraph' ? 0 : 1,
+          resultLimit: 12,
+          required: true,
+        },
+        resolvedReferences: [],
+        resolvedContextMarkdown: '',
+        graphProjection: {
+          ...sourceProjection,
+          nodes: sourceProjection.nodes.filter((candidate) => relatedNodeIds.has(candidate.id)),
+          edges: relatedEdges,
+        },
+        resolved: false,
+        ready: false,
+      };
+      return {
+        ...current,
+        [mainCardId]: [
+          ...existing.filter((item) => (
+            `${item.reference.authority}:${item.reference.nativeId}` !== replacementKey
+          )),
+          next,
+        ].map((item, order) => ({
+          ...item,
+          reference: { ...item.reference, order },
+        })),
+      };
+    });
+    setDeckStatusMessage(`${authorityName} reference selected for Main; Python will reread it on send.`);
+  }, [graphAttention.projections, mainCardId, setDeckStatusMessage]);
   const [standaloneTestResult, setStandaloneTestResult] = useState<StandaloneCardTestResult | null>(null);
   const handleCardInvocationStaged = useCallback((loaded: StagedCardInvocationLoaded) => {
     const target = deck.nodes.find((card) => card.id === loaded.targetCardId);
@@ -544,6 +642,9 @@ export default function AgentBuilder(): React.ReactElement {
     conversationId,
     initialMessages: EMPTY_PROJECT_MESSAGES,
     workspaceView,
+    dataAnchors: mainCardId
+      ? (transientCardGraphContext[mainCardId] || []).map((item) => item.reference)
+      : [],
     onUserTurnStarted: graphAttention.startAttentionScope,
     onNativeTurnEvent: graphAttention.observeNativeTurnEvent,
     onCardInvocationStaged: handleCardInvocationStaged,
@@ -1517,6 +1618,7 @@ export default function AgentBuilder(): React.ReactElement {
               projectId: activeProject,
               codeGraphProject: codeGraphProjectName || null,
             })}
+            onUseAttentionNode={handleUseAttentionNode}
             onKindChange={setKnowledgeGraphKind}
           />
         </KnowledgeSurfaceErrorBoundary>

@@ -73,6 +73,17 @@ export function requireHermesEffectSuccess(
   if (failed) throw new Error(`hermes_required_effect_failed:${failed.toolName}`);
 }
 
+export function resolveHermesEffectToolName(
+  effectToolNames: ReadonlySet<string>,
+  reportedName: string,
+): string {
+  if (effectToolNames.has(reportedName)) return reportedName;
+  const matches = [...effectToolNames].filter((name) => (
+    reportedName.endsWith(`__${name.replaceAll('.', '_')}`)
+  ));
+  return matches.length === 1 ? matches[0] : reportedName;
+}
+
 export type HermesTurnArgs = HermesRuntimeConfig & {
   sessionKey: string;
   projectId: string;
@@ -251,8 +262,9 @@ export function buildHermesHostSessionProjection(
             ...mcpToolsetNames(rootServers),
           ]),
           enabledTools: uniqueStrings([
+            // Exact native Hermes registry names only. Card-assigned MCP tools
+            // are exposed by the scoped mcp-main-runtime-* toolset above.
             ...args.nativeTools,
-            ...args.tools,
           ]),
           hostSessionKey: args.sessionKey,
           systemPrompt: args.prompt,
@@ -480,7 +492,8 @@ class AcpProcess {
     }
     if (kind === 'tool_call_update' && (update.status === 'completed' || update.status === 'failed')) {
       const id = String(update.toolCallId || '');
-      const toolName = turn.toolNames.get(id) || String(update.title || 'tool');
+      const reportedName = turn.toolNames.get(id) || String(update.title || 'tool');
+      const toolName = resolveHermesEffectToolName(turn.effectToolNames, reportedName);
       turn.effectOutcomes.push({
         toolName,
         toolUseId: id,

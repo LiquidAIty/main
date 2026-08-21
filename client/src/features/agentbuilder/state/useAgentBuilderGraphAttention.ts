@@ -51,6 +51,7 @@ export type GraphAttentionState = {
   startAttentionScope: (turn: MainChatTurnStarted) => void;
   observeNativeTurnEvent: (turn: MainChatTurnEvent) => void;
   finishAttentionScope: (turn: MainChatTurnFinished) => void;
+  restoreAttentionEvents: (events: NativeAttentionEvent[]) => void;
   expandNode: (request: ExpandRequest) => Promise<void>;
 };
 
@@ -387,6 +388,13 @@ export default function useAgentBuilderGraphAttention({ projectId }: { projectId
     if (activeRunRef.current === turn.runId) activeRunRef.current = null;
   }, []);
 
+  const restoreAttentionEvents = useCallback((events: NativeAttentionEvent[]) => {
+    for (const event of events) {
+      const result = projectNativeAttentionEvent({ event, projectId });
+      if (result) merge(result.authority, result.projection);
+    }
+  }, [merge, projectId]);
+
   const expandNode = useCallback(async ({
     authority,
     node,
@@ -448,6 +456,7 @@ export default function useAgentBuilderGraphAttention({ projectId }: { projectId
     startAttentionScope,
     observeNativeTurnEvent,
     finishAttentionScope,
+    restoreAttentionEvents,
     expandNode,
   };
 }

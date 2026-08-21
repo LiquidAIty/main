@@ -78,10 +78,12 @@ export function NativeKnowGraphSurface({
   projection,
   error,
   onExpand,
+  onUseAsContext,
 }: {
   projection: GraphProjectionV1;
   error: string | null;
   onExpand: (node: GraphProjectionNode) => Promise<void>;
+  onUseAsContext?: (node: GraphProjectionNode) => void;
 }) {
   return (
     <NativeGraphProjectionSurface
@@ -90,6 +92,7 @@ export function NativeKnowGraphSurface({
       error={error}
       authority="knowgraph"
       onExpand={onExpand}
+      onUseAsContext={onUseAsContext}
     />
   );
 }
@@ -134,10 +137,12 @@ export function NativeCodeGraphSurface({
   project,
   projection,
   onExpand,
+  onUseAsContext,
 }: {
   project: string | null;
   projection: GraphProjectionV1;
   onExpand: (node: GraphProjectionNode) => Promise<void>;
+  onUseAsContext?: (node: GraphProjectionNode) => void;
 }) {
   const attentionData = useMemo(() => toCodeGraphData(projection), [projection]);
   return (
@@ -148,6 +153,10 @@ export function NativeCodeGraphSurface({
         onExpand={async (node) => {
           const native = projection.nodes.find((candidate) => candidate.id === node.native_id);
           if (native) await onExpand(native);
+        }}
+        onUseAsContext={(node) => {
+          const native = projection.nodes.find((candidate) => candidate.id === node.native_id);
+          if (native) onUseAsContext?.(native);
         }}
       />
     </div>
@@ -227,12 +236,14 @@ export function NativeGraphProjectionSurface({
   error,
   authority = 'thinkgraph',
   onExpand,
+  onUseAsContext,
 }: {
   projection: GraphProjectionV1 | null;
   status: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
   authority?: GraphAuthority;
   onExpand?: (node: GraphProjectionNode) => Promise<void>;
+  onUseAsContext?: (node: GraphProjectionNode) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
@@ -618,7 +629,10 @@ export function NativeGraphProjectionSurface({
           if (!native) return;
           setExpanding(true);
           void onExpand(native).finally(() => setExpanding(false));
-        }}>{expanding ? 'Expanding…' : `Expand from native ${surfaceLabel}`}</button> : null}</section> : null}
+        }}>{expanding ? 'Expanding…' : `Expand from native ${surfaceLabel}`}</button> : null}{onUseAsContext ? <button onClick={() => {
+          const native = projection?.nodes.find((node) => node.id === selected.id);
+          if (native) onUseAsContext(native);
+        }}>Attach native reference to Main</button> : null}</section> : null}
         <section>
           <h3>Controls</h3>
           <div className="engraphis-native-actions">

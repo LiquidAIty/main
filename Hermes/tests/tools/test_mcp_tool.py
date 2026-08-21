@@ -2642,6 +2642,53 @@ class TestRegisterMcpServers:
         assert "mcp__my_server__tool1" in result
         _servers.pop("my_server", None)
 
+    def test_trusted_host_can_replace_one_named_server_when_headers_rotate(self):
+        from tools.mcp_tool import register_mcp_servers, _servers
+
+        old_config = {
+            "url": "http://127.0.0.1:8765/mcp",
+            "headers": {"Authorization": "Bearer old"},
+        }
+        new_config = {
+            "url": "http://127.0.0.1:8765/mcp",
+            "headers": {"Authorization": "Bearer new"},
+        }
+        prior = SimpleNamespace(
+            name="rotating",
+            _config=old_config,
+            shutdown=AsyncMock(),
+            _registered_tool_names=["mcp__rotating__tool1"],
+        )
+        _servers["rotating"] = prior
+
+        async def fake_register(name, cfg):
+            assert name == "rotating"
+            assert cfg == new_config
+            replacement = _make_mock_server(name)
+            replacement._config = cfg
+            replacement._registered_tool_names = ["mcp__rotating__tool1"]
+            _servers[name] = replacement
+            return replacement._registered_tool_names
+
+        def run_direct(coro_or_factory, timeout=30):
+            coro = coro_or_factory() if callable(coro_or_factory) else coro_or_factory
+            return asyncio.run(coro)
+
+        try:
+            with patch("tools.mcp_tool._MCP_AVAILABLE", True), \
+                 patch("tools.mcp_tool._run_on_mcp_loop", side_effect=run_direct), \
+                 patch("tools.mcp_tool._discover_and_register_server", side_effect=fake_register), \
+                 patch("tools.mcp_tool._connect_cooldown_active", return_value=False):
+                result = register_mcp_servers(
+                    {"rotating": new_config},
+                    replace_changed=True,
+                )
+            prior.shutdown.assert_awaited_once()
+            assert result == ["mcp__rotating__tool1"]
+            assert _servers["rotating"] is not prior
+        finally:
+            _servers.pop("rotating", None)
+
     def test_skips_servers_already_connecting(self):
         """Servers in _server_connecting must not be spawned again (#58862)."""
         from tools.mcp_tool import (

@@ -38,6 +38,15 @@ def _database(tmp_path):
                 json.dumps({"source": "unit"}), 1.0, None, 2.0,
             ),
         )
+        connection.execute(
+            "INSERT INTO memories VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "mem-native-1", "workspace-1", "repo-1", "semantic",
+                "Native Engraphis memory", "Project-scoped native MCP content",
+                json.dumps({}), json.dumps({"source": "agent"}),
+                2.0, None, 3.0,
+            ),
+        )
     return path
 
 
@@ -51,6 +60,16 @@ def test_exact_thinkgraph_read_is_project_scoped_and_read_only(tmp_path) -> None
     assert record["content"] == "Current native graph content"
     assert read_thinkgraph_exact("other-project", "fact:one", db_path=path) is None
     assert path.stat().st_mtime_ns == before
+
+
+def test_exact_thinkgraph_read_accepts_project_scoped_native_engraphis_id(tmp_path) -> None:
+    path = _database(tmp_path)
+    record = read_thinkgraph_exact("project-1", "mem-native-1", db_path=path)
+
+    assert record is not None
+    assert record["nativeId"] == "mem-native-1"
+    assert record["recordId"] == "mem-native-1"
+    assert record["content"] == "Project-scoped native MCP content"
 
 
 def test_required_anchor_materializes_real_data_and_stable_reference(tmp_path) -> None:

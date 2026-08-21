@@ -1087,6 +1087,42 @@ describe('coder routes', () => {
   });
 
   describe('/main/session/chat', () => {
+    it('reads persisted native attention through the existing AGE projection only', async () => {
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint: string) => {
+        if (endpoint !== '/domain/agentgraph/inspect') return railsImplementation(endpoint);
+        return {
+          runs: [{ attentionEvents: [{
+            eventId: 'attention-code', timestamp: '2026-08-21T12:00:00Z',
+            projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+            runId: 'run-1', cardId: 'card_local_coder', authority: 'codegraph',
+            operation: 'read', toolName: 'cbm.search_graph',
+            nativeNodeIds: ['pkg.materialize_idf'], nativeEdgeIds: [],
+            resultHash: 'a'.repeat(64), truncated: false,
+          }, {
+            eventId: 'attention-agent', timestamp: '2026-08-21T12:00:01Z',
+            projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+            runId: 'run-1', cardId: 'card_local_coder', authority: 'agentgraph',
+            operation: 'read', toolName: 'agentgraph.inspect',
+            nativeNodeIds: ['card_local_coder'], nativeEdgeIds: [],
+            resultHash: 'b'.repeat(64), truncated: false,
+          }] }],
+        };
+      });
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/attention?projectId=project-1&deckId=deck_builder`);
+        const body = await response.json() as any;
+        expect(response.status).toBe(200);
+        expect(body.events).toEqual([expect.objectContaining({
+          eventId: 'attention-code', authority: 'codegraph', nativeNodeIds: ['pkg.materialize_idf'],
+        })]);
+      } finally {
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+        await closeServer(server);
+      }
+    });
+
     it('adds the saved invoking Card identity to native tool results already on the SSE stream', async () => {
       chatSessionMocks.startHermesTurn.mockImplementationOnce(async (_params: unknown, onEvent: (event: any) => void) => {
         onEvent({
@@ -1199,7 +1235,14 @@ describe('coder routes', () => {
         const response = await fetch(`${baseUrl}/main/session/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: 'project-1', conversationId: 'main', message: 'hello' }),
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'main', message: 'hello',
+            dataAnchors: [{
+              authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
+              reason: 'Current production definition', priority: 0,
+              boundedExpansion: 1, resultLimit: 12, required: true,
+            }],
+          }),
         });
         expect(response.status).toBe(200);
         // Drain the SSE stream to completion.
@@ -1227,6 +1270,12 @@ describe('coder routes', () => {
           '/domain/runs/finish',
         ]);
         expect(railsCalls[0]?.[1]?.body).toContain('"message":"hello"');
+        expect(JSON.parse(String(railsCalls[0]?.[1]?.body))).toMatchObject({
+          dataAnchors: [{
+            authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
+            reason: 'Current production definition', required: true,
+          }],
+        });
         expect(railsCalls[1]?.[1]?.body).toContain('"state":"completed"');
 
         // The obsolete post-chat pair handoff must never fire from this route.

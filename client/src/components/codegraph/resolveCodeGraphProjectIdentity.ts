@@ -3,9 +3,9 @@
  *
  * The CodeGraph tab must request its layout from the Codebase-Memory (CBM) project
  * that actually indexes the running repository. Historically the Agent Builder
- * hardcoded a stale CBM project name (`C-Projects-LiquidAIty-main`) which no longer
- * matches the live index (`C-Projects-main`), so CodeGraph reported "project not
- * found". This resolver asks CBM for its indexed projects (the same `list_projects`
+ * may retain a stale CBM project name after the canonical repository identity
+ * changes, so CodeGraph reports "project not found". This resolver asks CBM for
+ * its indexed projects (the same `list_projects`
  * RPC the vendored CBM UI uses), prefers the canonical project identity, and only
  * falls back to an unambiguous ready index for the active repository root.
  *
@@ -32,7 +32,7 @@ type ResolveCbmProjectOptions = {
   getProjectStatus?: (projectName: string) => Promise<CbmProjectStatus>;
 };
 
-export const CANONICAL_CBM_PROJECT_NAME = 'C-Projects-main';
+export const CANONICAL_CBM_PROJECT_NAME = 'C-Projects-LiquidAIty-main';
 
 let nextRpcId = 1;
 
@@ -79,7 +79,7 @@ export function normalizeRepoPath(value: string | null | undefined): string {
  *
  * Resolution order:
  *  1. An explicitly configured, indexed, ready project.
- *  2. The indexed, ready canonical project (`C-Projects-main`).
+ *  2. The indexed, ready canonical project (`C-Projects-LiquidAIty-main`).
  *  3. The sole ready project whose `root_path` equals the active repo root.
  *
  * Any missing, unready, or ambiguous authority rejects with a user-visible error.

@@ -1180,7 +1180,13 @@ class HermesACPAgent(acp.Agent):
                     }
                 config_map[name] = config
 
-            await asyncio.to_thread(register_mcp_servers, config_map)
+            # LIQUIDAITY VENDOR PATCH: a persistent ACP session can receive a
+            # fresh trusted transport config for the same named MCP server.
+            await asyncio.to_thread(
+                register_mcp_servers,
+                config_map,
+                replace_changed=True,
+            )
         except Exception:
             logger.warning(
                 "Session %s: failed to register ACP MCP servers",

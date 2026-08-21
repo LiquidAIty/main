@@ -36,6 +36,10 @@ type Props = {
     authority: KnowledgeSurfaceKind,
     node: import('./NativeAuthorityGraphSurface').GraphProjectionNode,
   ) => Promise<void>;
+  onUseAttentionNode: (
+    authority: KnowledgeSurfaceKind,
+    node: import('./NativeAuthorityGraphSurface').GraphProjectionNode,
+  ) => void;
   onKindChange: (kind: KnowledgeSurfaceKind) => void;
 };
 
@@ -48,6 +52,7 @@ export default function KnowledgeGraphFramework({
   attentionProjections,
   attentionErrors,
   onExpandAttentionNode,
+  onUseAttentionNode,
   onKindChange,
 }: Props) {
   return (
@@ -119,6 +124,7 @@ export default function KnowledgeGraphFramework({
               project={codeGraphProjectName}
               projection={attentionProjections.codegraph}
               onExpand={(node) => onExpandAttentionNode('codegraph', node)}
+              onUseAsContext={(node) => onUseAttentionNode('codegraph', node)}
             />
           )
         ) : kind === 'thinkgraph' ? (
@@ -128,12 +134,14 @@ export default function KnowledgeGraphFramework({
             error={attentionErrors.thinkgraph || null}
             authority="thinkgraph"
             onExpand={(node) => onExpandAttentionNode('thinkgraph', node)}
+            onUseAsContext={(node) => onUseAttentionNode('thinkgraph', node)}
           />
         ) : kind === 'knowgraph' ? (
           <NativeKnowGraphSurface
             projection={attentionProjections.knowgraph}
             error={attentionErrors.knowgraph || null}
             onExpand={(node) => onExpandAttentionNode('knowgraph', node)}
+            onUseAsContext={(node) => onUseAttentionNode('knowgraph', node)}
           />
         ) : null}
       </Suspense>

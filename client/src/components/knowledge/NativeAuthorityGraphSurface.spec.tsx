@@ -77,6 +77,7 @@ describe('native authority graph surfaces', () => {
         }}
         attentionErrors={{}}
         onExpandAttentionNode={vi.fn()}
+        onUseAttentionNode={vi.fn()}
         onKindChange={vi.fn()}
       />,
     );
@@ -163,5 +164,31 @@ describe('native authority graph surfaces', () => {
     expect(graph.data.nodes[0]).toBe(survivingNode);
     expect(graph.data.nodes[0].x).toBe(42);
     expect(graph.d3ReheatSimulation).toHaveBeenCalledTimes(initialReheats + 1);
+  });
+
+  it('attaches only the exact selected native node to Main', async () => {
+    const onUseAsContext = vi.fn();
+    const projection = {
+      ...empty('thinkgraph'),
+      nodes: [{
+        id: 'mem-one', canonicalId: 'mem-one', label: 'Decision', mentionCount: 1,
+        properties: { attentionActive: true, attentionActorCardId: 'card_main_chat' },
+      }],
+    };
+    render(
+      <NativeGraphProjectionSurface
+        projection={projection}
+        status="ready"
+        error={null}
+        onUseAsContext={onUseAsContext}
+      />,
+    );
+    const graph = forceGraphMocks.instances.at(-1);
+    await waitFor(() => expect(graph.data.nodes).toHaveLength(1));
+    act(() => graph.nodeClick(graph.data.nodes[0]));
+    screen.getByRole('button', { name: 'Attach native reference to Main' }).click();
+    expect(onUseAsContext).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'mem-one', canonicalId: 'mem-one',
+    }));
   });
 });

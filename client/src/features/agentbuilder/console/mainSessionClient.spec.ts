@@ -37,7 +37,14 @@ describe('streamSession', () => {
           controller.close();
         },
       });
-      expect(JSON.parse(String(init?.body))).toMatchObject({ message: text });
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        message: text,
+        dataAnchors: [{
+          authority: 'CodeGraph',
+          nativeId: 'pkg.materialize_idf',
+          reason: 'Current production definition',
+        }],
+      });
       return new Response(stream, { status: 200 });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -46,6 +53,11 @@ describe('streamSession', () => {
       projectId: 'project-1',
       conversationId: 'main',
       message: text,
+      dataAnchors: [{
+        authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
+        reason: 'Current production definition', priority: 0,
+        boundedExpansion: 1, resultLimit: 12, required: true,
+      }],
       onEvent,
     })).resolves.toEqual({ finalText: text });
     expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: 'text', text }));

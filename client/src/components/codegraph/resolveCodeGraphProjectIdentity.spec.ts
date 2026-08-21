@@ -31,35 +31,41 @@ describe('CodeGraph authoritative CBM identity resolution', () => {
   });
 
   it('prefers the canonical project over an earlier stale same-root index', async () => {
-    const name = await resolveCbmProjectName('C:\\Projects\\main', {
+    const name = await resolveCbmProjectName('C:\\Projects\\LiquidAIty\\main', {
       listProjects: async () => ({
         projects: [
           {
-            name: 'C-Projects-main-2cf8608-validation',
-            root_path: 'C:/Projects/main',
+            name: 'C-Projects-LiquidAIty-main-2cf8608-validation',
+            root_path: 'C:/Projects/LiquidAIty/main',
           },
-          { name: 'C-Projects-main', root_path: 'C:/Projects/main' },
+          {
+            name: 'C-Projects-LiquidAIty-main',
+            root_path: 'C:/Projects/LiquidAIty/main',
+          },
         ],
       }),
       getProjectStatus: ready,
     });
-    expect(name).toBe('C-Projects-main');
+    expect(name).toBe('C-Projects-LiquidAIty-main');
   });
 
   it('chooses the canonical project regardless of list ordering', async () => {
-    const name = await resolveCbmProjectName('C:\\Projects\\main', {
+    const name = await resolveCbmProjectName('C:\\Projects\\LiquidAIty\\main', {
       listProjects: async () => ({
         projects: [
-          { name: 'C-Projects-main', root_path: 'C:/Projects/main' },
           {
-            name: 'C-Projects-main-validation',
-            root_path: 'C:/Projects/main',
+            name: 'C-Projects-LiquidAIty-main',
+            root_path: 'C:/Projects/LiquidAIty/main',
+          },
+          {
+            name: 'C-Projects-LiquidAIty-main-validation',
+            root_path: 'C:/Projects/LiquidAIty/main',
           },
         ],
       }),
       getProjectStatus: ready,
     });
-    expect(name).toBe('C-Projects-main');
+    expect(name).toBe('C-Projects-LiquidAIty-main');
   });
 
   it('uses the only ready exact-root project when the canonical identity is absent', async () => {
@@ -96,9 +102,12 @@ describe('CodeGraph authoritative CBM identity resolution', () => {
   });
 
   it('rejects an indexed canonical project that is not ready', async () => {
-    const resolution = resolveCbmProjectName('C:\\Projects\\main', {
+    const resolution = resolveCbmProjectName('C:\\Projects\\LiquidAIty\\main', {
       listProjects: async () => ({
-        projects: [{ name: 'C-Projects-main', root_path: 'C:/Projects/main' }],
+        projects: [{
+          name: 'C-Projects-LiquidAIty-main',
+          root_path: 'C:/Projects/LiquidAIty/main',
+        }],
       }),
       getProjectStatus: async (projectName) => ({
         project: projectName,
@@ -106,7 +115,7 @@ describe('CodeGraph authoritative CBM identity resolution', () => {
       }),
     });
     await expect(resolution).rejects.toThrow(
-      'CBM project is not ready: C-Projects-main (stale)',
+      'CBM project is not ready: C-Projects-LiquidAIty-main (stale)',
     );
   });
 
@@ -118,7 +127,7 @@ describe('CodeGraph authoritative CBM identity resolution', () => {
       getProjectStatus: ready,
     });
     await expect(resolution).rejects.toThrow(
-      'CBM project is not indexed: C-Projects-main',
+      'CBM project is not indexed: C-Projects-LiquidAIty-main',
     );
   });
 });

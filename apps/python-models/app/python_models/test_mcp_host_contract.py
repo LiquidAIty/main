@@ -1019,13 +1019,16 @@ def test_timed_out_call_does_not_block_completed_sibling(monkeypatch):
     assert json.loads(timed_out.content[0].text)["failureCode"] == "timeout"
 
 
-def test_only_native_cbm_index_uses_the_native_request_timeout(monkeypatch):
+def test_long_running_native_tools_use_their_owned_timeouts(monkeypatch):
     import mcp_host
 
     monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 30.0)
     monkeypatch.setattr(mcp_host, "_NATIVE_CBM_REQUEST_TIMEOUT_SECONDS", 300.0)
+    monkeypatch.setattr(mcp_host, "_LOCAL_EMBEDDING_TOOL_TIMEOUT_SECONDS", 240.0)
 
     assert mcp_host._mcp_tool_timeout_seconds("cbm.index_repository") == 300.0
+    assert mcp_host._mcp_tool_timeout_seconds("card.run_assistant_agent") == 300.0
+    assert mcp_host._mcp_tool_timeout_seconds("engraphis.remember") == 240.0
     assert mcp_host._mcp_tool_timeout_seconds("cbm.index_status") == 30.0
     assert mcp_host._mcp_tool_timeout_seconds("graphiti.get_status") == 30.0
 
@@ -2296,6 +2299,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
                 "properties": {
                     "query": {"type": "string"},
                     "limit": {"type": "integer"},
+                    "workspace": {"type": "string"},
+                    "repo": {"type": "string"},
                 },
                 "required": ["query"],
             },
@@ -2308,6 +2313,20 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
                 "required": ["query"],
+            },
+        ),
+        mcp_host.Tool(
+            name="engraphis_remember",
+            title="Remember",
+            description="Native Engraphis write.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string"},
+                    "workspace": {"type": "string"},
+                    "repo": {"type": "string"},
+                },
+                "required": ["content"],
             },
         ),
     ]
@@ -2347,6 +2366,11 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         mcp_host,
         "_NATIVE_ENGRAPHIS_NAMES",
         frozenset(tool.name for tool in native_engraphis_tools),
+    )
+    monkeypatch.setattr(
+        mcp_host,
+        "_NATIVE_ENGRAPHIS_TOOLS",
+        tuple(native_engraphis_tools),
     )
     monkeypatch.setattr(
         mcp_host,
@@ -2414,6 +2438,11 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert not any(name.startswith("worldsignals.") for name in by_name)
     assert "engraphis.recall" in by_name
     assert "engraphis.answer" in by_name
+    assert "engraphis.remember" in by_name
+    assert "workspace" not in by_name["engraphis.recall"].inputSchema["properties"]
+    assert "repo" not in by_name["engraphis.recall"].inputSchema["properties"]
+    assert "workspace" not in by_name["engraphis.remember"].inputSchema["properties"]
+    assert "repo" not in by_name["engraphis.remember"].inputSchema["properties"]
     assert "codegraph.status" not in by_name
     assert "codegraph.search" not in by_name
     assert {"cbm.search_graph", "cbm.index_status"}.issubset(by_name)
@@ -2504,7 +2533,33 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     monkeypatch.setattr(control_plane, "card_run_assistant_agent", run_saved_card)
 
     asyncio.run(mcp_host.call_tool("engraphis.recall", {"query": "Main", "limit": 3}))
-    assert calls[-1] == ("engraphis_recall", {"query": "Main", "limit": 3})
+    assert calls[-1] == (
+        "engraphis_recall",
+        {
+            "query": "Main",
+            "limit": 3,
+            "workspace": "project-1",
+            "repo": "thinkgraph",
+        },
+    )
+
+    asyncio.run(mcp_host.call_tool("engraphis.remember", {"content": "Approved fact"}))
+    assert calls[-1] == (
+        "engraphis_remember",
+        {
+            "content": "Approved fact",
+            "workspace": "project-1",
+            "repo": "thinkgraph",
+        },
+    )
+    rejected_scope = asyncio.run(mcp_host.call_tool(
+        "engraphis.remember",
+        {"content": "Approved fact", "workspace": "other-project"},
+    ))
+    assert json.loads(rejected_scope.content[0].text) == {
+        "ok": False,
+        "error": "caller_identity_rejected: workspace",
+    }
 
     cbm_result = asyncio.run(
         mcp_host.call_tool("cbm.search_graph", {"project": "C-Projects-main"})

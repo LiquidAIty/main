@@ -9,6 +9,7 @@ import {
   providerForHermes,
   requireHermesCompletionText,
   requireHermesEffectSuccess,
+  resolveHermesEffectToolName,
   resolveHermesRuntimeHome,
 } from './mainAdapter';
 
@@ -65,6 +66,22 @@ describe('Hermes ACP transport identity', () => {
       ['engraphis.remember'],
       [{ toolName: 'engraphis.remember', toolUseId: 'tool-1', isError: false }],
     )).not.toThrow();
+  });
+
+  it('maps one Hermes MCP runtime name back to its exact Card effect grant', () => {
+    const effects = new Set(['engraphis.remember', 'card.run_assistant_agent']);
+    expect(resolveHermesEffectToolName(
+      effects,
+      'mcp__main_runtime_3b25e34a0e05__engraphis_remember',
+    )).toBe('engraphis.remember');
+    expect(resolveHermesEffectToolName(effects, 'engraphis.remember')).toBe('engraphis.remember');
+    expect(resolveHermesEffectToolName(effects, 'engraphis.stats')).toBe('engraphis.stats');
+  });
+
+  it('does not guess when normalized Card effect names are ambiguous', () => {
+    const effects = new Set(['example.a_b', 'example_a.b']);
+    const reported = 'mcp__runtime__example_a_b';
+    expect(resolveHermesEffectToolName(effects, reported)).toBe(reported);
   });
 
   it('keeps optional readable-tool failures separate from required effects', () => {
@@ -131,7 +148,7 @@ describe('Hermes ACP transport identity', () => {
       'delegation',
       expect.stringMatching(/^mcp-main-runtime-/),
     ]));
-    expect(sessionConfig.enabledTools).toEqual(['delegate_task', 'canvas.inspect']);
+    expect(sessionConfig.enabledTools).toEqual(['delegate_task']);
     expect(sessionConfig).not.toHaveProperty('delegateProfiles');
     expect(sessionConfig.hostSessionKey).toBe('session-1');
     expect(sessionConfig.executionContextId).toBe('root-context');
@@ -184,8 +201,6 @@ describe('Hermes ACP transport identity', () => {
       'terminal',
       'read_file',
       'python',
-      'cbm.search_graph',
-      'cbm.trace_path',
     ]);
     expect(sessionConfig.enabledToolsets).toEqual(expect.arrayContaining([
       'memory',

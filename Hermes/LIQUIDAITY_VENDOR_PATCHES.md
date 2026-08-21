@@ -42,9 +42,16 @@ Files and symbols:
 - `acp_adapter/host_profiles.py`: bounded metadata parsing and exact session-surface publication.
 - `acp_adapter/session.py`: retain ephemeral host configuration across agent reconstruction.
 - `acp_adapter/server.py`: read ACP metadata, expose `_session/configure_host`, reapply configuration
-  after MCP registration/model switches, and preserve concurrent session identity with Hermes'
-  existing ContextVars rather than mutating process-global `HERMES_SESSION_ID`.
-- `tests/acp_adapter/test_host_profiles.py`: no-provider contract proof.
+  after MCP registration/model switches, replace only a changed host-provided MCP connection, and
+  preserve concurrent session identity with Hermes' existing ContextVars rather than mutating
+  process-global `HERMES_SESSION_ID`.
+- `tools/mcp_tool.py`: `register_mcp_servers(..., replace_changed=True)` replaces one existing named
+  connection only when its exact trusted transport configuration changes. This lets a persistent ACP
+  session rotate per-Run bearer headers without retaining stale authority; ordinary MCP discovery
+  remains name-idempotent by default.
+- `tests/acp_adapter/test_host_profiles.py`, `tests/acp/test_server.py`, and
+  `tests/tools/test_mcp_tool.py`: no-provider contract proof, including exact changed-connection
+  replacement and unchanged default registration behavior.
 
 Upstream behavior preserved: sessions without `_meta.hermes.sessionConfig` use the normal upstream ACP
 and `delegate_task` paths unchanged. Model-supplied goals, context, roles, and control actions retain

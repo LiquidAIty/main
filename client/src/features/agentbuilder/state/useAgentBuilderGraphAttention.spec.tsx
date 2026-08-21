@@ -123,6 +123,19 @@ describe('attention-activated native graph projection', () => {
     expect(result.current.projections.knowgraph.nodes).toEqual([]);
   });
 
+  it('restores persisted native attention without inventing graph objects', async () => {
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({ projectId: 'project-1' }));
+    act(() => result.current.restoreAttentionEvents([
+      attention('thinkgraph', ['mem-1']),
+      attention('codegraph', ['pkg.materialize_idf']),
+    ]));
+
+    await waitFor(() => expect(result.current.projections.thinkgraph.nodes).toHaveLength(1));
+    expect(result.current.projections.thinkgraph.nodes[0].id).toBe('mem-1');
+    expect(result.current.projections.codegraph.nodes[0].id).toBe('pkg.materialize_idf');
+    expect(result.current.projections.knowgraph.nodes).toEqual([]);
+  });
+
   it('expands a visible ThinkGraph memory through the native neighborhood route', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,

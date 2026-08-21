@@ -41,6 +41,15 @@ export async function streamSession(args: {
   deckId?: string;
   conversationId: string;
   message: string;
+  dataAnchors?: Array<{
+    authority: 'ThinkGraph' | 'KnowGraph' | 'CodeGraph';
+    nativeId: string;
+    reason: string;
+    priority: number;
+    boundedExpansion: number;
+    resultLimit: number;
+    required: boolean;
+  }>;
   onEvent: (event: NativeSessionEvent) => void;
   signal?: AbortSignal;
 }): Promise<{ finalText: string }> {
@@ -53,6 +62,7 @@ export async function streamSession(args: {
       deckId: args.deckId,
       conversationId: args.conversationId,
       message: args.message,
+      dataAnchors: args.dataAnchors || [],
     }),
     signal: args.signal,
   });

@@ -38,6 +38,11 @@ describe('Main chat live observation callbacks', () => {
     const onTurnFinished = vi.fn((turn) => order.push(turn.status));
     mocks.streamSession.mockImplementation(async (args) => {
       order.push('stream');
+      expect(args.dataAnchors).toEqual([{
+        authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
+        reason: 'Current production definition', priority: 0,
+        boundedExpansion: 1, resultLimit: 12, required: true,
+      }]);
       args.onEvent({ kind: 'reasoning', text: 'private provider reasoning' });
       args.onEvent({ kind: 'text', text: 'Visible answer.' });
       return { finalText: 'Visible answer.' };
@@ -48,6 +53,11 @@ describe('Main chat live observation callbacks', () => {
       conversationId: 'main',
       initialMessages: [],
       workspaceView: 'chat',
+      dataAnchors: [{
+        authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
+        reason: 'Current production definition', order: 0,
+        boundedExpansion: 1, resultLimit: 12, required: true,
+      }],
       onUserTurnStarted,
       onNativeTurnEvent,
       onTurnFinished,

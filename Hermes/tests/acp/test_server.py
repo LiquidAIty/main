@@ -637,7 +637,8 @@ class TestRegisterSessionMcpServers:
         )
 
         registered_config = {}
-        def capture_register(config_map):
+        def capture_register(config_map, *, replace_changed=False):
+            assert replace_changed is True
             registered_config.update(config_map)
             return ["mcp_test_server_tool1"]
 

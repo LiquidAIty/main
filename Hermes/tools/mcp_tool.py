@@ -7191,7 +7191,45 @@ async def _discover_and_register_server(name: str, config: dict) -> List[str]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def register_mcp_servers(servers: Dict[str, dict]) -> List[str]:
+def _replace_changed_mcp_servers(servers: Dict[str, dict]) -> None:
+    """Replace connected servers whose trusted transport config changed.
+
+    LIQUIDAITY VENDOR PATCH: generic ACP hosts can rotate authentication for a
+    persistent native session without importing product identity into Hermes.
+
+    Normal config discovery remains idempotent by server name. ACP hosts need a
+    narrower contract: a persistent native session may reuse the same server
+    name while rotating an Authorization header for each execution Run. Keeping
+    the old connection in that case sends stale credentials with fresh per-call
+    metadata. Replace only the changed named connection, after its prior tools
+    and transport have shut down cleanly.
+    """
+
+    changed: list[tuple[str, MCPServerTask]] = []
+    with _lock:
+        for name, config in servers.items():
+            current = _servers.get(name)
+            if current is None or getattr(current, "_config", None) == config:
+                continue
+            _servers.pop(name, None)
+            _server_connecting.discard(name)
+            changed.append((name, current))
+
+    for name, current in changed:
+        _run_on_mcp_loop(lambda current=current: current.shutdown(), timeout=15)
+        with _lock:
+            _server_connect_errors.pop(name, None)
+            _server_connect_retry_after.pop(name, None)
+            _server_connect_failures.pop(name, None)
+            _server_error_counts.pop(name, None)
+            _server_breaker_opened_at.pop(name, None)
+
+
+def register_mcp_servers(
+    servers: Dict[str, dict],
+    *,
+    replace_changed: bool = False,
+) -> List[str]:
     """Connect to explicit MCP servers and register their tools.
 
     Idempotent for already-connected server names. Servers with
@@ -7199,6 +7237,10 @@ def register_mcp_servers(servers: Dict[str, dict]) -> List[str]:
 
     Args:
         servers: Mapping of ``{server_name: server_config}``.
+        replace_changed: Replace an existing named connection when its exact
+            transport configuration changed. Intended for trusted persistent
+            ACP host sessions with rotating authentication; ordinary discovery
+            remains idempotent by default.
 
     Returns:
         List of all currently registered MCP tool names.
@@ -7211,6 +7253,8 @@ def register_mcp_servers(servers: Dict[str, dict]) -> List[str]:
     if not servers:
         logger.debug("No explicit MCP servers provided")
         return []
+    if replace_changed:
+        _replace_changed_mcp_servers(servers)
 
     # Only attempt servers that aren't already connected (or currently
     # connecting) and are enabled.  Checking ``_server_connecting`` prevents
