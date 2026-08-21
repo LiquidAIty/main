@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+import {
+  NativeGraphProjectionSurface,
+  type GraphProjectionV1,
+} from './knowledge/NativeAuthorityGraphSurface';
 
 import type {
   AgentCardRuntimeOptions,
@@ -183,27 +188,31 @@ interface AgentManagerProps {
   runBusy?: boolean;
   runDisabled?: boolean;
   runResult?: StandaloneCardTestResult | null;
-  magOneProposal?: {
-    deckRevision?: string | null;
-    proposalHash?: string;
-    existingWorkerCardIds?: string[];
-    approvalRequired?: boolean;
-    proposal?: {
-      goal?: string;
-      completionCriteria?: string[];
-      graphReferences?: Array<{ authority: string; nativeId: string; reason: string }>;
-      workers?: Array<Record<string, unknown>>;
-      cardsToCreate?: Array<Record<string, unknown>>;
-      cardsToUpdate?: Array<Record<string, unknown>>;
-      wiresToAdd?: Array<Record<string, unknown>>;
-      wiresToRemove?: Array<Record<string, unknown>>;
-      requestedOutputFormat?: string;
-      boundaries?: string[];
-      estimatedModelCalls?: number;
-      costRisk?: string;
-      graphResultsTruncated?: boolean;
+  loadedGraphContext?: Array<{
+    reference: {
+      authority: string;
+      nativeId: string;
+      reason: string;
+      order: number;
+      boundedExpansion: number;
+      resultLimit: number;
+      required: boolean;
     };
-  } | null;
+    resolvedReferences: Array<Record<string, unknown>>;
+    resolvedContextMarkdown: string;
+    graphProjection: GraphProjectionV1;
+    resolved: boolean;
+    ready: boolean;
+    observedAt?: string;
+    error?: string;
+  }>;
+  magOneWorkers?: Array<{
+    cardId: string;
+    title: string;
+    ready: boolean;
+    provider: string | null;
+    model: string | null;
+  }>;
   saveDeckStatusMessage?: string | null;
   openDeckRevision?: string | null;
   cardName?: string;
@@ -427,7 +436,8 @@ export function AgentManager({
   runBusy = false,
   runDisabled = false,
   runResult = null,
-  magOneProposal = null,
+  loadedGraphContext = [],
+  magOneWorkers = [],
   saveDeckStatusMessage = null,
   openDeckRevision = null,
   cardName = '',
@@ -490,6 +500,24 @@ export function AgentManager({
   const [toolsetsText, setToolsetsText] = useState('');
   const [mcpConnectionIdsText, setMcpConnectionIdsText] = useState('');
   const draftDirtyRef = useRef(false);
+  const loadedGraphProjection = useMemo<GraphProjectionV1>(() => {
+    const nodes = new Map<string, GraphProjectionV1['nodes'][number]>();
+    const edges = new Map<string, GraphProjectionV1['edges'][number]>();
+    for (const context of loadedGraphContext) {
+      for (const node of context.graphProjection.nodes) nodes.set(node.id, node);
+      for (const edge of context.graphProjection.edges) edges.set(edge.id, edge);
+    }
+    return {
+      schemaVersion: 'native-card-context.v1',
+      authority: 'mixed',
+      projectId: loadedGraphContext[0]?.graphProjection.projectId || '',
+      nodes: [...nodes.values()],
+      edges: [...edges.values()].filter(
+        (edge) => nodes.has(edge.source) && nodes.has(edge.target),
+      ),
+      counts: { nodes: nodes.size, edges: edges.size },
+    };
+  }, [loadedGraphContext]);
 
   useEffect(() => {
     setCardNameDraft(cardName);
@@ -1086,6 +1114,62 @@ export function AgentManager({
       );
     }
 
+    if (activeTab === 'Knowledge') {
+      return (
+        <div data-testid="agent-manager-knowledge" style={{ display: 'grid', gap: 10 }}>
+          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
+            Loaded native graph context
+          </div>
+          {loadedGraphContext.length === 0 ? (
+            <div style={{ color: '#80969F', fontSize: 11.5 }}>
+              No transient graph references are loaded for this Card invocation.
+            </div>
+          ) : (
+            <div style={{ height: 300, minHeight: 240, border: '1px solid #3A4A4F', borderRadius: 8, overflow: 'hidden' }}>
+              <NativeGraphProjectionSurface
+                projection={loadedGraphProjection}
+                status="ready"
+                error={null}
+                authority="knowgraph"
+              />
+            </div>
+          )}
+          {loadedGraphContext.map((item) => (
+            <section
+              key={`${item.reference.authority}:${item.reference.nativeId}`}
+              style={{ display: 'grid', gap: 6, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8 }}
+            >
+              <strong style={{ color: item.ready ? '#8FD1B8' : '#FFB6A2' }}>
+                {item.reference.authority}:{item.reference.nativeId} · {item.ready ? 'ready' : 'not ready'}
+              </strong>
+              <div style={{ color: '#B8C8CD', fontSize: 11.5 }}>{item.reference.reason}</div>
+              <div style={{ color: '#80969F', fontSize: 10.5 }}>
+                {item.reference.required ? 'required' : 'optional'} · order {item.reference.order} · depth {item.reference.boundedExpansion} · result limit {item.reference.resultLimit}
+                {item.resolvedReferences.some((reference) => reference.truncated === true) ? ' · truncated' : ''}
+                {item.observedAt ? ` · observed ${item.observedAt}` : ''}
+              </div>
+              {item.error ? <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>{item.error}</div> : null}
+              {item.resolvedReferences.map((reference, index) => (
+                <div key={`${item.reference.nativeId}-resolved-${index}`} style={{ color: '#9FB2B8', fontSize: 10.5 }}>
+                  provenance: {String(reference.provenance || reference.nativeKind || 'native graph')}
+                </div>
+              ))}
+            </section>
+          ))}
+          {magOneWorkers.length > 0 ? (
+            <section style={{ display: 'grid', gap: 5, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8 }}>
+              <strong style={{ color: '#8FC8D1' }}>Saved Mag One workers</strong>
+              {magOneWorkers.map((worker) => (
+                <div key={worker.cardId} style={{ color: worker.ready ? '#B8C8CD' : '#FFA2A2', fontSize: 11 }}>
+                  {worker.title} · {worker.provider || 'provider missing'} / {worker.model || 'model missing'} · {worker.ready ? 'ready' : 'not ready'}
+                </div>
+              ))}
+            </section>
+          ) : null}
+        </div>
+      );
+    }
+
     if (activeTab === 'Runtime') {
       if (!runtimeDictionaryReady) {
         return (
@@ -1650,79 +1734,6 @@ export function AgentManager({
           <div style={{ color: '#80969F', fontSize: 10.5 }}>
             Python combines this input with the saved Card into the one exact model call shown below.
           </div>
-          {magOneProposal?.proposal ? (
-            <section
-              data-testid="mag-one-proposal-review"
-              style={{
-                display: 'grid',
-                gap: 7,
-                padding: 10,
-                border: '1px solid #3A4A4F',
-                borderRadius: 8,
-                background: '#23292B',
-                color: '#D5E4E8',
-                fontSize: 11,
-              }}
-            >
-              <strong style={{ color: '#8FC8D1' }}>Read-only Mag One proposal</strong>
-              {magOneProposal.proposal.goal ? <div>Goal: {magOneProposal.proposal.goal}</div> : null}
-              {(magOneProposal.proposal.completionCriteria || []).length ? (
-                <div>Completion: {magOneProposal.proposal.completionCriteria?.join(' · ')}</div>
-              ) : null}
-              {magOneProposal.proposal.requestedOutputFormat ? (
-                <div>Output: {magOneProposal.proposal.requestedOutputFormat}</div>
-              ) : null}
-              {(magOneProposal.proposal.boundaries || []).length ? (
-                <div>Boundaries: {magOneProposal.proposal.boundaries?.join(' · ')}</div>
-              ) : null}
-              <div>
-                Current workers: {(magOneProposal.existingWorkerCardIds || []).join(', ') || 'none'}
-              </div>
-              <div>
-                Proposed workers: {(magOneProposal.proposal.workers || []).map((worker) =>
-                  String(worker.title || worker.existingCardId || 'unnamed worker')
-                ).join(', ') || 'no roster change'}
-              </div>
-              {(magOneProposal.proposal.workers || []).map((worker, index) => {
-                const model = worker.model && typeof worker.model === 'object'
-                  ? worker.model as Record<string, unknown>
-                  : {};
-                const readCapabilities = Array.isArray(worker.readCapabilities)
-                  ? worker.readCapabilities.map(String)
-                  : [];
-                const effectTools = Array.isArray(worker.effectTools)
-                  ? worker.effectTools.map(String)
-                  : [];
-                return (
-                  <div key={`${String(worker.existingCardId || worker.title || 'worker')}-${index}`}>
-                    {String(worker.title || worker.existingCardId || 'Worker')}: {String(model.provider || 'provider?')} / {String(model.providerModelId || model.modelKey || 'model?')}
-                    {' · '}reads {readCapabilities.join(', ') || 'none'}
-                    {' · '}writes/effects {effectTools.join(', ') || 'none'}
-                  </div>
-                );
-              })}
-              <div>
-                Graph anchors: {(magOneProposal.proposal.graphReferences || []).map((reference) =>
-                  `${reference.authority}:${reference.nativeId} — ${reference.reason}`
-                ).join(' · ') || 'none'}
-              </div>
-              <div>
-                Card delta: create {(magOneProposal.proposal.cardsToCreate || []).length}, update {(magOneProposal.proposal.cardsToUpdate || []).length}
-              </div>
-              <div>
-                Wire delta: add {(magOneProposal.proposal.wiresToAdd || []).length}, remove {(magOneProposal.proposal.wiresToRemove || []).length}
-              </div>
-              <div>
-                Estimated calls: {magOneProposal.proposal.estimatedModelCalls ?? 'unknown'} · cost risk: {magOneProposal.proposal.costRisk || 'unknown'} · graph truncated: {magOneProposal.proposal.graphResultsTruncated ? 'yes' : 'no'}
-              </div>
-              <div style={{ color: '#FFCF8B' }}>
-                Approval required. This review does not save Cards, change wires, or launch Mag One.
-              </div>
-              <div style={{ color: '#80969F' }}>
-                Deck revision {magOneProposal.deckRevision || 'unknown'} · proposal {magOneProposal.proposalHash || 'unhashed'}
-              </div>
-            </section>
-          ) : null}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
             <button
               type="button"

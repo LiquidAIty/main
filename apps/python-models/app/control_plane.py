@@ -18,7 +18,6 @@ Failures are honest; there is no fallback path.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import math
 import os
@@ -54,9 +53,6 @@ _CARD_CREATE_MODEL_KEYS = {
     "providerModelId",
     "reasoningEffort",
 }
-_MAG_ONE_PROPOSAL_WORKER_LIMIT = 12
-_MAG_ONE_PROPOSAL_REFERENCE_LIMIT = 24
-
 # Exact allowlist of card fields Harness may edit. Anything else — runtime code,
 # shell config, hidden tools, authority grants, worker selection — is rejected.
 _UPDATABLE_TOP_FIELDS = {"prompt", "title"}
@@ -245,219 +241,47 @@ async def canvas_inspect(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _proposal_strings(value: Any, field: str, *, limit: int = 24) -> list[str]:
-    if value is None:
-        return []
-    if not isinstance(value, list) or len(value) > limit:
-        raise ControlPlaneError(f"{field}_invalid")
-    result: list[str] = []
-    for item in value:
-        text = str(item or "").strip()
-        if not text:
-            raise ControlPlaneError(f"{field}_invalid")
-        if text not in result:
-            result.append(text)
-    return result
+def _configured_card_tools(card: dict[str, Any]) -> list[str]:
+    options = card.get("runtimeOptions")
+    values = options.get("tools") if isinstance(options, dict) else card.get("tools")
+    return [str(value).strip() for value in values or [] if str(value).strip()]
 
 
-async def prepare_mag_one_proposal(args: dict[str, Any]) -> dict[str, Any]:
-    """Validate one transient read-only Hermes proposal against saved deck truth."""
-    _require(args, "projectId", "deckId", "instructions")
+async def write_mag_one_instructions(args: dict[str, Any]) -> dict[str, Any]:
+    """Return one exact transient Mag One Card input; never save or execute it."""
+    _require(args, "projectId", "deckId", "instructions", "_sourceCardId")
     from app.python_models.card_domain import resolve_magentic_card_identity
-    from app.python_models.idd import readable_tool_ids, tool_access
 
     project_id = str(args["projectId"]).strip()
     deck_id = str(args["deckId"]).strip()
-    instructions = str(args["instructions"]).strip()
-    deck, revision = await asyncio.to_thread(_load_deck, project_id, deck_id)
-    target = resolve_magentic_card_identity(project_id, deck_id)
-    target_card_id = str(target["targetCardId"])
-    cards = {
-        str(node.get("id") or ""): node
-        for node in deck.get("nodes") or []
-        if str(node.get("id") or "")
-    }
-    existing_worker_ids = list(dict.fromkeys(
-        str(edge.get("source") or "")
-        for edge in deck.get("edges") or []
-        if str(edge.get("target") or "") == target_card_id
-        and str(edge.get("edgeType") or "") == "magentic_option"
-        and edge.get("enabled") is not False
-    ))
-    readable = set(readable_tool_ids())
-
-    raw_references = args.get("graphReferences") or []
-    if not isinstance(raw_references, list) or len(raw_references) > _MAG_ONE_PROPOSAL_REFERENCE_LIMIT:
-        raise ControlPlaneError("mag_one_proposal_graph_references_invalid")
-    graph_references: list[dict[str, Any]] = []
-    seen_references: set[tuple[str, str]] = set()
-    for item in raw_references:
-        if not isinstance(item, dict):
-            raise ControlPlaneError("mag_one_proposal_graph_reference_invalid")
-        authority = str(item.get("authority") or "").strip()
-        native_id = str(item.get("nativeId") or "").strip()
-        reason = str(item.get("reason") or "").strip()
-        if authority not in {"ThinkGraph", "KnowGraph", "CodeGraph"} or not native_id or not reason:
-            raise ControlPlaneError("mag_one_proposal_graph_reference_invalid")
-        identity = (authority, native_id)
-        if identity in seen_references:
-            continue
-        seen_references.add(identity)
-        graph_references.append({
-            "authority": authority,
-            "nativeId": native_id,
-            "reason": reason[:2_000],
-            "provenance": item.get("provenance") if isinstance(item.get("provenance"), dict) else {},
-        })
-
-    raw_workers = args.get("workers") or []
-    if not isinstance(raw_workers, list) or len(raw_workers) > _MAG_ONE_PROPOSAL_WORKER_LIMIT:
-        raise ControlPlaneError("mag_one_proposal_workers_invalid")
-    workers: list[dict[str, Any]] = []
-    cards_to_create: list[dict[str, Any]] = []
-    cards_to_update: list[dict[str, Any]] = []
-    wires_to_add: list[dict[str, Any]] = []
-    seen_workers: set[str] = set()
-    existing_wire_ids = {
-        str(edge.get("id") or "")
-        for edge in deck.get("edges") or []
-    }
-    for index, item in enumerate(raw_workers):
-        if not isinstance(item, dict):
-            raise ControlPlaneError("mag_one_proposal_worker_invalid")
-        existing_card_id = str(item.get("existingCardId") or "").strip()
-        card = cards.get(existing_card_id) if existing_card_id else None
-        if existing_card_id and card is None:
-            raise ControlPlaneError(f"mag_one_proposal_worker_card_not_found:{existing_card_id}")
-        identity = existing_card_id or f"new:{index}"
-        if identity in seen_workers:
-            raise ControlPlaneError("mag_one_proposal_worker_duplicate")
-        seen_workers.add(identity)
-        title = str(item.get("title") or (card or {}).get("title") or "").strip()
-        role = str(item.get("role") or (card or {}).get("role") or "").strip()
-        stable_instructions = str(item.get("stableInstructions") or "").strip()
-        reason = str(item.get("reason") or "").strip()
-        expected_input = str(item.get("expectedInput") or "").strip()
-        expected_output = str(item.get("expectedOutput") or "").strip()
-        if not all((title, role, reason, expected_input, expected_output)):
-            raise ControlPlaneError("mag_one_proposal_worker_fields_required")
-        if card is None and not stable_instructions:
-            raise ControlPlaneError("mag_one_proposal_new_worker_instructions_required")
-        read_capabilities = _proposal_strings(item.get("readCapabilities"), "readCapabilities")
-        effect_tools = _proposal_strings(item.get("effectTools"), "effectTools")
-        invalid_reads = [name for name in read_capabilities if name not in readable]
-        invalid_effects = [name for name in effect_tools if tool_access(name) != "write"]
-        if invalid_reads:
-            raise ControlPlaneError(f"mag_one_proposal_read_capability_invalid:{invalid_reads[0]}")
-        if invalid_effects:
-            raise ControlPlaneError(f"mag_one_proposal_effect_tool_invalid:{invalid_effects[0]}")
-        skills = _proposal_strings(item.get("skills"), "skills")
-        options = (card or {}).get("runtimeOptions") if isinstance((card or {}).get("runtimeOptions"), dict) else {}
-        runtime = (card or {}).get("runtime") if isinstance((card or {}).get("runtime"), dict) else item.get("runtime")
-        proposed_model = item.get("model")
-        if proposed_model is None:
-            proposed_model = {}
-        if not isinstance(proposed_model, dict):
-            raise ControlPlaneError("mag_one_proposal_worker_runtime_model_required")
-        model = {
-            "provider": str(options.get("provider") or proposed_model.get("provider") or ""),
-            "modelKey": str(options.get("modelKey") or proposed_model.get("modelKey") or ""),
-            "providerModelId": str(options.get("providerModelId") or proposed_model.get("providerModelId") or ""),
-        }
-        if not isinstance(runtime, dict) or not runtime.get("kind") or not runtime.get("mode") or not all(model.values()):
-            raise ControlPlaneError("mag_one_proposal_worker_runtime_model_required")
-        worker = {
-            "existingCardId": existing_card_id or None,
-            "reuseExisting": bool(existing_card_id),
-            "title": title,
-            "role": role,
-            "stableInstructions": stable_instructions,
-            "skills": skills,
-            "runtime": runtime,
-            "model": model,
-            "readCapabilities": read_capabilities,
-            "effectTools": effect_tools,
-            "reason": reason,
-            "expectedInput": expected_input,
-            "expectedOutput": expected_output,
-        }
-        workers.append(worker)
-        if card is None:
-            cards_to_create.append(worker)
-            continue
-        updates: dict[str, Any] = {}
-        if stable_instructions and stable_instructions != str(card.get("prompt") or ""):
-            updates["prompt"] = stable_instructions
-        configured_effects = [
-            str(name) for name in (options.get("tools") or []) if tool_access(str(name)) == "write"
-        ]
-        if effect_tools and effect_tools != configured_effects:
-            updates["tools"] = effect_tools
-        if updates:
-            cards_to_update.append({"cardId": existing_card_id, "updates": updates})
-        if existing_card_id not in existing_worker_ids:
-            wire_id = f"{existing_card_id}->{target_card_id}:magentic_option"
-            wires_to_add.append({
-                "id": wire_id,
-                "source": existing_card_id,
-                "target": target_card_id,
-                "edgeType": "magentic_option",
-                "alreadyExists": wire_id in existing_wire_ids,
-            })
-
-    remove_worker_ids = _proposal_strings(
-        args.get("removeWorkerCardIds"), "removeWorkerCardIds", limit=_MAG_ONE_PROPOSAL_WORKER_LIMIT
+    source_card_id = str(args["_sourceCardId"]).strip()
+    deck, _revision = await asyncio.to_thread(_load_deck, project_id, deck_id)
+    source = _find_card(deck, source_card_id)
+    if "write_mag_one_instructions" not in _configured_card_tools(source):
+        raise ControlPlaneError("write_mag_one_instructions_not_granted")
+    target = await asyncio.to_thread(
+        resolve_magentic_card_identity,
+        project_id,
+        deck_id,
     )
-    wires_to_remove = [
-        {
-            "id": str(edge.get("id") or ""),
-            "source": str(edge.get("source") or ""),
-            "target": target_card_id,
-            "edgeType": "magentic_option",
-        }
-        for edge in deck.get("edges") or []
-        if str(edge.get("source") or "") in remove_worker_ids
-        and str(edge.get("target") or "") == target_card_id
-        and str(edge.get("edgeType") or "") == "magentic_option"
-    ]
-    proposal = {
-        "instructions": instructions,
-        "goal": str(args.get("goal") or "").strip(),
-        "completionCriteria": _proposal_strings(args.get("completionCriteria"), "completionCriteria"),
-        "graphReferences": graph_references,
-        "requestedOutputFormat": str(args.get("requestedOutputFormat") or "").strip(),
-        "boundaries": _proposal_strings(args.get("boundaries"), "boundaries"),
-        "workers": workers,
-        "cardsToCreate": cards_to_create,
-        "cardsToUpdate": cards_to_update,
-        "wiresToAdd": wires_to_add,
-        "wiresToRemove": wires_to_remove,
-        "estimatedModelCalls": int(args.get("estimatedModelCalls") or 0),
-        "costRisk": str(args.get("costRisk") or "unknown").strip(),
-        "graphResultsTruncated": args.get("graphResultsTruncated") is True,
-    }
-    proposal_hash = hashlib.sha256(
-        json.dumps(
-            {"projectId": project_id, "deckId": deck_id, "deckRevision": revision, "proposal": proposal},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
     return {
         "ok": True,
         **target,
-        "projectId": project_id,
-        "deckId": deck_id,
-        "deckRevision": revision,
-        "instructions": instructions,
-        "proposal": proposal,
-        "proposalHash": proposal_hash,
-        "existingWorkerCardIds": existing_worker_ids,
+        "instructions": str(args["instructions"]).strip(),
+        "sourceCardId": source_card_id,
         "persisted": False,
         "started": False,
-        "approvalRequired": True,
-        "magOneLaunchApproved": False,
     }
+
+
+async def card_load_graph_references(args: dict[str, Any]) -> dict[str, Any]:
+    """Load one bounded native reference into transient target-Card context."""
+    from app.python_models.card_domain import CardDomainError, load_card_graph_reference
+
+    try:
+        return await asyncio.to_thread(load_card_graph_reference, args)
+    except CardDomainError as error:
+        raise ControlPlaneError(str(error)) from error
 
 
 # ---------------------------------------------------------------------------
@@ -774,6 +598,26 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
         **(
             {"dataAnchors": args["dataAnchors"]}
             if isinstance(args.get("dataAnchors"), list)
+            else {}
+        ),
+        **(
+            {"keyContext": args["keyContext"]}
+            if isinstance(args.get("keyContext"), str)
+            else {}
+        ),
+        **(
+            {"visibleMessages": args["visibleMessages"]}
+            if isinstance(args.get("visibleMessages"), list)
+            else {}
+        ),
+        **(
+            {"priorResults": args["priorResults"]}
+            if isinstance(args.get("priorResults"), list)
+            else {}
+        ),
+        **(
+            {"outputRequirements": args["outputRequirements"]}
+            if isinstance(args.get("outputRequirements"), str)
             else {}
         ),
     }

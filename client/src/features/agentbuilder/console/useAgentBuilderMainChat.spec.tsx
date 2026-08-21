@@ -75,8 +75,9 @@ describe('Main chat live observation callbacks', () => {
     expect(JSON.stringify(result.current.messages)).not.toContain('private provider reasoning');
   });
 
-  it('forwards the exact transient Mag One proposal from the native tool result', async () => {
-    const onMagOneInstructionsProposed = vi.fn();
+  it('loads exact transient Mag One input and resolved graph context from native tool results', async () => {
+    const onMagOneInstructionsLoaded = vi.fn();
+    const onCardGraphReferenceLoaded = vi.fn();
     mocks.streamSession.mockImplementation(async (args) => {
       args.onEvent({
         kind: 'tool_result',
@@ -89,24 +90,45 @@ describe('Main chat live observation callbacks', () => {
               ok: true,
               targetCardId: 'card_mag_one',
               instructions: '  exact mission\nwith formatting  ',
-              deckRevision: 'deck-revision-1',
-              proposalHash: 'proposal-hash-1',
-              existingWorkerCardIds: ['card_worker'],
-              approvalRequired: true,
-              proposal: {
-                goal: 'Bounded source search',
-                workers: [{ existingCardId: 'card_worker', title: 'Search Agent' }],
-                cardsToCreate: [],
-                wiresToAdd: [],
-              },
               persisted: false,
               started: false,
             }),
           }],
         }),
       });
-      args.onEvent({ kind: 'text', text: 'Proposal ready.' });
-      return { finalText: 'Proposal ready.' };
+      args.onEvent({
+        kind: 'tool_result',
+        toolName: 'card.load_graph_references',
+        isError: false,
+        output: {
+          ok: true,
+          targetCardId: 'card_mag_one',
+          sourceCardId: 'card_hermes_steward',
+          sourceRunId: 'run-helper',
+          reference: {
+            authority: 'KnowGraph', nativeId: 'episode:one', reason: 'Useful sourced fact',
+            order: 0, boundedExpansion: 1, resultLimit: 8, required: true,
+          },
+          resolvedReferences: [{ authority: 'KnowGraph', nativeId: 'episode:one', provenance: 'Graphiti' }],
+          resolvedContextMarkdown: '# KnowGraph\nActual current graph data',
+          graphProjection: {
+            schemaVersion: 'native-card-context.v1',
+            authority: 'knowgraph',
+            projectId: 'project-1',
+            nodes: [{
+              id: 'episode:one', label: 'Sourced episode', authority: 'KnowGraph', mentionCount: 1,
+            }],
+            edges: [],
+            counts: { nodes: 1, edges: 0 },
+          },
+          resolved: true,
+          ready: true,
+          persisted: false,
+          started: false,
+        },
+      });
+      args.onEvent({ kind: 'text', text: 'Card ready.' });
+      return { finalText: 'Card ready.' };
     });
     const { result } = renderHook(() => useAgentBuilderMainChat({
       canvasProjectId: 'project-1',
@@ -114,27 +136,30 @@ describe('Main chat live observation callbacks', () => {
       conversationId: 'main',
       initialMessages: [],
       workspaceView: 'chat',
-      onMagOneInstructionsProposed,
+      onMagOneInstructionsLoaded,
+      onCardGraphReferenceLoaded,
     }));
 
     await act(async () => {
       await result.current.requestMainText('Prepare the mission.');
     });
 
-    expect(onMagOneInstructionsProposed).toHaveBeenCalledOnce();
-    expect(onMagOneInstructionsProposed).toHaveBeenCalledWith({
+    expect(onMagOneInstructionsLoaded).toHaveBeenCalledOnce();
+    expect(onMagOneInstructionsLoaded).toHaveBeenCalledWith({
       targetCardId: 'card_mag_one',
       instructions: '  exact mission\nwith formatting  ',
-      deckRevision: 'deck-revision-1',
-      proposalHash: 'proposal-hash-1',
-      existingWorkerCardIds: ['card_worker'],
-      approvalRequired: true,
-      proposal: {
-        goal: 'Bounded source search',
-        workers: [{ existingCardId: 'card_worker', title: 'Search Agent' }],
-        cardsToCreate: [],
-        wiresToAdd: [],
-      },
     });
+    expect(onCardGraphReferenceLoaded).toHaveBeenCalledWith(expect.objectContaining({
+      targetCardId: 'card_mag_one',
+      sourceCardId: 'card_hermes_steward',
+      sourceRunId: 'run-helper',
+      ready: true,
+      resolvedContextMarkdown: '# KnowGraph\nActual current graph data',
+      graphProjection: expect.objectContaining({
+        projectId: 'project-1',
+        nodes: [expect.objectContaining({ id: 'episode:one' })],
+      }),
+      reference: expect.objectContaining({ authority: 'KnowGraph', nativeId: 'episode:one' }),
+    }));
   });
 });

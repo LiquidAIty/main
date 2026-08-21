@@ -38,6 +38,7 @@ export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions[
 // Seed default ONLY for a fresh Coder card. Once a card has a saved
 // provider/model, that saved value remains authoritative.
 export const CODER_CONTROLLER_TOOLS = [
+  'card.run_assistant_agent',
   'cbm.index_repository',
   'cbm.search_graph',
   'cbm.query_graph',
@@ -54,6 +55,7 @@ export const CODER_CONTROLLER_TOOLS = [
   'cbm.ingest_traces',
 ] as const;
 export const MAIN_CHAT_CONTROLLER_TOOLS = [
+  'card.run_assistant_agent',
   'engraphis.remember',
   'engraphis.recall',
   'engraphis.recall_context',
@@ -91,18 +93,10 @@ export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'run_mag_one',
 ] as const;
 export const HERMES_CARD_TOOLS = [
-  'graphiti.search_nodes',
-  'graphiti.search_memory_facts',
-  'graphiti.get_entity_edge',
-  'graphiti.get_episodes',
-  'graphiti.summarize_saga',
-  'graphiti.build_communities',
-  'graphiti.get_episode_entities',
-  'graphiti.get_status',
   'graphiti.add_memory',
   'graphiti.add_triplet',
-  'agentgraph.inspect',
   'write_mag_one_instructions',
+  'card.load_graph_references',
 ] as const;
 
 export function normalizeCardRuntime(value: unknown): CardRuntime | null {

@@ -131,13 +131,28 @@ capability = Card grants ∩ IDD requirements ∩ current input selections ∩ A
 Routing IDs and telemetry remain outside the transient call. PostgreSQL does not save transient call
 input by default.
 
-`write_mag_one_instructions` is a proposal tool, not another materializer or store. It resolves the
-one saved Mag One Card read-only and returns that Card identity with the exact proposed mission. In an
-active Agent Builder session, the existing Hermes tool-result/SSE path places the text in unsaved
-per-Card React state for the Mag One input field. Outside that UI it returns the same identity and text.
-It creates no Run, revision, hash, approval, or saved prompt and never starts AutoGen. The outer Mag One
-Card is materialized only when it is run; each saved worker Card then materializes its own task through
-the same receiving-Card path.
+`write_mag_one_instructions` loads exact text directly into the saved Mag One Card's transient
+Invocation editor. It is not a proposal document, materializer, or store. It resolves the one saved
+Mag One Card read-only and returns that Card identity with the exact mission. In an active Agent Builder
+session, the existing Hermes tool-result/SSE path places the text in unsaved per-Card React state.
+It creates no Run, revision, hash, approval object, or saved prompt and never starts AutoGen.
+
+`card.load_graph_references` is the single Card handoff for native graph pointers. The MCP host injects
+the trusted source Card/Run/project/deck identity; the caller supplies one target Card, native identity,
+reason, order, and bounds. Python rereads the current native authority, returns actual transient context
+to the target Card's existing Knowledge tab, and records the proven read/handoff on the source Run in
+AGE. The outer Mag One Card is materialized only when Main runs it; each saved worker Card then
+materializes its own task through the same receiving-Card path.
+
+Saved Hermes Cards remain three distinct persistent agents: Main, Coder, and Kanban. A saved `flow`
+edge grants an explicit Card-to-Card call; it never starts a profile, queued task, or model. Main may
+call Coder or Kanban, and Coder may call Kanban, through `card.run_assistant_agent`. Kanban has no
+outgoing saved-Card delegation grant. Each such call uses the receiving Card's saved Hermes profile and
+one transient bounded packet: exact task, short key context, at most six caller-selected visible
+messages under a conservative 3,000-byte ceiling (therefore never above 3,000 tokens), current graph anchors, prior checked native
+references, and required output. Python rejects unbounded parent context and resolves graph anchors
+before the one IDF materialization. The packet is not persisted. Native Hermes subagents remain an
+optional per-Card/profile capability; they do not replace these saved Cards or become AutoGen Assistants.
 
 ## Graph owners
 

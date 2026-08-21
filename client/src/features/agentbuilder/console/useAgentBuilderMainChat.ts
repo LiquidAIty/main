@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { waitForBackendReady } from '../../../components/builder/backendReadiness';
+import type { GraphProjectionV1 } from '../../../components/knowledge/NativeAuthorityGraphSurface';
 import {
   loadSessionHistory,
   type NativeSessionEvent,
@@ -21,7 +22,8 @@ type UseAgentBuilderMainChatArgs = {
   workspaceView: string;
   onUserTurnStarted?: (turn: MainChatTurnStarted) => void;
   onNativeTurnEvent?: (turn: MainChatTurnEvent) => void;
-  onMagOneInstructionsProposed?: (proposal: MagOneInstructionsProposal) => void;
+  onMagOneInstructionsLoaded?: (instructions: MagOneInstructionsLoaded) => void;
+  onCardGraphReferenceLoaded?: (context: LoadedCardGraphReference) => void;
   onTurnFinished?: (turn: MainChatTurnFinished) => void;
 };
 
@@ -41,33 +43,32 @@ export type MainChatTurnEvent = {
   observedAt: string;
 };
 
-export type MagOneInstructionsProposal = {
+export type MagOneInstructionsLoaded = {
   targetCardId: string;
   instructions: string;
-  deckRevision?: string | null;
-  proposalHash?: string;
-  existingWorkerCardIds?: string[];
-  approvalRequired?: boolean;
-  proposal?: {
-    goal?: string;
-    completionCriteria?: string[];
-    graphReferences?: Array<{
-      authority: string;
-      nativeId: string;
-      reason: string;
-      provenance?: Record<string, unknown>;
-    }>;
-    requestedOutputFormat?: string;
-    boundaries?: string[];
-    workers?: Array<Record<string, unknown>>;
-    cardsToCreate?: Array<Record<string, unknown>>;
-    cardsToUpdate?: Array<Record<string, unknown>>;
-    wiresToAdd?: Array<Record<string, unknown>>;
-    wiresToRemove?: Array<Record<string, unknown>>;
-    estimatedModelCalls?: number;
-    costRisk?: string;
-    graphResultsTruncated?: boolean;
+};
+
+export type LoadedCardGraphReference = {
+  targetCardId: string;
+  sourceCardId?: string;
+  sourceRunId?: string;
+  reference: {
+    authority: 'ThinkGraph' | 'KnowGraph' | 'CodeGraph';
+    nativeId: string;
+    reason: string;
+    order: number;
+    boundedExpansion: number;
+    resultLimit: number;
+    required: boolean;
   };
+  resolvedReferences: Array<Record<string, unknown>>;
+  resolvedContextMarkdown: string;
+  graphProjection: GraphProjectionV1;
+  resolved: boolean;
+  ready: boolean;
+  attentionObserved?: boolean;
+  observedAt?: string;
+  error?: string;
 };
 
 export type MainChatTurnFinished = {
@@ -90,22 +91,22 @@ function notifyObserver<T>(observer: ((value: T) => void) | undefined, value: T)
   }
 }
 
-export function parseMagOneInstructionsProposal(
+export function parseMagOneInstructionsLoaded(
   output: unknown,
   depth = 0,
-): MagOneInstructionsProposal | null {
+): MagOneInstructionsLoaded | null {
   if (depth > 8 || output == null) return null;
   if (typeof output === 'string') {
     try {
-      return parseMagOneInstructionsProposal(JSON.parse(output), depth + 1);
+      return parseMagOneInstructionsLoaded(JSON.parse(output), depth + 1);
     } catch {
       return null;
     }
   }
   if (Array.isArray(output)) {
     for (const item of output) {
-      const proposal = parseMagOneInstructionsProposal(item, depth + 1);
-      if (proposal) return proposal;
+      const loaded = parseMagOneInstructionsLoaded(item, depth + 1);
+      if (loaded) return loaded;
     }
     return null;
   }
@@ -123,22 +124,91 @@ export function parseMagOneInstructionsProposal(
     return {
       targetCardId: record.targetCardId,
       instructions: record.instructions,
-      ...(typeof record.deckRevision === 'string' ? { deckRevision: record.deckRevision } : {}),
-      ...(typeof record.proposalHash === 'string' ? { proposalHash: record.proposalHash } : {}),
-      ...(Array.isArray(record.existingWorkerCardIds) ? {
-        existingWorkerCardIds: record.existingWorkerCardIds.filter(
-          (value): value is string => typeof value === 'string',
-        ),
-      } : {}),
-      ...(record.approvalRequired === true ? { approvalRequired: true } : {}),
-      ...(record.proposal && typeof record.proposal === 'object' && !Array.isArray(record.proposal)
-        ? { proposal: record.proposal as MagOneInstructionsProposal['proposal'] }
-        : {}),
     };
   }
   for (const key of ['content', 'result', 'structuredContent', 'text', 'output']) {
-    const proposal = parseMagOneInstructionsProposal(record[key], depth + 1);
-    if (proposal) return proposal;
+    const loaded = parseMagOneInstructionsLoaded(record[key], depth + 1);
+    if (loaded) return loaded;
+  }
+  return null;
+}
+
+export function parseLoadedCardGraphReference(
+  output: unknown,
+  depth = 0,
+): LoadedCardGraphReference | null {
+  if (depth > 8 || output == null) return null;
+  if (typeof output === 'string') {
+    try {
+      return parseLoadedCardGraphReference(JSON.parse(output), depth + 1);
+    } catch {
+      return null;
+    }
+  }
+  if (Array.isArray(output)) {
+    for (const item of output) {
+      const loaded = parseLoadedCardGraphReference(item, depth + 1);
+      if (loaded) return loaded;
+    }
+    return null;
+  }
+  if (typeof output !== 'object') return null;
+  const record = output as Record<string, unknown>;
+  const reference = record.reference;
+  const referenceRecord = reference && typeof reference === 'object' && !Array.isArray(reference)
+    ? reference as Record<string, unknown>
+    : null;
+  const graphProjection = record.graphProjection;
+  const graphProjectionRecord = graphProjection
+    && typeof graphProjection === 'object'
+    && !Array.isArray(graphProjection)
+    ? graphProjection as Record<string, unknown>
+    : null;
+  if (
+    typeof record.targetCardId === 'string'
+    && record.targetCardId.length > 0
+    && referenceRecord
+    && ['ThinkGraph', 'KnowGraph', 'CodeGraph'].includes(String(referenceRecord.authority))
+    && typeof referenceRecord.nativeId === 'string'
+    && typeof referenceRecord.reason === 'string'
+    && Number.isInteger(referenceRecord.order)
+    && Number.isInteger(referenceRecord.boundedExpansion)
+    && Number.isInteger(referenceRecord.resultLimit)
+    && typeof referenceRecord.required === 'boolean'
+    && typeof record.ready === 'boolean'
+    && graphProjectionRecord
+    && Array.isArray(graphProjectionRecord.nodes)
+    && Array.isArray(graphProjectionRecord.edges)
+    && typeof graphProjectionRecord.projectId === 'string'
+    && record.persisted === false
+    && record.started === false
+  ) {
+    return {
+      targetCardId: record.targetCardId,
+      ...(typeof record.sourceCardId === 'string' ? { sourceCardId: record.sourceCardId } : {}),
+      ...(typeof record.sourceRunId === 'string' ? { sourceRunId: record.sourceRunId } : {}),
+      reference: referenceRecord as LoadedCardGraphReference['reference'],
+      resolvedReferences: Array.isArray(record.resolvedReferences)
+        ? record.resolvedReferences.filter(
+            (value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value),
+          )
+        : [],
+      resolvedContextMarkdown: typeof record.resolvedContextMarkdown === 'string'
+        ? record.resolvedContextMarkdown
+        : '',
+      graphProjection: graphProjectionRecord as GraphProjectionV1,
+      resolved: record.resolved === true,
+      ready: record.ready,
+      ...(typeof record.attentionObserved === 'boolean'
+        ? { attentionObserved: record.attentionObserved }
+        : {}),
+      ...(typeof record.observedAt === 'string' ? { observedAt: record.observedAt } : {}),
+      ...(typeof record.error === 'string' ? { error: record.error } : {}),
+    };
+  }
+  for (const key of ['content', 'result', 'structuredContent', 'text', 'output']) {
+    const loaded = parseLoadedCardGraphReference(record[key], depth + 1);
+    if (loaded) return loaded;
   }
   return null;
 }
@@ -150,7 +220,8 @@ export default function useAgentBuilderMainChat({
   initialMessages,
   onUserTurnStarted,
   onNativeTurnEvent,
-  onMagOneInstructionsProposed,
+  onMagOneInstructionsLoaded,
+  onCardGraphReferenceLoaded,
   onTurnFinished,
 }: UseAgentBuilderMainChatArgs) {
   const [nativeSessionBusy, setNativeSessionBusy] = useState(false);
@@ -266,8 +337,15 @@ export default function useAgentBuilderMainChat({
               && event.toolName === 'write_mag_one_instructions'
               && event.isError !== true
             ) {
-              const proposal = parseMagOneInstructionsProposal(event.output);
-              if (proposal) notifyObserver(onMagOneInstructionsProposed, proposal);
+              const loaded = parseMagOneInstructionsLoaded(event.output);
+              if (loaded) notifyObserver(onMagOneInstructionsLoaded, loaded);
+            }
+            if (
+              event.kind === 'tool_result'
+              && event.toolName === 'card.load_graph_references'
+            ) {
+              const loaded = parseLoadedCardGraphReference(event.output);
+              if (loaded) notifyObserver(onCardGraphReferenceLoaded, loaded);
             }
             if (event.kind === 'text') {
               appendAssistantText(
@@ -323,7 +401,8 @@ export default function useAgentBuilderMainChat({
       deckId,
       nativeSessionBusy,
       onNativeTurnEvent,
-      onMagOneInstructionsProposed,
+      onMagOneInstructionsLoaded,
+      onCardGraphReferenceLoaded,
       onTurnFinished,
       onUserTurnStarted,
     ],

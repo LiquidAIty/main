@@ -170,10 +170,19 @@ requiredCallerRuntimeMode = "main"
 
 [[toolGroups.tools]]
 name = "write_mag_one_instructions"
+access = "write"
 displayName = "Prepare Mag One input"
-description = "Return one exact read-only Mag One prompt, graph, worker, and wire proposal. Persist nothing and start no runtime."
-parameters = ["instructions", "goal", "completionCriteria", "graphReferences", "requestedOutputFormat", "boundaries", "workers", "removeWorkerCardIds", "estimatedModelCalls", "costRisk", "graphResultsTruncated"]
+description = "Place one exact transient prompt in the saved Mag One Card Invocation editor. Persist nothing and start no runtime."
+parameters = ["instructions"]
 required = ["instructions"]
+
+[[toolGroups.tools]]
+name = "card.load_graph_references"
+access = "write"
+displayName = "Load graph reference into Card"
+description = "Resolve one bounded native graph reference into a target Card's transient Knowledge context without executing or persisting the Card input."
+parameters = ["targetCardId", "authority", "nativeId", "reason", "order", "depth", "resultLimit", "required"]
+required = ["targetCardId", "authority", "nativeId", "reason", "order", "depth", "resultLimit", "required"]
 
 [[toolGroups.tools]]
 name = "canvas.inspect"
@@ -218,7 +227,7 @@ name = "card.run_assistant_agent"
 access = "write"
 displayName = "Run saved Card"
 description = "Run one saved external Card through current Card grants and AGE relationship authority."
-parameters = ["projectId", "deckId", "cardId", "correlationId", "conversationId", "originatingAgentId", "originatingRunId", "input", "dataAnchors"]
+parameters = ["projectId", "deckId", "cardId", "correlationId", "conversationId", "originatingAgentId", "originatingRunId", "input", "keyContext", "visibleMessages", "priorResults", "dataAnchors", "outputRequirements"]
 required = ["cardId", "input"]
 
 [[toolGroups]]
@@ -877,6 +886,11 @@ type = "integer"
 required = true
 
 [[records.fields]]
+name = "resultLimit"
+type = "integer"
+required = false
+
+[[records.fields]]
 name = "required"
 type = "boolean"
 required = true
@@ -1049,6 +1063,11 @@ required = true
 name = "boundedExpansion"
 type = "integer"
 required = true
+
+[[records.fields]]
+name = "resultLimit"
+type = "integer"
+required = false
 
 [[records.fields]]
 name = "required"

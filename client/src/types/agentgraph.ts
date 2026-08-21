@@ -14,7 +14,7 @@ export type CardRuntime =
       mode: 'assistant' | 'magentic_one';
     };
 
-// flow = ORANGE direct parent→subagent; magentic_option = BLUE side worker
+// flow = ORANGE explicit saved Card→Card authority; magentic_option = BLUE side worker
 // slot; magentic_control = BLUE dedicated top control input (submit the
 // finalized prompt to Mag One — never worker membership).
 // Mirrors the backend contract: an unrecognised edge is classified 'invalid' and

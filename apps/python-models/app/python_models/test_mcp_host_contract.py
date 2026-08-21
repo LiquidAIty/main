@@ -823,7 +823,7 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
     monkeypatch.setattr(control_plane, "agentgraph_inspect", inspect)
     monkeypatch.setattr(mcp_host, "_bridge", bridge)
 
-    async def proposal(args):
+    async def load_instructions(args):
         calls.append(("write_mag_one_instructions", dict(args)))
         return {
             "ok": True,
@@ -832,15 +832,30 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
             "targetCardId": "card_mag_one",
             "targetCardTitle": "Magentic-One",
             "instructions": str(args["instructions"]).strip(),
-            "proposal": {"workers": [], "cardsToCreate": [], "cardsToUpdate": [],
-                         "wiresToAdd": [], "wiresToRemove": []},
-            "proposalHash": "a" * 64,
+            "sourceCardId": args["_sourceCardId"],
             "persisted": False,
             "started": False,
-            "approvalRequired": True,
         }
 
-    monkeypatch.setattr(control_plane, "prepare_mag_one_proposal", proposal)
+    async def load_graph(args):
+        calls.append(("card.load_graph_references", dict(args)))
+        return {
+            "ok": True,
+            "targetCardId": args["targetCardId"],
+            "sourceCardId": args["_sourceCardId"],
+            "sourceRunId": args["_sourceRunId"],
+            "reference": {
+                "authority": args["authority"], "nativeId": args["nativeId"],
+                "reason": args["reason"], "order": args["order"],
+                "boundedExpansion": args["depth"], "resultLimit": args["resultLimit"],
+                "required": args["required"],
+            },
+            "resolvedReferences": [], "resolvedContextMarkdown": "# KnowGraph\nCurrent data",
+            "resolved": True, "ready": True, "persisted": False, "started": False,
+        }
+
+    monkeypatch.setattr(control_plane, "write_mag_one_instructions", load_instructions)
+    monkeypatch.setattr(control_plane, "card_load_graph_references", load_graph)
 
     inspected = asyncio.run(
         mcp_host._dispatch_tool("agentgraph.inspect", {"runId": "run-1", "limit": 5})
@@ -867,10 +882,26 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
     assert proposal_payload["instructions"] == "exact proposed mission\nwith formatting"
     assert proposal_payload["persisted"] is False
     assert proposal_payload["started"] is False
-    assert proposal_payload["approvalRequired"] is True
     assert calls[-1][0] == "write_mag_one_instructions"
     assert calls[-1][1]["projectId"] == "project-1"
     assert calls[-1][1]["deckId"] == "deck_builder"
+    assert calls[-1][1]["_sourceCardId"] == "card_main_chat"
+
+    loaded = asyncio.run(
+        mcp_host._dispatch_tool(
+            "card.load_graph_references",
+            {
+                "targetCardId": "card_mag_one", "authority": "KnowGraph",
+                "nativeId": "episode-1", "reason": "Current sourced evidence",
+                "order": 0, "depth": 1, "resultLimit": 8, "required": True,
+            },
+        )
+    )
+    loaded_payload = json.loads(loaded[0].text)
+    assert loaded_payload["ready"] is True
+    assert loaded_payload["sourceCardId"] == "card_main_chat"
+    assert loaded_payload["sourceRunId"] == "external-main:grant-1"
+    assert calls[-1][0] == "card.load_graph_references"
 
     executed = asyncio.run(
         mcp_host._dispatch_tool(
@@ -1065,6 +1096,10 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
         assert by_name["write_mag_one_instructions"].inputSchema["required"] == [
             "instructions",
         ]
+        assert by_name["card.load_graph_references"].inputSchema["required"] == [
+            "targetCardId", "authority", "nativeId", "reason", "order", "depth",
+            "resultLimit", "required",
+        ]
         assert by_name["card.create"].inputSchema["required"] == [
             "projectId",
             "deckId",
@@ -1089,6 +1124,8 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
         assert "main.context" in by_name
         assert "agentgraph.inspect" in by_name
         assert "write_mag_one_instructions" in by_name
+        assert "card.load_graph_references" in by_name
+        assert len(by_name) == 71
         assert "coder.status" not in by_name
         assert all(
             tool.inputSchema.get("additionalProperties") is False
@@ -1140,10 +1177,12 @@ def test_mag_one_tools_use_direct_transient_input_contract():
         "projectId", "deckId", "input", "conversationId",
     }
     assert mcp_host._ALLOWED_KEYS["write_mag_one_instructions"] == {
-        "projectId", "deckId", "conversationId", "instructions", "goal",
-        "completionCriteria", "graphReferences", "requestedOutputFormat",
-        "boundaries", "workers", "removeWorkerCardIds", "estimatedModelCalls",
-        "costRisk", "graphResultsTruncated",
+        "projectId", "deckId", "conversationId", "instructions", "_sourceCardId",
+    }
+    assert mcp_host._ALLOWED_KEYS["card.load_graph_references"] == {
+        "projectId", "deckId", "conversationId", "targetCardId", "authority",
+        "nativeId", "reason", "order", "depth", "resultLimit", "required",
+        "_sourceCardId", "_sourceRunId",
     }
 
 
@@ -2326,6 +2365,10 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "cardId",
         "input",
         "dataAnchors",
+        "keyContext",
+        "visibleMessages",
+        "priorResults",
+        "outputRequirements",
     }
     assert set(card_tool.inputSchema["required"]) == {"cardId", "input"}
     assert "saved runtime adapter" in card_tool.description
@@ -2451,6 +2494,13 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
         "cardId": "coder-card",
         "input": "Approved exact task.",
+        "keyContext": "Use the current saved Card and bounded source context.",
+        "visibleMessages": [{"role": "user", "content": "Check the missing point."}],
+        "priorResults": [{
+            "authority": "CodeGraph", "nativeId": "module.symbol",
+            "reason": "already inspected", "asOf": "current", "required": False,
+        }],
+        "outputRequirements": "Return the verified result and stop.",
     }))
     path, payload = calls[-1]
     assert path == "card_run_assistant_agent"
@@ -2459,6 +2509,10 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert payload["conversationId"] == "external-mcp:grant-1"
     assert payload["originatingAgentId"] == "card_main_chat"
     assert payload["originatingRunId"] == "external-main:grant-1"
+    assert payload["keyContext"].startswith("Use the current saved Card")
+    assert payload["visibleMessages"][0]["role"] == "user"
+    assert payload["priorResults"][0]["nativeId"] == "module.symbol"
+    assert payload["outputRequirements"] == "Return the verified result and stop."
 
 def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(monkeypatch):
     import asyncio
@@ -2531,7 +2585,7 @@ def test_tunnel_waits_for_complete_catalog_without_default_timeout():
     source = open(script, encoding="utf-8").read()
     assert "[int]$TimeoutSeconds = 0" in source
     assert '$readinessUrl = "$localBaseUrl/health/ready"' in source
-    assert "$catalogCount -eq 70" in source
+    assert "$catalogCount -eq 71" in source
     assert "$catalogReady" in source
     loop_start = source.index("    while ($null -eq $deadline")
     loop_end = source.index("\n    if (-not $catalogReady)", loop_start)

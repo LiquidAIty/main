@@ -91,6 +91,18 @@ describe('Main / Hermes / graph authority topology', () => {
     }
   });
 
+  it('uses wires only as explicit help authority and gives Kanban no outward flow', () => {
+    expect(INITIAL_DECK.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' }),
+      expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' }),
+      expect.objectContaining({ source: 'card_local_coder', target: 'card_hermes_steward', edgeType: 'flow' }),
+    ]));
+    expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
+      source: 'card_hermes_steward', edgeType: 'flow',
+    }));
+    expect(JSON.stringify(INITIAL_DECK.edges)).not.toContain('autoRun');
+  });
+
   it('grants Main and the one real Hermes card progressive graph tools without ordinary web search', () => {
     const byId = new Map(INITIAL_DECK.nodes.map((node) => [node.id, node]));
     const mainTools = byId.get('card_main_chat')?.runtimeOptions?.tools ?? [];
@@ -101,13 +113,12 @@ describe('Main / Hermes / graph authority topology', () => {
       'agentgraph.inspect',
     ]));
     expect(mainTools).not.toContain('web_search');
-    expect(hermesTools).toEqual(expect.arrayContaining([
-      'graphiti.search_nodes',
+    expect(hermesTools).toEqual([
       'graphiti.add_memory',
       'graphiti.add_triplet',
-      'agentgraph.inspect',
       'write_mag_one_instructions',
-    ]));
+      'card.load_graph_references',
+    ]);
     expect(hermesTools).not.toEqual(expect.arrayContaining(['web_search', 'run_mag_one']));
     expect(byId.has('card_research_agent')).toBe(false);
     const hermesPrompt = byId.get('card_hermes_steward')?.prompt ?? '';
@@ -136,7 +147,7 @@ describe('Main / Hermes / graph authority topology', () => {
     }));
   });
 
-  it('keeps Main, Coder, steward, and Mag One capability ceilings disjoint', () => {
+  it('keeps role capability ceilings bounded and explicit', () => {
     const byId = new Map(INITIAL_DECK.nodes.map((node) => [node.id, node]));
     const main = byId.get('card_main_chat');
     const coder = byId.get('card_local_coder');
@@ -144,8 +155,10 @@ describe('Main / Hermes / graph authority topology', () => {
     const magOne = byId.get('card_magentic');
 
     expect(main?.runtimeOptions?.tools).toContain('run_mag_one');
-    expect(main?.runtimeOptions?.toolsets).toEqual(['file', 'terminal', 'delegation']);
-    expect(main?.prompt).toContain('native Hermes delegate_task');
+    expect(main?.runtimeOptions?.tools).toContain('card.run_assistant_agent');
+    expect(main?.runtimeOptions?.toolsets).toEqual(['file', 'terminal']);
+    expect(main?.prompt).toContain('card.run_assistant_agent');
+    expect(main?.prompt).toContain('A wire grants authority but never starts work');
     expect(main?.prompt).toContain('only internal role allowed to submit it to Mag One');
     expect(main?.prompt).toContain('official MCP run_mag_one seam');
 
@@ -159,6 +172,7 @@ describe('Main / Hermes / graph authority topology', () => {
       },
     });
     expect(coder?.runtimeOptions?.tools).toContain('cbm.search_graph');
+    expect(coder?.runtimeOptions?.tools).toContain('card.run_assistant_agent');
     expect(coder?.runtimeOptions?.tools).not.toEqual(expect.arrayContaining([
       'run_mag_one',
       'graphiti.add_memory',
@@ -167,10 +181,14 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(coder?.prompt).toContain('Do not create hidden agents');
 
     expect(steward?.runtimeOptions?.tools).not.toContain('run_mag_one');
+    expect(steward?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
     expect(steward?.runtimeOptions?.tools).toContain('write_mag_one_instructions');
-    expect(steward?.runtimeOptions?.toolsets ?? []).toEqual([]);
+    expect(steward?.runtimeOptions?.toolsets ?? []).toEqual(['web']);
     expect(steward?.prompt).toContain('Do not use a repository-writing terminal');
     expect(steward?.prompt).toContain('Use write_mag_one_instructions');
+    expect(steward?.prompt).toContain('Inspect supplied current graph data and prior checked sources first');
+    expect(steward?.prompt).toContain('Firecrawl backend');
+    expect(steward?.prompt).toContain('Do not delegate onward');
 
     expect(magOne).toMatchObject({
       runtime: { kind: 'autogen', mode: 'magentic_one' },
@@ -179,4 +197,5 @@ describe('Main / Hermes / graph authority topology', () => {
       (node) => node.runtime.kind === 'hermes' && node.runtime.mode === 'kanban',
     ).map((node) => node.id)).toEqual(['card_hermes_steward']);
   });
+
 });

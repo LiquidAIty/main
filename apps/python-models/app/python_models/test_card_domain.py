@@ -70,7 +70,7 @@ def test_deck_validation_rejects_duplicate_identities_and_missing_endpoints() ->
         card_domain._validated_deck_collections(missing, "deck-two")
 
 
-def test_direct_subagents_keep_only_enabled_top_level_flow_targets() -> None:
+def test_direct_card_targets_keep_only_enabled_top_level_flow_targets() -> None:
     cards = {
         "parent": _agent("parent"),
         "enabled": _agent(
@@ -98,7 +98,7 @@ def test_direct_subagents_keep_only_enabled_top_level_flow_targets() -> None:
         {"source": "parent", "target": "kanban", "edgeType": "flow"},
         {"source": "enabled", "target": "parent", "edgeType": "flow"},
     ]
-    assert card_domain._direct_subagents("parent", cards, edges) == [
+    assert card_domain._direct_card_targets("parent", cards, edges) == [
         _expected_delegate("enabled"),
         {
             **_expected_delegate("kanban"),
@@ -426,13 +426,12 @@ def _destination_payload(card_id: str) -> dict:
         "cardId": card_id,
         "senderCardId": "sender",
         "assignment": "Use every supplied declaration.",
-        "contextMarkdown": (
-            "[MCP]\nname=calculator\n[/MCP]\n\n"
-            "[JSON]\n"
-            '{"type":"task-data","value":{"recipientCardId":"not-authority","runtime":"not-authority"}}'
-            "\n[/JSON]"
-        ),
-        "nativeReferences": [{
+        "keyContext": "Continue only from the bounded current handoff.",
+        "visibleMessages": [
+            {"role": "user", "content": "Please verify the current source."},
+            {"role": "assistant", "content": "I found one source-backed starting point."},
+        ],
+        "priorResults": [{
             "authority": "KnowGraph",
             "nativeId": "episode:one",
             "reason": "selected evidence",
@@ -459,6 +458,8 @@ def test_receiving_card_materializes_its_own_exact_call_data(
     assert autogen["idf"]["runtime"] == {"kind": "autogen", "mode": "assistant"}
     assert autogen["idf"]["enabledTools"] == []
     assert hermes["idf"]["message"] == autogen["idf"]["message"]
+    assert "Continue only from the bounded current handoff." in hermes["idf"]["message"]
+    assert "Inspect the supplied current graph data" in hermes["idf"]["message"]
     assert hermes["idf"]["nativeReferences"][0]["nativeId"] == "episode:one"
     assert "cardId" not in hermes["idf"]
     assert "runId" not in hermes["idf"]
@@ -590,6 +591,87 @@ def test_saved_dynamic_knowgraph_hook_searches_the_assignment_once(
     assert preview["resolvedNativeReads"][0]["nativeId"] == "entity-1"
 
 
+def test_card_graph_handoff_rereads_native_data_and_attributes_source_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _agent("helper", runtime={"kind": "hermes", "mode": "kanban", "profile": "helper"})
+    source["runtimeOptions"]["tools"] = ["card.load_graph_references"]
+    target = _agent("mag-one", runtime={"kind": "autogen", "mode": "magentic_one"})
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "deck": {"nodes": [source, target], "edges": []},
+    })
+    resolved_calls = []
+    monkeypatch.setattr(
+        card_domain,
+        "resolve_data_anchors",
+        lambda project_id, anchors, **kwargs: (
+            resolved_calls.append((project_id, anchors, kwargs))
+            or (
+                "# KnowGraph\nActual current sourced finding",
+                [{
+                    "authority": "KnowGraph", "nativeId": "episode:one",
+                    "nativeKind": "node", "reason": anchors[0]["reason"],
+                    "provenance": {"source": "Graphiti"}, "truncated": False,
+                }],
+            )
+        ),
+    )
+    observed = []
+    monkeypatch.setattr(card_domain, "observe_native_attention", lambda event: observed.append(event) or True)
+
+    result = card_domain.load_card_graph_reference({
+        "projectId": "project-one", "deckId": "deck_builder",
+        "conversationId": "conversation-one", "_sourceCardId": "helper",
+        "_sourceRunId": "run-helper", "targetCardId": "mag-one",
+        "authority": "KnowGraph", "nativeId": "episode:one",
+        "reason": "Use the sourced evidence", "order": 2, "depth": 1,
+        "resultLimit": 8, "required": True,
+    })
+
+    assert result["ready"] is True
+    assert result["persisted"] is False
+    assert result["started"] is False
+    assert result["reference"] == {
+        "authority": "KnowGraph", "nativeId": "episode:one",
+        "reason": "Use the sourced evidence", "boundedExpansion": 1,
+        "resultLimit": 8, "required": True, "order": 2,
+    }
+    assert resolved_calls[0][2]["deck_id"] == "deck_builder"
+    assert resolved_calls[0][2]["card_id"] == "helper"
+    assert resolved_calls[0][2]["graph_projection"]["schemaVersion"] == "native-card-context.v1"
+    assert observed[0]["runId"] == "run-helper"
+    assert observed[0]["cardId"] == "helper"
+    assert observed[0]["targetCardId"] == "mag-one"
+    assert observed[0]["nativeNodeIds"] == ["episode:one"]
+
+
+def test_card_graph_handoff_fails_closed_for_ungranted_or_unresolved_required_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _agent("helper", runtime={"kind": "hermes", "mode": "kanban", "profile": "helper"})
+    target = _agent("mag-one", runtime={"kind": "autogen", "mode": "magentic_one"})
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one", "deck": {"nodes": [source, target], "edges": []},
+    })
+    payload = {
+        "projectId": "project-one", "deckId": "deck_builder",
+        "_sourceCardId": "helper", "_sourceRunId": "run-helper",
+        "targetCardId": "mag-one", "authority": "KnowGraph",
+        "nativeId": "missing", "reason": "Required source", "order": 0,
+        "depth": 0, "resultLimit": 4, "required": True,
+    }
+    with pytest.raises(card_domain.CardDomainError, match="graph_reference_handoff_not_granted"):
+        card_domain.load_card_graph_reference(payload)
+
+    source["runtimeOptions"]["tools"] = ["card.load_graph_references"]
+    monkeypatch.setattr(card_domain, "resolve_data_anchors", lambda *_args, **_kwargs: ("", []))
+    result = card_domain.load_card_graph_reference(payload)
+    assert result["ok"] is False
+    assert result["ready"] is False
+    assert result["error"] == "data_anchor_required_not_resolved"
+
+
 def test_context_cascade_rejects_duplicate_and_recursive_handoffs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -625,6 +707,95 @@ def test_context_cascade_rejects_duplicate_and_recursive_handoffs(
     ):
         card_domain.materialize_invocation(payload)
 
+
+def test_explicit_subagent_context_is_bounded_transient_and_retaskable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loaded = _destination_fixture(monkeypatch)
+    target = next(card for card in loaded["deck"]["nodes"] if card["id"] == "hermes")
+    target["runtime"] = {"kind": "hermes", "mode": "kanban", "profile": "knowledge"}
+    target["runtimeOptions"]["tools"] = ["graphiti.add_memory"]
+
+    first = card_domain.materialize_invocation({
+        **_destination_payload("hermes"),
+        "assignment": "Research the first bounded question.",
+        "keyContext": "Use current graph evidence for the first question.",
+    })
+    second = card_domain.materialize_invocation({
+        **_destination_payload("hermes"),
+        "assignment": "Retask the same saved Kanban Card with a second question.",
+        "keyContext": "The first result was weak; verify the missing point only.",
+    })
+
+    assert first["cardIdentity"]["cardId"] == second["cardIdentity"]["cardId"] == "hermes"
+    assert second["idf"]["runtime"]["profile"] == "knowledge"
+    assert "Retask the same saved Kanban Card" in second["idf"]["message"]
+    assert "Research the first bounded question" not in second["idf"]["message"]
+    assert second["delegationTargets"] == []
+    assert "card.run_assistant_agent" not in second["idf"]["enabledTools"]
+
+    too_many = _destination_payload("hermes")
+    too_many["visibleMessages"] = [
+        {"role": "user", "content": f"message {index}"} for index in range(7)
+    ]
+    with pytest.raises(card_domain.CardDomainError, match="card_handoff_visible_message_limit_exceeded"):
+        card_domain.materialize_invocation(too_many)
+
+    too_large = _destination_payload("hermes")
+    too_large["visibleMessages"] = [{"role": "user", "content": "x" * 3_001}]
+    with pytest.raises(card_domain.CardDomainError, match="card_handoff_visible_message_token_limit_exceeded"):
+        card_domain.materialize_invocation(too_large)
+
+
+def test_explicit_subagent_context_rejects_unbounded_parent_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _destination_fixture(monkeypatch)
+    payload = _destination_payload("hermes")
+    payload["contextMarkdown"] = "complete parent transcript"
+    with pytest.raises(card_domain.CardDomainError, match="unbounded_card_handoff_context_rejected"):
+        card_domain.materialize_invocation(payload)
+
+
+def test_main_and_coder_can_explicitly_retask_one_non_delegating_kanban_card(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    main = _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
+    coder = _agent("coder", runtime={"kind": "hermes", "mode": "delegate", "profile": "coder"})
+    kanban = _agent("kanban", runtime={"kind": "hermes", "mode": "kanban", "profile": "knowledge"})
+    main["runtimeOptions"]["tools"] = ["card.run_assistant_agent"]
+    coder["runtimeOptions"]["tools"] = ["card.run_assistant_agent"]
+    kanban["runtimeOptions"]["tools"] = ["graphiti.add_memory"]
+    for index, card in enumerate((main, coder, kanban), start=1):
+        card["_cardRevisionId"] = f"revision-{index}"
+        card["_cardRevision"] = 1
+        card["_cardRevisionSha256"] = f"sha-{index}"
+    loaded = {
+        "projectId": "project-one",
+        "deck": {
+            "nodes": [main, coder, kanban],
+            "edges": [
+                {"source": "main", "target": "kanban", "edgeType": "flow"},
+                {"source": "coder", "target": "kanban", "edgeType": "flow"},
+            ],
+        },
+    }
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: loaded)
+
+    def invoke(sender: str, task: str) -> dict:
+        return card_domain.materialize_invocation({
+            "projectId": "project-one", "deckId": "deck_builder",
+            "cardId": "kanban", "senderCardId": sender,
+            "assignment": task, "keyContext": "Inspect supplied evidence first.",
+            "visibleMessages": [], "priorResults": [],
+            "outputRequirements": "Return evidence, gaps, and native references.",
+        })
+
+    assert invoke("main", "Research the current question.")["cardIdentity"]["cardId"] == "kanban"
+    assert invoke("coder", "Retask the missing evidence.")["delegationTargets"] == []
+    loaded["deck"]["edges"] = loaded["deck"]["edges"][:1]
+    with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
+        invoke("coder", "This wire no longer authorizes the retask.")
 
 def test_main_chat_materializes_once_without_serialized_card_or_run_data(
     monkeypatch: pytest.MonkeyPatch,

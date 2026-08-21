@@ -1837,98 +1837,46 @@ async def _materialize_complete_catalog() -> list[Tool]:
         Tool(
             name="write_mag_one_instructions",
             description=(
-                "Return one exact, read-only Mag One job proposal for Main review: transient input, "
-                "current graph references, worker assessment, and the exact Card/wire delta. "
-                "This tool persists nothing, grants no approval, and starts no runtime."
+                "Place one exact transient prompt into the saved Mag One Card's existing "
+                "Invocation editor for Main to review or edit. This tool creates no proposal "
+                "record, persists nothing, and never starts Mag One."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "instructions": {"type": "string", "minLength": 1},
-                    "goal": {"type": "string"},
-                    "completionCriteria": {
-                        "type": "array", "maxItems": 24,
-                        "items": {"type": "string", "minLength": 1},
-                    },
-                    "graphReferences": {
-                        "type": "array", "maxItems": 24,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "authority": {
-                                    "type": "string",
-                                    "enum": ["ThinkGraph", "KnowGraph", "CodeGraph"],
-                                },
-                                "nativeId": {"type": "string", "minLength": 1},
-                                "reason": {"type": "string", "minLength": 1},
-                                "provenance": {"type": "object"},
-                            },
-                            "required": ["authority", "nativeId", "reason"],
-                            "additionalProperties": False,
-                        },
-                    },
-                    "requestedOutputFormat": {"type": "string"},
-                    "boundaries": {
-                        "type": "array", "maxItems": 24,
-                        "items": {"type": "string", "minLength": 1},
-                    },
-                    "workers": {
-                        "type": "array", "maxItems": 12,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "existingCardId": {"type": "string"},
-                                "title": {"type": "string", "minLength": 1},
-                                "role": {"type": "string", "minLength": 1},
-                                "stableInstructions": {"type": "string"},
-                                "skills": {
-                                    "type": "array", "items": {"type": "string", "minLength": 1},
-                                },
-                                "runtime": {
-                                    "type": "object",
-                                    "properties": {
-                                        "kind": {"type": "string"},
-                                        "mode": {"type": "string"},
-                                        "profile": {"type": "string"},
-                                    },
-                                    "required": ["kind", "mode"],
-                                    "additionalProperties": False,
-                                },
-                                "model": {
-                                    "type": "object",
-                                    "properties": {
-                                        "provider": {"type": "string"},
-                                        "modelKey": {"type": "string"},
-                                        "providerModelId": {"type": "string"},
-                                    },
-                                    "required": ["provider", "modelKey", "providerModelId"],
-                                    "additionalProperties": False,
-                                },
-                                "readCapabilities": {
-                                    "type": "array", "items": {"type": "string", "minLength": 1},
-                                },
-                                "effectTools": {
-                                    "type": "array", "items": {"type": "string", "minLength": 1},
-                                },
-                                "reason": {"type": "string", "minLength": 1},
-                                "expectedInput": {"type": "string", "minLength": 1},
-                                "expectedOutput": {"type": "string", "minLength": 1},
-                            },
-                            "required": [
-                                "title", "role", "reason", "expectedInput", "expectedOutput",
-                            ],
-                            "additionalProperties": False,
-                        },
-                    },
-                    "removeWorkerCardIds": {
-                        "type": "array", "maxItems": 12,
-                        "items": {"type": "string", "minLength": 1},
-                    },
-                    "estimatedModelCalls": {"type": "integer", "minimum": 0},
-                    "costRisk": {"type": "string"},
-                    "graphResultsTruncated": {"type": "boolean"},
                 },
                 "required": ["instructions"],
+                "additionalProperties": False,
+            },
+        ),
+        Tool(
+            name="card.load_graph_references",
+            description=(
+                "Resolve one bounded current ThinkGraph, KnowGraph, or CodeGraph reference "
+                "into a saved target Card's transient Knowledge context. The server injects "
+                "source Card/Run/project/deck identity. This tool never executes the target, "
+                "persists an IDF, writes graph data, or creates Cards or wires."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "targetCardId": {"type": "string", "minLength": 1},
+                    "authority": {
+                        "type": "string",
+                        "enum": ["ThinkGraph", "KnowGraph", "CodeGraph"],
+                    },
+                    "nativeId": {"type": "string", "minLength": 1},
+                    "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
+                    "order": {"type": "integer", "minimum": 0, "maximum": 255},
+                    "depth": {"type": "integer", "minimum": 0, "maximum": 3},
+                    "resultLimit": {"type": "integer", "minimum": 1, "maximum": 24},
+                    "required": {"type": "boolean"},
+                },
+                "required": [
+                    "targetCardId", "authority", "nativeId", "reason",
+                    "order", "depth", "resultLimit", "required",
+                ],
                 "additionalProperties": False,
             },
         ),
@@ -2109,7 +2057,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
                 "server injects projectId/correlationId/conversationId; the model supplies the "
                 "bound cardId plus the task input only. conversationId is the real live "
                 "conversation this run belongs to, when one exists. The backend persists one "
-                "one transient Card input before the selected runtime receives it."
+                "transient Card input before the selected runtime receives it."
             ),
             inputSchema={
                 "type": "object",
@@ -2128,6 +2076,46 @@ async def _materialize_complete_catalog() -> list[Tool]:
                         "description": "Server-owned parent Harness turn identity for an inter-agent doorway call.",
                     },
                     "input": {"type": "string"},
+                    "keyContext": {
+                        "type": "string",
+                        "description": "Short caller-selected context for this explicit invocation only.",
+                    },
+                    "visibleMessages": {
+                        "type": "array",
+                        "maxItems": 6,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "role": {"type": "string", "enum": ["user", "assistant"]},
+                                "content": {"type": "string", "minLength": 1},
+                            },
+                            "required": ["role", "content"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "priorResults": {
+                        "type": "array",
+                        "maxItems": 32,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "authority": {
+                                    "type": "string",
+                                    "enum": ["ThinkGraph", "KnowGraph", "CodeGraph"],
+                                },
+                                "nativeId": {"type": "string", "minLength": 1},
+                                "reason": {"type": "string", "minLength": 1},
+                                "asOf": {"type": "string", "minLength": 1},
+                                "required": {"type": "boolean"},
+                            },
+                            "required": ["authority", "nativeId", "reason", "asOf", "required"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "outputRequirements": {
+                        "type": "string",
+                        "description": "Exact required result for this explicit invocation.",
+                    },
                     "dataAnchors": {
                         "type": "array",
                         "maxItems": 16,
@@ -2143,6 +2131,9 @@ async def _materialize_complete_catalog() -> list[Tool]:
                                 "priority": {"type": "integer"},
                                 "boundedExpansion": {
                                     "type": "integer", "minimum": 0, "maximum": 3,
+                                },
+                                "resultLimit": {
+                                    "type": "integer", "minimum": 1, "maximum": 24,
                                 },
                                 "required": {"type": "boolean"},
                             },
@@ -2425,6 +2416,8 @@ _SERVER_OWNED_ARGUMENTS = {
     "_callerCardId",
     "_callerRuntimeKind",
     "_callerRuntimeMode",
+    "_sourceCardId",
+    "_sourceRunId",
 }
 
 
@@ -2517,10 +2510,12 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "input", "conversationId"},
     "write_mag_one_instructions": {
-        "projectId", "deckId", "conversationId", "instructions", "goal",
-        "completionCriteria", "graphReferences", "requestedOutputFormat",
-        "boundaries", "workers", "removeWorkerCardIds", "estimatedModelCalls",
-        "costRisk", "graphResultsTruncated",
+        "projectId", "deckId", "conversationId", "instructions", "_sourceCardId",
+    },
+    "card.load_graph_references": {
+        "projectId", "deckId", "conversationId", "targetCardId", "authority",
+        "nativeId", "reason", "order", "depth", "resultLimit", "required",
+        "_sourceCardId", "_sourceRunId",
     },
     "canvas.inspect": {"projectId", "deckId"},
     "card.create": {
@@ -2539,6 +2534,10 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "originatingRunId",
         "input",
         "dataAnchors",
+        "keyContext",
+        "visibleMessages",
+        "priorResults",
+        "outputRequirements",
     },
     "web_search": {"query", "max_results"},
 }
@@ -2556,7 +2555,8 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
     "card.update_configuration": "card_update_configuration",
     "canvas.upsert_wire": "canvas_upsert_wire",
     "card.run_assistant_agent": "card_run_assistant_agent",
-    "write_mag_one_instructions": "prepare_mag_one_proposal",
+    "write_mag_one_instructions": "write_mag_one_instructions",
+    "card.load_graph_references": "card_load_graph_references",
 }
 
 
@@ -2648,6 +2648,10 @@ async def _dispatch_tool(
             for field in ("projectId", "deckId", "conversationId"):
                 if field in allowed:
                     args[field] = str(context[field])
+            if name in {"write_mag_one_instructions", "card.load_graph_references"}:
+                args["_sourceCardId"] = str(context["mainCardId"])
+            if name == "card.load_graph_references":
+                args["_sourceRunId"] = str(context["parentRunId"])
             if "senderAgentId" in allowed:
                 args["senderAgentId"] = str(context["mainCardId"])
             if "correlationId" in allowed:

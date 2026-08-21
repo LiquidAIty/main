@@ -23,6 +23,7 @@ export default function AgentCardNode({
   const canReceiveConnection = true;
   const canStartConnection = true;
   const shellActive = Boolean(selected || data?.isInspecting || data?.isRuntimeActive);
+  const isHermesCard = data?.runtime?.kind === 'hermes';
   const name = String(data?.title || '').trim() || 'Agent';
   const subtext = String(data?.subtitle || '').replace(/\s+/g, ' ').trim() || 'Operational agent';
   const compactSubtext =
@@ -30,13 +31,16 @@ export default function AgentCardNode({
 
   return (
     <div
-      className="rounded-xl border bg-zinc-900 text-white"
+      className="border bg-zinc-900 text-white"
+      data-runtime-kind={data?.runtime?.kind || 'unknown'}
       style={
         graphGlassCardStyle({
           position: 'relative',
           padding: '8px 9px',
-          width: 124,
-          minHeight: 90,
+          width: isHermesCard ? 112 : 124,
+          minHeight: isHermesCard ? 112 : 90,
+          aspectRatio: isHermesCard ? '1 / 1' : undefined,
+          borderRadius: isHermesCard ? 28 : 12,
           borderWidth: 1,
           borderColor: shellActive
             ? 'rgba(55,173,170,0.6)'

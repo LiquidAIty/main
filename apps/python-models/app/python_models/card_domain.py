@@ -23,7 +23,11 @@ from app.python_models.idd import (
     validate_record,
 )
 from app.python_models.idf import materialize_idf
-from app.python_models.data_anchor import DataAnchorError, resolve_data_anchors
+from app.python_models.data_anchor import (
+    DataAnchorError,
+    empty_graph_projection,
+    resolve_data_anchors,
+)
 from app.python_models.postgres import connect_postgres
 from app.python_models.tool_registry import tool_manifest
 
@@ -669,6 +673,42 @@ def observe_native_attention(event: dict[str, Any]) -> bool:
                 },
                 "observed agtype",
             )
+            target_card_id = str(event.get("targetCardId") or "").strip()
+            if target_card_id:
+                handed = _age_rows(
+                    cursor,
+                    """
+                    MATCH (run:Run {
+                      projectId: $projectId, deckId: $deckId, runId: $runId
+                    }), (target:Card {
+                      projectId: $projectId, deckId: $deckId, cardId: $targetCardId
+                    })
+                    MERGE (run)-[handoff:HANDED_CONTEXT_TO {eventId: $eventId}]->(target)
+                    SET handoff.timestamp=$timestamp,
+                        handoff.authority=$authority,
+                        handoff.toolName=$toolName,
+                        handoff.nativeNodeIds=$nativeNodeIds,
+                        handoff.nativeEdgeIds=$nativeEdgeIds,
+                        handoff.resultHash=$resultHash
+                    RETURN target.cardId
+                    """,
+                    {
+                        "projectId": project_id,
+                        "deckId": deck_id,
+                        "runId": run_id,
+                        "targetCardId": target_card_id,
+                        "eventId": event_id,
+                        "timestamp": timestamp,
+                        "authority": authority,
+                        "toolName": tool_name,
+                        "nativeNodeIds": node_ids,
+                        "nativeEdgeIds": edge_ids,
+                        "resultHash": result_hash,
+                    },
+                    "card_id agtype",
+                )
+                if len(handed) != 1:
+                    return False
         return True
     except Exception:
         return False
@@ -1195,12 +1235,12 @@ def _is_magentic_worker_card(card: dict[str, Any]) -> bool:
     return runtime == {"kind": "autogen", "mode": "assistant"} and _card_enabled(card)
 
 
-def _direct_subagents(
+def _direct_card_targets(
     card_id: str,
     cards: dict[str, dict[str, Any]],
     edges: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Project saved Hermes delegate profiles from exact enabled FLOW targets."""
+    """Project explicit saved Hermes Card targets from enabled FLOW edges."""
     direct: list[dict[str, Any]] = []
     seen: set[str] = set()
     for edge in edges:
@@ -1256,6 +1296,9 @@ def _direct_subagents(
 _NATIVE_REFERENCE_LIMIT = 32
 _NATIVE_REFERENCE_TEXT_LIMIT = 65_536
 _DATA_ANCHOR_LIMIT = 16
+_CARD_HANDOFF_VISIBLE_MESSAGE_LIMIT = 6
+_CARD_HANDOFF_VISIBLE_MESSAGE_TOKEN_UPPER_BOUND = 3_000
+_CARD_HANDOFF_KEY_CONTEXT_LIMIT = 8_000
 
 
 def _normalized_native_references(value: Any) -> list[dict[str, Any]]:
@@ -1292,6 +1335,95 @@ def _normalized_native_references(value: Any) -> list[dict[str, Any]]:
     return normalized
 
 
+def _normalized_visible_messages(value: Any) -> list[dict[str, str]]:
+    """Validate caller-selected visible messages with a dependency-free token ceiling.
+
+    UTF-8 byte length is a conservative upper bound on byte-pair token count:
+    one token cannot represent less than one input byte.  The resulting limit
+    can be stricter than 3,000 provider tokens, but it can never exceed them.
+    """
+
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise CardDomainError("card_handoff_visible_messages_invalid")
+    if len(value) > _CARD_HANDOFF_VISIBLE_MESSAGE_LIMIT:
+        raise CardDomainError("card_handoff_visible_message_limit_exceeded")
+    normalized: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise CardDomainError("card_handoff_visible_message_invalid")
+        role = str(item.get("role") or "").strip().lower()
+        if role not in {"user", "assistant"}:
+            raise CardDomainError("card_handoff_visible_message_role_invalid")
+        content = _required_text(item.get("content"), "card_handoff_visible_message_content")
+        normalized.append({"role": role, "content": content})
+    rendered = "\n\n".join(
+        f"{message['role']}: {message['content']}" for message in normalized
+    )
+    if len(rendered.encode("utf-8")) > _CARD_HANDOFF_VISIBLE_MESSAGE_TOKEN_UPPER_BOUND:
+        raise CardDomainError("card_handoff_visible_message_token_limit_exceeded")
+    return normalized
+
+
+def _bounded_card_handoff_context(
+    payload: dict[str, Any],
+    *,
+    required: bool,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Render one transient explicit help context; persist and infer nothing."""
+
+    if not required:
+        return str(payload.get("contextMarkdown") or ""), []
+
+    sender_card_id = str(payload.get("senderCardId") or "").strip()
+    context_fields_present = any(
+        payload.get(field) not in (None, "", [])
+        for field in ("keyContext", "visibleMessages", "priorResults")
+    )
+    if context_fields_present and not sender_card_id:
+        raise CardDomainError("card_handoff_context_requires_sender")
+    if not sender_card_id:
+        return str(payload.get("contextMarkdown") or ""), []
+
+    if payload.get("contextMarkdown") not in (None, ""):
+        raise CardDomainError("unbounded_card_handoff_context_rejected")
+    key_context = _required_text(payload.get("keyContext"), "card_handoff_key_context")
+    if len(key_context.encode("utf-8")) > _CARD_HANDOFF_KEY_CONTEXT_LIMIT:
+        raise CardDomainError("card_handoff_key_context_limit_exceeded")
+    messages = _normalized_visible_messages(payload.get("visibleMessages"))
+    prior_results = _normalized_native_references(payload.get("priorResults"))
+    output_requirements = _required_text(
+        payload.get("outputRequirements"), "card_handoff_output_requirements"
+    )
+
+    sections = [f"### Key context\n{key_context}"]
+    if messages:
+        sections.append(
+            "### Relevant visible chat\n"
+            + "\n\n".join(
+                f"**{message['role'].title()}**\n{message['content']}"
+                for message in messages
+            )
+        )
+    if prior_results:
+        sections.append(
+            "### Prior checked results and sources\n"
+            + "\n".join(
+                "- "
+                f"{reference['authority']}:{reference['nativeId']} — "
+                f"{reference['reason']} (checked {reference['asOf']})"
+                for reference in prior_results
+            )
+        )
+    sections.append(
+        "### Research continuity\n"
+        "Inspect the supplied current graph data and prior checked sources first. "
+        "Research only missing, stale, contradictory, or explicitly requested verification."
+    )
+    return "\n\n".join(sections), prior_results
+
+
 def _normalized_data_anchors(value: Any, *, record_name: str) -> list[dict[str, Any]]:
     if value is None:
         return []
@@ -1317,16 +1449,155 @@ def _normalized_data_anchors(value: Any, *, record_name: str) -> list[dict[str, 
         bounded_expansion = anchor.get("boundedExpansion")
         if bounded_expansion < 0 or bounded_expansion > 3:
             raise CardDomainError("data_anchor_expansion_invalid")
+        result_limit = int(anchor.get("resultLimit", 24))
+        if result_limit < 1 or result_limit > 24:
+            raise CardDomainError("data_anchor_result_limit_invalid")
         normalized.append({
             "authority": authority,
             "nativeId": native_id,
             "reason": _required_text(anchor.get("reason"), "data_anchor_reason")[:2_000],
             "priority": int(anchor.get("priority", 0)),
             "boundedExpansion": bounded_expansion,
+            "resultLimit": result_limit,
             "required": anchor.get("required") is True,
             "_inputOrder": index,
         })
     return normalized
+
+
+def load_card_graph_reference(payload: dict[str, Any]) -> dict[str, Any]:
+    """Resolve one trusted Card-to-Card native graph handoff without execution.
+
+    The caller supplies only the target and one bounded native pointer.  The
+    official MCP host injects the source Card/Run/project/deck identities.  The
+    returned graph body is transient UI context; the saved Card and native
+    graph authorities are never mutated here.
+    """
+
+    project_id = _required_text(payload.get("projectId"), "project_id")
+    deck_id = _required_text(payload.get("deckId"), "deck_id")
+    source_card_id = _required_text(payload.get("_sourceCardId"), "source_card_id")
+    source_run_id = _required_text(payload.get("_sourceRunId"), "source_run_id")
+    target_card_id = _required_text(payload.get("targetCardId"), "target_card_id")
+    loaded = _load_deck_internal(project_id, deck_id)
+    cards = {card["id"]: card for card in loaded["deck"]["nodes"]}
+    source_card = cards.get(source_card_id)
+    target_card = cards.get(target_card_id)
+    if source_card is None:
+        raise CardDomainError("source_card_not_found")
+    if target_card is None:
+        raise CardDomainError("target_card_not_found")
+    if source_card_id == target_card_id:
+        raise CardDomainError("graph_reference_self_handoff_forbidden")
+    if not _card_enabled(source_card) or not _card_enabled(target_card):
+        raise CardDomainError("graph_reference_card_disabled")
+    source_options = _json_object(source_card.get("runtimeOptions"), "runtime_options")
+    source_tools = _string_list(source_options.get("tools"), "tools")
+    if "card.load_graph_references" not in source_tools:
+        raise CardDomainError("graph_reference_handoff_not_granted")
+
+    order = int(payload.get("order", 0))
+    if order < 0 or order > 255:
+        raise CardDomainError("data_anchor_order_invalid")
+    anchor = _normalized_data_anchors(
+        [{
+            "authority": payload.get("authority"),
+            "nativeId": payload.get("nativeId"),
+            "reason": payload.get("reason"),
+            "priority": -order,
+            "boundedExpansion": int(payload.get("depth", 0)),
+            "resultLimit": int(payload.get("resultLimit", 24)),
+            "required": payload.get("required") is True,
+        }],
+        record_name="data-anchor-reference",
+    )[0]
+    anchor.pop("_inputOrder", None)
+    anchor.pop("priority", None)
+    response_reference = {**anchor, "order": order}
+    observed_at = _now().isoformat().replace("+00:00", "Z")
+    graph_projection = empty_graph_projection(loaded["projectId"])
+    try:
+        context_markdown, references = resolve_data_anchors(
+            loaded["projectId"],
+            [anchor],
+            deck_id=deck_id,
+            card_id=source_card_id,
+            graph_projection=graph_projection,
+        )
+    except DataAnchorError as error:
+        return {
+            "ok": False,
+            "error": str(error),
+            "projectId": loaded["projectId"],
+            "deckId": deck_id,
+            "sourceCardId": source_card_id,
+            "sourceRunId": source_run_id,
+            "targetCardId": target_card_id,
+            "targetCardTitle": str(target_card.get("title") or ""),
+            "reference": response_reference,
+            "graphProjection": graph_projection,
+            "resolved": False,
+            "ready": False,
+            "persisted": False,
+            "started": False,
+            "observedAt": observed_at,
+        }
+
+    resolved = bool(references)
+    ready = resolved or anchor["required"] is False
+    attention_observed = False
+    if resolved:
+        node_ids = [
+            str(reference["nativeId"])
+            for reference in references
+            if reference.get("nativeKind") != "edge"
+        ]
+        edge_ids = [
+            str(reference["nativeId"])
+            for reference in references
+            if reference.get("nativeKind") == "edge"
+        ]
+        attention_observed = observe_native_attention({
+            "eventId": f"native-attention:{uuid4()}",
+            "timestamp": observed_at,
+            "projectId": loaded["projectId"],
+            "deckId": deck_id,
+            "conversationId": str(payload.get("conversationId") or ""),
+            "runId": source_run_id,
+            "cardId": source_card_id,
+            "targetCardId": target_card_id,
+            "toolName": "card.load_graph_references",
+            "authority": str(anchor["authority"]).lower(),
+            "operation": "read",
+            "nativeNodeIds": node_ids,
+            "nativeEdgeIds": edge_ids,
+            "resultHash": _sha(_canonical_json({
+                "authority": anchor["authority"],
+                "references": references,
+                "targetCardId": target_card_id,
+            })),
+            "truncated": any(reference.get("truncated") is True for reference in references),
+        })
+    return {
+        "ok": ready,
+        **({"error": "data_anchor_required_not_resolved"} if not ready else {}),
+        "projectId": loaded["projectId"],
+        "deckId": deck_id,
+        "sourceCardId": source_card_id,
+        "sourceRunId": source_run_id,
+        "targetCardId": target_card_id,
+        "targetCardTitle": str(target_card.get("title") or ""),
+        "reference": response_reference,
+        "resolvedReferences": references,
+        "resolvedContextMarkdown": context_markdown,
+        "graphProjection": graph_projection,
+        "resolved": resolved,
+        "ready": ready,
+        "attentionObserved": attention_observed,
+        "persisted": False,
+        "started": False,
+        "observedAt": observed_at,
+    }
 
 
 def _normalized_graph_hooks(value: Any) -> list[dict[str, Any]]:
@@ -1407,6 +1678,7 @@ def _prepare_invocation(
     if not _card_enabled(card):
         raise CardDomainError("card_disabled")
     sender_id = str(payload.get("senderCardId") or "").strip()
+    bounded_context_required = False
     if sender_id:
         if sender_id == card_id:
             raise CardDomainError("card_invocation_self_handoff_forbidden")
@@ -1436,6 +1708,10 @@ def _prepare_invocation(
                 and edge.get("enabled") is not False
                 for edge in loaded["deck"]["edges"]
             )
+        bounded_context_required = not (
+            target_runtime == {"kind": "autogen", "mode": "magentic_one"}
+            or sender_runtime == {"kind": "autogen", "mode": "magentic_one"}
+        )
         if sender is None or not authorized:
             raise CardDomainError("card_invocation_edge_authority_required")
     options = _json_object(card.get("runtimeOptions"), "runtime_options")
@@ -1464,7 +1740,7 @@ def _prepare_invocation(
         if write_mode not in {"read-only", "edit"}:
             raise CardDomainError("coder_write_mode_invalid")
         runtime_options["writeMode"] = write_mode
-    direct_subagents = _direct_subagents(card_id, cards, loaded["deck"]["edges"])
+    direct_card_targets = _direct_card_targets(card_id, cards, loaded["deck"]["edges"])
     card_identity = {"cardId": card_id, "title": card["title"]}
     call_config = {
         "systemPrompt": common_prompt,
@@ -1494,7 +1770,7 @@ def _prepare_invocation(
     write_tools = [name for name in effective_tools if tool_access(name) == "write"]
     call_config["enabledTools"] = write_tools
     tool_definitions = [by_id[name] for name in write_tools]
-    for delegate in direct_subagents:
+    for delegate in direct_card_targets:
         unknown_delegate_tools = [
             name for name in delegate["tools"] if name not in by_id
         ]
@@ -1519,10 +1795,11 @@ def _prepare_invocation(
         ),
         "assignment": assignment,
         "cardIdentity": card_identity,
-        "delegationTargets": direct_subagents,
+        "delegationTargets": direct_card_targets,
         "_callConfig": call_config,
         "_toolDefinitions": tool_definitions if include_tool_definitions else [],
         "_graphHooks": graph_hooks,
+        "_boundedContextRequired": bounded_context_required,
     }
 
 
@@ -1533,7 +1810,19 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     assignment = prepared.pop("assignment")
     tool_definitions = prepared.pop("_toolDefinitions")
     graph_hooks = prepared.pop("_graphHooks")
+    bounded_context_required = prepared.pop("_boundedContextRequired")
+    context_markdown, prior_results = _bounded_card_handoff_context(
+        payload,
+        required=bounded_context_required,
+    )
     references = _normalized_native_references(payload.get("nativeReferences"))
+    reference_identities = {
+        (reference["authority"], reference["nativeId"]) for reference in references
+    }
+    references.extend(
+        reference for reference in prior_results
+        if (reference["authority"], reference["nativeId"]) not in reference_identities
+    )
     incoming_anchors = _normalized_data_anchors(
         payload.get("dataAnchors"), record_name="data-anchor-reference"
     )
@@ -1549,6 +1838,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     for anchor in anchors:
         anchor.pop("_inputOrder", None)
         anchor.pop("priority", None)
+    graph_projection = empty_graph_projection(prepared["projectId"])
     try:
         graph_seed, anchor_references = resolve_data_anchors(
             prepared["projectId"],
@@ -1556,6 +1846,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
             deck_id=prepared["deckId"],
             card_id=prepared["cardIdentity"]["cardId"],
             search_text=assignment,
+            graph_projection=graph_projection,
         )
     except DataAnchorError as error:
         raise CardDomainError(str(error)) from error
@@ -1581,7 +1872,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         skills=call_config["skills"],
         toolsets=call_config["toolsets"],
         mcp_connection_ids=call_config["mcpConnectionIds"],
-        context_markdown=str(payload.get("contextMarkdown") or ""),
+        context_markdown=context_markdown,
         graph_seed=graph_seed,
         output_requirements=output_requirements,
         native_references=references,
@@ -1590,6 +1881,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         **prepared,
         "resolvedNativeReads": anchor_references,
+        "resolvedGraphProjection": graph_projection,
         "idf": idf.model_dump(),
     }
 

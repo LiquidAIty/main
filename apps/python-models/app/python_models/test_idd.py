@@ -185,7 +185,9 @@ def test_explicit_tool_permissions_come_from_the_idd() -> None:
     from app.python_models.idd import readable_tool_ids, writable_tool_ids
     assert "cbm.search_graph" in readable_tool_ids()
     assert "cbm.index_repository" in writable_tool_ids()
-    assert "write_mag_one_instructions" in readable_tool_ids()
+    assert "write_mag_one_instructions" in writable_tool_ids()
+    assert "card.load_graph_references" in writable_tool_ids()
+    assert "write_mag_one_instructions" not in readable_tool_ids()
 
 
 def test_materialized_catalog_errors_do_not_echo_secret_values() -> None:

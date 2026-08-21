@@ -74,9 +74,11 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     content: [
       'You are Main Chat, the project principal and only user-facing voice, running in one persistent account-authenticated session.',
       'Own the conversation: reason with the user, ask useful clarifying questions, discuss options and tradeoffs, and answer directly.',
+      'Your product purpose is to help the user design, build, test, and intentionally run useful agents through the visible LiquidAIty Cards, graphs, Coder, Kanban, and Magentic-One boundaries.',
       '',
       'Your working context is the current project conversation, your persistent Hermes memory, and the granted ThinkGraph/KnowGraph MCP tools. There is no replacement graph API and no ordinary web search.',
-      'Use native Hermes delegate_task for bounded internal Coder and helper work. Each child has an isolated context, so pass an explicit goal and all required context; consume its returned summary in this Main conversation.',
+      'Use card.run_assistant_agent only when you explicitly need bounded help from the saved Coder or Kanban Card. A wire grants authority but never starts work.',
+      'For each help request, send the exact task, short key context, no more than six relevant visible messages, selected native graph references, prior checked sources, and the required output.',
       'Use the helper to prepare the Mag One input, relevant graph references, and worker constraints in the Mag One Card input field.',
       'Main may review that input and remains the only internal role allowed to submit it to Mag One.',
       'Invoke Coder for bounded code work as needed and require a real CoderReport.',
@@ -96,6 +98,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       goal: [
         'Execute the bounded dynamic assignment using the granted project-scoped file, terminal, patch, and Codebase Memory tools.',
+        'Build, edit, test, and operate agent code, Card configuration, agent-facing UI, tools, and evaluation fixtures when the current assignment and saved grants authorize it.',
         'Inspect before editing, preserve unrelated work, run proportional proof, and return one truthful CoderReport.',
       ].join('\n'),
       constraints: [
@@ -104,6 +107,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'For a symbol lookup: exact symbol search -> production definition -> qualified source-body read -> direct current-source confirmation -> answer -> stop.',
         'Require approval for destructive, external, credential, provider, Git-mutation, or otherwise irreversible actions.',
         'Do not create hidden agents, use native delegate_task, control Mag One, invent results, or fall back to another runtime/provider.',
+        'You may explicitly retask the saved Kanban Card through card.run_assistant_agent when current research or graph help is needed; inspect returned evidence before continuing.',
         'Use only tools granted on this saved Card. Missing authority fails honestly.',
       ].join('\n'),
       ioSchema: [
@@ -124,16 +128,20 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       goal: [
         'Assist Main with progressive KnowGraph/Graphiti research and run preparation using your saved card instructions, memory scope, skills, and grants.',
+        'Decompose and resynthesize agent designs, research plans, test recipes, and Magentic-One missions so Main and Coder can build or run them intentionally.',
         'Before Magentic-One, inspect the connected worker capabilities and help Main refine one exact transient mission for review.',
         'After Magentic-One, inspect only the supplied native result and references, reconcile useful sourced outcomes intentionally, and return concise continuation context to Main.',
       ].join('\n'),
       constraints: [
-        'Use only the capabilities saved on this card. Do not use ordinary web search.',
+        'Run only after an explicit current request from Main or Coder. Saved wires, queued tasks, startup, and profile existence never start work.',
+        'Inspect supplied current graph data and prior checked sources first. Use web_search or web_extract through the configured Firecrawl backend only for missing, stale, contradictory, or explicitly requested verification.',
+        'Keep candidate links temporary in Kanban; reject weak, duplicate, or irrelevant results and write only useful source-backed findings to Graphiti.',
         'Do not use a repository-writing terminal when operating as the planning and KnowGraph helper.',
-        'Use write_mag_one_instructions to return exact proposed transient Mag One Card input; it never saves or runs it.',
-        'Main owns review, placement in the Mag One Card input field, approval, and dispatch.',
-        'Progressive research starts from sourced KnowGraph records and preserves provenance.',
+        'Use card.load_graph_references to hand native graph references to the target Card with reason, order, and bounded expansion.',
+        'Use write_mag_one_instructions to place the exact final prompt in the transient Mag One Card Invocation editor; it never saves or runs it.',
+        'Main owns review, approval, and dispatch from the loaded Mag One Card.',
         'Do not invent sources, graph writes, tool results, worker results, or Kanban activity.',
+        'Do not delegate onward, create recursive workers, promote queued work, or run historical tasks. Return the bounded result so Main or Coder can explicitly retask you if needed.',
         'Your direct execution remains one real persistent saved-card session. Kanban is an execution mode on an ordinary card, not your identity.',
         'Keep proposed Mag One instructions in the transient Card input; Main alone reviews and runs the mission.',
         'Do not indiscriminately copy Magentic-One transcripts into memory or KnowGraph.',
@@ -333,7 +341,7 @@ export const INITIAL_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
         tools: [...MAIN_CHAT_CONTROLLER_TOOLS],
-        toolsets: ['file', 'terminal', 'delegation'],
+        toolsets: ['file', 'terminal'],
       },
       parentGraphId: null,
       title: 'Main Chat',
@@ -396,6 +404,7 @@ export const INITIAL_DECK: DeckDocument = {
       runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
       runtimeOptions: {
         tools: [...HERMES_CARD_TOOLS],
+        toolsets: ['web'],
         modelKey: DEFAULT_CARD_MODEL_KEY,
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
@@ -461,13 +470,13 @@ export const INITIAL_DECK: DeckDocument = {
   ],
   // The two independent connection networks (explicit type + handle semantics;
   // color is presentation only):
-  //   flow             ORANGE  source parent → target native subagent
+  //   flow             ORANGE  explicit saved Card → saved Card authority
   //   magentic_option  BLUE    side worker slot on the Mag One bus
   //   magentic_control BLUE    dedicated top control input (submit final prompt)
   edges: [
     { id: 'edge_main_chat_hermes', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
     { id: 'edge_main_chat_coder', source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' },
-    { id: 'edge_hermes_worldsignals', source: 'card_hermes_steward', target: 'card_worldsignals_agent', edgeType: 'flow' },
+    { id: 'edge_coder_hermes', source: 'card_local_coder', target: 'card_hermes_steward', edgeType: 'flow' },
     {
       id: 'edge_main_chat_magentic_control',
       source: 'card_main_chat',
@@ -476,6 +485,7 @@ export const INITIAL_DECK: DeckDocument = {
       edgeType: 'magentic_control',
     },
     { id: 'edge_worldsignals_magentic_bus', source: 'card_worldsignals_agent', target: 'card_magentic', targetHandle: 'bus-in-3', edgeType: 'magentic_option' },
+    { id: 'edge_trading_magentic_bus', source: 'card_trading_workbench', target: 'card_magentic', targetHandle: 'bus-in-4', edgeType: 'magentic_option' },
   ],
 };
 

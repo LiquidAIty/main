@@ -7,6 +7,7 @@ import pytest
 
 from app.python_models.data_anchor import (
     DataAnchorError,
+    empty_graph_projection,
     read_codegraph_exact,
     read_knowgraph_exact,
     read_thinkgraph_exact,
@@ -132,6 +133,62 @@ def test_knowgraph_exact_read_preserves_project_native_identity_and_provenance()
     assert record["provenance"]["group_id"] == "liquidaity-project-1"
     assert record["relationshipEvidence"][0]["nodes"][0]["nativeId"] == "entity-1"
     assert driver.closed is True
+
+
+def test_native_projection_contains_only_ids_returned_in_model_bound_graph_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = {
+        "authority": "KnowGraph",
+        "nativeId": "entity-1",
+        "nativeKind": "node",
+        "type": "Entity",
+        "title": "Alpha",
+        "content": "current sourced Alpha record",
+        "properties": {"name": "Alpha"},
+        "relationshipEvidence": [{
+            "nodes": [
+                {"nativeId": "entity-1", "labels": ["Entity"], "properties": {"name": "Alpha"}},
+                {"nativeId": "entity-2", "labels": ["Entity"], "properties": {"name": "Beta"}},
+            ],
+            "relationships": [{
+                "nativeId": "fact-1",
+                "type": "SUPPORTS",
+                "sourceNativeId": "entity-1",
+                "targetNativeId": "entity-2",
+                "properties": {"source": "primary"},
+            }],
+        }],
+        "provenance": {"source": "primary"},
+        "asOf": "current",
+        "readOperation": "neo4j.project_scoped_exact",
+        "resultLimit": 8,
+        "truncated": False,
+    }
+    monkeypatch.setattr(
+        "app.python_models.data_anchor.read_knowgraph_exact",
+        lambda *_args, **_kwargs: record,
+    )
+    projection = empty_graph_projection("project-1")
+    seed, references = resolve_data_anchors(
+        "project-1",
+        [{
+            "authority": "KnowGraph",
+            "nativeId": "entity-1",
+            "reason": "start from sourced evidence",
+            "boundedExpansion": 1,
+            "resultLimit": 8,
+            "required": True,
+        }],
+        graph_projection=projection,
+    )
+
+    assert {node["id"] for node in projection["nodes"]} == {"entity-1", "entity-2"}
+    assert [(edge["id"], edge["source"], edge["target"]) for edge in projection["edges"]] == [
+        ("fact-1", "entity-1", "entity-2"),
+    ]
+    assert all(native_id in seed for native_id in ("entity-1", "entity-2", "fact-1"))
+    assert references[0]["nativeId"] == "entity-1"
 
 
 def test_codegraph_exact_read_uses_official_mcp_calls_and_qualified_symbol() -> None:

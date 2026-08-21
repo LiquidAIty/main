@@ -118,6 +118,7 @@ def read_thinkgraph_exact(
     return {
         "authority": "ThinkGraph",
         "nativeId": canonical_id,
+        "nativeKind": "node",
         "recordId": str(row["id"]),
         "type": str(row["mtype"] or ""),
         "title": str(row["title"] or ""),
@@ -144,11 +145,14 @@ def read_knowgraph_exact(
     native_id: str,
     *,
     bounded_expansion: int = 0,
+    result_limit: int = _KNOWGRAPH_RESULT_LIMIT,
     driver_factory: Callable[[], Any] | None = None,
 ) -> dict[str, Any] | None:
     """Read one project-scoped Neo4j object and a bounded current neighborhood."""
     if bounded_expansion < 0 or bounded_expansion > 3:
         raise DataAnchorError("data_anchor_expansion_invalid")
+    if result_limit < 1 or result_limit > _KNOWGRAPH_RESULT_LIMIT:
+        raise DataAnchorError("data_anchor_result_limit_invalid")
     uri = os.environ.get("NEO4J_URI", "").strip()
     user = os.environ.get("NEO4J_USER", "").strip()
     password = os.environ.get("NEO4J_PASSWORD", "").strip()
@@ -193,6 +197,8 @@ def read_knowgraph_exact(
                       AND NONE(label IN labels(b) WHERE label IN $excludedLabels)
                     RETURN coalesce(toString(r.uuid), elementId(r)) AS nativeId,
                            [type(r)] AS labels, properties(r) AS properties,
+                           coalesce(toString(a.uuid), elementId(a)) AS sourceNativeId,
+                           coalesce(toString(b.uuid), elementId(b)) AS targetNativeId,
                            [{nativeId: coalesce(toString(a.uuid), elementId(a)),
                              labels: labels(a), properties: properties(a)},
                             {nativeId: coalesce(toString(b.uuid), elementId(b)),
@@ -226,13 +232,15 @@ def read_knowgraph_exact(
                                labels: labels(node), properties: properties(node)}}] AS nodes,
                            [rel IN relationships(path) | {{
                                nativeId: coalesce(toString(rel.uuid), elementId(rel)),
-                               type: type(rel), properties: properties(rel)}}] AS relationships
+                               type: type(rel), properties: properties(rel),
+                               sourceNativeId: coalesce(toString(startNode(rel).uuid), elementId(startNode(rel))),
+                               targetNativeId: coalesce(toString(endNode(rel).uuid), elementId(endNode(rel)))}}] AS relationships
                     LIMIT $limit
                     """,
                     nativeId=native_id,
                     scopeIds=scope_ids,
                     excludedLabels=sorted(_SKILL_GRAPH_LABELS),
-                    limit=_KNOWGRAPH_RESULT_LIMIT,
+                    limit=result_limit,
                 ))
     except Exception as error:
         if isinstance(error, DataAnchorError):
@@ -245,10 +253,11 @@ def read_knowgraph_exact(
 
     properties = center.get("properties") if isinstance(center.get("properties"), dict) else {}
     labels = center.get("labels") if isinstance(center.get("labels"), list) else []
-    neighborhood = _json_safe(paths)[:_KNOWGRAPH_RESULT_LIMIT]
+    neighborhood = _json_safe(paths)[:result_limit]
     return {
         "authority": "KnowGraph",
         "nativeId": str(center.get("nativeId") or native_id),
+        "nativeKind": "edge" if relationship_center else "node",
         "type": str(labels[0] if labels else "Neo4jObject"),
         "title": str(properties.get("name") or properties.get("title") or native_id),
         "content": json.dumps(
@@ -258,6 +267,9 @@ def read_knowgraph_exact(
             default=str,
         )[:_ANCHOR_BODY_LIMIT],
         "properties": properties,
+        "endpointNodes": center.get("endpointNodes") if relationship_center else [],
+        "sourceNativeId": str(center.get("sourceNativeId") or ""),
+        "targetNativeId": str(center.get("targetNativeId") or ""),
         "relationshipEvidence": neighborhood,
         "provenance": {
             key: properties.get(key)
@@ -266,6 +278,8 @@ def read_knowgraph_exact(
         },
         "asOf": _now_iso(),
         "readOperation": "neo4j.project_scoped_exact",
+        "resultLimit": result_limit,
+        "truncated": bool(bounded_expansion and len(paths) >= result_limit),
     }
 
 
@@ -276,11 +290,14 @@ def read_codegraph_exact(
     native_id: str,
     *,
     bounded_expansion: int = 0,
+    result_limit: int = 24,
     mcp_reader: Callable[..., list[dict[str, Any]]] = call_read_tools_via_mcp,
 ) -> dict[str, Any] | None:
     """Read one qualified current symbol through the official MCP/CBM seam."""
     if bounded_expansion < 0 or bounded_expansion > 3:
         raise DataAnchorError("data_anchor_expansion_invalid")
+    if result_limit < 1 or result_limit > 24:
+        raise DataAnchorError("data_anchor_result_limit_invalid")
     if not deck_id or not card_id:
         raise DataAnchorError("data_anchor_codegraph_context_missing")
     calls: list[tuple[str, dict[str, Any]]] = [
@@ -299,6 +316,7 @@ def read_codegraph_exact(
             "depth": bounded_expansion,
             "mode": "calls",
             "include_tests": False,
+            "limit": result_limit,
         }))
     try:
         results = mcp_reader(
@@ -331,6 +349,7 @@ def read_codegraph_exact(
     return {
         "authority": "CodeGraph",
         "nativeId": qualified_name,
+        "nativeKind": "node",
         "type": str(snippet.get("label") or "Symbol"),
         "title": str(snippet.get("name") or qualified_name.rsplit(".", 1)[-1]),
         "content": source[:_ANCHOR_BODY_LIMIT],
@@ -353,6 +372,7 @@ def read_codegraph_exact(
         },
         "asOf": _now_iso(),
         "readOperation": "cbm.get_code_snippet",
+        "truncated": bool(relationships.get("truncated") is True),
     }
 
 
@@ -416,6 +436,7 @@ def _knowgraph_node_record(
     return {
         "authority": "KnowGraph",
         "nativeId": native_id,
+        "nativeKind": "node",
         "type": labels[0] if labels else str(item.get("type") or "Entity"),
         "title": name,
         "content": json.dumps(properties, ensure_ascii=False, separators=(",", ":"))[:_ANCHOR_BODY_LIMIT],
@@ -452,6 +473,7 @@ def _knowgraph_fact_record(
     return {
         "authority": "KnowGraph",
         "nativeId": native_id,
+        "nativeKind": "edge",
         "type": str(item.get("name") or item.get("edge_type") or "Fact"),
         "title": str(item.get("fact") or item.get("name") or native_id)[:500],
         "content": json.dumps(properties, ensure_ascii=False, separators=(",", ":"))[:_ANCHOR_BODY_LIMIT],
@@ -668,6 +690,165 @@ def _render_anchor(anchor: dict[str, Any], record: dict[str, Any]) -> str:
     ]).strip()
 
 
+def empty_graph_projection(project_id: str) -> dict[str, Any]:
+    return {
+        "schemaVersion": "native-card-context.v1",
+        "authority": "",
+        "projectId": project_id,
+        "nodes": [],
+        "edges": [],
+        "counts": {"nodes": 0, "edges": 0},
+    }
+
+
+def _projection_node(
+    authority: str,
+    native_id: str,
+    *,
+    labels: Any = None,
+    properties: Any = None,
+    title: str = "",
+    provenance: Any = None,
+) -> dict[str, Any]:
+    safe_properties = properties if isinstance(properties, dict) else {}
+    safe_labels = [str(label) for label in labels] if isinstance(labels, list) else []
+    label = str(
+        title
+        or safe_properties.get("name")
+        or safe_properties.get("title")
+        or safe_properties.get("fact")
+        or native_id
+    )
+    return {
+        "id": native_id,
+        "canonicalId": native_id,
+        "label": label,
+        "title": label,
+        "type": safe_labels[0] if safe_labels else str(safe_properties.get("type") or "NativeObject"),
+        "labels": safe_labels,
+        "authority": authority,
+        "mentionCount": 1,
+        "properties": _json_safe(safe_properties),
+        "provenance": _json_safe(provenance) if isinstance(provenance, dict) else {},
+    }
+
+
+def _record_graph_projection(project_id: str, record: dict[str, Any]) -> dict[str, Any]:
+    """Project only native node/edge identities actually returned by a read."""
+    authority = str(record.get("authority") or "")
+    native_id = str(record.get("nativeId") or "").strip()
+    nodes: dict[str, dict[str, Any]] = {}
+    edges: dict[str, dict[str, Any]] = {}
+
+    def add_node(item: dict[str, Any], *, fallback_title: str = "") -> None:
+        item_id = str(item.get("nativeId") or item.get("uuid") or "").strip()
+        if not item_id or item_id in nodes:
+            return
+        nodes[item_id] = _projection_node(
+            authority,
+            item_id,
+            labels=item.get("labels"),
+            properties=item.get("properties") if isinstance(item.get("properties"), dict) else item,
+            title=str(item.get("title") or item.get("name") or fallback_title),
+            provenance=record.get("provenance"),
+        )
+
+    def add_edge(item: dict[str, Any]) -> None:
+        edge_id = str(item.get("nativeId") or item.get("uuid") or "").strip()
+        source = str(
+            item.get("sourceNativeId")
+            or item.get("sourceNodeUuid")
+            or item.get("source_node_uuid")
+            or ""
+        ).strip()
+        target = str(
+            item.get("targetNativeId")
+            or item.get("targetNodeUuid")
+            or item.get("target_node_uuid")
+            or ""
+        ).strip()
+        if not edge_id or not source or not target or edge_id in edges:
+            return
+        edges[edge_id] = {
+            "id": edge_id,
+            "source": source,
+            "target": target,
+            "predicate": str(item.get("type") or item.get("name") or item.get("edge_type") or "RELATED"),
+            "mentionCount": 1,
+            "properties": _json_safe(item.get("properties") or item),
+            "provenance": _json_safe(record.get("provenance") or {}),
+        }
+
+    if record.get("nativeKind") == "edge":
+        for endpoint in record.get("endpointNodes") or []:
+            if isinstance(endpoint, dict):
+                add_node(endpoint)
+        evidence = record.get("relationshipEvidence") or []
+        source_id = str(record.get("sourceNativeId") or "").strip()
+        target_id = str(record.get("targetNativeId") or "").strip()
+        if isinstance(evidence, list) and evidence and isinstance(evidence[0], dict):
+            source_id = source_id or str(evidence[0].get("sourceNodeUuid") or "").strip()
+            target_id = target_id or str(evidence[0].get("targetNodeUuid") or "").strip()
+        add_edge({
+            "nativeId": native_id,
+            "sourceNativeId": source_id,
+            "targetNativeId": target_id,
+            "type": record.get("type"),
+            "properties": record.get("properties"),
+        })
+    elif native_id:
+        add_node({
+            "nativeId": native_id,
+            "labels": [record.get("type")] if record.get("type") else [],
+            "properties": record.get("properties") or record.get("metadata") or {},
+            "title": record.get("title"),
+        })
+
+    for path in record.get("relationshipEvidence") or []:
+        if not isinstance(path, dict):
+            continue
+        for item in path.get("nodes") or []:
+            if isinstance(item, dict):
+                add_node(item)
+        for item in path.get("relationships") or []:
+            if isinstance(item, dict):
+                add_edge(item)
+
+    limit = max(1, min(int(record.get("resultLimit") or _KNOWGRAPH_RESULT_LIMIT), _KNOWGRAPH_RESULT_LIMIT))
+    bounded_nodes = list(nodes.values())[:limit]
+    node_ids = {node["id"] for node in bounded_nodes}
+    bounded_edges = [
+        edge for edge in edges.values()
+        if edge["source"] in node_ids and edge["target"] in node_ids
+    ][:limit]
+    return {
+        "schemaVersion": "native-card-context.v1",
+        "authority": authority.lower(),
+        "projectId": project_id,
+        "nodes": bounded_nodes,
+        "edges": bounded_edges,
+        "counts": {"nodes": len(bounded_nodes), "edges": len(bounded_edges)},
+    }
+
+
+def _merge_graph_projection(target: dict[str, Any], incoming: dict[str, Any]) -> None:
+    node_ids = {str(node.get("id") or "") for node in target["nodes"]}
+    edge_ids = {str(edge.get("id") or "") for edge in target["edges"]}
+    target["nodes"].extend(
+        node for node in incoming["nodes"] if str(node.get("id") or "") not in node_ids
+    )
+    target["edges"].extend(
+        edge for edge in incoming["edges"] if str(edge.get("id") or "") not in edge_ids
+    )
+    authorities = {
+        str(value).lower()
+        for value in (target.get("authority"), incoming.get("authority"))
+        if str(value or "").strip()
+    }
+    target["authority"] = authorities.pop() if len(authorities) == 1 else "mixed"
+    target["counts"] = {"nodes": len(target["nodes"]), "edges": len(target["edges"])}
+
+
 def resolve_data_anchors(
     project_id: str,
     anchors: list[dict[str, Any]],
@@ -676,6 +857,7 @@ def resolve_data_anchors(
     card_id: str = "",
     search_text: str = "",
     thinkgraph_db_path: str | Path | None = None,
+    graph_projection: dict[str, Any] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Resolve ordered anchors and return model text plus native references."""
     rendered: list[str] = []
@@ -703,6 +885,7 @@ def resolve_data_anchors(
                 project_id,
                 native_id,
                 bounded_expansion=anchor["boundedExpansion"],
+                result_limit=int(anchor.get("resultLimit", _KNOWGRAPH_RESULT_LIMIT)),
             )
         elif authority == "CodeGraph":
             record = read_codegraph_exact(
@@ -711,6 +894,7 @@ def resolve_data_anchors(
                 card_id,
                 native_id,
                 bounded_expansion=anchor["boundedExpansion"],
+                result_limit=int(anchor.get("resultLimit", 24)),
             )
         else:
             raise DataAnchorError(f"data_anchor_resolver_unavailable:{authority}")
@@ -723,13 +907,21 @@ def resolve_data_anchors(
             continue
         resolved_identities.add(identity)
         rendered.append(_render_anchor(anchor, record))
+        if graph_projection is not None:
+            _merge_graph_projection(
+                graph_projection,
+                _record_graph_projection(project_id, record),
+            )
         references.append({
             "authority": record["authority"],
             "nativeId": record["nativeId"],
+            "nativeKind": record.get("nativeKind", "node"),
             "reason": anchor["reason"],
             "asOf": record["asOf"],
             "required": anchor["required"],
             "readOperation": record.get("readOperation") or "exact_read",
+            "provenance": record.get("provenance") or {},
+            "truncated": record.get("truncated") is True,
         })
         if authority == "KnowGraph":
             exact_record = dict(record)
@@ -781,6 +973,7 @@ def resolve_data_anchors(
             references.append({
                 "authority": record["authority"],
                 "nativeId": record["nativeId"],
+                "nativeKind": record.get("nativeKind", "node"),
                 "reason": record["selectionReason"],
                 "asOf": record["asOf"],
                 "required": hook.get("required") is True,
@@ -788,6 +981,11 @@ def resolve_data_anchors(
                 "provenance": record.get("provenance") or {},
                 "truncated": result["truncated"],
             })
+            if graph_projection is not None:
+                _merge_graph_projection(
+                    graph_projection,
+                    _record_graph_projection(project_id, record),
+                )
     if anchors and not rendered:
         rendered.append(
             "### Data Anchor Resolution\nNo optional current native graph object was resolved."

@@ -28,7 +28,8 @@ import HermesKanbanWorkspace from '../features/hermeskanban/HermesKanbanWorkspac
 import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import type {
   AgentBuilderChatMessage,
-  MagOneInstructionsProposal,
+  LoadedCardGraphReference,
+  MagOneInstructionsLoaded,
 } from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
 import useAgentBuilderCardEditor from '../features/agentbuilder/state/useAgentBuilderCardEditor';
@@ -316,8 +317,8 @@ export default function AgentBuilder(): React.ReactElement {
     deck,
   });
   const [transientCardInputs, setTransientCardInputs] = useState<Record<string, string>>({});
-  const [magOneProposal, setMagOneProposal] =
-    useState<MagOneInstructionsProposal | null>(null);
+  const [transientCardGraphContext, setTransientCardGraphContext] =
+    useState<Record<string, LoadedCardGraphReference[]>>({});
   const standaloneTestPrompt = selectedCardId
     ? transientCardInputs[selectedCardId] || ''
     : '';
@@ -359,20 +360,47 @@ export default function AgentBuilder(): React.ReactElement {
     useState<KnowledgeSurfaceKind>('knowgraph');
   const conversationId = 'main';
   const graphAttention = useAgentBuilderGraphAttention({ projectId: activeProject });
-  const handleMagOneInstructionsProposed = useCallback((proposal: MagOneInstructionsProposal) => {
-    const target = deck.nodes.find((card) => card.id === proposal.targetCardId);
+  const handleMagOneInstructionsLoaded = useCallback((loaded: MagOneInstructionsLoaded) => {
+    const target = deck.nodes.find((card) => card.id === loaded.targetCardId);
     if (!target || target.runtime.kind !== 'autogen' || target.runtime.mode !== 'magentic_one') {
-      setDeckStatusMessage('Mag One proposal target is not an active saved Mag One Card.');
+      setDeckStatusMessage('Mag One instructions target is not an active saved Mag One Card.');
       return;
     }
     setTransientCardInputs((current) => ({
       ...current,
-      [target.id]: proposal.instructions,
+      [target.id]: loaded.instructions,
     }));
-    setMagOneProposal(proposal);
     setSelectedCardId(target.id);
     setTab('Invocation');
     setDeckStatusMessage(`${target.title} transient input is ready for review.`);
+  }, [deck.nodes, setDeckStatusMessage, setSelectedCardId, setTab]);
+
+  const handleCardGraphReferenceLoaded = useCallback((loaded: LoadedCardGraphReference) => {
+    const target = deck.nodes.find((card) => card.id === loaded.targetCardId);
+    if (!target) {
+      setDeckStatusMessage('Graph reference target is not an active saved Card.');
+      return;
+    }
+    setTransientCardGraphContext((current) => {
+      const existing = current[target.id] || [];
+      const replacementKey = `${loaded.reference.authority}:${loaded.reference.nativeId}`;
+      return {
+        ...current,
+        [target.id]: [
+          ...existing.filter(
+            (item) => `${item.reference.authority}:${item.reference.nativeId}` !== replacementKey,
+          ),
+          loaded,
+        ].sort((left, right) => left.reference.order - right.reference.order),
+      };
+    });
+    setSelectedCardId(target.id);
+    setTab('Knowledge');
+    setDeckStatusMessage(
+      loaded.ready
+        ? `${target.title} graph context is loaded for review.`
+        : `${target.title} graph context is not ready: ${loaded.error || 'required reference unresolved'}.`,
+    );
   }, [deck.nodes, setDeckStatusMessage, setSelectedCardId, setTab]);
 
   // CodeGraph repository identity is resolved from the authoritative CBM index.
@@ -413,7 +441,8 @@ export default function AgentBuilder(): React.ReactElement {
     workspaceView,
     onUserTurnStarted: graphAttention.startAttentionScope,
     onNativeTurnEvent: graphAttention.observeNativeTurnEvent,
-    onMagOneInstructionsProposed: handleMagOneInstructionsProposed,
+    onMagOneInstructionsLoaded: handleMagOneInstructionsLoaded,
+    onCardGraphReferenceLoaded: handleCardGraphReferenceLoaded,
     onTurnFinished: graphAttention.finishAttentionScope,
   });
   useEffect(() => {
@@ -584,6 +613,28 @@ export default function AgentBuilder(): React.ReactElement {
     selectedCardId,
     setDeck,
   });
+  const selectedMagOneWorkers = useMemo(() => {
+    if (!selectedCard || selectedCard.runtime.kind !== 'autogen' || selectedCard.runtime.mode !== 'magentic_one') {
+      return [];
+    }
+    return deck.edges
+      .filter((edge) => edge.edgeType === 'magentic_option')
+      .map((edge) => edge.source === selectedCard.id ? edge.target : edge.target === selectedCard.id ? edge.source : null)
+      .filter((cardId): cardId is string => Boolean(cardId))
+      .map((cardId) => deck.nodes.find((card) => card.id === cardId))
+      .filter((card): card is AgentCardInstance => Boolean(card))
+      .map((card) => ({
+        cardId: card.id,
+        title: card.title,
+        ready: card.status !== 'error'
+          && card.runtime.kind === 'autogen'
+          && card.runtime.mode === 'assistant'
+          && Boolean(card.runtimeOptions?.provider)
+          && Boolean(card.runtimeOptions?.modelKey),
+        provider: card.runtimeOptions?.provider || null,
+        model: card.runtimeOptions?.modelKey || null,
+      }));
+  }, [deck.edges, deck.nodes, selectedCard]);
   const [standaloneTestBusy, setStandaloneTestBusy] = useState(false);
   const [standaloneTestResult, setStandaloneTestResult] = useState<StandaloneCardTestResult | null>(null);
   const standaloneTestRequestRef = useRef<string | null>(null);
@@ -623,6 +674,15 @@ export default function AgentBuilder(): React.ReactElement {
           correlationId,
           input,
           conversationId,
+          dataAnchors: (transientCardGraphContext[selectedCard.id] || []).map((item) => ({
+            authority: item.reference.authority,
+            nativeId: item.reference.nativeId,
+            reason: item.reference.reason,
+            priority: -item.reference.order,
+            boundedExpansion: item.reference.boundedExpansion,
+            resultLimit: item.reference.resultLimit,
+            required: item.reference.required,
+          })),
         }),
       });
       const payload = await response.json().catch(() => null);
@@ -657,6 +717,11 @@ export default function AgentBuilder(): React.ReactElement {
             delete next[selectedCard.id];
             return next;
           });
+          setTransientCardGraphContext((current) => {
+            const next = { ...current };
+            delete next[selectedCard.id];
+            return next;
+          });
         }
       }
     } catch (error) {
@@ -681,6 +746,7 @@ export default function AgentBuilder(): React.ReactElement {
     selectedCard,
     standaloneTestBusy,
     standaloneTestUnavailableReason,
+    transientCardGraphContext,
   ]);
 
   const runStandaloneCardTest = useCallback(async () => {
@@ -723,6 +789,15 @@ export default function AgentBuilder(): React.ReactElement {
           correlationId,
           input,
           conversationId,
+          dataAnchors: (transientCardGraphContext[selectedCard.id] || []).map((item) => ({
+            authority: item.reference.authority,
+            nativeId: item.reference.nativeId,
+            reason: item.reference.reason,
+            priority: -item.reference.order,
+            boundedExpansion: item.reference.boundedExpansion,
+            resultLimit: item.reference.resultLimit,
+            required: item.reference.required,
+          })),
         }),
       });
       const payload = await response.json().catch(() => null);
@@ -765,7 +840,7 @@ export default function AgentBuilder(): React.ReactElement {
         setStandaloneTestBusy(false);
       }
     }
-  }, [canvasProjectId, conversationId, selectedCard, standaloneTestBusy, standaloneTestPrompt, standaloneTestUnavailableReason]);
+  }, [canvasProjectId, conversationId, selectedCard, standaloneTestBusy, standaloneTestPrompt, standaloneTestUnavailableReason, transientCardGraphContext]);
 
   const builderTabs = useMemo(() => {
     if (selectedCard) return [...BUILDER_NODE_TABS];
@@ -1041,14 +1116,20 @@ export default function AgentBuilder(): React.ReactElement {
                     runBusy={standaloneTestBusy}
                     runDisabled={
                       !showStandaloneTestControls ||
-                      !standaloneTestPrompt.trim()
+                      !standaloneTestPrompt.trim() ||
+                      (selectedCard.runtime.kind === 'autogen' &&
+                        selectedCard.runtime.mode === 'magentic_one' &&
+                        (
+                          selectedMagOneWorkers.length === 0 ||
+                          selectedMagOneWorkers.some((worker) => !worker.ready) ||
+                          (transientCardGraphContext[selectedCard.id] || []).some(
+                            (item) => item.reference.required && !item.ready,
+                          )
+                        ))
                     }
                     runResult={standaloneTestResult}
-                    magOneProposal={
-                      magOneProposal?.targetCardId === selectedCard.id
-                        ? magOneProposal
-                        : null
-                    }
+                    loadedGraphContext={transientCardGraphContext[selectedCard.id] || []}
+                    magOneWorkers={selectedMagOneWorkers}
                     saveDeckStatusMessage={deckStatusMessage}
                     openDeckRevision={deckRevision}
                     onSaveLocalConfig={handleSaveSelectedCardConfig}

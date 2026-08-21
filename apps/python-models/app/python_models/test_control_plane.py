@@ -75,7 +75,7 @@ def test_canvas_inspect_returns_only_the_bounded_public_projection(fake_backend)
     ]
 
 
-def test_mag_one_proposal_is_read_only_and_uses_saved_roster(monkeypatch) -> None:
+def test_mag_one_instructions_load_exact_transient_input_without_saving(monkeypatch) -> None:
     import copy
 
     deck = copy.deepcopy(DECK)
@@ -88,17 +88,10 @@ def test_mag_one_proposal_is_read_only_and_uses_saved_roster(monkeypatch) -> Non
             "providerModelId": "provider/orchestrator", "tools": [],
         },
     })
-    worker = next(node for node in deck["nodes"] if node["id"] == "worker")
-    worker.update({
-        "role": "web research",
-        "runtimeOptions": {
-            "provider": "openrouter", "modelKey": "worker",
-            "providerModelId": "provider/worker", "tools": ["web_search"],
-        },
-    })
-    deck["edges"].append({
-        "id": "worker->mag-one:magentic_option",
-        "source": "worker", "target": "mag-one", "edgeType": "magentic_option",
+    deck["nodes"].append({
+        "id": "helper", "title": "Helper",
+        "runtime": {"kind": "hermes", "mode": "kanban", "profile": "helper"},
+        "runtimeOptions": {"tools": ["write_mag_one_instructions"]},
     })
     calls = []
 
@@ -112,78 +105,43 @@ def test_mag_one_proposal_is_read_only_and_uses_saved_roster(monkeypatch) -> Non
         "app.python_models.card_domain.resolve_magentic_card_identity",
         lambda *_args: {"targetCardId": "mag-one"},
     )
-    result = asyncio.run(cp.prepare_mag_one_proposal({
+    result = asyncio.run(cp.write_mag_one_instructions({
         "projectId": "p",
         "deckId": "deck_builder",
-        "instructions": "Research one bounded public question.",
-        "goal": "Prove the web-search worker boundary.",
-        "workers": [{
-            "existingCardId": "worker",
-            "title": "Worker",
-            "role": "web research",
-            "stableInstructions": "",
-            "skills": [],
-            "readCapabilities": ["web_search"],
-            "effectTools": [],
-            "reason": "Existing bounded search worker",
-            "expectedInput": "One research question",
-            "expectedOutput": "Cited short answer",
-        }],
-        "estimatedModelCalls": 2,
-        "costRisk": "low",
+        "instructions": "  Research one bounded public question.\nKeep citations.  ",
+        "_sourceCardId": "helper",
     }))
 
+    assert result["targetCardId"] == "mag-one"
+    assert result["sourceCardId"] == "helper"
+    assert result["instructions"] == "Research one bounded public question.\nKeep citations."
     assert result["persisted"] is False
     assert result["started"] is False
-    assert result["approvalRequired"] is True
-    assert result["existingWorkerCardIds"] == ["worker"]
-    assert result["proposal"]["cardsToCreate"] == []
-    assert result["proposal"]["wiresToAdd"] == []
-    assert len(result["proposalHash"]) == 64
     assert [method for method, _payload in calls] == ["GET"]
 
 
-def test_mag_one_proposal_rejects_read_capability_as_effect_tool(monkeypatch, fake_backend) -> None:
+def test_mag_one_instructions_require_source_card_write_grant(monkeypatch, fake_backend) -> None:
     monkeypatch.setattr(
         "app.python_models.card_domain.resolve_magentic_card_identity",
         lambda *_args: {"targetCardId": "signals-card"},
     )
-    with pytest.raises(cp.ControlPlaneError, match="mag_one_proposal_effect_tool_invalid"):
-        asyncio.run(cp.prepare_mag_one_proposal({
+    with pytest.raises(cp.ControlPlaneError, match="write_mag_one_instructions_not_granted"):
+        asyncio.run(cp.write_mag_one_instructions({
             "projectId": "p", "deckId": "d", "instructions": "bounded",
-            "workers": [{
-                "existingCardId": "signals-card", "title": "WorldSignals", "role": "signals",
-                "reason": "reuse", "expectedInput": "question", "expectedOutput": "answer",
-                "effectTools": ["worldsignals.capabilities"],
-            }],
+            "_sourceCardId": "signals-card",
         }))
 
 
-def test_mag_one_proposal_requires_stable_instructions_for_a_new_worker(
-    monkeypatch, fake_backend,
-) -> None:
+def test_card_graph_reference_handler_uses_the_one_card_domain_owner(monkeypatch) -> None:
+    expected = {"ok": True, "targetCardId": "mag-one", "persisted": False, "started": False}
     monkeypatch.setattr(
-        "app.python_models.card_domain.resolve_magentic_card_identity",
-        lambda *_args: {"targetCardId": "signals-card"},
+        "app.python_models.card_domain.load_card_graph_reference",
+        lambda args: expected | {"sourceRunId": args["_sourceRunId"]},
     )
-    with pytest.raises(
-        cp.ControlPlaneError,
-        match="mag_one_proposal_new_worker_instructions_required",
-    ):
-        asyncio.run(cp.prepare_mag_one_proposal({
-            "projectId": "p", "deckId": "d", "instructions": "bounded",
-            "workers": [{
-                "title": "Search Agent", "role": "bounded web research",
-                "runtime": {"kind": "autogen", "mode": "assistant"},
-                "model": {
-                    "provider": "openrouter", "modelKey": "worker",
-                    "providerModelId": "provider/worker",
-                },
-                "reason": "benchmark", "expectedInput": "one question",
-                "expectedOutput": "cited source packet",
-                "readCapabilities": ["web_search"], "effectTools": [],
-            }],
-        }))
+
+    result = asyncio.run(cp.card_load_graph_references({"_sourceRunId": "run-helper"}))
+
+    assert result == expected | {"sourceRunId": "run-helper"}
 
 
 class TestCardCreate:
@@ -391,6 +349,22 @@ class TestRunAssistantAgent:
             "dataAnchors": anchors,
         }))
         assert calls[2][2]["dataAnchors"] == anchors
+
+        bounded_context = {
+            "keyContext": "Use the current checked source.",
+            "visibleMessages": [{"role": "user", "content": "Verify the missing point."}],
+            "priorResults": [{
+                "authority": "KnowGraph", "nativeId": "episode-1",
+                "reason": "already checked", "asOf": "current", "required": False,
+            }],
+            "outputRequirements": "Return one cited finding.",
+        }
+        asyncio.run(cp.card_run_assistant_agent({
+            "projectId": "p", "deckId": "d", "cardId": "c",
+            "correlationId": "bounded", "input": "continue",
+            **bounded_context,
+        }))
+        assert {key: calls[3][2][key] for key in bounded_context} == bounded_context
 
     def test_materialization_rejection_preserves_the_authority_error(self, monkeypatch):
         calls = []
