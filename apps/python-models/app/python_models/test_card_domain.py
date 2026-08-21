@@ -196,6 +196,97 @@ def test_no_flow_edge_materializes_no_delegation_transport(
     assert preview["delegationTargets"] == []
 
 
+def _prepared_grounded_runtime(runtime: dict[str, str]) -> dict:
+    return {
+        "cardRevisionId": "revision-one",
+        "idf": {"runtime": runtime},
+        "resolvedNativeReads": [{
+            "authority": "CodeGraph", "nativeId": "symbol-one",
+        }],
+        "resolvedGraphProjection": {
+            "nodes": [{"id": "symbol-one"}], "edges": [],
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "runtime",
+    [
+        {"kind": "hermes", "mode": "delegate", "profile": "coder"},
+        {"kind": "autogen", "mode": "magentic_one"},
+    ],
+)
+def test_coder_and_mag_one_execution_fail_before_run_without_current_grounding(
+    monkeypatch: pytest.MonkeyPatch,
+    runtime: dict[str, str],
+) -> None:
+    prepared = _prepared_grounded_runtime(runtime)
+    monkeypatch.setattr(card_domain, "materialize_invocation", lambda _payload: prepared)
+    monkeypatch.setattr(
+        card_domain,
+        "_insert_run",
+        lambda *_args, **_kwargs: pytest.fail("ungrounded execution created a Run"),
+    )
+
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="grounded_execution_reference_required",
+    ):
+        card_domain.begin_run({"runId": "run-one", "correlationId": "correlation-one"})
+
+    stale = [{
+        "authority": "CodeGraph", "nativeId": "missing-symbol",
+        "reason": "Required production owner", "priority": 0,
+        "boundedExpansion": 0, "resultLimit": 4, "required": True,
+    }]
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="grounded_execution_reference_stale:CodeGraph:missing-symbol",
+    ):
+        card_domain.begin_run({
+            "runId": "run-one", "correlationId": "correlation-one",
+            "dataAnchors": stale,
+        })
+
+
+@pytest.mark.parametrize(
+    "runtime",
+    [
+        {"kind": "hermes", "mode": "delegate", "profile": "coder"},
+        {"kind": "autogen", "mode": "magentic_one"},
+    ],
+)
+def test_coder_and_mag_one_grounding_reaches_readiness_without_creating_a_run(
+    monkeypatch: pytest.MonkeyPatch,
+    runtime: dict[str, str],
+) -> None:
+    prepared = _prepared_grounded_runtime(runtime)
+    monkeypatch.setattr(card_domain, "materialize_invocation", lambda _payload: prepared)
+    monkeypatch.setattr(
+        card_domain,
+        "_insert_run",
+        lambda *_args, **_kwargs: pytest.fail("grounding readiness created a Run"),
+    )
+    payload = {"dataAnchors": [{
+        "authority": "CodeGraph", "nativeId": "symbol-one",
+        "reason": "Required production owner", "priority": 0,
+        "boundedExpansion": 0, "resultLimit": 4, "required": True,
+    }]}
+
+    assert card_domain.prepare_run_invocation(payload) is prepared
+
+
+def test_other_card_runtimes_keep_the_existing_unrestricted_preparation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _prepared_grounded_runtime({"kind": "autogen", "mode": "assistant"})
+    prepared["resolvedNativeReads"] = []
+    prepared["resolvedGraphProjection"] = {"nodes": [], "edges": []}
+    monkeypatch.setattr(card_domain, "materialize_invocation", lambda _payload: prepared)
+
+    assert card_domain.prepare_run_invocation({}) is prepared
+
+
 def test_magentic_card_may_invoke_only_a_saved_magentic_option_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -264,33 +355,6 @@ def test_saved_magentic_control_edge_is_required_to_resolve_mag_one(
     loaded["deck"]["edges"] = []
     with pytest.raises(card_domain.CardDomainError, match="magentic_control_target_ambiguous"):
         card_domain.materialize_magentic_invocation(payload)
-
-
-def test_mag_one_identity_resolves_without_materializing_or_running(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    mag_one = _agent("mag-one", runtime={"kind": "autogen", "mode": "magentic_one"})
-    mag_one["title"] = "Magentic-One"
-    mag_one["_cardRevisionId"] = "revision-mag-one"
-    mag_one["_cardRevision"] = 1
-    mag_one["_cardRevisionSha256"] = "sha-mag-one"
-    loaded = {
-        "projectId": "00000000-0000-0000-0000-000000000001",
-        "deck": {"nodes": [mag_one], "edges": []},
-    }
-    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: loaded)
-    monkeypatch.setattr(
-        card_domain,
-        "materialize_invocation",
-        lambda *_args, **_kwargs: pytest.fail("proposal identity must not materialize"),
-    )
-
-    assert card_domain.resolve_magentic_card_identity("project-one", "deck-one") == {
-        "projectId": loaded["projectId"],
-        "deckId": "deck-one",
-        "targetCardId": "mag-one",
-        "targetCardTitle": "Magentic-One",
-    }
 
 
 def test_disabled_flow_edge_materializes_no_delegation_transport(

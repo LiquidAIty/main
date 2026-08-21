@@ -248,26 +248,72 @@ def _configured_card_tools(card: dict[str, Any]) -> list[str]:
 
 
 async def write_mag_one_instructions(args: dict[str, Any]) -> dict[str, Any]:
-    """Return one exact transient Mag One Card input; never save or execute it."""
-    _require(args, "projectId", "deckId", "instructions", "_sourceCardId")
-    from app.python_models.card_domain import resolve_magentic_card_identity
+    """Stage one grounded Coder or Mag One invocation; never save or execute."""
+    _require(
+        args,
+        "projectId",
+        "deckId",
+        "targetCardId",
+        "mission",
+        "_sourceCardId",
+    )
+    from app.python_models.card_domain import (
+        CardDomainError,
+        assert_grounded_invocation,
+        materialize_invocation,
+    )
 
     project_id = str(args["projectId"]).strip()
     deck_id = str(args["deckId"]).strip()
     source_card_id = str(args["_sourceCardId"]).strip()
+    target_card_id = str(args["targetCardId"]).strip()
+    mission = str(args["mission"]).strip()
     deck, _revision = await asyncio.to_thread(_load_deck, project_id, deck_id)
     source = _find_card(deck, source_card_id)
     if "write_mag_one_instructions" not in _configured_card_tools(source):
         raise ControlPlaneError("write_mag_one_instructions_not_granted")
-    target = await asyncio.to_thread(
-        resolve_magentic_card_identity,
-        project_id,
-        deck_id,
-    )
+    source_runtime = source.get("runtime")
+    if not isinstance(source_runtime, dict) or (
+        source_runtime.get("kind"), source_runtime.get("mode")
+    ) != ("hermes", "kanban"):
+        raise ControlPlaneError("grounded_staging_source_must_be_kanban")
+    target = _find_card(deck, target_card_id)
+    target_runtime = target.get("runtime")
+    if not isinstance(target_runtime, dict) or (
+        target_runtime.get("kind"), target_runtime.get("mode")
+    ) not in {("hermes", "delegate"), ("autogen", "magentic_one")}:
+        raise ControlPlaneError("grounded_staging_target_runtime_invalid")
+    raw_anchors = args.get("dataAnchors")
+    if not isinstance(raw_anchors, list) or not raw_anchors:
+        raise ControlPlaneError("grounded_execution_reference_required")
+    data_anchors = [
+        {**anchor, "required": True}
+        if isinstance(anchor, dict)
+        else anchor
+        for anchor in raw_anchors
+    ]
+    request = {
+        "projectId": project_id,
+        "deckId": deck_id,
+        "cardId": target_card_id,
+        "assignment": mission,
+        "dataAnchors": data_anchors,
+    }
+    try:
+        invocation = await asyncio.to_thread(materialize_invocation, request)
+        assert_grounded_invocation(request, invocation, force=True)
+    except CardDomainError as error:
+        raise ControlPlaneError(str(error)) from error
     return {
         "ok": True,
-        **target,
-        "instructions": str(args["instructions"]).strip(),
+        "ready": True,
+        "projectId": invocation["projectId"],
+        "deckId": deck_id,
+        "targetCardId": target_card_id,
+        "targetCardTitle": str(target.get("title") or target_card_id),
+        "mission": mission,
+        "dataAnchors": data_anchors,
+        "invocation": invocation,
         "sourceCardId": source_card_id,
         "persisted": False,
         "started": False,

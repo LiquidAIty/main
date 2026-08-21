@@ -75,8 +75,8 @@ describe('Main chat live observation callbacks', () => {
     expect(JSON.stringify(result.current.messages)).not.toContain('private provider reasoning');
   });
 
-  it('loads exact transient Mag One input and resolved graph context from native tool results', async () => {
-    const onMagOneInstructionsLoaded = vi.fn();
+  it('loads one staged Coder mission and exact model-bound graph projection', async () => {
+    const onCardInvocationStaged = vi.fn();
     const onCardGraphReferenceLoaded = vi.fn();
     mocks.streamSession.mockImplementation(async (args) => {
       args.onEvent({
@@ -88,8 +88,36 @@ describe('Main chat live observation callbacks', () => {
             type: 'text',
             text: JSON.stringify({
               ok: true,
-              targetCardId: 'card_mag_one',
-              instructions: '  exact mission\nwith formatting  ',
+              ready: true,
+              targetCardId: 'card_local_coder',
+              targetCardTitle: 'Coder',
+              sourceCardId: 'card_hermes_steward',
+              mission: '  exact mission\nwith formatting  ',
+              dataAnchors: [{
+                authority: 'CodeGraph', nativeId: 'symbol:one', reason: 'Current owner',
+                priority: 0, boundedExpansion: 0, resultLimit: 4, required: true,
+              }],
+              invocation: {
+                ephemeral: true,
+                cardRevisionId: 'revision-coder',
+                cardRevision: 1,
+                cardRevisionSha256: 'sha-coder',
+                runtimeOwner: 'hermes',
+                cardIdentity: { cardId: 'card_local_coder', title: 'Coder' },
+                resolvedNativeReads: [{ authority: 'CodeGraph', nativeId: 'symbol:one' }],
+                resolvedGraphProjection: {
+                  schemaVersion: 'native-card-context.v1', authority: 'codegraph',
+                  projectId: 'project-1',
+                  nodes: [{ id: 'symbol:one', label: 'Current owner', authority: 'CodeGraph', mentionCount: 1 }],
+                  edges: [], counts: { nodes: 1, edges: 0 },
+                },
+                idf: {
+                  systemPrompt: 'Coder', message: 'exact mission',
+                  runtime: { kind: 'hermes', mode: 'delegate' }, provider: {},
+                  runtimeOptions: {}, enabledTools: [], toolDefinitions: [], nativeTools: [],
+                  skills: [], toolsets: [], mcpConnectionIds: [], nativeReferences: [], images: [],
+                },
+              },
               persisted: false,
               started: false,
             }),
@@ -136,7 +164,7 @@ describe('Main chat live observation callbacks', () => {
       conversationId: 'main',
       initialMessages: [],
       workspaceView: 'chat',
-      onMagOneInstructionsLoaded,
+      onCardInvocationStaged,
       onCardGraphReferenceLoaded,
     }));
 
@@ -144,11 +172,19 @@ describe('Main chat live observation callbacks', () => {
       await result.current.requestMainText('Prepare the mission.');
     });
 
-    expect(onMagOneInstructionsLoaded).toHaveBeenCalledOnce();
-    expect(onMagOneInstructionsLoaded).toHaveBeenCalledWith({
-      targetCardId: 'card_mag_one',
-      instructions: '  exact mission\nwith formatting  ',
-    });
+    expect(onCardInvocationStaged).toHaveBeenCalledOnce();
+    expect(onCardInvocationStaged).toHaveBeenCalledWith(expect.objectContaining({
+      targetCardId: 'card_local_coder',
+      sourceCardId: 'card_hermes_steward',
+      mission: '  exact mission\nwith formatting  ',
+      dataAnchors: [expect.objectContaining({ nativeId: 'symbol:one', required: true })],
+      invocation: expect.objectContaining({
+        cardIdentity: { cardId: 'card_local_coder', title: 'Coder' },
+        resolvedGraphProjection: expect.objectContaining({
+          nodes: [expect.objectContaining({ id: 'symbol:one' })],
+        }),
+      }),
+    }));
     expect(onCardGraphReferenceLoaded).toHaveBeenCalledWith(expect.objectContaining({
       targetCardId: 'card_mag_one',
       sourceCardId: 'card_hermes_steward',

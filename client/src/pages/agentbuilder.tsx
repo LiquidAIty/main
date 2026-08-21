@@ -29,7 +29,7 @@ import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBu
 import type {
   AgentBuilderChatMessage,
   LoadedCardGraphReference,
-  MagOneInstructionsLoaded,
+  StagedCardInvocationLoaded,
 } from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
 import useAgentBuilderCardEditor from '../features/agentbuilder/state/useAgentBuilderCardEditor';
@@ -361,19 +361,54 @@ export default function AgentBuilder(): React.ReactElement {
   const conversationId = 'main';
   const graphAttention = useAgentBuilderGraphAttention({ projectId: activeProject });
   const [standaloneTestResult, setStandaloneTestResult] = useState<StandaloneCardTestResult | null>(null);
-  const handleMagOneInstructionsLoaded = useCallback((loaded: MagOneInstructionsLoaded) => {
+  const handleCardInvocationStaged = useCallback((loaded: StagedCardInvocationLoaded) => {
     const target = deck.nodes.find((card) => card.id === loaded.targetCardId);
-    if (!target || target.runtime.kind !== 'autogen' || target.runtime.mode !== 'magentic_one') {
-      setDeckStatusMessage('Mag One instructions target is not an active saved Mag One Card.');
+    const graphProjection = loaded.invocation.resolvedGraphProjection;
+    const supportedTarget = target && (
+      (target.runtime.kind === 'hermes' && target.runtime.mode === 'delegate')
+      || (target.runtime.kind === 'autogen' && target.runtime.mode === 'magentic_one')
+    );
+    if (!target || !supportedTarget || !graphProjection) {
+      setDeckStatusMessage('Grounded invocation target is not an active saved Coder or Mag One Card.');
       return;
     }
+    const graphContext: LoadedCardGraphReference[] = loaded.dataAnchors.map((anchor, order) => ({
+      targetCardId: target.id,
+      sourceCardId: loaded.sourceCardId,
+      reference: {
+        authority: anchor.authority,
+        nativeId: anchor.nativeId,
+        reason: anchor.reason,
+        order,
+        boundedExpansion: anchor.boundedExpansion,
+        resultLimit: anchor.resultLimit,
+        required: true,
+      },
+      resolvedReferences: loaded.invocation.resolvedNativeReads || [],
+      resolvedContextMarkdown: '',
+      graphProjection,
+      resolved: true,
+      ready: true,
+    }));
     setTransientCardInputs((current) => ({
       ...current,
-      [target.id]: loaded.instructions,
+      [target.id]: loaded.mission,
     }));
+    setTransientCardGraphContext((current) => ({ ...current, [target.id]: graphContext }));
+    setStandaloneTestResult({
+      status: 'ready',
+      output: '',
+      error: null,
+      toolCallCount: 0,
+      tools: loaded.invocation.idf.enabledTools,
+      provider: String(loaded.invocation.idf.provider.provider || ''),
+      model: String(loaded.invocation.idf.provider.providerModelId || ''),
+      runtimeLabel: `${target.runtime.kind}/${target.runtime.mode}`,
+      invocation: loaded.invocation,
+    });
     setSelectedCardId(target.id);
     setTab('Invocation');
-    setDeckStatusMessage(`${target.title} transient input is ready for review.`);
+    setDeckStatusMessage(`${target.title} grounded invocation is ready for review. Nothing ran.`);
   }, [deck.nodes, setDeckStatusMessage, setSelectedCardId, setTab]);
 
   const handleCardGraphReferenceLoaded = useCallback((loaded: LoadedCardGraphReference) => {
@@ -445,7 +480,7 @@ export default function AgentBuilder(): React.ReactElement {
     workspaceView,
     onUserTurnStarted: graphAttention.startAttentionScope,
     onNativeTurnEvent: graphAttention.observeNativeTurnEvent,
-    onMagOneInstructionsLoaded: handleMagOneInstructionsLoaded,
+    onCardInvocationStaged: handleCardInvocationStaged,
     onCardGraphReferenceLoaded: handleCardGraphReferenceLoaded,
     onTurnFinished: graphAttention.finishAttentionScope,
   });
@@ -653,7 +688,9 @@ export default function AgentBuilder(): React.ReactElement {
   useEffect(() => {
     standaloneTestRequestRef.current = null;
     setStandaloneTestBusy(false);
-    setStandaloneTestResult(null);
+    setStandaloneTestResult((current) => (
+      current?.invocation?.cardIdentity.cardId === selectedCardId ? current : null
+    ));
   }, [selectedCardId]);
 
   const executeStandaloneInvocation = useCallback(async (

@@ -1756,6 +1756,35 @@ async def _bridge(path: str, payload: dict[str, Any]) -> list[TextContent]:
     return [TextContent(type="text", text=text)]
 
 
+def _grounded_data_anchors_schema() -> dict[str, Any]:
+    """One public native-reference shape shared by staging and execution."""
+
+    return {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "items": {
+            "type": "object",
+            "properties": {
+                "authority": {
+                    "type": "string",
+                    "enum": ["ThinkGraph", "KnowGraph", "CodeGraph"],
+                },
+                "nativeId": {"type": "string", "minLength": 1},
+                "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
+                "priority": {"type": "integer"},
+                "boundedExpansion": {"type": "integer", "minimum": 0, "maximum": 3},
+                "resultLimit": {"type": "integer", "minimum": 1, "maximum": 24},
+            },
+            "required": [
+                "authority", "nativeId", "reason", "priority",
+                "boundedExpansion", "resultLimit",
+            ],
+            "additionalProperties": False,
+        },
+    }
+
+
 async def _materialize_complete_catalog() -> list[Tool]:
     global _LATEST_CATALOG_DIAGNOSTIC
 
@@ -1817,7 +1846,8 @@ async def _materialize_complete_catalog() -> list[Tool]:
         Tool(
             name="run_mag_one",
             description=(
-                "Main Chat only: submit one dynamic input to the AGE-connected Magentic-One "
+                "Main Chat only: submit one explicit mission and selected native graph anchors "
+                "to the AGE-connected Magentic-One "
                 "Card and invoke native MagenticOneGroupChat. Python materializes the saved "
                 "Card plus this input exactly once before execution. "
                 "The backend resolves the live worker roster from blue SIDE connections; never type "
@@ -1830,23 +1860,28 @@ async def _materialize_complete_catalog() -> list[Tool]:
                     "deckId": {"type": "string"},
                     "input": {"type": "string"},
                     "conversationId": {"type": "string"},
+                    "dataAnchors": _grounded_data_anchors_schema(),
                 },
-                "required": ["input", "projectId", "deckId"],
+                "required": ["input", "projectId", "deckId", "dataAnchors"],
+                "additionalProperties": False,
             },
         ),
         Tool(
             name="write_mag_one_instructions",
             description=(
-                "Place one exact transient prompt into the saved Mag One Card's existing "
-                "Invocation editor for Main to review or edit. This tool creates no proposal "
-                "record, persists nothing, and never starts Mag One."
+                "Kanban only: place one exact mission and its resolved native graph projection "
+                "into the saved Coder or Mag One Card's existing Invocation and Knowledge "
+                "editors for Main to review. This tool creates no proposal record, persists "
+                "nothing, and never starts either Card."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "instructions": {"type": "string", "minLength": 1},
+                    "targetCardId": {"type": "string", "minLength": 1},
+                    "mission": {"type": "string", "minLength": 1},
+                    "dataAnchors": _grounded_data_anchors_schema(),
                 },
-                "required": ["instructions"],
+                "required": ["targetCardId", "mission", "dataAnchors"],
                 "additionalProperties": False,
             },
         ),
@@ -2469,9 +2504,12 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "projectWide",
     },
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
-    "run_mag_one": {"projectId", "deckId", "input", "conversationId"},
+    "run_mag_one": {
+        "projectId", "deckId", "input", "conversationId", "dataAnchors",
+    },
     "write_mag_one_instructions": {
-        "projectId", "deckId", "conversationId", "instructions", "_sourceCardId",
+        "projectId", "deckId", "conversationId", "targetCardId", "mission",
+        "dataAnchors", "_sourceCardId",
     },
     "card.load_graph_references": {
         "projectId", "deckId", "conversationId", "targetCardId", "authority",
@@ -2653,6 +2691,13 @@ async def _dispatch_tool(
             )
         ]
     if name == "run_mag_one":
+        raw_anchors = args.get("dataAnchors")
+        data_anchors = [
+            {**anchor, "required": True}
+            if isinstance(anchor, dict)
+            else anchor
+            for anchor in raw_anchors
+        ] if isinstance(raw_anchors, list) else raw_anchors
         return await _bridge(
             "run_configured_card",
             {
@@ -2663,6 +2708,7 @@ async def _dispatch_tool(
                 "correlationId": f"mag_one:{uuid4()}",
                 "conversationId": str(args.get("conversationId") or "main"),
                 "input": str(args.get("input") or ""),
+                "dataAnchors": data_anchors,
             },
         )
     if name == "main.context":

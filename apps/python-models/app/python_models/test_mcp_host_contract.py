@@ -827,11 +827,22 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
         calls.append(("write_mag_one_instructions", dict(args)))
         return {
             "ok": True,
+            "ready": True,
             "projectId": args["projectId"],
             "deckId": args["deckId"],
-            "targetCardId": "card_mag_one",
-            "targetCardTitle": "Magentic-One",
-            "instructions": str(args["instructions"]).strip(),
+            "targetCardId": args["targetCardId"],
+            "targetCardTitle": "Coder",
+            "mission": str(args["mission"]).strip(),
+            "dataAnchors": [{**anchor, "required": True} for anchor in args["dataAnchors"]],
+            "invocation": {
+                "idf": {"runtime": {"kind": "hermes", "mode": "delegate"}},
+                "resolvedNativeReads": [{
+                    "authority": "CodeGraph", "nativeId": "symbol-one",
+                }],
+                "resolvedGraphProjection": {
+                    "nodes": [{"id": "symbol-one"}], "edges": [],
+                },
+            },
             "sourceCardId": args["_sourceCardId"],
             "persisted": False,
             "started": False,
@@ -875,11 +886,21 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
     proposed = asyncio.run(
         mcp_host._dispatch_tool(
             "write_mag_one_instructions",
-            {"instructions": "  exact proposed mission\nwith formatting  "},
+            {
+                "targetCardId": "card_local_coder",
+                "mission": "  exact proposed mission\nwith formatting  ",
+                "dataAnchors": [{
+                    "authority": "CodeGraph", "nativeId": "symbol-one",
+                    "reason": "Current source owner", "priority": 0,
+                    "boundedExpansion": 0, "resultLimit": 4,
+                }],
+            },
         )
     )
     proposal_payload = json.loads(proposed[0].text)
-    assert proposal_payload["instructions"] == "exact proposed mission\nwith formatting"
+    assert proposal_payload["mission"] == "exact proposed mission\nwith formatting"
+    assert proposal_payload["targetCardId"] == "card_local_coder"
+    assert proposal_payload["ready"] is True
     assert proposal_payload["persisted"] is False
     assert proposal_payload["started"] is False
     assert calls[-1][0] == "write_mag_one_instructions"
@@ -906,7 +927,14 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
     executed = asyncio.run(
         mcp_host._dispatch_tool(
             "run_mag_one",
-            {"input": "exact proposed mission"},
+            {
+                "input": "exact proposed mission",
+                "dataAnchors": [{
+                    "authority": "KnowGraph", "nativeId": "episode-1",
+                    "reason": "Current sourced evidence", "priority": 0,
+                    "boundedExpansion": 1, "resultLimit": 8,
+                }],
+            },
         )
     )
     assert json.loads(executed[0].text) == {"ok": True}
@@ -919,6 +947,11 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
         "correlationId": calls[-1][1]["correlationId"],
         "conversationId": "external-mcp:grant-1",
         "input": "exact proposed mission",
+        "dataAnchors": [{
+            "authority": "KnowGraph", "nativeId": "episode-1",
+            "reason": "Current sourced evidence", "priority": 0,
+            "boundedExpansion": 1, "resultLimit": 8, "required": True,
+        }],
     }
 
 
@@ -1089,12 +1122,10 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
             not in by_name["card.run_assistant_agent"].inputSchema["properties"]
         )
         assert by_name["run_mag_one"].inputSchema["required"] == [
-            "input",
-            "projectId",
-            "deckId",
+            "input", "projectId", "deckId", "dataAnchors",
         ]
         assert by_name["write_mag_one_instructions"].inputSchema["required"] == [
-            "instructions",
+            "targetCardId", "mission", "dataAnchors",
         ]
         assert by_name["card.load_graph_references"].inputSchema["required"] == [
             "targetCardId", "authority", "nativeId", "reason", "order", "depth",
@@ -1174,10 +1205,11 @@ def test_mag_one_tools_use_direct_transient_input_contract():
     import mcp_host
 
     assert mcp_host._ALLOWED_KEYS["run_mag_one"] == {
-        "projectId", "deckId", "input", "conversationId",
+        "projectId", "deckId", "input", "conversationId", "dataAnchors",
     }
     assert mcp_host._ALLOWED_KEYS["write_mag_one_instructions"] == {
-        "projectId", "deckId", "conversationId", "instructions", "_sourceCardId",
+        "projectId", "deckId", "conversationId", "targetCardId", "mission",
+        "dataAnchors", "_sourceCardId",
     }
     assert mcp_host._ALLOWED_KEYS["card.load_graph_references"] == {
         "projectId", "deckId", "conversationId", "targetCardId", "authority",

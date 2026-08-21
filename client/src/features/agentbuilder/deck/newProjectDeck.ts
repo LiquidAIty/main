@@ -138,7 +138,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Keep candidate links temporary in Kanban; reject weak, duplicate, or irrelevant results and write only useful source-backed findings to Graphiti.',
         'Do not use a repository-writing terminal when operating as the planning and KnowGraph helper.',
         'Use card.load_graph_references to hand native graph references to the target Card with reason, order, and bounded expansion.',
-        'Use write_mag_one_instructions to place the exact final prompt in the transient Mag One Card Invocation editor; it never saves or runs it.',
+        'Use write_mag_one_instructions to stage one exact mission plus selected native graph references in the transient Coder or Mag One Invocation and Knowledge editors; it never saves or runs either Card.',
         'Main owns review, approval, and dispatch from the loaded Mag One Card.',
         'Do not invent sources, graph writes, tool results, worker results, or Kanban activity.',
         'Do not delegate onward, create recursive workers, promote queued work, or run historical tasks. Return the bounded result so Main or Coder can explicitly retask you if needed.',

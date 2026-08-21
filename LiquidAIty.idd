@@ -162,19 +162,19 @@ required = ["projectId"]
 name = "run_mag_one"
 access = "write"
 displayName = "Run Magentic-One"
-description = "Run the saved Mag One Card with one dynamic input after current authority validation."
-parameters = ["projectId", "deckId", "input", "conversationId"]
-required = ["input", "projectId", "deckId"]
+description = "Run the saved Mag One Card with one explicit mission and current native graph anchors after authority validation."
+parameters = ["projectId", "deckId", "input", "conversationId", "dataAnchors"]
+required = ["input", "projectId", "deckId", "dataAnchors"]
 requiredCallerRuntimeKind = "hermes"
 requiredCallerRuntimeMode = "main"
 
 [[toolGroups.tools]]
 name = "write_mag_one_instructions"
 access = "write"
-displayName = "Prepare Mag One input"
-description = "Place one exact transient prompt in the saved Mag One Card Invocation editor. Persist nothing and start no runtime."
-parameters = ["instructions"]
-required = ["instructions"]
+displayName = "Stage grounded Card invocation"
+description = "Kanban places one exact mission and resolved native graph projection in the saved Coder or Mag One Card editor. Persist nothing and start no runtime."
+parameters = ["targetCardId", "mission", "dataAnchors"]
+required = ["targetCardId", "mission", "dataAnchors"]
 
 [[toolGroups.tools]]
 name = "card.load_graph_references"

@@ -118,7 +118,7 @@ describe('AgentManager active builder config', () => {
     expect(pageSource).toContain('invocation: result.invocation || null');
   });
 
-  it('places exact Mag One instructions and current graph data in transient Card state', () => {
+  it('places one staged Coder or Mag One mission and exact graph data in transient Card state', () => {
     const source = readFileSync(
       path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
       'utf8',
@@ -137,18 +137,21 @@ describe('AgentManager active builder config', () => {
 
     expect(chatSource).toContain("event.toolName === 'write_mag_one_instructions'");
     expect(chatSource).toContain("event.toolName === 'card.load_graph_references'");
-    expect(chatSource).toContain('onMagOneInstructionsLoaded');
+    expect(chatSource).toContain('onCardInvocationStaged');
     expect(chatSource).toContain('onCardGraphReferenceLoaded');
     expect(pageSource).toContain('const [transientCardInputs, setTransientCardInputs]');
     expect(pageSource).toContain('const [transientCardGraphContext, setTransientCardGraphContext]');
-    expect(pageSource).toContain('[target.id]: loaded.instructions');
+    expect(pageSource).toContain('[target.id]: loaded.mission');
+    expect(pageSource).toContain("target.runtime.kind === 'hermes' && target.runtime.mode === 'delegate'");
+    expect(pageSource).toContain("target.runtime.kind === 'autogen' && target.runtime.mode === 'magentic_one'");
+    expect(pageSource).toContain('invocation: loaded.invocation');
     expect(pageSource).toContain('dataAnchors: (transientCardGraphContext[selectedCard.id] || [])');
     expect(source).toContain('Exact model-bound native graph context');
     expect(source).toContain('NativeGraphProjectionSurface');
     expect(source).toContain('loadedGraphProjection');
     expect(source).toContain('Saved Mag One workers');
     expect(source).not.toContain('Read-only Mag One proposal');
-    expect(pageSource).toContain('onMagOneInstructionsLoaded: handleMagOneInstructionsLoaded');
+    expect(pageSource).toContain('onCardInvocationStaged: handleCardInvocationStaged');
     expect(pageSource).toContain('onCardGraphReferenceLoaded: handleCardGraphReferenceLoaded');
     expect(pageSource).not.toContain('persistTransientCardInputs');
     expect(pageSource).not.toContain('proposalHash');

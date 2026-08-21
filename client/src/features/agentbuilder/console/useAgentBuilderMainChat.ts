@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { waitForBackendReady } from '../../../components/builder/backendReadiness';
+import type { StandaloneCardTestResult } from '../../../components/AgentManager';
 import type { GraphProjectionV1 } from '../../../components/knowledge/NativeAuthorityGraphSurface';
 import {
   loadSessionHistory,
@@ -22,7 +23,7 @@ type UseAgentBuilderMainChatArgs = {
   workspaceView: string;
   onUserTurnStarted?: (turn: MainChatTurnStarted) => void;
   onNativeTurnEvent?: (turn: MainChatTurnEvent) => void;
-  onMagOneInstructionsLoaded?: (instructions: MagOneInstructionsLoaded) => void;
+  onCardInvocationStaged?: (invocation: StagedCardInvocationLoaded) => void;
   onCardGraphReferenceLoaded?: (context: LoadedCardGraphReference) => void;
   onTurnFinished?: (turn: MainChatTurnFinished) => void;
 };
@@ -43,9 +44,21 @@ export type MainChatTurnEvent = {
   observedAt: string;
 };
 
-export type MagOneInstructionsLoaded = {
+export type StagedCardInvocationLoaded = {
   targetCardId: string;
-  instructions: string;
+  targetCardTitle: string;
+  sourceCardId: string;
+  mission: string;
+  dataAnchors: Array<{
+    authority: 'ThinkGraph' | 'KnowGraph' | 'CodeGraph';
+    nativeId: string;
+    reason: string;
+    priority: number;
+    boundedExpansion: number;
+    resultLimit: number;
+    required: true;
+  }>;
+  invocation: NonNullable<StandaloneCardTestResult['invocation']>;
 };
 
 export type LoadedCardGraphReference = {
@@ -91,43 +104,72 @@ function notifyObserver<T>(observer: ((value: T) => void) | undefined, value: T)
   }
 }
 
-export function parseMagOneInstructionsLoaded(
+export function parseStagedCardInvocationLoaded(
   output: unknown,
   depth = 0,
-): MagOneInstructionsLoaded | null {
+): StagedCardInvocationLoaded | null {
   if (depth > 8 || output == null) return null;
   if (typeof output === 'string') {
     try {
-      return parseMagOneInstructionsLoaded(JSON.parse(output), depth + 1);
+      return parseStagedCardInvocationLoaded(JSON.parse(output), depth + 1);
     } catch {
       return null;
     }
   }
   if (Array.isArray(output)) {
     for (const item of output) {
-      const loaded = parseMagOneInstructionsLoaded(item, depth + 1);
+      const loaded = parseStagedCardInvocationLoaded(item, depth + 1);
       if (loaded) return loaded;
     }
     return null;
   }
   if (typeof output !== 'object') return null;
   const record = output as Record<string, unknown>;
+  const invocation = record.invocation as Record<string, unknown> | undefined;
+  const projection = invocation?.resolvedGraphProjection as Record<string, unknown> | undefined;
+  const anchors = Array.isArray(record.dataAnchors) ? record.dataAnchors : [];
   if (
     record.ok === true
+    && record.ready === true
     && record.persisted === false
     && record.started === false
     && typeof record.targetCardId === 'string'
     && record.targetCardId.length > 0
-    && typeof record.instructions === 'string'
-    && record.instructions.trim().length > 0
+    && typeof record.targetCardTitle === 'string'
+    && typeof record.sourceCardId === 'string'
+    && record.sourceCardId.length > 0
+    && typeof record.mission === 'string'
+    && record.mission.trim().length > 0
+    && anchors.length > 0
+    && anchors.every((anchor) => {
+      if (!anchor || typeof anchor !== 'object') return false;
+      const value = anchor as Record<string, unknown>;
+      return ['ThinkGraph', 'KnowGraph', 'CodeGraph'].includes(String(value.authority))
+        && typeof value.nativeId === 'string' && value.nativeId.length > 0
+        && typeof value.reason === 'string' && value.reason.length > 0
+        && Number.isInteger(value.priority)
+        && Number.isInteger(value.boundedExpansion)
+        && Number.isInteger(value.resultLimit)
+        && value.required === true;
+    })
+    && invocation != null
+    && invocation.idf != null
+    && projection != null
+    && Array.isArray(projection.nodes)
+    && Array.isArray(projection.edges)
+    && (projection.nodes.length > 0 || projection.edges.length > 0)
   ) {
     return {
       targetCardId: record.targetCardId,
-      instructions: record.instructions,
+      targetCardTitle: record.targetCardTitle,
+      sourceCardId: record.sourceCardId,
+      mission: record.mission,
+      dataAnchors: anchors as StagedCardInvocationLoaded['dataAnchors'],
+      invocation: invocation as StagedCardInvocationLoaded['invocation'],
     };
   }
   for (const key of ['content', 'result', 'structuredContent', 'text', 'output']) {
-    const loaded = parseMagOneInstructionsLoaded(record[key], depth + 1);
+    const loaded = parseStagedCardInvocationLoaded(record[key], depth + 1);
     if (loaded) return loaded;
   }
   return null;
@@ -220,7 +262,7 @@ export default function useAgentBuilderMainChat({
   initialMessages,
   onUserTurnStarted,
   onNativeTurnEvent,
-  onMagOneInstructionsLoaded,
+  onCardInvocationStaged,
   onCardGraphReferenceLoaded,
   onTurnFinished,
 }: UseAgentBuilderMainChatArgs) {
@@ -337,8 +379,8 @@ export default function useAgentBuilderMainChat({
               && event.toolName === 'write_mag_one_instructions'
               && event.isError !== true
             ) {
-              const loaded = parseMagOneInstructionsLoaded(event.output);
-              if (loaded) notifyObserver(onMagOneInstructionsLoaded, loaded);
+              const loaded = parseStagedCardInvocationLoaded(event.output);
+              if (loaded) notifyObserver(onCardInvocationStaged, loaded);
             }
             if (
               event.kind === 'tool_result'
@@ -401,7 +443,7 @@ export default function useAgentBuilderMainChat({
       deckId,
       nativeSessionBusy,
       onNativeTurnEvent,
-      onMagOneInstructionsLoaded,
+      onCardInvocationStaged,
       onCardGraphReferenceLoaded,
       onTurnFinished,
       onUserTurnStarted,

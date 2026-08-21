@@ -75,19 +75,34 @@ def test_canvas_inspect_returns_only_the_bounded_public_projection(fake_backend)
     ]
 
 
-def test_mag_one_instructions_load_exact_transient_input_without_saving(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("target_id", "runtime"),
+    [
+        ("coder", {"kind": "hermes", "mode": "delegate", "profile": "coder"}),
+        ("mag-one", {"kind": "autogen", "mode": "magentic_one"}),
+    ],
+)
+def test_one_grounded_staging_path_loads_coder_or_mag_one_without_running(
+    monkeypatch, target_id, runtime,
+) -> None:
     import copy
 
     deck = copy.deepcopy(DECK)
-    deck["nodes"].append({
-        "id": "mag-one",
-        "title": "Magentic-One",
-        "runtime": {"kind": "autogen", "mode": "magentic_one"},
-        "runtimeOptions": {
-            "provider": "openrouter", "modelKey": "orchestrator",
-            "providerModelId": "provider/orchestrator", "tools": [],
+    deck["nodes"].extend([
+        {
+            "id": "coder", "title": "Coder",
+            "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
+            "runtimeOptions": {"tools": []},
         },
-    })
+        {
+            "id": "mag-one", "title": "Magentic-One",
+            "runtime": {"kind": "autogen", "mode": "magentic_one"},
+            "runtimeOptions": {
+                "provider": "openrouter", "modelKey": "orchestrator",
+                "providerModelId": "provider/orchestrator", "tools": [],
+            },
+        },
+    ])
     deck["nodes"].append({
         "id": "helper", "title": "Helper",
         "runtime": {"kind": "hermes", "mode": "kanban", "profile": "helper"},
@@ -101,33 +116,88 @@ def test_mag_one_instructions_load_exact_transient_input_without_saving(monkeypa
         return {"ok": True, "deck": copy.deepcopy(deck), "meta": {"deckRevision": "rev-mag"}}
 
     monkeypatch.setattr(cp, "_backend_json", backend)
-    monkeypatch.setattr(
-        "app.python_models.card_domain.resolve_magentic_card_identity",
-        lambda *_args: {"targetCardId": "mag-one"},
-    )
+    materializations = []
+
+    def materialize(request):
+        materializations.append(copy.deepcopy(request))
+        return {
+            "projectId": "p", "deckId": "deck_builder", "ephemeral": True,
+            "cardRevisionId": f"revision-{target_id}", "cardRevision": 1,
+            "cardRevisionSha256": "sha", "runtimeOwner": runtime["kind"],
+            "cardIdentity": {"cardId": target_id, "title": target_id},
+            "resolvedNativeReads": [{
+                "authority": "KnowGraph", "nativeId": "episode-1",
+            }],
+            "resolvedGraphProjection": {
+                "schemaVersion": "native-card-context.v1", "authority": "knowgraph",
+                "projectId": "p", "nodes": [{"id": "episode-1"}], "edges": [],
+                "counts": {"nodes": 1, "edges": 0},
+            },
+            "idf": {
+                "runtime": runtime, "enabledTools": [], "provider": {},
+            },
+        }
+
+    monkeypatch.setattr("app.python_models.card_domain.materialize_invocation", materialize)
     result = asyncio.run(cp.write_mag_one_instructions({
         "projectId": "p",
         "deckId": "deck_builder",
-        "instructions": "  Research one bounded public question.\nKeep citations.  ",
+        "targetCardId": target_id,
+        "mission": "  Research one bounded public question.\nKeep citations.  ",
+        "dataAnchors": [{
+            "authority": "KnowGraph", "nativeId": "episode-1",
+            "reason": "Current sourced evidence", "priority": 0,
+            "boundedExpansion": 1, "resultLimit": 8,
+        }],
         "_sourceCardId": "helper",
     }))
 
-    assert result["targetCardId"] == "mag-one"
+    assert result["targetCardId"] == target_id
     assert result["sourceCardId"] == "helper"
-    assert result["instructions"] == "Research one bounded public question.\nKeep citations."
+    assert result["mission"] == "Research one bounded public question.\nKeep citations."
+    assert result["dataAnchors"][0]["required"] is True
+    assert result["invocation"]["resolvedGraphProjection"]["nodes"] == [{"id": "episode-1"}]
+    assert result["ready"] is True
     assert result["persisted"] is False
     assert result["started"] is False
+    assert materializations == [{
+        "projectId": "p", "deckId": "deck_builder", "cardId": target_id,
+        "assignment": "Research one bounded public question.\nKeep citations.",
+        "dataAnchors": [{
+            "authority": "KnowGraph", "nativeId": "episode-1",
+            "reason": "Current sourced evidence", "priority": 0,
+            "boundedExpansion": 1, "resultLimit": 8, "required": True,
+        }],
+    }]
     assert [method for method, _payload in calls] == ["GET"]
 
 
-def test_mag_one_instructions_require_source_card_write_grant(monkeypatch, fake_backend) -> None:
-    monkeypatch.setattr(
-        "app.python_models.card_domain.resolve_magentic_card_identity",
-        lambda *_args: {"targetCardId": "signals-card"},
-    )
+def test_grounded_staging_requires_source_card_write_grant(monkeypatch, fake_backend) -> None:
     with pytest.raises(cp.ControlPlaneError, match="write_mag_one_instructions_not_granted"):
         asyncio.run(cp.write_mag_one_instructions({
-            "projectId": "p", "deckId": "d", "instructions": "bounded",
+            "projectId": "p", "deckId": "d", "targetCardId": "worker",
+            "mission": "bounded", "dataAnchors": [{"nativeId": "one"}],
+            "_sourceCardId": "signals-card",
+        }))
+
+
+def test_grounded_staging_rejects_a_non_kanban_source_even_with_the_tool(monkeypatch) -> None:
+    import copy
+
+    deck = copy.deepcopy(DECK)
+    source = deck["nodes"][0]
+    source["runtime"] = {"kind": "hermes", "mode": "main", "profile": "main"}
+    source["runtimeOptions"]["tools"] = ["write_mag_one_instructions"]
+    monkeypatch.setattr(
+        cp,
+        "_backend_json",
+        lambda *_args, **_kwargs: {"ok": True, "deck": deck, "meta": {}},
+    )
+
+    with pytest.raises(cp.ControlPlaneError, match="grounded_staging_source_must_be_kanban"):
+        asyncio.run(cp.write_mag_one_instructions({
+            "projectId": "p", "deckId": "d", "targetCardId": "worker",
+            "mission": "bounded", "dataAnchors": [{"nativeId": "one"}],
             "_sourceCardId": "signals-card",
         }))
 

@@ -1788,28 +1788,6 @@ def prepare_main_chat(payload: dict[str, Any]) -> dict[str, Any]:
     return {**prepared, "sessionProfile": call_config}
 
 
-def resolve_magentic_card_identity(project_ref: str, deck_id: str) -> dict[str, str]:
-    """Resolve the one saved Mag One Card without materializing or running it."""
-    loaded = _load_deck_internal(
-        _required_text(project_ref, "project_id"),
-        _required_text(deck_id, "deck_id"),
-    )
-    targets = [
-        card for card in loaded["deck"]["nodes"]
-        if _card_enabled(card)
-        and _card_runtime(card) == {"kind": "autogen", "mode": "magentic_one"}
-    ]
-    if len(targets) != 1:
-        raise CardDomainError("magentic_card_identity_ambiguous")
-    target = targets[0]
-    return {
-        "projectId": str(loaded["projectId"]),
-        "deckId": deck_id,
-        "targetCardId": str(target["id"]),
-        "targetCardTitle": str(target.get("title") or "Mag One"),
-    }
-
-
 def materialize_magentic_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     """Resolve the one Mag One Card controlled by the explicit sender edge."""
     project_ref = _required_text(payload.get("projectId"), "project_id")
@@ -1907,7 +1885,58 @@ def prepare_run_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     expected_revision = str(payload.get("cardRevisionId") or "").strip()
     if expected_revision and prepared["cardRevisionId"] != expected_revision:
         raise CardDomainError("card_revision_changed")
+    assert_grounded_invocation(payload, prepared)
     return prepared
+
+
+def assert_grounded_invocation(
+    payload: dict[str, Any],
+    prepared: dict[str, Any],
+    *,
+    force: bool = False,
+) -> None:
+    """Fail before Run creation unless a grounded target has current graph data.
+
+    Coder and Mag One are the two explicit execution targets that require a
+    reviewed mission plus selected native graph anchors.  Staging uses the
+    same assertion with ``force=True`` so its returned projection is already
+    execution-ready without creating a Run or contacting a provider.
+    """
+
+    runtime = prepared.get("idf", {}).get("runtime", {})
+    requires_grounding = (
+        isinstance(runtime, dict)
+        and (
+            (runtime.get("kind"), runtime.get("mode"))
+            in {("hermes", "delegate"), ("autogen", "magentic_one")}
+        )
+    )
+    if not force and not requires_grounding:
+        return
+
+    requested = _normalized_data_anchors(
+        payload.get("dataAnchors"), record_name="data-anchor-reference"
+    )
+    if not requested:
+        raise CardDomainError("grounded_execution_reference_required")
+
+    resolved = {
+        (str(reference.get("authority") or ""), str(reference.get("nativeId") or ""))
+        for reference in prepared.get("resolvedNativeReads") or []
+        if isinstance(reference, dict)
+    }
+    for anchor in requested:
+        identity = (anchor["authority"], anchor["nativeId"])
+        if identity not in resolved:
+            raise CardDomainError(
+                f"grounded_execution_reference_stale:{identity[0]}:{identity[1]}"
+            )
+
+    projection = prepared.get("resolvedGraphProjection")
+    if not isinstance(projection, dict) or not (
+        projection.get("nodes") or projection.get("edges")
+    ):
+        raise CardDomainError("grounded_execution_projection_empty")
 
 
 def _insert_run(
