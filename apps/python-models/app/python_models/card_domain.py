@@ -1355,7 +1355,7 @@ def _normalized_data_anchors(value: Any, *, record_name: str) -> list[dict[str, 
 
 
 def load_card_graph_reference(payload: dict[str, Any]) -> dict[str, Any]:
-    """Resolve one trusted Card-to-Card native graph handoff without execution.
+    """Resolve one bounded Main selection or Card-to-Card graph handoff.
 
     The caller supplies only the target and one bounded native pointer.  The
     official MCP host injects the source Card/Run/project/deck identities.  The
@@ -1376,13 +1376,19 @@ def load_card_graph_reference(payload: dict[str, Any]) -> dict[str, Any]:
         raise CardDomainError("source_card_not_found")
     if target_card is None:
         raise CardDomainError("target_card_not_found")
-    if source_card_id == target_card_id:
+    source_runtime = _card_runtime(source_card)
+    main_self_selection = (
+        source_card_id == target_card_id
+        and source_runtime.get("kind") == "hermes"
+        and source_runtime.get("mode") == "main"
+    )
+    if source_card_id == target_card_id and not main_self_selection:
         raise CardDomainError("graph_reference_self_handoff_forbidden")
     if not _card_enabled(source_card) or not _card_enabled(target_card):
         raise CardDomainError("graph_reference_card_disabled")
     source_options = _json_object(source_card.get("runtimeOptions"), "runtime_options")
     source_tools = _string_list(source_options.get("tools"), "tools")
-    if "card.load_graph_references" not in source_tools:
+    if not main_self_selection and "card.load_graph_references" not in source_tools:
         raise CardDomainError("graph_reference_handoff_not_granted")
 
     order = int(payload.get("order", 0))

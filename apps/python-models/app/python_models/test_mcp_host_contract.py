@@ -1033,6 +1033,80 @@ def test_long_running_native_tools_use_their_owned_timeouts(monkeypatch):
     assert mcp_host._mcp_tool_timeout_seconds("graphiti.get_status") == 30.0
 
 
+def test_cold_engraphis_timeout_cannot_enter_write_and_retry_is_safe(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    preparing = threading.Event()
+    release = threading.Event()
+    prepare_calls = []
+    writes = []
+
+    def prepare():
+        prepare_calls.append("prepare")
+        preparing.set()
+        if len(prepare_calls) == 1 and not release.wait(timeout=2):
+            raise RuntimeError("test_release_timeout")
+
+    class NativeMcp:
+        async def call_tool(self, name, arguments):
+            writes.append((name, arguments))
+            return [mcp_host.TextContent(
+                type="text",
+                text=json.dumps({"ok": True, "id": "mem-one"}),
+            )]
+
+    async def initialized():
+        return None
+
+    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
+    monkeypatch.setattr(
+        mcp_host,
+        "_NATIVE_ENGRAPHIS_NAMES",
+        frozenset({"engraphis_remember"}),
+    )
+    monkeypatch.setattr(
+        mcp_host,
+        "_NATIVE_ENGRAPHIS_TOOLS",
+        (mcp_host.Tool(
+            name="engraphis_remember",
+            description="Remember",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string"},
+                    "workspace": {"type": "string"},
+                    "repo": {"type": "string"},
+                },
+            },
+        ),),
+    )
+    monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
+    monkeypatch.setattr(mcp_host, "_prepare_native_engraphis_semantic_write", prepare)
+    monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr(mcp_host, "_LOCAL_EMBEDDING_TOOL_TIMEOUT_SECONDS", 1.0)
+
+    first = asyncio.run(mcp_host.call_tool(
+        "engraphis.remember",
+        {"content": "Approved bounded fact"},
+    ))
+    assert preparing.is_set()
+    assert first.isError is True
+    assert json.loads(first.content[0].text)["failureCode"] == "timeout"
+    assert writes == []
+
+    release.set()
+    second = asyncio.run(mcp_host.call_tool(
+        "engraphis.remember",
+        {"content": "Approved bounded fact"},
+    ))
+    assert second.isError is not True
+    assert writes == [(
+        "engraphis_remember",
+        {"content": "Approved bounded fact"},
+    )]
+
+
 def test_plain_text_does_not_hide_a_later_structured_tool_error():
     import json
     import mcp_host

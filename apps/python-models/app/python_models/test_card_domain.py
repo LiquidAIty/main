@@ -699,6 +699,99 @@ def test_card_graph_handoff_rereads_native_data_and_attributes_source_run(
     assert observed[0]["nativeNodeIds"] == ["episode:one"]
 
 
+def test_main_can_load_its_own_bounded_knowledge_selection_without_handoff_grant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    main = _agent(
+        "main",
+        runtime={"kind": "hermes", "mode": "main", "profile": "liquidaity-main"},
+    )
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "deck": {"nodes": [main], "edges": []},
+    })
+    resolved_calls = []
+    monkeypatch.setattr(
+        card_domain,
+        "resolve_data_anchors",
+        lambda project_id, anchors, **kwargs: (
+            resolved_calls.append((project_id, anchors, kwargs))
+            or (
+                "# ThinkGraph\nCurrent bounded decision",
+                [{
+                    "authority": "ThinkGraph",
+                    "nativeId": "mem-one",
+                    "nativeKind": "node",
+                    "reason": anchors[0]["reason"],
+                }],
+            )
+        ),
+    )
+
+    result = card_domain.load_card_graph_reference({
+        "projectId": "project-one",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-one",
+        "_sourceCardId": "main",
+        "_sourceRunId": "run-main",
+        "targetCardId": "main",
+        "authority": "ThinkGraph",
+        "nativeId": "mem-one",
+        "reason": "Attach the approved decision",
+        "order": 0,
+        "depth": 0,
+        "resultLimit": 1,
+        "required": True,
+    })
+
+    assert result["ready"] is True
+    assert result["sourceCardId"] == result["targetCardId"] == "main"
+    assert result["reference"] == {
+        "authority": "ThinkGraph",
+        "nativeId": "mem-one",
+        "reason": "Attach the approved decision",
+        "boundedExpansion": 0,
+        "resultLimit": 1,
+        "required": True,
+        "order": 0,
+    }
+    assert len(resolved_calls) == 1
+    assert resolved_calls[0][2]["card_id"] == "main"
+
+
+def test_non_main_same_card_graph_load_remains_forbidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    helper = _agent(
+        "helper",
+        runtime={"kind": "hermes", "mode": "kanban", "profile": "helper"},
+    )
+    helper["runtimeOptions"]["tools"] = ["card.load_graph_references"]
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "deck": {"nodes": [helper], "edges": []},
+    })
+
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="graph_reference_self_handoff_forbidden",
+    ):
+        card_domain.load_card_graph_reference({
+            "projectId": "project-one",
+            "deckId": "deck_builder",
+            "_sourceCardId": "helper",
+            "_sourceRunId": "run-helper",
+            "targetCardId": "helper",
+            "authority": "ThinkGraph",
+            "nativeId": "mem-one",
+            "reason": "Invalid recursive handoff",
+            "order": 0,
+            "depth": 0,
+            "resultLimit": 1,
+            "required": True,
+        })
+
+
 def test_card_graph_handoff_fails_closed_for_ungranted_or_unresolved_required_reference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

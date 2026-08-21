@@ -799,6 +799,8 @@ server = AgentRuntimeServer(
 _NATIVE_ENGRAPHIS_MCP: Any | None = None
 _NATIVE_ENGRAPHIS_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_ENGRAPHIS_NAMES: frozenset[str] = frozenset()
+_NATIVE_ENGRAPHIS_WRITE_READY = False
+_NATIVE_ENGRAPHIS_WRITE_READY_LOCK = threading.Lock()
 _NATIVE_CBM_CLIENT: "_NativeStdioMcpClient | None" = None
 _NATIVE_CBM_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_CBM_NAMES: frozenset[str] = frozenset()
@@ -947,6 +949,28 @@ def _native_engraphis_mcp():
     if _NATIVE_ENGRAPHIS_MCP is None:
         raise RuntimeError("native_engraphis_not_initialized")
     return _NATIVE_ENGRAPHIS_MCP
+
+
+def _prepare_native_engraphis_semantic_write() -> None:
+    """Load the lazy local embedder without entering Engraphis' write handler.
+
+    A cancelled or timed-out first request may leave this preparation running in
+    its worker thread, but it cannot commit a memory. A later retry reuses the
+    prepared process state and enters the native write handler exactly once.
+    """
+
+    global _NATIVE_ENGRAPHIS_WRITE_READY
+    if _NATIVE_ENGRAPHIS_WRITE_READY:
+        return
+    with _NATIVE_ENGRAPHIS_WRITE_READY_LOCK:
+        if _NATIVE_ENGRAPHIS_WRITE_READY:
+            return
+        from engraphis.mcp_server import service
+
+        vectors = service().engine.embedder.embed([""])
+        if len(vectors) != 1:
+            raise RuntimeError("native_engraphis_embedding_prepare_failed")
+        _NATIVE_ENGRAPHIS_WRITE_READY = True
 
 
 async def _native_engraphis_tools() -> list[Tool]:
@@ -2612,6 +2636,15 @@ async def _dispatch_tool(
                     native_args["workspace"] = str(context["projectId"])
                 if "repo" in native_properties:
                     native_args["repo"] = "thinkgraph"
+            if native_name == "engraphis_remember":
+                # Keep the cold model load outside the native write handler. If
+                # it exceeds the ordinary connector window, the request fails
+                # before any memory can be committed; a retry can safely reuse
+                # the completed lazy initialization.
+                await asyncio.wait_for(
+                    asyncio.to_thread(_prepare_native_engraphis_semantic_write),
+                    timeout=_MCP_CALL_TIMEOUT_SECONDS,
+                )
             result = await asyncio.to_thread(
                 asyncio.run,
                 _native_engraphis_mcp().call_tool(
