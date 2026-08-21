@@ -256,6 +256,8 @@ export type StandaloneCardTestResult = {
     cardRevision: number;
     cardRevisionSha256: string;
     runtimeOwner: string;
+    resolvedNativeReads?: Array<Record<string, unknown>>;
+    resolvedGraphProjection?: GraphProjectionV1;
     idf: {
       systemPrompt: string;
       message: string;
@@ -275,6 +277,16 @@ export type StandaloneCardTestResult = {
   } | null;
   receipt?: Record<string, unknown> | null;
 };
+
+export function selectKnowledgeGraphProjection(
+  loaded: GraphProjectionV1,
+  materialized?: GraphProjectionV1,
+): { projection: GraphProjectionV1; modelBound: boolean } {
+  if (materialized && Array.isArray(materialized.nodes) && Array.isArray(materialized.edges)) {
+    return { projection: materialized, modelBound: true };
+  }
+  return { projection: loaded, modelBound: false };
+}
 
 type SaveCardStatus = 'idle' | 'saving' | 'saved' | 'failed';
 
@@ -518,6 +530,13 @@ export function AgentManager({
       counts: { nodes: nodes.size, edges: edges.size },
     };
   }, [loadedGraphContext]);
+  const materializedGraphProjection = runResult?.invocation?.resolvedGraphProjection;
+  const selectedKnowledgeProjection = selectKnowledgeGraphProjection(
+    loadedGraphProjection,
+    materializedGraphProjection,
+  );
+  const knowledgeGraphProjection = selectedKnowledgeProjection.projection;
+  const knowledgeProjectionIsMaterialized = selectedKnowledgeProjection.modelBound;
 
   useEffect(() => {
     setCardNameDraft(cardName);
@@ -1118,16 +1137,23 @@ export function AgentManager({
       return (
         <div data-testid="agent-manager-knowledge" style={{ display: 'grid', gap: 10 }}>
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-            Loaded native graph context
+            {knowledgeProjectionIsMaterialized
+              ? 'Exact model-bound native graph context'
+              : 'Loaded native graph context'}
           </div>
-          {loadedGraphContext.length === 0 ? (
+          {knowledgeGraphProjection.nodes.length === 0 ? (
             <div style={{ color: '#80969F', fontSize: 11.5 }}>
               No transient graph references are loaded for this Card invocation.
             </div>
           ) : (
-            <div style={{ height: 300, minHeight: 240, border: '1px solid #3A4A4F', borderRadius: 8, overflow: 'hidden' }}>
+            <div
+              data-testid={knowledgeProjectionIsMaterialized
+                ? 'knowledge-model-bound-projection'
+                : 'knowledge-loaded-projection'}
+              style={{ height: 300, minHeight: 240, border: '1px solid #3A4A4F', borderRadius: 8, overflow: 'hidden' }}
+            >
               <NativeGraphProjectionSurface
-                projection={loadedGraphProjection}
+                projection={knowledgeGraphProjection}
                 status="ready"
                 error={null}
                 authority="knowgraph"

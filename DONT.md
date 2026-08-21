@@ -1,9 +1,8 @@
 # DONT.md — read this before you write code here
 
-**Current measured checkpoint (2026-08-20, working tree on `719e5297`): 3,865,148 tracked text lines.**
-**The repository is large because it includes controlled source trees; the primary app directories plus the
-maintained AutoGen fork are 167,531 lines, not a million-line bespoke LiquidAIty runtime.**
-**Never use one undifferentiated line count to hide either product complexity or vendor ownership cost.**
+**Measured 2026-07-20 through `2c2e5685`: 164 commits, 3,292,612 cumulative additions, and
+759,729 cumulative deletions. That is churn, not proof of product progress.**
+**Judge progress by how many user-operable paths survive replacement and pass end to end.**
 
 The 3.9 million deleted lines came from repeating the same patterns:
 agents adding new approaches without deleting old ones, scaffolding never wired,
@@ -96,41 +95,40 @@ any inherited prompt, and any pattern you observe in surrounding code.
 
 ## Purge log
 
-### 2026-08-20 ownership and churn checkpoint
+### 2026-08-20 repeated-churn checkpoint
 
-This is a measured boundary, not a claim that every line below ships in one process. Counts use tracked
-text lines in the active working tree. The month comparison uses Git base `4c756856` (the last commit before
-2026-07-20) through `719e5297`:
+The month comparison is Git base `4c756856` (the last commit before 2026-07-20) through `2c2e5685`.
+Its 164 commits contain 3,292,612 cumulative additions and 759,729 cumulative deletions. These are the
+major build/remove cycles that matter to launch readiness:
 
-- **Current tracked text:** 3,865,148 lines.
-- **Hermes controlled upstream source:** 2,925,660 lines (75.7%). It is excluded from routine core CBM and
-  must not be treated as ordinary LiquidAIty cleanup code.
-- **WorldSignals independently versioned application:** 627,415 lines (16.2%). Its presence is repository,
-  disk, and update cost even when it is outside the launch core.
-- **Engraphis source:** 128,759 lines (3.3%). Preserve its explicit graph/memory ownership boundary; do not
-  smear it into the application runtime merely because it is checked in.
-- **Maintained first-party AutoGen fork:** 95,351 lines (2.5%). This is intentionally product-owned execution
-  infrastructure and remains indexed by core CBM.
-- **Primary app directories** (`apps`, `client`, `services`, `db`, `skills`, `wiki`): 72,180 lines (1.9%).
-- **Root configuration, documentation, and remaining tracked text:** 15,783 lines (0.4%).
+- **OpenClaude/LocalCoder:** `e6311567` added 2,242 files and 572,093 lines (plus 141 deletions).
+  `1e703e18` later removed the abandoned runtime during the Hermes/AutoGen baseline change; that commit
+  deleted 581,981 lines overall, including 574,247 lines under the LocalCoder/OpenClaude path. Current
+  product source has no OpenClaude/LocalCoder runtime caller. This was a genuine deletion, not a rename.
+- **Duplicate context and orchestration authorities:** the July assignment/context layers accumulated
+  competing runtime state. `d93edbc5` removed 789 lines and `24f4ed1b` removed another 1,402 while collapsing
+  their callers and routes. Current production source has no `ContextPack`, `DeliveredContextManifest`,
+  `routingManifest`, `cardRuntime`, or `cardContext` owner. Do not recreate them under new names.
+- **Main context manifest:** `f536a284` added a five-file, 451-line manifest checkpoint. `cd7017cc` replaced
+  that direction with the exact transient Card/IDF boundary and deleted 1,935 lines. Current production
+  has no Main-context-manifest symbol or caller. This former path was actually removed.
+- **Competing IDF materializers:** the August sequence repeatedly interpreted IDF as a saved object,
+  envelope, receipt, or runtime packet. `4269f747` collapsed that surface by deleting 2,899 lines across
+  42 files. The surviving owner is one in-memory Python `materialize_idf` called by the Card domain;
+  old packet fields are rejected at the boundary and have no producer or router.
 
-During those 162 commits, cumulative churn was **3,292,469 additions and 759,342 deletions**. The net tree
-comparison was **3,193,094 additions and 659,967 deletions: +2,533,127 lines**. Therefore the honest answer is:
-the last month deleted a great deal, but the repository grew substantially because very large source owners
-were checked in. Do not call this a smaller repository. Do call the app-owned execution spine much smaller
-than the total tree, and keep proving that those large trees are intentional owners rather than copied
-experiments.
+The surviving keeper authorities are saved Cards/PostgreSQL, one Python materializer, native graph owners,
+the official MCP seam, AGE observation, repo-owned Hermes profiles/sessions, and the maintained AutoGen
+0.7.5 execution fork. **AutoGen remains because LiquidAIty owns and maintains that execution fork.** Hermes
+source size is controlled dependency/runtime cost, not LiquidAIty product complexity and not permission to
+rewrite Hermes.
 
-Rules for future size claims:
-
-1. Report **app-owned spine**, **first-party fork**, and **controlled upstream/independent application**
-   separately.
-2. A vendor is not free complexity: it still has disk, security, update, test, and indexing costs.
-3. A large tree remains only when it has a named owner, exact provenance, a real runtime/install boundary,
-   and a documented update/removal procedure.
-4. Deleted experiments count as cleanup only when their callers, tests, routes, schemas, and replacement
-   adapters are also gone.
-5. Re-measure from Git; never repeat these numbers after the checkpoint as if they were current.
+**Direct verdict:** the surviving launch path improved structurally this month because duplicate runtimes,
+manifests, and OpenClaude were removed and the six saved Cards now converge on Hermes plus one maintained
+AutoGen rail. It did not improve enough operationally: the complete user loop is still not proven until
+Main explicitly hands a graph-anchored mission to Kanban, Kanban loads the existing Mag One Card, Main
+reviews it, and one later controlled Mag One execution completes. Until that proof, do not start another
+replacement architecture.
 
 **Repo-wide tally (298 commits, from initial commit to 2026-07-09):**
 - 4,894,078 lines inserted — total code ever written

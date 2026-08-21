@@ -10,6 +10,7 @@ import {
   buildInputDictionarySelectedRows,
   buildDisplayedToolRows,
   parseCardEditorInputDataDictionary,
+  selectKnowledgeGraphProjection,
   toggleSavedToolAssignment,
 } from './AgentManager';
 
@@ -142,7 +143,7 @@ describe('AgentManager active builder config', () => {
     expect(pageSource).toContain('const [transientCardGraphContext, setTransientCardGraphContext]');
     expect(pageSource).toContain('[target.id]: loaded.instructions');
     expect(pageSource).toContain('dataAnchors: (transientCardGraphContext[selectedCard.id] || [])');
-    expect(source).toContain('Loaded native graph context');
+    expect(source).toContain('Exact model-bound native graph context');
     expect(source).toContain('NativeGraphProjectionSurface');
     expect(source).toContain('loadedGraphProjection');
     expect(source).toContain('Saved Mag One workers');
@@ -151,6 +152,34 @@ describe('AgentManager active builder config', () => {
     expect(pageSource).toContain('onCardGraphReferenceLoaded: handleCardGraphReferenceLoaded');
     expect(pageSource).not.toContain('persistTransientCardInputs');
     expect(pageSource).not.toContain('proposalHash');
+  });
+
+  it('shows the exact materialized native IDs instead of a stale loaded preview', () => {
+    const loaded = {
+      schemaVersion: 'native-card-context.v1',
+      authority: 'mixed',
+      projectId: 'project-1',
+      nodes: [{ id: 'stale-node', label: 'Stale', mentionCount: 1 }],
+      edges: [],
+      counts: { nodes: 1, edges: 0 },
+    };
+    const materialized = {
+      ...loaded,
+      nodes: [{ id: 'native-node-current', label: 'Current', mentionCount: 1 }],
+      edges: [{
+        id: 'native-edge-current',
+        source: 'native-node-current',
+        target: 'native-node-current',
+        predicate: 'SELF',
+        mentionCount: 1,
+      }],
+      counts: { nodes: 1, edges: 1 },
+    };
+
+    const selected = selectKnowledgeGraphProjection(loaded, materialized);
+    expect(selected.modelBound).toBe(true);
+    expect(selected.projection.nodes.map((node) => node.id)).toEqual(['native-node-current']);
+    expect(selected.projection.edges.map((edge) => edge.id)).toEqual(['native-edge-current']);
   });
 
   it('keeps the card identity fields without adding another persistence path', () => {

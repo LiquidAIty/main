@@ -360,6 +360,7 @@ export default function AgentBuilder(): React.ReactElement {
     useState<KnowledgeSurfaceKind>('knowgraph');
   const conversationId = 'main';
   const graphAttention = useAgentBuilderGraphAttention({ projectId: activeProject });
+  const [standaloneTestResult, setStandaloneTestResult] = useState<StandaloneCardTestResult | null>(null);
   const handleMagOneInstructionsLoaded = useCallback((loaded: MagOneInstructionsLoaded) => {
     const target = deck.nodes.find((card) => card.id === loaded.targetCardId);
     if (!target || target.runtime.kind !== 'autogen' || target.runtime.mode !== 'magentic_one') {
@@ -394,6 +395,9 @@ export default function AgentBuilder(): React.ReactElement {
         ].sort((left, right) => left.reference.order - right.reference.order),
       };
     });
+    // A new native reference invalidates any older materialization preview.
+    // The Knowledge tab must never label a stale projection as model-bound.
+    setStandaloneTestResult(null);
     setSelectedCardId(target.id);
     setTab('Knowledge');
     setDeckStatusMessage(
@@ -636,7 +640,6 @@ export default function AgentBuilder(): React.ReactElement {
       }));
   }, [deck.edges, deck.nodes, selectedCard]);
   const [standaloneTestBusy, setStandaloneTestBusy] = useState(false);
-  const [standaloneTestResult, setStandaloneTestResult] = useState<StandaloneCardTestResult | null>(null);
   const standaloneTestRequestRef = useRef<string | null>(null);
   const standaloneTestUnavailableReason = useMemo(
     () => getStandaloneCardUnavailableReason(selectedCard),

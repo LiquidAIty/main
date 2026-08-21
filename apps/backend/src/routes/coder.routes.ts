@@ -448,6 +448,8 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
             cardRevision: prepared.cardRevision,
             cardRevisionSha256: prepared.cardRevisionSha256,
             runtimeOwner: prepared.runtimeOwner,
+            resolvedNativeReads: prepared.resolvedNativeReads,
+            resolvedGraphProjection: prepared.resolvedGraphProjection,
             idf: prepared.idf,
             cardIdentity: prepared.cardIdentity,
           },

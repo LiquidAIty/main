@@ -178,6 +178,15 @@ const orchestratorMocks = vi.hoisted(() => ({
         runId: body.runId,
         cardRevisionId: body.cardRevisionId,
         runtimeOwner: 'hermes',
+        resolvedNativeReads: coderCard ? [{ authority: 'CodeGraph', nativeId: 'pkg.materialize_idf' }] : [],
+        resolvedGraphProjection: {
+          schemaVersion: 'native-card-context.v1',
+          authority: 'mixed',
+          projectId: body.projectId,
+          nodes: coderCard ? [{ id: 'pkg.materialize_idf', label: 'materialize_idf', mentionCount: 1 }] : [],
+          edges: [],
+          counts: { nodes: coderCard ? 1 : 0, edges: 0 },
+        },
         hermesTransport: {
           idf: {
             systemPrompt: coderCard ? 'Saved Coder prompt' : 'Saved prompt',
@@ -603,12 +612,19 @@ describe('coder routes', () => {
         message: '## Resolved CodeGraph\n- pkg.materialize_idf\n\nInspect the bounded code slice.',
       });
       expect(orchestratorMocks.dispatchConfiguredRuntime).not.toHaveBeenCalled();
-      await expect(response.json()).resolves.toMatchObject({
+      const payload = await response.json();
+      expect(payload).toMatchObject({
         ok: true,
         result: {
           cardId: 'card_local_coder',
           runtimeOwner: 'hermes',
           output: 'Real assistant reply.',
+          invocation: {
+            resolvedGraphProjection: {
+              nodes: [{ id: 'pkg.materialize_idf' }],
+              edges: [],
+            },
+          },
         },
       });
     } finally {
