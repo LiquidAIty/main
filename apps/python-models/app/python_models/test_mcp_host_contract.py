@@ -1788,6 +1788,39 @@ def test_native_engraphis_failure_is_typed_and_the_next_call_succeeds(monkeypatc
     asyncio.run(check())
 
 
+def test_native_engraphis_missing_local_model_is_a_precise_tool_error(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    class NativeMcp:
+        async def call_tool(self, name, arguments):
+            return [mcp_host.TextContent(
+                type="text",
+                text="Error: local_embedding_model_unavailable",
+            )]
+
+    async def initialized():
+        return None
+
+    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
+    monkeypatch.setattr(
+        mcp_host,
+        "_NATIVE_ENGRAPHIS_NAMES",
+        frozenset({"engraphis_remember"}),
+    )
+    monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
+
+    async def check():
+        result = await mcp_host.call_tool("engraphis.remember", {"content": "isolated"})
+        assert result.isError is True
+        payload = json.loads(result.content[0].text)
+        assert payload["failureCode"] == "local_embedding_model_unavailable"
+        assert payload["errorCategory"] == "DEPENDENCY_UNAVAILABLE"
+        assert payload["retryable"] is False
+
+    asyncio.run(check())
+
+
 def test_native_cbm_replaces_a_stale_process_without_retrying_a_tool(monkeypatch):
     import mcp_host
 

@@ -8,6 +8,7 @@ import {
   modelSelectionForHermes,
   providerForHermes,
   requireHermesCompletionText,
+  requireHermesEffectSuccess,
   resolveHermesRuntimeHome,
 } from './mainAdapter';
 
@@ -50,6 +51,27 @@ describe('Hermes ACP transport identity', () => {
     expect(requireHermesCompletionText('answer')).toBe('answer');
     expect(() => requireHermesCompletionText('  ')).toThrow('hermes_empty_completion');
     expect(() => requireHermesCompletionText('')).toThrow('hermes_empty_completion');
+  });
+
+  it('does not report a completed Run after a Card-authorized effect failed', () => {
+    expect(() => {
+      requireHermesEffectSuccess(
+        ['engraphis.remember'],
+        [{ toolName: 'engraphis.remember', toolUseId: 'tool-1', isError: true }],
+      );
+      requireHermesCompletionText('I answered even though the required write failed.');
+    }).toThrow('hermes_required_effect_failed:engraphis.remember');
+    expect(() => requireHermesEffectSuccess(
+      ['engraphis.remember'],
+      [{ toolName: 'engraphis.remember', toolUseId: 'tool-1', isError: false }],
+    )).not.toThrow();
+  });
+
+  it('keeps optional readable-tool failures separate from required effects', () => {
+    expect(() => requireHermesEffectSuccess(
+      ['engraphis.remember'],
+      [{ toolName: 'engraphis.stats', toolUseId: 'tool-1', isError: true }],
+    )).not.toThrow();
   });
 
   it('connects genuine Hermes to the one official HTTP MCP host with Card grants', () => {
@@ -109,7 +131,7 @@ describe('Hermes ACP transport identity', () => {
       'delegation',
       expect.stringMatching(/^mcp-main-runtime-/),
     ]));
-    expect(sessionConfig.enabledTools).toEqual(['delegate_task']);
+    expect(sessionConfig.enabledTools).toEqual(['delegate_task', 'canvas.inspect']);
     expect(sessionConfig).not.toHaveProperty('delegateProfiles');
     expect(sessionConfig.hostSessionKey).toBe('session-1');
     expect(sessionConfig.executionContextId).toBe('root-context');
@@ -162,6 +184,8 @@ describe('Hermes ACP transport identity', () => {
       'terminal',
       'read_file',
       'python',
+      'cbm.search_graph',
+      'cbm.trace_path',
     ]);
     expect(sessionConfig.enabledToolsets).toEqual(expect.arrayContaining([
       'memory',

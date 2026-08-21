@@ -239,11 +239,10 @@ def _tool_result_failed(result: Optional[str], tool_name: str | None = None) -> 
     if isinstance(exit_code, int) and exit_code != 0:
         return True
 
-    # Hermes core/polished tools commonly report tool-level failures as a
-    # structured {"error": "..."} payload without an explicit success flag.
-    # Keep generic plugin/unknown tool payloads conservative to avoid marking
-    # optional diagnostic messages as failed.
-    if tool_name in _POLISHED_TOOLS and data.get("error") and not data.get("content"):
+    # LIQUIDAITY VENDOR PATCH: ``tool_error`` is Hermes' generic public failure
+    # contract for native, plugin, and MCP tools. ACP must preserve that status
+    # even for a host-provided tool outside the polished rendering set.
+    if data.get("error") and not data.get("content"):
         return True
 
     return False

@@ -64,6 +64,15 @@ export function requireHermesCompletionText(value: unknown): string {
   throw new Error('hermes_empty_completion');
 }
 
+export function requireHermesEffectSuccess(
+  effectToolNames: readonly string[],
+  outcomes: ReadonlyArray<{ toolName: string; toolUseId: string; isError: boolean }>,
+): void {
+  const required = new Set(effectToolNames);
+  const failed = outcomes.find((outcome) => outcome.isError && required.has(outcome.toolName));
+  if (failed) throw new Error(`hermes_required_effect_failed:${failed.toolName}`);
+}
+
 export type HermesTurnArgs = HermesRuntimeConfig & {
   sessionKey: string;
   projectId: string;
@@ -121,6 +130,8 @@ type ActiveTurn = {
   onEvent(event: HermesSessionEvent): void;
   fullText: string;
   toolNames: Map<string, string>;
+  effectToolNames: Set<string>;
+  effectOutcomes: Array<{ toolName: string; toolUseId: string; isError: boolean }>;
   permissionRequestIds: Map<string, number | string>;
   rootExecutionContextId: string;
 };
@@ -241,6 +252,7 @@ export function buildHermesHostSessionProjection(
           ]),
           enabledTools: uniqueStrings([
             ...args.nativeTools,
+            ...args.tools,
           ]),
           hostSessionKey: args.sessionKey,
           systemPrompt: args.prompt,
@@ -468,9 +480,15 @@ class AcpProcess {
     }
     if (kind === 'tool_call_update' && (update.status === 'completed' || update.status === 'failed')) {
       const id = String(update.toolCallId || '');
+      const toolName = turn.toolNames.get(id) || String(update.title || 'tool');
+      turn.effectOutcomes.push({
+        toolName,
+        toolUseId: id,
+        isError: update.status === 'failed',
+      });
       turn.onEvent({
         kind: 'tool_result',
-        toolName: turn.toolNames.get(id) || String(update.title || 'tool'),
+        toolName,
         toolUseId: id,
         output: jsonText(update.rawOutput),
         isError: update.status === 'failed',
@@ -642,6 +660,8 @@ class AcpProcess {
         onEvent,
         fullText: '',
         toolNames: new Map(),
+        effectToolNames: new Set(args.tools),
+        effectOutcomes: [],
         permissionRequestIds: new Map(),
         rootExecutionContextId: rootContext.contextId,
       };
@@ -667,6 +687,7 @@ class AcpProcess {
       };
       if (result?.stopReason === 'cancelled') throw new Error('hermes_turn_cancelled');
       if (result?.stopReason === 'refusal') throw new Error('hermes_turn_refused');
+      requireHermesEffectSuccess([...active.effectToolNames], active.effectOutcomes);
       const finalText = requireHermesCompletionText(active.fullText);
       rootTerminalState = 'completed';
       onEvent({ kind: 'done', fullText: finalText, usage });

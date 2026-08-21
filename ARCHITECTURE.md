@@ -257,7 +257,9 @@ parent ceiling and remain Runs of the owning Card. Sessions without the metadata
 Hermes behavior. Focused no-provider tests live in
 `Hermes/tests/acp_adapter/test_host_profiles.py` and `Hermes/tests/tools/test_delegate.py`. The generic
 child execution-context extension additionally touches `Hermes/tools/mcp_tool.py` so official MCP 2
-per-call `meta=` carries only an opaque host-issued context ID. The complete rebase, rollback, and
+per-call `meta=` carries only an opaque host-issued context ID. A separate one-condition correction in
+`Hermes/acp_adapter/tools.py` preserves Hermes' generic structured `tool_error()` status across ACP;
+its focused proof is `Hermes/tests/acp/test_tools.py`. The complete rebase, rollback, and
 upstream-contribution plan is owned by `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. On each Hermes refresh,
 remove a divergence if upstream supplies the equivalent public hook; otherwise reapply only its marked
 symbols and rerun the registered tests.

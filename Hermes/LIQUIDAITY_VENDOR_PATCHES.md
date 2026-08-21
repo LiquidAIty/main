@@ -116,3 +116,22 @@ children, MCP 2 `meta=`, exact-once closure, and no-op compatibility for ordinar
 Rollback: remove the marked execution-context hooks from the four production files and stop sending
 `executionContextId`/`toolCallMeta`. This preserves ordinary upstream delegation but disables
 LiquidAIty child-Run attribution until truthful attribution is restored.
+
+## Patch: generic ACP tool-error status preservation
+
+Purpose: preserve Hermes' existing `tool_error()` contract across ACP for native, plugin, and MCP
+tools. Upstream ACP recognized a structured `{"error": ...}` payload as failed only for the polished
+core-tool set, so an MCP effect could fail while its ACP update reported `completed`. The patch changes
+only the generic result-status classifier; tool output, rendering, dispatch, and retry behavior remain
+unchanged.
+
+Files and symbols:
+
+- `acp_adapter/tools.py`: `_tool_result_failed` recognizes Hermes' generic structured error contract.
+- `tests/acp/test_tools.py`: proves an unknown MCP tool's structured error remains failed.
+
+Contribution plan: submit the one-condition correction and regression test upstream as an ACP status
+fidelity fix. Drop this patch when upstream classifies generic `tool_error()` results consistently.
+
+Rollback: restore the polished-tool guard. That preserves upstream behavior but makes host-visible ACP
+status unreliable for failing MCP effects, so LiquidAIty must not report those Runs as successful.

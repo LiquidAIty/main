@@ -384,7 +384,9 @@ def _complete_catalog_family(family: str) -> None:
 def _typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any]:
     detail = _sanitize_failure_detail(value)
     lowered = detail.lower()
-    if "tool_not_granted" in lowered:
+    if "local_embedding_model_unavailable" in lowered:
+        code, retryable = "local_embedding_model_unavailable", False
+    elif "tool_not_granted" in lowered:
         code, retryable = "tool_not_granted", False
     elif isinstance(value, (asyncio.TimeoutError, TimeoutError)) or any(
         term in lowered for term in ("timeout", "timed out", "deadline")
@@ -446,7 +448,12 @@ def _typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any
             if dependency == "mcp"
             else ("provider_failure", False)
         )
-    if code in {"database_failure", "queue_failure", "service_unavailable"}:
+    if code in {
+        "database_failure",
+        "queue_failure",
+        "service_unavailable",
+        "local_embedding_model_unavailable",
+    }:
         category = "DEPENDENCY_UNAVAILABLE"
     elif code in {"authentication_expired", "authentication_failed"}:
         category = "AUTHENTICATION"
