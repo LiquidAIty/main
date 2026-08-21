@@ -23,10 +23,11 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
   it('federates the three complete native catalogs with the Main control surface', async () => {
     const names = await listPythonAgentMcpTools();
     expect(new Set(names).size).toBe(names.length);
-    expect(names).toHaveLength(69);
+    expect(names).toHaveLength(70);
     expect(names).toEqual(expect.arrayContaining([
       'canvas.inspect',
       'canvas.upsert_wire',
+      'card.create',
       'card.run_assistant_agent',
       'card.update_configuration',
       'cbm.search_graph',

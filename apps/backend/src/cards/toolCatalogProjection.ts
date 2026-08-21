@@ -32,6 +32,7 @@ export type ToolCatalogIndex = {
 export type ToolCatalogSearch = {
   query?: string;
   namespace?: string;
+  access?: 'read' | 'write';
   selectedIds?: readonly string[];
   offset?: number;
   limit?: number;
@@ -80,11 +81,13 @@ export function resolveToolCatalogDefinitions(
 export function searchToolCatalogReferences(catalog: ToolCatalogIndex, search: ToolCatalogSearch) {
   const query = asText(search.query).toLowerCase();
   const namespace = asText(search.namespace).toLowerCase();
+  const access = search.access;
   const selectedIds = (search.selectedIds || []).map(asText).filter(Boolean);
   const unresolvedSelectedIds = selectedIds.filter((id) => !catalog.definitionsById.has(id));
   const offset = Math.max(0, Math.floor(Number(search.offset) || 0));
   const limit = Math.min(MAX_LIMIT, Math.max(1, Math.floor(Number(search.limit) || DEFAULT_LIMIT)));
   const matches = catalog.references.filter((reference) => {
+    if (access && reference.access !== access) return false;
     if (namespace && reference.namespace.toLowerCase() !== namespace) return false;
     if (!query) return true;
     const haystack = [
@@ -97,12 +100,19 @@ export function searchToolCatalogReferences(catalog: ToolCatalogIndex, search: T
     ].join('\n').toLowerCase();
     return query.split(/\s+/).every((term) => haystack.includes(term));
   });
-  const selectedKnownIds = selectedIds.filter((id) => catalog.definitionsById.has(id));
+  const selectedKnownIds = selectedIds.filter((id) => {
+    const definition = catalog.definitionsById.get(id);
+    return Boolean(definition && (!access || definition.access === access));
+  });
   return {
     references: matches.slice(offset, offset + limit),
     selectedKnownReferences: resolveToolCatalogDefinitions(catalog, selectedKnownIds),
     unresolvedSelectedIds,
-    namespaces: [...new Set(catalog.references.map((reference) => reference.namespace))].sort(),
+    namespaces: [...new Set(
+      catalog.references
+        .filter((reference) => !access || reference.access === access)
+        .map((reference) => reference.namespace),
+    )].sort(),
     total: matches.length,
     offset,
     limit,

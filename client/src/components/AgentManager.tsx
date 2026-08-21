@@ -183,6 +183,27 @@ interface AgentManagerProps {
   runBusy?: boolean;
   runDisabled?: boolean;
   runResult?: StandaloneCardTestResult | null;
+  magOneProposal?: {
+    deckRevision?: string | null;
+    proposalHash?: string;
+    existingWorkerCardIds?: string[];
+    approvalRequired?: boolean;
+    proposal?: {
+      goal?: string;
+      completionCriteria?: string[];
+      graphReferences?: Array<{ authority: string; nativeId: string; reason: string }>;
+      workers?: Array<Record<string, unknown>>;
+      cardsToCreate?: Array<Record<string, unknown>>;
+      cardsToUpdate?: Array<Record<string, unknown>>;
+      wiresToAdd?: Array<Record<string, unknown>>;
+      wiresToRemove?: Array<Record<string, unknown>>;
+      requestedOutputFormat?: string;
+      boundaries?: string[];
+      estimatedModelCalls?: number;
+      costRisk?: string;
+      graphResultsTruncated?: boolean;
+    };
+  } | null;
   saveDeckStatusMessage?: string | null;
   openDeckRevision?: string | null;
   cardName?: string;
@@ -406,6 +427,7 @@ export function AgentManager({
   runBusy = false,
   runDisabled = false,
   runResult = null,
+  magOneProposal = null,
   saveDeckStatusMessage = null,
   openDeckRevision = null,
   cardName = '',
@@ -795,6 +817,7 @@ export function AgentManager({
         try {
           const params = new URLSearchParams({
             query: toolDictionaryQuery,
+            access: 'write',
             offset: String(toolDictionaryOffset),
             limit: '100',
           });
@@ -1627,6 +1650,79 @@ export function AgentManager({
           <div style={{ color: '#80969F', fontSize: 10.5 }}>
             Python combines this input with the saved Card into the one exact model call shown below.
           </div>
+          {magOneProposal?.proposal ? (
+            <section
+              data-testid="mag-one-proposal-review"
+              style={{
+                display: 'grid',
+                gap: 7,
+                padding: 10,
+                border: '1px solid #3A4A4F',
+                borderRadius: 8,
+                background: '#23292B',
+                color: '#D5E4E8',
+                fontSize: 11,
+              }}
+            >
+              <strong style={{ color: '#8FC8D1' }}>Read-only Mag One proposal</strong>
+              {magOneProposal.proposal.goal ? <div>Goal: {magOneProposal.proposal.goal}</div> : null}
+              {(magOneProposal.proposal.completionCriteria || []).length ? (
+                <div>Completion: {magOneProposal.proposal.completionCriteria?.join(' · ')}</div>
+              ) : null}
+              {magOneProposal.proposal.requestedOutputFormat ? (
+                <div>Output: {magOneProposal.proposal.requestedOutputFormat}</div>
+              ) : null}
+              {(magOneProposal.proposal.boundaries || []).length ? (
+                <div>Boundaries: {magOneProposal.proposal.boundaries?.join(' · ')}</div>
+              ) : null}
+              <div>
+                Current workers: {(magOneProposal.existingWorkerCardIds || []).join(', ') || 'none'}
+              </div>
+              <div>
+                Proposed workers: {(magOneProposal.proposal.workers || []).map((worker) =>
+                  String(worker.title || worker.existingCardId || 'unnamed worker')
+                ).join(', ') || 'no roster change'}
+              </div>
+              {(magOneProposal.proposal.workers || []).map((worker, index) => {
+                const model = worker.model && typeof worker.model === 'object'
+                  ? worker.model as Record<string, unknown>
+                  : {};
+                const readCapabilities = Array.isArray(worker.readCapabilities)
+                  ? worker.readCapabilities.map(String)
+                  : [];
+                const effectTools = Array.isArray(worker.effectTools)
+                  ? worker.effectTools.map(String)
+                  : [];
+                return (
+                  <div key={`${String(worker.existingCardId || worker.title || 'worker')}-${index}`}>
+                    {String(worker.title || worker.existingCardId || 'Worker')}: {String(model.provider || 'provider?')} / {String(model.providerModelId || model.modelKey || 'model?')}
+                    {' · '}reads {readCapabilities.join(', ') || 'none'}
+                    {' · '}writes/effects {effectTools.join(', ') || 'none'}
+                  </div>
+                );
+              })}
+              <div>
+                Graph anchors: {(magOneProposal.proposal.graphReferences || []).map((reference) =>
+                  `${reference.authority}:${reference.nativeId} — ${reference.reason}`
+                ).join(' · ') || 'none'}
+              </div>
+              <div>
+                Card delta: create {(magOneProposal.proposal.cardsToCreate || []).length}, update {(magOneProposal.proposal.cardsToUpdate || []).length}
+              </div>
+              <div>
+                Wire delta: add {(magOneProposal.proposal.wiresToAdd || []).length}, remove {(magOneProposal.proposal.wiresToRemove || []).length}
+              </div>
+              <div>
+                Estimated calls: {magOneProposal.proposal.estimatedModelCalls ?? 'unknown'} · cost risk: {magOneProposal.proposal.costRisk || 'unknown'} · graph truncated: {magOneProposal.proposal.graphResultsTruncated ? 'yes' : 'no'}
+              </div>
+              <div style={{ color: '#FFCF8B' }}>
+                Approval required. This review does not save Cards, change wires, or launch Mag One.
+              </div>
+              <div style={{ color: '#80969F' }}>
+                Deck revision {magOneProposal.deckRevision || 'unknown'} · proposal {magOneProposal.proposalHash || 'unhashed'}
+              </div>
+            </section>
+          ) : null}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
             <button
               type="button"

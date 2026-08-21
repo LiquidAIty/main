@@ -310,7 +310,20 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
                 reasoning_effort=options.get("reasoningEffort"),
             )
         )
-        selected_tools = context.idf.enabledTools
+        # The IDD read plane is available to every configured Card. The saved
+        # Card's enabledTools contains only its write/effect ceiling. AutoGen's
+        # local FunctionTool registry can expose the intersection it actually
+        # implements without copying readable tools into each saved Card.
+        from app.python_models.idd import readable_tool_ids
+
+        implemented = set(DEFAULT_TOOL_REGISTRY.known_names())
+        selected_tools = list(dict.fromkeys([
+            *(
+                name for name in sorted(readable_tool_ids())
+                if name in implemented
+            ),
+            *context.idf.enabledTools,
+        ]))
         tools = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools)
         agent = AssistantAgent(
             name="Configured_Card",

@@ -513,8 +513,9 @@ def test_saved_hook_and_handoff_anchor_resolve_before_one_materialization(
     }]
     resolved: list[dict] = []
 
-    def resolve(project_id, anchors):
+    def resolve(project_id, anchors, **kwargs):
         assert project_id == loaded["projectId"]
+        assert kwargs["search_text"] == "Use every supplied declaration."
         resolved.extend(anchors)
         return "actual current graph data", [{
             "authority": "ThinkGraph", "nativeId": anchor["nativeId"],
@@ -546,6 +547,47 @@ def test_saved_hook_and_handoff_anchor_resolve_before_one_materialization(
     with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
         card_domain.materialize_invocation(payload)
     assert resolved == []
+
+
+def test_saved_dynamic_knowgraph_hook_searches_the_assignment_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loaded = _destination_fixture(monkeypatch)
+    target = next(card for card in loaded["deck"]["nodes"] if card["id"] == "hermes")
+    target["runtimeOptions"]["graphHooks"] = [{
+        "authority": "KnowGraph",
+        "reason": "start from current sourced knowledge",
+        "order": 1,
+        "boundedExpansion": 1,
+        "required": False,
+        "searchDynamicInput": True,
+        "entityTypes": ["Company"],
+        "edgeTypes": ["SUPPORTS"],
+        "maxNodes": 4,
+        "maxFacts": 5,
+    }]
+    calls: list[tuple[list[dict], dict]] = []
+
+    def resolve(_project_id, anchors, **kwargs):
+        calls.append((anchors, kwargs))
+        return "current KnowGraph result", [{
+            "authority": "KnowGraph", "nativeId": "entity-1",
+            "reason": anchors[0]["reason"], "asOf": "current",
+            "required": False, "readOperation": "graphiti.search_nodes",
+        }]
+
+    monkeypatch.setattr(card_domain, "resolve_data_anchors", resolve)
+    preview = card_domain.materialize_invocation(_destination_payload("hermes"))
+
+    assert len(calls) == 1
+    anchors, kwargs = calls[0]
+    assert len(anchors) == 1
+    assert anchors[0]["searchDynamicInput"] is True
+    assert anchors[0]["entityTypes"] == ["Company"]
+    assert anchors[0]["edgeTypes"] == ["SUPPORTS"]
+    assert kwargs["search_text"] == "Use every supplied declaration."
+    assert preview["idf"]["graphSeed"] == "current KnowGraph result"
+    assert preview["resolvedNativeReads"][0]["nativeId"] == "entity-1"
 
 
 def test_context_cascade_rejects_duplicate_and_recursive_handoffs(

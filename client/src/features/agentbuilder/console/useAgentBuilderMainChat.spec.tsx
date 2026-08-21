@@ -89,6 +89,16 @@ describe('Main chat live observation callbacks', () => {
               ok: true,
               targetCardId: 'card_mag_one',
               instructions: '  exact mission\nwith formatting  ',
+              deckRevision: 'deck-revision-1',
+              proposalHash: 'proposal-hash-1',
+              existingWorkerCardIds: ['card_worker'],
+              approvalRequired: true,
+              proposal: {
+                goal: 'Bounded source search',
+                workers: [{ existingCardId: 'card_worker', title: 'Search Agent' }],
+                cardsToCreate: [],
+                wiresToAdd: [],
+              },
               persisted: false,
               started: false,
             }),
@@ -115,6 +125,16 @@ describe('Main chat live observation callbacks', () => {
     expect(onMagOneInstructionsProposed).toHaveBeenCalledWith({
       targetCardId: 'card_mag_one',
       instructions: '  exact mission\nwith formatting  ',
+      deckRevision: 'deck-revision-1',
+      proposalHash: 'proposal-hash-1',
+      existingWorkerCardIds: ['card_worker'],
+      approvalRequired: true,
+      proposal: {
+        goal: 'Bounded source search',
+        workers: [{ existingCardId: 'card_worker', title: 'Search Agent' }],
+        cardsToCreate: [],
+        wiresToAdd: [],
+      },
     });
   });
 });

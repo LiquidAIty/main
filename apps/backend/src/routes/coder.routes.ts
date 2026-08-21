@@ -102,6 +102,9 @@ router.get('/input-data-dictionary/tools', async (req, res) => {
       ...searchToolCatalogReferences(catalog, {
         query: typeof req.query.query === 'string' ? req.query.query : undefined,
         namespace: typeof req.query.namespace === 'string' ? req.query.namespace : undefined,
+        access: req.query.access === 'read' || req.query.access === 'write'
+          ? req.query.access
+          : undefined,
         selectedIds,
         offset: typeof req.query.offset === 'string' ? Number(req.query.offset) : undefined,
         limit: typeof req.query.limit === 'string' ? Number(req.query.limit) : undefined,

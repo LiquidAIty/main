@@ -171,8 +171,8 @@ requiredCallerRuntimeMode = "main"
 [[toolGroups.tools]]
 name = "write_mag_one_instructions"
 displayName = "Prepare Mag One input"
-description = "Return exact proposed transient input for the Mag One Card. Persist nothing and start no runtime."
-parameters = ["instructions"]
+description = "Return one exact read-only Mag One prompt, graph, worker, and wire proposal. Persist nothing and start no runtime."
+parameters = ["instructions", "goal", "completionCriteria", "graphReferences", "requestedOutputFormat", "boundaries", "workers", "removeWorkerCardIds", "estimatedModelCalls", "costRisk", "graphResultsTruncated"]
 required = ["instructions"]
 
 [[toolGroups.tools]]
@@ -181,6 +181,14 @@ displayName = "Inspect canvas"
 description = "Read a bounded saved card and wire view."
 parameters = ["projectId", "deckId"]
 required = ["projectId", "deckId"]
+
+[[toolGroups.tools]]
+name = "card.create"
+access = "write"
+displayName = "Create card"
+description = "Create one explicitly configured saved Card through the canonical optimistic deck authority without launching it."
+parameters = ["projectId", "deckId", "expectedRevision", "title", "role", "prompt", "runtime", "model", "tools", "position"]
+required = ["projectId", "deckId", "expectedRevision", "title", "role", "prompt", "runtime", "model"]
 
 [[toolGroups.tools]]
 name = "card.update_configuration"
@@ -851,7 +859,7 @@ values = ["ThinkGraph", "KnowGraph", "CodeGraph"]
 [[records.fields]]
 name = "nativeId"
 type = "string"
-required = true
+required = false
 
 [[records.fields]]
 name = "reason"
@@ -872,6 +880,51 @@ required = true
 name = "required"
 type = "boolean"
 required = true
+
+[[records.fields]]
+name = "searchDynamicInput"
+type = "boolean"
+required = false
+
+[[records.fields]]
+name = "entityTypes"
+type = "string-array"
+required = false
+
+[[records.fields]]
+name = "edgeTypes"
+type = "string-array"
+required = false
+
+[[records.fields]]
+name = "validAtAfter"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "validAtBefore"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "invalidAtAfter"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "invalidAtBefore"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "maxNodes"
+type = "integer"
+required = false
+
+[[records.fields]]
+name = "maxFacts"
+type = "integer"
+required = false
 
 [[records]]
 name = "model-option"

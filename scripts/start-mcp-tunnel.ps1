@@ -62,8 +62,8 @@ try {
                 [int]$readiness.StatusCode -eq 200 -and
                 [bool]$readinessPayload.catalogReady -and
                 $catalogState -eq 'ready' -and
-                $catalogCount -eq 69 -and
-                $catalogUniqueCount -eq 69 -and
+                $catalogCount -eq 70 -and
+                $catalogUniqueCount -eq 70 -and
                 -not [string]::IsNullOrWhiteSpace($catalogHash)
             )
         } catch {

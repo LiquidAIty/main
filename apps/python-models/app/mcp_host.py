@@ -9,7 +9,7 @@ Engraphis, Codebase Memory, and official Graphiti MCP registries:
   * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
   * run_mag_one                      (Main-only transient Mag One mission)
   * web_search                       (real Tavily search; Search Agent only by grant)
-  * canvas.inspect / card.update_configuration / canvas.upsert_wire /
+  * canvas.inspect / card.create / card.update_configuration / canvas.upsert_wire /
     card.run_assistant_agent         (user-directed Harness control surface;
                                       handlers live in app.control_plane — Python)
 
@@ -753,6 +753,8 @@ def _request_tool_is_allowed(name: str) -> bool:
     kind = str(principal.get("kind") or "")
     if kind == "catalog-reader":
         return False
+    if kind == "materializer-read":
+        return access == "read"
     if kind == "system-root":
         return name == "card.run_assistant_agent"
     if kind != "card-runtime":
@@ -1679,10 +1681,14 @@ class Auth0TokenVerifier:
                 )
                 principal = claims.get("principal")
                 if not isinstance(principal, dict) or principal.get("kind") not in {
-                    "catalog-reader", "system-root", "card-runtime"
+                    "catalog-reader", "materializer-read", "system-root", "card-runtime"
                 }:
                     return None
-                if principal.get("kind") != "catalog-reader":
+                if principal.get("kind") == "materializer-read":
+                    required = ("projectId", "deckId", "callerCardId")
+                    if any(not str(principal.get(field) or "").strip() for field in required):
+                        return None
+                elif principal.get("kind") != "catalog-reader":
                     required = (
                         "projectId", "deckId", "conversationId", "parentRunId",
                         "callerCardId", "callerRuntimeKind", "callerRuntimeMode",
@@ -1831,13 +1837,96 @@ async def _materialize_complete_catalog() -> list[Tool]:
         Tool(
             name="write_mag_one_instructions",
             description=(
-                "Return exact proposed transient input for the Mag One Card so Main can review "
-                "and place it in the Card input field. This tool persists nothing and starts no runtime."
+                "Return one exact, read-only Mag One job proposal for Main review: transient input, "
+                "current graph references, worker assessment, and the exact Card/wire delta. "
+                "This tool persists nothing, grants no approval, and starts no runtime."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "instructions": {"type": "string", "minLength": 1},
+                    "goal": {"type": "string"},
+                    "completionCriteria": {
+                        "type": "array", "maxItems": 24,
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                    "graphReferences": {
+                        "type": "array", "maxItems": 24,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "authority": {
+                                    "type": "string",
+                                    "enum": ["ThinkGraph", "KnowGraph", "CodeGraph"],
+                                },
+                                "nativeId": {"type": "string", "minLength": 1},
+                                "reason": {"type": "string", "minLength": 1},
+                                "provenance": {"type": "object"},
+                            },
+                            "required": ["authority", "nativeId", "reason"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "requestedOutputFormat": {"type": "string"},
+                    "boundaries": {
+                        "type": "array", "maxItems": 24,
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                    "workers": {
+                        "type": "array", "maxItems": 12,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "existingCardId": {"type": "string"},
+                                "title": {"type": "string", "minLength": 1},
+                                "role": {"type": "string", "minLength": 1},
+                                "stableInstructions": {"type": "string"},
+                                "skills": {
+                                    "type": "array", "items": {"type": "string", "minLength": 1},
+                                },
+                                "runtime": {
+                                    "type": "object",
+                                    "properties": {
+                                        "kind": {"type": "string"},
+                                        "mode": {"type": "string"},
+                                        "profile": {"type": "string"},
+                                    },
+                                    "required": ["kind", "mode"],
+                                    "additionalProperties": False,
+                                },
+                                "model": {
+                                    "type": "object",
+                                    "properties": {
+                                        "provider": {"type": "string"},
+                                        "modelKey": {"type": "string"},
+                                        "providerModelId": {"type": "string"},
+                                    },
+                                    "required": ["provider", "modelKey", "providerModelId"],
+                                    "additionalProperties": False,
+                                },
+                                "readCapabilities": {
+                                    "type": "array", "items": {"type": "string", "minLength": 1},
+                                },
+                                "effectTools": {
+                                    "type": "array", "items": {"type": "string", "minLength": 1},
+                                },
+                                "reason": {"type": "string", "minLength": 1},
+                                "expectedInput": {"type": "string", "minLength": 1},
+                                "expectedOutput": {"type": "string", "minLength": 1},
+                            },
+                            "required": [
+                                "title", "role", "reason", "expectedInput", "expectedOutput",
+                            ],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "removeWorkerCardIds": {
+                        "type": "array", "maxItems": 12,
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                    "estimatedModelCalls": {"type": "integer", "minimum": 0},
+                    "costRisk": {"type": "string"},
+                    "graphResultsTruncated": {"type": "boolean"},
                 },
                 "required": ["instructions"],
                 "additionalProperties": False,
@@ -1853,6 +1942,72 @@ async def _materialize_complete_catalog() -> list[Tool]:
                 "type": "object",
                 "properties": {"projectId": {"type": "string"}, "deckId": {"type": "string"}},
                 "required": ["projectId", "deckId"],
+            },
+        ),
+        Tool(
+            name="card.create",
+            description=(
+                "Create ONE explicitly configured saved Card through the canonical PostgreSQL "
+                "deck authority using optimistic locking. The server mints the Card identity; "
+                "read capabilities are rejected from the Card write-tool list. This operation "
+                "never launches the Card or Mag One."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string", "minLength": 1},
+                    "deckId": {"type": "string", "minLength": 1},
+                    "expectedRevision": {"type": "string", "minLength": 1},
+                    "title": {"type": "string", "minLength": 1},
+                    "role": {"type": "string", "minLength": 1},
+                    "prompt": {"type": "string", "minLength": 1},
+                    "runtime": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "enum": ["hermes", "autogen"]},
+                            "mode": {
+                                "type": "string",
+                                "enum": ["main", "delegate", "kanban", "single", "assistant", "magentic_one"],
+                            },
+                            "profile": {"type": "string", "minLength": 1},
+                        },
+                        "required": ["kind", "mode"],
+                        "additionalProperties": False,
+                    },
+                    "model": {
+                        "type": "object",
+                        "properties": {
+                            "provider": {"type": "string", "minLength": 1},
+                            "modelKey": {"type": "string", "minLength": 1},
+                            "accessMode": {"type": "string", "minLength": 1},
+                            "providerModelId": {"type": "string", "minLength": 1},
+                            "reasoningEffort": {
+                                "type": "string",
+                                "enum": ["low", "medium", "high", "xhigh"],
+                            },
+                        },
+                        "required": ["provider", "modelKey", "accessMode"],
+                        "additionalProperties": False,
+                    },
+                    "tools": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "default": [],
+                    },
+                    "position": {
+                        "type": "object",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+                "required": [
+                    "projectId", "deckId", "expectedRevision", "title", "role",
+                    "prompt", "runtime", "model",
+                ],
+                "additionalProperties": False,
             },
         ),
         Tool(
@@ -2227,6 +2382,9 @@ async def list_tools() -> list[Tool]:
         principal = _internal_mcp_principal()
         if principal is None or principal.get("kind") == "catalog-reader":
             return tools
+        if principal.get("kind") == "materializer-read":
+            readable = readable_tool_ids()
+            return [tool for tool in tools if tool.name in readable]
         if principal.get("kind") == "system-root":
             return [tool for tool in tools if tool.name == "card.run_assistant_agent"]
         grants = principal.get("grantedTools")
@@ -2359,9 +2517,16 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "input", "conversationId"},
     "write_mag_one_instructions": {
-        "projectId", "deckId", "conversationId", "instructions",
+        "projectId", "deckId", "conversationId", "instructions", "goal",
+        "completionCriteria", "graphReferences", "requestedOutputFormat",
+        "boundaries", "workers", "removeWorkerCardIds", "estimatedModelCalls",
+        "costRisk", "graphResultsTruncated",
     },
     "canvas.inspect": {"projectId", "deckId"},
+    "card.create": {
+        "projectId", "deckId", "expectedRevision", "title", "role", "prompt",
+        "runtime", "model", "tools", "position",
+    },
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
     "card.run_assistant_agent": {
@@ -2373,6 +2538,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "originatingAgentId",
         "originatingRunId",
         "input",
+        "dataAnchors",
     },
     "web_search": {"query", "max_results"},
 }
@@ -2386,9 +2552,11 @@ _BRIDGE_PATHS: dict[str, str] = {
 _CONTROL_HANDLER_NAMES: dict[str, str] = {
     "agentgraph.inspect": "agentgraph_inspect",
     "canvas.inspect": "canvas_inspect",
+    "card.create": "card_create",
     "card.update_configuration": "card_update_configuration",
     "canvas.upsert_wire": "canvas_upsert_wire",
     "card.run_assistant_agent": "card_run_assistant_agent",
+    "write_mag_one_instructions": "prepare_mag_one_proposal",
 }
 
 
@@ -2536,27 +2704,6 @@ async def _dispatch_tool(
                 "input": str(args.get("input") or ""),
             },
         )
-    if name == "write_mag_one_instructions":
-        instructions = str(args.get("instructions") or "")
-        if not instructions.strip():
-            return [TextContent(type="text", text=json.dumps({
-                "ok": False,
-                "error": "instructions_required",
-            }))]
-        from app.python_models.card_domain import resolve_magentic_card_identity
-
-        target = resolve_magentic_card_identity(
-            str(args.get("projectId") or ""),
-            str(args.get("deckId") or ""),
-        )
-        return [TextContent(type="text", text=json.dumps({
-            "ok": True,
-            **target,
-            "instructions": instructions,
-            "persisted": False,
-            "started": False,
-        }))]
-
     if name == "main.context":
         if context is None:
             return [

@@ -44,6 +44,31 @@ def test_card_runtime_token_is_scoped_and_signed(monkeypatch):
     }
 
 
+def test_materializer_read_token_has_no_fake_run_and_expires_quickly(monkeypatch):
+    secret = "0123456789abcdef0123456789abcdef"
+    monkeypatch.setenv("LIQUIDAITY_INTERNAL_MCP_SECRET", secret)
+    token = internal_mcp.create_materializer_read_token(
+        project_id="project-1",
+        deck_id="deck_builder",
+        card_id="card-coder",
+    )
+    claims = jwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        issuer="liquidaity-runtime",
+        audience="liquidaity-internal-mcp",
+    )
+    assert claims["principal"] == {
+        "kind": "materializer-read",
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "callerCardId": "card-coder",
+    }
+    assert claims["exp"] - claims["iat"] == 60
+    assert "runId" not in claims["principal"]
+
+
 def test_saved_card_call_uses_official_http_mcp_with_server_owned_identity(monkeypatch):
     monkeypatch.setenv(
         "LIQUIDAITY_INTERNAL_MCP_SECRET",
@@ -115,3 +140,81 @@ def test_saved_card_call_uses_official_http_mcp_with_server_owned_identity(monke
         "card.run_assistant_agent",
         {"cardId": "card-coder", "input": "bounded task"},
     )
+
+
+def test_materializer_read_client_reuses_one_official_session_and_rejects_writes(monkeypatch):
+    monkeypatch.setenv(
+        "LIQUIDAITY_INTERNAL_MCP_SECRET",
+        "0123456789abcdef0123456789abcdef",
+    )
+    observed = {"sessions": 0, "calls": []}
+
+    class HttpClient:
+        def __init__(self, *, headers, timeout):
+            assert str(headers["Authorization"]).startswith("Bearer ")
+            assert timeout.connect == 30.0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    @asynccontextmanager
+    async def transport(_url, *, http_client):
+        assert isinstance(http_client, HttpClient)
+        yield object(), object(), lambda: None
+
+    class Session:
+        def __init__(self, *_args):
+            observed["sessions"] += 1
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def initialize(self):
+            return None
+
+        async def call_tool(self, name, arguments):
+            observed["calls"].append((name, arguments))
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"ok":true}')],
+                isError=False,
+            )
+
+    monkeypatch.setattr(internal_mcp.httpx, "AsyncClient", HttpClient)
+    monkeypatch.setattr(internal_mcp, "streamable_http_client", transport)
+    monkeypatch.setattr(internal_mcp, "ClientSession", Session)
+    monkeypatch.setattr(
+        "app.python_models.idd.tool_access",
+        lambda name: "write" if name == "cbm.index_repository" else "read",
+    )
+
+    results = internal_mcp.call_read_tools_via_mcp(
+        project_id="project-1",
+        deck_id="deck_builder",
+        card_id="card-coder",
+        calls=[
+            ("cbm.index_status", {"project": "core"}),
+            ("cbm.get_code_snippet", {"project": "core", "qualified_name": "symbol"}),
+        ],
+    )
+    assert results == [{"ok": True}, {"ok": True}]
+    assert observed["sessions"] == 1
+    assert [name for name, _args in observed["calls"]] == [
+        "cbm.index_status", "cbm.get_code_snippet",
+    ]
+    try:
+        internal_mcp.call_read_tools_via_mcp(
+            project_id="project-1",
+            deck_id="deck_builder",
+            card_id="card-coder",
+            calls=[("cbm.index_repository", {"repo_path": "x"})],
+        )
+    except RuntimeError as error:
+        assert str(error) == "materializer_mcp_read_required:cbm.index_repository"
+    else:
+        raise AssertionError("write tool was accepted by the materializer client")

@@ -674,6 +674,57 @@ def observe_native_attention(event: dict[str, Any]) -> bool:
         return False
 
 
+def observe_materialized_anchor_reads(
+    prepared: dict[str, Any],
+    *,
+    run_id: str,
+) -> bool:
+    """Attach only genuinely resolved pre-dispatch graph reads to this Run."""
+    references = prepared.get("resolvedNativeReads") or []
+    if not references:
+        return True
+    if not isinstance(references, list) or any(not isinstance(item, dict) for item in references):
+        return False
+    try:
+        with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            matched = _age_rows(
+                cursor,
+                """
+                MATCH (run:Run {
+                  projectId: $projectId, deckId: $deckId, runId: $runId
+                })-[:EXECUTED_BY]->(card:Card {
+                  projectId: $projectId, deckId: $deckId, cardId: $cardId
+                })
+                UNWIND $references AS reference
+                MERGE (native:NativeReference {
+                  projectId: $projectId,
+                  authority: reference.authority,
+                  nativeId: reference.nativeId
+                })
+                MERGE (run)-[read:READ {
+                  authority: reference.authority,
+                  nativeId: reference.nativeId
+                }]->(native)
+                SET read.reason=reference.reason,
+                    read.asOf=reference.asOf,
+                    read.operation=reference.readOperation,
+                    read.required=reference.required
+                RETURN count(read)
+                """,
+                {
+                    "projectId": prepared["projectId"],
+                    "deckId": prepared["deckId"],
+                    "runId": run_id,
+                    "cardId": prepared["cardIdentity"]["cardId"],
+                    "references": references,
+                },
+                "observed agtype",
+            )
+        return len(matched) == 1
+    except Exception:
+        return False
+
+
 def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
     """Read bounded current Card authority and identity-only AGE telemetry."""
     project_ref = _required_text(payload.get("projectId"), "project_id")
@@ -1279,9 +1330,58 @@ def _normalized_data_anchors(value: Any, *, record_name: str) -> list[dict[str, 
 
 
 def _normalized_graph_hooks(value: Any) -> list[dict[str, Any]]:
-    hooks = _normalized_data_anchors(value, record_name="graph-hook")
-    for index, hook in enumerate(value or []):
-        hooks[index]["priority"] = -int(hook["order"])
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise CardDomainError("graph_hooks_invalid")
+    if len(value) > _DATA_ANCHOR_LIMIT:
+        raise CardDomainError("data_anchor_limit_exceeded")
+    hooks: list[dict[str, Any]] = []
+    seen_exact: set[tuple[str, str]] = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise CardDomainError("graph_hook_invalid")
+        try:
+            hook = validate_record("graph-hook", item)
+        except IddValidationError as error:
+            raise CardDomainError(str(error)) from error
+        authority = _required_text(hook.get("authority"), "data_anchor_authority")
+        native_id = str(hook.get("nativeId") or "").strip()
+        semantic_search = hook.get("searchDynamicInput") is True
+        if not native_id and not semantic_search:
+            raise CardDomainError("graph_hook_native_id_or_search_required")
+        if semantic_search and authority != "KnowGraph":
+            raise CardDomainError("graph_hook_dynamic_search_requires_knowgraph")
+        if native_id:
+            identity = (authority, native_id)
+            if identity in seen_exact:
+                raise CardDomainError("data_anchor_duplicate")
+            seen_exact.add(identity)
+        bounded_expansion = int(hook.get("boundedExpansion", 0))
+        if bounded_expansion < 0 or bounded_expansion > 3:
+            raise CardDomainError("data_anchor_expansion_invalid")
+        max_nodes = int(hook.get("maxNodes", 8))
+        max_facts = int(hook.get("maxFacts", 8))
+        if not 1 <= max_nodes <= 20 or not 1 <= max_facts <= 20:
+            raise CardDomainError("graph_hook_result_limit_invalid")
+        hooks.append({
+            "authority": authority,
+            **({"nativeId": native_id} if native_id else {}),
+            "reason": _required_text(hook.get("reason"), "data_anchor_reason")[:2_000],
+            "priority": -int(hook.get("order", index)),
+            "boundedExpansion": bounded_expansion,
+            "required": hook.get("required") is True,
+            "searchDynamicInput": semantic_search,
+            "entityTypes": _string_list(hook.get("entityTypes"), "graph_hook_entity_types"),
+            "edgeTypes": _string_list(hook.get("edgeTypes"), "graph_hook_edge_types"),
+            "validAtAfter": str(hook.get("validAtAfter") or "").strip(),
+            "validAtBefore": str(hook.get("validAtBefore") or "").strip(),
+            "invalidAtAfter": str(hook.get("invalidAtAfter") or "").strip(),
+            "invalidAtBefore": str(hook.get("invalidAtBefore") or "").strip(),
+            "maxNodes": max_nodes,
+            "maxFacts": max_facts,
+            "_inputOrder": index,
+        })
     return sorted(hooks, key=lambda item: (-item["priority"], item["_inputOrder"]))
 
 
@@ -1440,7 +1540,9 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     incoming_anchors.sort(key=lambda item: (-item["priority"], item["_inputOrder"]))
     anchors = [*graph_hooks, *incoming_anchors]
     anchor_identities = [
-        (anchor["authority"], anchor["nativeId"]) for anchor in anchors
+        (anchor["authority"], anchor["nativeId"])
+        for anchor in anchors
+        if anchor.get("nativeId")
     ]
     if len(anchor_identities) != len(set(anchor_identities)):
         raise CardDomainError("data_anchor_duplicate")
@@ -1449,7 +1551,11 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         anchor.pop("priority", None)
     try:
         graph_seed, anchor_references = resolve_data_anchors(
-            prepared["projectId"], anchors
+            prepared["projectId"],
+            anchors,
+            deck_id=prepared["deckId"],
+            card_id=prepared["cardIdentity"]["cardId"],
+            search_text=assignment,
         )
     except DataAnchorError as error:
         raise CardDomainError(str(error)) from error
@@ -1483,6 +1589,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     )
     return {
         **prepared,
+        "resolvedNativeReads": anchor_references,
         "idf": idf.model_dump(),
     }
 
@@ -1688,11 +1795,16 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
         run_id=run_id,
         correlation_id=correlation_id,
     )
+    anchor_telemetry_written = observe_materialized_anchor_reads(
+        prepared,
+        run_id=run_id,
+    )
     return {
         **prepared,
         "runId": run_id,
         "correlationId": correlation_id,
         "telemetryWritten": telemetry_written,
+        "anchorTelemetryWritten": anchor_telemetry_written,
         "nativeRuntimeRequest": None,
         "hermesTransport": {
             "idf": prepared["idf"],
@@ -1772,11 +1884,16 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
         run_id=run_id,
         correlation_id=correlation_id,
     )
+    anchor_telemetry_written = observe_materialized_anchor_reads(
+        prepared,
+        run_id=run_id,
+    )
     return {
         **prepared,
         "runId": run_id,
         "correlationId": correlation_id,
         "telemetryWritten": telemetry_written,
+        "anchorTelemetryWritten": anchor_telemetry_written,
         "nativeRuntimeRequest": native_runtime_request,
         "hermesTransport": {
             "idf": prepared["idf"],

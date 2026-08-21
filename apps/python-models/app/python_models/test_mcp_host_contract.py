@@ -312,6 +312,57 @@ def test_internal_mcp_token_binds_card_context_without_auth0_or_provider_calls(m
     assert mcp_host._request_tool_is_allowed("run_mag_one") is False
 
 
+def test_materializer_principal_can_only_use_idd_reads(monkeypatch):
+    import asyncio
+    import jwt
+    import mcp_host
+
+    secret = "0123456789abcdef0123456789abcdef"
+    now = int(time.time())
+    principal = {
+        "kind": "materializer-read",
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "callerCardId": "card-coder",
+    }
+    token = jwt.encode({
+        "iss": "liquidaity-runtime",
+        "aud": "liquidaity-internal-mcp",
+        "sub": "materializer-read:card-coder",
+        "iat": now,
+        "exp": now + 60,
+        "principal": principal,
+    }, secret, algorithm="HS256")
+    monkeypatch.setattr(mcp_host, "INTERNAL_MCP_SECRET", secret)
+    verifier = mcp_host.Auth0TokenVerifier(
+        mcp_host.OAuthConfig(
+            resource_url="https://example.ngrok.dev/mcp",
+            issuer_url="https://auth.example/",
+            audience="https://example.ngrok.dev/mcp",
+            client_id="chatgpt-client",
+            required_scope="liquidaity.main",
+        ),
+        jwk_client=SimpleNamespace(),
+    )
+    verified = verifier._verify_sync(token)
+    assert verified is not None
+    monkeypatch.setattr(mcp_host, "get_access_token", lambda: verified)
+    assert mcp_host._authenticated_main_context() is None
+    assert mcp_host._request_tool_is_allowed("cbm.get_code_snippet") is True
+    assert mcp_host._request_tool_is_allowed("cbm.index_repository") is False
+    assert mcp_host._request_tool_is_allowed("run_mag_one") is False
+
+    monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
+    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", (
+        mcp_host.Tool(name="cbm.get_code_snippet", description="read", inputSchema={"type": "object"}),
+        mcp_host.Tool(name="cbm.index_repository", description="write", inputSchema={"type": "object"}),
+    ))
+    assert [tool.name for tool in asyncio.run(mcp_host.list_tools())] == [
+        "cbm.get_code_snippet",
+    ]
+
+
 def test_mcp2_per_call_meta_resolves_child_run_and_card_without_model_identity(monkeypatch):
     import mcp_host
 
@@ -771,16 +822,25 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
 
     monkeypatch.setattr(control_plane, "agentgraph_inspect", inspect)
     monkeypatch.setattr(mcp_host, "_bridge", bridge)
-    monkeypatch.setattr(
-        card_domain,
-        "resolve_magentic_card_identity",
-        lambda project_id, deck_id: {
-            "projectId": project_id,
-            "deckId": deck_id,
+
+    async def proposal(args):
+        calls.append(("write_mag_one_instructions", dict(args)))
+        return {
+            "ok": True,
+            "projectId": args["projectId"],
+            "deckId": args["deckId"],
             "targetCardId": "card_mag_one",
             "targetCardTitle": "Magentic-One",
-        },
-    )
+            "instructions": str(args["instructions"]).strip(),
+            "proposal": {"workers": [], "cardsToCreate": [], "cardsToUpdate": [],
+                         "wiresToAdd": [], "wiresToRemove": []},
+            "proposalHash": "a" * 64,
+            "persisted": False,
+            "started": False,
+            "approvalRequired": True,
+        }
+
+    monkeypatch.setattr(control_plane, "prepare_mag_one_proposal", proposal)
 
     inspected = asyncio.run(
         mcp_host._dispatch_tool("agentgraph.inspect", {"runId": "run-1", "limit": 5})
@@ -803,16 +863,14 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
             {"instructions": "  exact proposed mission\nwith formatting  "},
         )
     )
-    assert json.loads(proposed[0].text) == {
-        "ok": True,
-        "projectId": "project-1",
-        "deckId": "deck_builder",
-        "targetCardId": "card_mag_one",
-        "targetCardTitle": "Magentic-One",
-        "instructions": "  exact proposed mission\nwith formatting  ",
-        "persisted": False,
-        "started": False,
-    }
+    proposal_payload = json.loads(proposed[0].text)
+    assert proposal_payload["instructions"] == "exact proposed mission\nwith formatting"
+    assert proposal_payload["persisted"] is False
+    assert proposal_payload["started"] is False
+    assert proposal_payload["approvalRequired"] is True
+    assert calls[-1][0] == "write_mag_one_instructions"
+    assert calls[-1][1]["projectId"] == "project-1"
+    assert calls[-1][1]["deckId"] == "deck_builder"
 
     executed = asyncio.run(
         mcp_host._dispatch_tool(
@@ -1007,6 +1065,17 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
         assert by_name["write_mag_one_instructions"].inputSchema["required"] == [
             "instructions",
         ]
+        assert by_name["card.create"].inputSchema["required"] == [
+            "projectId",
+            "deckId",
+            "expectedRevision",
+            "title",
+            "role",
+            "prompt",
+            "runtime",
+            "model",
+        ]
+        assert by_name["card.create"].inputSchema["additionalProperties"] is False
         assert "minProperties" not in str(
             by_name["card.update_configuration"].inputSchema
         )
@@ -1071,7 +1140,10 @@ def test_mag_one_tools_use_direct_transient_input_contract():
         "projectId", "deckId", "input", "conversationId",
     }
     assert mcp_host._ALLOWED_KEYS["write_mag_one_instructions"] == {
-        "projectId", "deckId", "conversationId", "instructions",
+        "projectId", "deckId", "conversationId", "instructions", "goal",
+        "completionCriteria", "graphReferences", "requestedOutputFormat",
+        "boundaries", "workers", "removeWorkerCardIds", "estimatedModelCalls",
+        "costRisk", "graphResultsTruncated",
     }
 
 
@@ -2275,7 +2347,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     }.issubset(main_names)
     assert {
         "engraphis.answer", "graphiti.get_status",
-        "card.update_configuration", "canvas.upsert_wire",
+        "card.create", "card.update_configuration", "canvas.upsert_wire",
     }.issubset(main_names)
     active_scopes[:] = ["main"]
 
@@ -2459,7 +2531,7 @@ def test_tunnel_waits_for_complete_catalog_without_default_timeout():
     source = open(script, encoding="utf-8").read()
     assert "[int]$TimeoutSeconds = 0" in source
     assert '$readinessUrl = "$localBaseUrl/health/ready"' in source
-    assert "$catalogCount -eq 69" in source
+    assert "$catalogCount -eq 70" in source
     assert "$catalogReady" in source
     loop_start = source.index("    while ($null -eq $deadline")
     loop_end = source.index("\n    if (-not $catalogReady)", loop_start)

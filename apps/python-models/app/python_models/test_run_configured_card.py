@@ -76,9 +76,40 @@ def test_single_card_consumes_one_python_materialization(monkeypatch) -> None:
     assert result.ok is True
     assert result.runId == "run:one"
     assert observed[0]["system_message"] == context.idf.systemPrompt
+    attached_names = {tool.name for tool in observed[0]["tools"]}
+    assert "web_search" in attached_names
+    assert "calculator" in attached_names
     assert observed[1] == {"task": context.idf.message}
     assert context.idf.message == "bounded context\n\nrun"
     assert "card:one" not in context.idf.message
+
+
+def test_single_card_gets_idd_reads_without_copying_them_into_card_tools(
+    monkeypatch,
+) -> None:
+    observed: list[dict] = []
+
+    class Agent:
+        def __init__(self, **kwargs):
+            observed.append(kwargs)
+
+        async def run(self, *, task):
+            return SimpleNamespace(messages=[SimpleNamespace(content="native answer")])
+
+    class Client:
+        async def close(self):
+            return None
+
+    context = _context(enabled_tools=[])
+    monkeypatch.setattr(mac, "_build_model_client", lambda _config: Client())
+    monkeypatch.setattr(mac, "AssistantAgent", Agent)
+
+    result = asyncio.run(mac.run_configured_card(context))
+
+    assert result.ok is True
+    attached_names = {tool.name for tool in observed[0]["tools"]}
+    assert "web_search" in attached_names
+    assert context.idf.enabledTools == []
 
 
 def test_single_card_error_never_echoes_dynamic_input(monkeypatch) -> None:

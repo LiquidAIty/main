@@ -44,6 +44,30 @@ export type MainChatTurnEvent = {
 export type MagOneInstructionsProposal = {
   targetCardId: string;
   instructions: string;
+  deckRevision?: string | null;
+  proposalHash?: string;
+  existingWorkerCardIds?: string[];
+  approvalRequired?: boolean;
+  proposal?: {
+    goal?: string;
+    completionCriteria?: string[];
+    graphReferences?: Array<{
+      authority: string;
+      nativeId: string;
+      reason: string;
+      provenance?: Record<string, unknown>;
+    }>;
+    requestedOutputFormat?: string;
+    boundaries?: string[];
+    workers?: Array<Record<string, unknown>>;
+    cardsToCreate?: Array<Record<string, unknown>>;
+    cardsToUpdate?: Array<Record<string, unknown>>;
+    wiresToAdd?: Array<Record<string, unknown>>;
+    wiresToRemove?: Array<Record<string, unknown>>;
+    estimatedModelCalls?: number;
+    costRisk?: string;
+    graphResultsTruncated?: boolean;
+  };
 };
 
 export type MainChatTurnFinished = {
@@ -99,6 +123,17 @@ export function parseMagOneInstructionsProposal(
     return {
       targetCardId: record.targetCardId,
       instructions: record.instructions,
+      ...(typeof record.deckRevision === 'string' ? { deckRevision: record.deckRevision } : {}),
+      ...(typeof record.proposalHash === 'string' ? { proposalHash: record.proposalHash } : {}),
+      ...(Array.isArray(record.existingWorkerCardIds) ? {
+        existingWorkerCardIds: record.existingWorkerCardIds.filter(
+          (value): value is string => typeof value === 'string',
+        ),
+      } : {}),
+      ...(record.approvalRequired === true ? { approvalRequired: true } : {}),
+      ...(record.proposal && typeof record.proposal === 'object' && !Array.isArray(record.proposal)
+        ? { proposal: record.proposal as MagOneInstructionsProposal['proposal'] }
+        : {}),
     };
   }
   for (const key of ['content', 'result', 'structuredContent', 'text', 'output']) {

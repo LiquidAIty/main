@@ -26,7 +26,10 @@ import CoderTerminalPanel from '../features/agentbuilder/console/CoderTerminalPa
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
 import HermesKanbanWorkspace from '../features/hermeskanban/HermesKanbanWorkspace';
 import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
-import type { AgentBuilderChatMessage } from '../features/agentbuilder/console/useAgentBuilderMainChat';
+import type {
+  AgentBuilderChatMessage,
+  MagOneInstructionsProposal,
+} from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
 import useAgentBuilderCardEditor from '../features/agentbuilder/state/useAgentBuilderCardEditor';
 import useAgentBuilderDeck from '../features/agentbuilder/state/useAgentBuilderDeck';
@@ -313,6 +316,8 @@ export default function AgentBuilder(): React.ReactElement {
     deck,
   });
   const [transientCardInputs, setTransientCardInputs] = useState<Record<string, string>>({});
+  const [magOneProposal, setMagOneProposal] =
+    useState<MagOneInstructionsProposal | null>(null);
   const standaloneTestPrompt = selectedCardId
     ? transientCardInputs[selectedCardId] || ''
     : '';
@@ -354,10 +359,7 @@ export default function AgentBuilder(): React.ReactElement {
     useState<KnowledgeSurfaceKind>('knowgraph');
   const conversationId = 'main';
   const graphAttention = useAgentBuilderGraphAttention({ projectId: activeProject });
-  const handleMagOneInstructionsProposed = useCallback((proposal: {
-    targetCardId: string;
-    instructions: string;
-  }) => {
+  const handleMagOneInstructionsProposed = useCallback((proposal: MagOneInstructionsProposal) => {
     const target = deck.nodes.find((card) => card.id === proposal.targetCardId);
     if (!target || target.runtime.kind !== 'autogen' || target.runtime.mode !== 'magentic_one') {
       setDeckStatusMessage('Mag One proposal target is not an active saved Mag One Card.');
@@ -367,6 +369,7 @@ export default function AgentBuilder(): React.ReactElement {
       ...current,
       [target.id]: proposal.instructions,
     }));
+    setMagOneProposal(proposal);
     setSelectedCardId(target.id);
     setTab('Invocation');
     setDeckStatusMessage(`${target.title} transient input is ready for review.`);
@@ -1041,6 +1044,11 @@ export default function AgentBuilder(): React.ReactElement {
                       !standaloneTestPrompt.trim()
                     }
                     runResult={standaloneTestResult}
+                    magOneProposal={
+                      magOneProposal?.targetCardId === selectedCard.id
+                        ? magOneProposal
+                        : null
+                    }
                     saveDeckStatusMessage={deckStatusMessage}
                     openDeckRevision={deckRevision}
                     onSaveLocalConfig={handleSaveSelectedCardConfig}

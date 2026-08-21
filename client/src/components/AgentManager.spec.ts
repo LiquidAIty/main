@@ -118,6 +118,10 @@ describe('AgentManager active builder config', () => {
   });
 
   it('places the exact Mag One proposal in unsaved per-Card input state', () => {
+    const source = readFileSync(
+      path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
+      'utf8',
+    );
     const pageSource = readFileSync(
       path.resolve(process.cwd(), 'client/src/pages/agentbuilder.tsx'),
       'utf8',
@@ -134,6 +138,10 @@ describe('AgentManager active builder config', () => {
     expect(chatSource).toContain('onMagOneInstructionsProposed');
     expect(pageSource).toContain('const [transientCardInputs, setTransientCardInputs]');
     expect(pageSource).toContain('[target.id]: proposal.instructions');
+    expect(source).toContain('Read-only Mag One proposal');
+    expect(source).toContain('Completion:');
+    expect(source).toContain('writes/effects');
+    expect(source).toContain('This review does not save Cards, change wires, or launch Mag One.');
     expect(pageSource).toContain('onMagOneInstructionsProposed: handleMagOneInstructionsProposed');
     expect(pageSource).not.toContain('persistTransientCardInputs');
   });
