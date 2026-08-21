@@ -97,7 +97,9 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain("data-testid=\"agent-manager-save\"");
     expect(source).toContain("data-testid=\"agent-manager-run\"");
     expect(source).toContain('Save Card Version');
-    expect(source).toContain('Run transient');
+    expect(source).toContain("data-testid=\"agent-manager-clear-invocation\"");
+    expect(source).toContain('Prepare / Refresh');
+    expect(source).toContain("{runBusy ? 'Running…' : 'Run'}");
     expect(source).not.toContain('agent-manager-save-idf');
     expect(source).not.toContain('agent-manager-export-idf');
     expect(source).not.toContain('Run Test');
@@ -135,8 +137,9 @@ describe('AgentManager active builder config', () => {
       'utf8',
     );
 
-    expect(chatSource).toContain("event.toolName === 'write_mag_one_instructions'");
-    expect(chatSource).toContain("event.toolName === 'card.load_graph_references'");
+    expect(chatSource).toContain("'nativeEvents'");
+    expect(chatSource).toContain("['write_mag_one_instructions', 'card.run_assistant_agent']");
+    expect(chatSource).toContain("['card.load_graph_references', 'card.run_assistant_agent']");
     expect(chatSource).toContain('onCardInvocationStaged');
     expect(chatSource).toContain('onCardGraphReferenceLoaded');
     expect(pageSource).toContain('const [transientCardInputs, setTransientCardInputs]');
@@ -150,6 +153,8 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain('NativeGraphProjectionSurface');
     expect(source).toContain('loadedGraphProjection');
     expect(source).toContain('Saved Mag One workers');
+    expect(source).toContain('onRemoveGraphReference');
+    expect(source).toContain('onMoveGraphReference');
     expect(source).not.toContain('Read-only Mag One proposal');
     expect(pageSource).toContain('onCardInvocationStaged: handleCardInvocationStaged');
     expect(pageSource).toContain('onCardGraphReferenceLoaded: handleCardGraphReferenceLoaded');

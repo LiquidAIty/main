@@ -442,6 +442,70 @@ export default function AgentBuilder(): React.ReactElement {
     );
   }, [deck.nodes, setDeckStatusMessage, setSelectedCardId, setTab]);
 
+  const clearTransientCardInvocation = useCallback((cardId: string) => {
+    setTransientCardInputs((current) => {
+      const next = { ...current };
+      delete next[cardId];
+      return next;
+    });
+    setTransientCardGraphContext((current) => {
+      const next = { ...current };
+      delete next[cardId];
+      return next;
+    });
+    setStandaloneTestResult((current) => (
+      current?.invocation?.cardIdentity.cardId === cardId ? null : current
+    ));
+    setDeckStatusMessage('Transient mission and graph context cleared. Nothing ran.');
+  }, [setDeckStatusMessage]);
+
+  const removeTransientGraphReference = useCallback((
+    cardId: string,
+    authority: string,
+    nativeId: string,
+  ) => {
+    setTransientCardGraphContext((current) => ({
+      ...current,
+      [cardId]: (current[cardId] || [])
+        .filter((item) => !(
+          item.reference.authority === authority
+          && item.reference.nativeId === nativeId
+        ))
+        .map((item, order) => ({
+          ...item,
+          reference: { ...item.reference, order },
+        })),
+    }));
+    setStandaloneTestResult(null);
+  }, []);
+
+  const moveTransientGraphReference = useCallback((
+    cardId: string,
+    authority: string,
+    nativeId: string,
+    direction: -1 | 1,
+  ) => {
+    setTransientCardGraphContext((current) => {
+      const values = [...(current[cardId] || [])];
+      const from = values.findIndex((item) => (
+        item.reference.authority === authority
+        && item.reference.nativeId === nativeId
+      ));
+      const to = from + direction;
+      if (from < 0 || to < 0 || to >= values.length) return current;
+      const [moved] = values.splice(from, 1);
+      values.splice(to, 0, moved);
+      return {
+        ...current,
+        [cardId]: values.map((item, order) => ({
+          ...item,
+          reference: { ...item.reference, order },
+        })),
+      };
+    });
+    setStandaloneTestResult(null);
+  }, []);
+
   // CodeGraph repository identity is resolved from the authoritative CBM index.
   // The canonical ready project wins over stale same-root validation indexes.
   const [codeGraphProjectName, setCodeGraphProjectName] = useState<string>('');
@@ -1150,6 +1214,15 @@ export default function AgentBuilder(): React.ReactElement {
                     onMaterializeCard={() => {
                       void materializeStandaloneCard();
                     }}
+                    onClearInvocation={() => {
+                      clearTransientCardInvocation(selectedCard.id);
+                    }}
+                    onRemoveGraphReference={(authority, nativeId) => {
+                      removeTransientGraphReference(selectedCard.id, authority, nativeId);
+                    }}
+                    onMoveGraphReference={(authority, nativeId, direction) => {
+                      moveTransientGraphReference(selectedCard.id, authority, nativeId, direction);
+                    }}
                     onRunCard={() => {
                       void runStandaloneCardTest();
                     }}
@@ -1157,11 +1230,18 @@ export default function AgentBuilder(): React.ReactElement {
                     runDisabled={
                       !showStandaloneTestControls ||
                       !standaloneTestPrompt.trim() ||
-                      (selectedCard.runtime.kind === 'autogen' &&
-                        selectedCard.runtime.mode === 'magentic_one' &&
+                      (((selectedCard.runtime.kind === 'hermes' &&
+                        selectedCard.runtime.mode === 'delegate') ||
+                        (selectedCard.runtime.kind === 'autogen' &&
+                          selectedCard.runtime.mode === 'magentic_one')) &&
                         (
-                          selectedMagOneWorkers.length === 0 ||
-                          selectedMagOneWorkers.some((worker) => !worker.ready) ||
+                          (transientCardGraphContext[selectedCard.id] || []).length === 0 ||
+                          (selectedCard.runtime.kind === 'autogen' &&
+                            selectedCard.runtime.mode === 'magentic_one' &&
+                            (
+                              selectedMagOneWorkers.length === 0 ||
+                              selectedMagOneWorkers.some((worker) => !worker.ready)
+                            )) ||
                           (transientCardGraphContext[selectedCard.id] || []).some(
                             (item) => item.reference.required && !item.ready,
                           )

@@ -527,6 +527,33 @@ describe('coder routes', () => {
   it('routes the saved Kanban Card through its stable native Hermes ACP session', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.startHermesTurn.mockClear();
+    chatSessionMocks.startHermesTurn.mockImplementationOnce(async (_params: unknown, onEvent: (event: any) => void) => {
+      onEvent({
+        kind: 'tool_start',
+        toolName: 'write_mag_one_instructions',
+        toolCallId: 'stage-coder-1',
+        input: { targetCardId: 'card_local_coder' },
+      });
+      onEvent({ kind: 'reasoning', text: 'private child reasoning' });
+      onEvent({
+        kind: 'tool_result',
+        toolName: 'write_mag_one_instructions',
+        toolCallId: 'stage-coder-1',
+        isError: false,
+        output: { ok: true, targetCardId: 'card_local_coder', started: false },
+      });
+      return {
+        done: Promise.resolve({ finalText: 'Real assistant reply.', usage: chatSessionMocks.usage }),
+        cancel: chatSessionMocks.lastCancel,
+        answer: vi.fn(),
+        resolved: {
+          cardId: 'card_hermes_steward',
+          provider: 'openai',
+          modelKey: 'gpt-5.6-luna',
+          providerModelId: 'gpt-5.6-luna',
+        },
+      };
+    });
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
@@ -553,9 +580,23 @@ describe('coder routes', () => {
           status: 'completed',
           output: 'Real assistant reply.',
           runtimeOwner: 'hermes',
+          nativeEvents: [
+            expect.objectContaining({
+              kind: 'tool_start',
+              toolName: 'write_mag_one_instructions',
+              toolCallId: 'stage-coder-1',
+            }),
+            expect.objectContaining({
+              kind: 'tool_result',
+              toolName: 'write_mag_one_instructions',
+              toolCallId: 'stage-coder-1',
+              isError: false,
+            }),
+          ],
           receipt: { runId: 'corr-steward-1', state: 'completed' },
         },
       });
+      expect(JSON.stringify(payload.result.nativeEvents)).not.toContain('private child reasoning');
       expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1);
       expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).toMatchObject({
         cardId: 'card_hermes_steward',

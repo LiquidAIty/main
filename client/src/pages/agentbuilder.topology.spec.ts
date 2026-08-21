@@ -95,8 +95,11 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(INITIAL_DECK.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({ source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' }),
       expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' }),
-      expect.objectContaining({ source: 'card_local_coder', target: 'card_hermes_steward', edgeType: 'flow' }),
     ]));
+    expect(INITIAL_DECK.edges).toHaveLength(5);
+    expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
+      source: 'card_local_coder', edgeType: 'flow',
+    }));
     expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
       source: 'card_hermes_steward', edgeType: 'flow',
     }));
@@ -176,17 +179,19 @@ describe('Main / Hermes / graph authority topology', () => {
       runtimeOptions: {
         accessMode: 'chatgpt-account',
         nativeTools: ['memory'],
-        toolsets: ['file', 'terminal'],
+        toolsets: ['hermes-acp', 'computer_use'],
       },
     });
-    expect(coder?.runtimeOptions?.tools).toContain('card.run_assistant_agent');
+    expect(coder?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
     expect(coder?.runtimeOptions?.tools).not.toContain('cbm.search_graph');
     expect(coder?.runtimeOptions?.tools).not.toEqual(expect.arrayContaining([
       'run_mag_one',
       'graphiti.add_memory',
     ]));
     expect(coder?.prompt).toContain('You are Coder');
-    expect(coder?.prompt).toContain('Do not create hidden agents');
+    expect(coder?.prompt).toContain('Native delegate_task is available');
+    expect(coder?.prompt).toContain('children remain parts of this Coder Card');
+    expect(coder?.prompt).not.toContain('retask the saved Kanban Card');
 
     expect(steward?.runtimeOptions?.tools).not.toContain('run_mag_one');
     expect(steward?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');

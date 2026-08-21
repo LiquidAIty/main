@@ -87,7 +87,6 @@ describe('agentbuilder authoring flow', () => {
     }))).toEqual([
       { source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
       { source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' },
-      { source: 'card_local_coder', target: 'card_hermes_steward', edgeType: 'flow' },
       {
         source: 'card_main_chat',
         target: 'card_magentic',
@@ -110,7 +109,8 @@ describe('agentbuilder authoring flow', () => {
     expect(systemCoder?.runtimeOptions?.tools).toContain('card.update_configuration');
     expect(systemCoder?.runtimeOptions?.tools).not.toContain('cbm.search_graph');
     expect(systemCoder?.runtimeOptions?.tools).not.toContain('run_local_coder');
-    expect(systemCoder?.runtimeOptions?.toolsets).toEqual(['file', 'terminal']);
+    expect(systemCoder?.runtimeOptions?.toolsets).toEqual(['hermes-acp', 'computer_use']);
+    expect(systemCoder?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
     expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_local_coder' && edge.edgeType === 'magentic_option')).toBe(false);
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_main_chat')?.runtime).toEqual({ kind: 'hermes', mode: 'main', profile: 'liquidaity-main' });
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_hermes_steward')?.runtime).toEqual({ kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' });

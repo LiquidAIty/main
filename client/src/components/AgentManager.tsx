@@ -185,6 +185,13 @@ interface AgentManagerProps {
   onChangePromptTestInput?: (value: string) => void;
   onRunCard?: () => void;
   onMaterializeCard?: () => void;
+  onClearInvocation?: () => void;
+  onRemoveGraphReference?: (authority: string, nativeId: string) => void;
+  onMoveGraphReference?: (
+    authority: string,
+    nativeId: string,
+    direction: -1 | 1,
+  ) => void;
   runBusy?: boolean;
   runDisabled?: boolean;
   runResult?: StandaloneCardTestResult | null;
@@ -445,6 +452,9 @@ export function AgentManager({
   onChangePromptTestInput,
   onRunCard,
   onMaterializeCard,
+  onClearInvocation,
+  onRemoveGraphReference,
+  onMoveGraphReference,
   runBusy = false,
   runDisabled = false,
   runResult = null,
@@ -1160,7 +1170,7 @@ export function AgentManager({
               />
             </div>
           )}
-          {loadedGraphContext.map((item) => (
+          {loadedGraphContext.map((item, index) => (
             <section
               key={`${item.reference.authority}:${item.reference.nativeId}`}
               style={{ display: 'grid', gap: 6, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8 }}
@@ -1180,6 +1190,42 @@ export function AgentManager({
                   provenance: {String(reference.provenance || reference.nativeKind || 'native graph')}
                 </div>
               ))}
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  disabled={index === 0}
+                  onClick={() => onMoveGraphReference?.(
+                    item.reference.authority,
+                    item.reference.nativeId,
+                    -1,
+                  )}
+                  aria-label={`Move ${item.reference.nativeId} earlier`}
+                >
+                  Earlier
+                </button>
+                <button
+                  type="button"
+                  disabled={index === loadedGraphContext.length - 1}
+                  onClick={() => onMoveGraphReference?.(
+                    item.reference.authority,
+                    item.reference.nativeId,
+                    1,
+                  )}
+                  aria-label={`Move ${item.reference.nativeId} later`}
+                >
+                  Later
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onRemoveGraphReference?.(
+                    item.reference.authority,
+                    item.reference.nativeId,
+                  )}
+                  aria-label={`Remove ${item.reference.nativeId}`}
+                >
+                  Remove
+                </button>
+              </div>
             </section>
           ))}
           {magOneWorkers.length > 0 ? (
@@ -1763,11 +1809,19 @@ export function AgentManager({
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
             <button
               type="button"
+              onClick={onClearInvocation}
+              disabled={runBusy || (!String(promptTestInput || '').trim() && loadedGraphContext.length === 0)}
+              data-testid="agent-manager-clear-invocation"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
               onClick={onMaterializeCard}
-              disabled={runBusy || !String(promptTestInput || '').trim()}
+              disabled={runDisabled || runBusy || !String(promptTestInput || '').trim()}
               data-testid="agent-manager-materialize"
             >
-              {runBusy ? 'Working…' : 'Preview IDF'}
+              {runBusy ? 'Working…' : 'Prepare / Refresh'}
             </button>
             <button
               type="button"
@@ -1789,7 +1843,7 @@ export function AgentManager({
                 fontWeight: 600,
               }}
             >
-              {runBusy ? 'Running…' : 'Run transient'}
+              {runBusy ? 'Running…' : 'Run'}
             </button>
           </div>
         </div> : null}

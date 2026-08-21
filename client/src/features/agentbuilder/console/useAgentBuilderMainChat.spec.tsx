@@ -81,12 +81,18 @@ describe('Main chat live observation callbacks', () => {
     mocks.streamSession.mockImplementation(async (args) => {
       args.onEvent({
         kind: 'tool_result',
-        toolName: 'write_mag_one_instructions',
+        toolName: 'card.run_assistant_agent',
         isError: false,
-        output: JSON.stringify({
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
+        output: {
+          result: {
+            nativeEvents: [{
+              kind: 'tool_result',
+              toolName: 'write_mag_one_instructions',
+              isError: false,
+              output: JSON.stringify({
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
               ok: true,
               ready: true,
               targetCardId: 'card_local_coder',
@@ -120,9 +126,12 @@ describe('Main chat live observation callbacks', () => {
               },
               persisted: false,
               started: false,
-            }),
-          }],
-        }),
+                  }),
+                }],
+              }),
+            }],
+          },
+        },
       });
       args.onEvent({
         kind: 'tool_result',

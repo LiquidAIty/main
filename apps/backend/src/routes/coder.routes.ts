@@ -395,6 +395,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
 
     let output = '';
     let transport: Record<string, unknown> | null = null;
+    const nativeEvents: HermesSessionEvent[] = [];
     let providerInputTokens: number | null = null;
     let providerOutputTokens: number | null = null;
     let totalCostUsd: number | null = null;
@@ -407,7 +408,13 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
           conversationId,
           parentRunId: correlationId,
           ...(cardId === CODER_CARD_ID ? { workingDirectory: resolveRepoRoot() } : {}),
-          onEvent: () => undefined,
+          onEvent: (event) => {
+            // Preserve real child tool effects for the parent/UI observer. Text,
+            // reasoning, and memory remain inside the child Hermes session.
+            if (event.kind === 'tool_start' || event.kind === 'tool_result') {
+              nativeEvents.push(event);
+            }
+          },
         });
         if (clientDisconnected) {
           hermesHandle.cancel();
@@ -455,6 +462,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
           },
           output,
           transport,
+          nativeEvents,
           receipt: finished.receipt || null,
         },
       });

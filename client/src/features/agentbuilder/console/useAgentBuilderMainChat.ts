@@ -108,7 +108,9 @@ export function parseStagedCardInvocationLoaded(
   output: unknown,
   depth = 0,
 ): StagedCardInvocationLoaded | null {
-  if (depth > 8 || output == null) return null;
+  // Main can observe a configured child Card result wrapped by MCP content,
+  // the backend result object, and the child's preserved native tool event.
+  if (depth > 12 || output == null) return null;
   if (typeof output === 'string') {
     try {
       return parseStagedCardInvocationLoaded(JSON.parse(output), depth + 1);
@@ -168,7 +170,7 @@ export function parseStagedCardInvocationLoaded(
       invocation: invocation as StagedCardInvocationLoaded['invocation'],
     };
   }
-  for (const key of ['content', 'result', 'structuredContent', 'text', 'output']) {
+  for (const key of ['content', 'result', 'structuredContent', 'text', 'output', 'nativeEvents']) {
     const loaded = parseStagedCardInvocationLoaded(record[key], depth + 1);
     if (loaded) return loaded;
   }
@@ -179,7 +181,7 @@ export function parseLoadedCardGraphReference(
   output: unknown,
   depth = 0,
 ): LoadedCardGraphReference | null {
-  if (depth > 8 || output == null) return null;
+  if (depth > 12 || output == null) return null;
   if (typeof output === 'string') {
     try {
       return parseLoadedCardGraphReference(JSON.parse(output), depth + 1);
@@ -248,7 +250,7 @@ export function parseLoadedCardGraphReference(
       ...(typeof record.error === 'string' ? { error: record.error } : {}),
     };
   }
-  for (const key of ['content', 'result', 'structuredContent', 'text', 'output']) {
+  for (const key of ['content', 'result', 'structuredContent', 'text', 'output', 'nativeEvents']) {
     const loaded = parseLoadedCardGraphReference(record[key], depth + 1);
     if (loaded) return loaded;
   }
@@ -376,15 +378,18 @@ export default function useAgentBuilderMainChat({
             });
             if (
               event.kind === 'tool_result'
-              && event.toolName === 'write_mag_one_instructions'
               && event.isError !== true
+              && typeof event.toolName === 'string'
+              && ['write_mag_one_instructions', 'card.run_assistant_agent'].includes(event.toolName)
             ) {
               const loaded = parseStagedCardInvocationLoaded(event.output);
               if (loaded) notifyObserver(onCardInvocationStaged, loaded);
             }
             if (
               event.kind === 'tool_result'
-              && event.toolName === 'card.load_graph_references'
+              && event.isError !== true
+              && typeof event.toolName === 'string'
+              && ['card.load_graph_references', 'card.run_assistant_agent'].includes(event.toolName)
             ) {
               const loaded = parseLoadedCardGraphReference(event.output);
               if (loaded) notifyObserver(onCardGraphReferenceLoaded, loaded);

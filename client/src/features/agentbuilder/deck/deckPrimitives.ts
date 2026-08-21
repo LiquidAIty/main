@@ -38,7 +38,6 @@ export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions[
 // Seed default ONLY for a fresh Coder card. Once a card has a saved
 // provider/model, that saved value remains authoritative.
 export const CODER_CONTROLLER_TOOLS = [
-  'card.run_assistant_agent',
   'card.create',
   'card.update_configuration',
   'canvas.upsert_wire',
