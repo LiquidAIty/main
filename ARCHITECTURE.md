@@ -269,7 +269,11 @@ ACP has no standard native-Kanban task method. The LiquidAIty-owned subclass in
 idempotent Triage creation, and task readback over the stock Hermes ACP agent. It never calls
 `session/prompt`, decomposes work, dispatches workers, or synthesizes a response. The persistent
 Hermes gateway remains the sole automatic decomposer and dispatcher; native child tasks and profile
-workers remain internal to the one saved Kanban Card Run. The vendored Hermes source is unchanged.
+workers remain internal to the one saved Kanban Card Run. One focused vendor correction lets Hermes'
+first-run guard recognize an explicitly selected provider only when the normal Hermes auth resolver
+reports that exact provider logged in; it does not change provider, model, temperature, profile, or
+OAuth storage. The registered files, proof, contribution plan, and rollback live in
+`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
 OpenClaude/LocalCoder is not a vendor boundary, package root, fallback, or supported runtime in Core v0.
 WorldSignals, Engraphis, and other imported roots remain isolated owners and are not ordinary cleanup

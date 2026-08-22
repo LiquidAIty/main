@@ -967,7 +967,7 @@ def _relative_time(ts) -> str:
     return relative_time(ts)
 
 
-def _has_any_provider_configured() -> bool:
+def _has_any_provider_configured(explicit_provider=None) -> bool:
     """Check if at least one inference provider is usable."""
     from hermes_cli.config import get_env_path, get_hermes_home, load_config
     from hermes_cli.auth import get_auth_status
@@ -1060,6 +1060,25 @@ def _has_any_provider_configured() -> bool:
         cfg_api_key = (model_cfg.get("api_key") or "").strip()
         if cfg_provider or cfg_base_url or cfg_api_key:
             return True
+
+    # LIQUIDAITY VENDOR PATCH: a non-interactive worker may receive an exact
+    # provider from its native task even when the profile intentionally has no
+    # provider default. Honor that explicit choice only when Hermes both knows
+    # how to route it and its normal auth resolver reports it logged in. In
+    # profile mode get_auth_status() retains Hermes' read-only global auth
+    # fallback, so this does not create or copy profile-local credentials.
+    explicit_provider = (explicit_provider or "").strip().lower()
+    if explicit_provider:
+        try:
+            from hermes_cli.auth import is_runtime_provider_routable
+
+            if (
+                is_runtime_provider_routable(explicit_provider)
+                and get_auth_status(explicit_provider).get("logged_in")
+            ):
+                return True
+        except Exception:
+            pass
 
     # Check provider-specific auth fallbacks (for example, Copilot via gh auth).
     try:
@@ -3066,7 +3085,7 @@ def cmd_chat(args):
         pass
 
     # First-run guard: check if any provider is configured before launching
-    if not _has_any_provider_configured():
+    if not _has_any_provider_configured(getattr(args, "provider", None)):
         print()
         print(
             "It looks like Hermes isn't configured yet -- no API keys or providers found."

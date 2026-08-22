@@ -660,6 +660,42 @@ class TestHasAnyProviderConfigured:
             f"provider registry sweep ran before auth.json short-circuit: {calls}"
         )
 
+    def test_explicit_authenticated_runtime_provider_counts(self, monkeypatch, tmp_path):
+        """An exact task provider may use Hermes' normal profile auth fallback."""
+        self._setup_home(monkeypatch, tmp_path)
+        calls = []
+
+        monkeypatch.setattr(
+            "hermes_cli.auth.is_runtime_provider_routable",
+            lambda provider_id: provider_id == "openai-codex",
+        )
+
+        def _status(provider_id):
+            calls.append(provider_id)
+            return {"logged_in": provider_id == "openai-codex"}
+
+        monkeypatch.setattr("hermes_cli.auth.get_auth_status", _status)
+        from hermes_cli.main import _has_any_provider_configured
+
+        assert _has_any_provider_configured("openai-codex") is True
+        assert calls == ["openai-codex"]
+
+    def test_explicit_unauthenticated_runtime_provider_does_not_count(
+        self, monkeypatch, tmp_path
+    ):
+        """An explicit task provider never bypasses the credential check."""
+        self._setup_home(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            "hermes_cli.auth.is_runtime_provider_routable",
+            lambda provider_id: provider_id == "openai-codex",
+        )
+        monkeypatch.setattr(
+            "hermes_cli.auth.get_auth_status", lambda _provider_id: {"logged_in": False}
+        )
+        from hermes_cli.main import _has_any_provider_configured
+
+        assert _has_any_provider_configured("openai-codex") is False
+
 
 # =============================================================================
 # Kimi Code auto-detection tests
@@ -1213,4 +1249,3 @@ class TestDeepInfraProviderProfile:
         # Fallback list intentionally empty — live catalog is the source
         # of truth. Pin the shape only, not contents.
         assert isinstance(profile.fallback_models, tuple)
-

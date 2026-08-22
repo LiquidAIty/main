@@ -142,3 +142,29 @@ fidelity fix. Drop this patch when upstream classifies generic `tool_error()` re
 
 Rollback: restore the polished-tool guard. That preserves upstream behavior but makes host-visible ACP
 status unreliable for failing MCP effects, so LiquidAIty must not report those Runs as successful.
+
+## Patch: explicit authenticated provider first-run guard
+
+Purpose: let a non-interactive native Kanban worker use an explicit task-level provider when Hermes'
+official auth resolver reports that exact provider logged in. This closes only the first-run guard gap
+for profiles that intentionally rely on Hermes' read-only global auth fallback; provider resolution,
+OAuth storage, downstream inference, model selection, and ordinary setup behavior remain stock.
+
+Files and symbols:
+
+- `hermes_cli/main.py`: `_has_any_provider_configured` accepts an optional explicit provider and
+  `cmd_chat` passes its existing `--provider` argument.
+- `tests/hermes_cli/test_api_key_providers.py`: proves authenticated explicit providers pass and
+  unauthenticated explicit providers remain blocked without an inference call.
+
+Upstream behavior preserved: callers without `--provider`, unknown providers, and providers whose
+normal Hermes auth status is not logged in retain the existing setup guard. No credential is copied or
+written, and no provider, model, temperature, or profile default is changed.
+
+Contribution plan: submit the optional explicit-provider check and focused tests upstream as a
+non-interactive profile-worker correction. Drop this patch when upstream's first-run guard consults the
+same exact authenticated provider already selected for runtime initialization.
+
+Rollback: remove the marked block and stop passing `args.provider` to the guard. Hermes returns to the
+upstream guard, and profile workers without profile-local defaults will again stop before the already
+supported global auth fallback reaches runtime provider initialization.
