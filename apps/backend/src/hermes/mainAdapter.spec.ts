@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 import {
+  AcpProcess,
   buildHermesHostSessionProjection,
   buildHermesOfficialMcpServer,
   deriveHermesSessionKey,
@@ -11,9 +15,122 @@ import {
   requireHermesEffectSuccess,
   resolveHermesEffectToolName,
   resolveHermesRuntimeHome,
+  startHermesTurnWithOnePrePromptRecovery,
 } from './mainAdapter';
 
+function providerFreeTurnArgs(toolCount = 57) {
+  return {
+    cardId: 'card_main_chat',
+    title: 'Main Chat',
+    runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' } as const,
+    prompt: 'Saved Main prompt',
+    provider: 'openai',
+    modelKey: 'gpt-5.6-sol',
+    providerModelId: 'gpt-5.6-sol',
+    accessMode: 'chatgpt-account' as const,
+    tools: Array.from({ length: toolCount }, (_, index) => `test.tool_${index + 1}`),
+    nativeTools: ['delegate_task'],
+    skills: [],
+    toolsets: ['delegation'],
+    mcpConnectionIds: [],
+    sessionKey: 'hermes:project-1:provider-free:card_main_chat',
+    projectId: 'project-1',
+    deckId: 'deck_builder',
+    conversationId: 'provider-free',
+    parentRunId: 'provider-free-run',
+    message: 'Return the bounded provider-free result.',
+  };
+}
+
+function fakeAcpScript(exitAfterRegistration: boolean): string {
+  return `
+const readline = require('node:readline');
+const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }
+rl.on('line', (line) => {
+  const message = JSON.parse(line);
+  const method = message.method;
+  if (method === 'initialize') return send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  if (method === 'session/list') return send({ jsonrpc: '2.0', id: message.id, result: { sessions: [] } });
+  if (method === 'session/new') {
+    process.stderr.write('MCP server provider-free (HTTP): registered 57 tool(s)\\n');
+    ${exitAfterRegistration ? "return setImmediate(() => process.exit(0));" : "return send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'provider-free-session' } });"}
+  }
+  if (method === 'session/set_model' || method === '_session/configure_host') {
+    return send({ jsonrpc: '2.0', id: message.id, result: {} });
+  }
+  if (method === 'session/prompt') {
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'provider-free-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'provider-free terminal result' } } } });
+    return send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn', usage: { inputTokens: 11, outputTokens: 4 } } });
+  }
+});
+`;
+}
+
 describe('Hermes ACP transport identity', () => {
+  it('keeps the real stdio lifecycle alive after a large MCP catalog and preserves unexpected pre-inference exit evidence', async () => {
+    const previousSecret = process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
+    const previousUrl = process.env.LIQUIDAITY_INTERNAL_MCP_URL;
+    process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = 'provider-free-secret-0123456789abcdef';
+    process.env.LIQUIDAITY_INTERNAL_MCP_URL = 'http://127.0.0.1:9/mcp';
+    const root = path.join(tmpdir(), `liquidaity-acp-${randomUUID()}`);
+    const hermesHome = path.join(root, '.hermes');
+    mkdirSync(hermesHome, { recursive: true });
+    const processes: AcpProcess[] = [];
+    try {
+      const premature = new AcpProcess(() => undefined, {
+        install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(true)] },
+        hermesHome,
+      });
+      processes.push(premature);
+      await expect(premature.startTurn(providerFreeTurnArgs(), () => undefined)).rejects.toThrow(
+        /hermes_acp_exited:0:none:explicit=no:last=request:session\/new:write/,
+      );
+      const unexpectedExit = await premature.closed;
+      expect(unexpectedExit.stderrTail.join('\n')).toContain('registered 57 tool(s)');
+      expect(unexpectedExit.stdoutTail).toBe('');
+
+      const recoveryFirst = new AcpProcess(() => undefined, {
+        install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(true)] },
+        hermesHome,
+      });
+      const recoverySecond = new AcpProcess(() => undefined, {
+        install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(false)] },
+        hermesHome,
+      });
+      processes.push(recoveryFirst, recoverySecond);
+      const queue = [recoveryFirst, recoverySecond];
+      const events: string[] = [];
+      const handle = await startHermesTurnWithOnePrePromptRecovery(
+        providerFreeTurnArgs(),
+        (event) => events.push(event.kind),
+        () => {
+          const next = queue.shift();
+          if (!next) throw new Error('unexpected_third_acp_attempt');
+          return next;
+        },
+      );
+      const result = await handle.done;
+      expect(queue).toHaveLength(0);
+      expect(result.finalText).toBe('provider-free terminal result');
+      expect(result.usage).toMatchObject({ providerInputTokens: 11, providerOutputTokens: 4 });
+      expect(events).toContain('done');
+      expect(recoverySecond.alive).toBe(true);
+      recoverySecond.close();
+      const explicitExit = await recoverySecond.closed;
+      expect(explicitExit.explicit).toBe(true);
+      expect(explicitExit.lastProtocolEvent).toBe('close:explicit');
+    } finally {
+      for (const processOwner of processes) {
+        if (processOwner.alive) processOwner.close();
+      }
+      if (previousSecret === undefined) delete process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
+      else process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = previousSecret;
+      if (previousUrl === undefined) delete process.env.LIQUIDAITY_INTERNAL_MCP_URL;
+      else process.env.LIQUIDAITY_INTERNAL_MCP_URL = previousUrl;
+    }
+  });
+
   it('uses one repo-owned Hermes home for every stable native session', () => {
     const root = 'C:\\Projects\\LiquidAIty\\main\\Hermes';
     expect(resolveHermesRuntimeHome(root)).toBe(path.join(root, '.hermes'));

@@ -133,9 +133,38 @@ export type HermesHistoryMessage = {
 };
 
 type PendingRequest = {
+  method: string;
   resolve(value: any): void;
   reject(error: Error): void;
 };
+
+type HermesAcpInstall = {
+  root: string;
+  executable: string;
+  args: string[];
+};
+
+type HermesAcpExit = {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  explicit: boolean;
+  lastProtocolEvent: string;
+  stderrTail: string[];
+  stdoutTail: string;
+};
+
+class HermesAcpExitedError extends Error {
+  constructor(readonly exit: HermesAcpExit) {
+    const stderr = exit.stderrTail.slice(-3).join(' | ');
+    const stdout = exit.stdoutTail ? `:stdout=${exit.stdoutTail}` : '';
+    super(
+      `hermes_acp_exited:${exit.code ?? 'null'}:${exit.signal ?? 'none'}`
+      + `:explicit=${exit.explicit ? 'yes' : 'no'}`
+      + `:last=${exit.lastProtocolEvent}${stdout}:${stderr}`,
+    );
+    this.name = 'HermesAcpExitedError';
+  }
+}
 
 type ActiveTurn = {
   onEvent(event: HermesSessionEvent): void;
@@ -147,7 +176,7 @@ type ActiveTurn = {
   rootExecutionContextId: string;
 };
 
-function resolveHermesInstall(): { root: string; executable: string; args: string[] } {
+function resolveHermesInstall(): HermesAcpInstall {
   const root = path.join(resolveRepoRoot(), 'Hermes');
   const executable = path.join(root, 'venv', 'Scripts', 'python.exe');
   const bridge = path.join(
@@ -289,7 +318,7 @@ export function buildHermesHostSessionProjection(
   };
 }
 
-class AcpProcess {
+export class AcpProcess {
   readonly executable: string;
   readonly hermesHome: string;
   readonly transport = 'acp-stdio' as const;
@@ -304,11 +333,22 @@ class AcpProcess {
   private stderrTail: string[] = [];
   private ready: Promise<void>;
   private terminated = false;
+  private explicitClose = false;
+  private lastProtocolEvent = 'spawn';
+  private readonly exitPromise: Promise<HermesAcpExit>;
+  private resolveExit!: (exit: HermesAcpExit) => void;
 
-  constructor(private readonly onClosed: (owner: AcpProcess) => void) {
-    const install = resolveHermesInstall();
+  constructor(
+    private readonly onClosed: (owner: AcpProcess) => void,
+    options: { install?: HermesAcpInstall; hermesHome?: string } = {},
+  ) {
+    const install = options.install ?? resolveHermesInstall();
     this.executable = install.executable;
-    this.hermesHome = ensureHermesHolographicMemoryHome(install.root);
+    this.hermesHome = options.hermesHome
+      ?? ensureHermesHolographicMemoryHome(install.root);
+    this.exitPromise = new Promise((resolve) => {
+      this.resolveExit = resolve;
+    });
     const childEnv = withoutInternalMcpSecret(process.env);
     this.child = spawn(this.executable, install.args, {
       cwd: install.root,
@@ -327,9 +367,24 @@ class AcpProcess {
       this.stderrTail.push(...String(chunk).split(/\r?\n/).filter(Boolean));
       this.stderrTail = this.stderrTail.slice(-30);
     });
-    this.child.once('error', (error) => this.failAll(error));
-    this.child.once('exit', (code, signal) => {
-      this.failAll(new Error(`hermes_acp_exited:${code ?? 'null'}:${signal ?? 'none'}:${this.stderrTail.slice(-3).join(' | ')}`));
+    this.child.once('error', (error) => {
+      this.lastProtocolEvent = 'process:error';
+      this.failAll(error);
+    });
+    // `close`, unlike `exit`, fires only after stdout/stderr have drained. That
+    // preserves the bridge's actual final diagnostic instead of normalizing a
+    // clean pre-inference EOF while its explanation is still buffered.
+    this.child.once('close', (code, signal) => {
+      const exit: HermesAcpExit = {
+        code,
+        signal,
+        explicit: this.explicitClose,
+        lastProtocolEvent: this.lastProtocolEvent,
+        stderrTail: [...this.stderrTail],
+        stdoutTail: this.stdoutBuffer.trim().slice(-500),
+      };
+      this.resolveExit(exit);
+      this.failAll(new HermesAcpExitedError(exit));
     });
     this.ready = this.request('initialize', {
       protocolVersion: 1,
@@ -350,7 +405,13 @@ class AcpProcess {
     return !this.terminated && !this.child.killed && this.child.stdin.writable;
   }
 
+  get closed(): Promise<HermesAcpExit> {
+    return this.exitPromise;
+  }
+
   close(): void {
+    this.explicitClose = true;
+    this.lastProtocolEvent = 'close:explicit';
     if (!this.child.killed) this.child.kill();
   }
 
@@ -362,7 +423,8 @@ class AcpProcess {
   private request(method: string, params: Record<string, unknown>): Promise<any> {
     const id = this.nextRequestId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, { method, resolve, reject });
+      this.lastProtocolEvent = `request:${method}:write`;
       this.send({ jsonrpc: '2.0', id, method, params });
     });
   }
@@ -395,6 +457,7 @@ class AcpProcess {
       const pending = this.pending.get(Number(message.id));
       if (!pending) return;
       this.pending.delete(Number(message.id));
+      this.lastProtocolEvent = `response:${pending.method}:${message.error ? 'error' : 'ok'}`;
       if (message.error) {
         pending.reject(new Error(`hermes_acp_rpc_error:${jsonText(message.error)}`));
       } else {
@@ -776,6 +839,17 @@ class AcpProcess {
   }
 }
 
+function isRetryablePrePromptCleanExit(error: unknown): error is HermesAcpExitedError {
+  if (!(error instanceof HermesAcpExitedError)) return false;
+  const { code, signal, explicit, lastProtocolEvent } = error.exit;
+  return code === 0
+    && signal === null
+    && !explicit
+    && !lastProtocolEvent.startsWith('request:session/prompt')
+    && !lastProtocolEvent.startsWith('response:session/prompt')
+    && !lastProtocolEvent.startsWith('notification:session/update');
+}
+
 let processOwner: AcpProcess | null = null;
 
 function sharedHermesProcess(): AcpProcess {
@@ -794,7 +868,24 @@ export async function startHermesTurn(
   args: HermesTurnArgs,
   onEvent: (event: HermesSessionEvent) => void,
 ): Promise<HermesTurnHandle> {
-  return sharedHermesProcess().startTurn(args, onEvent);
+  return startHermesTurnWithOnePrePromptRecovery(args, onEvent);
+}
+
+export async function startHermesTurnWithOnePrePromptRecovery(
+  args: HermesTurnArgs,
+  onEvent: (event: HermesSessionEvent) => void,
+  acquireProcess: () => AcpProcess = sharedHermesProcess,
+): Promise<HermesTurnHandle> {
+  try {
+    return await acquireProcess().startTurn(args, onEvent);
+  } catch (error) {
+    if (!isRetryablePrePromptCleanExit(error)) throw error;
+    // A clean EOF before session/prompt cannot have reached inference or
+    // created delegated native work. Re-establish this one failed transport
+    // boundary once; never retry after prompt dispatch.
+    console.warn(`[hermes] ACP closed before prompt dispatch; re-establishing once: ${(error as Error).message}`);
+    return acquireProcess().startTurn(args, onEvent);
+  }
 }
 
 export async function requestHermesExtension(
