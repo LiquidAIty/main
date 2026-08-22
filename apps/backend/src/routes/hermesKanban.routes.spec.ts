@@ -20,6 +20,8 @@ import {
   parseProfileTable,
   hermesGatewayPids,
   isHermesGatewayRunning,
+  deriveHermesKanbanProgress,
+  readHermesKanbanSessionUsage,
   startNativeHermesKanbanTurn,
   waitForHermesKanbanCardTask,
 } from './hermesKanban.routes';
@@ -68,6 +70,64 @@ const TASKS = [
 ];
 
 describe('hermesKanban helpers', () => {
+  it('derives aggregate retained-root progress without creating worker identities', () => {
+    const root = {
+      task: { id: 't_625de6e8', status: 'running' },
+      parents: ['t_child_done', 't_child_working'],
+      children: [],
+      events: [{ kind: 'decomposed' }],
+      runs: [{ id: 4, ended_at: null, metadata: { worker_session_id: 'terra-root' } }],
+    };
+    const childDone = {
+      task: { id: 't_child_done', status: 'done' },
+      parents: [], children: [], events: [],
+      runs: [{ id: 5, ended_at: 'finished', metadata: { worker_session_id: 'luna-one' } }],
+    };
+    const childWorking = {
+      task: { id: 't_child_working', status: 'running' },
+      parents: [], children: [], events: [],
+      runs: [{ id: 6, ended_at: null, metadata: { worker_session_id: 'luna-two' } }],
+    };
+    expect(deriveHermesKanbanProgress('t_625de6e8', [root, childDone, childWorking])).toEqual({
+      nativeRootId: 't_625de6e8',
+      nativeRunId: 4,
+      phase: 'working',
+      tasksCompleted: 1,
+      tasksTotal: 3,
+      activeWorkers: 2,
+      workerSessionIds: ['terra-root', 'luna-one', 'luna-two'],
+    });
+  });
+
+  it('sums official redacted Hermes session usage provider-free', async () => {
+    const runner = vi.fn(async (args: readonly string[]) => ({
+      exitCode: 0,
+      stderr: '',
+      stdout: JSON.stringify({
+        id: args[args.indexOf('--session-id') + 1],
+        tool_call_count: 2,
+        input_tokens: 10,
+        output_tokens: 4,
+        cache_read_tokens: 5,
+        cache_write_tokens: 1,
+        reasoning_tokens: 3,
+        estimated_cost_usd: 0,
+      }),
+    }));
+    await expect(readHermesKanbanSessionUsage(
+      'liquidaity-hermes-steward',
+      ['luna-one', 'terra-root'],
+      runner as any,
+    )).resolves.toEqual({
+      toolCallCount: 4,
+      providerInputTokens: 20,
+      providerOutputTokens: 8,
+      providerCachedTokens: 12,
+      providerReasoningTokens: 6,
+      totalCostUsd: 0,
+    });
+  });
+
   it('accepts both current and historical native gateway status wording', () => {
     expect(isHermesGatewayRunning('Gateway is running (PID: 42)')).toBe(true);
     expect(isHermesGatewayRunning('Gateway process running (PID: 42)')).toBe(true);

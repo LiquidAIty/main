@@ -2120,7 +2120,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
         Tool(
             name="card.run_assistant_agent",
             description=(
-                "Run ONE saved, enabled Card through its saved runtime adapter "
+                "Submit or rejoin ONE saved, enabled Card through its saved runtime adapter "
                 "with its saved identity, prompt, provider/model/profile, and tools. "
                 "No prompt/model/tool/card overrides "
                 "exist on this path — extra arguments are rejected structurally. deckId defaults to "
@@ -2129,7 +2129,9 @@ async def _materialize_complete_catalog() -> list[Tool]:
                 "bound cardId, one mission, and optional selected native graph references only. "
                 "conversationId is the real live "
                 "conversation this run belongs to, when one exists. Python materializes one "
-                "transient Card input before the selected runtime receives it."
+                "transient Card input before the selected runtime receives it. A Kanban "
+                "submission returns its durable Run and native root promptly; use action=status "
+                "with runId or nativeRootId to rejoin that same Run."
             ),
             inputSchema={
                 "type": "object",
@@ -2137,6 +2139,9 @@ async def _materialize_complete_catalog() -> list[Tool]:
                     "projectId": {"type": "string"},
                     "deckId": {"type": "string"},
                     "cardId": {"type": "string"},
+                    "action": {"type": "string", "enum": ["execute", "status"]},
+                    "runId": {"type": "string"},
+                    "nativeRootId": {"type": "string"},
                     "correlationId": {"type": "string"},
                     "conversationId": {"type": "string"},
                     "originatingAgentId": {
@@ -2177,7 +2182,11 @@ async def _materialize_complete_catalog() -> list[Tool]:
                         },
                     },
                 },
-                "required": ["cardId", "input"],
+                "anyOf": [
+                    {"required": ["cardId", "input"]},
+                    {"required": ["runId"]},
+                    {"required": ["nativeRootId"]},
+                ],
             },
         ),
     ]
@@ -2566,9 +2575,12 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
     "card.run_assistant_agent": {
+        "action",
         "projectId",
         "deckId",
         "cardId",
+        "runId",
+        "nativeRootId",
         "correlationId",
         "conversationId",
         "originatingAgentId",

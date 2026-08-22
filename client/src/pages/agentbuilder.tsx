@@ -41,6 +41,7 @@ import AgentBuilderProjectDrawer from '../features/agentbuilder/project/AgentBui
 import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import useAgentBuilderGraphAttention from '../features/agentbuilder/state/useAgentBuilderGraphAttention';
+import useKanbanCardRunStatus from '../features/agentbuilder/state/useKanbanCardRunStatus';
 import TradingUI from './tradingui';
 import {
   GRAPH_THEME,
@@ -291,6 +292,10 @@ export default function AgentBuilder(): React.ReactElement {
       && deckRevision
       && deck.id === BUILDER_DECK_ID,
   );
+  const kanbanCardRuns = useKanbanCardRunStatus({
+    projectId: canonicalDeckReady ? activeProject : '',
+    deck,
+  });
   const currentDeckRef = useRef(deck);
   useEffect(() => {
     currentDeckRef.current = deck;
@@ -1530,7 +1535,8 @@ export default function AgentBuilder(): React.ReactElement {
         document={deck}
         setDocument={setDeck}
         onPersistGraphMutation={recordDeckWriteReason}
-        activeCardIds={[]}
+        activeCardIds={kanbanCardRuns.activeCardIds}
+        kanbanRunStatuses={kanbanCardRuns.statuses}
         activeEdgeIds={[]}
         selectedCardId={selectedCardId}
         selectedEdgeId={selectedEdgeId}

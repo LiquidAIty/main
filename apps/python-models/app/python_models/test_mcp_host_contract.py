@@ -1251,10 +1251,11 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
     async def check():
         tools = await mcp_host.list_tools()
         by_name = {tool.name: tool for tool in tools}
-        assert set(by_name["card.run_assistant_agent"].inputSchema["required"]) == {
-            "cardId",
-            "input",
-        }
+        assert by_name["card.run_assistant_agent"].inputSchema["anyOf"] == [
+            {"required": ["cardId", "input"]},
+            {"required": ["runId"]},
+            {"required": ["nativeRootId"]},
+        ]
         assert (
             "instructionId"
             not in by_name["card.run_assistant_agent"].inputSchema["properties"]
@@ -2591,11 +2592,13 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "run_mag_one" in by_name
     card_tool = by_name["card.run_assistant_agent"]
     assert set(card_tool.inputSchema["properties"]) == {
-        "cardId",
-        "input",
-        "dataAnchors",
+        "action", "cardId", "runId", "nativeRootId", "input", "dataAnchors",
     }
-    assert set(card_tool.inputSchema["required"]) == {"cardId", "input"}
+    assert card_tool.inputSchema["anyOf"] == [
+        {"required": ["cardId", "input"]},
+        {"required": ["runId"]},
+        {"required": ["nativeRootId"]},
+    ]
     assert "saved runtime adapter" in card_tool.description
     assert "instructionId" not in by_name["card.run_assistant_agent"].inputSchema["properties"]
     assert {scheme["scopes"][0] for scheme in by_name["engraphis.recall"].model_dump()["securitySchemes"]} == {"liquidaity.main"}

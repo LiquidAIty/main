@@ -287,6 +287,74 @@ def test_other_card_runtimes_keep_the_existing_unrestricted_preparation(
     assert card_domain.prepare_run_invocation({}) is prepared
 
 
+def test_exact_kanban_retry_rejoins_without_duplicate_run_or_attention(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = {
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardRevisionId": "revision-one",
+        "runtimeOwner": "hermes",
+        "cardIdentity": {"cardId": "kanban-one", "title": "Kanban"},
+        "idf": {
+            "runtime": {
+                "kind": "hermes", "mode": "kanban", "profile": "steward",
+            },
+            "provider": {
+                "provider": "openai", "modelKey": "gpt-5.6-luna",
+                "providerModelId": "gpt-5.6-luna", "accessMode": "chatgpt-account",
+            },
+        },
+        "resolvedNativeReads": [],
+        "resolvedGraphProjection": {"nodes": [], "edges": []},
+    }
+    inserted = []
+    monkeypatch.setattr(card_domain, "prepare_run_invocation", lambda _payload: prepared)
+    monkeypatch.setattr(
+        card_domain,
+        "_insert_run",
+        lambda _prepared, **kwargs: (
+            inserted.append(kwargs) or ("run-original", "correlation-original", False)
+        ),
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "_observe_run_start",
+        lambda *_args, **_kwargs: pytest.fail("retry duplicated Run attention"),
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "observe_materialized_anchor_reads",
+        lambda *_args, **_kwargs: pytest.fail("retry duplicated anchor attention"),
+    )
+
+    result = card_domain.begin_run({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardId": "kanban-one",
+        "runId": "run-retry",
+        "correlationId": "correlation-retry",
+        "assignment": "Exact mission",
+    })
+
+    assert result["runId"] == "run-original"
+    assert result["correlationId"] == "correlation-original"
+    assert result["rejoined"] is True
+    assert len(inserted) == 1
+    assert inserted[0]["request_fingerprint"] == card_domain._run_request_fingerprint({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardId": "kanban-one",
+        "cardRevisionId": "revision-one",
+        "conversationId": "",
+        "senderCardId": "",
+        "originatingRunId": "",
+        "assignment": "Exact mission",
+        "dataAnchors": [],
+        "images": [],
+    })
+
+
 def test_magentic_card_may_invoke_only_a_saved_magentic_option_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -987,7 +1055,10 @@ def test_main_chat_materializes_once_without_serialized_card_or_run_data(
     monkeypatch.setattr(
         card_domain,
         "_insert_run",
-        lambda value, **kwargs: inserted.update({"prepared": value, **kwargs}),
+        lambda value, **kwargs: (
+            inserted.update({"prepared": value, **kwargs})
+            or (kwargs["run_id"], kwargs["correlation_id"], True)
+        ),
     )
     monkeypatch.setattr(card_domain, "_observe_run_start", lambda *args, **kwargs: True)
     begun = card_domain.begin_main_chat_run({
@@ -1237,6 +1308,12 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
                 "sender_card_id": "card-main",
                 "target_card_id": "card-one",
             }]
+        if "count(edge)" in query:
+            return [{
+                "run_id": "run-one",
+                "operation": "read",
+                "event_count": 1,
+            }]
         if "USED_TOOL" in query:
             return [{
                 "run_id": "run-one",
@@ -1306,9 +1383,11 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         "cardId": "card-one",
         "assignedFromCardIds": ["card-main"],
         "parentRunIds": [],
-        "childRunIds": [],
-        "usedTools": ["cbm.search_graph"],
-        "attentionEvents": [{
+            "childRunIds": [],
+            "usedTools": ["cbm.search_graph"],
+            "graphReads": 1,
+            "graphWrites": 0,
+            "attentionEvents": [{
             "eventId": "native-attention:event-one",
             "timestamp": "2026-08-18T12:00:00Z",
             "projectId": "project-one",

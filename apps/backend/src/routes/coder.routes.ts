@@ -36,7 +36,11 @@ import {
 } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
 import { resolveHermesExecutionContext } from '../hermes/childExecutionContext';
-import { startNativeHermesKanbanTurn } from './hermesKanban.routes';
+import {
+  readHermesKanbanSessionUsage,
+  startNativeHermesKanbanTurn,
+  type HermesKanbanProgress,
+} from './hermesKanban.routes';
 
 const router = Router();
 const CODER_CARD_ID = 'card_local_coder';
@@ -205,6 +209,7 @@ type PreparedHermesTransportArgs = {
   parentRunId?: string;
   workingDirectory?: string;
   onEvent: (event: HermesSessionEvent) => void;
+  onKanbanProgress?: (progress: HermesKanbanProgress) => Promise<void> | void;
 };
 
 function resolveHermesTurnArgs(
@@ -323,9 +328,129 @@ async function startPreparedHermesTransport(
           ))]
         : []),
     ].join('\n');
-    return startNativeHermesKanbanTurn({ ...turnArgs, nativeMission: mission }, args.onEvent);
+    return startNativeHermesKanbanTurn(
+      { ...turnArgs, nativeMission: mission },
+      args.onEvent,
+      { onProgress: args.onKanbanProgress },
+    );
   }
   return startHermesTurn(turnArgs, args.onEvent);
+}
+
+type ConfiguredCardRunStatus = {
+  runId: string;
+  correlationId: string;
+  cardId: string;
+  state: string;
+  status: string;
+  nativeRootId: string | null;
+  nativeRunId: string | number | null;
+  tasksCompleted: number;
+  tasksTotal: number;
+  activeWorkers: number;
+  elapsedMs: number;
+  toolCallCount: number;
+  graphReads: number;
+  graphWrites: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  reasoningTokens: number;
+  costUsd: number;
+  resultReady: boolean;
+  output: string | null;
+  errorCode: string | null;
+  errorSummary: string | null;
+};
+
+function nonNegativeNumber(value: unknown): number {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : 0;
+}
+
+async function readConfiguredCardRunStatus(args: {
+  projectId: string;
+  deckId: string;
+  runId?: string;
+  correlationId?: string;
+  nativeRootId?: string;
+  cardId?: string;
+}): Promise<ConfiguredCardRunStatus | null> {
+  const response = await requestPythonRailsJson('/domain/runs/read', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+  }) as any;
+  const run = response?.run;
+  if (!run || typeof run !== 'object') return null;
+  const runId = String(run.runId || '').trim();
+  const inspection = await requestPythonRailsJson('/domain/agentgraph/inspect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      projectId: args.projectId,
+      deckId: args.deckId,
+      runId,
+      limit: 50,
+    }),
+  }) as any;
+  const telemetryRun = Array.isArray(inspection?.runs)
+    ? inspection.runs.find((candidate: any) => String(candidate?.runId || '') === runId)
+    : null;
+  const attention = Array.isArray(telemetryRun?.attentionEvents)
+    ? telemetryRun.attentionEvents
+    : Array.isArray(inspection?.attentionEvents) ? inspection.attentionEvents : [];
+  const graphReads = Number.isSafeInteger(telemetryRun?.graphReads)
+    ? telemetryRun.graphReads
+    : attention.filter((event: any) => String(event?.operation || '') === 'read').length;
+  const graphWrites = Number.isSafeInteger(telemetryRun?.graphWrites)
+    ? telemetryRun.graphWrites
+    : attention.filter((event: any) => String(event?.operation || '') === 'write').length;
+  const startedAt = Date.parse(String(run.startedAt || ''));
+  const finishedAt = Date.parse(String(run.finishedAt || ''));
+  const elapsedMs = Number.isFinite(startedAt)
+    ? Math.max(0, (Number.isFinite(finishedAt) ? finishedAt : Date.now()) - startedAt)
+    : 0;
+  const state = String(run.state || 'running');
+  const nativeStatus = String(run.nativePhase || '').trim();
+  const output = typeof run.result === 'string' && run.result.length > 0
+    ? run.result
+    : null;
+  return {
+    runId,
+    correlationId: String(run.correlationId || ''),
+    cardId: String(run.cardId || ''),
+    state,
+    status: nativeStatus || (state === 'completed'
+      ? 'complete'
+      : state === 'cancelled' || state === 'failed'
+        ? 'failed'
+        : state === 'blocked'
+          ? 'blocked'
+          : state === 'pending'
+            ? 'queued'
+            : 'working'),
+    nativeRootId: String(run.nativeRootId || '').trim() || null,
+    nativeRunId: typeof run.nativeRunId === 'number' || typeof run.nativeRunId === 'string'
+      ? run.nativeRunId
+      : null,
+    tasksCompleted: nonNegativeNumber(run.tasksCompleted),
+    tasksTotal: nonNegativeNumber(run.tasksTotal),
+    activeWorkers: nonNegativeNumber(run.activeWorkers),
+    elapsedMs,
+    toolCallCount: nonNegativeNumber(run.toolCallCount),
+    graphReads,
+    graphWrites,
+    inputTokens: nonNegativeNumber(run.inputTokens),
+    outputTokens: nonNegativeNumber(run.outputTokens),
+    cachedTokens: nonNegativeNumber(run.cachedTokens),
+    reasoningTokens: nonNegativeNumber(run.reasoningTokens),
+    costUsd: nonNegativeNumber(run.costUsd),
+    resultReady: output !== null,
+    output,
+    errorCode: String(run.errorCode || '').trim() || null,
+    errorSummary: String(run.errorSummary || '').trim() || null,
+  };
 }
 
 // Thin configured-Card transport. Python owns Card/AGE/IDD validation, the one
@@ -334,7 +459,7 @@ async function startPreparedHermesTransport(
 router.post('/mcp-bridge/run_configured_card', async (req, res) => {
   const body = req.body || {};
   const action = body.action;
-  if (action !== 'materialize' && action !== 'execute') {
+  if (action !== 'materialize' && action !== 'execute' && action !== 'status') {
     return res.status(400).json({ ok: false, error: 'configured_card_action_invalid' });
   }
   const projectId = String(body.projectId || '').trim();
@@ -345,7 +470,36 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
   const originatingRunId = String(body.originatingRunId || body.parentRunId || '').trim();
   const senderCardId = String(body.senderCardId || '').trim();
   const input = String(body.input || '').trim();
-  if (!projectId || !deckId || !cardId || !correlationId || !input) {
+  if (!projectId || !deckId) {
+    return res.status(400).json({ ok: false, error: 'card_run_args_incomplete' });
+  }
+
+  if (action === 'status') {
+    const runId = String(body.runId || '').trim();
+    const nativeRootId = String(body.nativeRootId || '').trim();
+    const selectors = [runId, correlationId, nativeRootId, cardId].filter(Boolean);
+    if (selectors.length !== 1) {
+      return res.status(400).json({ ok: false, error: 'card_run_status_selector_invalid' });
+    }
+    try {
+      const status = await readConfiguredCardRunStatus({
+        projectId,
+        deckId,
+        ...(runId ? { runId } : {}),
+        ...(correlationId ? { correlationId } : {}),
+        ...(nativeRootId ? { nativeRootId } : {}),
+        ...(cardId ? { cardId } : {}),
+      });
+      return res.json({ ok: true, result: status });
+    } catch (error) {
+      return res.status(502).json({
+        ok: false,
+        error: error instanceof Error ? error.message : 'card_run_status_failed',
+      });
+    }
+  }
+
+  if (!cardId || !correlationId || !input) {
     return res.status(400).json({ ok: false, error: 'card_run_args_incomplete' });
   }
 
@@ -383,6 +537,162 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       }),
     }) as any;
 
+    const runId = String(prepared.runId || correlationId).trim();
+    if (prepared.rejoined) {
+      const status = await readConfiguredCardRunStatus({ projectId, deckId, runId });
+      return res.json({ ok: true, result: status });
+    }
+
+    const runtimeMode = String(prepared?.hermesTransport?.idf?.runtime?.mode || '').trim();
+    if (prepared.runtimeOwner === 'hermes' && runtimeMode === 'kanban') {
+      let latestProgress: HermesKanbanProgress | null = null;
+      const persistProgress = async (progress: HermesKanbanProgress): Promise<void> => {
+        latestProgress = progress;
+        await requestPythonRailsJson('/domain/runs/progress', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            runId,
+            nativeRootId: progress.nativeRootId,
+            nativeRunId: progress.nativeRunId,
+            nativePhase: progress.phase,
+            tasksCompleted: progress.tasksCompleted,
+            tasksTotal: progress.tasksTotal,
+            activeWorkers: progress.activeWorkers,
+          }),
+        });
+      };
+      let hermesHandle: HermesTurnHandle;
+      try {
+        hermesHandle = await startPreparedHermesTransport({
+          prepared,
+          projectId,
+          deckId,
+          conversationId,
+          parentRunId: runId,
+          onEvent: () => undefined,
+          onKanbanProgress: (progress) => persistProgress(progress).catch((error) => {
+            logHarnessTrace(
+              `[harness] configured-card progress persistence failed run=${runId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
+            );
+          }),
+        });
+        const nativeRootId = String(hermesHandle.runtime.sessionId || '').trim();
+        if (!nativeRootId) throw new Error('hermes_kanban_card_task_id_missing');
+        latestProgress = {
+          nativeRootId,
+          nativeRunId: null,
+          phase: 'queued',
+          tasksCompleted: 0,
+          tasksTotal: 1,
+          activeWorkers: 0,
+          workerSessionIds: [],
+        };
+        await persistProgress(latestProgress);
+
+        const monitor = async (): Promise<void> => {
+          try {
+            const response = await hermesHandle.done;
+            const progress = latestProgress ?? {
+              nativeRootId,
+              nativeRunId: null,
+              phase: 'complete' as const,
+              tasksCompleted: 1,
+              tasksTotal: 1,
+              activeWorkers: 0,
+              workerSessionIds: [],
+            };
+            let usage = {
+              toolCallCount: 0,
+              providerInputTokens: 0,
+              providerOutputTokens: 0,
+              providerCachedTokens: 0,
+              providerReasoningTokens: 0,
+              totalCostUsd: 0,
+            };
+            try {
+              usage = await readHermesKanbanSessionUsage(
+                String(prepared.hermesTransport.idf.runtime.profile || ''),
+                progress.workerSessionIds,
+              );
+            } catch (error) {
+              logHarnessTrace(
+                `[harness] configured-card usage read failed run=${runId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
+              );
+            }
+            await requestPythonRailsJson('/domain/runs/finish', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                runId,
+                state: 'completed',
+                providerThreadRef: nativeRootId,
+                providerTurnRef: response.transport?.turnId || progress.nativeRunId,
+                nativePhase: 'complete',
+                tasksCompleted: Math.max(progress.tasksCompleted, progress.tasksTotal),
+                tasksTotal: progress.tasksTotal,
+                activeWorkers: 0,
+                ...usage,
+                finalResult: response.finalText,
+              }),
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'configured_card_transport_failed';
+            const blocked = message === 'hermes_kanban_card_blocked';
+            await requestPythonRailsJson('/domain/runs/finish', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                runId,
+                state: blocked ? 'blocked' : 'failed',
+                providerThreadRef: nativeRootId,
+                providerTurnRef: latestProgress?.nativeRunId || null,
+                nativePhase: blocked ? 'blocked' : 'failed',
+                tasksCompleted: latestProgress?.tasksCompleted || 0,
+                tasksTotal: latestProgress?.tasksTotal || 1,
+                activeWorkers: 0,
+                errorCode: 'configured_card_transport_failed',
+                errorSummary: message,
+              }),
+            }).catch(() => undefined);
+          }
+        };
+        void monitor();
+        return res.status(202).json({
+          ok: true,
+          result: {
+            status: 'queued',
+            state: 'running',
+            runId,
+            correlationId: String(prepared.correlationId || correlationId),
+            cardId,
+            runtimeOwner: prepared.runtimeOwner,
+            cardRevisionId: prepared.cardRevisionId,
+            nativeRootId,
+            transport: {
+              nativeTaskId: nativeRootId,
+              planType: 'hermes-native-kanban',
+            },
+            resultReady: false,
+          },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'configured_card_transport_failed';
+        await requestPythonRailsJson('/domain/runs/finish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            runId,
+            state: 'failed',
+            nativePhase: 'failed',
+            errorCode: 'configured_card_transport_failed',
+            errorSummary: message,
+          }),
+        }).catch(() => undefined);
+        throw error;
+      }
+    }
+
     let hermesHandle: HermesTurnHandle | null = null;
     let clientDisconnected = false;
     let runFinalized = false;
@@ -395,7 +705,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       return requestPythonRailsJson('/domain/runs/finish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ runId: correlationId, state, ...fields }),
+        body: JSON.stringify({ runId, state, ...fields }),
       });
     };
     const cancelDisconnectedHermesTurn = (): void => {
@@ -430,7 +740,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
           projectId,
           deckId,
           conversationId,
-          parentRunId: correlationId,
+          parentRunId: runId,
           ...(cardId === CODER_CARD_ID ? { workingDirectory: resolveRepoRoot() } : {}),
           onEvent: (event) => {
             // Preserve real child tool effects for the parent/UI observer. Text,
@@ -469,7 +779,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         ok: true,
         result: {
           status: 'completed',
-          correlationId,
+          correlationId: String(prepared.correlationId || correlationId),
           cardId,
           runtimeOwner: prepared.runtimeOwner,
           cardRevisionId: prepared.cardRevisionId,

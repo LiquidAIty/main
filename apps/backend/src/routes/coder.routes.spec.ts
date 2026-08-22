@@ -71,7 +71,15 @@ const chatSessionMocks = vi.hoisted(() => {
 });
 
 const kanbanMocks = vi.hoisted(() => ({
-  startNativeHermesKanbanTurn: vi.fn(async (params: any) => ({
+  readHermesKanbanSessionUsage: vi.fn(async () => ({
+    toolCallCount: 7,
+    providerInputTokens: 120,
+    providerOutputTokens: 45,
+    providerCachedTokens: 30,
+    providerReasoningTokens: 12,
+    totalCostUsd: 0,
+  })),
+  startNativeHermesKanbanTurn: vi.fn(async (params: any, _onEvent?: unknown, _options?: unknown) => ({
     done: Promise.resolve({
       finalText: 'Native root synthesis.',
       usage: {
@@ -149,7 +157,12 @@ const ptyMocks = vi.hoisted(() => {
   return { children, spawn };
 });
 
-const orchestratorMocks = vi.hoisted(() => ({
+const orchestratorMocks = vi.hoisted(() => {
+  const runRecords = new Map<string, any>();
+  const requestFingerprints = new Map<string, string>();
+  return {
+  runRecords,
+  requestFingerprints,
   dispatchConfiguredRuntime: vi.fn(async (): Promise<any> => ({
     ok: true,
     runId: 'run-mag-one',
@@ -214,8 +227,23 @@ const orchestratorMocks = vi.hoisted(() => ({
       const cardId = mainChat ? 'card_main_chat' : body.cardId;
       const autoKanban = cardId === 'card_hermes_steward';
       const coderCard = cardId === 'card_local_coder';
+      const requestKey = [body.projectId, body.deckId, cardId, body.cardRevisionId || '', body.assignment || body.message || ''].join('|');
+      const existingRunId = requestFingerprints.get(requestKey);
+      const resolvedRunId = existingRunId || body.runId;
+      if (!existingRunId) {
+        requestFingerprints.set(requestKey, resolvedRunId);
+        runRecords.set(resolvedRunId, {
+          runId: resolvedRunId,
+          correlationId: body.correlationId,
+          cardId,
+          state: 'running',
+          startedAt: new Date().toISOString(),
+        });
+      }
       return {
-        runId: body.runId,
+        runId: resolvedRunId,
+        correlationId: runRecords.get(resolvedRunId)?.correlationId || body.correlationId,
+        rejoined: Boolean(existingRunId),
         cardRevisionId: body.cardRevisionId,
         runtimeOwner: 'hermes',
         resolvedNativeReads: autoKanban
@@ -275,15 +303,55 @@ const orchestratorMocks = vi.hoisted(() => ({
         },
       };
     }
+    if (endpoint === '/domain/runs/progress') {
+      runRecords.set(body.runId, { ...(runRecords.get(body.runId) || {}), ...body });
+      return { ok: true, runId: body.runId, updated: true };
+    }
     if (endpoint === '/domain/runs/finish') {
+      runRecords.set(body.runId, {
+        ...(runRecords.get(body.runId) || {}),
+        ...body,
+        finishedAt: new Date().toISOString(),
+        finalResult: body.finalResult ?? null,
+      });
       return { receipt: { runId: body.runId, state: body.state } };
     }
+    if (endpoint === '/domain/runs/read') {
+      const records = [...runRecords.values()];
+      const run = records.find((record) => (
+        (body.runId && record.runId === body.runId)
+        || (body.correlationId && record.correlationId === body.correlationId)
+        || (body.nativeRootId && record.nativeRootId === body.nativeRootId)
+        || (body.cardId && record.cardId === body.cardId)
+      ));
+      return {
+        ok: true,
+        run: run ? {
+          ...run,
+          inputTokens: run.providerInputTokens,
+          outputTokens: run.providerOutputTokens,
+          cachedTokens: run.providerCachedTokens,
+          reasoningTokens: run.providerReasoningTokens,
+          costUsd: run.totalCostUsd,
+          result: run.finalResult,
+        } : null,
+      };
+    }
     if (endpoint === '/domain/agentgraph/inspect') {
-      return { ok: true, runs: [] };
+      return {
+        ok: true,
+        runs: [],
+        attentionEvents: body.runId ? [
+          { operation: 'read', runId: body.runId },
+          { operation: 'read', runId: body.runId },
+          { operation: 'write', runId: body.runId },
+        ] : [],
+      };
     }
     return {};
   }),
-}));
+  };
+});
 
 const dbMocks = vi.hoisted(() => ({
   query: vi.fn(),
@@ -312,6 +380,7 @@ vi.mock('../hermes/mainAdapter', () => ({
 }));
 
 vi.mock('./hermesKanban.routes', () => ({
+  readHermesKanbanSessionUsage: kanbanMocks.readHermesKanbanSessionUsage,
   startNativeHermesKanbanTurn: kanbanMocks.startNativeHermesKanbanTurn,
 }));
 
@@ -593,19 +662,20 @@ describe('coder routes', () => {
         }),
       });
       const payload = await response.json();
-      expect(response.status, JSON.stringify(payload)).toBe(200);
+      expect(response.status, JSON.stringify(payload)).toBe(202);
       expect(payload).toMatchObject({
         ok: true,
         result: {
-          status: 'completed',
-          output: 'Native root synthesis.',
+          status: 'queued',
+          state: 'running',
+          runId: 'corr-steward-1',
+          nativeRootId: 't_native_root',
           runtimeOwner: 'hermes',
-          nativeEvents: [],
           transport: expect.objectContaining({
             nativeTaskId: 't_native_root',
             planType: 'hermes-native-kanban',
           }),
-          receipt: { runId: 'corr-steward-1', state: 'completed' },
+          resultReady: false,
         },
       });
       expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
@@ -629,6 +699,10 @@ describe('coder routes', () => {
           '- ThinkGraph:think-root-1',
         ].join('\n'),
       });
+      await vi.waitFor(() => expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(
+        ([endpoint, init]) => endpoint === '/domain/runs/finish'
+          && JSON.parse(String(init?.body || '{}')).state === 'completed',
+      )).toBe(true));
       const finishCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
         ([endpoint, init]) => endpoint === '/domain/runs/finish'
           && JSON.parse(String(init?.body || '{}')).state === 'completed',
@@ -637,7 +711,167 @@ describe('coder routes', () => {
         runId: 'corr-steward-1',
         providerThreadRef: 't_native_root',
         providerTurnRef: '41',
+        finalResult: 'Native root synthesis.',
       });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('keeps one Kanban Card Run alive across disconnect, progress, exact retry, and rejoin', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.runRecords.clear();
+    orchestratorMocks.requestFingerprints.clear();
+    kanbanMocks.startNativeHermesKanbanTurn.mockClear();
+    let resolveNative: (value: any) => void = () => undefined;
+    let completed = false;
+    let progressListener: ((progress: any) => Promise<void> | void) | undefined;
+    const cancel = vi.fn();
+    const done = new Promise<any>((resolve) => {
+      resolveNative = (value) => {
+        completed = true;
+        resolve(value);
+      };
+    });
+    kanbanMocks.startNativeHermesKanbanTurn.mockImplementationOnce(
+      async (params: any, _onEvent: unknown, options: any) => {
+        progressListener = options?.onProgress;
+        return {
+          done,
+          cancel,
+          answer: vi.fn(),
+          resolved: {
+            cardId: params.cardId,
+            provider: params.provider,
+            modelKey: params.modelKey,
+            providerModelId: params.providerModelId,
+          },
+          runtime: {
+            executable: 'hermes-acp.exe',
+            pid: 42,
+            hermesHome: 'Hermes/.hermes',
+            sessionId: 't_625de6e8',
+            transport: 'hermes-kanban',
+          },
+        };
+      },
+    );
+    const { server, baseUrl } = await createApiServer();
+    const submission = {
+      projectId: 'project-async',
+      deckId: 'deck_builder',
+      cardId: 'card_hermes_steward',
+      correlationId: 'run-kanban-durable',
+      conversationId: 'conversation-main-async',
+      input: 'Use the retained provider-free lifecycle fixture.',
+      action: 'execute',
+      cardRevisionId: 'revision:card_hermes_steward',
+    };
+    try {
+      const controller = new AbortController();
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify(submission),
+      });
+      expect(response.status).toBe(202);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        result: {
+          runId: 'run-kanban-durable',
+          nativeRootId: 't_625de6e8',
+          state: 'running',
+          resultReady: false,
+        },
+      });
+      expect(completed).toBe(false);
+      controller.abort();
+      expect(cancel).not.toHaveBeenCalled();
+
+      await progressListener?.({
+        nativeRootId: 't_625de6e8',
+        nativeRunId: 4,
+        phase: 'working',
+        tasksCompleted: 2,
+        tasksTotal: 5,
+        activeWorkers: 2,
+        workerSessionIds: ['worker-luna-1', 'worker-luna-2'],
+      });
+      const runningResponse = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'status',
+          projectId: 'project-async',
+          deckId: 'deck_builder',
+          runId: 'run-kanban-durable',
+        }),
+      });
+      await expect(runningResponse.json()).resolves.toMatchObject({
+        result: {
+          runId: 'run-kanban-durable',
+          nativeRootId: 't_625de6e8',
+          status: 'working',
+          tasksCompleted: 2,
+          tasksTotal: 5,
+          activeWorkers: 2,
+          graphReads: 2,
+          graphWrites: 1,
+          resultReady: false,
+        },
+      });
+
+      const retryResponse = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...submission, correlationId: 'retry-correlation-must-not-win' }),
+      });
+      await expect(retryResponse.json()).resolves.toMatchObject({
+        result: { runId: 'run-kanban-durable', nativeRootId: 't_625de6e8' },
+      });
+      expect(kanbanMocks.startNativeHermesKanbanTurn).toHaveBeenCalledTimes(1);
+
+      resolveNative({
+        finalText: 'Retained native root synthesis.',
+        usage: chatSessionMocks.usage,
+        transport: { threadId: 't_625de6e8', turnId: '4' },
+      });
+      await vi.waitFor(() => {
+        expect(orchestratorMocks.runRecords.get('run-kanban-durable')).toMatchObject({
+          state: 'completed',
+          finalResult: 'Retained native root synthesis.',
+          toolCallCount: 7,
+          providerCachedTokens: 30,
+          providerReasoningTokens: 12,
+        });
+      });
+      const completeResponse = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'status',
+          projectId: 'project-async',
+          deckId: 'deck_builder',
+          nativeRootId: 't_625de6e8',
+        }),
+      });
+      await expect(completeResponse.json()).resolves.toMatchObject({
+        result: {
+          runId: 'run-kanban-durable',
+          status: 'complete',
+          state: 'completed',
+          output: 'Retained native root synthesis.',
+          toolCallCount: 7,
+          inputTokens: 120,
+          outputTokens: 45,
+          cachedTokens: 30,
+          reasoningTokens: 12,
+          resultReady: true,
+        },
+      });
+      expect(orchestratorMocks.runRecords).toHaveLength(1);
+      expect(cancel).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }
@@ -786,7 +1020,7 @@ describe('coder routes', () => {
         body: JSON.stringify({
           projectId: 'project-1',
           deckId: 'deck_builder',
-          cardId: 'card_hermes_steward',
+          cardId: 'card_local_coder',
           correlationId: 'corr-helper-completed',
           conversationId: 'helper',
           input: 'Prepare one bounded note.',

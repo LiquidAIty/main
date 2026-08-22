@@ -377,6 +377,40 @@ class TestUpsertWire:
 
 
 class TestRunAssistantAgent:
+    def test_rejoins_one_existing_run_without_resubmitting(self, monkeypatch):
+        calls = []
+
+        def backend(method, path, payload=None):
+            calls.append((method, path, payload))
+            return {
+                "ok": True,
+                "result": {
+                    "runId": "run-existing",
+                    "nativeRootId": "t_625de6e8",
+                    "status": "working",
+                },
+            }
+
+        monkeypatch.setattr(cp, "_backend_json", backend)
+        response = asyncio.run(cp.card_run_assistant_agent({
+            "projectId": "p",
+            "deckId": "deck_builder",
+            "correlationId": "server-injected-but-not-a-selector",
+            "action": "status",
+            "runId": "run-existing",
+        }))
+        assert response["result"]["runId"] == "run-existing"
+        assert calls == [(
+            "POST",
+            "/api/coder/mcp-bridge/run_configured_card",
+            {
+                "projectId": "p",
+                "deckId": "deck_builder",
+                "action": "status",
+                "runId": "run-existing",
+            },
+        )]
+
     def test_all_structural_references_required(self):
         with pytest.raises(cp.ControlPlaneError, match="input_required"):
             asyncio.run(cp.card_run_assistant_agent({

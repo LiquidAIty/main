@@ -79,6 +79,24 @@ def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _run_request_fingerprint(payload: dict[str, Any]) -> str:
+    """Hash one caller request identity without persisting its transient input."""
+
+    identity = {
+        "projectId": str(payload.get("projectId") or "").strip(),
+        "deckId": str(payload.get("deckId") or "").strip(),
+        "cardId": str(payload.get("cardId") or "").strip(),
+        "cardRevisionId": str(payload.get("cardRevisionId") or "").strip(),
+        "conversationId": str(payload.get("conversationId") or "").strip(),
+        "senderCardId": str(payload.get("senderCardId") or "").strip(),
+        "originatingRunId": str(payload.get("originatingRunId") or "").strip(),
+        "assignment": str(payload.get("assignment") or ""),
+        "dataAnchors": payload.get("dataAnchors") or [],
+        "images": payload.get("images") or [],
+    }
+    return sha256(_canonical_json(identity).encode("utf-8")).hexdigest()
+
+
 def _sha(value: str) -> str:
     return sha256(value.encode("utf-8")).hexdigest()
 
@@ -812,6 +830,8 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     "parentRunIds": [],
                     "childRunIds": [],
                     "usedTools": [],
+                    "graphReads": 0,
+                    "graphWrites": 0,
                     "attentionEvents": [],
                     "nativeReferences": [],
                     "viewedNativeReferences": [],
@@ -849,6 +869,15 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                         RETURN run.runId, tool.toolId, properties(edge)
                         """,
                         "run_id agtype, tool_id agtype, event agtype",
+                    ),
+                    "tool_totals": (
+                        """
+                        MATCH (run:Run {projectId: $projectId, deckId: $deckId})
+                              -[edge:USED_TOOL]->(:Tool)
+                        WHERE run.runId IN $runIds
+                        RETURN run.runId, edge.operation, count(edge)
+                        """,
+                        "run_id agtype, operation agtype, event_count agtype",
                     ),
                     "used": (
                         """
@@ -928,6 +957,13 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                                 "resultHash": str(event.get("resultHash") or ""),
                                 "truncated": event.get("truncated") is True,
                             })
+                for row in telemetry["tool_totals"]:
+                    item = runs.get(str(row.get("run_id") or ""))
+                    operation = str(row.get("operation") or "")
+                    if item is not None and operation in {"read", "write"}:
+                        item["graphReads" if operation == "read" else "graphWrites"] = int(
+                            row.get("event_count") or 0
+                        )
                 for telemetry_name, output_name in (
                     ("used", "nativeReferences"),
                     ("viewed", "viewedNativeReferences"),
@@ -1950,28 +1986,63 @@ def _insert_run(
     *,
     run_id: str,
     correlation_id: str,
-) -> None:
+    request_fingerprint: str | None = None,
+) -> tuple[str, str, bool]:
     idf = prepared["idf"]
     runtime = idf["runtime"]
     provider = idf["provider"]
-    with connect_postgres() as connection, connection.cursor() as cursor:
+    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """
             INSERT INTO ag_catalog.agent_runs (
               run_id, project_id, deck_id, target_card_revision_id,
               runtime_kind, runtime_mode,
               provider, model_key, provider_model_id, access_mode, correlation_id,
-              state, started_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
+              request_fingerprint, state, started_at
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
+            ON CONFLICT DO NOTHING
             """,
             (
                 run_id, prepared["projectId"], prepared["deckId"],
                 prepared["cardRevisionId"], runtime["kind"],
                 runtime["mode"], provider.get("provider"),
                 provider.get("modelKey"), provider.get("providerModelId"),
-                provider.get("accessMode"), correlation_id,
+                provider.get("accessMode"), correlation_id, request_fingerprint,
             ),
         )
+        if cursor.rowcount == 1:
+            return run_id, correlation_id, True
+        cursor.execute(
+            """
+            SELECT run_id, correlation_id, project_id, deck_id,
+                   target_card_revision_id, request_fingerprint
+            FROM ag_catalog.agent_runs
+            WHERE (%s IS NOT NULL AND request_fingerprint=%s)
+               OR run_id=%s OR correlation_id=%s
+            ORDER BY CASE WHEN request_fingerprint=%s THEN 0 ELSE 1 END, created_at ASC
+            LIMIT 1
+            """,
+            (
+                request_fingerprint, request_fingerprint, run_id,
+                correlation_id, request_fingerprint,
+            ),
+        )
+        existing = cursor.fetchone()
+        if existing is None:
+            raise CardDomainError("run_identity_conflict")
+        existing = dict(existing)
+        if (
+            str(existing.get("project_id")) != str(prepared["projectId"])
+            or str(existing.get("deck_id")) != str(prepared["deckId"])
+            or str(existing.get("target_card_revision_id")) != str(prepared["cardRevisionId"])
+            or (
+                request_fingerprint is not None
+                and str(existing.get("request_fingerprint") or "") != request_fingerprint
+            )
+        ):
+            raise CardDomainError("run_identity_conflict")
+        return str(existing["run_id"]), str(existing["correlation_id"]), False
+
 
 def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
     """Begin Main with the same canonical transient Card input as every call."""
@@ -1982,7 +2053,13 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
         raise CardDomainError("card_revision_changed")
     run_id = _required_text(payload.get("runId"), "run_id")
     correlation_id = _required_text(payload.get("correlationId"), "correlation_id")
-    _insert_run(prepared, run_id=run_id, correlation_id=correlation_id)
+    resolved_run_id, resolved_correlation_id, created = _insert_run(
+        prepared,
+        run_id=run_id,
+        correlation_id=correlation_id,
+    )
+    if not created:
+        raise CardDomainError("main_run_identity_conflict")
     telemetry_written = _observe_run_start(
         prepared,
         payload,
@@ -1995,8 +2072,8 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
     )
     return {
         **prepared,
-        "runId": run_id,
-        "correlationId": correlation_id,
+        "runId": resolved_run_id,
+        "correlationId": resolved_correlation_id,
         "telemetryWritten": telemetry_written,
         "anchorTelemetryWritten": anchor_telemetry_written,
         "nativeRuntimeRequest": None,
@@ -2071,21 +2148,46 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
             "idf": prepared["idf"],
             "participants": participants,
         }
-    _insert_run(prepared, run_id=run_id, correlation_id=correlation_id)
-    telemetry_written = _observe_run_start(
+    runtime = prepared["idf"]["runtime"]
+    durable_kanban = (
+        owner == "hermes"
+        and runtime.get("kind") == "hermes"
+        and runtime.get("mode") == "kanban"
+    )
+    request_fingerprint = _run_request_fingerprint({
+        **payload,
+        "projectId": prepared["projectId"],
+        "deckId": prepared["deckId"],
+        "cardId": card_identity["cardId"],
+        "cardRevisionId": prepared["cardRevisionId"],
+    }) if durable_kanban else None
+    resolved_run_id, resolved_correlation_id, created = _insert_run(
         prepared,
-        payload,
         run_id=run_id,
         correlation_id=correlation_id,
+        request_fingerprint=request_fingerprint,
     )
-    anchor_telemetry_written = observe_materialized_anchor_reads(
-        prepared,
-        run_id=run_id,
-    )
+    if not created and not durable_kanban:
+        raise CardDomainError("run_identity_conflict")
+    telemetry_written = False
+    anchor_telemetry_written = False
+    if created:
+        telemetry_written = _observe_run_start(
+            prepared,
+            payload,
+            run_id=resolved_run_id,
+            correlation_id=resolved_correlation_id,
+        )
+        anchor_telemetry_written = observe_materialized_anchor_reads(
+            prepared,
+            run_id=resolved_run_id,
+        )
     return {
         **prepared,
-        "runId": run_id,
-        "correlationId": correlation_id,
+        "runId": resolved_run_id,
+        "correlationId": resolved_correlation_id,
+        "rejoined": not created,
+        "requestFingerprint": request_fingerprint,
         "telemetryWritten": telemetry_written,
         "anchorTelemetryWritten": anchor_telemetry_written,
         "nativeRuntimeRequest": native_runtime_request,
@@ -2095,6 +2197,196 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
             "delegationTargets": prepared.get("delegationTargets") or [],
         } if owner == "hermes" else None,
     }
+
+
+def _run_projection(row: dict[str, Any]) -> dict[str, Any]:
+    def timestamp(name: str) -> str | None:
+        value = row.get(name)
+        return value.isoformat() if isinstance(value, datetime) else None
+
+    cost = row.get("total_cost_usd")
+    return {
+        "runId": str(row.get("run_id") or ""),
+        "correlationId": str(row.get("correlation_id") or ""),
+        "projectId": str(row.get("project_id") or ""),
+        "deckId": str(row.get("deck_id") or ""),
+        "cardId": str(row.get("card_id") or ""),
+        "cardRevisionId": str(row.get("target_card_revision_id") or ""),
+        "runtimeKind": str(row.get("runtime_kind") or ""),
+        "runtimeMode": str(row.get("runtime_mode") or ""),
+        "state": str(row.get("state") or ""),
+        "nativePhase": str(row.get("native_phase") or "") or None,
+        "nativeRootId": str(row.get("provider_thread_ref") or "") or None,
+        "nativeRunId": str(row.get("provider_turn_ref") or "") or None,
+        "tasksCompleted": row.get("native_task_completed_count"),
+        "tasksTotal": row.get("native_task_total_count"),
+        "activeWorkers": row.get("native_active_worker_count"),
+        "toolCallCount": row.get("tool_call_count"),
+        "inputTokens": row.get("provider_input_tokens"),
+        "outputTokens": row.get("provider_output_tokens"),
+        "cachedTokens": row.get("provider_cached_tokens"),
+        "reasoningTokens": row.get("provider_reasoning_tokens"),
+        "costUsd": float(cost) if cost is not None else None,
+        "startedAt": timestamp("started_at"),
+        "finishedAt": timestamp("finished_at"),
+        "result": str(row.get("final_result") or "") or None,
+        "errorCode": str(row.get("error_code") or "") or None,
+        "errorSummary": str(row.get("error_summary") or "") or None,
+    }
+
+
+def read_run(payload: dict[str, Any]) -> dict[str, Any]:
+    """Read one durable Run by its public rejoin identities."""
+
+    project_ref = _required_text(payload.get("projectId"), "project_id")
+    deck_id = _required_text(payload.get("deckId"), "deck_id")
+    selectors = {
+        "run_id": str(payload.get("runId") or "").strip(),
+        "correlation_id": str(payload.get("correlationId") or "").strip(),
+        "provider_thread_ref": str(payload.get("nativeRootId") or "").strip(),
+        "card_id": str(payload.get("cardId") or "").strip(),
+    }
+    selected = [(name, value) for name, value in selectors.items() if value]
+    if len(selected) != 1:
+        raise CardDomainError("run_rejoin_selector_invalid")
+    selector, value = selected[0]
+    with connect_postgres(autocommit=False) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SET TRANSACTION READ ONLY")
+            project = _resolve_project(cursor, project_ref)
+            project_id = str(project["id"])
+            if selector == "card_id":
+                cursor.execute(
+                    """
+                    SELECT run.*, revision.card_id
+                    FROM ag_catalog.agent_runs AS run
+                    JOIN ag_catalog.agent_card_revisions AS revision
+                      ON revision.revision_id=run.target_card_revision_id
+                    WHERE run.project_id=%s AND run.deck_id=%s AND revision.card_id=%s
+                    ORDER BY run.created_at DESC LIMIT 1
+                    """,
+                    (project_id, deck_id, value),
+                )
+            else:
+                column = {
+                    "run_id": "run.run_id",
+                    "correlation_id": "run.correlation_id",
+                    "provider_thread_ref": "run.provider_thread_ref",
+                }[selector]
+                cursor.execute(
+                    f"""
+                    SELECT run.*, revision.card_id
+                    FROM ag_catalog.agent_runs AS run
+                    JOIN ag_catalog.agent_card_revisions AS revision
+                      ON revision.revision_id=run.target_card_revision_id
+                    WHERE run.project_id=%s AND run.deck_id=%s AND {column}=%s
+                    ORDER BY run.created_at ASC LIMIT 1
+                    """,
+                    (project_id, deck_id, value),
+                )
+            row = cursor.fetchone()
+    return {"ok": True, "run": _run_projection(dict(row)) if row is not None else None}
+
+
+def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
+    """Update the existing Run with native aggregate progress only."""
+
+    run_id = _required_text(payload.get("runId"), "run_id")
+    phase = _required_text(payload.get("nativePhase"), "native_phase")
+    if phase not in {
+        "queued", "decomposing", "working", "synthesizing",
+        "complete", "blocked", "failed",
+    }:
+        raise CardDomainError("native_run_phase_invalid")
+
+    def count(name: str) -> int | None:
+        value = payload.get(name)
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise CardDomainError(f"{name}_invalid")
+        return value
+
+    counts = {
+        name: count(name)
+        for name in (
+            "tasksCompleted", "tasksTotal", "activeWorkers", "toolCallCount",
+            "providerInputTokens", "providerOutputTokens", "providerCachedTokens",
+            "providerReasoningTokens",
+        )
+    }
+    with connect_postgres() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE ag_catalog.agent_runs SET
+              provider_thread_ref=COALESCE(%s, provider_thread_ref),
+              provider_turn_ref=COALESCE(%s, provider_turn_ref),
+              native_phase=%s,
+              native_task_completed_count=COALESCE(%s, native_task_completed_count),
+              native_task_total_count=COALESCE(%s, native_task_total_count),
+              native_active_worker_count=COALESCE(%s, native_active_worker_count),
+              tool_call_count=COALESCE(%s, tool_call_count),
+              provider_input_tokens=COALESCE(%s, provider_input_tokens),
+              provider_output_tokens=COALESCE(%s, provider_output_tokens),
+              provider_cached_tokens=COALESCE(%s, provider_cached_tokens),
+              provider_reasoning_tokens=COALESCE(%s, provider_reasoning_tokens),
+              total_cost_usd=COALESCE(%s, total_cost_usd)
+            WHERE run_id=%s AND state IN ('pending','running')
+            """,
+            (
+                payload.get("nativeRootId"), payload.get("nativeRunId"), phase,
+                counts["tasksCompleted"], counts["tasksTotal"],
+                counts["activeWorkers"], counts["toolCallCount"],
+                counts["providerInputTokens"], counts["providerOutputTokens"],
+                counts["providerCachedTokens"], counts["providerReasoningTokens"],
+                payload.get("totalCostUsd"), run_id,
+            ),
+        )
+        updated = cursor.rowcount == 1
+    telemetry_written = _observe_run_progress(run_id, phase, payload) if updated else False
+    return {
+        "ok": True,
+        "runId": run_id,
+        "updated": updated,
+        "telemetryWritten": telemetry_written,
+    }
+
+
+def _observe_run_progress(run_id: str, phase: str, payload: dict[str, Any]) -> bool:
+    try:
+        with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            _age_rows(
+                cursor,
+                """
+                MATCH (run:Run {runId: $runId})
+                SET run.nativeRootId=$nativeRootId,
+                    run.nativeRunId=$nativeRunId,
+                    run.nativePhase=$nativePhase,
+                    run.nativeTaskCompletedCount=$tasksCompleted,
+                    run.nativeTaskTotalCount=$tasksTotal,
+                    run.nativeActiveWorkerCount=$activeWorkers,
+                    run.toolCallCount=$toolCallCount,
+                    run.providerCachedTokens=$providerCachedTokens,
+                    run.providerReasoningTokens=$providerReasoningTokens
+                RETURN properties(run)
+                """,
+                {
+                    "runId": run_id,
+                    "nativeRootId": payload.get("nativeRootId"),
+                    "nativeRunId": payload.get("nativeRunId"),
+                    "nativePhase": phase,
+                    "tasksCompleted": payload.get("tasksCompleted"),
+                    "tasksTotal": payload.get("tasksTotal"),
+                    "activeWorkers": payload.get("activeWorkers"),
+                    "toolCallCount": payload.get("toolCallCount"),
+                    "providerCachedTokens": payload.get("providerCachedTokens"),
+                    "providerReasoningTokens": payload.get("providerReasoningTokens"),
+                },
+                "value agtype",
+            )
+        return True
+    except Exception:
+        return False
 
 
 def _observe_run_start(
@@ -2266,7 +2558,7 @@ def begin_native_hermes_child_run(payload: dict[str, Any]) -> dict[str, Any]:
 def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
     run_id = _required_text(payload.get("runId"), "run_id")
     state = _required_text(payload.get("state"), "state")
-    if state not in {"completed", "failed", "cancelled"}:
+    if state not in {"completed", "blocked", "failed", "cancelled"}:
         raise CardDomainError("run_terminal_state_invalid")
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
@@ -2274,14 +2566,25 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
             UPDATE ag_catalog.agent_runs SET state=%s, finished_at=NOW(),
               provider_thread_ref=%s, provider_turn_ref=%s,
               error_code=%s, error_summary=%s,
-              provider_input_tokens=%s, provider_output_tokens=%s, total_cost_usd=%s
+              provider_input_tokens=%s, provider_output_tokens=%s,
+              provider_cached_tokens=%s, provider_reasoning_tokens=%s,
+              tool_call_count=%s, total_cost_usd=%s,
+              native_phase=%s,
+              native_task_completed_count=%s,
+              native_task_total_count=%s,
+              native_active_worker_count=%s,
+              final_result=%s
             WHERE run_id=%s
             """,
             (
                 state, payload.get("providerThreadRef"), payload.get("providerTurnRef"),
                 payload.get("errorCode"), payload.get("errorSummary"),
                 payload.get("providerInputTokens"), payload.get("providerOutputTokens"),
-                payload.get("totalCostUsd"), run_id,
+                payload.get("providerCachedTokens"), payload.get("providerReasoningTokens"),
+                payload.get("toolCallCount"), payload.get("totalCostUsd"),
+                payload.get("nativePhase"), payload.get("tasksCompleted"),
+                payload.get("tasksTotal"), payload.get("activeWorkers"),
+                payload.get("finalResult"), run_id,
             ),
         )
         if cursor.rowcount != 1:
@@ -2293,7 +2596,11 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                    access_mode, correlation_id, provider_thread_ref,
                    provider_turn_ref, state, started_at, finished_at,
                    error_code, error_summary, provider_input_tokens,
-                   provider_output_tokens, total_cost_usd
+                   provider_output_tokens, provider_cached_tokens,
+                   provider_reasoning_tokens, tool_call_count, total_cost_usd,
+                   native_phase, native_task_completed_count,
+                   native_task_total_count, native_active_worker_count,
+                   final_result
             FROM ag_catalog.agent_runs WHERE run_id=%s
             """,
             (run_id,),
@@ -2327,7 +2634,15 @@ def _observe_run_finish(
                     run.durationMs=$durationMs,
                     run.providerInputTokens=$providerInputTokens,
                     run.providerOutputTokens=$providerOutputTokens,
-                    run.totalCostUsd=$totalCostUsd
+                    run.providerCachedTokens=$providerCachedTokens,
+                    run.providerReasoningTokens=$providerReasoningTokens,
+                    run.toolCallCount=$toolCallCount,
+                    run.totalCostUsd=$totalCostUsd,
+                    run.nativePhase=$nativePhase,
+                    run.nativeTaskCompletedCount=$tasksCompleted,
+                    run.nativeTaskTotalCount=$tasksTotal,
+                    run.nativeActiveWorkerCount=$activeWorkers,
+                    run.resultReady=$resultReady
                 RETURN properties(run)
                 """,
                 {
@@ -2337,7 +2652,15 @@ def _observe_run_finish(
                     "durationMs": (payload or {}).get("durationMs"),
                     "providerInputTokens": (payload or {}).get("providerInputTokens"),
                     "providerOutputTokens": (payload or {}).get("providerOutputTokens"),
+                    "providerCachedTokens": (payload or {}).get("providerCachedTokens"),
+                    "providerReasoningTokens": (payload or {}).get("providerReasoningTokens"),
+                    "toolCallCount": (payload or {}).get("toolCallCount"),
                     "totalCostUsd": (payload or {}).get("totalCostUsd"),
+                    "nativePhase": (payload or {}).get("nativePhase"),
+                    "tasksCompleted": (payload or {}).get("tasksCompleted"),
+                    "tasksTotal": (payload or {}).get("tasksTotal"),
+                    "activeWorkers": (payload or {}).get("activeWorkers"),
+                    "resultReady": bool((payload or {}).get("finalResult")),
                 },
                 "value agtype",
             )

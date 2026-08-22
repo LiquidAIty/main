@@ -615,6 +615,32 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
     # Agent Canvas default. conversationId is a structural reference to the
     # real live conversation when one exists — the backend mints card-scoped
     # authority from it; this layer never authors or invents authority.
+    action = str(args.get("action") or "execute").strip()
+    if action == "status" or args.get("runId") or args.get("nativeRootId"):
+        _require(args, "projectId")
+        selectors = {
+            key: str(args.get(key) or "").strip()
+            for key in ("runId", "nativeRootId", "cardId")
+            if str(args.get(key) or "").strip()
+        }
+        if len(selectors) != 1:
+            raise ControlPlaneError("card_run_status_selector_invalid")
+        payload = {
+            "projectId": str(args["projectId"]).strip(),
+            **({"deckId": str(args["deckId"]).strip()} if args.get("deckId") else {}),
+            "action": "status",
+            **selectors,
+        }
+        response = await asyncio.to_thread(
+            _backend_json,
+            "POST",
+            "/api/coder/mcp-bridge/run_configured_card",
+            payload,
+        )
+        if response.get("ok") is False:
+            raise ControlPlaneError(str(response.get("error") or "configured_card_status_failed"))
+        return response
+
     _require(args, "projectId", "cardId", "correlationId", "input")
     deck_id = str(args.get("deckId") or "").strip()
     conversation_id = str(args.get("conversationId") or "").strip()
