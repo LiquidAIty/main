@@ -217,6 +217,7 @@ export function buildHermesOfficialMcpServer(
     | 'tools'
   >,
   env: NodeJS.ProcessEnv = process.env,
+  executionContextId = '',
 ): Record<string, unknown> | null {
   const granted = args.tools.filter((name) => name !== 'web_search');
   const shared = resolvePythonAgentMcpServerSpec({
@@ -230,6 +231,7 @@ export function buildHermesOfficialMcpServer(
     callerRuntimeMode: args.runtime.mode,
     grantedTools: granted,
     requiresExecutionContext: true,
+    executionContextId: String(executionContextId || '').trim() || undefined,
   }, env);
   const suffix = createHash('sha256').update(args.sessionKey).digest('hex').slice(0, 12);
   return {
@@ -257,7 +259,7 @@ export function buildHermesHostSessionProjection(
   sessionMeta: Record<string, unknown>;
 } {
   const rootSaved = resolveSavedMcpConnections(args.mcpConnectionIds, env);
-  const rootOfficial = buildHermesOfficialMcpServer(args, env);
+  const rootOfficial = buildHermesOfficialMcpServer(args, env, executionContextId);
   const rootServers: Record<string, unknown>[] = rootOfficial
     ? [rootOfficial, ...rootSaved]
     : rootSaved;

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -43,6 +43,40 @@ def cli_value(value):
 for key, value in desired:
     if get_nested(raw, key) != value:
         set_config_value(key, cli_value(value), force=True)
+`;
+
+const CONFIGURE_CARD_MCP_SCRIPT = String.raw`
+import json
+import sys
+
+from hermes_cli.config import read_raw_config, set_config_value, unset_config_value
+
+desired = json.loads(sys.argv[1])
+unset_keys = json.loads(sys.argv[2])
+raw = read_raw_config()
+missing = object()
+
+def get_nested(document, dotted_key):
+    current = document
+    for segment in dotted_key.split('.'):
+        if not isinstance(current, dict) or segment not in current:
+            return missing
+        current = current[segment]
+    return current
+
+def cli_value(value):
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    return str(value)
+
+for key, value in desired:
+    if get_nested(raw, key) != value:
+        set_config_value(key, cli_value(value), force=True)
+
+raw = read_raw_config()
+for key in unset_keys:
+    if get_nested(raw, key) is not missing:
+        unset_config_value(key)
 `;
 
 function resolveHermesPythonExecutable(hermesRoot: string): string {
@@ -102,19 +136,14 @@ export function resolveHermesProfileHome(
 }
 
 /**
- * Mechanically project Card-owned prompt/model/tool authority into one native
- * Hermes profile. Hermes continues to own its session, memory, auth, and tool
- * loops; the persisted profile contains only public configuration and an
- * environment-variable placeholder for its short-lived MCP bearer.
+ * Configure only the public MCP transport template used by native Kanban
+ * workers. The signed Card-Run bearer stays in the gateway process environment;
+ * no Card grants, prompt, model, credential, or worker identity is persisted.
  */
-export function configureHermesCardProfile(args: {
+export function configureHermesCardMcpProfile(args: {
   hermesRoot: string;
   profile: string;
-  prompt: string;
-  provider: string;
-  model: string;
   mcpUrl: string;
-  mcpTools: string[];
   mcpTokenEnv: string;
   runtimeHome?: string;
 }): string {
@@ -126,29 +155,43 @@ export function configureHermesCardProfile(args: {
     args.profile,
     args.runtimeHome,
   );
+  if (!/^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?(?:\/|$)/.test(args.mcpUrl)) {
+    throw new Error('hermes_profile_mcp_url_invalid');
+  }
   const settings: Array<readonly [string, unknown]> = [
-    ...HOLOGRAPHIC_MEMORY_SETTINGS,
-    ['model.default', args.model],
-    ['model.provider', args.provider],
-    ['model.openai_runtime', HERMES_NATIVE_OPENAI_RUNTIME],
-    ...(args.provider === 'openai-codex'
-      ? ([['model.api_mode', 'codex_responses']] as const)
-      : []),
     ['mcp_servers.liquidaity.url', args.mcpUrl],
     [
       'mcp_servers.liquidaity.headers.Authorization',
       `Bearer ${'${'}${args.mcpTokenEnv}}`,
     ],
-    ['mcp_servers.liquidaity.tools.include', [...args.mcpTools]],
     ['mcp_servers.liquidaity.tools.resources', false],
     ['mcp_servers.liquidaity.tools.prompts', false],
     ['mcp_servers.liquidaity.connect_timeout', 30],
   ];
-  configureHermesHolographicMemoryHome(args.hermesRoot, profileHome, settings);
-  const soulPath = path.join(profileHome, 'SOUL.md');
-  const prompt = String(args.prompt || '');
-  const current = existsSync(soulPath) ? readFileSync(soulPath, 'utf8') : null;
-  if (current !== prompt) writeFileSync(soulPath, prompt, 'utf8');
+  mkdirSync(profileHome, { recursive: true });
+  const result = spawnSync(
+    resolveHermesPythonExecutable(args.hermesRoot),
+    [
+      '-c',
+      CONFIGURE_CARD_MCP_SCRIPT,
+      JSON.stringify(settings),
+      JSON.stringify([
+        'mcp_servers.liquidaity.tools.include',
+        'mcp_servers.liquidaity.tools.exclude',
+      ]),
+    ],
+    {
+      cwd: args.hermesRoot,
+      env: { ...process.env, HERMES_HOME: profileHome },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 20_000,
+      maxBuffer: 1024 * 1024,
+    },
+  );
+  if (result.error || result.status !== 0) {
+    throw new Error('hermes_profile_mcp_config_failed');
+  }
   return profileHome;
 }
 

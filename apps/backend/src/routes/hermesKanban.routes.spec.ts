@@ -10,6 +10,7 @@ const execMocks = vi.hoisted(() => ({
 }));
 vi.mock('node:child_process', () => ({
   execFile: execMocks.execFile,
+  spawn: vi.fn(),
 }));
 
 import router from './hermesKanban.routes';
@@ -17,6 +18,7 @@ import {
   parseHermesJson,
   parseYamlishConfig,
   parseProfileTable,
+  hermesGatewayPids,
   isHermesGatewayRunning,
   startNativeHermesKanbanTurn,
   waitForHermesKanbanCardTask,
@@ -70,6 +72,8 @@ describe('hermesKanban helpers', () => {
     expect(isHermesGatewayRunning('Gateway is running (PID: 42)')).toBe(true);
     expect(isHermesGatewayRunning('Gateway process running (PID: 42)')).toBe(true);
     expect(isHermesGatewayRunning('Gateway is not running')).toBe(false);
+    expect(hermesGatewayPids('Gateway process running (PID: 42, 84)')).toEqual([42, 84]);
+    expect(hermesGatewayPids('Gateway is not running')).toEqual([]);
   });
 
   it('parseHermesJson strips a warning/prefix line and parses the leading JSON', () => {
@@ -159,7 +163,11 @@ describe('hermesKanban helpers', () => {
       args: readonly string[],
       _bin?: string,
       _timeoutMs?: number,
+      _envOverrides?: NodeJS.ProcessEnv,
     ) => {
+      if (args.join(' ') === 'gateway stop') {
+        return { exitCode: 0, stdout: 'Gateway stopped', stderr: '' };
+      }
       if (args.join(' ') === 'gateway status') {
         return { exitCode: 0, stdout: 'Gateway process running (PID: 42)', stderr: '' };
       }
@@ -188,6 +196,10 @@ describe('hermesKanban helpers', () => {
       throw new Error(`unexpected ACP method: ${method}`);
     });
     const events: any[] = [];
+    const configureCardMcpProfile = vi.fn(() => 'profile-home');
+    // Windows hermes.exe is a launcher; native readiness reports the handed-off
+    // long-running Python gateway PID rather than this launcher PID.
+    const spawnGateway = vi.fn(async () => 41);
     const handle = await startNativeHermesKanbanTurn({
       sessionKey: 'unused-for-native-kanban',
       projectId: 'project-1',
@@ -209,7 +221,17 @@ describe('hermesKanban helpers', () => {
       mcpConnectionIds: [],
       message: 'The dynamic input',
       nativeMission: 'Saved instructions\n\nMission\n\nThinkGraph:root-1',
-    }, (event) => events.push(event), { runner, requestExtension });
+    }, (event) => events.push(event), {
+      runner,
+      requestExtension,
+      configureCardMcpProfile,
+      spawnGateway,
+      cardMcpServer: {
+        type: 'http',
+        url: 'http://127.0.0.1:8765/mcp',
+        headers: [{ name: 'Authorization', value: 'Bearer signed-test-token' }],
+      },
+    });
 
     const completed = await handle.done;
     expect(completed.finalText).toBe('Native root synthesis');
@@ -220,6 +242,23 @@ describe('hermesKanban helpers', () => {
       nativeStatus: 'done',
     });
     expect(runner.mock.calls.find(([args]) => args.join(' ') === 'gateway status')?.[2]).toBe(60_000);
+    expect(runner.mock.calls.find(([args]) => args.join(' ') === 'gateway stop')?.[2]).toBe(60_000);
+    expect(runner.mock.calls.find(([args]) => args.join(' ') === 'gateway stop')?.[3]).toMatchObject({
+      LIQUIDAITY_KANBAN_CARD_MCP_BEARER: 'signed-test-token',
+      OPENAI_API_KEY: '',
+      OPENROUTER_API_KEY: '',
+      OPENROUTER_BASE_URL: '',
+    });
+    expect(spawnGateway).toHaveBeenCalledWith(expect.objectContaining({
+      LIQUIDAITY_KANBAN_CARD_MCP_BEARER: 'signed-test-token',
+      OPENROUTER_API_KEY: '',
+    }));
+    expect(configureCardMcpProfile).toHaveBeenCalledWith(expect.objectContaining({
+      profile: 'orchestrator',
+      mcpUrl: 'http://127.0.0.1:8765/mcp',
+      mcpTokenEnv: 'LIQUIDAITY_KANBAN_CARD_MCP_BEARER',
+    }));
+    expect(JSON.stringify(configureCardMcpProfile.mock.calls)).not.toContain('signed-test-token');
     expect(requestExtension).toHaveBeenCalledTimes(2);
     expect(requestExtension.mock.calls[0]).toEqual([
       '_kanban/find',
@@ -230,6 +269,7 @@ describe('hermesKanban helpers', () => {
       },
     ]);
     expect(requestExtension.mock.calls[1]).toEqual(['_kanban/show', { taskId: 't_root' }]);
+    expect(requestExtension.mock.calls.some(([method]) => String(method).includes('bind-card-runtime'))).toBe(false);
     expect(requestExtension.mock.calls.some(([method]) => method === 'session/prompt')).toBe(false);
     expect(events).toEqual(expect.arrayContaining([
       { kind: 'text', text: 'Native root synthesis' },

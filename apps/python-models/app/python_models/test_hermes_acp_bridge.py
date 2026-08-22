@@ -1,13 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 from pathlib import Path
 
-import pytest
-
-
-@pytest.mark.asyncio
-async def test_native_kanban_extensions_create_rejoin_and_read_back(monkeypatch, tmp_path):
+def test_native_kanban_extensions_create_rejoin_and_read_back(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
     monkeypatch.setenv("HERMES_KANBAN_BOARD", "default")
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent))
@@ -26,19 +23,23 @@ async def test_native_kanban_extensions_create_rejoin_and_read_back(monkeypatch,
         "skills": [],
     }
 
-    first = await agent.ext_method("kanban/create", params)
-    second = await agent.ext_method("kanban/create", params)
-    found = await agent.ext_method(
-        "kanban/find",
-        {
-            "title": params["title"],
-            "body": params["body"],
-            "createdBy": params["createdBy"],
-        },
-    )
-    snapshot = await agent.ext_method(
-        "kanban/show", {"taskId": first["id"]}
-    )
+    async def exercise():
+        first = await agent.ext_method("kanban/create", params)
+        second = await agent.ext_method("kanban/create", params)
+        found = await agent.ext_method(
+            "kanban/find",
+            {
+                "title": params["title"],
+                "body": params["body"],
+                "createdBy": params["createdBy"],
+            },
+        )
+        snapshot = await agent.ext_method(
+            "kanban/show", {"taskId": first["id"]}
+        )
+        return first, second, found, snapshot
+
+    first, second, found, snapshot = asyncio.run(exercise())
 
     assert first["id"].startswith("t_")
     assert first["rejoined"] is False

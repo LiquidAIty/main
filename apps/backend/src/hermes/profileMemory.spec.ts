@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 
 import {
-  configureHermesCardProfile,
+  configureHermesCardMcpProfile,
   configureHermesHolographicMemoryHome,
   HOLOGRAPHIC_MEMORY_SETTINGS,
   resolveHermesHolographicMemoryDb,
@@ -121,40 +121,43 @@ describe('Hermes Holographic runtime configuration', () => {
     ]);
   });
 
-  it('projects Card prompt, model, and bounded MCP grants into one native profile', () => {
+  it('persists only the public Card-Run MCP template and leaves profile authority unchanged', () => {
     const runtimeHome = mkdtempSync(path.join(tmpdir(), 'liquidaity-hermes-profiles-'));
     tempHomes.push(runtimeHome);
-    const profileHome = configureHermesCardProfile({
+    const profileHome = path.join(runtimeHome, 'profiles', 'coder');
+    mkdirSync(profileHome, { recursive: true });
+    writeFileSync(
+      path.join(profileHome, 'config.yaml'),
+      'model:\n  default: gpt-5.6-luna\n  provider: openai-codex\nmcp_servers:\n  liquidaity:\n    tools:\n      include:\n        - stale.worker.grant\n',
+      'utf8',
+    );
+    writeFileSync(path.join(profileHome, 'SOUL.md'), 'Existing saved profile prompt', 'utf8');
+
+    const configuredHome = configureHermesCardMcpProfile({
       hermesRoot: HERMES_ROOT,
       runtimeHome,
       profile: 'coder',
-      prompt: 'Saved Coder prompt',
-      provider: 'openai-codex',
-      model: 'gpt-5.6-luna',
       mcpUrl: 'http://127.0.0.1:8765/mcp',
-      mcpTools: ['cbm.search_graph', 'cbm.trace_path'],
       mcpTokenEnv: 'LIQUIDAITY_CODER_MCP_BEARER',
     });
     const raw = readRawHermesConfig(profileHome);
 
-    expect(profileHome).toBe(path.join(runtimeHome, 'profiles', 'coder'));
-    expect(readFileSync(path.join(profileHome, 'SOUL.md'), 'utf8')).toBe('Saved Coder prompt');
+    expect(configuredHome).toBe(profileHome);
+    expect(readFileSync(path.join(profileHome, 'SOUL.md'), 'utf8')).toBe('Existing saved profile prompt');
     expect(raw.model).toEqual({
       default: 'gpt-5.6-luna',
       provider: 'openai-codex',
-      api_mode: 'codex_responses',
-      openai_runtime: 'auto',
     });
     expect(raw.mcp_servers.liquidaity).toEqual({
       url: 'http://127.0.0.1:8765/mcp',
       headers: { Authorization: 'Bearer ${LIQUIDAITY_CODER_MCP_BEARER}' },
       tools: {
-        include: ['cbm.search_graph', 'cbm.trace_path'],
         resources: false,
         prompts: false,
       },
       connect_timeout: 30,
     });
+    expect(JSON.stringify(raw)).not.toContain('stale.worker.grant');
     expect(JSON.stringify(raw)).not.toContain('test-coder-terminal-token');
   });
 

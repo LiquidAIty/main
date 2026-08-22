@@ -24,6 +24,8 @@ describe('internal MCP Card authentication', () => {
       callerRuntimeKind: 'hermes',
       callerRuntimeMode: 'main',
       grantedTools: ['canvas.inspect', 'canvas.inspect', 'card.run_assistant_agent'],
+      requiresExecutionContext: true,
+      executionContextId: 'context-root-1',
     }, env, 1000);
     const claims = verifyInternalMcpBearerForTest(token, env);
     expect(claims).toMatchObject({
@@ -36,6 +38,8 @@ describe('internal MCP Card authentication', () => {
         callerRuntimeKind: 'hermes',
         callerRuntimeMode: 'main',
         grantedTools: ['canvas.inspect', 'card.run_assistant_agent'],
+        requiresExecutionContext: true,
+        executionContextId: 'context-root-1',
       },
     });
   });

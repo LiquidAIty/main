@@ -706,12 +706,16 @@ def _request_execution_context() -> dict[str, Any] | None:
     try:
         meta = server.request_context.meta
     except LookupError:
-        raise PermissionError("mcp_execution_context_missing")
+        meta = None
     if hasattr(meta, "model_dump"):
         meta = meta.model_dump(exclude_none=True)
     if not isinstance(meta, dict):
-        raise PermissionError("mcp_execution_context_missing")
-    context_id = str(meta.get("liquidaity/execution") or "").strip()
+        meta = {}
+    meta_context_id = str(meta.get("liquidaity/execution") or "").strip()
+    principal_context_id = str(principal.get("executionContextId") or "").strip()
+    if meta_context_id and principal_context_id and meta_context_id != principal_context_id:
+        raise PermissionError("mcp_execution_context_invalid")
+    context_id = meta_context_id or principal_context_id
     if not context_id:
         raise PermissionError("mcp_execution_context_missing")
     try:

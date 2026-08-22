@@ -1,9 +1,10 @@
 import { Router } from 'express';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 import {
+  buildHermesOfficialMcpServer,
   providerForHermes,
   requestHermesExtension,
   type HermesSessionEvent,
@@ -15,6 +16,7 @@ import {
   finishHermesExecutionContext,
   registerHermesRootExecutionContext,
 } from '../hermes/childExecutionContext';
+import { configureHermesCardMcpProfile } from '../hermes/profileMemory';
 
 /*
  * Hermes Kanban proxy — thin read/persistence adapter (DONT.md rule 5).
@@ -36,6 +38,8 @@ const HERMES_HOME = path.join(HERMES_ROOT, '.hermes');
 const HERMES_BIN = path.join(HERMES_ROOT, 'venv', 'Scripts', 'hermes.exe');
 const HERMES_EXEC_TIMEOUT_MS = 20_000;
 const HERMES_GATEWAY_STATUS_TIMEOUT_MS = 60_000;
+const HERMES_GATEWAY_STOP_TIMEOUT_MS = 60_000;
+const KANBAN_CARD_MCP_TOKEN_ENV = 'LIQUIDAITY_KANBAN_CARD_MCP_BEARER';
 
 export type HermesExecResult = {
   exitCode: number;
@@ -47,10 +51,20 @@ export function isHermesGatewayRunning(stdout: string): boolean {
   return /Gateway(?: process)? (?:is )?running/i.test(stdout);
 }
 
+export function hermesGatewayPids(stdout: string): number[] {
+  const match = /Gateway(?: process)? (?:is )?running[^\r\n]*\(PID:\s*([\d,\s]+)\)/i.exec(stdout);
+  if (!match?.[1]) return [];
+  return match[1]
+    .split(',')
+    .map((value) => Number.parseInt(value.trim(), 10))
+    .filter((value) => Number.isSafeInteger(value) && value > 0);
+}
+
 export function runHermes(
   args: readonly string[],
   bin: string = HERMES_BIN,
   timeoutMs: number = HERMES_EXEC_TIMEOUT_MS,
+  envOverrides: NodeJS.ProcessEnv = {},
 ): Promise<HermesExecResult> {
   return new Promise((resolve) => {
     execFile(
@@ -63,6 +77,7 @@ export function runHermes(
         shell: false,
         env: {
           ...process.env,
+          ...envOverrides,
           HERMES_HOME,
         },
       },
@@ -172,18 +187,117 @@ export async function waitForHermesKanbanCardTask(
   }
 }
 
-async function requireNativeKanbanGateway(runner: typeof runHermes): Promise<void> {
-  const [gateway, config] = await Promise.all([
-    runner(['gateway', 'status'], HERMES_BIN, HERMES_GATEWAY_STATUS_TIMEOUT_MS),
-    runner(['config', 'get', 'kanban']),
-  ]);
-  if (!isHermesGatewayRunning(gateway.stdout)) {
-    throw new Error('hermes_kanban_gateway_not_running');
-  }
+async function requireNativeKanbanConfig(runner: typeof runHermes): Promise<void> {
+  const config = await runner(['config', 'get', 'kanban']);
   if (config.exitCode !== 0) throw new Error('hermes_kanban_config_unavailable');
   const values = parseYamlishConfig(config.stdout);
   if (values.dispatch_in_gateway === false) throw new Error('hermes_kanban_gateway_dispatch_disabled');
   if (values.auto_decompose === false) throw new Error('hermes_kanban_auto_decompose_disabled');
+}
+
+function requireCardMcpProjection(server: Record<string, unknown>): { url: string; bearer: string } {
+  const url = String(server.url || '').trim();
+  if (!/^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?(?:\/|$)/.test(url)) {
+    throw new Error('hermes_kanban_card_runtime_mcp_invalid');
+  }
+  const headers = Array.isArray(server.headers) ? server.headers : [];
+  const authorization = headers.find((header: any) => (
+    String(header?.name || '').trim().toLowerCase() === 'authorization'
+  ));
+  const match = /^Bearer\s+(.+)$/.exec(String(authorization?.value || '').trim());
+  if (!match?.[1]) throw new Error('hermes_kanban_card_runtime_bearer_missing');
+  return { url, bearer: match[1] };
+}
+
+export function spawnRunScopedHermesGateway(
+  envOverrides: NodeJS.ProcessEnv,
+  processOptions: {
+    bin?: string;
+    args?: readonly string[];
+    cwd?: string;
+    inheritedEnv?: NodeJS.ProcessEnv;
+  } = {},
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      processOptions.bin ?? HERMES_BIN,
+      [...(processOptions.args ?? ['gateway', 'run'])],
+      {
+        cwd: processOptions.cwd ?? HERMES_ROOT,
+        detached: true,
+        env: {
+          ...(processOptions.inheritedEnv ?? process.env),
+          ...envOverrides,
+          HERMES_HOME,
+        },
+        shell: false,
+        stdio: 'ignore',
+        windowsHide: true,
+      },
+    );
+    child.once('error', (error) => {
+      reject(new Error(`hermes_kanban_gateway_spawn_failed:${error.message}`));
+    });
+    child.once('spawn', () => {
+      if (!child.pid) {
+        reject(new Error('hermes_kanban_gateway_spawn_failed:missing_pid'));
+        return;
+      }
+      child.unref();
+      resolve(child.pid);
+    });
+  });
+}
+
+function nativeGatewayFailure(prefix: string, result: HermesExecResult): Error {
+  const nativeDetail = `${result.stderr}\n${result.stdout}`.trim().replace(/\s+/g, ' ').slice(0, 1_000);
+  return new Error(nativeDetail ? `${prefix}:${nativeDetail}` : prefix);
+}
+
+async function replaceNativeKanbanGateway(
+  runner: typeof runHermes,
+  bearer: string,
+  spawnGateway: typeof spawnRunScopedHermesGateway,
+): Promise<void> {
+  const runEnvironment: NodeJS.ProcessEnv = {
+    [KANBAN_CARD_MCP_TOKEN_ENV]: bearer,
+    OPENAI_API_KEY: '',
+    OPENROUTER_API_KEY: '',
+    OPENROUTER_BASE_URL: '',
+  };
+  const stopped = await runner(
+    ['gateway', 'stop'],
+    HERMES_BIN,
+    HERMES_GATEWAY_STOP_TIMEOUT_MS,
+    runEnvironment,
+  );
+  if (stopped.exitCode !== 0) throw new Error('hermes_kanban_gateway_stop_failed');
+  // On Windows the hermes.exe launcher hands off to the long-running Python
+  // gateway process, so the launcher PID is diagnostic only. The native
+  // readiness command is authoritative for the single live gateway PID.
+  const launcherPid = await spawnGateway(runEnvironment);
+  const deadline = Date.now() + HERMES_GATEWAY_STATUS_TIMEOUT_MS;
+  let lastStatus: HermesExecResult = { exitCode: 0, stdout: '', stderr: '' };
+  do {
+    lastStatus = await runner(
+      ['gateway', 'status'],
+      HERMES_BIN,
+      HERMES_GATEWAY_STATUS_TIMEOUT_MS,
+      runEnvironment,
+    );
+    if (lastStatus.exitCode !== 0) {
+      throw nativeGatewayFailure('hermes_kanban_gateway_readiness_check_failed', lastStatus);
+    }
+    const runningPids = hermesGatewayPids(lastStatus.stdout);
+    if (runningPids.length === 1) return;
+    if (runningPids.length > 1) {
+      throw new Error(
+        `hermes_kanban_gateway_overlap:launcher_${launcherPid}:native_${runningPids.join(',')}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  } while (Date.now() < deadline);
+  throw nativeGatewayFailure('hermes_kanban_gateway_readiness_timeout', lastStatus);
 }
 
 export async function startNativeHermesKanbanTurn(
@@ -192,6 +306,9 @@ export async function startNativeHermesKanbanTurn(
   options: {
     runner?: typeof runHermes;
     requestExtension?: typeof requestHermesExtension;
+    cardMcpServer?: Record<string, unknown>;
+    configureCardMcpProfile?: typeof configureHermesCardMcpProfile;
+    spawnGateway?: typeof spawnRunScopedHermesGateway;
   } = {},
 ): Promise<HermesTurnHandle> {
   if (args.runtime.mode !== 'kanban') throw new Error('hermes_native_kanban_mode_required');
@@ -201,7 +318,7 @@ export async function startNativeHermesKanbanTurn(
   }
   const runner = options.runner ?? runHermes;
   const acpRequest = options.requestExtension ?? requestHermesExtension;
-  await requireNativeKanbanGateway(runner);
+  await requireNativeKanbanConfig(runner);
   const context = registerHermesRootExecutionContext({
     sessionId: `kanban:${args.parentRunId}`,
     runId: args.parentRunId,
@@ -214,7 +331,29 @@ export async function startNativeHermesKanbanTurn(
   });
   let contextState: 'completed' | 'failed' | 'cancelled' = 'failed';
   let cancelled = false;
+  const releaseContext = (): Promise<void> => finishHermesExecutionContext({
+    contextId: context.contextId,
+    state: contextState,
+  }).then(() => undefined);
   try {
+    const server = options.cardMcpServer
+      ?? buildHermesOfficialMcpServer(args, process.env, context.contextId);
+    if (!server) throw new Error('hermes_kanban_card_runtime_mcp_missing');
+    const cardMcp = requireCardMcpProjection(server);
+    const configureProfile = options.configureCardMcpProfile ?? configureHermesCardMcpProfile;
+    configureProfile({
+      hermesRoot: HERMES_ROOT,
+      runtimeHome: HERMES_HOME,
+      profile,
+      mcpUrl: cardMcp.url,
+      mcpTokenEnv: KANBAN_CARD_MCP_TOKEN_ENV,
+    });
+    await replaceNativeKanbanGateway(
+      runner,
+      cardMcp.bearer,
+      options.spawnGateway ?? spawnRunScopedHermesGateway,
+    );
+
     const idempotencyKey = `liquidaity-${createHash('sha256')
       .update([args.projectId, args.deckId, args.cardId, args.nativeMission].join('\u0000'))
       .digest('hex')}`;
@@ -286,7 +425,7 @@ export async function startNativeHermesKanbanTurn(
         onEvent({ kind: 'error', message, code: 'hermes_kanban_turn_failed' });
         throw error;
       })
-      .finally(() => finishHermesExecutionContext({ contextId: context.contextId, state: contextState }));
+      .finally(releaseContext);
     return {
       answer: () => undefined,
       cancel: () => { cancelled = true; },
@@ -306,7 +445,7 @@ export async function startNativeHermesKanbanTurn(
       },
     };
   } catch (error) {
-    await finishHermesExecutionContext({ contextId: context.contextId, state: contextState });
+    await releaseContext();
     throw error;
   }
 }

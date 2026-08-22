@@ -429,6 +429,67 @@ def test_required_child_execution_meta_fails_closed_when_missing(monkeypatch):
         mcp_host._request_execution_context()
 
 
+def test_signed_execution_context_id_supports_native_kanban_worker(monkeypatch):
+    import mcp_host
+
+    principal = {
+        "kind": "card-runtime",
+        "requiresExecutionContext": True,
+        "executionContextId": "context-kanban-root",
+    }
+    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: principal)
+    monkeypatch.setattr(
+        type(mcp_host.server),
+        "request_context",
+        property(lambda _self: SimpleNamespace(meta={})),
+    )
+    bridge_calls = []
+
+    def bridge(path, payload):
+        bridge_calls.append((path, payload))
+        return json.dumps({
+            "ok": True,
+            "context": {
+                "projectId": "project-1",
+                "deckId": "deck_builder",
+                "conversationId": "conversation-1",
+                "runId": "saved-card-run",
+                "rootRunId": "saved-card-run",
+                "cardId": "card_hermes_steward",
+                "runtimeMode": "kanban",
+                "nativeChildId": None,
+                "grantedTools": ["graphiti.add_memory"],
+            },
+        })
+
+    monkeypatch.setattr(mcp_host, "_bridge_sync", bridge)
+    context = mcp_host._request_execution_context()
+    assert context["parentRunId"] == "saved-card-run"
+    assert context["rootRunId"] == "saved-card-run"
+    assert context["nativeChildId"] == ""
+    assert bridge_calls == [(
+        "internal_execution_context",
+        {"contextId": "context-kanban-root", "principal": principal},
+    )]
+
+
+def test_signed_and_per_call_execution_context_ids_must_match(monkeypatch):
+    import mcp_host
+
+    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: {
+        "kind": "card-runtime",
+        "requiresExecutionContext": True,
+        "executionContextId": "signed-context",
+    })
+    monkeypatch.setattr(
+        type(mcp_host.server),
+        "request_context",
+        property(lambda _self: SimpleNamespace(meta={"liquidaity/execution": "other-context"})),
+    )
+    with pytest.raises(PermissionError, match="mcp_execution_context_invalid"):
+        mcp_host._request_execution_context()
+
+
 def test_internal_mcp_catalog_is_filtered_but_public_catalog_stays_complete(monkeypatch):
     import asyncio
     import mcp_host
