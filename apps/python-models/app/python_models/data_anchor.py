@@ -317,6 +317,7 @@ def read_codegraph_exact(
             "mode": "calls",
             "include_tests": False,
             "limit": result_limit,
+            "format": "json",
         }))
     try:
         results = mcp_reader(
@@ -342,9 +343,9 @@ def read_codegraph_exact(
         file_path = file_path[len(repo_prefix):]
     relationships = results[2] if len(results) > 2 else {}
     evidence = {
-        key: relationships.get(key, [])
+        key: _codegraph_trace_records(relationships.get(key))
         for key in ("callers", "callees")
-        if isinstance(relationships.get(key), list)
+        if _codegraph_trace_records(relationships.get(key))
     }
     return {
         "authority": "CodeGraph",
@@ -374,6 +375,35 @@ def read_codegraph_exact(
         "readOperation": "cbm.get_code_snippet",
         "truncated": bool(relationships.get("truncated") is True),
     }
+
+
+def _codegraph_trace_records(value: Any) -> list[dict[str, Any]]:
+    """Normalize native CBM JSON trace rows without interpreting their meaning."""
+    if isinstance(value, list):
+        return [dict(item) for item in value if isinstance(item, dict)]
+    if not isinstance(value, dict):
+        return []
+    columns = value.get("cols")
+    groups = value.get("groups")
+    if not isinstance(columns, list) or not isinstance(groups, list):
+        return []
+    records: list[dict[str, Any]] = []
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        prefix = str(group.get("qn_prefix") or "").strip()
+        rows = group.get("rows")
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, list) or len(row) != len(columns):
+                continue
+            record = {str(columns[index]): item for index, item in enumerate(row)}
+            name = str(record.get("name") or "").strip()
+            if name:
+                record["qualified_name"] = f"{prefix}.{name}" if prefix else name
+            records.append(record)
+    return records
 
 
 def _payload_records(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:

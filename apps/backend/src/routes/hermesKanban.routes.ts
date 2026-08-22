@@ -129,6 +129,12 @@ export type HermesKanbanUsageTotals = {
   totalCostUsd: number;
 };
 
+export type RejoinedHermesKanbanResult = {
+  finalText: string;
+  nativeRunId: string | number | null;
+  progress: HermesKanbanProgress;
+};
+
 type HermesKanbanJoinOptions = {
   timeoutMs?: number;
   pollMs?: number;
@@ -313,6 +319,50 @@ export async function waitForHermesKanbanCardTask(
     if (now() >= deadline) throw new Error('hermes_kanban_card_join_timeout');
     await pause(options.pollMs ?? 1_000);
   }
+}
+
+export async function rejoinNativeHermesKanbanTask(args: {
+  profile: string;
+  taskId: string;
+  expectedCardId: string;
+  expectedProjectId: string;
+  requestExtension?: typeof requestHermesExtension;
+  onProgress?: (progress: HermesKanbanProgress) => Promise<void> | void;
+}): Promise<RejoinedHermesKanbanResult> {
+  const expectedCardId = String(args.expectedCardId || '').trim();
+  const expectedProjectId = String(args.expectedProjectId || '').trim();
+  if (!expectedCardId || !expectedProjectId) {
+    throw new Error('hermes_kanban_recovery_authority_incomplete');
+  }
+  const requestExtension = args.requestExtension ?? requestHermesExtension;
+  const show = async (nativeTaskId: string) => (
+    requestExtension('_kanban/show', { taskId: nativeTaskId }) as Promise<HermesKanbanTaskSnapshot>
+  );
+  let latestProgress: HermesKanbanProgress | null = null;
+  const completed = await waitForHermesKanbanCardTask(args.profile, args.taskId, {
+    show,
+    onSnapshot: async (rootSnapshot) => {
+      const nativeCardId = String(rootSnapshot.task.created_by || '').trim();
+      const nativeProjectId = String(rootSnapshot.task.project_id || '').trim();
+      if (nativeCardId !== expectedCardId) {
+        throw new Error('hermes_kanban_recovery_card_mismatch');
+      }
+      if (nativeProjectId && nativeProjectId !== expectedProjectId) {
+        throw new Error('hermes_kanban_recovery_project_mismatch');
+      }
+      const snapshots = await readHermesKanbanTaskGraph(args.taskId, rootSnapshot, show);
+      latestProgress = deriveHermesKanbanProgress(args.taskId, snapshots);
+      await args.onProgress?.(latestProgress);
+    },
+  });
+  const finalText = String(
+    completed.snapshot.latest_summary || completed.snapshot.task.result || '',
+  ).trim();
+  return {
+    finalText,
+    nativeRunId: completed.runId,
+    progress: latestProgress ?? deriveHermesKanbanProgress(args.taskId, [completed.snapshot]),
+  };
 }
 
 async function requireNativeKanbanConfig(runner: typeof runHermes): Promise<void> {

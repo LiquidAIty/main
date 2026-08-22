@@ -355,6 +355,62 @@ def test_exact_kanban_retry_rejoins_without_duplicate_run_or_attention(
     })
 
 
+def test_active_kanban_recovery_projects_only_persisted_run_and_root_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[str] = []
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, _params=None):
+            statements.append(str(query))
+
+        def fetchall(self):
+            return [{
+                "run_id": "run-one",
+                "correlation_id": "correlation-one",
+                "project_id": "project-one",
+                "deck_id": "deck-one",
+                "card_id": "card_hermes_steward",
+                "target_card_revision_id": "revision-one",
+                "runtime_kind": "hermes",
+                "runtime_mode": "kanban",
+                "runtime_profile": "liquidaity-hermes-steward",
+                "state": "running",
+                "provider_thread_ref": "t_existing_root",
+            }]
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+
+    result = card_domain.list_active_kanban_runs()
+
+    assert result["ok"] is True
+    assert len(result["runs"]) == 1
+    assert result["runs"][0]["runId"] == "run-one"
+    assert result["runs"][0]["nativeRootId"] == "t_existing_root"
+    assert result["runs"][0]["runtimeProfile"] == "liquidaity-hermes-steward"
+    query = "\n".join(statements)
+    assert "run.state IN ('pending','running')" in query
+    assert "run.runtime_mode='kanban'" in query
+    assert "provider_thread_ref IS NOT NULL" in query
+    assert "native_child" not in query.lower()
+
+
 def test_magentic_card_may_invoke_only_a_saved_magentic_option_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

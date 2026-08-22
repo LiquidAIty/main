@@ -20,6 +20,7 @@ from app.python_models.card_domain import (
     describe_magentic_agents,
     finish_run,
     inspect_agentgraph,
+    list_active_kanban_runs,
     list_decks,
     load_deck,
     materialize_invocation,
@@ -200,6 +201,14 @@ def domain_run_finish(payload: dict[str, Any]):
 def domain_run_read(payload: dict[str, Any]):
     try:
         return read_run(payload)
+    except CardDomainError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.get("/domain/runs/active-kanban")
+def domain_active_kanban_runs():
+    try:
+        return list_active_kanban_runs()
     except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 

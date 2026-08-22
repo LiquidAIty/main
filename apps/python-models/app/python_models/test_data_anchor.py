@@ -247,6 +247,47 @@ def test_codegraph_exact_read_uses_official_mcp_calls_and_qualified_symbol() -> 
     assert [name for name, _args in observed["calls"]] == [
         "cbm.index_status", "cbm.get_code_snippet", "cbm.trace_path",
     ]
+    assert observed["calls"][2][1]["format"] == "json"
+
+
+def test_codegraph_exact_read_normalizes_native_grouped_trace_json() -> None:
+    def reader(**_kwargs):
+        return [
+            {"project": "C-Projects-LiquidAIty-main", "status": "ready"},
+            {
+                "qualified_name": "project.module.materialize_idf",
+                "name": "materialize_idf",
+                "label": "Function",
+                "file_path": "apps/python-models/app/python_models/idf.py",
+                "source": "def materialize_idf():\n    pass",
+            },
+            {
+                "callers": {
+                    "cols": ["name", "hop"],
+                    "groups": [{
+                        "qn_prefix": "project.module",
+                        "rows": [["caller", 1]],
+                    }],
+                },
+                "callees": {"cols": ["name", "hop"], "groups": []},
+            },
+        ]
+
+    record = read_codegraph_exact(
+        "project-1",
+        "deck_builder",
+        "card_coder",
+        "project.module.materialize_idf",
+        bounded_expansion=1,
+        mcp_reader=reader,
+    )
+
+    assert record is not None
+    assert record["relationshipEvidence"]["callers"] == [{
+        "name": "caller",
+        "hop": 1,
+        "qualified_name": "project.module.caller",
+    }]
 
 
 def test_hybrid_knowgraph_search_is_concurrent_centered_ranked_and_provenanced() -> None:

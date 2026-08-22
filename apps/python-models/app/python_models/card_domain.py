@@ -2288,6 +2288,38 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "run": _run_projection(dict(row)) if row is not None else None}
 
 
+def list_active_kanban_runs() -> dict[str, Any]:
+    """Return persisted Kanban roots that still need aggregate monitoring."""
+
+    with connect_postgres(autocommit=False) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SET TRANSACTION READ ONLY")
+            cursor.execute(
+                """
+                SELECT run.*, revision.card_id, revision.runtime_profile
+                FROM ag_catalog.agent_runs AS run
+                JOIN ag_catalog.agent_card_revisions AS revision
+                  ON revision.revision_id=run.target_card_revision_id
+                WHERE run.state IN ('pending','running')
+                  AND run.runtime_kind='hermes'
+                  AND run.runtime_mode='kanban'
+                  AND run.provider_thread_ref IS NOT NULL
+                ORDER BY run.created_at ASC
+                """
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+    return {
+        "ok": True,
+        "runs": [
+            {
+                **_run_projection(row),
+                "runtimeProfile": str(row.get("runtime_profile") or ""),
+            }
+            for row in rows
+        ],
+    }
+
+
 def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
     """Update the existing Run with native aggregate progress only."""
 
@@ -2574,7 +2606,7 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
               native_task_total_count=%s,
               native_active_worker_count=%s,
               final_result=%s
-            WHERE run_id=%s
+            WHERE run_id=%s AND state IN ('pending','running')
             """,
             (
                 state, payload.get("providerThreadRef"), payload.get("providerTurnRef"),
@@ -2587,8 +2619,7 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                 payload.get("finalResult"), run_id,
             ),
         )
-        if cursor.rowcount != 1:
-            raise CardDomainError("run_not_found")
+        updated = cursor.rowcount == 1
         cursor.execute(
             """
             SELECT run_id, project_id, deck_id, target_card_revision_id,
@@ -2605,12 +2636,16 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
             """,
             (run_id,),
         )
-        receipt = dict(cursor.fetchone())
-    telemetry_written = _observe_run_finish(run_id, state, payload)
+        existing = cursor.fetchone()
+        if existing is None:
+            raise CardDomainError("run_not_found")
+        receipt = dict(existing)
+    telemetry_written = _observe_run_finish(run_id, state, payload) if updated else False
     return {
         "ok": True,
         "runId": run_id,
-        "state": state,
+        "state": str(receipt["state"]),
+        "updated": updated,
         "telemetryWritten": telemetry_written,
         "receipt": {
             key: value.isoformat() if isinstance(value, datetime) else str(value) if key.endswith("_id") and value is not None else value

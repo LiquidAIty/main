@@ -8,6 +8,8 @@ import { getDevTestJsonBodyLimit } from "./services/devTest";
 import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/requestAccess";
 import { closePythonAgentMcpClient } from "./services/mcp/pythonAgentMcpClient";
 import { closeHermesRuntimes } from "./hermes/mainAdapter";
+import { listenAfterRequiredMigrations } from "./db/migrations";
+import { recoverActiveKanbanRunMonitors } from "./hermes/kanbanRunRecovery";
 
 const app = express();
 app.set('etag', false);
@@ -190,15 +192,18 @@ async function startServer() {
     }
   }
 
-  logStartupBanner();
-  void logModelConfiguration();
-
   let server: Server;
   try {
-    server = await listenOnPort(PORT);
+    server = await listenAfterRequiredMigrations(async () => {
+      logStartupBanner();
+      void logModelConfiguration();
+      return listenOnPort(PORT);
+    });
   } catch (error) {
-    console.error("[BOOT] " + formatListenError(error, PORT));
     const err = error as NodeJS.ErrnoException | undefined;
+    console.error("[BOOT] " + (err?.code
+      ? formatListenError(error, PORT)
+      : error instanceof Error ? error.message : String(error)));
     if (err?.code !== 'EADDRINUSE') {
       console.error(error);
     }
@@ -213,6 +218,13 @@ async function startServer() {
   });
   globalThis.__liquidaityBackendServer__ = server;
   installShutdownHooks();
+  void recoverActiveKanbanRunMonitors()
+    .then(({ discovered, started }) => {
+      console.log(`[BOOT] Kanban Run recovery discovered=${discovered} started=${started}`);
+    })
+    .catch((error) => {
+      console.error(`[BOOT] Kanban Run recovery failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
 }
 
 // Mount all routes under /api

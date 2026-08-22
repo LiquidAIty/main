@@ -36,6 +36,7 @@ import {
 } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
 import { resolveHermesExecutionContext } from '../hermes/childExecutionContext';
+import { startKanbanRunMonitor } from '../hermes/kanbanRunRecovery';
 import {
   readHermesKanbanSessionUsage,
   startNativeHermesKanbanTurn,
@@ -657,7 +658,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
             }).catch(() => undefined);
           }
         };
-        void monitor();
+        startKanbanRunMonitor(runId, monitor);
         return res.status(202).json({
           ok: true,
           result: {
