@@ -17,6 +17,9 @@ import {
   parseHermesJson,
   parseYamlishConfig,
   parseProfileTable,
+  isHermesGatewayRunning,
+  startNativeHermesKanbanTurn,
+  waitForHermesKanbanCardTask,
 } from './hermesKanban.routes';
 
 function echo(fixture: unknown, exitCode = 0, stderr = '') {
@@ -63,6 +66,12 @@ const TASKS = [
 ];
 
 describe('hermesKanban helpers', () => {
+  it('accepts both current and historical native gateway status wording', () => {
+    expect(isHermesGatewayRunning('Gateway is running (PID: 42)')).toBe(true);
+    expect(isHermesGatewayRunning('Gateway process running (PID: 42)')).toBe(true);
+    expect(isHermesGatewayRunning('Gateway is not running')).toBe(false);
+  });
+
   it('parseHermesJson strips a warning/prefix line and parses the leading JSON', () => {
     expect(
       parseHermesJson(`warning: legacy flags\ndeprecated\n{"ok": true}`),
@@ -112,6 +121,120 @@ describe('hermesKanban helpers', () => {
       gateway: 'running',
     });
     expect(rows[1]).toMatchObject({ name: 'research', active: false, model: 'z-ai/glm-5.2', gateway: 'stopped' });
+  });
+
+  it('joins the native root result through ACP show without executing a prompt', async () => {
+    const show = vi.fn()
+      .mockResolvedValueOnce({
+        task: { id: 't_root', status: 'triage' },
+        latest_summary: null,
+        parents: [],
+        children: [],
+        events: [],
+        runs: [],
+      })
+      .mockResolvedValueOnce({
+        task: { id: 't_root', status: 'done', result: 'Native root result' },
+        latest_summary: 'Native root result',
+        parents: ['t_child'],
+        children: [],
+        events: [{ kind: 'completed' }],
+        runs: [{ id: 17, status: 'done', summary: 'Native root result' }],
+      });
+
+    const result = await waitForHermesKanbanCardTask('orchestrator', 't_root', {
+      show,
+      pause: async () => undefined,
+      timeoutMs: 1_000,
+    });
+
+    expect(show).toHaveBeenCalledTimes(2);
+    expect(result.taskId).toBe('t_root');
+    expect(result.runId).toBe(17);
+    expect(result.snapshot.latest_summary).toBe('Native root result');
+  });
+
+  it('uses ACP exact lookup to rejoin and join one native Triage root', async () => {
+    const runner = vi.fn(async (
+      args: readonly string[],
+      _bin?: string,
+      _timeoutMs?: number,
+    ) => {
+      if (args.join(' ') === 'gateway status') {
+        return { exitCode: 0, stdout: 'Gateway process running (PID: 42)', stderr: '' };
+      }
+      if (args.join(' ') === 'config get kanban') {
+        return {
+          exitCode: 0,
+          stdout: 'dispatch_in_gateway: true\nauto_decompose: true\n',
+          stderr: '',
+        };
+      }
+      throw new Error(`unexpected command: ${args.join(' ')}`);
+    });
+    const requestExtension = vi.fn(async (method: string) => {
+      if (method === '_kanban/find') return { id: 't_root', duplicateIds: [] };
+      if (method === '_kanban/create') throw new Error('must not duplicate the retained root');
+      if (method === '_kanban/show') {
+        return {
+          task: { id: 't_root', status: 'done', result: 'Native root synthesis' },
+          latest_summary: 'Native root synthesis',
+          parents: ['t_worker_a', 't_worker_b'],
+          children: [],
+          events: [{ kind: 'decomposed' }, { kind: 'completed' }],
+          runs: [{ id: 23, profile: 'orchestrator', status: 'done' }],
+        };
+      }
+      throw new Error(`unexpected ACP method: ${method}`);
+    });
+    const events: any[] = [];
+    const handle = await startNativeHermesKanbanTurn({
+      sessionKey: 'unused-for-native-kanban',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'conversation-1',
+      parentRunId: 'run-native-kanban-1',
+      cardId: 'card_kanban',
+      title: 'Saved Kanban Card',
+      runtime: { kind: 'hermes', mode: 'kanban', profile: 'orchestrator' },
+      prompt: 'Saved Card instructions',
+      provider: 'openai',
+      modelKey: 'saved-model-key',
+      providerModelId: 'saved-model-id',
+      accessMode: 'chatgpt-account',
+      tools: ['knowgraph.search'],
+      nativeTools: ['delegate_task'],
+      skills: ['research'],
+      toolsets: ['memory'],
+      mcpConnectionIds: [],
+      message: 'The dynamic input',
+      nativeMission: 'Saved instructions\n\nMission\n\nThinkGraph:root-1',
+    }, (event) => events.push(event), { runner, requestExtension });
+
+    const completed = await handle.done;
+    expect(completed.finalText).toBe('Native root synthesis');
+    expect(completed.transport).toMatchObject({
+      planType: 'hermes-native-kanban',
+      nativeTaskId: 't_root',
+      nativeRunId: 23,
+      nativeStatus: 'done',
+    });
+    expect(runner.mock.calls.find(([args]) => args.join(' ') === 'gateway status')?.[2]).toBe(60_000);
+    expect(requestExtension).toHaveBeenCalledTimes(2);
+    expect(requestExtension.mock.calls[0]).toEqual([
+      '_kanban/find',
+      {
+        title: 'Saved Kanban Card',
+        body: 'Saved instructions\n\nMission\n\nThinkGraph:root-1',
+        createdBy: 'card_kanban',
+      },
+    ]);
+    expect(requestExtension.mock.calls[1]).toEqual(['_kanban/show', { taskId: 't_root' }]);
+    expect(requestExtension.mock.calls.some(([method]) => method === 'session/prompt')).toBe(false);
+    expect(events).toEqual(expect.arrayContaining([
+      { kind: 'text', text: 'Native root synthesis' },
+      expect.objectContaining({ kind: 'done', fullText: 'Native root synthesis' }),
+    ]));
   });
 });
 

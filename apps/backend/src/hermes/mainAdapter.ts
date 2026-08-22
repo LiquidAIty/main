@@ -116,7 +116,7 @@ export type HermesTurnHandle = {
     pid: number | null;
     hermesHome: string;
     sessionId: string;
-    transport: 'acp-stdio';
+    transport: 'acp-stdio' | 'hermes-kanban';
   };
 };
 
@@ -147,13 +147,22 @@ type ActiveTurn = {
   rootExecutionContextId: string;
 };
 
-function resolveHermesInstall(): { root: string; executable: string } {
+function resolveHermesInstall(): { root: string; executable: string; args: string[] } {
   const root = path.join(resolveRepoRoot(), 'Hermes');
-  const executable = path.join(root, 'venv', 'Scripts', 'hermes-acp.exe');
+  const executable = path.join(root, 'venv', 'Scripts', 'python.exe');
+  const bridge = path.join(
+    resolveRepoRoot(),
+    'apps',
+    'python-models',
+    'app',
+    'python_models',
+    'hermes_acp_bridge.py',
+  );
   if (!existsSync(executable)) {
-    throw new Error(`hermes_repo_acp_missing:${executable}`);
+    throw new Error(`hermes_repo_python_missing:${executable}`);
   }
-  return { root, executable };
+  if (!existsSync(bridge)) throw new Error(`liquidaity_hermes_acp_bridge_missing:${bridge}`);
+  return { root, executable, args: [bridge] };
 }
 
 export function providerForHermes(provider: string, accessMode?: CardAccessMode): string {
@@ -299,7 +308,7 @@ class AcpProcess {
     this.executable = install.executable;
     this.hermesHome = ensureHermesHolographicMemoryHome(install.root);
     const childEnv = withoutInternalMcpSecret(process.env);
-    this.child = spawn(this.executable, [], {
+    this.child = spawn(this.executable, install.args, {
       cwd: install.root,
       env: {
         ...childEnv,
@@ -639,6 +648,14 @@ class AcpProcess {
     }
   }
 
+  async requestExtension(method: string, params: Record<string, unknown>): Promise<any> {
+    await this.ready;
+    if (!/^_(?:session|kanban)\/[a-z_]+$/.test(method)) {
+      throw new Error('hermes_acp_extension_method_invalid');
+    }
+    return this.request(method, params);
+  }
+
   async startTurn(args: HermesTurnArgs, onEvent: (event: HermesSessionEvent) => void): Promise<HermesTurnHandle> {
     await this.ready;
     const provisionalSessionId = args.sessionKey;
@@ -776,6 +793,13 @@ export async function startHermesTurn(
   onEvent: (event: HermesSessionEvent) => void,
 ): Promise<HermesTurnHandle> {
   return sharedHermesProcess().startTurn(args, onEvent);
+}
+
+export async function requestHermesExtension(
+  method: string,
+  params: Record<string, unknown>,
+): Promise<any> {
+  return sharedHermesProcess().requestExtension(method, params);
 }
 
 export async function prepareHermesSession(

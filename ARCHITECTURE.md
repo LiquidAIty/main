@@ -264,6 +264,13 @@ upstream-contribution plan is owned by `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. On
 remove a divergence if upstream supplies the equivalent public hook; otherwise reapply only its marked
 symbols and rerun the registered tests.
 
+ACP has no standard native-Kanban task method. The LiquidAIty-owned subclass in
+`apps/python-models/app/python_models/hermes_acp_bridge.py` adds only exact native-root lookup,
+idempotent Triage creation, and task readback over the stock Hermes ACP agent. It never calls
+`session/prompt`, decomposes work, dispatches workers, or synthesizes a response. The persistent
+Hermes gateway remains the sole automatic decomposer and dispatcher; native child tasks and profile
+workers remain internal to the one saved Kanban Card Run. The vendored Hermes source is unchanged.
+
 OpenClaude/LocalCoder is not a vendor boundary, package root, fallback, or supported runtime in Core v0.
 WorldSignals, Engraphis, and other imported roots remain isolated owners and are not ordinary cleanup
 targets.

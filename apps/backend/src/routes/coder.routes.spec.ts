@@ -70,6 +70,46 @@ const chatSessionMocks = vi.hoisted(() => {
   return mocks;
 });
 
+const kanbanMocks = vi.hoisted(() => ({
+  startNativeHermesKanbanTurn: vi.fn(async (params: any) => ({
+    done: Promise.resolve({
+      finalText: 'Native root synthesis.',
+      usage: {
+        providerInputTokens: null,
+        providerOutputTokens: null,
+        totalCostUsd: null,
+        usageAvailable: false,
+        usageSource: 'hermes_native_kanban_unavailable',
+        contextBreakdownJson: '',
+      },
+      transport: {
+        threadId: 't_native_root',
+        turnId: '41',
+        authMode: null,
+        planType: 'hermes-native-kanban',
+        nativeTaskId: 't_native_root',
+        nativeRunId: 41,
+        nativeStatus: 'done',
+      },
+    }),
+    cancel: vi.fn(),
+    answer: vi.fn(),
+    resolved: {
+      cardId: params.cardId,
+      provider: params.provider,
+      modelKey: params.modelKey,
+      providerModelId: params.providerModelId,
+    },
+    runtime: {
+      executable: 'hermes-acp.exe',
+      pid: 42,
+      hermesHome: 'Hermes/.hermes',
+      sessionId: 't_native_root',
+      transport: 'hermes-kanban',
+    },
+  })),
+}));
+
 const mcpClientMocks = vi.hoisted(() => ({
   callPythonAgentMcpTool: vi.fn(async () => ({ ok: true })),
   listPythonAgentMcpCatalog: vi.fn(async (): Promise<any[]> => []),
@@ -178,7 +218,9 @@ const orchestratorMocks = vi.hoisted(() => ({
         runId: body.runId,
         cardRevisionId: body.cardRevisionId,
         runtimeOwner: 'hermes',
-        resolvedNativeReads: coderCard ? [{ authority: 'CodeGraph', nativeId: 'pkg.materialize_idf' }] : [],
+        resolvedNativeReads: autoKanban
+          ? [{ authority: 'ThinkGraph', nativeId: 'think-root-1' }]
+          : coderCard ? [{ authority: 'CodeGraph', nativeId: 'pkg.materialize_idf' }] : [],
         resolvedGraphProjection: {
           schemaVersion: 'native-card-context.v1',
           authority: 'mixed',
@@ -267,6 +309,10 @@ vi.mock('../hermes/mainAdapter', () => ({
   prepareHermesSession: chatSessionMocks.prepareHermesSession,
   readHermesHistory: chatSessionMocks.readHermesHistory,
   startHermesTurn: chatSessionMocks.startHermesTurn,
+}));
+
+vi.mock('./hermesKanban.routes', () => ({
+  startNativeHermesKanbanTurn: kanbanMocks.startNativeHermesKanbanTurn,
 }));
 
 vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
@@ -524,36 +570,10 @@ describe('coder routes', () => {
     }
   });
 
-  it('routes the saved Kanban Card through its stable native Hermes ACP session', async () => {
+  it('uses ACP to create and join one native Hermes Kanban root task', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.startHermesTurn.mockClear();
-    chatSessionMocks.startHermesTurn.mockImplementationOnce(async (_params: unknown, onEvent: (event: any) => void) => {
-      onEvent({
-        kind: 'tool_start',
-        toolName: 'write_mag_one_instructions',
-        toolCallId: 'stage-coder-1',
-        input: { targetCardId: 'card_local_coder' },
-      });
-      onEvent({ kind: 'reasoning', text: 'private child reasoning' });
-      onEvent({
-        kind: 'tool_result',
-        toolName: 'write_mag_one_instructions',
-        toolCallId: 'stage-coder-1',
-        isError: false,
-        output: { ok: true, targetCardId: 'card_local_coder', started: false },
-      });
-      return {
-        done: Promise.resolve({ finalText: 'Real assistant reply.', usage: chatSessionMocks.usage }),
-        cancel: chatSessionMocks.lastCancel,
-        answer: vi.fn(),
-        resolved: {
-          cardId: 'card_hermes_steward',
-          provider: 'openai',
-          modelKey: 'gpt-5.6-luna',
-          providerModelId: 'gpt-5.6-luna',
-        },
-      };
-    });
+    kanbanMocks.startNativeHermesKanbanTurn.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
@@ -578,27 +598,19 @@ describe('coder routes', () => {
         ok: true,
         result: {
           status: 'completed',
-          output: 'Real assistant reply.',
+          output: 'Native root synthesis.',
           runtimeOwner: 'hermes',
-          nativeEvents: [
-            expect.objectContaining({
-              kind: 'tool_start',
-              toolName: 'write_mag_one_instructions',
-              toolCallId: 'stage-coder-1',
-            }),
-            expect.objectContaining({
-              kind: 'tool_result',
-              toolName: 'write_mag_one_instructions',
-              toolCallId: 'stage-coder-1',
-              isError: false,
-            }),
-          ],
+          nativeEvents: [],
+          transport: expect.objectContaining({
+            nativeTaskId: 't_native_root',
+            planType: 'hermes-native-kanban',
+          }),
           receipt: { runId: 'corr-steward-1', state: 'completed' },
         },
       });
-      expect(JSON.stringify(payload.result.nativeEvents)).not.toContain('private child reasoning');
-      expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1);
-      expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).toMatchObject({
+      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
+      expect(kanbanMocks.startNativeHermesKanbanTurn).toHaveBeenCalledTimes(1);
+      expect(kanbanMocks.startNativeHermesKanbanTurn.mock.calls[0]?.[0]).toMatchObject({
         cardId: 'card_hermes_steward',
         title: 'Hermes steward',
         prompt: 'Saved prompt',
@@ -606,7 +618,16 @@ describe('coder routes', () => {
         provider: 'openai',
         providerModelId: 'gpt-5.6-luna',
         skills: ['documentation'],
-        message: 'Prepare one bounded documentation result.',
+        nativeMission: [
+          'Saved Card system instructions:',
+          'Saved prompt',
+          '',
+          'Mission:',
+          'Prepare one bounded documentation result.',
+          '',
+          'Ordered native references:',
+          '- ThinkGraph:think-root-1',
+        ].join('\n'),
       });
       const finishCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
         ([endpoint, init]) => endpoint === '/domain/runs/finish'
@@ -614,9 +635,43 @@ describe('coder routes', () => {
       );
       expect(JSON.parse(String(finishCall?.[1]?.body || '{}'))).toMatchObject({
         runId: 'corr-steward-1',
-        providerThreadRef: null,
-        providerTurnRef: null,
+        providerThreadRef: 't_native_root',
+        providerTurnRef: '41',
       });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('fails Kanban closed without retrying through ordinary ACP', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    chatSessionMocks.startHermesTurn.mockClear();
+    kanbanMocks.startNativeHermesKanbanTurn.mockRejectedValueOnce(
+      new Error('hermes_kanban_gateway_not_running'),
+    );
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'card_hermes_steward',
+          correlationId: 'corr-steward-failed',
+          conversationId: 'conversation-main-1',
+          senderCardId: 'card_main_chat',
+          input: 'Fail closed.',
+          action: 'execute',
+        }),
+      });
+      expect(response.status).toBe(502);
+      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
+      const failedFinish = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+        ([endpoint, init]) => endpoint === '/domain/runs/finish'
+          && JSON.parse(String(init?.body || '{}')).state === 'failed',
+      );
+      expect(failedFinish).toBeTruthy();
     } finally {
       await closeServer(server);
     }

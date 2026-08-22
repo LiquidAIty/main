@@ -36,6 +36,7 @@ import {
 } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
 import { resolveHermesExecutionContext } from '../hermes/childExecutionContext';
+import { startNativeHermesKanbanTurn } from './hermesKanban.routes';
 
 const router = Router();
 const CODER_CARD_ID = 'card_local_coder';
@@ -301,6 +302,29 @@ async function startPreparedHermesTransport(
   args: PreparedHermesTransportArgs,
 ): Promise<HermesTurnHandle> {
   const turnArgs = resolvePreparedHermesTurnArgs(args);
+  if (turnArgs.runtime.mode === 'kanban') {
+    const anchors = (Array.isArray(args.prepared?.resolvedNativeReads)
+      ? args.prepared.resolvedNativeReads
+      : [])
+      .map((reference: any) => ({
+        authority: String(reference?.authority || '').trim(),
+        nativeId: String(reference?.nativeId || '').trim(),
+      }))
+      .filter((reference: { authority: string; nativeId: string }) => reference.authority && reference.nativeId);
+    const mission = [
+      'Saved Card system instructions:',
+      String(args.prepared?.hermesTransport?.idf?.systemPrompt || '').trim(),
+      '',
+      'Mission:',
+      String(args.prepared?.hermesTransport?.idf?.message || '').trim(),
+      ...(anchors.length > 0
+        ? ['', 'Ordered native references:', ...anchors.map((reference: { authority: string; nativeId: string }) => (
+            `- ${reference.authority}:${reference.nativeId}`
+          ))]
+        : []),
+    ].join('\n');
+    return startNativeHermesKanbanTurn({ ...turnArgs, nativeMission: mission }, args.onEvent);
+  }
   return startHermesTurn(turnArgs, args.onEvent);
 }
 
