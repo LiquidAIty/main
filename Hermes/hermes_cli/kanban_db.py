@@ -10734,6 +10734,10 @@ def _default_spawn(
 
     prompt = f"work kanban task {task.id}"
     env = dict(os.environ)
+    # LIQUIDAITY VENDOR PATCH: the signing secret belongs only to the host
+    # process.  A registered provider may add a scoped bearer below, but the
+    # worker can never inherit the authority to mint another bearer.
+    env.pop("LIQUIDAITY_INTERNAL_MCP_SECRET", None)
     # The dispatcher is detached from every conversation. Its worker must never
     # inherit routing mirrored by a previous gateway turn, even before the first
     # session binds ContextVars in this process.
@@ -10829,6 +10833,35 @@ def _default_spawn(
     # what the tool reads — set it explicitly here so comments are
     # attributed correctly regardless of how the child loads config.
     env["HERMES_PROFILE"] = profile_arg
+
+    # LIQUIDAITY VENDOR PATCH: registered providers may add narrowly-scoped
+    # values to this one child
+    # only.  They receive bounded native identity rather than the mutable Task
+    # or inherited process environment, and may not replace any stock or
+    # inherited key.  A provider failure deliberately propagates into the
+    # dispatcher's existing spawn-failure/retry semantics.
+    from hermes_cli.plugins import (
+        KanbanWorkerEnvironmentContext,
+        resolve_kanban_worker_environment,
+    )
+    provider_env = resolve_kanban_worker_environment(
+        KanbanWorkerEnvironmentContext(
+            task_id=task.id,
+            run_id=str(task.current_run_id or ""),
+            board=resolved_board,
+            assignee=str(task.assignee or ""),
+            profile=profile_arg,
+            workspace=str(workspace or ""),
+            claim_lock=str(task.claim_lock or ""),
+        )
+    )
+    conflicts = sorted(set(provider_env).intersection(env))
+    if conflicts:
+        raise RuntimeError(
+            "Kanban worker environment provider attempted to replace existing key(s): "
+            + ", ".join(conflicts)
+        )
+    env.update(provider_env)
 
     # A worker must NEVER boot the interactive TUI: an inherited HERMES_TUI=1
     # or a `display.interface: tui` in the profile's config would send the

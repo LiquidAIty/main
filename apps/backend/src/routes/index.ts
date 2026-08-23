@@ -10,6 +10,7 @@ import decksRoutes from './decks.routes';
 import worldsignalRoutes from './worldsignal.routes';
 import config from './config.routes';
 import hermesKanbanRoutes from './hermesKanban.routes';
+import internalHermesKanbanRoutes from './internalHermesKanban.routes';
 
 const router = Router();
 
@@ -18,6 +19,10 @@ router.use('/auth', auth);
 
 // Mount children exactly once. Preserve existing concrete paths.
 router.use('/health', health);
+// Native Hermes workers call this strict socket-loopback seam before spawn.
+// It is intentionally outside user/Auth0 middleware and never mounted by the
+// public MCP/ngrok service.
+router.use('/internal/hermes-kanban', internalHermesKanbanRoutes);
 router.use('/config', authMiddleware, config);
 router.use('/coder', authMiddleware, coder);
 router.use('/knowgraph', authMiddleware, knowgraphRoutes);

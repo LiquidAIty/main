@@ -282,6 +282,16 @@ reports that exact provider logged in; it does not change provider, model, tempe
 OAuth storage. The registered files, proof, contribution plan, and rollback live in
 `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
+The default native Kanban worker lane also exposes one generic registered pre-spawn environment
+provider. The provider receives only bounded native task/run/board/profile/workspace/claim identity
+and may add new values to that child process without replacing inherited or stock Hermes values.
+LiquidAIty's bundled provider resolves the already-persisted native-root to saved-Card Run/revision/
+grant correlation over strict loopback, asks the existing signer for one short-lived Card bearer, and
+adds only `LIQUIDAITY_CARD_BEARER`; the signing secret is removed from the child environment. Hermes'
+normal MCP `${ENV_VAR}` header interpolation consumes the bearer, while model OAuth and ordinary
+workers without a registered provider remain unchanged. Focused proof and rollback are registered in
+`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
+
 OpenClaude/LocalCoder is not a vendor boundary, package root, fallback, or supported runtime in Core v0.
 WorldSignals, Engraphis, and other imported roots remain isolated owners and are not ordinary cleanup
 targets.

@@ -87,10 +87,13 @@ describe('hermesKanban helpers', () => {
     };
     const resolveRun = vi.fn(async (payload: Record<string, unknown>) => {
       expect(new Set(payload.nativeTaskIds as string[])).toEqual(new Set(['t_worker', 't_root']));
+      expect(payload).not.toHaveProperty('projectId');
+      expect(payload).not.toHaveProperty('deckId');
       return {
         ok: true,
         context: {
-          projectId: 'project-one', deckId: 'deck_builder', runId: 'card-run-one',
+          projectId: 'project-one', deckId: 'deck_builder', conversationId: 'conversation-one',
+          runId: 'card-run-one',
           rootRunId: 'card-run-one', cardId: 'card_hermes_steward',
           cardRevisionId: 'revision-one', runtimeMode: 'kanban',
           runtimeProfile: 'liquidaity-hermes-steward', nativeRootId: 't_root',
@@ -100,14 +103,13 @@ describe('hermesKanban helpers', () => {
     });
 
     const context = await resolveHermesKanbanCardExecutionContext({
-      projectId: 'project-one',
-      deckId: 'deck_builder',
       taskId: 't_worker',
       show: async (taskId) => snapshots[taskId],
       resolveRun,
     });
 
     expect(context.runId).toBe('card-run-one');
+    expect(context.conversationId).toBe('conversation-one');
     expect(context.nativeRootId).toBe('t_root');
     expect(context.nativeChildId).toBe('t_worker');
     expect(context.grantedTools).toEqual(['cbm.search_graph', 'graphiti.add_memory']);

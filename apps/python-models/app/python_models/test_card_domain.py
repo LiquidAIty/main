@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.python_models import card_domain
@@ -510,6 +512,8 @@ def test_native_hermes_task_context_uses_exact_root_run_revision_grants(
                 return [{
                     "run_id": "run-one",
                     "provider_thread_ref": "t_root",
+                    "project_id": "project-one",
+                    "deck_id": "deck_builder",
                     "target_card_revision_id": "revision-one",
                     "card_id": "card_hermes_steward",
                     "runtime_kind": "hermes",
@@ -522,6 +526,8 @@ def test_native_hermes_task_context_uses_exact_root_run_revision_grants(
                     {"grant_id": "graphiti.add_memory"},
                     {"grant_id": "card.load_graph_references"},
                 ]
+            if "ag_catalog.cypher" in self.last_query:
+                return [{"value": json.dumps({"conversationId": "conversation-one"})}]
             return []
 
     class Connection:
@@ -543,14 +549,13 @@ def test_native_hermes_task_context_uses_exact_root_run_revision_grants(
     )
 
     result = card_domain.resolve_native_hermes_task_context({
-        "projectId": "project-one",
-        "deckId": "deck_builder",
         "nativeTaskIds": ["t_worker", "t_root"],
     })
 
     assert result["context"] == {
         "projectId": "project-one",
         "deckId": "deck_builder",
+        "conversationId": "conversation-one",
         "runId": "run-one",
         "rootRunId": "run-one",
         "cardId": "card_hermes_steward",
@@ -569,6 +574,13 @@ def test_native_hermes_task_context_uses_exact_root_run_revision_grants(
     assert "provider_thread_ref = ANY" in query
     assert "target_card_revision_id" in query
     assert "grant_kind='tool'" in query
+    run_query, run_params = next(
+        (statement, params)
+        for statement, params in statements
+        if "FROM ag_catalog.agent_runs" in statement
+    )
+    assert "run.project_id=%s" not in run_query
+    assert run_params == (["t_root", "t_worker"],)
 
 
 def test_run_progress_casts_numeric_native_run_id_to_persisted_text(

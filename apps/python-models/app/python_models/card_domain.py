@@ -2305,8 +2305,10 @@ def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any
     it creates no worker identity, lease, bearer, or secondary registry.
     """
 
-    project_ref = _required_text(payload.get("projectId"), "project_id")
-    deck_id = _required_text(payload.get("deckId"), "deck_id")
+    project_ref = str(payload.get("projectId") or "").strip()
+    deck_id = str(payload.get("deckId") or "").strip()
+    if bool(project_ref) != bool(deck_id):
+        raise CardDomainError("hermes_kanban_card_authority_incomplete")
     raw_task_ids = payload.get("nativeTaskIds")
     if not isinstance(raw_task_ids, list) or not raw_task_ids or len(raw_task_ids) > 256:
         raise CardDomainError("hermes_kanban_task_ids_invalid")
@@ -2320,12 +2322,13 @@ def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any
     with connect_postgres(autocommit=False) as connection:
         with connection.cursor(row_factory=dict_row) as cursor:
             cursor.execute("SET TRANSACTION READ ONLY")
-            project = _resolve_project(cursor, project_ref)
-            project_id = str(project["id"])
-            cursor.execute(
-                """
+            if project_ref:
+                project = _resolve_project(cursor, project_ref)
+                project_id = str(project["id"])
+                cursor.execute(
+                    """
                 SELECT run.run_id, run.provider_thread_ref,
-                       run.target_card_revision_id,
+                       run.project_id, run.deck_id, run.target_card_revision_id,
                        revision.card_id, revision.runtime_kind,
                        revision.runtime_mode, revision.runtime_profile,
                        revision.enabled
@@ -2338,14 +2341,34 @@ def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any
                   AND run.runtime_mode='kanban'
                 ORDER BY run.created_at ASC
                 """,
-                (project_id, deck_id, task_ids),
-            )
+                    (project_id, deck_id, task_ids),
+                )
+            else:
+                cursor.execute(
+                    """
+                SELECT run.run_id, run.provider_thread_ref,
+                       run.project_id, run.deck_id, run.target_card_revision_id,
+                       revision.card_id, revision.runtime_kind,
+                       revision.runtime_mode, revision.runtime_profile,
+                       revision.enabled
+                FROM ag_catalog.agent_runs AS run
+                JOIN ag_catalog.agent_card_revisions AS revision
+                  ON revision.revision_id=run.target_card_revision_id
+                WHERE run.provider_thread_ref = ANY(%s::text[])
+                  AND run.runtime_kind='hermes'
+                  AND run.runtime_mode='kanban'
+                ORDER BY run.created_at ASC
+                """,
+                    (task_ids,),
+                )
             rows = [dict(row) for row in cursor.fetchall()]
             if not rows:
                 raise CardDomainError("hermes_kanban_card_run_not_found")
             if len(rows) != 1:
                 raise CardDomainError("hermes_kanban_card_run_ambiguous")
             row = rows[0]
+            project_id = str(row["project_id"])
+            deck_id = str(row["deck_id"])
             if row.get("enabled") is False:
                 raise CardDomainError("hermes_kanban_card_disabled")
             revision_id = str(row["target_card_revision_id"])
@@ -2359,6 +2382,24 @@ def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any
                 (revision_id,),
             )
             saved_tool_grants = [str(grant["grant_id"]) for grant in cursor.fetchall()]
+            telemetry_rows = _age_rows(
+                cursor,
+                """
+                MATCH (run:Run {runId: $runId})
+                RETURN properties(run)
+                """,
+                {"runId": str(row["run_id"])},
+                "value agtype",
+            )
+
+    telemetry = telemetry_rows[0].get("value") if telemetry_rows else None
+    conversation_id = (
+        str(telemetry.get("conversationId") or "").strip()
+        if isinstance(telemetry, dict)
+        else ""
+    )
+    if not conversation_id:
+        raise CardDomainError("hermes_kanban_card_run_conversation_not_found")
 
     effective_tools = sorted({*readable_tool_ids(), *saved_tool_grants})
     return {
@@ -2366,6 +2407,7 @@ def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any
         "context": {
             "projectId": project_id,
             "deckId": deck_id,
+            "conversationId": conversation_id,
             "runId": str(row["run_id"]),
             "rootRunId": str(row["run_id"]),
             "cardId": str(row["card_id"]),

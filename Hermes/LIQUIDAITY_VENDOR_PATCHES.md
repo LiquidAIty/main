@@ -193,3 +193,35 @@ descendant-pipe regression. Drop this patch when upstream `_bash_starts` uses th
 
 Rollback: restore raw `subprocess.run` in `_bash_starts`; this reopens an unbounded Windows startup
 hang and is safe only after upstream supplies equivalent process-tree timeout handling.
+
+## Patch: registered pre-spawn Kanban worker environment provider
+
+Purpose: let a host add short-lived, run-scoped environment values to the one native profile-worker
+child immediately before spawn. Hermes supplies only bounded native task, run, board, assignee,
+profile, workspace, and claim-lock identity. Providers cannot inspect the task prompt or inherited
+environment, replace existing or stock `HERMES_KANBAN_*` values, or persist credentials.
+
+Files and symbols:
+
+- `hermes_cli/plugins.py`: `KanbanWorkerEnvironmentContext`,
+  `PluginContext.register_kanban_worker_environment_provider`, and
+  `resolve_kanban_worker_environment` provide the generic synchronous registry.
+- `hermes_cli/kanban_db.py`: `_default_spawn` resolves additive values after stock worker identity is
+  fixed and before `Popen`; provider errors follow the existing visible spawn-failure/retry path. It
+  also removes the host-only `LIQUIDAITY_INTERNAL_MCP_SECRET` from the child.
+- `plugins/liquidaity-card-mcp/`: the product provider exchanges bounded native claim identity over
+  loopback and returns only `LIQUIDAITY_CARD_BEARER`.
+- `tests/plugins/test_kanban_worker_environment.py`: provider-free compatibility, additive merge,
+  failure, isolation, and redaction proof.
+
+Upstream behavior preserved: no-provider dispatch retains the original command, environment, worker
+ownership, profile, OAuth, and lifecycle. The provider cannot choose a model, tool, task, or runtime.
+LiquidAIty correlation and bearer signing stay outside Hermes; ordinary tasks that do not resolve to a
+saved Card Run receive no added value.
+
+Contribution plan: propose the generic bounded pre-spawn environment-provider registry upstream with
+tests for no-provider compatibility, non-overwrite, concurrent isolation, and visible provider
+failure. Keep the LiquidAIty loopback provider downstream.
+
+Rollback: remove the marked registry and `_default_spawn` call site plus the bundled LiquidAIty
+provider. Native workers then retain stock spawning but cannot use Card-scoped LiquidAIty MCP grants.

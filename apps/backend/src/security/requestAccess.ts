@@ -43,6 +43,11 @@ function isLoopbackAddress(value: string): boolean {
   );
 }
 
+/** Strict transport check for internal process-to-process HTTP seams. */
+export function isLoopbackSocketRequest(req: Request): boolean {
+  return isLoopbackAddress(String(req.socket.remoteAddress || ''));
+}
+
 export function isLocalDevLoopbackRequest(req: Request): boolean {
   const nodeEnv = (process.env.NODE_ENV || 'development').toLowerCase();
   if (nodeEnv === 'production') return false;

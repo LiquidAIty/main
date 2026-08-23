@@ -255,6 +255,7 @@ async function readHermesKanbanTaskGraph(
 export type HermesKanbanCardExecutionContext = {
   projectId: string;
   deckId: string;
+  conversationId: string;
   runId: string;
   rootRunId: string;
   cardId: string;
@@ -267,8 +268,8 @@ export type HermesKanbanCardExecutionContext = {
 };
 
 export async function resolveHermesKanbanCardExecutionContext(args: {
-  projectId: string;
-  deckId: string;
+  projectId?: string;
+  deckId?: string;
   taskId: string;
   show?: (taskId: string) => Promise<HermesKanbanTaskSnapshot>;
   resolveRun?: (payload: Record<string, unknown>) => Promise<Record<string, unknown>>;
@@ -276,7 +277,9 @@ export async function resolveHermesKanbanCardExecutionContext(args: {
   const projectId = String(args.projectId || '').trim();
   const deckId = String(args.deckId || '').trim();
   const taskId = String(args.taskId || '').trim();
-  if (!projectId || !deckId) throw new Error('hermes_kanban_card_authority_incomplete');
+  if (Boolean(projectId) !== Boolean(deckId)) {
+    throw new Error('hermes_kanban_card_authority_incomplete');
+  }
   if (!/^t_[A-Za-z0-9_-]+$/.test(taskId)) throw new Error('hermes_kanban_card_task_id_invalid');
   const show = args.show ?? (async (nativeTaskId: string) => (
     requestHermesExtension('_kanban/show', { taskId: nativeTaskId }) as Promise<HermesKanbanTaskSnapshot>
@@ -291,12 +294,18 @@ export async function resolveHermesKanbanCardExecutionContext(args: {
       body: JSON.stringify(payload),
     }) as Promise<Record<string, unknown>>
   ));
-  const resolved = await resolveRun({ projectId, deckId, nativeTaskIds });
+  const resolved = await resolveRun({
+    ...(projectId ? { projectId, deckId } : {}),
+    nativeTaskIds,
+  });
   const rawContext = resolved?.context;
   if (!resolved?.ok || !rawContext || typeof rawContext !== 'object') {
     throw new Error('hermes_kanban_card_run_context_rejected');
   }
   const context = rawContext as Record<string, unknown>;
+  const resolvedProjectId = String(context.projectId || '').trim();
+  const resolvedDeckId = String(context.deckId || '').trim();
+  const conversationId = String(context.conversationId || '').trim();
   const nativeRootId = String(context.nativeRootId || '').trim();
   const root = snapshots.find((snapshot) => String(snapshot.task.id || '').trim() === nativeRootId);
   const grantedTools = Array.isArray(context.grantedTools)
@@ -304,8 +313,11 @@ export async function resolveHermesKanbanCardExecutionContext(args: {
     : [];
   if (
     !root
-    || String(context.projectId || '') !== projectId
-    || String(context.deckId || '') !== deckId
+    || !resolvedProjectId
+    || !resolvedDeckId
+    || !conversationId
+    || (projectId && resolvedProjectId !== projectId)
+    || (deckId && resolvedDeckId !== deckId)
     || String(context.runtimeMode || '') !== 'kanban'
     || !String(context.runId || '').trim()
     || String(context.rootRunId || '') !== String(context.runId || '')
@@ -320,12 +332,13 @@ export async function resolveHermesKanbanCardExecutionContext(args: {
   if (nativeCardId && nativeCardId !== String(context.cardId)) {
     throw new Error('hermes_kanban_card_run_card_mismatch');
   }
-  if (nativeProjectId && nativeProjectId !== projectId) {
+  if (nativeProjectId && nativeProjectId !== resolvedProjectId) {
     throw new Error('hermes_kanban_card_run_project_mismatch');
   }
   return {
-    projectId,
-    deckId,
+    projectId: resolvedProjectId,
+    deckId: resolvedDeckId,
+    conversationId,
     runId: String(context.runId),
     rootRunId: String(context.runId),
     cardId: String(context.cardId),
