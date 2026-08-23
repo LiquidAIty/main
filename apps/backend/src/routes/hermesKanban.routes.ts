@@ -16,6 +16,7 @@ import {
   finishHermesExecutionContext,
   registerHermesRootExecutionContext,
 } from '../hermes/childExecutionContext';
+import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
 
 /*
  * Hermes Kanban proxy — thin read/persistence adapter (DONT.md rule 5).
@@ -249,6 +250,92 @@ async function readHermesKanbanTaskGraph(
     }
   }
   return [...snapshots.values()];
+}
+
+export type HermesKanbanCardExecutionContext = {
+  projectId: string;
+  deckId: string;
+  runId: string;
+  rootRunId: string;
+  cardId: string;
+  cardRevisionId: string;
+  runtimeMode: 'kanban';
+  runtimeProfile: string;
+  nativeRootId: string;
+  nativeChildId: string;
+  grantedTools: string[];
+};
+
+export async function resolveHermesKanbanCardExecutionContext(args: {
+  projectId: string;
+  deckId: string;
+  taskId: string;
+  show?: (taskId: string) => Promise<HermesKanbanTaskSnapshot>;
+  resolveRun?: (payload: Record<string, unknown>) => Promise<Record<string, unknown>>;
+}): Promise<HermesKanbanCardExecutionContext> {
+  const projectId = String(args.projectId || '').trim();
+  const deckId = String(args.deckId || '').trim();
+  const taskId = String(args.taskId || '').trim();
+  if (!projectId || !deckId) throw new Error('hermes_kanban_card_authority_incomplete');
+  if (!/^t_[A-Za-z0-9_-]+$/.test(taskId)) throw new Error('hermes_kanban_card_task_id_invalid');
+  const show = args.show ?? (async (nativeTaskId: string) => (
+    requestHermesExtension('_kanban/show', { taskId: nativeTaskId }) as Promise<HermesKanbanTaskSnapshot>
+  ));
+  const first = requireNativeTaskSnapshot(taskId, JSON.stringify(await show(taskId)));
+  const snapshots = await readHermesKanbanTaskGraph(taskId, first, show);
+  const nativeTaskIds = snapshots.map((snapshot) => String(snapshot.task.id || '').trim());
+  const resolveRun = args.resolveRun ?? (async (payload) => (
+    requestPythonRailsJson('/domain/runs/resolve-native-hermes-task-context', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }) as Promise<Record<string, unknown>>
+  ));
+  const resolved = await resolveRun({ projectId, deckId, nativeTaskIds });
+  const rawContext = resolved?.context;
+  if (!resolved?.ok || !rawContext || typeof rawContext !== 'object') {
+    throw new Error('hermes_kanban_card_run_context_rejected');
+  }
+  const context = rawContext as Record<string, unknown>;
+  const nativeRootId = String(context.nativeRootId || '').trim();
+  const root = snapshots.find((snapshot) => String(snapshot.task.id || '').trim() === nativeRootId);
+  const grantedTools = Array.isArray(context.grantedTools)
+    ? [...new Set(context.grantedTools.map(String).map((value) => value.trim()).filter(Boolean))].sort()
+    : [];
+  if (
+    !root
+    || String(context.projectId || '') !== projectId
+    || String(context.deckId || '') !== deckId
+    || String(context.runtimeMode || '') !== 'kanban'
+    || !String(context.runId || '').trim()
+    || String(context.rootRunId || '') !== String(context.runId || '')
+    || !String(context.cardId || '').trim()
+    || !String(context.cardRevisionId || '').trim()
+    || !grantedTools.length
+  ) {
+    throw new Error('hermes_kanban_card_run_context_invalid');
+  }
+  const nativeCardId = String(root.task.created_by || '').trim();
+  const nativeProjectId = String(root.task.project_id || '').trim();
+  if (nativeCardId && nativeCardId !== String(context.cardId)) {
+    throw new Error('hermes_kanban_card_run_card_mismatch');
+  }
+  if (nativeProjectId && nativeProjectId !== projectId) {
+    throw new Error('hermes_kanban_card_run_project_mismatch');
+  }
+  return {
+    projectId,
+    deckId,
+    runId: String(context.runId),
+    rootRunId: String(context.runId),
+    cardId: String(context.cardId),
+    cardRevisionId: String(context.cardRevisionId),
+    runtimeMode: 'kanban',
+    runtimeProfile: String(context.runtimeProfile || ''),
+    nativeRootId,
+    nativeChildId: taskId,
+    grantedTools,
+  };
 }
 
 export async function readHermesKanbanSessionUsage(

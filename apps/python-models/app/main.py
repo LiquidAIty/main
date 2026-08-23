@@ -27,6 +27,7 @@ from app.python_models.card_domain import (
     prepare_main_chat,
     read_run,
     record_explicit_artifact,
+    resolve_native_hermes_task_context,
     save_deck,
     update_run_progress,
 )
@@ -203,6 +204,14 @@ def domain_run_read(payload: dict[str, Any]):
         return read_run(payload)
     except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/domain/runs/resolve-native-hermes-task-context")
+def domain_native_hermes_task_context(payload: dict[str, Any]):
+    try:
+        return resolve_native_hermes_task_context(payload)
+    except CardDomainError as err:
+        raise HTTPException(status_code=403, detail=str(err)) from err
 
 
 @app.get("/domain/runs/active-kanban")

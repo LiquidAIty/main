@@ -487,6 +487,90 @@ def test_run_projection_carries_saved_runtime_profile_for_exact_rejoin() -> None
     assert projected["nativeRootId"] == "t_retained_root"
 
 
+def test_native_hermes_task_context_uses_exact_root_run_revision_grants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[tuple[str, object]] = []
+
+    class Cursor:
+        last_query = ""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, params=None):
+            self.last_query = str(query)
+            statements.append((self.last_query, params))
+
+        def fetchall(self):
+            if "FROM ag_catalog.agent_runs" in self.last_query:
+                return [{
+                    "run_id": "run-one",
+                    "provider_thread_ref": "t_root",
+                    "target_card_revision_id": "revision-one",
+                    "card_id": "card_hermes_steward",
+                    "runtime_kind": "hermes",
+                    "runtime_mode": "kanban",
+                    "runtime_profile": "liquidaity-hermes-steward",
+                    "enabled": True,
+                }]
+            if "card_capability_grants" in self.last_query:
+                return [
+                    {"grant_id": "graphiti.add_memory"},
+                    {"grant_id": "card.load_graph_references"},
+                ]
+            return []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_resolve_project", lambda _cursor, _ref: {"id": "project-one"})
+    monkeypatch.setattr(
+        card_domain,
+        "readable_tool_ids",
+        lambda: frozenset({"cbm.search_graph", "engraphis.recall"}),
+    )
+
+    result = card_domain.resolve_native_hermes_task_context({
+        "projectId": "project-one",
+        "deckId": "deck_builder",
+        "nativeTaskIds": ["t_worker", "t_root"],
+    })
+
+    assert result["context"] == {
+        "projectId": "project-one",
+        "deckId": "deck_builder",
+        "runId": "run-one",
+        "rootRunId": "run-one",
+        "cardId": "card_hermes_steward",
+        "cardRevisionId": "revision-one",
+        "runtimeMode": "kanban",
+        "runtimeProfile": "liquidaity-hermes-steward",
+        "nativeRootId": "t_root",
+        "grantedTools": [
+            "card.load_graph_references",
+            "cbm.search_graph",
+            "engraphis.recall",
+            "graphiti.add_memory",
+        ],
+    }
+    query = "\n".join(statement for statement, _params in statements)
+    assert "provider_thread_ref = ANY" in query
+    assert "target_card_revision_id" in query
+    assert "grant_kind='tool'" in query
+
+
 def test_run_progress_casts_numeric_native_run_id_to_persisted_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

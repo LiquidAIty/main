@@ -20,6 +20,7 @@ from app.python_models.idd import (
     IddValidationError,
     load_input_data_dictionary,
     materialize_tool_catalog,
+    readable_tool_ids,
     tool_access,
     validate_record,
 )
@@ -2294,6 +2295,87 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
                 )
             row = cursor.fetchone()
     return {"ok": True, "run": _run_projection(dict(row)) if row is not None else None}
+
+
+def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any]:
+    """Resolve one native task component to its exact persisted Kanban Card Run.
+
+    Hermes owns task topology.  LiquidAIty owns the saved Card revision and the
+    Run/root correlation, so this read joins only those existing authorities;
+    it creates no worker identity, lease, bearer, or secondary registry.
+    """
+
+    project_ref = _required_text(payload.get("projectId"), "project_id")
+    deck_id = _required_text(payload.get("deckId"), "deck_id")
+    raw_task_ids = payload.get("nativeTaskIds")
+    if not isinstance(raw_task_ids, list) or not raw_task_ids or len(raw_task_ids) > 256:
+        raise CardDomainError("hermes_kanban_task_ids_invalid")
+    task_ids = sorted({str(value or "").strip() for value in raw_task_ids})
+    if (
+        len(task_ids) != len(raw_task_ids)
+        or any(not re.fullmatch(r"t_[A-Za-z0-9_-]+", value) for value in task_ids)
+    ):
+        raise CardDomainError("hermes_kanban_task_ids_invalid")
+
+    with connect_postgres(autocommit=False) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SET TRANSACTION READ ONLY")
+            project = _resolve_project(cursor, project_ref)
+            project_id = str(project["id"])
+            cursor.execute(
+                """
+                SELECT run.run_id, run.provider_thread_ref,
+                       run.target_card_revision_id,
+                       revision.card_id, revision.runtime_kind,
+                       revision.runtime_mode, revision.runtime_profile,
+                       revision.enabled
+                FROM ag_catalog.agent_runs AS run
+                JOIN ag_catalog.agent_card_revisions AS revision
+                  ON revision.revision_id=run.target_card_revision_id
+                WHERE run.project_id=%s AND run.deck_id=%s
+                  AND run.provider_thread_ref = ANY(%s::text[])
+                  AND run.runtime_kind='hermes'
+                  AND run.runtime_mode='kanban'
+                ORDER BY run.created_at ASC
+                """,
+                (project_id, deck_id, task_ids),
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+            if not rows:
+                raise CardDomainError("hermes_kanban_card_run_not_found")
+            if len(rows) != 1:
+                raise CardDomainError("hermes_kanban_card_run_ambiguous")
+            row = rows[0]
+            if row.get("enabled") is False:
+                raise CardDomainError("hermes_kanban_card_disabled")
+            revision_id = str(row["target_card_revision_id"])
+            cursor.execute(
+                """
+                SELECT grant_id
+                FROM ag_catalog.card_capability_grants
+                WHERE revision_id=%s AND grant_kind='tool'
+                ORDER BY ordinal
+                """,
+                (revision_id,),
+            )
+            saved_tool_grants = [str(grant["grant_id"]) for grant in cursor.fetchall()]
+
+    effective_tools = sorted({*readable_tool_ids(), *saved_tool_grants})
+    return {
+        "ok": True,
+        "context": {
+            "projectId": project_id,
+            "deckId": deck_id,
+            "runId": str(row["run_id"]),
+            "rootRunId": str(row["run_id"]),
+            "cardId": str(row["card_id"]),
+            "cardRevisionId": revision_id,
+            "runtimeMode": "kanban",
+            "runtimeProfile": str(row.get("runtime_profile") or ""),
+            "nativeRootId": str(row["provider_thread_ref"]),
+            "grantedTools": effective_tools,
+        },
+    }
 
 
 def list_active_kanban_runs() -> dict[str, Any]:

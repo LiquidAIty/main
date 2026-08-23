@@ -22,6 +22,7 @@ import {
   isHermesGatewayRunning,
   deriveHermesKanbanProgress,
   readHermesKanbanSessionUsage,
+  resolveHermesKanbanCardExecutionContext,
   startNativeHermesKanbanTurn,
   waitForHermesKanbanCardTask,
 } from './hermesKanban.routes';
@@ -70,6 +71,48 @@ const TASKS = [
 ];
 
 describe('hermesKanban helpers', () => {
+  it('resolves an ephemeral worker through the native graph to one saved Card Run', async () => {
+    const snapshots: Record<string, any> = {
+      t_worker: {
+        task: { id: 't_worker', status: 'done', created_by: 'auto-decomposer' },
+        parents: [], children: ['t_root'], events: [], runs: [],
+      },
+      t_root: {
+        task: {
+          id: 't_root', status: 'running', created_by: 'card_hermes_steward',
+          project_id: 'project-one',
+        },
+        parents: ['t_worker'], children: [], events: [{ kind: 'decomposed' }], runs: [],
+      },
+    };
+    const resolveRun = vi.fn(async (payload: Record<string, unknown>) => {
+      expect(new Set(payload.nativeTaskIds as string[])).toEqual(new Set(['t_worker', 't_root']));
+      return {
+        ok: true,
+        context: {
+          projectId: 'project-one', deckId: 'deck_builder', runId: 'card-run-one',
+          rootRunId: 'card-run-one', cardId: 'card_hermes_steward',
+          cardRevisionId: 'revision-one', runtimeMode: 'kanban',
+          runtimeProfile: 'liquidaity-hermes-steward', nativeRootId: 't_root',
+          grantedTools: ['graphiti.add_memory', 'cbm.search_graph'],
+        },
+      };
+    });
+
+    const context = await resolveHermesKanbanCardExecutionContext({
+      projectId: 'project-one',
+      deckId: 'deck_builder',
+      taskId: 't_worker',
+      show: async (taskId) => snapshots[taskId],
+      resolveRun,
+    });
+
+    expect(context.runId).toBe('card-run-one');
+    expect(context.nativeRootId).toBe('t_root');
+    expect(context.nativeChildId).toBe('t_worker');
+    expect(context.grantedTools).toEqual(['cbm.search_graph', 'graphiti.add_memory']);
+  });
+
   it('derives aggregate retained-root progress without creating worker identities', () => {
     const root = {
       task: { id: 't_625de6e8', status: 'running' },
