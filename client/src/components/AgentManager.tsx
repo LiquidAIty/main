@@ -10,8 +10,10 @@ import type {
   CardRuntime,
 } from '../types/agentgraph';
 import {
+  applyNativeHermesOperation,
   loadNativeHermesCard,
   testNativeHermesMcp,
+  type NativeHermesApplyOperation,
   type NativeHermesCardView,
 } from '../features/agentbuilder/nativeHermesCard';
 
@@ -536,6 +538,15 @@ export function AgentManager({
   const [nativeHermesState, setNativeHermesState] = useState<NativeHermesCardView | null>(null);
   const [nativeHermesStatus, setNativeHermesStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [nativeHermesError, setNativeHermesError] = useState<string | null>(null);
+  const [nativeApplyStatus, setNativeApplyStatus] = useState<'idle' | 'applying' | 'applied' | 'failed'>('idle');
+  const [nativeApplyError, setNativeApplyError] = useState<string | null>(null);
+  const [nativeDescriptionDraft, setNativeDescriptionDraft] = useState('');
+  const [nativeSoulDraft, setNativeSoulDraft] = useState('');
+  const [nativeProviderDraft, setNativeProviderDraft] = useState('');
+  const [nativeModelDraft, setNativeModelDraft] = useState('');
+  const [nativeDisabledSkills, setNativeDisabledSkills] = useState<string[]>([]);
+  const [nativeEnabledToolsets, setNativeEnabledToolsets] = useState<string[]>([]);
+  const [nativeEnabledMcpServers, setNativeEnabledMcpServers] = useState<string[]>([]);
   const [nativeMcpChecks, setNativeMcpChecks] = useState<Record<string, {
     status: 'checking' | 'connected' | 'failed';
     toolCount: number;
@@ -688,6 +699,34 @@ export function AgentManager({
   // unsaved Card drafts. Card save never mutates the bound profile.
   }, [isLocalConfigMode, projectId, deckId, cardId]);
 
+  useEffect(() => {
+    if (!nativeHermesState) {
+      setNativeDescriptionDraft('');
+      setNativeSoulDraft('');
+      setNativeProviderDraft('');
+      setNativeModelDraft('');
+      setNativeDisabledSkills([]);
+      setNativeEnabledToolsets([]);
+      setNativeEnabledMcpServers([]);
+      return;
+    }
+    setNativeDescriptionDraft(nativeHermesState.native.description);
+    setNativeSoulDraft(nativeHermesState.native.soul);
+    setNativeProviderDraft(nativeHermesState.native.model.provider);
+    setNativeModelDraft(nativeHermesState.native.model.default);
+    setNativeDisabledSkills(
+      nativeHermesState.native.skills.filter((item) => !item.enabled).map((item) => item.name),
+    );
+    setNativeEnabledToolsets(
+      nativeHermesState.native.toolsets.filter((item) => item.enabled).map((item) => item.name),
+    );
+    setNativeEnabledMcpServers(
+      nativeHermesState.native.mcpServers.filter((item) => item.enabled).map((item) => item.name),
+    );
+    setNativeApplyStatus('idle');
+    setNativeApplyError(null);
+  }, [nativeHermesState]);
+
   const markDraftDirty = () => {
     draftDirtyRef.current = true;
   };
@@ -787,6 +826,21 @@ export function AgentManager({
       setNativeHermesError(error instanceof Error ? error.message : 'Native profile unavailable.');
     }
   }, [projectId, deckId, cardId]);
+
+  const runNativeApply = useCallback(async (change: NativeHermesApplyOperation) => {
+    if (!projectId || !deckId || !cardId || nativeApplyStatus === 'applying') return;
+    setNativeApplyStatus('applying');
+    setNativeApplyError(null);
+    try {
+      const readback = await applyNativeHermesOperation({ projectId, deckId, cardId, change });
+      setNativeHermesState(readback);
+      setNativeHermesStatus('ready');
+      setNativeApplyStatus('applied');
+    } catch (error) {
+      setNativeApplyStatus('failed');
+      setNativeApplyError(error instanceof Error ? error.message : 'Native Apply failed.');
+    }
+  }, [projectId, deckId, cardId, nativeApplyStatus]);
 
   const checkNativeMcpServer = useCallback(async (serverName: string) => {
     if (!projectId || !deckId || !cardId) return;
@@ -1094,7 +1148,7 @@ export function AgentManager({
           ) : null}
           <div>
             <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-              Role
+              {runtimeKind === 'hermes' ? 'Card contract instructions' : 'Role'}
             </label>
             <textarea
               value={promptParts.role}
@@ -1198,7 +1252,7 @@ export function AgentManager({
 
           <div>
             <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-              Memory Policy
+              {runtimeKind === 'hermes' ? 'Output and retention expectations' : 'Memory Policy'}
             </label>
             <textarea
               value={promptParts.memoryPolicy}
@@ -1229,6 +1283,74 @@ export function AgentManager({
     if (activeTab === 'Knowledge') {
       return (
         <div data-testid="agent-manager-knowledge" style={{ display: 'grid', gap: 10 }}>
+          {runtimeKind === 'hermes' && nativeHermesState ? (
+            <section
+              data-testid="agent-native-knowledge"
+              style={{ display: 'grid', gap: 10, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#202827' }}
+            >
+              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
+                Native profile knowledge
+              </div>
+              <div style={{ color: '#80969F', fontSize: 10.5, lineHeight: 1.45 }}>
+                Role and Soul remain owned by profile {nativeHermesState.binding.profile}. Each button invokes one native operation and then re-reads Hermes. Save Card Version does not apply these drafts.
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                  Role
+                </label>
+                <textarea
+                  aria-label="Native profile Role"
+                  value={nativeDescriptionDraft}
+                  onChange={(event) => setNativeDescriptionDraft(event.target.value)}
+                  rows={3}
+                />
+                <button
+                  type="button"
+                  disabled={nativeApplyStatus === 'applying'}
+                  onClick={() => void runNativeApply({ operation: 'profile.description.set', value: nativeDescriptionDraft })}
+                >
+                  Apply Role to profile
+                </button>
+              </div>
+              <details>
+                <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>Soul</summary>
+                <div style={{ display: 'grid', gap: 7, marginTop: 8 }}>
+                  <textarea
+                    aria-label="Native profile Soul"
+                    value={nativeSoulDraft}
+                    onChange={(event) => setNativeSoulDraft(event.target.value)}
+                    rows={10}
+                    style={{ fontFamily: 'monospace', resize: 'vertical' }}
+                  />
+                  <button
+                    type="button"
+                    disabled={nativeApplyStatus === 'applying'}
+                    onClick={() => void runNativeApply({ operation: 'profile.soul.set', value: nativeSoulDraft })}
+                  >
+                    Apply Soul to profile
+                  </button>
+                </div>
+              </details>
+              <details>
+                <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
+                  Memory and learning · {nativeHermesState.native.learning.count} native item{nativeHermesState.native.learning.count === 1 ? '' : 's'}
+                </summary>
+                <div style={{ display: 'grid', gap: 6, marginTop: 8, color: '#9FB2B8', fontSize: 10.5 }}>
+                  <div>{nativeHermesState.native.learning.summary || 'Native learning state is empty.'}</div>
+                  <div>
+                    Holographic/SQLite memory, learned skills, automatic skill creation, and /learn remain native. Detailed graph, Learn, and mutation controls are intentionally deferred from this pass.
+                  </div>
+                </div>
+              </details>
+              {nativeApplyStatus === 'applying' ? (
+                <div style={{ color: '#80969F', fontSize: 11 }}>Applying one native operation…</div>
+              ) : nativeApplyStatus === 'applied' ? (
+                <div style={{ color: '#72D7C7', fontSize: 11 }}>Native Apply confirmed by profile readback.</div>
+              ) : nativeApplyStatus === 'failed' ? (
+                <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>{nativeApplyError || 'Native Apply failed.'}</div>
+              ) : null}
+            </section>
+          ) : null}
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
             {knowledgeProjectionIsMaterialized
               ? 'Exact model-bound native graph context'
@@ -1390,93 +1512,69 @@ export function AgentManager({
                 </div>
               </div>
             ) : null}
-            <div>
-              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                {providerField?.label}
-              </label>
-              <select
-                value={provider}
-                onChange={(event) => {
-                  const nextProvider = event.target.value as 'openai' | 'openrouter' | '';
-                  setProvider(nextProvider);
-                  const nextModels = nextProvider ? modelsByProvider[nextProvider] || [] : [];
-                  setModelKey((current) =>
-                    nextModels.some((model) => model.key === current)
-                      ? current
-                      : nextModels[0]?.key || '',
-                  );
-                  markDraftDirty();
-                }}
-                style={{
-                  width: '100%',
-                  padding: 8,
-                  background: '#2B2B2B',
-                  color: '#FFF',
-                  border: '1px solid #3A3A3A',
-                  borderRadius: 8,
-                }}
-              >
-                <option value="">Unset</option>
-                {providerOptions.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                {accessModeField?.label}
-              </label>
-              <select
-                data-testid="agent-access-mode"
-                value={accessMode}
-                onChange={(event) => {
-                  setAccessMode(event.target.value as typeof accessMode);
-                  markDraftDirty();
-                }}
-                style={{
-                  width: '100%',
-                  padding: 8,
-                  background: '#2B2B2B',
-                  color: '#FFF',
-                  border: '1px solid #3A3A3A',
-                  borderRadius: 8,
-                }}
-              >
-                <option value="">Select access mode</option>
-                {accessModeOptions.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                {modelKeyField?.label}
-              </label>
-              <select
-                value={modelKey}
-                onChange={(event) => {
-                  setModelKey(event.target.value);
-                  markDraftDirty();
-                }}
-                style={{
-                  width: '100%',
-                  padding: 8,
-                  background: '#2B2B2B',
-                  color: '#FFF',
-                  border: '1px solid #3A3A3A',
-                  borderRadius: 8,
-                }}
-              >
-                <option value="">Select model</option>
-                {availableModels.map((model) => (
-                  <option key={model.key} value={model.key}>
-                    {model.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {runtimeKind !== 'hermes' ? (
+              <>
+                <div>
+                  <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                    {providerField?.label}
+                  </label>
+                  <select
+                    value={provider}
+                    onChange={(event) => {
+                      const nextProvider = event.target.value as 'openai' | 'openrouter' | '';
+                      setProvider(nextProvider);
+                      const nextModels = nextProvider ? modelsByProvider[nextProvider] || [] : [];
+                      setModelKey((current) =>
+                        nextModels.some((model) => model.key === current)
+                          ? current
+                          : nextModels[0]?.key || '',
+                      );
+                      markDraftDirty();
+                    }}
+                  >
+                    <option value="">Unset</option>
+                    {providerOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                    {accessModeField?.label}
+                  </label>
+                  <select
+                    data-testid="agent-access-mode"
+                    value={accessMode}
+                    onChange={(event) => {
+                      setAccessMode(event.target.value as typeof accessMode);
+                      markDraftDirty();
+                    }}
+                  >
+                    <option value="">Select access mode</option>
+                    {accessModeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                    {modelKeyField?.label}
+                  </label>
+                  <select
+                    value={modelKey}
+                    onChange={(event) => {
+                      setModelKey(event.target.value);
+                      markDraftDirty();
+                    }}
+                  >
+                    <option value="">Select model</option>
+                    {availableModels.map((model) => (
+                      <option key={model.key} value={model.key}>{model.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            ) : null}
 
             <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
@@ -1597,11 +1695,43 @@ export function AgentManager({
                       Model: {nativeHermesState.native.model.provider || 'unset'} / {nativeHermesState.native.model.default || 'unset'}
                     </div>
                     <div>Workspace: {nativeHermesState.binding.workspace || 'current launch workspace'}</div>
-                    <div>Memory: native profile-owned · read-only here</div>
+                    <div>Memory: native profile-owned</div>
                   </div>
                   <div style={{ color: '#72D7C7', fontSize: 11.5 }}>
-                    Native state is read-only. Saving this Card cannot change the profile.
+                    Saving this Card cannot change the profile. Model changes below require their own native Apply.
                   </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, alignItems: 'end' }}>
+                    <label style={{ display: 'grid', gap: 4, color: '#E0DED5', fontSize: 11 }}>
+                      Provider
+                      <input
+                        aria-label="Native profile Provider"
+                        value={nativeProviderDraft}
+                        onChange={(event) => setNativeProviderDraft(event.target.value)}
+                      />
+                    </label>
+                    <label style={{ display: 'grid', gap: 4, color: '#E0DED5', fontSize: 11 }}>
+                      Model
+                      <input
+                        aria-label="Native profile Model"
+                        value={nativeModelDraft}
+                        onChange={(event) => setNativeModelDraft(event.target.value)}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      disabled={nativeApplyStatus === 'applying' || !nativeProviderDraft.trim() || !nativeModelDraft.trim()}
+                      onClick={() => void runNativeApply({
+                        operation: 'profile.model.set',
+                        provider: nativeProviderDraft,
+                        model: nativeModelDraft,
+                      })}
+                    >
+                      Apply Model
+                    </button>
+                  </div>
+                  {nativeApplyStatus === 'failed' ? (
+                    <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>{nativeApplyError || 'Native Apply failed.'}</div>
+                  ) : null}
                   <details>
                     <summary style={{ cursor: 'pointer', color: '#B8C8CD', fontSize: 11 }}>Technical readback</summary>
                     <div style={{ color: '#80969F', fontSize: 10.5, overflowWrap: 'anywhere' }}>
@@ -1790,10 +1920,10 @@ export function AgentManager({
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
             <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Enabled skills
+                Card skill grants
               </label>
               <textarea
-                aria-label="Enabled skills"
+                aria-label="Card skill grants"
                 value={skillsText}
                 onChange={(event) => {
                   setSkillsText(event.target.value);
@@ -1805,10 +1935,10 @@ export function AgentManager({
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Toolsets
+                Card toolset grants
               </label>
               <textarea
-                aria-label="Toolsets"
+                aria-label="Card toolset grants"
                 value={toolsetsText}
                 onChange={(event) => {
                   setToolsetsText(event.target.value);
@@ -1821,10 +1951,10 @@ export function AgentManager({
           </div>
           <div>
             <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-              MCP connections
+              Card connection references
             </label>
             <textarea
-              aria-label="MCP connections"
+              aria-label="Card connection references"
               value={mcpConnectionIdsText}
               onChange={(event) => {
                 setMcpConnectionIdsText(event.target.value);
@@ -1850,16 +1980,78 @@ export function AgentManager({
               }}
             >
               <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-                Effective profile capabilities
-              </div>
-              <div style={{ color: '#9FB2B8', fontSize: 11 }}>
-                Skills: {nativeHermesState.native.skills.filter((item) => item.enabled).map((item) => item.name).join(', ') || 'none'}
-              </div>
-              <div style={{ color: '#9FB2B8', fontSize: 11 }}>
-                Toolsets: {nativeHermesState.native.toolsets.filter((item) => item.enabled).map((item) => item.name).join(', ') || 'none'}
+                Native capabilities
               </div>
               <div style={{ color: '#9FB2B8', fontSize: 11 }}>
                 Card grant ceiling: {nativeHermesState.binding.cardGrants.join(', ') || 'none'}
+              </div>
+              <div style={{ color: '#80969F', fontSize: 10.5 }}>
+                Native availability may reduce this ceiling; it can never expand Card authority. Every Apply below performs one native operation and exact readback.
+              </div>
+              <details>
+                <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
+                  Skills · {nativeHermesState.native.skills.filter((item) => item.enabled).length} enabled
+                </summary>
+                <div style={{ display: 'grid', gap: 5, marginTop: 8 }}>
+                  {nativeHermesState.native.skills.map((skill) => {
+                    const enabled = !nativeDisabledSkills.includes(skill.name);
+                    return (
+                      <label key={skill.name} style={{ color: '#B8C8CD', fontSize: 11 }}>
+                        <input
+                          type="checkbox"
+                          checked={enabled}
+                          onChange={(event) => setNativeDisabledSkills((current) => (
+                            event.target.checked
+                              ? current.filter((name) => name !== skill.name)
+                              : Array.from(new Set([...current, skill.name]))
+                          ))}
+                        />{' '}
+                        {skill.name}
+                      </label>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    disabled={nativeApplyStatus === 'applying'}
+                    onClick={() => void runNativeApply({ operation: 'skills.disabled.replace', values: nativeDisabledSkills })}
+                  >
+                    Apply Skills
+                  </button>
+                  <div style={{ color: '#80969F', fontSize: 10 }}>
+                    Learned and automatically created skill content remains one native object; this control changes profile enablement only.
+                  </div>
+                </div>
+              </details>
+              <details>
+                <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
+                  Toolsets · {nativeEnabledToolsets.length} enabled
+                </summary>
+                <div style={{ display: 'grid', gap: 5, marginTop: 8 }}>
+                  {nativeHermesState.native.toolsets.map((toolset) => (
+                    <label key={toolset.name} style={{ color: '#B8C8CD', fontSize: 11 }}>
+                      <input
+                        type="checkbox"
+                        checked={nativeEnabledToolsets.includes(toolset.name)}
+                        onChange={(event) => setNativeEnabledToolsets((current) => (
+                          event.target.checked
+                            ? Array.from(new Set([...current, toolset.name]))
+                            : current.filter((name) => name !== toolset.name)
+                        ))}
+                      />{' '}
+                      {toolset.label || toolset.name}{typeof toolset.tool_count === 'number' ? ` · ${toolset.tool_count} tools` : ''}
+                    </label>
+                  ))}
+                  <button
+                    type="button"
+                    disabled={nativeApplyStatus === 'applying'}
+                    onClick={() => void runNativeApply({ operation: 'toolsets.enabled.replace', values: nativeEnabledToolsets })}
+                  >
+                    Apply Toolsets
+                  </button>
+                </div>
+              </details>
+              <div style={{ color: '#9FB2B8', fontSize: 11 }}>
+                Built-in tools: {nativeHermesState.binding.nativeTools.join(', ') || 'none reported'}
               </div>
               {nativeHermesState.native.mcpServers.length ? nativeHermesState.native.mcpServers.map((server) => {
                 const checked = nativeMcpChecks[server.name];
@@ -1875,9 +2067,18 @@ export function AgentManager({
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <span style={{ color: '#D5E4E8', fontSize: 11.5 }}>
-                        {server.name} · {server.enabled ? 'enabled' : 'disabled'} · {server.credentialStatus.replace('_', ' ')}
-                      </span>
+                      <label style={{ color: '#D5E4E8', fontSize: 11.5 }}>
+                        <input
+                          type="checkbox"
+                          checked={nativeEnabledMcpServers.includes(server.name)}
+                          onChange={(event) => setNativeEnabledMcpServers((current) => (
+                            event.target.checked
+                              ? Array.from(new Set([...current, server.name]))
+                              : current.filter((name) => name !== server.name)
+                          ))}
+                        />{' '}
+                        {server.name} · {server.credentialStatus.replace('_', ' ')}
+                      </label>
                       <button
                         type="button"
                         onClick={() => void checkNativeMcpServer(server.name)}
@@ -1904,6 +2105,20 @@ export function AgentManager({
               }) : (
                 <div style={{ color: '#80969F', fontSize: 11 }}>No native MCP connections are configured.</div>
               )}
+              {nativeHermesState.native.mcpServers.length ? (
+                <button
+                  type="button"
+                  disabled={nativeApplyStatus === 'applying'}
+                  onClick={() => void runNativeApply({ operation: 'mcp.enabled.replace', values: nativeEnabledMcpServers })}
+                >
+                  Apply Connections
+                </button>
+              ) : null}
+              {nativeApplyStatus === 'failed' ? (
+                <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>{nativeApplyError || 'Native Apply failed.'}</div>
+              ) : nativeApplyStatus === 'applied' ? (
+                <div style={{ color: '#72D7C7', fontSize: 11 }}>Native Apply confirmed by profile readback.</div>
+              ) : null}
             </section>
           ) : null}
         </div>

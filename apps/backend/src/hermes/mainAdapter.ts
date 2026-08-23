@@ -10,7 +10,6 @@ import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { resolveSavedMcpConnections } from './mcpConnections';
 import {
   ensureHermesHolographicMemoryHome,
-  HERMES_NATIVE_OPENAI_RUNTIME,
 } from './profileMemory';
 import {
   createHermesChildExecutionContext,
@@ -194,32 +193,6 @@ function resolveHermesInstall(): HermesAcpInstall {
   return { root, executable, args: [bridge] };
 }
 
-export function providerForHermes(provider: string, accessMode?: CardAccessMode): string {
-  const normalized = String(provider || '').trim().toLowerCase();
-  if (normalized === 'openai' && accessMode === 'chatgpt-account') return 'openai-codex';
-  return normalized;
-}
-
-export function modelSelectionForHermes(args: Pick<
-  HermesRuntimeConfig,
-  'provider' | 'accessMode' | 'providerModelId'
->): {
-  modelId: string;
-  apiMode?: 'codex_responses';
-  openaiRuntime?: typeof HERMES_NATIVE_OPENAI_RUNTIME;
-} {
-  const provider = providerForHermes(args.provider, args.accessMode);
-  const modelId = `${provider}:${args.providerModelId}`;
-  if (provider === 'openai-codex' && args.accessMode === 'chatgpt-account') {
-    return {
-      modelId,
-      apiMode: 'codex_responses',
-      openaiRuntime: HERMES_NATIVE_OPENAI_RUNTIME,
-    };
-  }
-  return { modelId };
-}
-
 function textContent(update: any): string {
   return update?.content?.type === 'text' ? String(update.content.text || '') : '';
 }
@@ -326,7 +299,6 @@ export class AcpProcess {
   private readonly pending = new Map<number, PendingRequest>();
   private readonly turns = new Map<string, ActiveTurn>();
   private readonly sessionByKey = new Map<string, string>();
-  private readonly configuredModelBySession = new Map<string, string>();
   private readonly historyCollectors = new Map<string, HermesHistoryMessage[]>();
   private nextRequestId = 1;
   private stdoutBuffer = '';
@@ -658,18 +630,9 @@ export class AcpProcess {
     return { sessionId, reused: false };
   }
 
-  private async configureModel(sessionId: string, args: HermesTurnArgs): Promise<void> {
-    const selection = modelSelectionForHermes(args);
-    const cacheKey = JSON.stringify(selection);
-    if (this.configuredModelBySession.get(sessionId) === cacheKey) return;
-    await this.request('session/set_model', { sessionId, ...selection });
-    this.configuredModelBySession.set(sessionId, cacheKey);
-  }
-
   async prepareSession(args: HermesTurnArgs): Promise<HermesPreparedSession> {
     await this.ready;
     const { sessionId } = await this.resolveSession(args, '');
-    await this.configureModel(sessionId, args);
     return {
       cardId: args.cardId,
       provider: args.provider,
@@ -692,7 +655,6 @@ export class AcpProcess {
     if (!contextId) throw new Error('hermes_execution_context_id_required');
     const { sessionId } = await this.resolveSession(args, contextId);
     bindHermesRootExecutionSession(contextId, sessionId);
-    await this.configureModel(sessionId, args);
     const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(
       args,
       process.env,
@@ -748,9 +710,14 @@ export class AcpProcess {
 
   async requestExtension(method: string, params: Record<string, unknown>): Promise<any> {
     await this.ready;
-    const nativeReadMethod = method === '_profile/read' || method === '_mcp/test';
+    const nativeManagerMethod = [
+      '_profile/read',
+      '_learning/detail',
+      '_native/apply',
+      '_mcp/test',
+    ].includes(method);
     const runtimeMethod = /^_(?:session|kanban)\/[a-z_]+$/.test(method);
-    if (!nativeReadMethod && !runtimeMethod) {
+    if (!nativeManagerMethod && !runtimeMethod) {
       throw new Error('hermes_acp_extension_method_invalid');
     }
     return this.request(method, params);
@@ -775,7 +742,6 @@ export class AcpProcess {
       ({ sessionId } = await this.resolveSession(args, rootContext.contextId));
       bindHermesRootExecutionSession(rootContext.contextId, sessionId);
       if (this.turns.has(sessionId)) throw new Error('hermes_session_turn_already_running');
-      await this.configureModel(sessionId, args);
       const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(
         args,
         process.env,

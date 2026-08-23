@@ -9,8 +9,6 @@ import {
   buildHermesHostSessionProjection,
   buildHermesOfficialMcpServer,
   deriveHermesSessionKey,
-  modelSelectionForHermes,
-  providerForHermes,
   requireHermesCompletionText,
   requireHermesEffectSuccess,
   resolveHermesEffectToolName,
@@ -60,10 +58,13 @@ rl.on('line', (line) => {
     process.stderr.write('MCP server provider-free (HTTP): registered 57 tool(s)\\n');
     ${exitAfterRegistration ? "return setImmediate(() => process.exit(0));" : "return send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'provider-free-session' } });"}
   }
-  if (method === 'session/set_model' || method === '_session/configure_host') {
+  if (method === 'session/set_model') {
+    return send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Card must not override native profile model' } });
+  }
+  if (method === '_session/configure_host') {
     return send({ jsonrpc: '2.0', id: message.id, result: {} });
   }
-  if (method === '_profile/read' || method === '_mcp/test') {
+  if (method === '_profile/read' || method === '_learning/detail' || method === '_native/apply' || method === '_mcp/test') {
     return send({ jsonrpc: '2.0', id: message.id, result: { method } });
   }
   if (method === 'session/prompt') {
@@ -88,6 +89,10 @@ describe('Hermes ACP transport identity', () => {
         .resolves.toEqual({ method: '_profile/read' });
       await expect(processOwner.requestExtension('_mcp/test', { profile: 'coder', name: 'liquidaity' }))
         .resolves.toEqual({ method: '_mcp/test' });
+      await expect(processOwner.requestExtension('_native/apply', { profile: 'coder', operation: 'profile.soul.set', value: 'Soul' }))
+        .resolves.toEqual({ method: '_native/apply' });
+      await expect(processOwner.requestExtension('_learning/detail', { profile: 'coder', nodeId: 'skill' }))
+        .resolves.toEqual({ method: '_learning/detail' });
       await expect(processOwner.requestExtension('_profile/apply', { name: 'coder' }))
         .rejects.toThrow('hermes_acp_extension_method_invalid');
       await expect(processOwner.requestExtension('_secrets/read', {}))
@@ -166,26 +171,21 @@ describe('Hermes ACP transport identity', () => {
     expect(resolveHermesRuntimeHome(root)).toBe(path.join(root, '.hermes'));
   });
 
-  it('mechanically maps prepared ChatGPT-account OpenAI transport to Hermes native OAuth', () => {
-    expect(providerForHermes('openai', 'chatgpt-account')).toBe('openai-codex');
-    expect(providerForHermes('openrouter', 'openrouter-api')).toBe('openrouter');
-  });
-
-  it('projects Main, Kanban, and Coder onto Hermes native Codex Responses', () => {
-    for (const [cardId, mode, profile] of [
-      ['card_main_chat', 'main', 'liquidaity-main'],
-      ['card_hermes_steward', 'kanban', 'liquidaity-hermes-steward'],
-      ['card_local_coder', 'delegate', 'coder'],
-    ] as const) {
-      expect(modelSelectionForHermes({
-        provider: 'openai',
-        accessMode: 'chatgpt-account',
-        providerModelId: 'gpt-5.6-luna',
-      }), `${cardId}:${mode}:${profile}`).toEqual({
-        modelId: 'openai-codex:gpt-5.6-luna',
-        apiMode: 'codex_responses',
-        openaiRuntime: 'auto',
+  it('does not push Card provider/model fields into a native Hermes session', async () => {
+    const root = path.join(tmpdir(), `liquidaity-acp-native-model-${randomUUID()}`);
+    const hermesHome = path.join(root, '.hermes');
+    mkdirSync(hermesHome, { recursive: true });
+    const owner = new AcpProcess(() => undefined, {
+      install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(false)] },
+      hermesHome,
+    });
+    try {
+      await expect(owner.prepareSession(providerFreeTurnArgs())).resolves.toMatchObject({
+        sessionId: 'provider-free-session',
       });
+    } finally {
+      owner.close();
+      await owner.closed;
     }
   });
 

@@ -4,6 +4,7 @@ import type { AgentCardInstance, DeckDocument } from '../types';
 import {
   filterEffectiveHermesTools,
   HERMES_CARD_FIELD_MAP,
+  applyHermesNativeOperation,
   hydrateHermesCardProfile,
   projectHermesCardBinding,
 } from './cardProfileProjection';
@@ -55,24 +56,29 @@ function native() {
         credentialStatus: 'configured',
         toolFilter: [],
       }],
+      learning: { count: 1, summary: '1 learned item', buckets: [] },
     },
   };
 }
 
-describe('Hermes Card read-only profile binding', () => {
-  it('classifies Card contract fields as non-native and the profile only as a binding', () => {
+describe('Hermes Card native profile binding', () => {
+  it('classifies Card-owned and native-owned fields without synchronization', () => {
     expect(HERMES_CARD_FIELD_MAP.find((row) => row.field === 'runtime.profile')).toMatchObject({
       classification: 'binding',
       nativeTarget: 'existing profile name',
     });
-    for (const field of ['role', 'prompt', 'skills', 'toolsets', 'mcpConnectionIds']) {
+    for (const field of ['Card Prompt', 'skills', 'toolsets', 'mcpConnectionIds']) {
       expect(HERMES_CARD_FIELD_MAP.find((row) => row.field === field)).toMatchObject({
         classification: 'liquidaity-owned',
         nativeTarget: null,
       });
     }
-    expect(HERMES_CARD_FIELD_MAP.find((row) => row.field === 'Hermes SOUL/memory/skills'))
-      .toMatchObject({ classification: 'native-read-only', owner: 'native-hermes-profile' });
+    for (const field of ['profile Role/description', 'Soul', 'profile provider/model']) {
+      expect(HERMES_CARD_FIELD_MAP.find((row) => row.field === field)).toMatchObject({
+        classification: 'native-editable',
+        owner: 'native-hermes-profile',
+      });
+    }
   });
 
   it('projects only the existing profile binding and Card grant ceiling', () => {
@@ -93,7 +99,8 @@ describe('Hermes Card read-only profile binding', () => {
 
     expect(request).toHaveBeenCalledTimes(1);
     expect(request).toHaveBeenCalledWith('_profile/read', { name: 'liquidaity-main' });
-    expect(result.readOnly).toBe(true);
+    expect(result.nativeApply).toBe('explicit');
+    expect(result.cardSaveMutatesNative).toBe(false);
     expect(result.native).toMatchObject({
       description: 'Native profile description',
       soul: 'Native SOUL instructions',
@@ -103,6 +110,26 @@ describe('Hermes Card read-only profile binding', () => {
     expect(result).not.toHaveProperty('fingerprint');
     expect(result.native.mcpServers[0]).not.toHaveProperty('headers');
     expect(result.native.mcpServers[0]).not.toHaveProperty('env');
+  });
+
+  it('delegates exactly one native operation and then returns its exact readback', async () => {
+    const request = vi.fn(async () => native());
+    const result = await applyHermesNativeOperation(
+      card,
+      deck,
+      { operation: 'profile.soul.set', value: 'New native Soul' },
+      request as never,
+    );
+
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith('_native/apply', {
+      profile: 'liquidaity-main',
+      operation: 'profile.soul.set',
+      value: 'New native Soul',
+    });
+    expect(result.binding.profile).toBe('liquidaity-main');
+    expect(result.cardSaveMutatesNative).toBe(false);
+    expect(card.prompt).toBe('Card-to-Card contract only');
   });
 
   it('Card Prompt and role changes cannot alter the native read request or readback', async () => {

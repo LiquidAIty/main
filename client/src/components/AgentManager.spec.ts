@@ -90,7 +90,7 @@ describe('AgentManager active builder config', () => {
     expect(coder.toolsets).toEqual(['file', 'terminal']);
   });
 
-  it('saves Card fields without a Card-to-profile mutation path', () => {
+  it('keeps Card Save separate from one-operation native Apply', () => {
     const source = readFileSync(
       path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
       'utf8',
@@ -103,7 +103,10 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain('await Promise.resolve(onSaveLocalConfig(payload))');
     expect(source).toContain('Saving this Card cannot change the profile.');
     expect(source).not.toMatch(/applyNativeHermesCard|previewNativeHermesCard|buildHermesCardDraftFromLocalConfig/);
-    expect(nativeClient).not.toMatch(/\/apply|\/preview|expectedFingerprint|HermesCardDraft/);
+    expect(source).toContain('runNativeApply({ operation:');
+    expect(nativeClient).toContain('/native/apply');
+    expect(nativeClient).not.toMatch(/\/preview|expectedFingerprint|HermesCardDraft/);
+    expect(source).not.toContain('runNativeApply(buildCurrentLocalPayload');
   });
 
   it('uses the historical five Card tabs and exactly one Task composer', () => {
@@ -254,9 +257,16 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain('/api/coder/input-data-dictionary/card-editor');
     expect(source).not.toContain('/api/config/models');
     expect(source).not.toContain('<option value="openai">');
-    expect(source).toContain('Enabled skills');
-    expect(source).toContain('MCP connections');
+    expect(source).toContain('Card skill grants');
+    expect(source).toContain('Card connection references');
     expect(source).toContain('Connection references only');
+    expect(source).toContain('Apply Role to profile');
+    expect(source).toContain('Apply Soul to profile');
+    expect(source).toContain('Apply Model');
+    expect(source).toContain('Apply Skills');
+    expect(source).toContain('Apply Toolsets');
+    expect(source).toContain('Apply Connections');
+    expect(source).toContain('Detailed graph, Learn, and mutation controls are intentionally deferred');
     expect(source).not.toContain('Profile selector');
     expect(source).not.toContain('HERMES_HOME');
   });

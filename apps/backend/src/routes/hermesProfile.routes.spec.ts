@@ -35,6 +35,7 @@ function native() {
       toolsets: [],
       toolsetsPinned: false,
       mcpServers: [],
+      learning: { count: 0, summary: '', buckets: [] },
     },
   };
 }
@@ -66,7 +67,8 @@ describe('Hermes profile Card routes', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.readOnly).toBe(true);
+    expect(body.nativeApply).toBe('explicit');
+    expect(body.cardSaveMutatesNative).toBe(false);
     expect(body.binding).toMatchObject({ profile: 'liquidaity-main', mode: 'main' });
     expect(body.native).toMatchObject({ description: 'Native description', soul: 'Native SOUL' });
     expect(requestExtension).toHaveBeenCalledTimes(1);
@@ -74,16 +76,49 @@ describe('Hermes profile Card routes', () => {
     expect(JSON.stringify(body)).not.toMatch(/api.?key|access.?token|refresh.?token|client.?secret|bearer\s+[a-z0-9]/i);
   });
 
-  it('does not expose Card-to-profile apply or preview endpoints', async () => {
+  it('applies one supported native operation without creating a Card revision or Run', async () => {
     const { base, requestExtension } = await start();
-    for (const suffix of ['apply', 'preview']) {
-      const response = await fetch(`${base}/cards/card_main/${suffix}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId: 'p1', deckId: 'deck_builder', draft: { prompt: 'must not write' } }),
-      });
-      expect(response.status).toBe(404);
-    }
+    const response = await fetch(`${base}/cards/card_main/native/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'p1',
+        deckId: 'deck_builder',
+        operation: 'profile.description.set',
+        value: 'Native role only',
+      }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.applied).toBe('profile.description.set');
+    expect(body.cardSaveMutatesNative).toBe(false);
+    expect(requestExtension).toHaveBeenCalledTimes(1);
+    expect(requestExtension).toHaveBeenCalledWith('_native/apply', {
+      profile: 'liquidaity-main',
+      operation: 'profile.description.set',
+      value: 'Native role only',
+    });
+    expect(body).not.toHaveProperty('runId');
+    expect(body).not.toHaveProperty('cardRevision');
+    expect(deck.nodes[0].prompt).toBe('Card contract');
+  });
+
+  it('rejects broad or extra-field synchronization payloads before Hermes', async () => {
+    const { base, requestExtension } = await start();
+    const response = await fetch(`${base}/cards/card_main/native/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'p1',
+        deckId: 'deck_builder',
+        operation: 'profile.soul.set',
+        value: 'Soul',
+        prompt: 'must not synchronize',
+      }),
+    });
+
+    expect(response.status).toBe(400);
     expect(requestExtension).not.toHaveBeenCalled();
   });
 });

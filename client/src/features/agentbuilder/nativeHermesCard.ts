@@ -17,8 +17,18 @@ export type NativeHermesCardView = {
     toolsets: Array<{ name: string; label?: string; enabled: boolean; tool_count?: number }>;
     toolsetsPinned: boolean;
     mcpServers: NativeHermesMcpServerView[];
+    learning: {
+      count: number;
+      summary: string;
+      buckets: Array<{
+        label: string;
+        date: string;
+        nodes: Array<{ id: string; label: string; fullLabel: string; meta: string; body: string }>;
+      }>;
+    };
   };
-  readOnly: true;
+  nativeApply: 'explicit';
+  cardSaveMutatesNative: false;
   binding: {
     profile: string;
     mode: 'main' | 'delegate' | 'kanban';
@@ -27,6 +37,15 @@ export type NativeHermesCardView = {
     nativeTools: string[];
   };
 };
+
+export type NativeHermesApplyOperation =
+  | { operation: 'profile.description.set'; value: string }
+  | { operation: 'profile.soul.set'; value: string }
+  | { operation: 'profile.model.set'; provider: string; model: string }
+  | { operation: 'skills.disabled.replace'; values: string[] }
+  | { operation: 'toolsets.enabled.replace'; values: string[] }
+  | { operation: 'mcp.enabled.replace'; values: string[] }
+  | { operation: 'learning.edit'; nodeId: string; content: string };
 
 async function responseJson(response: Response): Promise<Record<string, any>> {
   const body = await response.json().catch(() => ({}));
@@ -48,6 +67,41 @@ export async function loadNativeHermesCard(input: {
     { signal: input.signal },
   );
   return responseJson(response) as Promise<NativeHermesCardView>;
+}
+
+export async function applyNativeHermesOperation(input: {
+  projectId: string;
+  deckId: string;
+  cardId: string;
+  change: NativeHermesApplyOperation;
+}): Promise<NativeHermesCardView> {
+  const response = await fetch(
+    `/api/hermes-profile/cards/${encodeURIComponent(input.cardId)}/native/apply`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: input.projectId, deckId: input.deckId, ...input.change }),
+    },
+  );
+  return responseJson(response) as Promise<NativeHermesCardView>;
+}
+
+export async function loadNativeHermesLearningDetail(input: {
+  projectId: string;
+  deckId: string;
+  cardId: string;
+  nodeId: string;
+}): Promise<{ ok: true; kind: 'memory' | 'skill'; id: string; label: string; content: string }> {
+  const query = new URLSearchParams({
+    projectId: input.projectId,
+    deckId: input.deckId,
+    nodeId: input.nodeId,
+  });
+  const response = await fetch(
+    `/api/hermes-profile/cards/${encodeURIComponent(input.cardId)}/learning/detail?${query.toString()}`,
+  );
+  const body = await responseJson(response);
+  return body.detail;
 }
 
 export async function testNativeHermesMcp(input: {
