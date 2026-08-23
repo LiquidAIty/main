@@ -13,11 +13,26 @@ from app.python_models.magentic_agentchat import (
 from app.python_models.orchestration_contracts import (
     RuntimeRequest,
     OrchestratorRunResponse,
+    StoredRuntimeRequest,
 )
+from app.python_models.icf import load_input_pair
+
+
+def load_stored_runtime_request(context: StoredRuntimeRequest) -> RuntimeRequest:
+    """Load AutoGen input only from the exact retained ICF/IGF bytes."""
+
+    pair = load_input_pair(context.inputFiles.model_dump())
+    return RuntimeRequest(
+        session=context.session,
+        icf=pair.icf,
+        igf=pair.igf,
+        inputFiles=context.inputFiles,
+        participants=context.participants,
+    )
 
 
 async def orchestrate_runtime(context: RuntimeRequest) -> OrchestratorRunResponse:
-    runtime = context.idf.runtime
+    runtime = context.icf.stable.get("runtime") or {}
     if runtime.get("kind") != "autogen" or runtime.get("mode") != "magentic_one":
         raise RuntimeError(
             "orchestrator_card_required: runtime="
@@ -42,4 +57,10 @@ def _configured_runtime_handler(runtime: dict[str, object]):
 
 async def dispatch_configured_runtime(context: RuntimeRequest) -> OrchestratorRunResponse:
     """Dispatch one transient model input through its saved Card runtime."""
-    return await _configured_runtime_handler(context.idf.runtime)(context)
+    return await _configured_runtime_handler(context.icf.stable.get("runtime") or {})(context)
+
+
+async def dispatch_stored_runtime(
+    context: StoredRuntimeRequest,
+) -> OrchestratorRunResponse:
+    return await dispatch_configured_runtime(load_stored_runtime_request(context))

@@ -225,11 +225,11 @@ function resolveHermesTurnArgs(
   transport: any,
 ): HermesTurnArgs {
   const identity = transport?.cardIdentity || {};
-  const idf = transport?.idf;
-  const runtime = idf?.runtime;
-  const provider = idf?.provider;
+  const input = transport?.request;
+  const runtime = input?.runtime;
+  const provider = input?.provider;
   if (
-    !idf || typeof idf !== 'object'
+    !input || typeof input !== 'object'
     || args.prepared?.runtimeOwner !== 'hermes'
     || runtime?.kind !== 'hermes'
     || !['main', 'delegate', 'kanban'].includes(runtime?.mode)
@@ -241,13 +241,13 @@ function resolveHermesTurnArgs(
     cardId: String(identity.cardId || ''),
     title: String(identity.title || ''),
     runtime,
-    prompt: String(idf.systemPrompt || ''),
+    prompt: String(input.systemPrompt || ''),
     provider: String(provider?.provider || ''),
     modelKey: String(provider?.modelKey || ''),
     providerModelId: String(provider?.providerModelId || ''),
     accessMode: provider?.accessMode,
-    tools: Array.isArray(idf.enabledTools) ? idf.enabledTools : [],
-    mcpConnectionIds: Array.isArray(idf.mcpConnectionIds) ? idf.mcpConnectionIds : [],
+    tools: Array.isArray(input.enabledTools) ? input.enabledTools : [],
+    mcpConnectionIds: Array.isArray(input.mcpConnectionIds) ? input.mcpConnectionIds : [],
     sessionKey: deriveHermesSessionKey(
       args.projectId,
       args.conversationId,
@@ -257,7 +257,13 @@ function resolveHermesTurnArgs(
     deckId: args.deckId,
     conversationId: args.conversationId,
     parentRunId: args.parentRunId || args.conversationId,
-    message: [String(idf.graphSeed || '').trim(), String(idf.message || '').trim()]
+    message: [
+      String(input.graphContext || '').trim(),
+      String(input.task || '').trim(),
+      String(input.outputRequirements || '').trim()
+        ? `Output requirements:\n${String(input.outputRequirements).trim()}`
+        : '',
+    ]
       .filter(Boolean)
       .join('\n\n'),
     ...(args.workingDirectory ? { workingDirectory: args.workingDirectory } : {}),
@@ -309,15 +315,15 @@ async function startPreparedHermesTransport(
   args: PreparedHermesTransportArgs,
 ): Promise<HermesTurnHandle> {
   const turnArgs = resolvePreparedHermesTurnArgs(args);
-  const idf = args.prepared?.hermesTransport?.idf || {};
-  const transientTask = String(idf.message || '').trim();
+  const input = args.prepared?.hermesTransport?.request || {};
+  const transientTask = String(input.task || '').trim();
   if (transientTask === '/learn' || transientTask.startsWith('/learn ')) {
     if (turnArgs.runtime.mode === 'kanban') throw new Error('hermes_learn_requires_acp_mode');
     const learnedPrompt = await dispatchHermesLearnCommand(
       turnArgs.runtime.profile,
       transientTask.slice('/learn'.length).trim(),
     );
-    turnArgs.message = [String(idf.graphSeed || '').trim(), learnedPrompt]
+    turnArgs.message = [String(input.graphContext || '').trim(), learnedPrompt]
       .filter(Boolean)
       .join('\n\n');
   }
@@ -332,7 +338,7 @@ async function startPreparedHermesTransport(
       .filter((reference: { authority: string; nativeId: string }) => reference.authority && reference.nativeId);
     const mission = [
       'Saved Card system instructions:',
-      String(args.prepared?.hermesTransport?.idf?.systemPrompt || '').trim(),
+      String(args.prepared?.hermesTransport?.request?.systemPrompt || '').trim(),
       '',
       'Transient Card task and resolved graph context:',
       turnArgs.message,
@@ -493,12 +499,18 @@ async function readConfiguredCardRunStatus(args: {
 }
 
 // Thin configured-Card transport. Python owns Card/AGE/IDD validation, the one
-// transient IDF materializer, runtime-owner selection, and separate Run
+// canonical ICF/IGF materializer, runtime-owner selection, and separate Run
 // persistence. This route never rebuilds the model call.
 router.post('/mcp-bridge/run_configured_card', async (req, res) => {
   const body = req.body || {};
   const action = body.action;
-  if (action !== 'materialize' && action !== 'execute' && action !== 'status' && action !== 'stop') {
+  if (
+    action !== 'materialize'
+    && action !== 'execute'
+    && action !== 'status'
+    && action !== 'inputs'
+    && action !== 'stop'
+  ) {
     return res.status(400).json({ ok: false, error: 'configured_card_action_invalid' });
   }
   const projectId = String(body.projectId || '').trim();
@@ -534,6 +546,26 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       return res.status(502).json({
         ok: false,
         error: error instanceof Error ? error.message : 'card_run_status_failed',
+      });
+    }
+  }
+
+  if (action === 'inputs') {
+    const runId = String(body.runId || '').trim();
+    if (!runId) {
+      return res.status(400).json({ ok: false, error: 'card_run_input_files_run_required' });
+    }
+    try {
+      const result = await requestPythonRailsJson('/domain/runs/input-files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, deckId, runId }),
+      });
+      return res.json({ ok: true, result });
+    } catch (error) {
+      return res.status(502).json({
+        ok: false,
+        error: error instanceof Error ? error.message : 'card_run_input_files_failed',
       });
     }
   }
@@ -612,7 +644,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       return res.json({ ok: true, result: status });
     }
 
-    const runtimeMode = String(prepared?.hermesTransport?.idf?.runtime?.mode || '').trim();
+    const runtimeMode = String(prepared?.hermesTransport?.request?.runtime?.mode || '').trim();
     if (prepared.runtimeOwner === 'hermes' && runtimeMode === 'kanban') {
       let latestProgress: HermesKanbanProgress | null = null;
       const persistProgress = async (progress: HermesKanbanProgress): Promise<void> => {
@@ -681,7 +713,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
             };
             try {
               usage = await readHermesKanbanSessionUsage(
-                String(prepared.hermesTransport.idf.runtime.profile || ''),
+                String(prepared.hermesTransport.request.runtime.profile || ''),
                 progress.workerSessionIds,
               );
             } catch (error) {
@@ -839,7 +871,10 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
             runtimeOwner: prepared.runtimeOwner,
             resolvedNativeReads: prepared.resolvedNativeReads,
             resolvedGraphProjection: prepared.resolvedGraphProjection,
-            idf: prepared.idf,
+            icf: prepared.icf,
+            igf: prepared.igf,
+            inputSummary: prepared.inputSummary,
+            inputFiles: prepared.inputFiles,
             cardIdentity: prepared.cardIdentity,
           },
           output,
@@ -995,7 +1030,7 @@ router.post('/main/session/chat', async (req, res) => {
       correlationId,
     });
   }
-  if (prepared.runtimeOwner !== 'hermes' || !prepared.hermesTransport?.cardIdentity || !prepared.hermesTransport?.idf) {
+  if (prepared.runtimeOwner !== 'hermes' || !prepared.hermesTransport?.cardIdentity || !prepared.hermesTransport?.request) {
     return res.status(424).json({ ok: false, error: 'main_hermes_card_not_runnable' });
   }
   const mainCardId = String(prepared.hermesTransport.cardIdentity.cardId || '');
@@ -1018,7 +1053,7 @@ router.post('/main/session/chat', async (req, res) => {
     }
   };
   writeSse('session', { sessionId });
-  logHarnessTrace(`[hermes] request received ${`corr=${correlationId}`} project=${projectId} profile=${prepared.hermesTransport.idf.runtime.profile}`);
+  logHarnessTrace(`[hermes] request received ${`corr=${correlationId}`} project=${projectId} profile=${prepared.hermesTransport.request.runtime.profile}`);
   let turnFinished = false;
   let terminalDoneEvent: Extract<HermesSessionEvent, { kind: 'done' }> | null = null;
   const emittedAttentionIds = new Set<string>();

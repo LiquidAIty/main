@@ -1,8 +1,8 @@
-"""Stable Card/deck authority and transient runtime-input preparation.
+"""Stable Card/deck authority and canonical runtime-input preparation.
 
 PostgreSQL owns stable Project, Deck, Card revision, runtime, grants, layout, and
-Run identities. AGE owns Card relationships. Dynamic communication
-is materialized and validated in memory and is never written by this module.
+Run identities. AGE owns Card relationships. Each execution retains one
+validated ``in.icf``/``in.igf`` pair through the existing Run artifact owner.
 """
 
 from __future__ import annotations
@@ -24,7 +24,15 @@ from app.python_models.idd import (
     tool_access,
     validate_record,
 )
-from app.python_models.idf import materialize_idf
+from app.python_models.icf import (
+    InputMaterializationError,
+    input_pair_public,
+    load_input_pair,
+    materialize_input_pair,
+    rematerialize_input_pair,
+    runtime_projection,
+    write_input_pair,
+)
 from app.python_models.data_anchor import (
     DataAnchorError,
     empty_graph_projection,
@@ -1999,28 +2007,55 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     images = payload.get("images") or []
     if not isinstance(images, list) or any(not isinstance(item, dict) for item in images):
         raise CardDomainError("images_invalid")
-    idf = materialize_idf(
-        system_prompt=call_config["systemPrompt"],
-        dynamic_input=assignment,
-        runtime=call_config["runtime"],
-        provider=call_config["provider"],
-        runtime_options=call_config["runtimeOptions"],
-        enabled_tools=call_config["enabledTools"],
-        tool_definitions=tool_definitions,
-        native_tools=call_config["nativeTools"],
-        skills=call_config["skills"],
-        toolsets=call_config["toolsets"],
-        mcp_connection_ids=call_config["mcpConnectionIds"],
-        graph_seed=graph_seed,
-        output_requirements=output_requirements,
-        native_references=references,
-        images=images,
-    )
+    try:
+        pair = materialize_input_pair(
+            owner={
+                "kind": "preview",
+                "projectId": prepared["projectId"],
+                "deckId": prepared["deckId"],
+                "cardId": prepared["cardIdentity"]["cardId"],
+            },
+            stable={
+                "projectId": prepared["projectId"],
+                "deckId": prepared["deckId"],
+                "cardId": prepared["cardIdentity"]["cardId"],
+                "cardTitle": prepared["cardIdentity"]["title"],
+                "cardRevisionId": prepared["cardRevisionId"],
+                "cardRevision": prepared["cardRevision"],
+                "cardRevisionSha256": prepared["cardRevisionSha256"],
+                "instructions": call_config["systemPrompt"],
+                "outputContract": output_requirements,
+                "runtime": call_config["runtime"],
+                "provider": call_config["provider"],
+            },
+            variable={
+                "task": assignment,
+                "conversationId": str(payload.get("conversationId") or ""),
+                "senderCardId": str(payload.get("senderCardId") or ""),
+                "originatingRunId": str(payload.get("originatingRunId") or ""),
+                "selectedNativeReferences": references,
+                "images": images,
+            },
+            capabilities={
+                "enabledTools": call_config["enabledTools"],
+                "toolDefinitions": tool_definitions,
+                "nativeTools": call_config["nativeTools"],
+                "skills": call_config["skills"],
+                "toolsets": call_config["toolsets"],
+                "mcpConnectionIds": call_config["mcpConnectionIds"],
+            },
+            allocation={"runtimeOptions": call_config["runtimeOptions"]},
+            graph_context=graph_seed,
+            native_references=references,
+            graph_projection=graph_projection,
+        )
+    except InputMaterializationError as error:
+        raise CardDomainError(str(error)) from error
     return {
         **prepared,
         "resolvedNativeReads": anchor_references,
         "resolvedGraphProjection": graph_projection,
-        "idf": idf.model_dump(),
+        **input_pair_public(pair),
     }
 
 
@@ -2174,7 +2209,7 @@ def assert_grounded_invocation(
     execution-ready without creating a Run or contacting a provider.
     """
 
-    runtime = prepared.get("idf", {}).get("runtime", {})
+    runtime = prepared.get("icf", {}).get("stable", {}).get("runtime", {})
     requires_grounding = (
         isinstance(runtime, dict)
         and (
@@ -2217,9 +2252,9 @@ def _insert_run(
     correlation_id: str,
     request_fingerprint: str | None = None,
 ) -> tuple[str, str, bool]:
-    idf = prepared["idf"]
-    runtime = idf["runtime"]
-    provider = idf["provider"]
+    icf = prepared["icf"]
+    runtime = icf["stable"]["runtime"]
+    provider = icf["stable"]["provider"]
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """
@@ -2273,8 +2308,189 @@ def _insert_run(
         return str(existing["run_id"]), str(existing["correlation_id"]), False
 
 
+def _record_run_input_artifacts(run_id: str, input_files: dict[str, Any]) -> None:
+    rows = [
+        (
+            f"input:{_sha(run_id)[:24]}:icf",
+            "input-context-file",
+            input_files["icfPath"],
+            "application/vnd.liquidaity.icf+json",
+            input_files["icfSha256"],
+            input_files["icfBytes"],
+        ),
+        (
+            f"input:{_sha(run_id)[:24]}:igf",
+            "input-graph-file",
+            input_files["igfPath"],
+            "application/vnd.liquidaity.igf+jsonl",
+            input_files["igfSha256"],
+            input_files["igfBytes"],
+        ),
+    ]
+    with connect_postgres() as connection, connection.cursor() as cursor:
+        for artifact_id, kind, locator, media_type, content_hash, size_bytes in rows:
+            cursor.execute(
+                """
+                INSERT INTO ag_catalog.run_artifacts (
+                  artifact_id, producing_run_id, artifact_kind, locator,
+                  media_type, content_sha256, provenance_ref, size_bytes
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                """,
+                (
+                    artifact_id, run_id, kind, locator, media_type,
+                    content_hash, "canonical-runtime-input", size_bytes,
+                ),
+            )
+    for artifact_id, kind, locator, *_ in rows:
+        _observe_artifact(run_id, artifact_id, kind, locator)
+
+
+def _input_file_descriptor_for_run(run_id: str) -> dict[str, Any] | None:
+    with connect_postgres(autocommit=False) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SET TRANSACTION READ ONLY")
+            cursor.execute(
+                """
+                SELECT artifact_kind, locator, content_sha256, size_bytes
+                FROM ag_catalog.run_artifacts
+                WHERE producing_run_id=%s
+                  AND artifact_kind IN ('input-context-file','input-graph-file')
+                ORDER BY artifact_kind
+                """,
+                (run_id,),
+            )
+            rows = {str(row["artifact_kind"]): dict(row) for row in cursor.fetchall()}
+    icf = rows.get("input-context-file")
+    igf = rows.get("input-graph-file")
+    if icf is None or igf is None:
+        return None
+    return {
+        "workspace": str(icf["locator"]).rsplit("\\", 1)[0].rsplit("/", 1)[0],
+        "icfPath": str(icf["locator"]),
+        "igfPath": str(igf["locator"]),
+        "icfSha256": str(icf.get("content_sha256") or ""),
+        "igfSha256": str(igf.get("content_sha256") or ""),
+        "icfBytes": int(icf.get("size_bytes") or 0),
+        "igfBytes": int(igf.get("size_bytes") or 0),
+    }
+
+
+def _retain_run_input_pair(
+    prepared: dict[str, Any],
+    *,
+    run_id: str,
+    correlation_id: str,
+    created: bool,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    try:
+        if created:
+            pair = rematerialize_input_pair(
+                prepared["icf"],
+                prepared["igf"],
+                owner={
+                    "kind": "card-run",
+                    "projectId": prepared["projectId"],
+                    "deckId": prepared["deckId"],
+                    "cardId": prepared["cardIdentity"]["cardId"],
+                    "runId": run_id,
+                    "correlationId": correlation_id,
+                },
+            )
+            input_files = write_input_pair(
+                pair,
+                project_id=prepared["projectId"],
+                deck_id=prepared["deckId"],
+                run_id=run_id,
+            )
+            _record_run_input_artifacts(run_id, input_files)
+        else:
+            input_files = _input_file_descriptor_for_run(run_id)
+            if input_files is None:
+                raise InputMaterializationError("input_files_unavailable")
+            pair = load_input_pair(input_files)
+        public = input_pair_public(pair)
+        return public, input_files, runtime_projection(pair)
+    except InputMaterializationError as error:
+        raise CardDomainError(str(error)) from error
+
+
+def _retain_required_run_input_pair(
+    prepared: dict[str, Any],
+    *,
+    run_id: str,
+    correlation_id: str,
+    created: bool,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Fail a newly created Run closed when its canonical inputs cannot persist."""
+
+    try:
+        return _retain_run_input_pair(
+            prepared,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            created=created,
+        )
+    except Exception as error:
+        message = str(error) if isinstance(error, CardDomainError) else "input_files_retention_failed"
+        if created:
+            try:
+                finish_run({
+                    "runId": run_id,
+                    "state": "failed",
+                    "nativePhase": "failed",
+                    "errorCode": "input_files_materialization_failed",
+                    "errorSummary": message,
+                })
+            except Exception:
+                pass
+        if isinstance(error, CardDomainError):
+            raise
+        raise CardDomainError(message) from error
+
+
+def read_run_input_files(payload: dict[str, Any]) -> dict[str, Any]:
+    """Read exact retained bytes for one selected Run; never reconstruct old input."""
+
+    project_ref = _required_text(payload.get("projectId"), "project_id")
+    deck_id = _required_text(payload.get("deckId"), "deck_id")
+    run_id = _required_text(payload.get("runId"), "run_id")
+    with connect_postgres(autocommit=False) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SET TRANSACTION READ ONLY")
+            project_id = str(_resolve_project(cursor, project_ref)["id"])
+            cursor.execute(
+                """
+                SELECT 1 FROM ag_catalog.agent_runs
+                WHERE run_id=%s AND project_id=%s AND deck_id=%s
+                """,
+                (run_id, project_id, deck_id),
+            )
+            if cursor.fetchone() is None:
+                raise CardDomainError("run_not_found")
+    input_files = _input_file_descriptor_for_run(run_id)
+    if input_files is None:
+        return {
+            "ok": True,
+            "available": False,
+            "runId": run_id,
+            "message": "Input files unavailable for this Run",
+        }
+    try:
+        pair = load_input_pair(input_files)
+    except InputMaterializationError as error:
+        raise CardDomainError(str(error)) from error
+    return {
+        "ok": True,
+        "available": True,
+        "runId": run_id,
+        **input_pair_public(pair),
+        "icfText": pair.icf_bytes.decode("utf-8"),
+        "igfText": pair.igf_bytes.decode("utf-8"),
+    }
+
+
 def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
-    """Begin Main with the same canonical transient Card input as every call."""
+    """Begin Main only after its canonical input pair is retained and reloaded."""
     message = _required_text(payload.get("message"), "message")
     prepared = prepare_main_chat({**payload, "message": message})
     expected_revision = str(payload.get("cardRevisionId") or "").strip()
@@ -2289,6 +2505,13 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if not created:
         raise CardDomainError("main_run_identity_conflict")
+    public, input_files, runtime_input = _retain_required_run_input_pair(
+        prepared,
+        run_id=resolved_run_id,
+        correlation_id=resolved_correlation_id,
+        created=True,
+    )
+    prepared.update(public)
     telemetry_written = _observe_run_start(
         prepared,
         payload,
@@ -2305,9 +2528,11 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
         "correlationId": resolved_correlation_id,
         "telemetryWritten": telemetry_written,
         "anchorTelemetryWritten": anchor_telemetry_written,
+        "inputFiles": input_files,
         "nativeRuntimeRequest": None,
         "hermesTransport": {
-            "idf": prepared["idf"],
+            "request": runtime_input,
+            "inputFiles": input_files,
             "cardIdentity": prepared["cardIdentity"],
             "delegationTargets": prepared.get("delegationTargets") or [],
         },
@@ -2315,74 +2540,45 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
-    """Create one Run around the single Python-materialized Card input."""
+    """Create one Run, retain its input pair, then expose one native request."""
 
     prepared = prepare_run_invocation(payload)
     run_id = _required_text(payload.get("runId"), "run_id")
     correlation_id = _required_text(payload.get("correlationId"), "correlation_id")
     card_identity = prepared["cardIdentity"]
     owner = prepared["runtimeOwner"]
-    native_runtime_request = None
-    if owner in {"autogen", "mag_one"}:
-        if owner == "mag_one":
-            loaded = _load_deck_internal(prepared["projectId"], prepared["deckId"])
-            cards = {card["id"]: card for card in loaded["deck"]["nodes"]}
-            worker_ids: list[str] = []
-            for edge in loaded["deck"]["edges"]:
-                if (
-                    edge["edgeType"] != "magentic_option"
-                    or card_identity["cardId"] not in {edge["source"], edge["target"]}
-                ):
-                    continue
-                worker_id = (
-                    edge["target"]
-                    if edge["source"] == card_identity["cardId"]
-                    else edge["source"]
-                )
-                worker = cards.get(worker_id)
-                if (
-                    worker is not None
-                    and worker_id not in worker_ids
-                    and _is_magentic_worker_card(worker)
-                ):
-                    worker_ids.append(worker_id)
-            participants = [
-                _autogen_participant(cards[worker_id])
-                for worker_id in worker_ids
-            ]
-            if not participants:
-                raise CardDomainError("magentic_runtime_no_connected_participants")
-        else:
-            participants = []
-        native_runtime_request = {
-            "session": {
-                "sessionId": f"{prepared['deckId']}:{card_identity['cardId']}:{run_id}",
-                "projectId": prepared["projectId"],
-                "deckId": prepared["deckId"],
-                "cardId": card_identity["cardId"],
-                "conversationId": str(payload.get("conversationId") or "active"),
-                "turnId": correlation_id,
-                "runId": run_id,
-                **(
-                    {"parentRunId": str(payload.get("originatingRunId")).strip()}
-                    if str(payload.get("originatingRunId") or "").strip()
-                    else {}
-                ),
-                "route": "deck_runtime" if owner == "mag_one" else "single_card",
-                "orchestrator": (
-                    "magentic_one" if owner == "mag_one" else "assistant_agent"
-                ),
-                "startedAt": _now().isoformat(),
-            },
-            "idf": prepared["idf"],
-            "participants": participants,
-        }
-    runtime = prepared["idf"]["runtime"]
+    runtime = prepared["icf"]["stable"]["runtime"]
     durable_kanban = (
         owner == "hermes"
         and runtime.get("kind") == "hermes"
         and runtime.get("mode") == "kanban"
     )
+    participants: list[dict[str, Any]] = []
+    if owner == "mag_one":
+        loaded = _load_deck_internal(prepared["projectId"], prepared["deckId"])
+        cards = {card["id"]: card for card in loaded["deck"]["nodes"]}
+        worker_ids: list[str] = []
+        for edge in loaded["deck"]["edges"]:
+            if (
+                edge["edgeType"] != "magentic_option"
+                or card_identity["cardId"] not in {edge["source"], edge["target"]}
+            ):
+                continue
+            worker_id = (
+                edge["target"]
+                if edge["source"] == card_identity["cardId"]
+                else edge["source"]
+            )
+            worker = cards.get(worker_id)
+            if (
+                worker is not None
+                and worker_id not in worker_ids
+                and _is_magentic_worker_card(worker)
+            ):
+                worker_ids.append(worker_id)
+        participants = [_autogen_participant(cards[worker_id]) for worker_id in worker_ids]
+        if not participants:
+            raise CardDomainError("magentic_runtime_no_connected_participants")
     request_fingerprint = _run_request_fingerprint({
         **payload,
         "projectId": prepared["projectId"],
@@ -2398,6 +2594,36 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if not created and not durable_kanban:
         raise CardDomainError("run_identity_conflict")
+    public, input_files, runtime_input = _retain_required_run_input_pair(
+        prepared,
+        run_id=resolved_run_id,
+        correlation_id=resolved_correlation_id,
+        created=created,
+    )
+    prepared.update(public)
+    native_runtime_request = None
+    if owner in {"autogen", "mag_one"}:
+        native_runtime_request = {
+            "session": {
+                "sessionId": f"{prepared['deckId']}:{card_identity['cardId']}:{resolved_run_id}",
+                "projectId": prepared["projectId"],
+                "deckId": prepared["deckId"],
+                "cardId": card_identity["cardId"],
+                "conversationId": str(payload.get("conversationId") or "active"),
+                "turnId": resolved_correlation_id,
+                "runId": resolved_run_id,
+                **(
+                    {"parentRunId": str(payload.get("originatingRunId")).strip()}
+                    if str(payload.get("originatingRunId") or "").strip()
+                    else {}
+                ),
+                "route": "deck_runtime" if owner == "mag_one" else "single_card",
+                "orchestrator": "magentic_one" if owner == "mag_one" else "assistant_agent",
+                "startedAt": _now().isoformat(),
+            },
+            "inputFiles": input_files,
+            "participants": participants,
+        }
     telemetry_written = False
     anchor_telemetry_written = False
     if created:
@@ -2419,9 +2645,11 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
         "requestFingerprint": request_fingerprint,
         "telemetryWritten": telemetry_written,
         "anchorTelemetryWritten": anchor_telemetry_written,
+        "inputFiles": input_files,
         "nativeRuntimeRequest": native_runtime_request,
         "hermesTransport": {
-            "idf": prepared["idf"],
+            "request": runtime_input,
+            "inputFiles": input_files,
             "cardIdentity": card_identity,
             "delegationTargets": prepared.get("delegationTargets") or [],
         } if owner == "hermes" else None,
@@ -2785,7 +3013,10 @@ def _observe_run_start(
     try:
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
             identity = prepared["cardIdentity"]
-            runtime = (prepared.get("idf") or {}).get("runtime") or {}
+            runtime = (
+                ((prepared.get("icf") or {}).get("stable") or {}).get("runtime")
+                or {}
+            )
             _age_rows(
                 cursor,
                 """

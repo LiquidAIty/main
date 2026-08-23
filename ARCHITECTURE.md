@@ -150,8 +150,9 @@ call Coder or Kanban, and Coder may call Kanban, through `card.run_assistant_age
 outgoing saved-Card delegation grant. Each such call uses the receiving Card's saved Hermes profile and
 one explicit mission plus selected native graph references. Python rejects copied parent context,
 message windows, prior-result packets, and caller-authored native-reference bodies; it rereads each
-selected native identity and resolves current graph data before the one IDF materialization. Main's
-Hermes memory remains private to Main. The transient invocation is not persisted. Native Hermes subagents remain an
+selected native identity and resolves current graph data before the one ICF/IGF materialization. Main's
+Hermes memory remains private to Main. The root Run retains only its two exact runtime-input files through
+the existing artifact catalog. Native Hermes subagents remain an
 optional per-Card/profile capability; they do not replace these saved Cards or become AutoGen Assistants.
 
 ## Graph owners

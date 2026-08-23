@@ -49,11 +49,18 @@ def _as_text(value: Any) -> str:
 
 
 def _model_task(context: RuntimeRequest) -> str:
-    """Mechanically join Python-materialized graph data and dynamic input once."""
+    """Mechanically project the native task from validated ICF/IGF records."""
+    graph_context = next((
+        _as_text(record.content.get("text"))
+        for record in context.igf.records
+        if record.kind == "materialized-context"
+    ), "")
+    output_contract = _as_text(context.icf.stable.get("outputContract"))
     return "\n\n".join(
         value for value in (
-            _as_text(context.idf.graphSeed),
-            _as_text(context.idf.message),
+            graph_context,
+            _as_text(context.icf.variable.get("task")),
+            f"Output requirements:\n{output_contract}" if output_contract else "",
         ) if value
     )
 
@@ -148,8 +155,8 @@ class McpSavedCardAgent(BaseChatAgent):
                 conversation_id=_as_text(self._context.session.conversationId) or "active",
                 parent_run_id=self._outer_run_id,
                 caller_card_id=self._context.session.cardId,
-                caller_runtime_kind=_as_text(self._context.idf.runtime.get("kind")),
-                caller_runtime_mode=_as_text(self._context.idf.runtime.get("mode")),
+                caller_runtime_kind=_as_text((self._context.icf.stable.get("runtime") or {}).get("kind")),
+                caller_runtime_mode=_as_text((self._context.icf.stable.get("runtime") or {}).get("mode")),
                 target_card_id=self._card_id,
                 input_text=input_text,
             )
@@ -223,7 +230,7 @@ def _validate_single_card_context(context: RuntimeRequest) -> str | None:
     decides meaning — only shape: exactly one configured participant, the
     single-card runtime type, and a non-empty task.
     """
-    runtime = context.idf.runtime
+    runtime = context.icf.stable.get("runtime") or {}
     if runtime.get("kind") != "autogen" or runtime.get("mode") != "assistant":
         return (
             "single_card_runtime_invalid: runtime="
@@ -231,7 +238,7 @@ def _validate_single_card_context(context: RuntimeRequest) -> str | None:
         )
     if context.session.orchestrator != "assistant_agent":
         return f"single_card_orchestrator_invalid: orchestrator={context.session.orchestrator}"
-    if not _as_text(context.idf.message):
+    if not _as_text(context.icf.variable.get("task")):
         return "empty_user_message"
     return None
 
@@ -299,8 +306,8 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
 
     client = None
     try:
-        provider = context.idf.provider
-        options = context.idf.runtimeOptions
+        provider = context.icf.stable.get("provider") or {}
+        options = context.icf.allocation.get("runtimeOptions") or {}
         client = _build_model_client(
             AutoGenAgentConfig(
                 provider=_as_text(provider.get("provider")),
@@ -322,13 +329,13 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
                 name for name in sorted(readable_tool_ids())
                 if name in implemented
             ),
-            *context.idf.enabledTools,
+            *list(context.icf.capabilities.get("enabledTools") or []),
         ]))
         tools = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools)
         agent = AssistantAgent(
             name="Configured_Card",
             model_client=client,
-            system_message=context.idf.systemPrompt,
+            system_message=_as_text(context.icf.stable.get("instructions")),
             **({"tools": tools} if tools else {}),
         )
         result = await agent.run(task=_model_task(context))
@@ -366,7 +373,7 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
 
 
 def _read_max_turns(context: RuntimeRequest) -> int | None:
-    runtime_options = context.idf.runtimeOptions
+    runtime_options = context.icf.allocation.get("runtimeOptions") or {}
     if not isinstance(runtime_options, dict) or "maxTurns" not in runtime_options:
         return None
     raw = runtime_options["maxTurns"]
@@ -392,7 +399,7 @@ async def run_native_magentic_mission(
     context: RuntimeRequest,
 ) -> OrchestratorRunResponse:
     """Run native Magentic-One with the saved roster and transient task text."""
-    runtime = context.idf.runtime
+    runtime = context.icf.stable.get("runtime") or {}
     if runtime.get("kind") != "autogen" or runtime.get("mode") != "magentic_one":
         raise RuntimeError("orchestrator_card_required")
     run_id = _as_text(context.session.runId) or context.session.turnId
@@ -401,8 +408,8 @@ async def run_native_magentic_mission(
     client = None
     participant_clients: list[Any] = []
     try:
-        runtime_options = context.idf.runtimeOptions
-        provider = context.idf.provider
+        runtime_options = context.icf.allocation.get("runtimeOptions") or {}
+        provider = context.icf.stable.get("provider") or {}
         client = _build_model_client(
             AutoGenAgentConfig(
                 provider=_as_text(provider.get("provider")),

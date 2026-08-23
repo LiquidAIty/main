@@ -3,16 +3,26 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import React from 'react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildActiveAgentManagerLocalConfig,
   buildInputDictionarySelectedRows,
   buildDisplayedToolRows,
+  AgentManager,
+  parseNamedRuntimeInput,
   parseCardEditorInputDataDictionary,
   selectKnowledgeGraphProjection,
   toggleSavedToolAssignment,
 } from './AgentManager';
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe('AgentManager active builder config', () => {
   it('builds the exact active local configuration payload', () => {
@@ -144,8 +154,8 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain("data-testid=\"agent-manager-clear-invocation\"");
     expect(source).not.toContain('Prepare / Refresh');
     expect(source).toContain("{runBusy ? 'Running…' : 'Run'}");
-    expect(source).not.toContain('agent-manager-save-idf');
-    expect(source).not.toContain('agent-manager-export-idf');
+    expect(source).not.toContain('agent-manager-save-icf');
+    expect(source).toContain('Export ICF…');
     expect(source).not.toContain('Run Test');
   });
 
@@ -159,10 +169,207 @@ describe('AgentManager active builder config', () => {
 
     expect(source).toContain('Dynamic context / input');
     expect(source).toContain('Python materializes this input with the saved Card');
-    expect(source).not.toContain('Exact in-memory IDF');
+    expect(source).not.toContain('Exact in-memory runtime packet');
     expect(source).not.toContain('Run telemetry receipt');
-    expect(source).not.toContain('aria-label="Exact temporary IDF"');
+    expect(source).not.toContain('aria-label="Exact temporary runtime packet"');
     expect(pageSource).toContain('invocation: result?.invocation || null');
+  });
+
+  it('shows and exports the selected Run ICF with an explicit estimate breakdown', async () => {
+    const write = vi.fn(async () => undefined);
+    const close = vi.fn(async () => undefined);
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, fields: [], catalogs: { 'configured-models': [] } }),
+    })));
+    const showSaveFilePicker = vi.fn(async () => ({
+      createWritable: async () => ({ write, close }),
+    }));
+    vi.stubGlobal('showSaveFilePicker', showSaveFilePicker);
+    vi.stubGlobal('prompt', vi.fn(() => 'research-baseline.icf'));
+    const icfText = '{"format":"liquidaity.input-context"}\n';
+    render(React.createElement(AgentManager, {
+      agentType: 'agent_builder',
+      activeTab: 'Task',
+      cardId: 'card-one',
+      localConfig: { runtime: { kind: 'autogen', mode: 'assistant' } },
+      onSaveLocalConfig: vi.fn(),
+      showTaskComposer: false,
+      runInputs: {
+        available: true,
+        runId: 'run-one',
+        icfText,
+        igfText: '{"kind":"header","format":"liquidaity.input-graph"}\n',
+        inputSummary: { icfBytes: 420, igfBytes: 180 },
+        icf: { estimates: {
+          totalModelVisibleTokens: 95,
+          systemContextTokens: 40,
+          taskTokens: 20,
+          outputContractTokens: 5,
+          graphContextTokens: 30,
+        } },
+        igf: { header: { recordCounts: { total: 2 }, authorities: ['CodeGraph'] }, records: [] },
+      },
+    }));
+
+    expect(screen.getByTestId('selected-run-icf').textContent).toContain('Selected Run · in.icf');
+    expect(screen.getByTestId('selected-run-token-estimate').textContent).toContain('system 40');
+    expect(screen.getByTestId('selected-run-token-estimate').textContent).toContain('graph 30');
+    expect(screen.getByTestId('selected-run-token-estimate').textContent).toContain('model-agnostic');
+    fireEvent.click(screen.getByRole('button', { name: 'Export ICF…' }));
+    await waitFor(() => expect(write).toHaveBeenCalledWith(icfText));
+    expect(showSaveFilePicker).toHaveBeenCalledWith(expect.objectContaining({
+      suggestedName: 'research-baseline.icf',
+    }));
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('imports only the ICF transient task and clears it without changing Card configuration', async () => {
+    const onChangePromptTestInput = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, fields: [], catalogs: { 'configured-models': [] } }),
+    })));
+    render(React.createElement(AgentManager, {
+      agentType: 'agent_builder',
+      activeTab: 'Task',
+      cardId: 'card-one',
+      localConfig: { runtime: { kind: 'autogen', mode: 'assistant' } },
+      onSaveLocalConfig: vi.fn(),
+      onChangePromptTestInput,
+      showTaskComposer: false,
+      runInputs: {
+        available: true, runId: 'run-one', icf: { estimates: {} },
+        igf: { header: { recordCounts: { total: 0 }, authorities: [] }, records: [] },
+        inputSummary: { icfBytes: 1, igfBytes: 1 }, icfText: '{}\n', igfText: '{}\n',
+      },
+    }));
+    const file = new File([], 'research-baseline.icf', { type: 'application/json' });
+    Object.defineProperty(file, 'text', {
+      value: async () => JSON.stringify({
+        format: 'liquidaity.input-context',
+        stable: {
+          provider: { provider: 'ignored-provider' },
+          runtime: { kind: 'hermes', mode: 'main', profile: 'ignored-profile' },
+        },
+        variable: { task: 'Imported bounded task.' },
+        capabilities: { enabledTools: ['ignored-tool'] },
+      }),
+    });
+    fireEvent.change(screen.getByLabelText('Import named .icf'), { target: { files: [file] } });
+    await waitFor(() => expect(onChangePromptTestInput).toHaveBeenCalledWith('Imported bounded task.'));
+    expect(screen.getByTestId('named-icf-inspection').textContent).toContain('Saved Card grants, profile, provider, and model were ignored');
+    fireEvent.click(screen.getByRole('button', { name: 'Clear imported ICF' }));
+    expect(onChangePromptTestInput).toHaveBeenLastCalledWith('');
+  });
+
+  it('previews the next ICF through the real Task control without creating a Run', () => {
+    const onPreviewCard = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, fields: [], catalogs: { 'configured-models': [] } }),
+    })));
+    render(React.createElement(AgentManager, {
+      agentType: 'agent_builder',
+      activeTab: 'Task',
+      cardId: 'card-one',
+      localConfig: { runtime: { kind: 'autogen', mode: 'assistant' } },
+      onSaveLocalConfig: vi.fn(),
+      promptTestInput: 'Preview this exact task.',
+      onPreviewCard,
+      runResult: {
+        status: 'previewed', output: '', error: null, tools: [],
+        invocation: {
+          ephemeral: true, cardRevisionId: 'revision-one', cardRevision: 1,
+          cardRevisionSha256: 'sha', runtimeOwner: 'autogen',
+          icf: { format: 'liquidaity.input-context', variable: { task: 'Preview this exact task.' } },
+          igf: { header: { recordCounts: { total: 0 } }, records: [] },
+          cardIdentity: { cardId: 'card-one' },
+        },
+      },
+    }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview inputs' }));
+    expect(onPreviewCard).toHaveBeenCalledOnce();
+    expect(screen.getByTestId('next-icf-preview').textContent).toContain('No Run exists');
+    expect(screen.getByTestId('next-icf-preview').textContent).toContain('Preview this exact task.');
+  });
+
+  it('shows and imports selected-Run IGF selections through the native-reread callback only', async () => {
+    const onImportIgfSelections = vi.fn(async () => undefined);
+    const onClearInvocation = vi.fn();
+    const onClearGraphContext = vi.fn();
+    const write = vi.fn(async () => undefined);
+    const close = vi.fn(async () => undefined);
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, fields: [], catalogs: { 'configured-models': [] } }),
+    })));
+    vi.stubGlobal('prompt', vi.fn(() => 'research-baseline.igf'));
+    vi.stubGlobal('showSaveFilePicker', vi.fn(async () => ({
+      createWritable: async () => ({ write, close }),
+    })));
+    render(React.createElement(AgentManager, {
+      agentType: 'agent_builder',
+      activeTab: 'Knowledge',
+      cardId: 'card-one',
+      localConfig: { runtime: { kind: 'autogen', mode: 'assistant' } },
+      onSaveLocalConfig: vi.fn(),
+      onImportIgfSelections,
+      onClearInvocation,
+      onClearGraphContext,
+      runInputs: {
+        available: true,
+        runId: 'run-one',
+        icfText: '{}\n',
+        igfText: '{"kind":"header","format":"liquidaity.input-graph"}\n',
+        inputSummary: { icfBytes: 10, igfBytes: 180 },
+        icf: { estimates: {} },
+        igf: {
+          header: { recordCounts: { total: 3 }, authorities: ['ThinkGraph', 'KnowGraph'] },
+          records: [],
+        },
+      },
+    }));
+
+    expect(screen.getByTestId('selected-run-igf').textContent).toContain('3 records');
+    expect(screen.getByTestId('selected-run-igf').textContent).toContain('ThinkGraph, KnowGraph');
+    expect(screen.queryByText(/sub-worker input/i)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Export IGF…' }));
+    await waitFor(() => expect(write).toHaveBeenCalledWith('{"kind":"header","format":"liquidaity.input-graph"}\n'));
+    expect(close).toHaveBeenCalledOnce();
+    const file = new File([], 'research-baseline.igf', { type: 'application/json' });
+    Object.defineProperty(file, 'text', {
+      value: async () => [
+        JSON.stringify({ kind: 'header', format: 'liquidaity.input-graph' }),
+        JSON.stringify({
+          kind: 'selection', authority: 'CodeGraph', nativeId: 'pkg.materialize_input_pair',
+          content: { reason: 'Current owner', required: true },
+        }),
+        '',
+      ].join('\n'),
+    });
+    fireEvent.change(screen.getByLabelText('Import named .igf'), { target: { files: [file] } });
+    await waitFor(() => expect(onImportIgfSelections).toHaveBeenCalledWith([{
+      authority: 'CodeGraph', nativeId: 'pkg.materialize_input_pair', reason: 'Current owner',
+      boundedExpansion: 1, resultLimit: 12, required: true,
+    }]));
+    expect(screen.getByTestId('named-igf-inspection').textContent).toContain('current native reread');
+    fireEvent.click(screen.getByRole('button', { name: 'Clear imported IGF' }));
+    expect(onClearGraphContext).toHaveBeenCalledOnce();
+    expect(onClearInvocation).not.toHaveBeenCalled();
+  });
+
+  it('parses named ICF and IGF only for local inspection', () => {
+    expect(parseNamedRuntimeInput('study.icf', '{"format":"liquidaity.input-context"}\n').kind).toBe('icf');
+    expect(parseNamedRuntimeInput(
+      'selection.igf',
+      '{"kind":"header","format":"liquidaity.input-graph"}\n{"kind":"node"}\n',
+    ).kind).toBe('igf');
+    expect(() => parseNamedRuntimeInput('wrong.json', '{}')).toThrow('runtime_input_extension_invalid');
+    expect(() => parseNamedRuntimeInput(
+      'secret.icf',
+      '{"format":"liquidaity.input-context","api_key":"forbidden"}',
+    )).toThrow('input_file_secret_field_forbidden');
   });
 
   it('uses native learning and tool controls instead of passive or Card-side projections', () => {

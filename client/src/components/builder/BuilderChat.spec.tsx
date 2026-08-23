@@ -54,4 +54,26 @@ describe('BuilderChat', () => {
     expect(screen.getAllByRole('button')).toHaveLength(2);
     expect(screen.getByPlaceholderText('Type a message…')).not.toBeNull();
   });
+
+  it('uses the parent-owned draft so an imported Main task reaches the one chat composer', () => {
+    const onSend = vi.fn();
+    function ControlledChat() {
+      const [draft, setDraft] = React.useState('Imported Main task.');
+      return (
+        <BuilderChat
+          messages={[]}
+          onSend={onSend}
+          knowledgeProjectId="project-1"
+          colors={colors}
+          draft={draft}
+          onDraftChange={setDraft}
+        />
+      );
+    }
+    render(<ControlledChat />);
+    expect((screen.getByTestId('builder-chat-input') as HTMLInputElement).value).toBe('Imported Main task.');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(onSend).toHaveBeenCalledWith('Imported Main task.');
+    expect((screen.getByTestId('builder-chat-input') as HTMLInputElement).value).toBe('');
+  });
 });

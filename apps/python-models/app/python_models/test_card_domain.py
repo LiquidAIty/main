@@ -291,14 +291,14 @@ def test_enabled_flow_edge_materializes_bounded_target_without_inventing_tool_gr
         edges=[{"source": "parent", "target": "child", "edgeType": "flow"}],
     )
     assert preview["cardIdentity"] == {"cardId": "parent", "title": "parent"}
-    assert preview["idf"]["enabledTools"] == []
+    assert preview["icf"]["capabilities"]["enabledTools"] == []
     assert preview["delegationTargets"] == [{
         **_expected_delegate(),
         "nativeTools": ["terminal"],
         "skills": ["repository-coder"],
         "toolsets": ["terminal"],
     }]
-    assert "delegationTargets" not in preview["idf"]
+    assert "delegationTargets" not in preview["icf"]
 
 
 def test_hermes_flow_target_projects_saved_profile_outside_model_input(
@@ -311,14 +311,14 @@ def test_hermes_flow_target_projects_saved_profile_outside_model_input(
     )
     assert preview["runtimeOwner"] == "hermes"
     assert preview["cardIdentity"] == {"cardId": "parent", "title": "parent"}
-    assert "card.run_assistant_agent" not in preview["idf"]["enabledTools"]
+    assert "card.run_assistant_agent" not in preview["icf"]["capabilities"]["enabledTools"]
     assert preview["delegationTargets"] == [{
         **_expected_delegate(),
         "nativeTools": ["terminal"],
         "skills": ["repository-coder"],
         "toolsets": ["terminal"],
     }]
-    assert "delegationTargets" not in preview["idf"]
+    assert "delegationTargets" not in preview["icf"]
 
 
 def test_no_flow_edge_materializes_no_delegation_transport(
@@ -326,21 +326,93 @@ def test_no_flow_edge_materializes_no_delegation_transport(
 ) -> None:
     preview = _delegation_preview(monkeypatch, edges=[])
     assert preview["cardIdentity"] == {"cardId": "parent", "title": "parent"}
-    assert preview["idf"]["enabledTools"] == []
+    assert preview["icf"]["capabilities"]["enabledTools"] == []
     assert preview["delegationTargets"] == []
 
 
 def _prepared_grounded_runtime(runtime: dict[str, str]) -> dict:
+    reads = [{
+        "authority": "CodeGraph", "nativeId": "symbol-one",
+    }]
+    pair = card_domain.materialize_input_pair(
+        owner={"kind": "test", "projectId": "project-one"},
+        stable={
+            "instructions": "test instructions",
+            "outputContract": "",
+            "runtime": runtime,
+            "provider": {
+                "provider": "openai", "modelKey": "gpt-5.6-luna",
+                "providerModelId": "gpt-5.6-luna", "accessMode": "chatgpt-account",
+            },
+        },
+        variable={"task": "test task"},
+        capabilities={"enabledTools": []},
+        allocation={"runtimeOptions": {}},
+        graph_context="symbol-one",
+        native_references=reads,
+        graph_projection={"authority": "CodeGraph", "nodes": [{
+            "id": "symbol-one", "authority": "CodeGraph", "type": "Function",
+        }], "edges": []},
+    )
     return {
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "runtimeOwner": (
+            "hermes" if runtime["kind"] == "hermes"
+            else "mag_one" if runtime.get("mode") == "magentic_one"
+            else "autogen"
+        ),
+        "cardIdentity": {"cardId": "card-one", "title": "Card"},
         "cardRevisionId": "revision-one",
-        "idf": {"runtime": runtime},
-        "resolvedNativeReads": [{
-            "authority": "CodeGraph", "nativeId": "symbol-one",
-        }],
+        "icf": pair.icf.model_dump(),
+        "igf": pair.igf.model_dump(),
+        "resolvedNativeReads": reads,
         "resolvedGraphProjection": {
             "nodes": [{"id": "symbol-one"}], "edges": [],
         },
     }
+
+
+def _prepared_kanban_runtime() -> dict:
+    prepared = _prepared_grounded_runtime({
+        "kind": "hermes", "mode": "kanban", "profile": "steward",
+    })
+    prepared.update({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "runtimeOwner": "hermes",
+        "cardIdentity": {"cardId": "kanban-one", "title": "Kanban"},
+        "resolvedNativeReads": [],
+        "resolvedGraphProjection": {"nodes": [], "edges": []},
+    })
+    return prepared
+
+
+def _fake_retain_input_pair(prepared: dict, **_kwargs) -> tuple[dict, dict, dict]:
+    stable = prepared["icf"]["stable"]
+    variable = prepared["icf"]["variable"]
+    capabilities = prepared["icf"]["capabilities"]
+    return (
+        {
+            "icf": prepared["icf"],
+            "igf": prepared["igf"],
+            "inputSummary": {"icfBytes": 1, "igfBytes": 1},
+        },
+        {
+            "icfPath": "in.icf", "igfPath": "in.igf",
+            "icfSha256": "icf", "igfSha256": "igf",
+            "icfBytes": 1, "igfBytes": 1,
+        },
+        {
+            "systemPrompt": str(stable.get("instructions") or ""),
+            "outputRequirements": str(stable.get("outputContract") or ""),
+            "task": str(variable.get("task") or ""),
+            "graphContext": "",
+            "runtime": stable["runtime"],
+            "provider": stable["provider"],
+            "enabledTools": list(capabilities.get("enabledTools") or []),
+        },
+    )
 
 
 @pytest.mark.parametrize(
@@ -421,29 +493,72 @@ def test_other_card_runtimes_keep_the_existing_unrestricted_preparation(
     assert card_domain.prepare_run_invocation({}) is prepared
 
 
+def test_new_run_fails_closed_when_root_input_files_cannot_persist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _prepared_grounded_runtime({"kind": "autogen", "mode": "assistant"})
+    terminal: list[dict] = []
+    monkeypatch.setattr(card_domain, "prepare_run_invocation", lambda _payload: prepared)
+    monkeypatch.setattr(
+        card_domain,
+        "_insert_run",
+        lambda *_args, **_kwargs: ("run-one", "correlation-one", True),
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "_retain_run_input_pair",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            card_domain.CardDomainError("input_files_write_failed")
+        ),
+    )
+    monkeypatch.setattr(card_domain, "finish_run", lambda payload: terminal.append(payload) or {})
+
+    with pytest.raises(card_domain.CardDomainError, match="input_files_write_failed"):
+        card_domain.begin_run({"runId": "run-one", "correlationId": "correlation-one"})
+    assert terminal == [{
+        "runId": "run-one",
+        "state": "failed",
+        "nativePhase": "failed",
+        "errorCode": "input_files_materialization_failed",
+        "errorSummary": "input_files_write_failed",
+    }]
+
+
+def test_mag_one_participant_validation_still_fails_before_run_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _prepared_grounded_runtime({"kind": "autogen", "mode": "magentic_one"})
+    monkeypatch.setattr(card_domain, "prepare_run_invocation", lambda _payload: prepared)
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "deck": {
+            "nodes": [{
+                "id": "card-one",
+                "runtime": {"kind": "autogen", "mode": "magentic_one"},
+            }],
+            "edges": [],
+        },
+    })
+    monkeypatch.setattr(
+        card_domain,
+        "_insert_run",
+        lambda *_args, **_kwargs: pytest.fail("participant validation created a Run"),
+    )
+
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="magentic_runtime_no_connected_participants",
+    ):
+        card_domain.begin_run({"runId": "run-one", "correlationId": "correlation-one"})
+
+
 def test_exact_kanban_retry_rejoins_without_duplicate_run_or_attention(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    prepared = {
-        "projectId": "project-one",
-        "deckId": "deck-one",
-        "cardRevisionId": "revision-one",
-        "runtimeOwner": "hermes",
-        "cardIdentity": {"cardId": "kanban-one", "title": "Kanban"},
-        "idf": {
-            "runtime": {
-                "kind": "hermes", "mode": "kanban", "profile": "steward",
-            },
-            "provider": {
-                "provider": "openai", "modelKey": "gpt-5.6-luna",
-                "providerModelId": "gpt-5.6-luna", "accessMode": "chatgpt-account",
-            },
-        },
-        "resolvedNativeReads": [],
-        "resolvedGraphProjection": {"nodes": [], "edges": []},
-    }
+    prepared = _prepared_kanban_runtime()
     inserted = []
     monkeypatch.setattr(card_domain, "prepare_run_invocation", lambda _payload: prepared)
+    monkeypatch.setattr(card_domain, "_retain_run_input_pair", _fake_retain_input_pair)
     monkeypatch.setattr(
         card_domain,
         "_insert_run",
@@ -492,26 +607,12 @@ def test_exact_kanban_retry_rejoins_without_duplicate_run_or_attention(
 def test_same_parent_kanban_rewording_rejoins_the_existing_child_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    prepared = {
-        "projectId": "project-one",
-        "deckId": "deck-one",
-        "cardRevisionId": "revision-one",
-        "runtimeOwner": "hermes",
-        "cardIdentity": {"cardId": "kanban-one", "title": "Kanban"},
-        "idf": {
-            "runtime": {"kind": "hermes", "mode": "kanban", "profile": "steward"},
-            "provider": {
-                "provider": "openai", "modelKey": "gpt-5.6-luna",
-                "providerModelId": "gpt-5.6-luna", "accessMode": "chatgpt-account",
-            },
-        },
-        "resolvedNativeReads": [],
-        "resolvedGraphProjection": {"nodes": [], "edges": []},
-    }
+    prepared = _prepared_kanban_runtime()
     fingerprints: dict[str, tuple[str, str]] = {}
     observed: list[str] = []
 
     monkeypatch.setattr(card_domain, "prepare_run_invocation", lambda _payload: prepared)
+    monkeypatch.setattr(card_domain, "_retain_run_input_pair", _fake_retain_input_pair)
 
     def insert(_prepared: dict, **kwargs):
         fingerprint = kwargs["request_fingerprint"]
@@ -1003,8 +1104,8 @@ def test_disabled_flow_edge_materializes_no_delegation_transport(
             "enabled": False,
         }],
     )
-    assert "card.run_assistant_agent" not in preview["idf"]["enabledTools"]
-    assert "card.run_assistant_agent" not in preview["idf"]["enabledTools"]
+    assert "card.run_assistant_agent" not in preview["icf"]["capabilities"]["enabledTools"]
+    assert "card.run_assistant_agent" not in preview["icf"]["capabilities"]["enabledTools"]
     assert preview["delegationTargets"] == []
 
 
@@ -1034,7 +1135,7 @@ def test_disabled_missing_or_invalid_flow_target_is_not_eligible(
         edges=[{"source": "parent", "target": "missing", "edgeType": "flow"}],
     )
     assert missing["delegationTargets"] == []
-    assert "card.run_assistant_agent" not in missing["idf"]["enabledTools"]
+    assert "card.run_assistant_agent" not in missing["icf"]["capabilities"]["enabledTools"]
 
 
 def test_stable_card_has_one_prompt_and_one_explicit_runtime() -> None:
@@ -1134,21 +1235,20 @@ def test_receiving_card_materializes_its_own_exact_call_data(
     hermes = card_domain.materialize_invocation(_destination_payload("hermes"))
     autogen = card_domain.materialize_invocation(_destination_payload("autogen"))
 
-    assert hermes["idf"]["systemPrompt"] == "Hermes saved prompt"
-    assert hermes["idf"]["runtime"] == {
+    assert hermes["icf"]["stable"]["instructions"] == "Hermes saved prompt"
+    assert hermes["icf"]["stable"]["runtime"] == {
         "kind": "hermes", "mode": "delegate", "profile": "research",
     }
-    assert hermes["idf"]["enabledTools"] == []
-    assert autogen["idf"]["systemPrompt"] == "AutoGen saved prompt"
-    assert autogen["idf"]["runtime"] == {"kind": "autogen", "mode": "assistant"}
-    assert autogen["idf"]["enabledTools"] == []
-    assert hermes["idf"]["message"] == autogen["idf"]["message"]
-    assert hermes["idf"]["message"] == "Use every supplied declaration."
-    assert hermes["idf"]["graphSeed"] == ""
-    assert hermes["idf"]["nativeReferences"] == []
-    assert "cardId" not in hermes["idf"]
-    assert "runId" not in hermes["idf"]
-    assert "flow-hermes" not in str(hermes["idf"])
+    assert hermes["icf"]["capabilities"]["enabledTools"] == []
+    assert autogen["icf"]["stable"]["instructions"] == "AutoGen saved prompt"
+    assert autogen["icf"]["stable"]["runtime"] == {"kind": "autogen", "mode": "assistant"}
+    assert autogen["icf"]["capabilities"]["enabledTools"] == []
+    assert hermes["icf"]["variable"]["task"] == autogen["icf"]["variable"]["task"]
+    assert hermes["icf"]["variable"]["task"] == "Use every supplied declaration."
+    assert hermes["icf"]["graphInput"]["recordCounts"]["total"] == 0
+    assert hermes["icf"]["variable"]["selectedNativeReferences"] == []
+    assert "runId" not in hermes["icf"]["stable"]
+    assert "flow-hermes" not in str(hermes["icf"])
 
     loaded["deck"]["edges"] = [
         edge for edge in loaded["deck"]["edges"] if edge["target"] != "autogen"
@@ -1225,8 +1325,9 @@ def test_saved_hook_and_handoff_anchor_resolve_before_one_materialization(
     preview = card_domain.materialize_invocation(payload)
 
     assert [anchor["nativeId"] for anchor in resolved] == ["hook:one", "handoff:one"]
-    assert preview["idf"]["graphSeed"] == "actual current graph data"
-    assert [reference["nativeId"] for reference in preview["idf"]["nativeReferences"]] == [
+    context = next(record for record in preview["igf"]["records"] if record["kind"] == "materialized-context")
+    assert context["content"]["text"] == "actual current graph data"
+    assert [reference["nativeId"] for reference in preview["icf"]["variable"]["selectedNativeReferences"]] == [
         "hook:one", "handoff:one",
     ]
 
@@ -1274,7 +1375,8 @@ def test_saved_dynamic_knowgraph_hook_searches_the_assignment_once(
     assert anchors[0]["entityTypes"] == ["Company"]
     assert anchors[0]["edgeTypes"] == ["SUPPORTS"]
     assert kwargs["search_text"] == "Use every supplied declaration."
-    assert preview["idf"]["graphSeed"] == "current KnowGraph result"
+    context = next(record for record in preview["igf"]["records"] if record["kind"] == "materialized-context")
+    assert context["content"]["text"] == "current KnowGraph result"
     assert preview["resolvedNativeReads"][0]["nativeId"] == "entity-1"
 
 
@@ -1506,11 +1608,11 @@ def test_explicit_card_mission_is_transient_and_retaskable(
     })
 
     assert first["cardIdentity"]["cardId"] == second["cardIdentity"]["cardId"] == "hermes"
-    assert second["idf"]["runtime"]["profile"] == "knowledge"
-    assert "Retask the same saved Kanban Card" in second["idf"]["message"]
-    assert "Research the first bounded question" not in second["idf"]["message"]
+    assert second["icf"]["stable"]["runtime"]["profile"] == "knowledge"
+    assert "Retask the same saved Kanban Card" in second["icf"]["variable"]["task"]
+    assert "Research the first bounded question" not in second["icf"]["variable"]["task"]
     assert second["delegationTargets"] == []
-    assert "card.run_assistant_agent" not in second["idf"]["enabledTools"]
+    assert "card.run_assistant_agent" not in second["icf"]["capabilities"]["enabledTools"]
 
 
 def test_main_and_coder_can_explicitly_retask_one_non_delegating_kanban_card(
@@ -1551,8 +1653,9 @@ def test_main_and_coder_can_explicitly_retask_one_non_delegating_kanban_card(
     with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
         invoke("coder", "This wire no longer authorizes the retask.")
 
-def test_main_chat_materializes_once_without_serialized_card_or_run_data(
+def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     import engraphis.backends.embedder_st as embedder_st
     import engraphis.core.engine as engraphis_engine
@@ -1592,13 +1695,13 @@ def test_main_chat_materializes_once_without_serialized_card_or_run_data(
         },
     )
     materializations: list[str] = []
-    real_materialize = card_domain.materialize_idf
+    real_materialize = card_domain.materialize_input_pair
 
     def count_materialization(**kwargs):
-        materializations.append(str(kwargs["dynamic_input"]))
+        materializations.append(str(kwargs["variable"]["task"]))
         return real_materialize(**kwargs)
 
-    monkeypatch.setattr(card_domain, "materialize_idf", count_materialization)
+    monkeypatch.setattr(card_domain, "materialize_input_pair", count_materialization)
     prepared = card_domain.prepare_main_chat({
         "projectId": "project-one",
         "deckId": "deck-one",
@@ -1606,15 +1709,14 @@ def test_main_chat_materializes_once_without_serialized_card_or_run_data(
     })
     assert "assignment" not in prepared
     assert "message" not in prepared
-    assert prepared["idf"]["systemPrompt"] == main["prompt"]
-    assert prepared["idf"]["message"] == "Help me prepare work for another agent."
-    assert prepared["idf"]["enabledTools"] == []
-    assert prepared["idf"]["runtime"] == {
+    assert prepared["icf"]["stable"]["instructions"] == main["prompt"]
+    assert prepared["icf"]["variable"]["task"] == "Help me prepare work for another agent."
+    assert prepared["icf"]["capabilities"]["enabledTools"] == []
+    assert prepared["icf"]["stable"]["runtime"] == {
         "kind": "hermes", "mode": "main", "profile": "default",
     }
-    assert "cardId" not in prepared["idf"]
-    assert "runId" not in prepared["idf"]
-    assert "serialized-card" not in str(prepared["idf"])
+    assert "runId" not in prepared["icf"]["stable"]
+    assert "serialized-card" not in str(prepared["icf"])
     assert prepared["cardIdentity"] == {"cardId": "main", "title": "main"}
     assert materializations == ["Help me prepare work for another agent."]
     inserted: dict[str, object] = {}
@@ -1627,6 +1729,8 @@ def test_main_chat_materializes_once_without_serialized_card_or_run_data(
         ),
     )
     monkeypatch.setattr(card_domain, "_observe_run_start", lambda *args, **kwargs: True)
+    monkeypatch.setattr(card_domain, "_record_run_input_artifacts", lambda *_args, **_kwargs: None)
+    monkeypatch.setenv("LIQUIDAITY_RUN_INPUT_ROOT", str(tmp_path / "run-inputs"))
     begun = card_domain.begin_main_chat_run({
         "projectId": "project-one",
         "deckId": "deck-one",
@@ -1636,11 +1740,12 @@ def test_main_chat_materializes_once_without_serialized_card_or_run_data(
         "correlationId": "run-main-one",
         "conversationId": "conversation-one",
     })
-    assert begun["hermesTransport"]["idf"] == begun["idf"]
-    assert begun["hermesTransport"]["idf"]["message"] == (
+    assert begun["hermesTransport"]["request"]["task"] == (
         "Help me prepare work for another agent."
     )
-    assert inserted["prepared"]["idf"] == begun["idf"]
+    assert inserted["prepared"]["icf"]["variable"]["task"] == begun["icf"]["variable"]["task"]
+    assert begun["inputFiles"]["icfPath"].endswith("in.icf")
+    assert begun["inputFiles"]["igfPath"].endswith("in.igf")
     assert materializations == [
         "Help me prepare work for another agent.",
         "Help me prepare work for another agent.",
@@ -1679,13 +1784,9 @@ def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
         "projectId": "project-one",
         "deckId": "deck-one",
         "cardIdentity": {"cardId": "card-one"},
-        "idf": {"runtime": {"kind": "hermes", "mode": "main", "profile": "main"}, "nativeReferences": [{
-            "authority": "KnowGraph",
-            "nativeId": "episode:selected",
-            "reason": "selected for the call",
-            "asOf": "2026-08-17T00:00:00Z",
-            "required": True,
-        }]},
+        "icf": {"stable": {"runtime": {
+            "kind": "hermes", "mode": "main", "profile": "main",
+        }}},
     }
     assert card_domain._observe_run_start(
         prepared,
@@ -2031,8 +2132,8 @@ def test_native_attention_observation_requires_existing_run_card_identity(monkey
         "operation": "read",
         "toolName": "cbm.search_graph",
         "nativeNodeIds": [
-            "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
-            "apps/python-models/app/python_models/idf.py",
+            "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.icf.materialize_input_pair",
+            "apps/python-models/app/python_models/icf.py",
         ],
         "nativeEdgeIds": ["edge-one"],
         "resultHash": "a" * 64,
@@ -2048,17 +2149,17 @@ def test_native_attention_observation_requires_existing_run_card_identity(monkey
     assert statements[0][1]["runId"] == "coder-run-one"
     assert statements[0][1]["cardId"] == "card_local_coder"
     assert statements[0][1]["nativeNodeIds"] == [
-        "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
-        "apps/python-models/app/python_models/idf.py",
+        "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.icf.materialize_input_pair",
+        "apps/python-models/app/python_models/icf.py",
     ]
     assert statements[0][1]["nativeEdgeIds"] == ["edge-one"]
     assert statements[1][1]["references"] == [
         {
-            "nativeId": "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
+            "nativeId": "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.icf.materialize_input_pair",
             "nativeKind": "node",
         },
         {
-            "nativeId": "apps/python-models/app/python_models/idf.py",
+            "nativeId": "apps/python-models/app/python_models/icf.py",
             "nativeKind": "node",
         },
         {"nativeId": "edge-one", "nativeKind": "edge"},

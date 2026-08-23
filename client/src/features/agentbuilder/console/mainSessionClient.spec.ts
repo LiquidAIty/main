@@ -41,7 +41,7 @@ describe('streamSession', () => {
         message: text,
         dataAnchors: [{
           authority: 'CodeGraph',
-          nativeId: 'pkg.materialize_idf',
+          nativeId: 'pkg.materialize_input_pair',
           reason: 'Current production definition',
         }],
       });
@@ -54,7 +54,7 @@ describe('streamSession', () => {
       conversationId: 'main',
       message: text,
       dataAnchors: [{
-        authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
+        authority: 'CodeGraph', nativeId: 'pkg.materialize_input_pair',
         reason: 'Current production definition', priority: 0,
         boundedExpansion: 1, resultLimit: 12, required: true,
       }],

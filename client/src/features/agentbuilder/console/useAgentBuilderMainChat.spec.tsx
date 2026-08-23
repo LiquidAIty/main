@@ -39,7 +39,7 @@ describe('Main chat live observation callbacks', () => {
     mocks.streamSession.mockImplementation(async (args) => {
       order.push('stream');
       expect(args.dataAnchors).toEqual([{
-        authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
+        authority: 'CodeGraph', nativeId: 'pkg.materialize_input_pair',
         reason: 'Current production definition', priority: 0,
         boundedExpansion: 1, resultLimit: 12, required: true,
       }]);
@@ -54,7 +54,7 @@ describe('Main chat live observation callbacks', () => {
       initialMessages: [],
       workspaceView: 'chat',
       dataAnchors: [{
-        authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
+        authority: 'CodeGraph', nativeId: 'pkg.materialize_input_pair',
         reason: 'Current production definition', order: 0,
         boundedExpansion: 1, resultLimit: 12, required: true,
       }],
@@ -127,12 +127,13 @@ describe('Main chat live observation callbacks', () => {
                   nodes: [{ id: 'symbol:one', label: 'Current owner', authority: 'CodeGraph', mentionCount: 1 }],
                   edges: [], counts: { nodes: 1, edges: 0 },
                 },
-                idf: {
-                  systemPrompt: 'Coder', message: 'exact mission',
-                  runtime: { kind: 'hermes', mode: 'delegate' }, provider: {},
-                  runtimeOptions: {}, enabledTools: [], toolDefinitions: [], nativeTools: [],
-                  skills: [], toolsets: [], mcpConnectionIds: [], nativeReferences: [], images: [],
+                icf: {
+                  format: 'liquidaity.input-context', version: 1,
+                  stable: { instructions: 'Coder', runtime: { kind: 'hermes', mode: 'delegate' }, provider: {} },
+                  variable: { task: 'exact mission' }, capabilities: { enabledTools: [] },
+                  allocation: {}, graphInput: {}, estimates: {}, idd: {},
                 },
+                igf: { header: { recordCounts: { total: 1 } }, records: [] },
               },
               persisted: false,
               started: false,

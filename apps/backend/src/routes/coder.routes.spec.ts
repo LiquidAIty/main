@@ -168,7 +168,7 @@ const orchestratorMocks = vi.hoisted(() => {
     if (endpoint === '/idd/tools/materialize') return { references: body.tools };
     if (endpoint === '/idd/card-editor/materialize') {
       return {
-        dictionary: { name: 'LiquidAIty', version: 1, idfFormat: 'card-model-call' },
+        dictionary: { name: 'LiquidAIty', version: 3, icfFormat: 'input-context-file' },
         fields: [{ name: 'provider', label: 'Provider', path: 'provider', control: 'select' }],
         catalogs: { 'configured-models': body.models },
       };
@@ -207,13 +207,25 @@ const orchestratorMocks = vi.hoisted(() => {
         },
         ...(mainChat && !body.message
           ? { sessionProfile: callConfiguration }
-          : { idf: {
-              ...callConfiguration,
-              message: String(mainChat ? body.message || '' : body.assignment || ''),
-              toolDefinitions: [],
-              nativeReferences: [],
-              images: [],
-            } }),
+          : {
+              icf: {
+                format: 'liquidaity.input-context', version: 1, idd: {},
+                stable: {
+                  instructions: callConfiguration.systemPrompt,
+                  outputContract: '', runtime, provider,
+                },
+                variable: { task: String(mainChat ? body.message || '' : body.assignment || '') },
+                capabilities: {
+                  enabledTools: callConfiguration.enabledTools,
+                  toolDefinitions: [], nativeTools: callConfiguration.nativeTools,
+                  skills: callConfiguration.skills, toolsets: callConfiguration.toolsets,
+                  mcpConnectionIds: callConfiguration.mcpConnectionIds,
+                },
+                allocation: { runtimeOptions: {} }, graphInput: {}, estimates: {},
+              },
+              igf: { header: { recordCounts: { total: 0 }, authorities: [] }, records: [] },
+              inputSummary: { icfBytes: 100, igfBytes: 80 },
+            }),
       };
     }
     if (endpoint === '/domain/runs/begin' || endpoint === '/domain/main/runs/begin') {
@@ -245,22 +257,59 @@ const orchestratorMocks = vi.hoisted(() => {
         runtimeOwner: 'hermes',
         resolvedNativeReads: autoKanban
           ? [{ authority: 'ThinkGraph', nativeId: 'think-root-1' }]
-          : coderCard ? [{ authority: 'CodeGraph', nativeId: 'pkg.materialize_idf' }] : [],
+          : coderCard ? [{ authority: 'CodeGraph', nativeId: 'pkg.materialize_input_pair' }] : [],
         resolvedGraphProjection: {
           schemaVersion: 'native-card-context.v1',
           authority: 'mixed',
           projectId: body.projectId,
-          nodes: coderCard ? [{ id: 'pkg.materialize_idf', label: 'materialize_idf', mentionCount: 1 }] : [],
+          nodes: coderCard ? [{ id: 'pkg.materialize_input_pair', label: 'materialize_input_pair', mentionCount: 1 }] : [],
           edges: [],
           counts: { nodes: coderCard ? 1 : 0, edges: 0 },
         },
-        hermesTransport: {
-          idf: {
+        icf: {
+          format: 'liquidaity.input-context', version: 1, idd: {},
+          stable: {
             systemPrompt: coderCard ? 'Saved Coder prompt' : 'Saved prompt',
-            graphSeed: autoKanban
+            instructions: coderCard ? 'Saved Coder prompt' : 'Saved prompt',
+            outputContract: '',
+            runtime: cardId === 'card_main_chat'
+              ? { kind: 'hermes', mode: 'main', profile: 'default' }
+              : coderCard
+                ? { kind: 'hermes', mode: 'delegate', profile: 'coder' }
+                : { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
+            provider: {
+              accessMode: 'chatgpt-account', provider: 'openai',
+              modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
+            },
+          },
+          variable: { task: String(mainChat ? body.message || '' : body.assignment || '') },
+          capabilities: {
+            enabledTools: autoKanban ? ['graphiti.search_nodes'] : coderCard ? ['cbm.search_graph'] : [],
+            toolDefinitions: [],
+            nativeTools: autoKanban ? ['memory'] : coderCard ? ['terminal'] : [],
+            skills: autoKanban ? ['documentation'] : coderCard ? ['repository-coder'] : [],
+            toolsets: coderCard ? ['file', 'terminal'] : [],
+            mcpConnectionIds: [],
+          },
+          allocation: { runtimeOptions: {} }, graphInput: {}, estimates: {},
+        },
+        igf: { header: { recordCounts: { total: coderCard || autoKanban ? 2 : 0 }, authorities: [] }, records: [] },
+        inputSummary: { icfBytes: 240, igfBytes: 160 },
+        inputFiles: {
+          workspace: 'C:\\runtime-inputs\\root-run',
+          icfPath: 'C:\\runtime-inputs\\root-run\\in.icf',
+          igfPath: 'C:\\runtime-inputs\\root-run\\in.igf',
+          icfSha256: 'a'.repeat(64), igfSha256: 'b'.repeat(64),
+          icfBytes: 240, igfBytes: 160,
+        },
+        hermesTransport: {
+          request: {
+            systemPrompt: coderCard ? 'Saved Coder prompt' : 'Saved prompt',
+            outputRequirements: '',
+            graphContext: autoKanban
               ? '## Resolved ThinkGraph\nNative bounded context for think-root-1.'
-              : coderCard ? '## Resolved CodeGraph\n- pkg.materialize_idf' : '',
-            message: String(mainChat ? body.message || '' : body.assignment || ''),
+              : coderCard ? '## Resolved CodeGraph\n- pkg.materialize_input_pair' : '',
+            task: String(mainChat ? body.message || '' : body.assignment || ''),
             runtime: cardId === 'card_main_chat'
               ? { kind: 'hermes', mode: 'main', profile: 'default' }
               : coderCard
@@ -272,13 +321,16 @@ const orchestratorMocks = vi.hoisted(() => {
             },
             runtimeOptions: {},
             enabledTools: autoKanban ? ['graphiti.search_nodes'] : coderCard ? ['cbm.search_graph'] : [],
-            toolDefinitions: [],
-            nativeTools: autoKanban ? ['memory'] : coderCard ? ['terminal'] : [],
+            toolDefinitions: [], nativeTools: autoKanban ? ['memory'] : coderCard ? ['terminal'] : [],
             skills: autoKanban ? ['documentation'] : coderCard ? ['repository-coder'] : [],
-            toolsets: coderCard ? ['file', 'terminal'] : [],
-            mcpConnectionIds: [],
-            nativeReferences: [],
-            images: [],
+            toolsets: coderCard ? ['file', 'terminal'] : [], mcpConnectionIds: [],
+          },
+          inputFiles: {
+            workspace: 'C:\\runtime-inputs\\root-run',
+            icfPath: 'C:\\runtime-inputs\\root-run\\in.icf',
+            igfPath: 'C:\\runtime-inputs\\root-run\\in.igf',
+            icfSha256: 'a'.repeat(64), igfSha256: 'b'.repeat(64),
+            icfBytes: 240, igfBytes: 160,
           },
           delegationTargets: cardId === 'card_main_chat' ? [{
             cardId: 'card_local_coder',
@@ -334,6 +386,18 @@ const orchestratorMocks = vi.hoisted(() => {
           costUsd: run.totalCostUsd,
           result: run.finalResult,
         } : null,
+      };
+    }
+    if (endpoint === '/domain/runs/input-files') {
+      return {
+        ok: true,
+        available: true,
+        runId: body.runId,
+        icf: { estimates: { totalModelVisibleTokens: 42 } },
+        igf: { header: { recordCounts: { total: 1 }, authorities: ['CodeGraph'] }, records: [] },
+        inputSummary: { icfBytes: 240, igfBytes: 160 },
+        icfText: '{"format":"liquidaity.input-context"}\n',
+        igfText: '{"kind":"header","format":"liquidaity.input-graph"}\n',
       };
     }
     if (endpoint === '/domain/agentgraph/inspect') {
@@ -510,7 +574,7 @@ describe('coder routes', () => {
       const payload = await response.json();
       expect(payload).toMatchObject({
         ok: true,
-        dictionary: { name: 'LiquidAIty', version: 1 },
+        dictionary: { name: 'LiquidAIty', version: 3, icfFormat: 'input-context-file' },
         fields: [expect.objectContaining({ name: 'provider' })],
       });
       expect(payload.catalogs['configured-models']).toEqual(expect.arrayContaining([
@@ -585,7 +649,7 @@ describe('coder routes', () => {
           status: 'previewed',
           invocation: {
             cardRevisionId: 'revision:card_worker',
-            idf: { message: 'Use the stored handoff.' },
+            icf: { variable: { task: 'Use the stored handoff.' } },
           },
         },
       });
@@ -594,6 +658,39 @@ describe('coder routes', () => {
         expect.objectContaining({ body: expect.stringContaining('Use the stored handoff.') }),
       );
       expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('returns the exact retained root inputs for one selected Run', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'inputs',
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          runId: 'run-one',
+        }),
+      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        result: {
+          available: true,
+          runId: 'run-one',
+          icf: { estimates: { totalModelVisibleTokens: 42 } },
+          igf: { header: { recordCounts: { total: 1 } } },
+        },
+      });
+      expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledWith(
+        '/domain/runs/input-files',
+        expect.objectContaining({ body: expect.stringContaining('run-one') }),
+      );
     } finally {
       await closeServer(server);
     }
@@ -1007,7 +1104,7 @@ describe('coder routes', () => {
         cardId: 'card_local_coder',
         runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
         tools: ['cbm.search_graph'],
-        message: '## Resolved CodeGraph\n- pkg.materialize_idf\n\nInspect the bounded code slice.',
+        message: '## Resolved CodeGraph\n- pkg.materialize_input_pair\n\nInspect the bounded code slice.',
       });
       expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).not.toHaveProperty('skills');
       expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).not.toHaveProperty('toolsets');
@@ -1021,7 +1118,7 @@ describe('coder routes', () => {
           output: 'Real assistant reply.',
           invocation: {
             resolvedGraphProjection: {
-              nodes: [{ id: 'pkg.materialize_idf' }],
+              nodes: [{ id: 'pkg.materialize_input_pair' }],
               edges: [],
             },
           },
@@ -1116,7 +1213,7 @@ describe('coder routes', () => {
       expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).toMatchObject({
         cardId: 'card_local_coder',
         runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
-        message: '## Resolved CodeGraph\n- pkg.materialize_idf\n\nNATIVE LEARN PROMPT: study the bounded repository context',
+        message: '## Resolved CodeGraph\n- pkg.materialize_input_pair\n\nNATIVE LEARN PROMPT: study the bounded repository context',
       });
       const beginCalls = orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
         ([endpoint]) => endpoint === '/domain/runs/begin',
@@ -1439,7 +1536,7 @@ describe('coder routes', () => {
     }
   });
 
-  it('sends the exact Python-prepared outer mission to native Mag One', async () => {
+  it('sends the exact Python-retained root inputs to native Mag One', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.dispatchConfiguredRuntime.mockClear();
     const nativeRuntimeRequest = {
@@ -1454,25 +1551,14 @@ describe('coder routes', () => {
         orchestrator: 'magentic_one',
         startedAt: '2026-08-17T00:00:00Z',
       },
-      idf: {
-        systemPrompt: 'Saved Mag One prompt',
-        message: 'Coordinate the mission.',
-        runtime: { kind: 'autogen', mode: 'magentic_one' },
-        provider: {
-          accessMode: 'openrouter-api',
-          provider: 'openrouter',
-          modelKey: 'deepseek/deepseek-v4-pro-0813',
-          providerModelId: 'deepseek/deepseek-v4-pro-0813',
-        },
-        runtimeOptions: {},
-        enabledTools: [],
-        toolDefinitions: [],
-        nativeTools: [],
-        skills: [],
-        toolsets: [],
-        mcpConnectionIds: [],
-        nativeReferences: [],
-        images: [],
+      inputFiles: {
+        workspace: 'C:\\runtime-inputs\\mag-root',
+        icfPath: 'C:\\runtime-inputs\\mag-root\\in.icf',
+        igfPath: 'C:\\runtime-inputs\\mag-root\\in.igf',
+        icfSha256: 'c'.repeat(64),
+        igfSha256: 'd'.repeat(64),
+        icfBytes: 320,
+        igfBytes: 180,
       },
       participants: [],
     };
@@ -1569,7 +1655,7 @@ describe('coder routes', () => {
             projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
             runId: 'run-1', cardId: 'card_local_coder', authority: 'codegraph',
             operation: 'read', toolName: 'cbm.search_graph',
-            nativeNodeIds: ['pkg.materialize_idf'], nativeEdgeIds: [],
+            nativeNodeIds: ['pkg.materialize_input_pair'], nativeEdgeIds: [],
             resultHash: 'a'.repeat(64), truncated: false,
           }, {
             eventId: 'attention-agent', timestamp: '2026-08-21T12:00:01Z',
@@ -1587,7 +1673,7 @@ describe('coder routes', () => {
         const body = await response.json() as any;
         expect(response.status).toBe(200);
         expect(body.events).toEqual([expect.objectContaining({
-          eventId: 'attention-code', authority: 'codegraph', nativeNodeIds: ['pkg.materialize_idf'],
+          eventId: 'attention-code', authority: 'codegraph', nativeNodeIds: ['pkg.materialize_input_pair'],
         })]);
       } finally {
         orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
@@ -1710,7 +1796,7 @@ describe('coder routes', () => {
           body: JSON.stringify({
             projectId: 'project-1', conversationId: 'main', message: 'hello',
             dataAnchors: [{
-              authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
+              authority: 'CodeGraph', nativeId: 'pkg.materialize_input_pair',
               reason: 'Current production definition', priority: 0,
               boundedExpansion: 1, resultLimit: 12, required: true,
             }],
@@ -1744,7 +1830,7 @@ describe('coder routes', () => {
         expect(railsCalls[0]?.[1]?.body).toContain('"message":"hello"');
         expect(JSON.parse(String(railsCalls[0]?.[1]?.body))).toMatchObject({
           dataAnchors: [{
-            authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
+            authority: 'CodeGraph', nativeId: 'pkg.materialize_input_pair',
             reason: 'Current production definition', required: true,
           }],
         });

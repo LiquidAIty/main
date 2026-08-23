@@ -31,6 +31,8 @@ export default function BuilderChat({
   colors,
   busy = false,
   onStop,
+  draft,
+  onDraftChange,
 }: {
   messages: { role: "assistant" | "user"; text: string }[];
   onSend: (t: string) => void;
@@ -39,8 +41,15 @@ export default function BuilderChat({
   /** The real SSE turn is still open; prevent a second send and state it plainly. */
   busy?: boolean;
   onStop?: () => void;
+  draft?: string;
+  onDraftChange?: (value: string) => void;
 }) {
-  const [v, setV] = useState("");
+  const [localDraft, setLocalDraft] = useState("");
+  const value = draft === undefined ? localDraft : draft;
+  const setValue = (next: string) => {
+    if (draft === undefined) setLocalDraft(next);
+    onDraftChange?.(next);
+  };
   const listRef = useRef<HTMLDivElement>(null);
 
   // Keep the latest message (and the active turn's inline work) in view — scroll
@@ -52,10 +61,10 @@ export default function BuilderChat({
   }, [messages.length, lastTextLen]);
 
   const send = () => {
-    const trimmed = v.trim();
+    const trimmed = value.trim();
     if (!trimmed || busy) return;
     onSend(trimmed);
-    setV("");
+    setValue("");
   };
 
   return (
@@ -160,8 +169,8 @@ export default function BuilderChat({
           />
           <input
             data-testid="builder-chat-input"
-            value={v}
-            onChange={(e) => setV(e.target.value)}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
             disabled={busy}
             onKeyDown={(e) => {
               if (e.key === "Enter") send();

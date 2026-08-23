@@ -8,14 +8,15 @@ import pytest
 
 from app.python_models import magentic_agentchat as mac
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
-from app.python_models.idf import materialize_idf
+from app.python_models.icf import materialize_input_pair
 from app.python_models.orchestration_contracts import (
     ProjectSession,
     RuntimeParticipant,
+    RuntimeInputFiles,
     RuntimeRequest,
 )
 
-MODEL = "deepseek/deepseek-v4-flash-0731"
+MODEL = "gpt-5.6"
 
 
 def _context() -> RuntimeRequest:
@@ -29,6 +30,26 @@ def _context() -> RuntimeRequest:
             runtime={"kind": "autogen", "mode": "assistant"},
         ),
     ]
+    pair = materialize_input_pair(
+        owner={"kind": "test", "runId": "mag:one"},
+        stable={
+            "instructions": "saved orchestrator system", "outputContract": "",
+            "runtime": {"kind": "autogen", "mode": "magentic_one"},
+            "provider": {
+                "accessMode": "openai-api", "provider": "openai",
+                "modelKey": MODEL, "providerModelId": MODEL,
+            },
+        },
+        variable={"task": "approved task", "selectedNativeReferences": [], "images": []},
+        capabilities={
+            "enabledTools": [], "toolDefinitions": [], "nativeTools": [],
+            "skills": [], "toolsets": [], "mcpConnectionIds": [],
+        },
+        allocation={"runtimeOptions": {}},
+        graph_context="current native graph data",
+        native_references=[],
+        graph_projection={"authority": "", "nodes": [], "edges": []},
+    )
     return RuntimeRequest(
         session=ProjectSession(
             sessionId="s", projectId="p", deckId="d", cardId="mag:card",
@@ -36,17 +57,12 @@ def _context() -> RuntimeRequest:
             runId="mag:one", route="r", orchestrator="magentic_one",
             startedAt="now",
         ),
-        idf=materialize_idf(
-            system_prompt="saved orchestrator system",
-            dynamic_input="approved task",
-            graph_seed="current native graph data",
-            runtime={"kind": "autogen", "mode": "magentic_one"},
-            provider={
-                "accessMode": "openrouter-api", "provider": "openrouter",
-                "modelKey": MODEL, "providerModelId": MODEL,
-            },
-            enabled_tools=[],
-            tool_definitions=[],
+        icf=pair.icf,
+        igf=pair.igf,
+        inputFiles=RuntimeInputFiles(
+            workspace="test", icfPath="test/in.icf", igfPath="test/in.igf",
+            icfSha256=pair.icf_sha256, igfSha256=pair.igf_sha256,
+            icfBytes=len(pair.icf_bytes), igfBytes=len(pair.igf_bytes),
         ),
         participants=participants,
     )
@@ -56,7 +72,7 @@ def _context() -> RuntimeRequest:
 def test_invalid_saved_max_tokens_fails_instead_of_provider_default(max_tokens):
     with pytest.raises(RuntimeError, match=f"card_max_tokens_invalid: {max_tokens}"):
         _build_model_client(AutoGenAgentConfig(
-            provider="openrouter", provider_model_id=MODEL, max_tokens=max_tokens,
+            provider="openai", provider_model_id=MODEL, max_tokens=max_tokens,
         ))
 
 
@@ -97,7 +113,7 @@ def test_native_mag_one_consumes_canonical_card_input_and_returns_native_ids(mon
 def test_native_mag_one_failure_does_not_echo_secret(monkeypatch):
     secret = "provider-secret-must-not-escape"
     context = _context()
-    context.idf.message = secret
+    context.icf.variable["task"] = secret
     monkeypatch.setattr(
         mac,
         "_build_model_client",

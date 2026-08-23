@@ -463,7 +463,7 @@ def materialize_card_editor(model_options: Any) -> dict[str, Any]:
         "dictionary": {
             "name": metadata["name"],
             "version": metadata["version"],
-            "idfFormat": metadata["idfFormat"],
+            "icfFormat": metadata["icfFormat"],
         },
         "fields": deepcopy(document["editorFields"]),
         "catalogs": {

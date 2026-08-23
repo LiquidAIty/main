@@ -791,9 +791,9 @@ def test_coder_root_context_is_active_before_native_cbm_dispatch_and_persists_ex
         structuredContent={
             "cols": ["qn", "label", "file", "lines"],
             "rows": [[
-                "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
+                "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.icf.materialize_input_pair",
                 "Function",
-                "apps/python-models/app/python_models/idf.py",
+                "apps/python-models/app/python_models/icf.py",
                 "37-78",
             ]],
         },
@@ -814,7 +814,7 @@ def test_coder_root_context_is_active_before_native_cbm_dispatch_and_persists_ex
 
     result = asyncio.run(mcp_host.call_tool(
         "cbm.search_code",
-        {"project": "C-Projects-LiquidAIty-main", "pattern": "materialize_idf"},
+        {"project": "C-Projects-LiquidAIty-main", "pattern": "materialize_input_pair"},
     ))
 
     assert dispatched_contexts == [context]
@@ -826,8 +826,8 @@ def test_coder_root_context_is_active_before_native_cbm_dispatch_and_persists_ex
     assert attention["cardId"] == "card_local_coder"
     assert attention["toolName"] == "cbm.search_code"
     assert attention["nativeNodeIds"] == [
-        "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
-        "apps/python-models/app/python_models/idf.py",
+        "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.icf.materialize_input_pair",
+        "apps/python-models/app/python_models/icf.py",
     ]
     assert observed == [attention]
 
@@ -903,7 +903,8 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
             "mission": str(args["mission"]).strip(),
             "dataAnchors": [{**anchor, "required": True} for anchor in args["dataAnchors"]],
             "invocation": {
-                "idf": {"runtime": {"kind": "hermes", "mode": "delegate"}},
+                "icf": {"stable": {"runtime": {"kind": "hermes", "mode": "delegate"}}},
+                "igf": {"header": {"recordCounts": {"total": 1}}, "records": []},
                 "resolvedNativeReads": [{
                     "authority": "CodeGraph", "nativeId": "symbol-one",
                 }],

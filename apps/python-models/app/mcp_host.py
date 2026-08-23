@@ -1927,7 +1927,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
                 "Resolve one bounded current ThinkGraph, KnowGraph, or CodeGraph reference "
                 "into a saved target Card's transient Knowledge context. The server injects "
                 "source Card/Run/project/deck identity. This tool never executes the target, "
-                "persists an IDF, writes graph data, or creates Cards or wires."
+                "persists runtime-input files, writes graph data, or creates Cards or wires."
             ),
             inputSchema={
                 "type": "object",

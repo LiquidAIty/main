@@ -59,7 +59,7 @@ Never collapse CURRENT and TARGET into one claim.
 ### APPROVED TARGET
 
 - Repo-owned Hermes Main, Coder, and Kanban complete live proof without another runtime or fallback.
-- Main approves exact IDF handoff to the one native AutoGen Magentic-One runtime.
+- Main approves exact ICF/IGF handoff to the one native AutoGen Magentic-One runtime.
 - Real native graph reads, Context Selections, handoffs, consumption, traversal, and writes drive the
   two visual canvases.
 - Native child Runs, tools, references, artifacts, failures, and completion become truthful AGE
@@ -88,7 +88,7 @@ idea is unserious.
 ### Most recent explicit decision wins
 
 Exploration is not approval to delete a capability. A historical migration is not a current product
-decision. When the owner explicitly retains a feature—such as generic typed SQL/Cypher in IDF—record
+decision. When the owner explicitly retains a feature—such as generic typed SQL/Cypher selected into ICF—record
 that decision and do not silently narrow it because an earlier implementation was removed.
 
 If a new explicit decision replaces an older approach:
@@ -474,7 +474,7 @@ Python rails restart/reload required: yes
 
 ### Models
 
-Models interpret user intent, select among granted capabilities, plan semantically, author IDF prose and
+Models interpret user intent, select among granted capabilities, plan semantically, author task prose and
 operations, choose useful graph context, and decide what to delegate. Do not replace model reasoning with
 regex, substring, keyword, or lookup-table logic.
 
@@ -541,7 +541,7 @@ AgentGraph = LiquidAIty Card relationships, delegation, parent-run lineage, and 
 One authority and one writer per graph.
 
 - Pass pointers, native IDs, bounded Context Selections, and provenance—not copied subgraphs.
-- Transient context selection may reference native authorities for IDF hydration; it is not another graph
+- Transient context selection may reference native authorities for ICF/IGF hydration; it is not another graph
   and does not absorb or archive their data.
 - AgentGraph/AGE owns accepted Card relationship edits and may observe stable run/reference/artifact IDs. It never
   stores raw IDFs, authorizes a runtime, chooses a card, or owns native runtime lifecycle.
@@ -572,42 +572,46 @@ knowledge movement.
 
 ---
 
-## IDF and IDD law
+## ICF, IGF, and IDD law
 
-There is exactly one IDF meaning and implementation:
+There is exactly one runtime-input meaning and implementation:
 
 ```text
 saved Card stable fields
 + current transient dynamic input
 + deliberately selected rich data, native references, and images
 + effective granted tools
-= exact transient model/framework request
+= one exact Input Context File plus one exact Input Graph File
 ```
 
-A saved Card becomes the IDF only when its dynamic input is filled and the Card is run.
-`apps/python-models/app/python_models/idf.py::materialize_idf` is the only materializer. It produces the
-exact Inspector-visible fields consumed once by Hermes or AutoGen/Mag One: system instructions,
-dynamic message, runtime/provider/model/options, effective MCP/native tools, skills/toolsets,
-connections, selected context/references/images, and requested output requirements. The object exists
-in memory for one call and is discarded.
+A saved Card becomes runnable only when its dynamic input is filled and the Card is run.
+`apps/python-models/app/python_models/icf.py::materialize_input_pair` is the only materializer. Before
+inference it writes and reloads exactly two canonical UTF-8 files for the Card/root Run:
 
-Card identity, revision identity, sender/target routing, Project/conversation/Run/correlation identity,
-AGE data, telemetry, receipts, hashes, approval state, and runtime lineage stay outside the IDF. No
-adapter may rebuild, wrap, serialize, validate, hash, save, rematerialize, or reinterpret it. Adapters
-may only project its existing fields mechanically into the native Hermes or AutoGen API shape. There is
-no saved-IDF library, revision, approval copy, envelope, manifest, or alternate TypeScript assembler.
+```text
+in.icf = saved Card/revision contract + dynamic task + allocation + effective capabilities + IGF hash
+in.igf = mandatory header + bounded selected native graph records + provenance + model-visible graph text
+```
+
+The existing Run artifact catalog retains their paths, byte sizes, and hashes. Hermes and AutoGen receive
+only a mechanical native request projected from those exact reloaded bytes; no adapter may reconstruct,
+wrap, validate, hash, or reinterpret a competing payload. TypeScript transports file references and renders
+selected-Run inspection; it is never a materializer. AGE data, receipts, approval state, and runtime lineage
+remain outside the files. There is no saved-input library, revision copy, envelope, manifest, receipt, or
+alternate TypeScript assembler.
 
 Cards remain one product concept. Their explicit Hermes or AutoGen runtime binding is saved Card
 configuration, not a separate Card type or a second runtime payload. A sending user or agent supplies
 only dynamic input and selected references; the receiving Card owns materialization. Mag One workers
-receive their dynamic task through the saved-worker Card doorway, so each worker Card materializes its
-own one-call IDF.
+receive their dynamic task through the saved-worker Card doorway, so each independently invoked saved worker
+Card gets its own root ICF/IGF pair. A Hermes Kanban Card is one root boundary: Hermes owns native task
+decomposition, worker prompts, handoffs, and child context. Never infer per-worker files from native child IDs.
 
 IDD is the Input Data Dictionary: the one literal repo-root `LiquidAIty.idd` declaration language for
 constructing and editing structured input where structure is useful. It may declare named variables,
 types/defaults/constraints, tools, native operations, and output forms. Python rails interprets that
 file mechanically; TypeScript and Python must not contain a copied competing dictionary. Only the
-declarations selected for the current communication enter its IDF; the whole IDD never enters a model
+declarations selected for the current communication enter its ICF; the whole IDD never enters a model
 request. Ordinary prompt prose stays Markdown, while explicitly cataloged native-language islands may
 be typed.
 
@@ -647,7 +651,7 @@ Callers provide task input and stable references, not alternate card definitions
 models, grants, runtimes, or authorities fail honestly. No model/provider/tool fallback.
 
 The underlying Project graphs remain durable in their native owners. A caller selects bounded
-references/context for one invocation; that selection and the materialized IDF remain transient.
+references/context for one invocation; that selection and the materialized ICF/IGF remain Run-scoped.
 PostgreSQL persists stable Card state, Run status, and explicit artifact metadata. AGE owns saved Card
 relationships and may observe execution identities. Neither replaces saved-card configuration or
 native runtime truth.

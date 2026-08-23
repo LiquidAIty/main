@@ -127,12 +127,12 @@ describe('attention-activated native graph projection', () => {
     const { result } = renderHook(() => useAgentBuilderGraphAttention({ projectId: 'project-1' }));
     act(() => result.current.restoreAttentionEvents([
       attention('thinkgraph', ['mem-1']),
-      attention('codegraph', ['pkg.materialize_idf']),
+      attention('codegraph', ['pkg.materialize_input_pair']),
     ]));
 
     await waitFor(() => expect(result.current.projections.thinkgraph.nodes).toHaveLength(1));
     expect(result.current.projections.thinkgraph.nodes[0].id).toBe('mem-1');
-    expect(result.current.projections.codegraph.nodes[0].id).toBe('pkg.materialize_idf');
+    expect(result.current.projections.codegraph.nodes[0].id).toBe('pkg.materialize_input_pair');
     expect(result.current.projections.knowgraph.nodes).toEqual([]);
   });
 

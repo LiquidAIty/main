@@ -218,13 +218,13 @@ def test_codegraph_exact_read_uses_official_mcp_calls_and_qualified_symbol() -> 
         return [
             {"project": "C-Projects-LiquidAIty-main", "status": "ready", "nodes": 8, "edges": 16},
             {
-                "qualified_name": "project.module.materialize_idf",
-                "name": "materialize_idf",
+                "qualified_name": "project.module.materialize_input_pair",
+                "name": "materialize_input_pair",
                 "label": "Function",
-                "file_path": "C:/Projects/LiquidAIty/main/apps/python-models/app/python_models/idf.py",
+                "file_path": "C:/Projects/LiquidAIty/main/apps/python-models/app/python_models/icf.py",
                 "start_line": 37,
                 "end_line": 78,
-                "source": "def materialize_idf():\n    pass",
+                "source": "def materialize_input_pair():\n    pass",
                 "signature": "()",
                 "fp": "current-fingerprint",
             },
@@ -235,14 +235,14 @@ def test_codegraph_exact_read_uses_official_mcp_calls_and_qualified_symbol() -> 
         "project-1",
         "deck_builder",
         "card_coder",
-        "project.module.materialize_idf",
+        "project.module.materialize_input_pair",
         bounded_expansion=1,
         mcp_reader=reader,
     )
 
     assert record is not None
-    assert record["nativeId"] == "project.module.materialize_idf"
-    assert record["properties"]["file"] == "apps/python-models/app/python_models/idf.py"
+    assert record["nativeId"] == "project.module.materialize_input_pair"
+    assert record["properties"]["file"] == "apps/python-models/app/python_models/icf.py"
     assert record["relationshipEvidence"]["callers"][0]["qualified_name"].endswith("caller")
     assert [name for name, _args in observed["calls"]] == [
         "cbm.index_status", "cbm.get_code_snippet", "cbm.trace_path",
@@ -255,11 +255,11 @@ def test_codegraph_exact_read_normalizes_native_grouped_trace_json() -> None:
         return [
             {"project": "C-Projects-LiquidAIty-main", "status": "ready"},
             {
-                "qualified_name": "project.module.materialize_idf",
-                "name": "materialize_idf",
+                "qualified_name": "project.module.materialize_input_pair",
+                "name": "materialize_input_pair",
                 "label": "Function",
-                "file_path": "apps/python-models/app/python_models/idf.py",
-                "source": "def materialize_idf():\n    pass",
+                "file_path": "apps/python-models/app/python_models/icf.py",
+                "source": "def materialize_input_pair():\n    pass",
             },
             {
                 "callers": {
@@ -277,7 +277,7 @@ def test_codegraph_exact_read_normalizes_native_grouped_trace_json() -> None:
         "project-1",
         "deck_builder",
         "card_coder",
-        "project.module.materialize_idf",
+        "project.module.materialize_input_pair",
         bounded_expansion=1,
         mcp_reader=reader,
     )

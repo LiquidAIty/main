@@ -7,8 +7,8 @@
 
 [dictionary]
 name = "LiquidAIty"
-version = 2
-idfFormat = "card-model-call"
+version = 3
+icfFormat = "input-context-file"
 islandStyle = "bracketed-native-language"
 unknownIslands = "inert"
 
@@ -737,6 +737,166 @@ sourceId = "worldsignals"
 description = "Read a bounded WorldSignals event stream."
 parameters = ["max_events", "timeout_seconds"]
 required = []
+
+[[records]]
+name = "input-context-file"
+allowUnknownFields = false
+description = "One canonical concrete Card invocation paired with one Input Graph File."
+
+[[records.fields]]
+name = "format"
+type = "string"
+required = true
+values = ["liquidaity.input-context"]
+
+[[records.fields]]
+name = "version"
+type = "integer"
+required = true
+
+[[records.fields]]
+name = "idd"
+type = "object"
+required = true
+
+[[records.fields]]
+name = "stable"
+type = "object"
+required = true
+
+[[records.fields]]
+name = "variable"
+type = "object"
+required = true
+
+[[records.fields]]
+name = "capabilities"
+type = "object"
+required = true
+
+[[records.fields]]
+name = "allocation"
+type = "object"
+required = true
+
+[[records.fields]]
+name = "graphInput"
+type = "object"
+required = true
+
+[[records.fields]]
+name = "estimates"
+type = "object"
+required = true
+
+[[records]]
+name = "input-graph-header"
+allowUnknownFields = false
+description = "Mandatory first JSONL record for one canonical Input Graph File."
+
+[[records.fields]]
+name = "kind"
+type = "string"
+required = true
+values = ["header"]
+
+[[records.fields]]
+name = "format"
+type = "string"
+required = true
+values = ["liquidaity.input-graph"]
+
+[[records.fields]]
+name = "version"
+type = "integer"
+required = true
+
+[[records.fields]]
+name = "owner"
+type = "object"
+required = true
+
+[[records.fields]]
+name = "materializedAt"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "authorities"
+type = "string-array"
+required = true
+
+[[records.fields]]
+name = "selectedNativeReferences"
+type = "object-array"
+required = true
+
+[[records.fields]]
+name = "recordCounts"
+type = "object"
+required = true
+
+[[records.fields]]
+name = "provenanceSummary"
+type = "object-array"
+required = true
+
+[[records.fields]]
+name = "contentHashRule"
+type = "string"
+required = true
+values = ["sha256-entire-file-utf8"]
+
+[[records]]
+name = "input-graph-record"
+allowUnknownFields = false
+description = "One native selection, node, relationship, or exact model-visible graph context record."
+
+[[records.fields]]
+name = "kind"
+type = "string"
+required = true
+values = ["selection", "node", "relationship", "materialized-context"]
+
+[[records.fields]]
+name = "authority"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "nativeId"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "type"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "content"
+type = "object"
+required = true
+
+[[records.fields]]
+name = "provenance"
+type = "object"
+required = true
+
+[[records.fields]]
+name = "retrievedAt"
+type = "string"
+required = true
+
+[[records.fields]]
+name = "sourcePath"
+type = "string"
+required = false
+
+[[records.fields]]
+name = "relationshipIds"
+type = "string-array"
+required = true
 
 [[records]]
 name = "card-context"

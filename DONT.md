@@ -110,12 +110,13 @@ major build/remove cycles that matter to launch readiness:
   their callers and routes. Current production source has no `ContextPack`, `DeliveredContextManifest`,
   `routingManifest`, `cardRuntime`, or `cardContext` owner. Do not recreate them under new names.
 - **Main context manifest:** `f536a284` added a five-file, 451-line manifest checkpoint. `cd7017cc` replaced
-  that direction with the exact transient Card/IDF boundary and deleted 1,935 lines. Current production
+  that direction with the exact transient Card runtime-input boundary and deleted 1,935 lines. Current production
   has no Main-context-manifest symbol or caller. This former path was actually removed.
-- **Competing IDF materializers:** the August sequence repeatedly interpreted IDF as a saved object,
+- **Competing runtime-input materializers:** the August sequence repeatedly interpreted runtime input as a saved object,
   envelope, receipt, or runtime packet. `4269f747` collapsed that surface by deleting 2,899 lines across
-  42 files. The surviving owner is one in-memory Python `materialize_idf` called by the Card domain;
-  old packet fields are rejected at the boundary and have no producer or router.
+  42 files. The surviving owner is Python `materialize_input_pair`, called by the Card domain to retain
+  one canonical `in.icf` and `in.igf` per Card/root Run; old packet fields are rejected at the boundary
+  and have no producer or router.
 
 The surviving keeper authorities are saved Cards/PostgreSQL, one Python materializer, native graph owners,
 the official MCP seam, AGE observation, repo-owned Hermes profiles/sessions, and the maintained AutoGen

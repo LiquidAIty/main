@@ -96,7 +96,10 @@ const AgentManager = lazy(async () => {
   return { default: mod.AgentManager };
 });
 void loadAgentManager();
-import type { StandaloneCardTestResult } from '../components/AgentManager';
+import type {
+  RetainedRunInputs,
+  StandaloneCardTestResult,
+} from '../components/AgentManager';
 
 import { resolveCbmProjectName } from '../components/codegraph/resolveCodeGraphProjectIdentity';
 
@@ -462,6 +465,7 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckStatusMessage(`${authorityName} reference selected for Main; Python will reread it on send.`);
   }, [graphAttention.projections, mainCardId, setDeckStatusMessage]);
   const [standaloneTestResult, setStandaloneTestResult] = useState<StandaloneCardTestResult | null>(null);
+  const [standaloneRunInputs, setStandaloneRunInputs] = useState<RetainedRunInputs | null>(null);
   const handleCardInvocationStaged = useCallback((loaded: StagedCardInvocationLoaded) => {
     const target = deck.nodes.find((card) => card.id === loaded.targetCardId);
     const graphProjection = loaded.invocation.resolvedGraphProjection;
@@ -501,9 +505,11 @@ export default function AgentBuilder(): React.ReactElement {
       output: '',
       error: null,
       toolCallCount: 0,
-      tools: loaded.invocation.idf.enabledTools,
-      provider: String(loaded.invocation.idf.provider.provider || ''),
-      model: String(loaded.invocation.idf.provider.providerModelId || ''),
+      tools: Array.isArray(loaded.invocation.icf.capabilities?.enabledTools)
+        ? loaded.invocation.icf.capabilities.enabledTools.map((tool: unknown) => String(tool))
+        : [],
+      provider: String(loaded.invocation.icf.stable?.provider?.provider || ''),
+      model: String(loaded.invocation.icf.stable?.provider?.providerModelId || ''),
       runtimeLabel: `${target.runtime.kind}/${target.runtime.mode}`,
       invocation: loaded.invocation,
     });
@@ -558,6 +564,18 @@ export default function AgentBuilder(): React.ReactElement {
       current?.invocation?.cardIdentity.cardId === cardId ? null : current
     ));
     setDeckStatusMessage('Transient mission and graph context cleared. Nothing ran.');
+  }, [setDeckStatusMessage]);
+
+  const clearTransientCardGraphContext = useCallback((cardId: string) => {
+    setTransientCardGraphContext((current) => {
+      const next = { ...current };
+      delete next[cardId];
+      return next;
+    });
+    setStandaloneTestResult((current) => (
+      current?.invocation?.cardIdentity.cardId === cardId ? null : current
+    ));
+    setDeckStatusMessage('Imported graph context cleared. The transient task was preserved and nothing ran.');
   }, [setDeckStatusMessage]);
 
   const removeTransientGraphReference = useCallback((
@@ -878,8 +896,8 @@ export default function AgentBuilder(): React.ReactElement {
       ? String(result.errorSummary)
       : result?.error ? String(result.error) : null,
     toolCallCount: typeof result?.toolCallCount === 'number' ? result.toolCallCount : null,
-    tools: Array.isArray(result?.invocation?.idf?.enabledTools)
-      ? result.invocation.idf.enabledTools.map((tool: unknown) => String(tool))
+    tools: Array.isArray(result?.invocation?.icf?.capabilities?.enabledTools)
+      ? result.invocation.icf.capabilities.enabledTools.map((tool: unknown) => String(tool))
       : [],
     provider: selectedCard?.runtimeOptions?.provider || null,
     model: selectedCard?.runtimeOptions?.modelKey || null,
@@ -910,6 +928,142 @@ export default function AgentBuilder(): React.ReactElement {
     }
     return payload.result;
   }, [canvasProjectId]);
+
+  const readStandaloneRunInputs = useCallback(async (runId: string): Promise<RetainedRunInputs> => {
+    if (!canvasProjectId) throw new Error('card_run_project_required');
+    const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'inputs',
+        projectId: canvasProjectId,
+        deckId: BUILDER_DECK_ID,
+        runId,
+      }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || payload?.ok !== true || !payload?.result) {
+      throw new Error(String(payload?.error || `card_run_inputs_http_${response.status}`));
+    }
+    return payload.result as RetainedRunInputs;
+  }, [canvasProjectId]);
+
+  const importNamedIgfSelections = useCallback(async (selections: Array<{
+    authority: 'ThinkGraph' | 'KnowGraph' | 'CodeGraph';
+    nativeId: string;
+    reason: string;
+    boundedExpansion: number;
+    resultLimit: number;
+    required: boolean;
+  }>) => {
+    if (!selectedCard || !canvasProjectId) throw new Error('card_graph_import_target_required');
+    const input = standaloneTestPrompt.trim();
+    if (!input) throw new Error('Enter the current dynamic task before importing IGF selections.');
+    const correlationId = `card-input-preview-${crypto.randomUUID()}`;
+    const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'materialize',
+        projectId: canvasProjectId,
+        deckId: BUILDER_DECK_ID,
+        cardId: selectedCard.id,
+        correlationId,
+        input,
+        conversationId,
+        dataAnchors: selections.map((selection, order) => ({
+          ...selection,
+          priority: -order,
+        })),
+      }),
+    });
+    const payload = await response.json().catch(() => null);
+    const invocation = payload?.result?.invocation;
+    const graphProjection = invocation?.resolvedGraphProjection;
+    if (!response.ok || payload?.ok !== true || !invocation || !graphProjection) {
+      throw new Error(String(payload?.error || `card_graph_import_http_${response.status}`));
+    }
+    const resolvedReads = Array.isArray(invocation.resolvedNativeReads)
+      ? invocation.resolvedNativeReads as Array<Record<string, unknown>>
+      : [];
+    const contexts: LoadedCardGraphReference[] = selections.map((selection, order) => {
+      const ready = resolvedReads.some((reference) => (
+        String(reference.authority || '') === selection.authority
+        && String(reference.nativeId || '') === selection.nativeId
+      ));
+      return {
+        targetCardId: selectedCard.id,
+        reference: { ...selection, order },
+        resolvedReferences: resolvedReads,
+        resolvedContextMarkdown: String(
+          invocation.igf?.records?.find((record: any) => record?.kind === 'materialized-context')?.content?.text
+          || '',
+        ),
+        graphProjection,
+        resolved: ready,
+        ready,
+        ...(!ready ? { error: 'Imported native reference did not resolve through the current authority.' } : {}),
+      };
+    });
+    const missing = contexts.find((context) => context.reference.required && !context.ready);
+    if (missing) {
+      throw new Error(`grounded_execution_reference_stale:${missing.reference.authority}:${missing.reference.nativeId}`);
+    }
+    setTransientCardGraphContext((current) => ({ ...current, [selectedCard.id]: contexts }));
+    setStandaloneTestResult({
+      status: 'ready',
+      output: '',
+      error: null,
+      toolCallCount: 0,
+      tools: Array.isArray(invocation.icf?.capabilities?.enabledTools)
+        ? invocation.icf.capabilities.enabledTools.map((tool: unknown) => String(tool))
+        : [],
+      provider: String(invocation.icf?.stable?.provider?.provider || ''),
+      model: String(invocation.icf?.stable?.provider?.providerModelId || ''),
+      runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
+      invocation,
+    });
+    setDeckStatusMessage(
+      selections.length > 0
+        ? `${selections.length} imported graph selection${selections.length === 1 ? '' : 's'} re-read through current native authorities. Nothing ran.`
+        : 'Imported empty IGF. The current invocation has no graph selections and nothing ran.',
+    );
+  }, [
+    canvasProjectId,
+    conversationId,
+    selectedCard,
+    setDeckStatusMessage,
+    standaloneTestPrompt,
+  ]);
+
+  useEffect(() => {
+    const runId = standaloneTestResult?.cardId === selectedCard?.id
+      ? String(standaloneTestResult?.runId || '').trim()
+      : '';
+    if (!runId) {
+      setStandaloneRunInputs(null);
+      return;
+    }
+    let active = true;
+    setStandaloneRunInputs(null);
+    void readStandaloneRunInputs(runId)
+      .then((inputs) => {
+        if (active) setStandaloneRunInputs(inputs);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setStandaloneRunInputs({
+          available: false,
+          runId,
+          message: error instanceof Error ? error.message : 'Input files unavailable for this Run',
+        });
+      });
+    return () => {
+      active = false;
+    };
+  }, [readStandaloneRunInputs, selectedCard?.id, standaloneTestResult?.cardId, standaloneTestResult?.runId]);
 
   const pollStandaloneRun = useCallback(async (
     runId: string,
@@ -1066,6 +1220,59 @@ export default function AgentBuilder(): React.ReactElement {
     standaloneTestUnavailableReason,
   ]);
 
+  const previewStandaloneCardInput = useCallback(async () => {
+    if (
+      !selectedCard || !canvasProjectId || standaloneTestBusy
+      || standaloneTestUnavailableReason || !standaloneTestPrompt.trim()
+    ) return;
+    setStandaloneTestBusy(true);
+    try {
+      const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'materialize',
+          projectId: canvasProjectId,
+          deckId: BUILDER_DECK_ID,
+          cardId: selectedCard.id,
+          correlationId: `card-input-preview-${crypto.randomUUID()}`,
+          input: standaloneTestPrompt.trim(),
+          conversationId,
+          dataAnchors: (transientCardGraphContext[selectedCard.id] || []).map((item) => ({
+            authority: item.reference.authority,
+            nativeId: item.reference.nativeId,
+            reason: item.reference.reason,
+            priority: -item.reference.order,
+            boundedExpansion: item.reference.boundedExpansion,
+            resultLimit: item.reference.resultLimit,
+            required: item.reference.required,
+          })),
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.ok !== true || !payload?.result?.invocation) {
+        throw new Error(String(payload?.error || `card_input_preview_http_${response.status}`));
+      }
+      setStandaloneTestResult(toStandaloneRunResult(payload.result));
+      setDeckStatusMessage(`${selectedCard.title} inputs materialized for provider-free preview. Nothing ran.`);
+    } catch (error) {
+      setDeckStatusMessage(error instanceof Error ? error.message : 'Card input preview failed.');
+    } finally {
+      setStandaloneTestBusy(false);
+    }
+  }, [
+    canvasProjectId,
+    conversationId,
+    selectedCard,
+    setDeckStatusMessage,
+    standaloneTestBusy,
+    standaloneTestPrompt,
+    standaloneTestUnavailableReason,
+    toStandaloneRunResult,
+    transientCardGraphContext,
+  ]);
+
   const learnFromStandaloneCardInput = useCallback(async () => {
     if (
       !selectedCard ||
@@ -1144,7 +1351,7 @@ export default function AgentBuilder(): React.ReactElement {
     standaloneActiveRunRef.current = null;
     setStandaloneTestBusy(false);
     setStandaloneTestResult(null);
-    if (!selectedCard || !canvasProjectId || !showStandaloneTestControls) return;
+    if (!selectedCard || !canvasProjectId) return;
     const token = `card-hydrate-${selectedCard.id}-${crypto.randomUUID().slice(0, 8)}`;
     let cancelled = false;
     void readStandaloneRunStatus({ cardId: selectedCard.id })
@@ -1173,7 +1380,7 @@ export default function AgentBuilder(): React.ReactElement {
       cancelled = true;
       if (standaloneTestRequestRef.current === token) standaloneTestRequestRef.current = null;
     };
-  }, [canvasProjectId, pollStandaloneRun, readStandaloneRunStatus, selectedCard, selectedCardId, setDeckStatusMessage, showStandaloneTestControls, toStandaloneRunResult]);
+  }, [canvasProjectId, pollStandaloneRun, readStandaloneRunStatus, selectedCard, selectedCardId, setDeckStatusMessage, toStandaloneRunResult]);
 
   const builderTabs = useMemo(() => {
     if (selectedCard) return [...BUILDER_NODE_TABS];
@@ -1457,6 +1664,9 @@ export default function AgentBuilder(): React.ReactElement {
                     onClearInvocation={() => {
                       clearTransientCardInvocation(selectedCard.id);
                     }}
+                    onClearGraphContext={() => {
+                      clearTransientCardGraphContext(selectedCard.id);
+                    }}
                     onOpenCoderTerminal={() => {
                       document.querySelector<HTMLElement>('[data-testid="coder-console-panel"]')?.scrollIntoView({ block: 'nearest' });
                       document.querySelector<HTMLElement>('[data-testid="coder-console-panel"]')?.focus();
@@ -1469,8 +1679,12 @@ export default function AgentBuilder(): React.ReactElement {
                     onMoveGraphReference={(authority, nativeId, direction) => {
                       moveTransientGraphReference(selectedCard.id, authority, nativeId, direction);
                     }}
+                    onImportIgfSelections={importNamedIgfSelections}
                     onRunCard={() => {
                       void runStandaloneCardTest();
+                    }}
+                    onPreviewCard={() => {
+                      void previewStandaloneCardInput();
                     }}
                     onLearnCard={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.mode !== 'kanban'
                       ? () => { void learnFromStandaloneCardInput(); }
@@ -1502,6 +1716,7 @@ export default function AgentBuilder(): React.ReactElement {
                         ))
                     }
                     runResult={standaloneTestResult}
+                    runInputs={standaloneRunInputs}
                     loadedGraphContext={transientCardGraphContext[selectedCard.id] || []}
                     saveDeckStatusMessage={deckStatusMessage}
                     openDeckRevision={deckRevision}
@@ -1635,6 +1850,18 @@ export default function AgentBuilder(): React.ReactElement {
         <BuilderChat
           messages={messages}
           onSend={handleNativeSend}
+          draft={mainCardId ? transientCardInputs[mainCardId] || '' : ''}
+          onDraftChange={(value) => {
+            if (!mainCardId) return;
+            setTransientCardInputs((current) => {
+              if (!value) {
+                const next = { ...current };
+                delete next[mainCardId];
+                return next;
+              }
+              return { ...current, [mainCardId]: value };
+            });
+          }}
           knowledgeProjectId={projectId}
           colors={C}
           busy={nativeSessionBusy}

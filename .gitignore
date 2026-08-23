@@ -20,6 +20,7 @@ coder-workspace/returns/
 tmp_*.json
 tmp_*.log
 handoff/
+/runtime/run-inputs/
 db/thinkgraph-engraphis-v2.sqlite*
 # Reproducible Engraphis release-check cache stored beside the local database.
 /db/.engraphis_update_check.json

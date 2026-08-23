@@ -11,7 +11,7 @@ from app.python_models.alpaca_market_data import (
     get_market_snapshot,
     get_paper_account_readiness,
 )
-from app.python_models.autogen_orchestrator import dispatch_configured_runtime
+from app.python_models.autogen_orchestrator import dispatch_stored_runtime
 from app.python_models.card_domain import (
     CardDomainError,
     begin_main_chat_run,
@@ -27,6 +27,7 @@ from app.python_models.card_domain import (
     materialize_invocation,
     prepare_main_chat,
     read_run,
+    read_run_input_files,
     record_explicit_artifact,
     resolve_native_hermes_task_context,
     save_deck,
@@ -37,7 +38,7 @@ from app.python_models.idd import (
     materialize_card_editor,
     materialize_tool_catalog,
 )
-from app.python_models.orchestration_contracts import RuntimeRequest
+from app.python_models.orchestration_contracts import StoredRuntimeRequest
 from app.python_models.tool_registry import tool_manifest
 
 app = FastAPI()
@@ -235,6 +236,14 @@ def domain_run_read(payload: dict[str, Any]):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
+@app.post("/domain/runs/input-files")
+def domain_run_input_files(payload: dict[str, Any]):
+    try:
+        return read_run_input_files(payload)
+    except CardDomainError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
 @app.post("/domain/runs/resolve-native-hermes-task-context")
 def domain_native_hermes_task_context(payload: dict[str, Any]):
     try:
@@ -285,9 +294,9 @@ def domain_artifact_record(payload: dict[str, Any]):
 
 
 @app.post("/autogen/dispatch")
-async def autogen_dispatch(req: RuntimeRequest):
+async def autogen_dispatch(req: StoredRuntimeRequest):
     try:
-        return await dispatch_configured_runtime(req)
+        return await dispatch_stored_runtime(req)
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err
 

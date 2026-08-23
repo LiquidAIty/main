@@ -133,9 +133,11 @@ def test_one_grounded_staging_path_loads_coder_or_mag_one_without_running(
                 "projectId": "p", "nodes": [{"id": "episode-1"}], "edges": [],
                 "counts": {"nodes": 1, "edges": 0},
             },
-            "idf": {
-                "runtime": runtime, "enabledTools": [], "provider": {},
+            "icf": {
+                "stable": {"runtime": runtime, "provider": {}},
+                "capabilities": {"enabledTools": []},
             },
+            "igf": {"header": {"recordCounts": {"total": 1}}, "records": []},
         }
 
     monkeypatch.setattr("app.python_models.card_domain.materialize_invocation", materialize)

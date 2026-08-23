@@ -4,10 +4,14 @@ import asyncio
 from types import SimpleNamespace
 
 from app.python_models import magentic_agentchat as mac
-from app.python_models.idf import materialize_idf
-from app.python_models.orchestration_contracts import ProjectSession, RuntimeRequest
+from app.python_models.icf import materialize_input_pair
+from app.python_models.orchestration_contracts import (
+    ProjectSession,
+    RuntimeInputFiles,
+    RuntimeRequest,
+)
 
-MODEL = "deepseek/deepseek-v4-flash-0731"
+MODEL = "gpt-5.6"
 
 
 def _context(
@@ -18,28 +22,40 @@ def _context(
     enabled_tools: list[str] | None = None,
 ) -> RuntimeRequest:
     tools = ["calculator"] if enabled_tools is None else enabled_tools
+    pair = materialize_input_pair(
+        owner={"kind": "test", "runId": "run:one"},
+        stable={
+            "instructions": "saved system",
+            "outputContract": "",
+            "runtime": {"kind": "autogen", "mode": runtime_mode},
+            "provider": {
+                "accessMode": "openai-api", "provider": "openai",
+                "modelKey": MODEL, "providerModelId": MODEL,
+            },
+        },
+        variable={"task": user_text, "selectedNativeReferences": [], "images": []},
+        capabilities={
+            "enabledTools": tools,
+            "toolDefinitions": [{"name": name} for name in tools],
+            "nativeTools": [], "skills": [], "toolsets": [], "mcpConnectionIds": [],
+        },
+        allocation={"runtimeOptions": {}},
+        graph_context="current native graph data",
+        native_references=[],
+        graph_projection={"authority": "", "nodes": [], "edges": []},
+    )
     return RuntimeRequest(
         session=ProjectSession(
             sessionId="s", projectId="p", deckId="d", cardId="card:one",
             conversationId="c", turnId="turn:one", runId="run:one",
             route="single_card", orchestrator=orchestrator, startedAt="now",
         ),
-        idf=materialize_idf(
-            system_prompt="saved system",
-            dynamic_input=user_text,
-            graph_seed="current native graph data",
-            runtime={"kind": "autogen", "mode": runtime_mode},
-            provider={
-                "accessMode": "openrouter-api", "provider": "openrouter",
-                "modelKey": MODEL, "providerModelId": MODEL,
-            },
-            enabled_tools=tools,
-            tool_definitions=[{"name": name} for name in tools],
-            native_references=[{
-                "authority": "knowgraph", "nativeId": "node:1",
-                "reason": "bounded runtime context",
-                "asOf": "2026-08-14T00:00:00Z", "required": True,
-            }],
+        icf=pair.icf,
+        igf=pair.igf,
+        inputFiles=RuntimeInputFiles(
+            workspace="test", icfPath="test/in.icf", igfPath="test/in.igf",
+            icfSha256=pair.icf_sha256, igfSha256=pair.igf_sha256,
+            icfBytes=len(pair.icf_bytes), igfBytes=len(pair.igf_bytes),
         ),
     )
 
@@ -75,13 +91,13 @@ def test_single_card_consumes_one_python_materialization(monkeypatch) -> None:
 
     assert result.ok is True
     assert result.runId == "run:one"
-    assert observed[0]["system_message"] == context.idf.systemPrompt
+    assert observed[0]["system_message"] == context.icf.stable["instructions"]
     attached_names = {tool.name for tool in observed[0]["tools"]}
     assert "web_search" in attached_names
     assert "calculator" in attached_names
     assert observed[1] == {"task": "current native graph data\n\nrun"}
-    assert context.idf.message == "run"
-    assert "card:one" not in context.idf.message
+    assert context.icf.variable["task"] == "run"
+    assert "card:one" not in context.icf.variable["task"]
 
 
 def test_single_card_gets_idd_reads_without_copying_them_into_card_tools(
@@ -109,7 +125,7 @@ def test_single_card_gets_idd_reads_without_copying_them_into_card_tools(
     assert result.ok is True
     attached_names = {tool.name for tool in observed[0]["tools"]}
     assert "web_search" in attached_names
-    assert context.idf.enabledTools == []
+    assert context.icf.capabilities["enabledTools"] == []
 
 
 def test_single_card_error_never_echoes_dynamic_input(monkeypatch) -> None:
