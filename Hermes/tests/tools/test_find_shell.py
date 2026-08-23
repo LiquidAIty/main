@@ -149,10 +149,56 @@ class TestGitBashExternalProgramProbe:
             calls.append((argv, kwargs))
             return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-        monkeypatch.setattr(local_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(local_mod, "bounded_probe_run", fake_run)
 
         assert local_mod._bash_starts(r"C:\Git\bin\bash.exe") is True
         assert calls[0][0][-1] == "/usr/bin/true; /usr/bin/cat --version >/dev/null"
+        assert calls[0][1]["timeout"] == local_mod._BASH_PROBE_TIMEOUT_SECONDS
+
+    def test_aslr_diagnostic_probe_uses_same_bounded_runner(self, monkeypatch):
+        import tools.environments.local as local_mod
+
+        local_mod._mandatory_aslr_enabled_cache = None
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return subprocess.CompletedProcess(argv, 0, stdout="Off\n", stderr="")
+
+        monkeypatch.setattr(local_mod, "bounded_probe_run", fake_run)
+        monkeypatch.setattr(local_mod.shutil, "which", lambda _name: "powershell.exe")
+
+        assert local_mod._mandatory_aslr_enabled() is False
+        assert calls[0][1]["timeout"] == 10
+
+    @pytest.mark.windows_only
+    def test_probe_timeout_kills_descendant_pipe_tree_within_bound(self, monkeypatch):
+        """A timed-out Git Bash descendant cannot pin native file-tool startup.
+
+        The background child inherits Bash's captured pipe.  Raw
+        ``subprocess.run(timeout=...)`` waits for that pipe after killing only
+        the parent; the shared bounded probe kills the owned process tree and
+        returns ``False`` with a visible diagnostic.
+        """
+        import time
+        import tools.environments.local as local_mod
+
+        bash = local_mod._find_bash()
+        local_mod._bash_starts_cache.clear()
+        local_mod._bash_probe_details_cache.clear()
+        monkeypatch.setattr(
+            local_mod,
+            "_BASH_EXTERNAL_PROGRAM_PROBE",
+            "/usr/bin/sleep 30 & wait",
+        )
+        monkeypatch.setattr(local_mod, "_BASH_PROBE_TIMEOUT_SECONDS", 0.25)
+
+        started = time.monotonic()
+        assert local_mod._bash_starts(bash) is False
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 10
+        assert "did not complete within 0.25s" in local_mod._bash_probe_details_cache[bash]
 
     @pytest.mark.windows_only
     def test_aslr_failure_surfaces_targeted_windows_command(

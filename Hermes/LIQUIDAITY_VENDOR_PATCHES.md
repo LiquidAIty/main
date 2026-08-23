@@ -168,3 +168,28 @@ same exact authenticated provider already selected for runtime initialization.
 Rollback: remove the marked block and stop passing `args.provider` to the guard. Hermes returns to the
 upstream guard, and profile workers without profile-local defaults will again stop before the already
 supported global auth fallback reaches runtime provider initialization.
+
+## Patch: bounded Git Bash probe before native file tools
+
+Purpose: make the Windows Git Bash health probe genuinely honor its timeout before lazy
+`LocalEnvironment` creation. Python's raw `subprocess.run(timeout=...)` kills only the direct Bash
+process and then performs an unbounded pipe drain; an MSYS descendant retaining stdout can therefore
+pin `search_files` before the environment reports ready. Hermes already owns the correct generic
+process-tree solution in `bounded_probe_run`, so the patch routes this one missed probe through it.
+
+Files and symbols:
+
+- `tools/environments/local.py`: `_bash_starts` and its optional Mandatory-ASLR diagnostic use
+  `bounded_probe_run`; failed Bash probes retain a bounded visible diagnostic.
+- `tests/tools/test_find_shell.py`: real Windows descendant-pipe timeout proof.
+- `tests/tools/test_file_tools.py`: native search preserves the initialization diagnostic as a
+  structured tool error.
+
+Upstream behavior preserved: successful Bash selection, the external MSYS health command, candidate
+ordering, caching, file-search behavior, shell configuration, providers, and models are unchanged.
+
+Contribution plan: submit the missed `bounded_probe_run` call-site correction with the Windows
+descendant-pipe regression. Drop this patch when upstream `_bash_starts` uses the same bounded helper.
+
+Rollback: restore raw `subprocess.run` in `_bash_starts`; this reopens an unbounded Windows startup
+hang and is safe only after upstream supplies equivalent process-tree timeout handling.

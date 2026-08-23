@@ -683,6 +683,39 @@ export class AcpProcess {
     };
   }
 
+  async configureHostSession(
+    args: HermesTurnArgs,
+    executionContextId: string,
+  ): Promise<HermesPreparedSession> {
+    await this.ready;
+    const contextId = String(executionContextId || '').trim();
+    if (!contextId) throw new Error('hermes_execution_context_id_required');
+    const { sessionId } = await this.resolveSession(args, contextId);
+    bindHermesRootExecutionSession(contextId, sessionId);
+    await this.configureModel(sessionId, args);
+    const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(
+      args,
+      process.env,
+      contextId,
+    );
+    await this.request('_session/configure_host', {
+      sessionId,
+      mcpServers,
+      _meta: sessionMeta,
+    });
+    return {
+      cardId: args.cardId,
+      provider: args.provider,
+      modelKey: args.modelKey,
+      providerModelId: args.providerModelId,
+      executable: this.executable,
+      pid: this.pid,
+      hermesHome: this.hermesHome,
+      sessionId,
+      transport: this.transport,
+    };
+  }
+
   async readHistory(args: HermesTurnArgs): Promise<{
     sessionId: string | null;
     messages: HermesHistoryMessage[];
@@ -893,6 +926,13 @@ export async function requestHermesExtension(
   params: Record<string, unknown>,
 ): Promise<any> {
   return sharedHermesProcess().requestExtension(method, params);
+}
+
+export async function configureHermesHostSession(
+  args: HermesTurnArgs,
+  executionContextId: string,
+): Promise<HermesPreparedSession> {
+  return sharedHermesProcess().configureHostSession(args, executionContextId);
 }
 
 export async function prepareHermesSession(

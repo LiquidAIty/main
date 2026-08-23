@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearKanbanRunMonitorsForTest,
+  reconcileTerminalKanbanRun,
   recoverActiveKanbanRunMonitors,
 } from './kanbanRunRecovery';
 
@@ -114,6 +115,52 @@ describe('durable Kanban Run recovery', () => {
       runId: 'run-bad-root',
       state: 'failed',
       errorSummary: 'kanban_run_recovery_native_root_invalid',
+    });
+  });
+
+  it('reconciles a transport-failed Run only after the same native root returns its stored result', async () => {
+    const writes: Array<{ endpoint: string; body: any }> = [];
+    let releaseRoot: (() => void) | undefined;
+    const rootReady = new Promise<void>((resolve) => { releaseRoot = resolve; });
+    const request = vi.fn(async (endpoint: string, init: RequestInit) => {
+      writes.push({
+        endpoint,
+        body: typeof init.body === 'string' ? JSON.parse(init.body) : null,
+      });
+      return { ok: true, updated: true };
+    });
+    const rejoin = vi.fn(async () => {
+      await rootReady;
+      return {
+        finalText: 'Exact stored native result.',
+        nativeRunId: 18,
+        progress: {
+          nativeRootId: 't_retained_root', nativeRunId: 18, phase: 'complete' as const,
+          tasksCompleted: 5, tasksTotal: 5, activeWorkers: 0,
+          workerSessionIds: [],
+        },
+      };
+    });
+    const run = {
+      runId: 'run-transport-failed', projectId: 'project-1', deckId: 'deck-1',
+      cardId: 'card_hermes_steward', nativeRootId: 't_retained_root',
+      runtimeProfile: 'liquidaity-hermes-steward',
+    };
+
+    expect(reconcileTerminalKanbanRun(run, { request, rejoin })).toBe(true);
+    expect(reconcileTerminalKanbanRun(run, { request, rejoin })).toBe(false);
+    await vi.waitFor(() => expect(rejoin).toHaveBeenCalledTimes(1));
+    releaseRoot?.();
+    await vi.waitFor(() => expect(writes.some((write) => (
+      write.endpoint === '/domain/runs/finish'
+      && write.body?.state === 'completed'
+    ))).toBe(true));
+    expect(writes.find((write) => write.endpoint === '/domain/runs/finish')?.body).toMatchObject({
+      runId: 'run-transport-failed',
+      providerThreadRef: 't_retained_root',
+      providerTurnRef: 18,
+      finalResult: 'Exact stored native result.',
+      reconcileNativeTerminal: true,
     });
   });
 });

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from hermes_constants import get_process_hermes_home
 from tools.environments.base import BaseEnvironment, _pipe_stdin
-from hermes_cli._subprocess_compat import windows_hide_flags
+from hermes_cli._subprocess_compat import bounded_probe_run, windows_hide_flags
 
 _IS_WINDOWS = platform.system() == "Windows"
 
@@ -827,6 +827,7 @@ _bash_probe_details_cache: dict[str, str] = {}
 _mandatory_aslr_enabled_cache: "bool | None" = None
 
 _BASH_EXTERNAL_PROGRAM_PROBE = "/usr/bin/true; /usr/bin/cat --version >/dev/null"
+_BASH_PROBE_TIMEOUT_SECONDS = 15.0
 
 
 def _looks_like_msys_spawn_failure(details: str) -> bool:
@@ -849,32 +850,26 @@ def _mandatory_aslr_enabled() -> "bool | None":
     if _mandatory_aslr_enabled_cache is not None:
         return _mandatory_aslr_enabled_cache
 
-    try:
-        powershell = shutil.which("powershell.exe") or "powershell.exe"
-        result = subprocess.run(
-            [
-                powershell,
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "(Get-ProcessMitigation -System).Aslr.ForceRelocateImages.ToString()",
-            ],
-            capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
-            timeout=10,
-            creationflags=windows_hide_flags(),
-        )
-        if result.returncode != 0:
-            return None
-        value = (result.stdout or "").strip().upper()
-        if value == "ON":
-            _mandatory_aslr_enabled_cache = True
-            return True
-        if value in {"OFF", "NOTSET"}:
-            _mandatory_aslr_enabled_cache = False
-            return False
-    except Exception as exc:
-        logger.debug("Could not query Windows Mandatory ASLR state: %s", exc)
+    powershell = shutil.which("powershell.exe") or "powershell.exe"
+    result = bounded_probe_run(
+        [
+            powershell,
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "(Get-ProcessMitigation -System).Aslr.ForceRelocateImages.ToString()",
+        ],
+        timeout=10,
+    )
+    if result is None or result.returncode != 0:
+        return None
+    value = (result.stdout or "").strip().upper()
+    if value == "ON":
+        _mandatory_aslr_enabled_cache = True
+        return True
+    if value in {"OFF", "NOTSET"}:
+        _mandatory_aslr_enabled_cache = False
+        return False
     return None
 
 
@@ -922,23 +917,30 @@ def _bash_starts(bash: str) -> bool:
     if cached is not None:
         return cached
 
-    try:
-        result = subprocess.run(
-            [bash, "--noprofile", "--norc", "-c", _BASH_EXTERNAL_PROGRAM_PROBE],
-            capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
-            timeout=15,
-            creationflags=windows_hide_flags() if _IS_WINDOWS else 0,
+    # LIQUIDAITY VENDOR PATCH: this probe runs before LocalEnvironment can
+    # enforce its own command timeout.  Raw subprocess.run(timeout=...) is not
+    # actually bounded on Windows when an MSYS descendant retains a captured
+    # pipe after the Bash parent is killed.  Use Hermes' existing tree-killing,
+    # bounded-drain probe helper so native file search cannot hang during lazy
+    # environment initialization.
+    result = bounded_probe_run(
+        [bash, "--noprofile", "--norc", "-c", _BASH_EXTERNAL_PROGRAM_PROBE],
+        timeout=_BASH_PROBE_TIMEOUT_SECONDS,
+    )
+    if result is None:
+        detail = (
+            "Git Bash external-program probe did not complete within "
+            f"{_BASH_PROBE_TIMEOUT_SECONDS:g}s"
         )
+        _bash_probe_details_cache[bash] = detail
+        logger.debug("bash probe failed for %s: %s", bash, detail)
+        ok = False
+    else:
         ok = result.returncode == 0
         if not ok:
             combined = f"{result.stdout or ''}{result.stderr or ''}"
             _bash_probe_details_cache[bash] = combined.strip()[:2000]
             logger.debug("bash probe failed for %s: %s", bash, combined.strip()[:200])
-    except Exception as exc:
-        _bash_probe_details_cache[bash] = str(exc)[:2000]
-        logger.debug("bash probe error for %s: %s", bash, exc)
-        ok = False
 
     _bash_starts_cache[bash] = ok
     return ok

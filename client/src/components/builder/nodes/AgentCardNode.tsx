@@ -1,5 +1,5 @@
 import { Handle, Position } from '@xyflow/react';
-import type { AgentCardInstance, KanbanCardRunStatus } from '../../../types/agentgraph';
+import type { AgentCardInstance } from '../../../types/agentgraph';
 import { GRAPH_THEME, graphGlassCardStyle } from '../../graph/graphVisualTokens';
 import { GRAPH_TEXT } from '../../graph/graphWorkspaceContract';
 
@@ -11,19 +11,7 @@ type AgentCardNodeData = AgentCardInstance & {
   isHoverRelated?: boolean;
   isFlowLinked?: boolean;
   isInspecting?: boolean;
-  kanbanRunStatus?: KanbanCardRunStatus | null;
 };
-
-function compactCount(value: number): string {
-  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
-}
-
-function compactElapsed(elapsedMs: number): string {
-  const seconds = Math.max(0, Math.floor(elapsedMs / 1_000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
 
 export default function AgentCardNode({
   data,
@@ -36,8 +24,6 @@ export default function AgentCardNode({
   const canStartConnection = true;
   const shellActive = Boolean(selected || data?.isInspecting || data?.isRuntimeActive);
   const isHermesCard = data?.runtime?.kind === 'hermes';
-  const isKanbanCard = isHermesCard && data?.runtime?.mode === 'kanban';
-  const kanban = isKanbanCard ? data.kanbanRunStatus : null;
   const name = String(data?.title || '').trim() || 'Agent';
   const subtext = String(data?.subtitle || '').replace(/\s+/g, ' ').trim() || 'Operational agent';
   const compactSubtext =
@@ -51,9 +37,9 @@ export default function AgentCardNode({
         graphGlassCardStyle({
           position: 'relative',
           padding: '8px 9px',
-          width: kanban ? 224 : isHermesCard ? 112 : 124,
-          minHeight: kanban ? 182 : isHermesCard ? 112 : 90,
-          aspectRatio: kanban ? undefined : isHermesCard ? '1 / 1' : undefined,
+          width: isHermesCard ? 112 : 124,
+          minHeight: isHermesCard ? 112 : 90,
+          aspectRatio: isHermesCard ? '1 / 1' : undefined,
           borderRadius: isHermesCard ? 28 : 12,
           borderWidth: 1,
           borderColor: shellActive
@@ -159,43 +145,6 @@ export default function AgentCardNode({
         >
           {compactSubtext}
         </div>
-        {kanban ? (
-          <div
-            data-testid="kanban-card-run-status"
-            data-run-id={kanban.runId}
-            style={{
-              display: 'grid',
-              gap: 5,
-              marginTop: 3,
-              paddingTop: 6,
-              borderTop: `1px solid ${GRAPH_THEME.card.glassBorder}`,
-              color: GRAPH_THEME.surface.mutedText,
-              fontSize: 9,
-              lineHeight: 1.2,
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-              <strong style={{ color: GRAPH_THEME.accent.primary, textTransform: 'uppercase' }}>
-                {kanban.status}
-              </strong>
-              <span>{kanban.tasksCompleted}/{kanban.tasksTotal} tasks · {kanban.activeWorkers} active · {compactElapsed(kanban.elapsedMs)}</span>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 10px' }}>
-              <span>Tools {compactCount(kanban.toolCallCount)}</span>
-              <span>Graph {kanban.graphReads}R/{kanban.graphWrites}W</span>
-              <span>Tokens {compactCount(kanban.inputTokens)} in/{compactCount(kanban.outputTokens)} out</span>
-              <span>Cache {compactCount(kanban.cachedTokens)} · Reason {compactCount(kanban.reasoningTokens)}</span>
-              <span>Cost ${kanban.costUsd.toFixed(4)}</span>
-              <span>{kanban.resultReady ? 'Result ready' : 'Result pending'}</span>
-            </div>
-            <div
-              title={kanban.nativeRootId || undefined}
-              style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.78 }}
-            >
-              Root {kanban.nativeRootId || 'pending'}
-            </div>
-          </div>
-        ) : null}
       </div>
     </div>
   );

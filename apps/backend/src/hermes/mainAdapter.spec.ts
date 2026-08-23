@@ -17,6 +17,10 @@ import {
   resolveHermesRuntimeHome,
   startHermesTurnWithOnePrePromptRecovery,
 } from './mainAdapter';
+import {
+  finishHermesExecutionContext,
+  registerHermesRootExecutionContext,
+} from './childExecutionContext';
 
 function providerFreeTurnArgs(toolCount = 57) {
   return {
@@ -230,6 +234,45 @@ describe('Hermes ACP transport identity', () => {
     });
     expect(server).not.toHaveProperty('command');
     expect(JSON.stringify(server)).not.toContain('0123456789abcdef0123456789abcdef');
+  });
+
+  it('configures a signed Card MCP projection on one ACP session without prompting a model', async () => {
+    const previousSecret = process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
+    const previousUrl = process.env.LIQUIDAITY_INTERNAL_MCP_URL;
+    process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = 'provider-free-secret-0123456789abcdef';
+    process.env.LIQUIDAITY_INTERNAL_MCP_URL = 'http://127.0.0.1:9/mcp';
+    const root = path.join(tmpdir(), `liquidaity-acp-config-${randomUUID()}`);
+    const hermesHome = path.join(root, '.hermes');
+    mkdirSync(hermesHome, { recursive: true });
+    const owner = new AcpProcess(() => undefined, {
+      install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(false)] },
+      hermesHome,
+    });
+    const context = registerHermesRootExecutionContext({
+      sessionId: 'kanban:provider-free-run',
+      runId: 'provider-free-run',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'provider-free',
+      cardId: 'card_main_chat',
+      runtimeMode: 'kanban',
+      grantedTools: providerFreeTurnArgs().tools,
+    });
+    try {
+      await expect(owner.configureHostSession(providerFreeTurnArgs(), context.contextId)).resolves.toMatchObject({
+        sessionId: 'provider-free-session',
+        hermesHome,
+        transport: 'acp-stdio',
+      });
+      expect(owner.alive).toBe(true);
+    } finally {
+      await finishHermesExecutionContext({ contextId: context.contextId, state: 'cancelled' });
+      if (owner.alive) owner.close();
+      if (previousSecret === undefined) delete process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
+      else process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = previousSecret;
+      if (previousUrl === undefined) delete process.env.LIQUIDAITY_INTERNAL_MCP_URL;
+      else process.env.LIQUIDAITY_INTERNAL_MCP_URL = previousUrl;
+    }
   });
 
   it('projects one Card-owned native and MCP surface without creating subagent Cards', () => {

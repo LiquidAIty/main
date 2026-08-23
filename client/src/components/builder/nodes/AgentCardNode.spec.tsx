@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import AgentCardNode from './AgentCardNode';
@@ -51,50 +51,20 @@ describe('AgentCardNode runtime shape', () => {
     expect(card?.style.borderRadius).toBe('12px');
   });
 
-  it('hydrates one saved Kanban Card with aggregate retained-root status', () => {
+  it('keeps a Kanban Card on the shared Hermes square without a special status panel', () => {
     const { container } = render(
       <AgentCardNode
         data={{
           ...baseCard,
           runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
-          kanbanRunStatus: {
-            runId: 'external-mcp:ecccd111-1dae-4950-93cb-ad7eccdff59a',
-            correlationId: 'mcp:retained-root-readback',
-            cardId: 'card-test',
-            state: 'completed',
-            status: 'complete',
-            nativeRootId: 't_625de6e8',
-            nativeRunId: 4,
-            tasksCompleted: 5,
-            tasksTotal: 5,
-            activeWorkers: 0,
-            elapsedMs: 312_000,
-            toolCallCount: 7,
-            graphReads: 2,
-            graphWrites: 1,
-            inputTokens: 62_020,
-            outputTokens: 1_960,
-            cachedTokens: 109_568,
-            reasoningTokens: 109,
-            costUsd: 0,
-            resultReady: true,
-            output: 'Native synthesis.',
-            errorCode: null,
-            errorSummary: null,
-          },
         }}
       />,
     );
 
-    expect(screen.getByTestId('kanban-card-run-status').getAttribute('data-run-id')).toBe(
-      'external-mcp:ecccd111-1dae-4950-93cb-ad7eccdff59a',
-    );
-    expect(screen.getByText('complete')).toBeTruthy();
-    expect(screen.getByText('5/5 tasks · 0 active · 5m 12s')).toBeTruthy();
-    expect(screen.getByText('Result ready')).toBeTruthy();
-    expect(screen.getByText('Root t_625de6e8')).toBeTruthy();
     const card = container.querySelector<HTMLElement>('[data-runtime-kind="hermes"]');
-    expect(card?.style.width).toBe('224px');
-    expect(card?.style.aspectRatio).toBe('');
+    expect(card?.style.width).toBe('112px');
+    expect(card?.style.minHeight).toBe('112px');
+    expect(card?.style.aspectRatio).toBe('1 / 1');
+    expect(container.querySelector('[data-testid="kanban-card-run-status"]')).toBeNull();
   });
 });

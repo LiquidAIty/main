@@ -355,6 +355,67 @@ def test_exact_kanban_retry_rejoins_without_duplicate_run_or_attention(
     })
 
 
+def test_same_parent_kanban_rewording_rejoins_the_existing_child_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = {
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardRevisionId": "revision-one",
+        "runtimeOwner": "hermes",
+        "cardIdentity": {"cardId": "kanban-one", "title": "Kanban"},
+        "idf": {
+            "runtime": {"kind": "hermes", "mode": "kanban", "profile": "steward"},
+            "provider": {
+                "provider": "openai", "modelKey": "gpt-5.6-luna",
+                "providerModelId": "gpt-5.6-luna", "accessMode": "chatgpt-account",
+            },
+        },
+        "resolvedNativeReads": [],
+        "resolvedGraphProjection": {"nodes": [], "edges": []},
+    }
+    fingerprints: dict[str, tuple[str, str]] = {}
+    observed: list[str] = []
+
+    monkeypatch.setattr(card_domain, "prepare_run_invocation", lambda _payload: prepared)
+
+    def insert(_prepared: dict, **kwargs):
+        fingerprint = kwargs["request_fingerprint"]
+        existing = fingerprints.get(fingerprint)
+        if existing is not None:
+            return (*existing, False)
+        identity = (kwargs["run_id"], kwargs["correlation_id"])
+        fingerprints[fingerprint] = identity
+        return (*identity, True)
+
+    monkeypatch.setattr(card_domain, "_insert_run", insert)
+    monkeypatch.setattr(
+        card_domain,
+        "_observe_run_start",
+        lambda *_args, **kwargs: observed.append(kwargs["run_id"]) or True,
+    )
+    monkeypatch.setattr(card_domain, "observe_materialized_anchor_reads", lambda *_args, **_kwargs: True)
+
+    first = card_domain.begin_run({
+        "projectId": "project-one", "deckId": "deck-one", "cardId": "kanban-one",
+        "runId": "run-first", "correlationId": "correlation-first",
+        "originatingRunId": "main-run", "assignment": "Original mission",
+        "dataAnchors": [{"authority": "CodeGraph", "nativeId": "symbol-one"}],
+    })
+    second = card_domain.begin_run({
+        "projectId": "project-one", "deckId": "deck-one", "cardId": "kanban-one",
+        "runId": "run-second", "correlationId": "correlation-second",
+        "originatingRunId": "main-run", "assignment": "Reworded mission",
+        "dataAnchors": [{"authority": "CodeGraph", "nativeId": "symbol-two"}],
+    })
+
+    assert first["runId"] == second["runId"] == "run-first"
+    assert first["rejoined"] is False
+    assert second["rejoined"] is True
+    assert observed == ["run-first"]
+    assert len(fingerprints) == 1
+
+
 def test_active_kanban_recovery_projects_only_persisted_run_and_root_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -409,6 +470,147 @@ def test_active_kanban_recovery_projects_only_persisted_run_and_root_identity(
     assert "run.runtime_mode='kanban'" in query
     assert "provider_thread_ref IS NOT NULL" in query
     assert "native_child" not in query.lower()
+
+
+def test_run_projection_carries_saved_runtime_profile_for_exact_rejoin() -> None:
+    projected = card_domain._run_projection({
+        "run_id": "run-one",
+        "runtime_kind": "hermes",
+        "runtime_mode": "kanban",
+        "runtime_profile": "liquidaity-hermes-steward",
+        "provider_thread_ref": "t_retained_root",
+        "state": "failed",
+    })
+
+    assert projected["runId"] == "run-one"
+    assert projected["runtimeProfile"] == "liquidaity-hermes-steward"
+    assert projected["nativeRootId"] == "t_retained_root"
+
+
+def test_run_progress_casts_numeric_native_run_id_to_persisted_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[tuple[str, object]] = []
+
+    class Cursor:
+        rowcount = 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, params=None):
+            statements.append((str(query), params))
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_observe_run_progress", lambda *_args, **_kwargs: True)
+
+    result = card_domain.update_run_progress({
+        "runId": "run-one",
+        "nativeRootId": "t_retained_root",
+        "nativeRunId": 18,
+        "nativePhase": "working",
+        "tasksCompleted": 2,
+        "tasksTotal": 5,
+        "activeWorkers": 1,
+    })
+
+    query, params = statements[0]
+    assert "provider_turn_ref=COALESCE(%s::text, provider_turn_ref)" in query
+    assert params[1] == 18
+    assert result["updated"] is True
+
+
+def test_finish_run_reconciles_only_a_matching_terminal_native_kanban_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[tuple[str, object]] = []
+    receipt = {
+        "run_id": "run-one",
+        "state": "failed",
+        "runtime_kind": "hermes",
+        "runtime_mode": "kanban",
+        "provider_thread_ref": "t_retained_root",
+    }
+
+    class Cursor:
+        rowcount = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, params=None):
+            statements.append((str(query), params))
+            if "UPDATE ag_catalog.agent_runs" in str(query):
+                self.rowcount = 1
+                receipt["state"] = "completed"
+
+        def fetchone(self):
+            return receipt
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_observe_run_finish", lambda *_args, **_kwargs: True)
+
+    result = card_domain.finish_run({
+        "runId": "run-one",
+        "state": "completed",
+        "providerThreadRef": "t_retained_root",
+        "providerTurnRef": 18,
+        "nativePhase": "complete",
+        "tasksCompleted": 5,
+        "tasksTotal": 5,
+        "activeWorkers": 0,
+        "finalResult": "Exact stored native result.",
+        "reconcileNativeTerminal": True,
+    })
+
+    update_query, update_params = statements[0]
+    assert "state IN ('failed','cancelled')" in update_query
+    assert "runtime_kind='hermes'" in update_query
+    assert "runtime_mode='kanban'" in update_query
+    assert "provider_thread_ref=%s" in update_query
+    assert "provider_turn_ref=%s::text" in update_query
+    assert update_params[-1] == "t_retained_root"
+    assert result["updated"] is True
+    assert result["state"] == "completed"
+
+
+def test_finish_run_reconciliation_requires_a_stored_native_result() -> None:
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="run_terminal_reconciliation_result_missing",
+    ):
+        card_domain.finish_run({
+            "runId": "run-one",
+            "state": "completed",
+            "providerThreadRef": "t_retained_root",
+            "reconcileNativeTerminal": True,
+        })
 
 
 def test_magentic_card_may_invoke_only_a_saved_magentic_option_worker(

@@ -118,6 +118,14 @@ const kanbanMocks = vi.hoisted(() => ({
   })),
 }));
 
+const kanbanRecoveryMocks = vi.hoisted(() => ({
+  reconcileTerminalKanbanRun: vi.fn(() => true),
+  startKanbanRunMonitor: vi.fn((_runId: string, monitor: () => Promise<void>) => {
+    void monitor();
+    return true;
+  }),
+}));
+
 const mcpClientMocks = vi.hoisted(() => ({
   callPythonAgentMcpTool: vi.fn(async () => ({ ok: true })),
   listPythonAgentMcpCatalog: vi.fn(async (): Promise<any[]> => []),
@@ -383,6 +391,8 @@ vi.mock('./hermesKanban.routes', () => ({
   readHermesKanbanSessionUsage: kanbanMocks.readHermesKanbanSessionUsage,
   startNativeHermesKanbanTurn: kanbanMocks.startNativeHermesKanbanTurn,
 }));
+
+vi.mock('../hermes/kanbanRunRecovery', () => kanbanRecoveryMocks);
 
 vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
   callPythonAgentMcpTool: mcpClientMocks.callPythonAgentMcpTool,
@@ -872,6 +882,61 @@ describe('coder routes', () => {
       });
       expect(orchestratorMocks.runRecords).toHaveLength(1);
       expect(cancel).not.toHaveBeenCalled();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('starts same-ID terminal reconciliation from status without creating another Run or root', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.runRecords.clear();
+    orchestratorMocks.requestFingerprints.clear();
+    kanbanRecoveryMocks.reconcileTerminalKanbanRun.mockClear();
+    kanbanMocks.startNativeHermesKanbanTurn.mockClear();
+    orchestratorMocks.runRecords.set('run-failed-transport', {
+      runId: 'run-failed-transport',
+      correlationId: 'run-failed-transport',
+      projectId: 'project-rejoin',
+      deckId: 'deck_builder',
+      cardId: 'card_hermes_steward',
+      runtimeKind: 'hermes',
+      runtimeMode: 'kanban',
+      runtimeProfile: 'liquidaity-hermes-steward',
+      state: 'failed',
+      nativeRootId: 't_retained_root',
+      nativePhase: 'failed',
+      finalResult: null,
+      startedAt: new Date().toISOString(),
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'status',
+          projectId: 'project-rejoin',
+          deckId: 'deck_builder',
+          runId: 'run-failed-transport',
+        }),
+      });
+      await expect(response.json()).resolves.toMatchObject({
+        result: {
+          runId: 'run-failed-transport',
+          nativeRootId: 't_retained_root',
+          state: 'failed',
+        },
+      });
+      expect(kanbanRecoveryMocks.reconcileTerminalKanbanRun).toHaveBeenCalledWith({
+        runId: 'run-failed-transport',
+        projectId: 'project-rejoin',
+        deckId: 'deck_builder',
+        cardId: 'card_hermes_steward',
+        nativeRootId: 't_retained_root',
+        runtimeProfile: 'liquidaity-hermes-steward',
+      });
+      expect(orchestratorMocks.runRecords).toHaveLength(1);
+      expect(kanbanMocks.startNativeHermesKanbanTurn).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }

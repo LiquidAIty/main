@@ -218,6 +218,35 @@ describe('hermesKanban helpers', () => {
     expect(result.snapshot.latest_summary).toBe('Native root result');
   });
 
+  it('survives bounded transient ACP show loss and returns the same native root result', async () => {
+    const show = vi.fn()
+      .mockRejectedValueOnce(new Error('bridge-replaced'))
+      .mockRejectedValueOnce(new Error('bridge-starting'))
+      .mockResolvedValueOnce({
+        task: { id: 't_root', status: 'done' },
+        latest_summary: 'Recovered native root result',
+        parents: [], children: [], events: [], runs: [{ id: 18 }],
+      });
+
+    await expect(waitForHermesKanbanCardTask('orchestrator', 't_root', {
+      show,
+      pause: async () => undefined,
+      maxConsecutiveShowFailures: 3,
+    })).resolves.toMatchObject({ taskId: 't_root', runId: 18 });
+    expect(show).toHaveBeenCalledTimes(3);
+  });
+
+  it('returns a bounded visible error when ACP show remains unavailable', async () => {
+    const show = vi.fn(async () => { throw new Error('bridge-unavailable'); });
+
+    await expect(waitForHermesKanbanCardTask('orchestrator', 't_root', {
+      show,
+      pause: async () => undefined,
+      maxConsecutiveShowFailures: 2,
+    })).rejects.toThrow('hermes_kanban_card_show_failed');
+    expect(show).toHaveBeenCalledTimes(2);
+  });
+
   it('uses ACP exact lookup to rejoin and join one native Triage root', async () => {
     const runner = vi.fn(async (
       args: readonly string[],
@@ -225,12 +254,6 @@ describe('hermesKanban helpers', () => {
       _timeoutMs?: number,
       _envOverrides?: NodeJS.ProcessEnv,
     ) => {
-      if (args.join(' ') === 'gateway stop') {
-        return { exitCode: 0, stdout: 'Gateway stopped', stderr: '' };
-      }
-      if (args.join(' ') === 'gateway status') {
-        return { exitCode: 0, stdout: 'Gateway process running (PID: 42)', stderr: '' };
-      }
       if (args.join(' ') === 'config get kanban') {
         return {
           exitCode: 0,
@@ -256,10 +279,17 @@ describe('hermesKanban helpers', () => {
       throw new Error(`unexpected ACP method: ${method}`);
     });
     const events: any[] = [];
-    const configureCardMcpProfile = vi.fn(() => 'profile-home');
-    // Windows hermes.exe is a launcher; native readiness reports the handed-off
-    // long-running Python gateway PID rather than this launcher PID.
-    const spawnGateway = vi.fn(async () => 41);
+    const configureHostSession = vi.fn(async (..._args: any[]) => ({
+      cardId: 'card_kanban',
+      provider: 'openai',
+      modelKey: 'saved-model-key',
+      providerModelId: 'saved-model-id',
+      executable: 'hermes-acp',
+      pid: 41,
+      hermesHome: 'C:/repo/Hermes/.hermes',
+      sessionId: 'kanban-card-session',
+      transport: 'acp-stdio' as const,
+    }));
     const handle = await startNativeHermesKanbanTurn({
       sessionKey: 'unused-for-native-kanban',
       projectId: 'project-1',
@@ -284,13 +314,7 @@ describe('hermesKanban helpers', () => {
     }, (event) => events.push(event), {
       runner,
       requestExtension,
-      configureCardMcpProfile,
-      spawnGateway,
-      cardMcpServer: {
-        type: 'http',
-        url: 'http://127.0.0.1:8765/mcp',
-        headers: [{ name: 'Authorization', value: 'Bearer signed-test-token' }],
-      },
+      configureHostSession,
     });
 
     const completed = await handle.done;
@@ -301,24 +325,16 @@ describe('hermesKanban helpers', () => {
       nativeRunId: 23,
       nativeStatus: 'done',
     });
-    expect(runner.mock.calls.find(([args]) => args.join(' ') === 'gateway status')?.[2]).toBe(60_000);
-    expect(runner.mock.calls.find(([args]) => args.join(' ') === 'gateway stop')?.[2]).toBe(60_000);
-    expect(runner.mock.calls.find(([args]) => args.join(' ') === 'gateway stop')?.[3]).toMatchObject({
-      LIQUIDAITY_KANBAN_CARD_MCP_BEARER: 'signed-test-token',
-      OPENAI_API_KEY: '',
-      OPENROUTER_API_KEY: '',
-      OPENROUTER_BASE_URL: '',
+    expect(runner.mock.calls.map(([command]) => command.join(' '))).toEqual(['config get kanban']);
+    expect(configureHostSession).toHaveBeenCalledTimes(1);
+    expect(configureHostSession.mock.calls[0]?.[0]).toMatchObject({
+      cardId: 'card_kanban',
+      parentRunId: 'run-native-kanban-1',
+      tools: ['knowgraph.search'],
     });
-    expect(spawnGateway).toHaveBeenCalledWith(expect.objectContaining({
-      LIQUIDAITY_KANBAN_CARD_MCP_BEARER: 'signed-test-token',
-      OPENROUTER_API_KEY: '',
-    }));
-    expect(configureCardMcpProfile).toHaveBeenCalledWith(expect.objectContaining({
-      profile: 'orchestrator',
-      mcpUrl: 'http://127.0.0.1:8765/mcp',
-      mcpTokenEnv: 'LIQUIDAITY_KANBAN_CARD_MCP_BEARER',
-    }));
-    expect(JSON.stringify(configureCardMcpProfile.mock.calls)).not.toContain('signed-test-token');
+    expect(configureHostSession.mock.calls[0]?.[1]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
     expect(requestExtension).toHaveBeenCalledTimes(2);
     expect(requestExtension.mock.calls[0]).toEqual([
       '_kanban/find',

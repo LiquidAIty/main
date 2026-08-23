@@ -76,6 +76,7 @@ function progressPayload(runId: string, progress: HermesKanbanProgress): Record<
 async function recoverOneKanbanRun(
   run: ActiveKanbanRun,
   dependencies: RecoveryDependencies,
+  reconcileNativeTerminal = false,
 ): Promise<void> {
   const request = dependencies.request ?? requestPythonRailsJson;
   const rejoin = dependencies.rejoin ?? rejoinNativeHermesKanbanTask;
@@ -126,11 +127,18 @@ async function recoverOneKanbanRun(
         activeWorkers: 0,
         ...usage,
         finalResult: completed.finalText,
+        ...(reconcileNativeTerminal ? { reconcileNativeTerminal: true } : {}),
       }),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'kanban_run_recovery_failed';
     const blocked = message === 'hermes_kanban_card_blocked';
+    if (reconcileNativeTerminal && !blocked) {
+      logHarnessTrace(
+        `[harness] terminal configured-card reconciliation deferred run=${run.runId} reason=${redactTrace(message)}`,
+      );
+      return;
+    }
     const failedProgress = latestProgress as HermesKanbanProgress | null;
     await request('/domain/runs/finish', {
       method: 'POST',
@@ -146,9 +154,21 @@ async function recoverOneKanbanRun(
         activeWorkers: 0,
         errorCode: 'kanban_run_recovery_failed',
         errorSummary: message,
+        ...(reconcileNativeTerminal ? { reconcileNativeTerminal: true } : {}),
       }),
     }).catch(() => undefined);
   }
+}
+
+export function reconcileTerminalKanbanRun(
+  value: unknown,
+  dependencies: RecoveryDependencies = {},
+): boolean {
+  const run = requireActiveRun(value);
+  return startKanbanRunMonitor(
+    run.runId,
+    () => recoverOneKanbanRun(run, dependencies, true),
+  );
 }
 
 export async function recoverActiveKanbanRunMonitors(

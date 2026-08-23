@@ -264,6 +264,13 @@ upstream-contribution plan is owned by `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. On
 remove a divergence if upstream supplies the equivalent public hook; otherwise reapply only its marked
 symbols and rerun the registered tests.
 
+A one-call Windows process-lifecycle correction in `Hermes/tools/environments/local.py` routes the
+pre-search Git Bash health probe through Hermes' existing bounded process-tree helper. It changes no
+tool, shell, workspace, or provider policy; it prevents an MSYS descendant holding a captured pipe
+from pinning native file-tool initialization beyond the declared probe timeout. Focused proof lives in
+`Hermes/tests/tools/test_find_shell.py` and `Hermes/tests/tools/test_file_tools.py`; rebase and rollback
+details live in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
+
 ACP has no standard native-Kanban task method. The LiquidAIty-owned subclass in
 `apps/python-models/app/python_models/hermes_acp_bridge.py` adds only exact native-root lookup,
 idempotent Triage creation, and task readback over the stock Hermes ACP agent. It never calls

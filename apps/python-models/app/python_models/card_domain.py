@@ -8,6 +8,7 @@ is materialized and validated in memory and is never written by this module.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any
@@ -82,6 +83,7 @@ def _canonical_json(value: Any) -> str:
 def _run_request_fingerprint(payload: dict[str, Any]) -> str:
     """Hash one caller request identity without persisting its transient input."""
 
+    originating_run_id = str(payload.get("originatingRunId") or "").strip()
     identity = {
         "projectId": str(payload.get("projectId") or "").strip(),
         "deckId": str(payload.get("deckId") or "").strip(),
@@ -89,10 +91,15 @@ def _run_request_fingerprint(payload: dict[str, Any]) -> str:
         "cardRevisionId": str(payload.get("cardRevisionId") or "").strip(),
         "conversationId": str(payload.get("conversationId") or "").strip(),
         "senderCardId": str(payload.get("senderCardId") or "").strip(),
-        "originatingRunId": str(payload.get("originatingRunId") or "").strip(),
-        "assignment": str(payload.get("assignment") or ""),
-        "dataAnchors": payload.get("dataAnchors") or [],
-        "images": payload.get("images") or [],
+        "originatingRunId": originating_run_id,
+        # One invoking Run may own only one durable Kanban child for a saved
+        # Card revision. A model rewording the assignment after status/readback
+        # is a rejoin of that child, not authority to create another mission.
+        # Direct/external submissions have no originating Run, so their exact
+        # transient request still participates in idempotency as before.
+        "assignment": "" if originating_run_id else str(payload.get("assignment") or ""),
+        "dataAnchors": [] if originating_run_id else payload.get("dataAnchors") or [],
+        "images": [] if originating_run_id else payload.get("images") or [],
     }
     return sha256(_canonical_json(identity).encode("utf-8")).hexdigest()
 
@@ -2214,6 +2221,7 @@ def _run_projection(row: dict[str, Any]) -> dict[str, Any]:
         "cardRevisionId": str(row.get("target_card_revision_id") or ""),
         "runtimeKind": str(row.get("runtime_kind") or ""),
         "runtimeMode": str(row.get("runtime_mode") or ""),
+        "runtimeProfile": str(row.get("runtime_profile") or ""),
         "state": str(row.get("state") or ""),
         "nativePhase": str(row.get("native_phase") or "") or None,
         "nativeRootId": str(row.get("provider_thread_ref") or "") or None,
@@ -2258,7 +2266,7 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
             if selector == "card_id":
                 cursor.execute(
                     """
-                    SELECT run.*, revision.card_id
+                    SELECT run.*, revision.card_id, revision.runtime_profile
                     FROM ag_catalog.agent_runs AS run
                     JOIN ag_catalog.agent_card_revisions AS revision
                       ON revision.revision_id=run.target_card_revision_id
@@ -2275,7 +2283,7 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
                 }[selector]
                 cursor.execute(
                     f"""
-                    SELECT run.*, revision.card_id
+                    SELECT run.*, revision.card_id, revision.runtime_profile
                     FROM ag_catalog.agent_runs AS run
                     JOIN ag_catalog.agent_card_revisions AS revision
                       ON revision.revision_id=run.target_card_revision_id
@@ -2352,7 +2360,7 @@ def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
             """
             UPDATE ag_catalog.agent_runs SET
               provider_thread_ref=COALESCE(%s, provider_thread_ref),
-              provider_turn_ref=COALESCE(%s, provider_turn_ref),
+              provider_turn_ref=COALESCE(%s::text, provider_turn_ref),
               native_phase=%s,
               native_task_completed_count=COALESCE(%s, native_task_completed_count),
               native_task_total_count=COALESCE(%s, native_task_total_count),
@@ -2592,11 +2600,28 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
     state = _required_text(payload.get("state"), "state")
     if state not in {"completed", "blocked", "failed", "cancelled"}:
         raise CardDomainError("run_terminal_state_invalid")
+    reconcile_native_terminal = payload.get("reconcileNativeTerminal", False)
+    if not isinstance(reconcile_native_terminal, bool):
+        raise CardDomainError("run_terminal_reconciliation_invalid")
+    if reconcile_native_terminal:
+        native_root_id = _required_text(payload.get("providerThreadRef"), "native_root_id")
+        if not re.fullmatch(r"t_[A-Za-z0-9_-]+", native_root_id):
+            raise CardDomainError("native_root_id_invalid")
+        if state not in {"completed", "blocked"}:
+            raise CardDomainError("run_terminal_reconciliation_state_invalid")
+        if state == "completed" and not str(payload.get("finalResult") or "").strip():
+            raise CardDomainError("run_terminal_reconciliation_result_missing")
+    terminal_condition = (
+        "state IN ('failed','cancelled') AND runtime_kind='hermes' "
+        "AND runtime_mode='kanban' AND provider_thread_ref=%s"
+        if reconcile_native_terminal
+        else "state IN ('pending','running')"
+    )
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
-            """
+            f"""
             UPDATE ag_catalog.agent_runs SET state=%s, finished_at=NOW(),
-              provider_thread_ref=%s, provider_turn_ref=%s,
+              provider_thread_ref=%s, provider_turn_ref=%s::text,
               error_code=%s, error_summary=%s,
               provider_input_tokens=%s, provider_output_tokens=%s,
               provider_cached_tokens=%s, provider_reasoning_tokens=%s,
@@ -2606,7 +2631,7 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
               native_task_total_count=%s,
               native_active_worker_count=%s,
               final_result=%s
-            WHERE run_id=%s AND state IN ('pending','running')
+            WHERE run_id=%s AND {terminal_condition}
             """,
             (
                 state, payload.get("providerThreadRef"), payload.get("providerTurnRef"),
@@ -2617,6 +2642,7 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                 payload.get("nativePhase"), payload.get("tasksCompleted"),
                 payload.get("tasksTotal"), payload.get("activeWorkers"),
                 payload.get("finalResult"), run_id,
+                *((payload.get("providerThreadRef"),) if reconcile_native_terminal else ()),
             ),
         )
         updated = cursor.rowcount == 1

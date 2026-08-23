@@ -36,7 +36,10 @@ import {
 } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
 import { resolveHermesExecutionContext } from '../hermes/childExecutionContext';
-import { startKanbanRunMonitor } from '../hermes/kanbanRunRecovery';
+import {
+  reconcileTerminalKanbanRun,
+  startKanbanRunMonitor,
+} from '../hermes/kanbanRunRecovery';
 import {
   readHermesKanbanSessionUsage,
   startNativeHermesKanbanTurn,
@@ -385,6 +388,24 @@ async function readConfiguredCardRunStatus(args: {
   const run = response?.run;
   if (!run || typeof run !== 'object') return null;
   const runId = String(run.runId || '').trim();
+  const state = String(run.state || 'running');
+  const nativeRootId = String(run.nativeRootId || '').trim();
+  if (
+    (state === 'failed' || state === 'cancelled')
+    && nativeRootId
+    && !String(run.result || '').trim()
+    && String(run.runtimeKind || '') === 'hermes'
+    && String(run.runtimeMode || '') === 'kanban'
+  ) {
+    reconcileTerminalKanbanRun({
+      runId,
+      projectId: String(run.projectId || ''),
+      deckId: String(run.deckId || ''),
+      cardId: String(run.cardId || ''),
+      nativeRootId,
+      runtimeProfile: String(run.runtimeProfile || ''),
+    });
+  }
   const inspection = await requestPythonRailsJson('/domain/agentgraph/inspect', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -412,7 +433,6 @@ async function readConfiguredCardRunStatus(args: {
   const elapsedMs = Number.isFinite(startedAt)
     ? Math.max(0, (Number.isFinite(finishedAt) ? finishedAt : Date.now()) - startedAt)
     : 0;
-  const state = String(run.state || 'running');
   const nativeStatus = String(run.nativePhase || '').trim();
   const output = typeof run.result === 'string' && run.result.length > 0
     ? run.result
@@ -431,7 +451,7 @@ async function readConfiguredCardRunStatus(args: {
           : state === 'pending'
             ? 'queued'
             : 'working'),
-    nativeRootId: String(run.nativeRootId || '').trim() || null,
+    nativeRootId: nativeRootId || null,
     nativeRunId: typeof run.nativeRunId === 'number' || typeof run.nativeRunId === 'string'
       ? run.nativeRunId
       : null,

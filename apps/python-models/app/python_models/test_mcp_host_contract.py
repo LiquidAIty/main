@@ -121,8 +121,15 @@ def test_graphiti_is_optional_when_provider_credentials_are_absent(monkeypatch):
     monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_TOOLS", None)
     monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_NAMES", frozenset())
     monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_UNAVAILABLE", None)
+    provider_initialization = []
+    monkeypatch.setattr(
+        mcp_host,
+        "_graphiti_config",
+        lambda: provider_initialization.append("called"),
+    )
 
     assert asyncio.run(mcp_host._native_graphiti_tools()) == []
+    assert provider_initialization == []
     assert mcp_host._NATIVE_GRAPHITI_NAMES == frozenset()
     assert mcp_host._NATIVE_GRAPHITI_UNAVAILABLE == {
         "ok": False,

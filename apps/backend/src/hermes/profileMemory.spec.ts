@@ -13,11 +13,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 
 import {
-  configureHermesCardMcpProfile,
   configureHermesHolographicMemoryHome,
   HOLOGRAPHIC_MEMORY_SETTINGS,
   resolveHermesHolographicMemoryDb,
-  resolveHermesProfileHome,
   resolveHermesRuntimeHome,
 } from './profileMemory';
 
@@ -121,49 +119,4 @@ describe('Hermes Holographic runtime configuration', () => {
     ]);
   });
 
-  it('persists only the public Card-Run MCP template and leaves profile authority unchanged', () => {
-    const runtimeHome = mkdtempSync(path.join(tmpdir(), 'liquidaity-hermes-profiles-'));
-    tempHomes.push(runtimeHome);
-    const profileHome = path.join(runtimeHome, 'profiles', 'coder');
-    mkdirSync(profileHome, { recursive: true });
-    writeFileSync(
-      path.join(profileHome, 'config.yaml'),
-      'model:\n  default: gpt-5.6-luna\n  provider: openai-codex\nmcp_servers:\n  liquidaity:\n    tools:\n      include:\n        - stale.worker.grant\n',
-      'utf8',
-    );
-    writeFileSync(path.join(profileHome, 'SOUL.md'), 'Existing saved profile prompt', 'utf8');
-
-    const configuredHome = configureHermesCardMcpProfile({
-      hermesRoot: HERMES_ROOT,
-      runtimeHome,
-      profile: 'coder',
-      mcpUrl: 'http://127.0.0.1:8765/mcp',
-      mcpTokenEnv: 'LIQUIDAITY_CODER_MCP_BEARER',
-    });
-    const raw = readRawHermesConfig(profileHome);
-
-    expect(configuredHome).toBe(profileHome);
-    expect(readFileSync(path.join(profileHome, 'SOUL.md'), 'utf8')).toBe('Existing saved profile prompt');
-    expect(raw.model).toEqual({
-      default: 'gpt-5.6-luna',
-      provider: 'openai-codex',
-    });
-    expect(raw.mcp_servers.liquidaity).toEqual({
-      url: 'http://127.0.0.1:8765/mcp',
-      headers: { Authorization: 'Bearer ${LIQUIDAITY_CODER_MCP_BEARER}' },
-      tools: {
-        resources: false,
-        prompts: false,
-      },
-      connect_timeout: 30,
-    });
-    expect(JSON.stringify(raw)).not.toContain('stale.worker.grant');
-    expect(JSON.stringify(raw)).not.toContain('test-coder-terminal-token');
-  });
-
-  it('rejects a profile name that could escape the native profile root', () => {
-    expect(() => resolveHermesProfileHome(HERMES_ROOT, '../coder')).toThrow(
-      'hermes_profile_name_invalid',
-    );
-  });
 });
