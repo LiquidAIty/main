@@ -1,16 +1,16 @@
 """LiquidAIty-owned ACP extensions for stock Hermes.
 
 The stock Hermes ACP agent remains the runtime.  This adapter subclasses its
-public agent surface only to expose native Kanban persistence over ACP; it does
-not prompt a model, decompose tasks, dispatch workers, or synthesize results.
-Those lifecycle steps remain owned by the persistent Hermes gateway.
+public agent surface only to expose read-only native profile/MCP state and
+native Kanban persistence over ACP; it does not prompt a model, configure a
+profile, decompose tasks, dispatch workers, or synthesize results. Those
+lifecycle steps remain owned by the persistent Hermes gateway.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 import sys
 from dataclasses import asdict
@@ -178,47 +178,6 @@ class LiquidAItyHermesACPAgent(HermesACPAgent):
                     "mcpServers": servers,
                 }
             }
-
-        if method == "profile/apply":
-            if not isinstance(params, dict):
-                raise ValueError("hermes_profile_apply_params_must_be_object")
-            allowed = {
-                "name",
-                "description",
-                "soul",
-                "model",
-                "provider",
-                "disabledSkills",
-                "enabledToolsets",
-                "enabledMcpServers",
-            }
-            unknown = sorted(set(params) - allowed)
-            if unknown:
-                raise ValueError(f"hermes_profile_apply_unknown_field:{unknown[0]}")
-            name = _required_text(params, "name")
-            configure: dict[str, Any] = {"name": name}
-            for source, target in (
-                ("description", "description"),
-                ("soul", "soul"),
-                ("model", "model"),
-                ("provider", "provider"),
-                ("disabledSkills", "disabled_skills"),
-                ("enabledToolsets", "enabled_toolsets"),
-                ("enabledMcpServers", "enabled_mcp_servers"),
-            ):
-                if source in params:
-                    configure[target] = params[source]
-            result = _native_manager_call("profiles.configure", configure)
-            if result.get("ok") is not True:
-                failed = sorted(
-                    key
-                    for key, applied in (result.get("applied") or {}).items()
-                    if applied is not True
-                )
-                raise ValueError(
-                    f"hermes_native_profile_apply_failed:{','.join(failed) or 'unknown'}"
-                )
-            return {"ok": True, "applied": result.get("applied") or {}}
 
         if method == "mcp/test":
             if not isinstance(params, dict):

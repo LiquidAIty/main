@@ -58,7 +58,7 @@ export type AgentCardInstance = {
   id: string;
   kind?: DeckNodeKind;
   templateId: string;
-  /** Stable capability description; Hermes profiles materialize it as description. */
+  /** Stable LiquidAIty Card-to-Card capability description. */
   role?: string | null;
   prompt?: string | null;
   /** LiquidAIty-owned result validation/presentation contract. */

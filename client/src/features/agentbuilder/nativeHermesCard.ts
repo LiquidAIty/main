@@ -1,5 +1,3 @@
-import type { AgentCardRuntimeOptions, CardRuntime } from '../../types/agentgraph';
-
 export type NativeHermesMcpServerView = {
   name: string;
   transport: string;
@@ -20,24 +18,14 @@ export type NativeHermesCardView = {
     toolsetsPinned: boolean;
     mcpServers: NativeHermesMcpServerView[];
   };
-  fingerprint: string;
-  drift: { status: 'in_sync' | 'drifted'; fields: string[] };
-  unsupported: Array<{ field: string; values: string[]; reason: string }>;
-  intent: {
+  readOnly: true;
+  binding: {
     profile: string;
     mode: 'main' | 'delegate' | 'kanban';
     workspace: string | null;
     cardGrants: string[];
     nativeTools: string[];
   };
-  mutated?: boolean;
-};
-
-export type HermesCardDraft = {
-  role: string;
-  prompt: string;
-  runtime: Extract<CardRuntime, { kind: 'hermes' }>;
-  runtimeOptions: AgentCardRuntimeOptions;
 };
 
 async function responseJson(response: Response): Promise<Record<string, any>> {
@@ -58,52 +46,6 @@ export async function loadNativeHermesCard(input: {
   const response = await fetch(
     `/api/hermes-profile/cards/${encodeURIComponent(input.cardId)}?${query.toString()}`,
     { signal: input.signal },
-  );
-  return responseJson(response) as Promise<NativeHermesCardView>;
-}
-
-export async function applyNativeHermesCard(input: {
-  projectId: string;
-  deckId: string;
-  cardId: string;
-  expectedFingerprint: string;
-  draft: HermesCardDraft;
-}): Promise<NativeHermesCardView> {
-  const response = await fetch(
-    `/api/hermes-profile/cards/${encodeURIComponent(input.cardId)}/apply`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId: input.projectId,
-        deckId: input.deckId,
-        expectedFingerprint: input.expectedFingerprint,
-        draft: input.draft,
-      }),
-    },
-  );
-  return responseJson(response) as Promise<NativeHermesCardView>;
-}
-
-export async function previewNativeHermesCard(input: {
-  projectId: string;
-  deckId: string;
-  cardId: string;
-  draft: HermesCardDraft;
-  signal?: AbortSignal;
-}): Promise<NativeHermesCardView> {
-  const response = await fetch(
-    `/api/hermes-profile/cards/${encodeURIComponent(input.cardId)}/preview`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId: input.projectId,
-        deckId: input.deckId,
-        draft: input.draft,
-      }),
-      signal: input.signal,
-    },
   );
   return responseJson(response) as Promise<NativeHermesCardView>;
 }

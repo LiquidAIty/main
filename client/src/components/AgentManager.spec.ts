@@ -7,7 +7,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildActiveAgentManagerLocalConfig,
-  buildHermesCardDraftFromLocalConfig,
   buildInputDictionarySelectedRows,
   buildDisplayedToolRows,
   parseCardEditorInputDataDictionary,
@@ -91,46 +90,20 @@ describe('AgentManager active builder config', () => {
     expect(coder.toolsets).toEqual(['file', 'terminal']);
   });
 
-  it('maps one Card configuration to native profile controls without putting Task input in it', () => {
-    const draft = buildHermesCardDraftFromLocalConfig({
-      runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
-      runtime_options: { nativeTools: ['search'] },
-      role: 'General planning and research',
-      output_contract: { type: 'object' },
-      provider: 'openai',
-      access_mode: 'chatgpt-account',
-      model_key: 'gpt-test',
-      reasoning_effort: 'medium',
-      temperature: 0.3,
-      max_tokens: 1200,
-      max_turns: 20,
-      prompt_template: 'Persistent instructions',
-      tools: ['graphiti.search'],
-      skills: ['research'],
-      toolsets: ['web'],
-      mcp_connection_ids: ['liquidaity'],
-    });
+  it('saves Card fields without a Card-to-profile mutation path', () => {
+    const source = readFileSync(
+      path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
+      'utf8',
+    );
+    const nativeClient = readFileSync(
+      path.resolve(process.cwd(), 'client/src/features/agentbuilder/nativeHermesCard.ts'),
+      'utf8',
+    );
 
-    expect(draft).toEqual({
-      role: 'General planning and research',
-      prompt: 'Persistent instructions',
-      runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
-      runtimeOptions: {
-        provider: 'openai',
-        accessMode: 'chatgpt-account',
-        modelKey: 'gpt-test',
-        reasoningEffort: 'medium',
-        temperature: 0.3,
-        maxTokens: 1200,
-        maxTurns: 20,
-        tools: ['graphiti.search'],
-        nativeTools: ['search'],
-        skills: ['research'],
-        toolsets: ['web'],
-        mcpConnectionIds: ['liquidaity'],
-      },
-    });
-    expect(JSON.stringify(draft)).not.toMatch(/dynamicInput|promptTestInput|output_contract/);
+    expect(source).toContain('await Promise.resolve(onSaveLocalConfig(payload))');
+    expect(source).toContain('Saving this Card cannot change the profile.');
+    expect(source).not.toMatch(/applyNativeHermesCard|previewNativeHermesCard|buildHermesCardDraftFromLocalConfig/);
+    expect(nativeClient).not.toMatch(/\/apply|\/preview|expectedFingerprint|HermesCardDraft/);
   });
 
   it('uses the historical five Card tabs and exactly one Task composer', () => {

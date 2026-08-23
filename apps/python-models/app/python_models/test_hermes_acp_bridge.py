@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 from pathlib import Path
-
-import pytest
 
 def test_native_kanban_extensions_create_rejoin_and_read_back(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
@@ -87,8 +86,6 @@ def test_native_profile_and_mcp_extensions_use_managers_and_redact_transport_val
                     "tools": {"include": ["main.context"]},
                 }]
             }
-        if method == "profiles.configure":
-            return {"ok": True, "applied": {"description": True}}
         if method == "mcp.servers.test":
             return {
                 "ok": False,
@@ -103,15 +100,12 @@ def test_native_profile_and_mcp_extensions_use_managers_and_redact_transport_val
 
     async def exercise():
         read = await agent.ext_method("profile/read", {"name": "liquidaity-main"})
-        applied = await agent.ext_method(
-            "profile/apply", {"name": "liquidaity-main", "description": "Planner"}
-        )
         tested = await agent.ext_method(
             "mcp/test", {"profile": "liquidaity-main", "name": "liquidaity"}
         )
-        return read, applied, tested
+        return read, tested
 
-    read, applied, tested = asyncio.run(exercise())
+    read, tested = asyncio.run(exercise())
     server = read["profile"]["mcpServers"][0]
     assert server == {
         "name": "liquidaity",
@@ -121,31 +115,26 @@ def test_native_profile_and_mcp_extensions_use_managers_and_redact_transport_val
         "credentialStatus": "configured",
         "toolFilter": ["main.context"],
     }
-    assert applied == {"ok": True, "applied": {"description": True}}
     assert tested["ok"] is False
     assert "super-secret" not in tested["error"]
     assert "also-secret" not in tested["error"]
     assert calls == [
         ("profiles.describe", {"name": "liquidaity-main"}),
         ("mcp.servers.list", {"profile": "liquidaity-main"}),
-        ("profiles.configure", {"name": "liquidaity-main", "description": "Planner"}),
         ("mcp.servers.test", {"profile": "liquidaity-main", "name": "liquidaity"}),
     ]
 
 
-def test_native_profile_extension_rejects_unknown_and_secret_fields(monkeypatch):
+def test_native_profile_extension_has_no_card_to_profile_write_method(monkeypatch):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent))
     bridge = importlib.import_module("hermes_acp_bridge")
-    agent = bridge.LiquidAItyHermesACPAgent.__new__(bridge.LiquidAItyHermesACPAgent)
+    source = inspect.getsource(bridge.LiquidAItyHermesACPAgent.ext_method)
 
-    with pytest.raises(ValueError, match="hermes_profile_apply_unknown_field:apiKey"):
-        asyncio.run(agent.ext_method(
-            "profile/apply",
-            {"name": "liquidaity-main", "apiKey": "must-not-pass"},
-        ))
+    assert 'method == "profile/apply"' not in source
+    assert '"profiles.configure"' not in source
 
 
-def test_native_profile_extensions_round_trip_through_real_managers(monkeypatch, tmp_path):
+def test_native_profile_readback_through_real_managers_is_read_only(monkeypatch, tmp_path):
     root = tmp_path / "hermes-root"
     profile = root / "profiles" / "liquidaity-roundtrip"
     (profile / "skills" / "research").mkdir(parents=True)
@@ -180,32 +169,20 @@ mcp_servers:
     bridge = importlib.import_module("hermes_acp_bridge")
     agent = bridge.LiquidAItyHermesACPAgent.__new__(bridge.LiquidAItyHermesACPAgent)
 
-    async def exercise():
-        before = await agent.ext_method(
-            "profile/read", {"name": "liquidaity-roundtrip"}
-        )
-        applied = await agent.ext_method(
-            "profile/apply",
-            {
-                "name": "liquidaity-roundtrip",
-                "description": "After",
-                "soul": "After instructions",
-                "provider": "openai-codex",
-                "model": "gpt-after",
-                "disabledSkills": ["research"],
-                "enabledToolsets": ["web"],
-                "enabledMcpServers": ["demo"],
-            },
-        )
-        after = await agent.ext_method(
-            "profile/read", {"name": "liquidaity-roundtrip"}
-        )
-        return before, applied, after
+    soul_before = (profile / "SOUL.md").read_bytes()
+    profile_meta_before = (profile / "profile.yaml").read_bytes()
+    config_before = (profile / "config.yaml").read_bytes()
+    skill_before = (profile / "skills" / "research" / "SKILL.md").read_bytes()
 
-    before, applied, after = asyncio.run(exercise())
-    assert before["profile"]["description"] == "Before"
-    assert before["profile"]["soul"] == "Before instructions"
-    assert before["profile"]["mcpServers"] == [{
+    async def read_profile():
+        return await agent.ext_method(
+            "profile/read", {"name": "liquidaity-roundtrip"}
+        )
+
+    readback = asyncio.run(read_profile())
+    assert readback["profile"]["description"] == "Before"
+    assert readback["profile"]["soul"] == "Before instructions"
+    assert readback["profile"]["mcpServers"] == [{
         "name": "demo",
         "transport": "stdio",
         "enabled": False,
@@ -213,27 +190,7 @@ mcp_servers:
         "credentialStatus": "not_required",
         "toolFilter": [],
     }]
-    assert applied == {
-        "ok": True,
-        "applied": {
-            "soul": True,
-            "description": True,
-            "model": True,
-            "skills": True,
-            "toolsets": True,
-            "mcp_servers": True,
-        },
-    }
-    assert after["profile"]["description"] == "After"
-    assert after["profile"]["soul"] == "After instructions"
-    assert after["profile"]["model"] == {
-        "provider": "openai-codex",
-        "default": "gpt-after",
-    }
-    assert {item["name"]: item["enabled"] for item in after["profile"]["skills"]} == {
-        "research": False,
-    }
-    assert next(
-        item for item in after["profile"]["toolsets"] if item["name"] == "web"
-    )["enabled"] is True
-    assert after["profile"]["mcpServers"][0]["enabled"] is True
+    assert (profile / "SOUL.md").read_bytes() == soul_before
+    assert (profile / "profile.yaml").read_bytes() == profile_meta_before
+    assert (profile / "config.yaml").read_bytes() == config_before
+    assert (profile / "skills" / "research" / "SKILL.md").read_bytes() == skill_before

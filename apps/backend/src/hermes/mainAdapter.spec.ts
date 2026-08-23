@@ -88,6 +88,8 @@ describe('Hermes ACP transport identity', () => {
         .resolves.toEqual({ method: '_profile/read' });
       await expect(processOwner.requestExtension('_mcp/test', { profile: 'coder', name: 'liquidaity' }))
         .resolves.toEqual({ method: '_mcp/test' });
+      await expect(processOwner.requestExtension('_profile/apply', { name: 'coder' }))
+        .rejects.toThrow('hermes_acp_extension_method_invalid');
       await expect(processOwner.requestExtension('_secrets/read', {}))
         .rejects.toThrow('hermes_acp_extension_method_invalid');
     } finally {

@@ -10,11 +10,8 @@ import type {
   CardRuntime,
 } from '../types/agentgraph';
 import {
-  applyNativeHermesCard,
   loadNativeHermesCard,
-  previewNativeHermesCard,
   testNativeHermesMcp,
-  type HermesCardDraft,
   type NativeHermesCardView,
 } from '../features/agentbuilder/nativeHermesCard';
 
@@ -459,38 +456,6 @@ export function buildActiveAgentManagerLocalConfig(input: {
   };
 }
 
-export function buildHermesCardDraftFromLocalConfig(
-  config: AgentManagerLocalConfig,
-): HermesCardDraft {
-  if (config.runtime.kind !== 'hermes') throw new Error('card_runtime_not_hermes');
-  return {
-    role: String(config.role || ''),
-    prompt: String(config.prompt_template || ''),
-    runtime: config.runtime,
-    runtimeOptions: {
-      provider:
-        config.provider === 'openai'
-        || config.provider === 'openrouter'
-        || config.provider === 'local_openai_compatible'
-          ? config.provider
-          : null,
-      accessMode: config.access_mode || null,
-      modelKey: config.model_key || null,
-      reasoningEffort: config.reasoning_effort || null,
-      temperature: config.temperature ?? null,
-      maxTokens: config.max_tokens ?? null,
-      maxTurns: config.max_turns ?? null,
-      tools: parseListText(JSON.stringify(config.tools || [])),
-      nativeTools: Array.isArray(config.runtime_options?.nativeTools)
-        ? config.runtime_options.nativeTools
-        : [],
-      skills: parseListText(JSON.stringify(config.skills || [])),
-      toolsets: parseListText(JSON.stringify(config.toolsets || [])),
-      mcpConnectionIds: parseListText(JSON.stringify(config.mcp_connection_ids || [])),
-    },
-  };
-}
-
 export function AgentManager({
   cardId = '',
   projectId = '',
@@ -719,9 +684,8 @@ export function AgentManager({
         setNativeHermesError(error instanceof Error ? error.message : 'Native Hermes profile unavailable.');
       });
     return () => controller.abort();
-  // Card/profile readback is identity-scoped. Do not immediately overwrite a
-  // successful apply with a read of the still-saving prior deck revision.
-  // Draft profile changes are previewed/applied explicitly by Save.
+  // Native readback is identity-scoped and deliberately independent from
+  // unsaved Card drafts. Card save never mutates the bound profile.
   }, [isLocalConfigMode, projectId, deckId, cardId]);
 
   const markDraftDirty = () => {
@@ -789,24 +753,6 @@ export function AgentManager({
     setSaveCardStatus('saving');
     setSaveCardErrorMessage(null);
     try {
-      if (payload.runtime.kind === 'hermes') {
-        if (!projectId || !deckId || !cardId) throw new Error('hermes_card_identity_missing');
-        const draft = buildHermesCardDraftFromLocalConfig(payload);
-        let observed = nativeHermesState;
-        if (!observed || observed.intent.profile !== draft.runtime.profile) {
-          observed = await previewNativeHermesCard({ projectId, deckId, cardId, draft });
-        }
-        const applied = await applyNativeHermesCard({
-          projectId,
-          deckId,
-          cardId,
-          expectedFingerprint: observed.fingerprint,
-          draft,
-        });
-        setNativeHermesState(applied);
-        setNativeHermesStatus('ready');
-        setNativeHermesError(null);
-      }
       await Promise.resolve(onSaveLocalConfig(payload));
       // Persistence readback is confirmed downstream by the deck save (CAS +
       // expectedRevision). Watch openDeckRevision / saveDeckStatusMessage; if a
@@ -824,10 +770,6 @@ export function AgentManager({
     localConfig,
     onSaveLocalConfig,
     saveCardStatus,
-    cardId,
-    projectId,
-    deckId,
-    nativeHermesState,
     buildCurrentLocalPayload,
     openDeckRevision,
   ]);
@@ -837,15 +779,14 @@ export function AgentManager({
     setNativeHermesStatus('loading');
     setNativeHermesError(null);
     try {
-      const draft = buildHermesCardDraftFromLocalConfig(buildCurrentLocalPayload());
-      const refreshed = await previewNativeHermesCard({ projectId, deckId, cardId, draft });
+      const refreshed = await loadNativeHermesCard({ projectId, deckId, cardId });
       setNativeHermesState(refreshed);
       setNativeHermesStatus('ready');
     } catch (error) {
       setNativeHermesStatus('failed');
       setNativeHermesError(error instanceof Error ? error.message : 'Native profile unavailable.');
     }
-  }, [projectId, deckId, cardId, buildCurrentLocalPayload]);
+  }, [projectId, deckId, cardId]);
 
   const checkNativeMcpServer = useCallback(async (serverName: string) => {
     if (!projectId || !deckId || !cardId) return;
@@ -1655,29 +1596,17 @@ export function AgentManager({
                     <div>
                       Model: {nativeHermesState.native.model.provider || 'unset'} / {nativeHermesState.native.model.default || 'unset'}
                     </div>
-                    <div>Workspace: {nativeHermesState.intent.workspace || 'current launch workspace'}</div>
-                    <div>Memory: profile-owned · policy is defined under Prompt</div>
+                    <div>Workspace: {nativeHermesState.binding.workspace || 'current launch workspace'}</div>
+                    <div>Memory: native profile-owned · read-only here</div>
                   </div>
-                  <div
-                    style={{
-                      color: nativeHermesState.drift.status === 'in_sync' ? '#72D7C7' : '#F2C36B',
-                      fontSize: 11.5,
-                    }}
-                  >
-                    {nativeHermesState.drift.status === 'in_sync'
-                      ? 'Card and profile agree.'
-                      : `Profile drift: ${nativeHermesState.drift.fields.join(', ')}`}
+                  <div style={{ color: '#72D7C7', fontSize: 11.5 }}>
+                    Native state is read-only. Saving this Card cannot change the profile.
                   </div>
-                  {nativeHermesState.unsupported.length ? (
-                    <div style={{ color: '#F2C36B', fontSize: 11 }}>
-                      Run-only or unavailable: {nativeHermesState.unsupported.map((item) => item.field).join(', ')}
-                    </div>
-                  ) : null}
                   <details>
                     <summary style={{ cursor: 'pointer', color: '#B8C8CD', fontSize: 11 }}>Technical readback</summary>
                     <div style={{ color: '#80969F', fontSize: 10.5, overflowWrap: 'anywhere' }}>
-                      Native fingerprint: {nativeHermesState.fingerprint}<br />
-                      Profile IDs are bindings only; Card ID remains {cardId}.
+                      Profile binding: {nativeHermesState.binding.profile}<br />
+                      Card ID remains {cardId}; no Card field is synchronized into native state.
                     </div>
                   </details>
                 </>
@@ -1930,7 +1859,7 @@ export function AgentManager({
                 Toolsets: {nativeHermesState.native.toolsets.filter((item) => item.enabled).map((item) => item.name).join(', ') || 'none'}
               </div>
               <div style={{ color: '#9FB2B8', fontSize: 11 }}>
-                Card grant ceiling: {nativeHermesState.intent.cardGrants.join(', ') || 'none'}
+                Card grant ceiling: {nativeHermesState.binding.cardGrants.join(', ') || 'none'}
               </div>
               {nativeHermesState.native.mcpServers.length ? nativeHermesState.native.mcpServers.map((server) => {
                 const checked = nativeMcpChecks[server.name];

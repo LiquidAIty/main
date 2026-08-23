@@ -16,10 +16,10 @@ const deck: DeckDocument = {
     id: 'card_main',
     templateId: 'main',
     title: 'Main Chat',
-    role: 'Planner',
-    prompt: 'Instructions',
+    role: 'Card role',
+    prompt: 'Card contract',
     runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
-    runtimeOptions: { provider: 'openai', accessMode: 'chatgpt-account', modelKey: 'gpt-5.6-luna' },
+    runtimeOptions: { tools: ['main.context'] },
     position: { x: 0, y: 0 },
   }],
 };
@@ -28,9 +28,9 @@ function native() {
   return {
     profile: {
       name: 'liquidaity-main',
-      description: 'Planner',
-      soul: 'Instructions',
-      model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
+      description: 'Native description',
+      soul: 'Native SOUL',
+      model: { provider: 'openai-codex', default: 'gpt-native' },
       skills: [],
       toolsets: [],
       toolsetsPinned: false,
@@ -60,55 +60,30 @@ async function start(requestExtension = vi.fn(async () => native())) {
 }
 
 describe('Hermes profile Card routes', () => {
-  it('hydrates the real saved Hermes Card without returning secret-shaped fields', async () => {
-    const { base } = await start();
+  it('reads the bound native profile without returning secret-shaped fields', async () => {
+    const { base, requestExtension } = await start();
     const response = await fetch(`${base}/cards/card_main?projectId=p1&deckId=deck_builder`);
     const body = await response.json();
+
     expect(response.status).toBe(200);
-    expect(body.drift.status).toBe('in_sync');
+    expect(body.readOnly).toBe(true);
+    expect(body.binding).toMatchObject({ profile: 'liquidaity-main', mode: 'main' });
+    expect(body.native).toMatchObject({ description: 'Native description', soul: 'Native SOUL' });
+    expect(requestExtension).toHaveBeenCalledTimes(1);
+    expect(requestExtension).toHaveBeenCalledWith('_profile/read', { name: 'liquidaity-main' });
     expect(JSON.stringify(body)).not.toMatch(/api.?key|access.?token|refresh.?token|client.?secret|bearer\s+[a-z0-9]/i);
   });
 
-  it('performs an identical no-op apply without a native configure call', async () => {
-    const requestExtension = vi.fn(async () => native());
-    const { base } = await start(requestExtension);
-    const hydrated = await (await fetch(`${base}/cards/card_main?projectId=p1&deckId=deck_builder`)).json();
-    requestExtension.mockClear();
-    const response = await fetch(`${base}/cards/card_main/apply`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId: 'p1',
-        deckId: 'deck_builder',
-        expectedFingerprint: hydrated.fingerprint,
-        draft: {
-          role: 'Planner',
-          prompt: 'Instructions',
-          runtime: deck.nodes[0].runtime,
-          runtimeOptions: deck.nodes[0].runtimeOptions,
-        },
-      }),
-    });
-    const body = await response.json();
-    expect(response.status).toBe(200);
-    expect(body.mutated).toBe(false);
-    expect(requestExtension).toHaveBeenCalledTimes(1);
-  });
-
-  it('rejects secret-shaped or unknown draft fields before contacting Hermes', async () => {
+  it('does not expose Card-to-profile apply or preview endpoints', async () => {
     const { base, requestExtension } = await start();
-    const response = await fetch(`${base}/cards/card_main/apply`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId: 'p1',
-        deckId: 'deck_builder',
-        expectedFingerprint: 'fingerprint',
-        draft: { apiKey: 'must-not-pass' },
-      }),
-    });
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ ok: false, error: 'hermes_card_draft_unknown_field:apiKey' });
+    for (const suffix of ['apply', 'preview']) {
+      const response = await fetch(`${base}/cards/card_main/${suffix}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'p1', deckId: 'deck_builder', draft: { prompt: 'must not write' } }),
+      });
+      expect(response.status).toBe(404);
+    }
     expect(requestExtension).not.toHaveBeenCalled();
   });
 });
