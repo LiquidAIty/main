@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildActiveAgentManagerLocalConfig,
+  buildHermesCardDraftFromLocalConfig,
   buildInputDictionarySelectedRows,
   buildDisplayedToolRows,
   parseCardEditorInputDataDictionary,
@@ -88,6 +89,73 @@ describe('AgentManager active builder config', () => {
     expect(coder.access_mode).toBe('chatgpt-account');
     expect(coder.tools).toEqual(['card.update_configuration']);
     expect(coder.toolsets).toEqual(['file', 'terminal']);
+  });
+
+  it('maps one Card configuration to native profile controls without putting Task input in it', () => {
+    const draft = buildHermesCardDraftFromLocalConfig({
+      runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
+      runtime_options: { nativeTools: ['search'] },
+      role: 'General planning and research',
+      output_contract: { type: 'object' },
+      provider: 'openai',
+      access_mode: 'chatgpt-account',
+      model_key: 'gpt-test',
+      reasoning_effort: 'medium',
+      temperature: 0.3,
+      max_tokens: 1200,
+      max_turns: 20,
+      prompt_template: 'Persistent instructions',
+      tools: ['graphiti.search'],
+      skills: ['research'],
+      toolsets: ['web'],
+      mcp_connection_ids: ['liquidaity'],
+    });
+
+    expect(draft).toEqual({
+      role: 'General planning and research',
+      prompt: 'Persistent instructions',
+      runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
+      runtimeOptions: {
+        provider: 'openai',
+        accessMode: 'chatgpt-account',
+        modelKey: 'gpt-test',
+        reasoningEffort: 'medium',
+        temperature: 0.3,
+        maxTokens: 1200,
+        maxTurns: 20,
+        tools: ['graphiti.search'],
+        nativeTools: ['search'],
+        skills: ['research'],
+        toolsets: ['web'],
+        mcpConnectionIds: ['liquidaity'],
+      },
+    });
+    expect(JSON.stringify(draft)).not.toMatch(/dynamicInput|promptTestInput|output_contract/);
+  });
+
+  it('uses the historical five Card tabs and exactly one Task composer', () => {
+    const source = readFileSync(
+      path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
+      'utf8',
+    );
+    const pageSource = readFileSync(
+      path.resolve(process.cwd(), 'client/src/pages/agentbuilder.tsx'),
+      'utf8',
+    );
+
+    expect(pageSource).toContain(
+      "const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime', 'Task'] as const;",
+    );
+    expect(source).toContain("activeTab === 'Task' && showTaskComposer");
+    expect(source.match(/aria-label="Dynamic context \/ input"/g)).toHaveLength(1);
+    expect(source.match(/data-testid="agent-manager-run"/g)).toHaveLength(1);
+    expect(source).toContain('saveRevisionAtStartRef.current = openDeckRevision ?? null');
+    expect(source).toContain('openDeckRevision !== saveRevisionAtStartRef.current');
+    expect(source.match(/setSaveCardStatus\('saved'\)/g)).toHaveLength(1);
+    expect(source).not.toContain('A short fallback covers the no-op save');
+    expect(pageSource).toContain("selectedCard?.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'main'");
+    expect(pageSource).toContain('showTaskComposer={showStandaloneTestControls}');
+    expect(pageSource).not.toContain("['Invocation', 'Prompt', 'Knowledge', 'Capabilities', 'Runtime']");
   });
 
   it('keeps stable Card versions separate from transient Card input', () => {

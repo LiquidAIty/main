@@ -196,7 +196,7 @@ class CardEditorErrorBoundary extends React.Component<
 }
 
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['Invocation', 'Prompt', 'Knowledge', 'Capabilities', 'Runtime'] as const;
+const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime', 'Task'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
@@ -507,7 +507,7 @@ export default function AgentBuilder(): React.ReactElement {
       invocation: loaded.invocation,
     });
     setSelectedCardId(target.id);
-    setTab('Invocation');
+    setTab('Task');
     setDeckStatusMessage(`${target.title} grounded invocation is ready for review. Nothing ran.`);
   }, [deck.nodes, setDeckStatusMessage, setSelectedCardId, setTab]);
 
@@ -1125,7 +1125,7 @@ export default function AgentBuilder(): React.ReactElement {
     }));
     setInspectorDrawerOpen(true);
     if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) {
-      setTab('Invocation');
+      setTab('Task');
     }
     setDeckStatusMessage(
       `Added ${nextNode.title} to the canvas. Open its editor to configure it.`,
@@ -1166,7 +1166,7 @@ export default function AgentBuilder(): React.ReactElement {
           nonce: (current?.nonce || 0) + 1,
         }));
         setSelectedEdgeId(null);
-        setTab('Invocation');
+        setTab('Task');
       } else {
         setBuilderCanvasFocusRequest((current) => ({
           kind: 'deck',
@@ -1274,10 +1274,10 @@ export default function AgentBuilder(): React.ReactElement {
     const renderEditorContent = () => {
       if (selectedCard && selectedCardConfig) {
         if (
-          tab === 'Invocation' ||
+          tab === 'Task' ||
           tab === 'Prompt' ||
           tab === 'Knowledge' ||
-          tab === 'Capabilities' ||
+          tab === 'Tools' ||
           tab === 'Runtime'
         ) {
           return (
@@ -1302,6 +1302,8 @@ export default function AgentBuilder(): React.ReactElement {
                   <AgentManager
                     key={`deck-card:${selectedCard.id}:${tab}`}
                     cardId={selectedCard.id}
+                    projectId={canvasProjectId}
+                    deckId={BUILDER_DECK_ID}
                     agentType="agent_builder"
                     activeTab={tab}
                     cardName={selectedCard.title}
@@ -1330,6 +1332,7 @@ export default function AgentBuilder(): React.ReactElement {
                       void runStandaloneCardTest();
                     }}
                     runBusy={standaloneTestBusy}
+                    showTaskComposer={showStandaloneTestControls}
                     runDisabled={
                       !showStandaloneTestControls ||
                       !standaloneTestPrompt.trim() ||

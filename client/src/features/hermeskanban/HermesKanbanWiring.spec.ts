@@ -77,7 +77,7 @@ describe('Coder terminal runtime swap', () => {
     expect(page).toContain("import('../components/AgentManager')");
     expect(page).toContain("'Prompt'");
     expect(page).toContain("'Knowledge'");
-    expect(page).toContain("'Capabilities'");
+    expect(page).toContain("'Tools'");
     expect(page).toContain("'Runtime'");
     const manager = read(AGENT_MANAGER);
     // The Agent Card editor still defines the saved Hermes card.

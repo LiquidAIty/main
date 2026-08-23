@@ -63,6 +63,9 @@ rl.on('line', (line) => {
   if (method === 'session/set_model' || method === '_session/configure_host') {
     return send({ jsonrpc: '2.0', id: message.id, result: {} });
   }
+  if (method === '_profile/read' || method === '_mcp/test') {
+    return send({ jsonrpc: '2.0', id: message.id, result: { method } });
+  }
   if (method === 'session/prompt') {
     send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'provider-free-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'provider-free terminal result' } } } });
     return send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn', usage: { inputTokens: 11, outputTokens: 4 } } });
@@ -72,6 +75,27 @@ rl.on('line', (line) => {
 }
 
 describe('Hermes ACP transport identity', () => {
+  it('permits only the bounded native profile and MCP manager extensions', async () => {
+    const root = path.join(tmpdir(), `liquidaity-acp-${randomUUID()}`);
+    const hermesHome = path.join(root, '.hermes');
+    mkdirSync(hermesHome, { recursive: true });
+    const processOwner = new AcpProcess(() => undefined, {
+      install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(false)] },
+      hermesHome,
+    });
+    try {
+      await expect(processOwner.requestExtension('_profile/read', { name: 'coder' }))
+        .resolves.toEqual({ method: '_profile/read' });
+      await expect(processOwner.requestExtension('_mcp/test', { profile: 'coder', name: 'liquidaity' }))
+        .resolves.toEqual({ method: '_mcp/test' });
+      await expect(processOwner.requestExtension('_secrets/read', {}))
+        .rejects.toThrow('hermes_acp_extension_method_invalid');
+    } finally {
+      processOwner.close();
+      await processOwner.closed;
+    }
+  });
+
   it('keeps the real stdio lifecycle alive after a large MCP catalog and preserves unexpected pre-inference exit evidence', async () => {
     const previousSecret = process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
     const previousUrl = process.env.LIQUIDAITY_INTERNAL_MCP_URL;

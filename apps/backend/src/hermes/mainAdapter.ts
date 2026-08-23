@@ -748,7 +748,7 @@ export class AcpProcess {
 
   async requestExtension(method: string, params: Record<string, unknown>): Promise<any> {
     await this.ready;
-    if (!/^_(?:session|kanban)\/[a-z_]+$/.test(method)) {
+    if (!/^_(?:session|kanban|profile|mcp)\/[a-z_]+$/.test(method)) {
       throw new Error('hermes_acp_extension_method_invalid');
     }
     return this.request(method, params);

@@ -80,6 +80,9 @@ export default function useAgentBuilderCardEditor({
       runtime: selectedCard.runtime,
       runtime_options: runtimeOptions,
       parent_graph_id: selectedCard.parentGraphId ?? null,
+      role: selectedCard.role ?? null,
+      output_contract: selectedCard.outputContract ?? null,
+      workspace_root: deck.workspaceRoot ?? null,
       provider:
         resolvedProvider === 'openai' ||
         resolvedProvider === 'openrouter' ||
@@ -108,7 +111,7 @@ export default function useAgentBuilderCardEditor({
       toolsets: normalizeStringList(runtimeOptions.toolsets),
       mcp_connection_ids: normalizeStringList(runtimeOptions.mcpConnectionIds),
     };
-  }, [effectiveAgent, selectedCard]);
+  }, [deck.workspaceRoot, effectiveAgent, selectedCard]);
 
   const handleSaveSelectedCardConfig = useCallback(
     (nextConfig: AgentManagerLocalConfig) => {
@@ -198,7 +201,9 @@ export default function useAgentBuilderCardEditor({
             node.id === selectedCard.id
               ? {
                   ...node,
+                  role: String(nextConfig.role || '').trim() || undefined,
                   prompt: String(nextConfig.prompt_template || ''),
+                  outputContract: nextConfig.output_contract ?? undefined,
                   runtime: nextRuntime,
                   runtimeOptions: nextRuntimeOptions,
                   parentGraphId: nextParentGraphId,

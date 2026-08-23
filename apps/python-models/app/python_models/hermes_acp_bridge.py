@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -28,6 +29,57 @@ from acp_adapter.server import HermesACPAgent  # noqa: E402
 
 
 logger = logging.getLogger(__name__)
+
+
+def _native_manager_call(method: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Invoke the installed Hermes manager handler without copying its logic."""
+    from tui_gateway import server as gateway
+
+    response = gateway.handle_request(
+        {"jsonrpc": "2.0", "id": "liquidaity", "method": method, "params": params}
+    )
+    if not isinstance(response, dict):
+        raise ValueError("hermes_native_manager_response_missing")
+    error = response.get("error")
+    if isinstance(error, dict):
+        message = str(error.get("message") or "native manager request failed")
+        raise ValueError(f"hermes_native_manager_error:{message}")
+    result = response.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("hermes_native_manager_response_invalid")
+    return result
+
+
+def _safe_mcp_server(value: Any) -> dict[str, Any]:
+    """Return UI-safe MCP state and never transport configuration values."""
+    server = value if isinstance(value, dict) else {}
+    auth = str(server.get("auth") or "").strip() or None
+    oauth_present = server.get("oauth_tokens_present")
+    if auth == "oauth":
+        credential_status = "configured" if oauth_present is True else "not_configured"
+    elif auth:
+        credential_status = "configured"
+    else:
+        credential_status = "not_required"
+    tools = server.get("tools") if isinstance(server.get("tools"), dict) else {}
+    include = tools.get("include") if isinstance(tools, dict) else None
+    return {
+        "name": str(server.get("name") or ""),
+        "transport": str(server.get("transport") or "unknown"),
+        "enabled": server.get("enabled") is not False,
+        "auth": auth,
+        "credentialStatus": credential_status,
+        "toolFilter": [str(item) for item in include]
+        if isinstance(include, list)
+        else [],
+    }
+
+
+def _safe_visible_error(value: Any) -> str:
+    text = str(value or "native MCP connection failed")
+    text = re.sub(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;]+", r"\1[REDACTED]", text)
+    text = re.sub(r"(?i)(access_token|refresh_token|client_secret|api_key)=([^&\s]+)", r"\1=[REDACTED]", text)
+    return text[:2000]
 
 
 def _required_text(params: dict[str, Any], key: str) -> str:
@@ -88,6 +140,119 @@ class LiquidAItyHermesACPAgent(HermesACPAgent):
     """Stock Hermes ACP agent plus contained native-Kanban transport calls."""
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        if method == "profile/read":
+            if not isinstance(params, dict):
+                raise ValueError("hermes_profile_read_params_must_be_object")
+            unknown = sorted(set(params) - {"name"})
+            if unknown:
+                raise ValueError(f"hermes_profile_read_unknown_field:{unknown[0]}")
+            name = _required_text(params, "name")
+            profile = _native_manager_call("profiles.describe", {"name": name})
+            mcp_result = _native_manager_call("mcp.servers.list", {"profile": name})
+            enabled_by_name = {
+                str(server.get("name") or ""): server.get("enabled") is not False
+                for server in profile.get("mcp_servers", [])
+                if isinstance(server, dict)
+            }
+            servers = []
+            for raw in mcp_result.get("servers", []):
+                safe = _safe_mcp_server(raw)
+                if safe["name"] in enabled_by_name:
+                    safe["enabled"] = enabled_by_name[safe["name"]]
+                servers.append(safe)
+            return {
+                "profile": {
+                    "name": str(profile.get("name") or name),
+                    "description": str(profile.get("description") or ""),
+                    "soul": str(profile.get("soul") or ""),
+                    "model": profile.get("model")
+                    if isinstance(profile.get("model"), dict)
+                    else {"provider": "", "default": ""},
+                    "skills": profile.get("skills")
+                    if isinstance(profile.get("skills"), list)
+                    else [],
+                    "toolsets": profile.get("toolsets")
+                    if isinstance(profile.get("toolsets"), list)
+                    else [],
+                    "toolsetsPinned": profile.get("toolsets_pinned") is True,
+                    "mcpServers": servers,
+                }
+            }
+
+        if method == "profile/apply":
+            if not isinstance(params, dict):
+                raise ValueError("hermes_profile_apply_params_must_be_object")
+            allowed = {
+                "name",
+                "description",
+                "soul",
+                "model",
+                "provider",
+                "disabledSkills",
+                "enabledToolsets",
+                "enabledMcpServers",
+            }
+            unknown = sorted(set(params) - allowed)
+            if unknown:
+                raise ValueError(f"hermes_profile_apply_unknown_field:{unknown[0]}")
+            name = _required_text(params, "name")
+            configure: dict[str, Any] = {"name": name}
+            for source, target in (
+                ("description", "description"),
+                ("soul", "soul"),
+                ("model", "model"),
+                ("provider", "provider"),
+                ("disabledSkills", "disabled_skills"),
+                ("enabledToolsets", "enabled_toolsets"),
+                ("enabledMcpServers", "enabled_mcp_servers"),
+            ):
+                if source in params:
+                    configure[target] = params[source]
+            result = _native_manager_call("profiles.configure", configure)
+            if result.get("ok") is not True:
+                failed = sorted(
+                    key
+                    for key, applied in (result.get("applied") or {}).items()
+                    if applied is not True
+                )
+                raise ValueError(
+                    f"hermes_native_profile_apply_failed:{','.join(failed) or 'unknown'}"
+                )
+            return {"ok": True, "applied": result.get("applied") or {}}
+
+        if method == "mcp/test":
+            if not isinstance(params, dict):
+                raise ValueError("hermes_mcp_test_params_must_be_object")
+            unknown = sorted(set(params) - {"profile", "name"})
+            if unknown:
+                raise ValueError(f"hermes_mcp_test_unknown_field:{unknown[0]}")
+            profile = _required_text(params, "profile")
+            name = _required_text(params, "name")
+            result = _native_manager_call(
+                "mcp.servers.test", {"profile": profile, "name": name}
+            )
+            tools = result.get("tools") if isinstance(result.get("tools"), list) else []
+            return {
+                "ok": result.get("ok") is True,
+                "tools": [
+                    {
+                        "name": str(tool.get("name") or ""),
+                        "description": str(tool.get("description") or "")[:2000],
+                    }
+                    for tool in tools
+                    if isinstance(tool, dict) and str(tool.get("name") or "").strip()
+                ],
+                "prompts": int(result.get("prompts") or 0),
+                "resources": int(result.get("resources") or 0),
+                "credentialStatus": "not_configured"
+                if result.get("oauth_needed") is True
+                and result.get("oauth_tokens_present") is not True
+                else "configured",
+                "error": None
+                if result.get("ok") is True
+                else _safe_visible_error(result.get("error")),
+            }
+
         if method == "kanban/find":
             if not isinstance(params, dict):
                 raise ValueError("hermes_kanban_find_params_must_be_object")

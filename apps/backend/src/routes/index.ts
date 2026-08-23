@@ -11,6 +11,7 @@ import worldsignalRoutes from './worldsignal.routes';
 import config from './config.routes';
 import hermesKanbanRoutes from './hermesKanban.routes';
 import internalHermesKanbanRoutes from './internalHermesKanban.routes';
+import hermesProfileRoutes from './hermesProfile.routes';
 
 const router = Router();
 
@@ -31,5 +32,6 @@ router.use('/worldsignal', authMiddleware, worldsignalRoutes);
 router.use('/projects', authMiddleware, projectsRoutes);
 router.use('/projects', authMiddleware, decksRoutes);
 router.use('/hermes-kanban', authMiddleware, hermesKanbanRoutes);
+router.use('/hermes-profile', authMiddleware, hermesProfileRoutes);
 
 export default router;
