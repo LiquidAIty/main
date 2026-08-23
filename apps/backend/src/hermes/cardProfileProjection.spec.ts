@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentCardInstance, DeckDocument } from '../types';
 import {
-  applyHermesNativeOperation,
   hydrateHermesCardProfile,
+  invokeHermesNativeOperation,
   projectHermesCardBinding,
 } from './cardProfileProjection';
 
@@ -38,25 +38,25 @@ const deck: Pick<DeckDocument, 'workspaceRoot'> = { workspaceRoot: 'C:/Projects/
 
 function native() {
   return {
-    profile: {
-      name: 'liquidaity-main',
-      description: 'Native profile description',
-      soul: 'Native SOUL instructions',
-      model: { provider: 'openai-codex', default: 'gpt-native' },
-      skills: [{ name: 'native-research', enabled: true }],
-      toolsets: [{ name: 'native-web', enabled: true }],
-      toolsetsPinned: true,
-      mcpServers: [{
-        name: 'liquidaity',
-        transport: 'http',
-        enabled: true,
-        auth: 'header',
-        credentialStatus: 'configured',
-        toolFilter: [],
-      }],
-      learning: { count: 1, summary: '1 learned item', buckets: [] },
-    },
+    name: 'liquidaity-main',
+    description: 'Native profile description',
+    soul: 'Native SOUL instructions',
+    model: { provider: 'openai-codex', default: 'gpt-native' },
+    skills: [{ name: 'native-research', enabled: true }],
+    toolsets: [{ name: 'native-web', enabled: true }],
+    toolsets_pinned: true,
+    mcp_servers: [{ name: 'liquidaity', enabled: true }],
   };
+}
+
+function nativeRequest() {
+  return vi.fn(async (method: string) => {
+    if (method === 'profiles.configure') return { ok: true, applied: { soul: true } };
+    if (method === 'profiles.describe') return native();
+    if (method === 'mcp.servers.list') return { servers: [{ name: 'liquidaity', transport: 'http', auth: 'header' }] };
+    if (method === 'learning.frames') return { count: 1, summary: '1 learned item', buckets: [] };
+    throw new Error(`unexpected_native_method:${method}`);
+  });
 }
 
 describe('Hermes Card native profile binding', () => {
@@ -69,12 +69,14 @@ describe('Hermes Card native profile binding', () => {
     expect(JSON.stringify(binding)).not.toMatch(/prompt|role|soul|description|model|skills|toolsets|mcpConnectionIds/i);
   });
 
-  it('reads native state once without comparing or synchronizing Card fields', async () => {
-    const request = vi.fn(async () => native());
+  it('reads the native owners without comparing or synchronizing Card fields', async () => {
+    const request = nativeRequest();
     const result = await hydrateHermesCardProfile(card, deck, request as never);
 
-    expect(request).toHaveBeenCalledTimes(1);
-    expect(request).toHaveBeenCalledWith('_profile/read', { name: 'liquidaity-main' });
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(request).toHaveBeenNthCalledWith(1, 'profiles.describe', { name: 'liquidaity-main' });
+    expect(request).toHaveBeenNthCalledWith(2, 'mcp.servers.list', { profile: 'liquidaity-main' });
+    expect(request).toHaveBeenNthCalledWith(3, 'learning.frames', { cols: 60, rows: 18, frames: 2 }, 'liquidaity-main');
     expect(result.nativeApply).toBe('explicit');
     expect(result.cardSaveMutatesNative).toBe(false);
     expect(result.native).toMatchObject({
@@ -89,27 +91,26 @@ describe('Hermes Card native profile binding', () => {
   });
 
   it('delegates exactly one native operation and then returns its exact readback', async () => {
-    const request = vi.fn(async () => native());
-    const result = await applyHermesNativeOperation(
+    const request = nativeRequest();
+    const result = await invokeHermesNativeOperation(
       card,
       deck,
-      { operation: 'profile.soul.set', value: 'New native Soul' },
+      { method: 'profiles.configure', params: { soul: 'New native Soul' } },
       request as never,
     );
 
-    expect(request).toHaveBeenCalledTimes(1);
-    expect(request).toHaveBeenCalledWith('_native/apply', {
-      profile: 'liquidaity-main',
-      operation: 'profile.soul.set',
-      value: 'New native Soul',
+    expect(request).toHaveBeenCalledTimes(4);
+    expect(request).toHaveBeenNthCalledWith(1, 'profiles.configure', {
+      name: 'liquidaity-main',
+      soul: 'New native Soul',
     });
-    expect(result.binding.profile).toBe('liquidaity-main');
-    expect(result.cardSaveMutatesNative).toBe(false);
+    expect(result.readback.binding.profile).toBe('liquidaity-main');
+    expect(result.readback.cardSaveMutatesNative).toBe(false);
     expect(card.prompt).toBe('Card-to-Card contract only');
   });
 
   it('Card Prompt and role changes cannot alter the native read request or readback', async () => {
-    const request = vi.fn(async () => native());
+    const request = nativeRequest();
     const changed = {
       ...card,
       role: 'Changed Card role',
@@ -117,7 +118,7 @@ describe('Hermes Card native profile binding', () => {
     };
     const result = await hydrateHermesCardProfile(changed, deck, request as never);
 
-    expect(request).toHaveBeenCalledWith('_profile/read', { name: 'liquidaity-main' });
+    expect(request).toHaveBeenCalledWith('profiles.describe', { name: 'liquidaity-main' });
     expect(result.native.description).toBe('Native profile description');
     expect(result.native.soul).toBe('Native SOUL instructions');
   });

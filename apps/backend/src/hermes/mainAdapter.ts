@@ -47,9 +47,6 @@ export type HermesRuntimeConfig = {
   providerModelId: string;
   accessMode: CardAccessMode;
   tools: string[];
-  nativeTools: string[];
-  skills: string[];
-  toolsets: string[];
   mcpConnectionIds: string[];
   nativeProfileToolsets?: string[];
   nativeProfileMcpServerNames?: string[];
@@ -109,7 +106,6 @@ export type HermesTurnHandle = {
       nativeStatus?: string;
     };
   }>;
-  resolved: { cardId: string; provider: string; modelKey: string; providerModelId: string };
   runtime: {
     executable: string;
     pid: number | null;
@@ -154,18 +150,19 @@ type HermesAcpExit = {
 
 class HermesAcpExitedError extends Error {
   constructor(readonly exit: HermesAcpExit) {
-    const stderr = exit.stderrTail.slice(-3).join(' | ');
-    const stdout = exit.stdoutTail ? `:stdout=${exit.stdoutTail}` : '';
     super(
       `hermes_acp_exited:${exit.code ?? 'null'}:${exit.signal ?? 'none'}`
       + `:explicit=${exit.explicit ? 'yes' : 'no'}`
-      + `:last=${exit.lastProtocolEvent}${stdout}:${stderr}`,
+      + `:last=${exit.lastProtocolEvent}`
+      + `:stderr_lines=${exit.stderrTail.length}`
+      + `:stdout_buffered=${exit.stdoutTail ? 'yes' : 'no'}`,
     );
     this.name = 'HermesAcpExitedError';
   }
 }
 
 type ActiveTurn = {
+  runId: string;
   onEvent(event: HermesSessionEvent): void;
   fullText: string;
   toolNames: Map<string, string>;
@@ -637,22 +634,6 @@ export class AcpProcess {
     return { sessionId, reused: false };
   }
 
-  async prepareSession(args: HermesTurnArgs): Promise<HermesPreparedSession> {
-    await this.ready;
-    const { sessionId } = await this.resolveSession(args, '');
-    return {
-      cardId: args.cardId,
-      provider: args.provider,
-      modelKey: args.modelKey,
-      providerModelId: args.providerModelId,
-      executable: this.executable,
-      pid: this.pid,
-      hermesHome: this.hermesHome,
-      sessionId,
-      transport: this.transport,
-    };
-  }
-
   async configureHostSession(
     args: HermesTurnArgs,
     executionContextId: string,
@@ -717,17 +698,52 @@ export class AcpProcess {
 
   async requestExtension(method: string, params: Record<string, unknown>): Promise<any> {
     await this.ready;
-    const nativeManagerMethod = [
-      '_profile/read',
-      '_learning/detail',
-      '_native/apply',
-      '_mcp/test',
-    ].includes(method);
+    const nativeManagerMethod = method === '_native/call';
     const runtimeMethod = /^_(?:session|kanban)\/[a-z_]+$/.test(method);
     if (!nativeManagerMethod && !runtimeMethod) {
       throw new Error('hermes_acp_extension_method_invalid');
     }
     return this.request(method, params);
+  }
+
+  private activeTurnForSessionKey(sessionKey: string): { sessionId: string; turn: ActiveTurn } | null {
+    const sessionId = this.sessionByKey.get(sessionKey);
+    if (!sessionId) return null;
+    const turn = this.turns.get(sessionId);
+    return turn ? { sessionId, turn } : null;
+  }
+
+  cancelSessionKey(sessionKey: string, expectedRunId = ''): string {
+    const active = this.activeTurnForSessionKey(sessionKey);
+    if (!active) throw new Error('hermes_session_turn_not_running');
+    if (expectedRunId && active.turn.runId !== expectedRunId) {
+      throw new Error('hermes_session_run_mismatch');
+    }
+    this.notify('session/cancel', { sessionId: active.sessionId });
+    return active.turn.runId;
+  }
+
+  cancelRun(runId: string): void {
+    const match = [...this.turns.entries()].find(([, turn]) => turn.runId === runId);
+    if (!match) throw new Error('hermes_run_not_running');
+    this.notify('session/cancel', { sessionId: match[0] });
+  }
+
+  answerSessionKey(sessionKey: string, promptId: string, reply: string): void {
+    const active = this.activeTurnForSessionKey(sessionKey);
+    if (!active) throw new Error('hermes_session_turn_not_running');
+    const requestId = active.turn.permissionRequestIds.get(promptId);
+    if (requestId === undefined) throw new Error('hermes_permission_prompt_not_found');
+    active.turn.permissionRequestIds.delete(promptId);
+    const options = (() => {
+      try { return JSON.parse(reply); } catch { return null; }
+    })();
+    const optionId = typeof options?.optionId === 'string' ? options.optionId : String(reply || '').trim();
+    this.send({
+      jsonrpc: '2.0',
+      id: requestId,
+      result: { outcome: optionId ? { outcome: 'selected', optionId } : { outcome: 'cancelled' } },
+    });
   }
 
   async startTurn(args: HermesTurnArgs, onEvent: (event: HermesSessionEvent) => void): Promise<HermesTurnHandle> {
@@ -760,6 +776,7 @@ export class AcpProcess {
         _meta: sessionMeta,
       });
       active = {
+        runId: args.parentRunId,
         onEvent,
         fullText: '',
         toolNames: new Map(),
@@ -830,12 +847,6 @@ export class AcpProcess {
       },
       cancel: () => this.notify('session/cancel', { sessionId }),
       done,
-      resolved: {
-        cardId: args.cardId,
-        provider: args.provider,
-        modelKey: args.modelKey,
-        providerModelId: args.providerModelId,
-      },
       runtime: {
         executable: this.executable,
         pid: this.pid,
@@ -871,6 +882,13 @@ function sharedHermesProcess(profile = ''): AcpProcess {
   return owner;
 }
 
+function runningHermesProcess(profile = ''): AcpProcess {
+  const key = String(profile || '').trim().toLowerCase();
+  const owner = processOwners.get(key);
+  if (!owner?.alive) throw new Error('hermes_profile_process_not_running');
+  return owner;
+}
+
 export function deriveHermesSessionKey(projectId: string, conversationId: string, cardId: string): string {
   return `hermes:${projectId}:${conversationId}:${cardId}`;
 }
@@ -886,10 +904,12 @@ export async function startHermesTurnWithOnePrePromptRecovery(
   args: HermesTurnArgs,
   onEvent: (event: HermesSessionEvent) => void,
   acquireProcess: (profile?: string) => AcpProcess = sharedHermesProcess,
+  readNativeProfile: (profile: string) => Promise<any> = (profile) => (
+    requestHermesNative('profiles.describe', { name: profile })
+  ),
 ): Promise<HermesTurnHandle> {
   const profile = String(args.runtime.profile || '').trim();
-  const readback = await requestHermesExtension('_profile/read', { name: profile });
-  const native = readback?.profile;
+  const native = await readNativeProfile(profile);
   if (!native || String(native.name || '').trim().toLowerCase() !== profile.toLowerCase()) {
     throw new Error(`hermes_native_profile_readback_mismatch:${profile}`);
   }
@@ -901,8 +921,8 @@ export async function startHermesTurnWithOnePrePromptRecovery(
         .map((item: any) => String(item.name || '').trim())
         .filter(Boolean)
       : [],
-    nativeProfileMcpServerNames: Array.isArray(native.mcpServers)
-      ? native.mcpServers
+    nativeProfileMcpServerNames: Array.isArray(native.mcp_servers)
+      ? native.mcp_servers
         .filter((item: any) => item?.enabled === true)
         .map((item: any) => String(item.name || '').trim())
         .filter(Boolean)
@@ -927,17 +947,55 @@ export async function requestHermesExtension(
   return sharedHermesProcess().requestExtension(method, params);
 }
 
+export async function requestHermesNative(
+  method: string,
+  params: Record<string, unknown>,
+  profile = '',
+): Promise<any> {
+  return requestHermesExtension('_native/call', {
+    method,
+    params,
+    ...(String(profile || '').trim() ? { profile: String(profile).trim() } : {}),
+  });
+}
+
+export async function dispatchHermesLearnCommand(profile: string, request: string): Promise<string> {
+  const result = await requestHermesNative(
+    'command.dispatch',
+    { name: 'learn', arg: request },
+    profile,
+  );
+  const message = result?.type === 'send' ? String(result.message || '').trim() : '';
+  if (!message) throw new Error('hermes_learn_command_dispatch_failed');
+  return message;
+}
+
+export function cancelHermesRun(profile: string, runId: string): void {
+  runningHermesProcess(profile).cancelRun(runId);
+}
+
+export function cancelHermesSession(
+  profile: string,
+  sessionKey: string,
+  expectedRunId = '',
+): string {
+  return runningHermesProcess(profile).cancelSessionKey(sessionKey, expectedRunId);
+}
+
+export function answerHermesSession(
+  profile: string,
+  sessionKey: string,
+  promptId: string,
+  reply: string,
+): void {
+  runningHermesProcess(profile).answerSessionKey(sessionKey, promptId, reply);
+}
+
 export async function configureHermesHostSession(
   args: HermesTurnArgs,
   executionContextId: string,
 ): Promise<HermesPreparedSession> {
   return sharedHermesProcess().configureHostSession(args, executionContextId);
-}
-
-export async function prepareHermesSession(
-  args: HermesTurnArgs,
-): Promise<HermesPreparedSession> {
-  return sharedHermesProcess().prepareSession(args);
 }
 
 export async function readHermesHistory(

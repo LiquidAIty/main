@@ -14,7 +14,7 @@ import {
   loadNativeHermesCard,
   loadNativeHermesLearningDetail,
   testNativeHermesMcp,
-  type NativeHermesApplyOperation,
+  type NativeHermesOperation,
   type NativeHermesCardView,
 } from '../features/agentbuilder/nativeHermesCard';
 
@@ -194,6 +194,7 @@ interface AgentManagerProps {
   promptTestInput?: string;
   onChangePromptTestInput?: (value: string) => void;
   onRunCard?: () => void;
+  onLearnCard?: () => void;
   onStopCard?: () => void;
   onRejoinCard?: () => void;
   onClearInvocation?: () => void;
@@ -227,13 +228,6 @@ interface AgentManagerProps {
     ready: boolean;
     observedAt?: string;
     error?: string;
-  }>;
-  magOneWorkers?: Array<{
-    cardId: string;
-    title: string;
-    ready: boolean;
-    provider: string | null;
-    model: string | null;
   }>;
   saveDeckStatusMessage?: string | null;
   openDeckRevision?: string | null;
@@ -481,6 +475,7 @@ export function AgentManager({
   promptTestInput,
   onChangePromptTestInput,
   onRunCard,
+  onLearnCard,
   onStopCard,
   onRejoinCard,
   onClearInvocation,
@@ -494,7 +489,6 @@ export function AgentManager({
   showTaskComposer = true,
   runResult = null,
   loadedGraphContext = [],
-  magOneWorkers = [],
   saveDeckStatusMessage = null,
   openDeckRevision = null,
   cardName = '',
@@ -863,7 +857,7 @@ export function AgentManager({
     }
   }, [projectId, deckId, cardId]);
 
-  const runNativeApply = useCallback(async (change: NativeHermesApplyOperation) => {
+  const runNativeApply = useCallback(async (change: NativeHermesOperation) => {
     if (!projectId || !deckId || !cardId || nativeApplyStatus === 'applying') return;
     setNativeApplyStatus('applying');
     setNativeApplyError(null);
@@ -903,9 +897,8 @@ export function AgentManager({
         deckId,
         cardId,
         change: {
-          operation: 'learning.edit',
-          nodeId: nativeLearningDetail.id,
-          content: nativeLearningDraft,
+          method: 'learning.edit',
+          params: { id: nativeLearningDetail.id, content: nativeLearningDraft },
         },
       });
       const detail = await loadNativeHermesLearningDetail({
@@ -1155,7 +1148,10 @@ export function AgentManager({
           </button>
         );
       }
-      return null;
+      // The Task composer is rendered below the shared Card controls. Keep a
+      // concrete section body here so non-Main Cards do not hit the legacy
+      // empty-section guard before their real Run controls are mounted.
+      return <></>;
     }
     if (activeTab === 'Prompt') {
       return (
@@ -1375,7 +1371,10 @@ export function AgentManager({
                 <button
                   type="button"
                   disabled={nativeApplyStatus === 'applying'}
-                  onClick={() => void runNativeApply({ operation: 'profile.description.set', value: nativeDescriptionDraft })}
+                  onClick={() => void runNativeApply({
+                    method: 'profiles.configure',
+                    params: { description: nativeDescriptionDraft },
+                  })}
                 >
                   Apply Role to profile
                 </button>
@@ -1393,7 +1392,10 @@ export function AgentManager({
                   <button
                     type="button"
                     disabled={nativeApplyStatus === 'applying'}
-                    onClick={() => void runNativeApply({ operation: 'profile.soul.set', value: nativeSoulDraft })}
+                    onClick={() => void runNativeApply({
+                      method: 'profiles.configure',
+                      params: { soul: nativeSoulDraft },
+                    })}
                   >
                     Apply Soul to profile
                   </button>
@@ -1537,16 +1539,6 @@ export function AgentManager({
               </div>
             </section>
           ))}
-          {magOneWorkers.length > 0 ? (
-            <section style={{ display: 'grid', gap: 5, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8 }}>
-              <strong style={{ color: '#8FC8D1' }}>Saved Mag One workers</strong>
-              {magOneWorkers.map((worker) => (
-                <div key={worker.cardId} style={{ color: worker.ready ? '#B8C8CD' : '#FFA2A2', fontSize: 11 }}>
-                  {worker.title} · {worker.provider || 'provider missing'} / {worker.model || 'model missing'} · {worker.ready ? 'ready' : 'not ready'}
-                </div>
-              ))}
-            </section>
-          ) : null}
         </div>
       );
     }
@@ -1824,9 +1816,8 @@ export function AgentManager({
                       type="button"
                       disabled={nativeApplyStatus === 'applying' || !nativeProviderDraft.trim() || !nativeModelDraft.trim()}
                       onClick={() => void runNativeApply({
-                        operation: 'profile.model.set',
-                        provider: nativeProviderDraft,
-                        model: nativeModelDraft,
+                        method: 'profiles.configure',
+                        params: { provider: nativeProviderDraft, model: nativeModelDraft },
                       })}
                     >
                       Apply Model
@@ -2116,7 +2107,10 @@ export function AgentManager({
                   <button
                     type="button"
                     disabled={nativeApplyStatus === 'applying'}
-                    onClick={() => void runNativeApply({ operation: 'skills.disabled.replace', values: nativeDisabledSkills })}
+                    onClick={() => void runNativeApply({
+                      method: 'profiles.configure',
+                      params: { disabled_skills: nativeDisabledSkills },
+                    })}
                   >
                     Apply Skills
                   </button>
@@ -2147,7 +2141,10 @@ export function AgentManager({
                   <button
                     type="button"
                     disabled={nativeApplyStatus === 'applying'}
-                    onClick={() => void runNativeApply({ operation: 'toolsets.enabled.replace', values: nativeEnabledToolsets })}
+                    onClick={() => void runNativeApply({
+                      method: 'profiles.configure',
+                      params: { enabled_toolsets: nativeEnabledToolsets },
+                    })}
                   >
                     Apply Toolsets
                   </button>
@@ -2209,7 +2206,10 @@ export function AgentManager({
                 <button
                   type="button"
                   disabled={nativeApplyStatus === 'applying'}
-                  onClick={() => void runNativeApply({ operation: 'mcp.enabled.replace', values: nativeEnabledMcpServers })}
+                  onClick={() => void runNativeApply({
+                    method: 'profiles.configure',
+                    params: { enabled_mcp_servers: nativeEnabledMcpServers },
+                  })}
                 >
                   Apply Connections
                 </button>
@@ -2357,6 +2357,16 @@ export function AgentManager({
             >
               {runBusy ? 'Running…' : 'Run'}
             </button>
+            {onLearnCard ? (
+              <button
+                type="button"
+                onClick={onLearnCard}
+                disabled={runDisabled || runBusy || !String(promptTestInput || '').trim()}
+                data-testid="agent-manager-learn"
+              >
+                Learn
+              </button>
+            ) : null}
             {runBusy && onStopCard ? (
               <button type="button" onClick={onStopCard} data-testid="agent-manager-stop">
                 Stop

@@ -103,8 +103,8 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain('await Promise.resolve(onSaveLocalConfig(payload))');
     expect(source).toContain('Saving this Card cannot change the profile.');
     expect(source).not.toMatch(/applyNativeHermesCard|previewNativeHermesCard|buildHermesCardDraftFromLocalConfig/);
-    expect(source).toContain('runNativeApply({ operation:');
-    expect(nativeClient).toContain('/native/apply');
+    expect(source).toContain("method: 'profiles.configure'");
+    expect(nativeClient).toContain('/native`');
     expect(nativeClient).not.toMatch(/\/preview|expectedFingerprint|HermesCardDraft/);
     expect(source).not.toContain('runNativeApply(buildCurrentLocalPayload');
   });
@@ -158,11 +158,11 @@ describe('AgentManager active builder config', () => {
     );
 
     expect(source).toContain('Dynamic context / input');
-    expect(source).toContain('Python combines this input with the saved Card');
+    expect(source).toContain('Python materializes this input with the saved Card');
     expect(source).not.toContain('Exact in-memory IDF');
     expect(source).not.toContain('Run telemetry receipt');
     expect(source).not.toContain('aria-label="Exact temporary IDF"');
-    expect(pageSource).toContain('invocation: result.invocation || null');
+    expect(pageSource).toContain('invocation: result?.invocation || null');
   });
 
   it('uses native learning and tool controls instead of passive or Card-side projections', () => {
@@ -178,7 +178,8 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain('native-learning-graph');
     expect(source).toContain('openNativeLearningNode(node.id)');
     expect(source).toContain('applyNativeLearningEdit()');
-    expect(nativeClient).toContain('/learning/detail');
+    expect(nativeClient).toContain("method: 'learning.detail'");
+    expect(source).toContain('data-testid="agent-manager-learn"');
     expect(source).not.toContain('Built-in tools: {nativeHermesState.binding.nativeTools');
     expect(source).not.toContain('Detailed graph, Learn, and mutation controls are intentionally deferred');
   });
@@ -215,7 +216,7 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain('Exact model-bound native graph context');
     expect(source).toContain('NativeGraphProjectionSurface');
     expect(source).toContain('loadedGraphProjection');
-    expect(source).toContain('Saved Mag One workers');
+    expect(source).not.toContain('Saved Mag One workers');
     expect(source).toContain('onRemoveGraphReference');
     expect(source).toContain('onMoveGraphReference');
     expect(source).not.toContain('Read-only Mag One proposal');
@@ -278,7 +279,7 @@ describe('AgentManager active builder config', () => {
     expect(source).not.toContain('<option value="openai">');
     expect(source).toContain('Card skill grants');
     expect(source).toContain('Card connection references');
-    expect(source).toContain('Connection references only');
+    expect(source).toContain('References existing LiquidAIty connections by ID');
     expect(source).toContain('Apply Role to profile');
     expect(source).toContain('Apply Soul to profile');
     expect(source).toContain('Apply Model');

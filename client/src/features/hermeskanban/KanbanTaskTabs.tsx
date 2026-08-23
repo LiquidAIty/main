@@ -21,6 +21,8 @@ export type TaskTabActions = {
   onLink: (parent: string) => void;
   onUnlink: (parent: string) => void;
   onOpenWorker: (runId: string) => void;
+  onReclaim: () => void;
+  onTerminateRun: (runId: string) => void;
 };
 
 function Section({
@@ -409,41 +411,52 @@ export function ActivityTab({
   currentWorkerLabel: string | null;
   actions: TaskTabActions;
 }) {
-  const running = taskShow.runs.filter((r) => String(r.status || '') === 'running');
+  const running = taskShow.runs.filter((run) => run.ended_at == null && taskShow.task.status === 'running');
   return (
     <div>
       <Section title="Worker / Session">
         {running.length > 0 ? (
-          running.map((run, i) => (
-            <button
-              key={i}
-              type="button"
-              data-testid={`hermes-kanban-activity-run-${run.run_id || run.id || i}`}
-              onClick={() => actions.onOpenWorker(String(run.run_id || run.id || ''))}
-              style={{
-                display: 'block',
-                width: '100%',
-                textAlign: 'left',
-                margin: '0 0 6px',
-                padding: '7px 9px',
-                borderRadius: 8,
-                border: '1px solid rgba(242,166,74,0.4)',
-                background: 'rgba(242,166,74,0.08)',
-                color: GRAPH_THEME.surface.text,
-                fontSize: 11,
-                cursor: 'pointer',
-              }}
-            >
-              <div style={{ fontWeight: 800 }}>
-                {String(run.run_id || run.id || 'worker')}
+          running.map((run, i) => {
+            const runId = String(run.run_id || run.id || '');
+            return (
+              <div
+                key={runId || i}
+                style={{ margin: '0 0 6px', padding: '7px 9px', borderRadius: 8, border: '1px solid rgba(242,166,74,0.4)', background: 'rgba(242,166,74,0.08)' }}
+              >
+                <button
+                  type="button"
+                  data-testid={`hermes-kanban-activity-run-${runId || i}`}
+                  onClick={() => actions.onOpenWorker(runId)}
+                  style={{ width: '100%', textAlign: 'left', border: 0, background: 'transparent', color: GRAPH_THEME.surface.text, fontSize: 11, cursor: 'pointer' }}
+                >
+                  <div style={{ fontWeight: 800 }}>{runId || 'worker'}</div>
+                  <div style={{ fontSize: 10, color: GRAPH_THEME.surface.mutedText, marginTop: 2 }}>
+                    started {fmtEpoch(Number(run.started_at ?? 0) || null)} · elapsed {fmtElapsed(Number(run.started_at ?? 0) || null)}
+                    {run.profile ? ` · ${String(run.profile)}` : ''}
+                  </div>
+                  <div style={{ fontSize: 9, color: '#F2A64A', marginTop: 3 }}>Open worker inspector →</div>
+                </button>
+                <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                  <button
+                    type="button"
+                    disabled={!runId || actions.busy(`terminate:${runId}`)}
+                    onClick={() => actions.onTerminateRun(runId)}
+                    data-testid={`hermes-kanban-terminate-run-${runId || i}`}
+                  >
+                    Terminate native run
+                  </button>
+                  <button
+                    type="button"
+                    disabled={actions.busy('reclaim')}
+                    onClick={actions.onReclaim}
+                    data-testid="hermes-kanban-reclaim-task"
+                  >
+                    Reclaim native task
+                  </button>
+                </div>
               </div>
-              <div style={{ fontSize: 10, color: GRAPH_THEME.surface.mutedText, marginTop: 2 }}>
-                started {fmtEpoch(Number(run.started_at ?? 0) || null)} · elapsed {fmtElapsed(Number(run.started_at ?? 0) || null)}
-                {run.profile ? ` · ${String(run.profile)}` : ''}
-              </div>
-              <div style={{ fontSize: 9, color: '#F2A64A', marginTop: 3 }}>Open worker inspector →</div>
-            </button>
-          ))
+            );
+          })
         ) : (
           <div style={{ fontSize: 10, color: GRAPH_THEME.surface.mutedText }}>
             {currentWorkerLabel ? `Last submission: ${currentWorkerLabel}` : 'No running worker.'}

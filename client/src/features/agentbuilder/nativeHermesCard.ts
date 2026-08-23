@@ -23,7 +23,7 @@ export type NativeHermesCardView = {
       buckets: Array<{
         label: string;
         date: string;
-        nodes: Array<{ id: string; label: string; fullLabel: string; meta: string; body: string }>;
+        nodes: Array<{ id: string; label: string; fullLabel: string; meta: string }>;
       }>;
     };
   };
@@ -35,14 +35,15 @@ export type NativeHermesCardView = {
   };
 };
 
-export type NativeHermesApplyOperation =
-  | { operation: 'profile.description.set'; value: string }
-  | { operation: 'profile.soul.set'; value: string }
-  | { operation: 'profile.model.set'; provider: string; model: string }
-  | { operation: 'skills.disabled.replace'; values: string[] }
-  | { operation: 'toolsets.enabled.replace'; values: string[] }
-  | { operation: 'mcp.enabled.replace'; values: string[] }
-  | { operation: 'learning.edit'; nodeId: string; content: string };
+export type NativeHermesOperation =
+  | { method: 'profiles.configure'; params: Record<string, unknown> }
+  | { method: 'learning.detail'; params: { id: string } }
+  | { method: 'learning.edit'; params: { id: string; content: string } }
+  | { method: 'skills.manage'; params: Record<string, unknown> }
+  | { method: 'tools.configure'; params: Record<string, unknown> }
+  | { method: 'toolsets.list'; params?: Record<string, unknown> }
+  | { method: 'mcp.servers.list'; params?: Record<string, unknown> }
+  | { method: 'mcp.servers.test'; params: { name: string } };
 
 async function responseJson(response: Response): Promise<Record<string, any>> {
   const body = await response.json().catch(() => ({}));
@@ -70,17 +71,17 @@ export async function applyNativeHermesOperation(input: {
   projectId: string;
   deckId: string;
   cardId: string;
-  change: NativeHermesApplyOperation;
-}): Promise<NativeHermesCardView> {
+  change: NativeHermesOperation;
+}): Promise<NativeHermesCardView & { result: unknown }> {
   const response = await fetch(
-    `/api/hermes-profile/cards/${encodeURIComponent(input.cardId)}/native/apply`,
+    `/api/hermes-profile/cards/${encodeURIComponent(input.cardId)}/native`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectId: input.projectId, deckId: input.deckId, ...input.change }),
     },
   );
-  return responseJson(response) as Promise<NativeHermesCardView>;
+  return responseJson(response) as Promise<NativeHermesCardView & { result: unknown }>;
 }
 
 export async function loadNativeHermesLearningDetail(input: {
@@ -89,16 +90,21 @@ export async function loadNativeHermesLearningDetail(input: {
   cardId: string;
   nodeId: string;
 }): Promise<{ ok: true; kind: 'memory' | 'skill'; id: string; label: string; content: string }> {
-  const query = new URLSearchParams({
-    projectId: input.projectId,
-    deckId: input.deckId,
-    nodeId: input.nodeId,
-  });
   const response = await fetch(
-    `/api/hermes-profile/cards/${encodeURIComponent(input.cardId)}/learning/detail?${query.toString()}`,
+    `/api/hermes-profile/cards/${encodeURIComponent(input.cardId)}/native`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: input.projectId,
+        deckId: input.deckId,
+        method: 'learning.detail',
+        params: { id: input.nodeId },
+      }),
+    },
   );
   const body = await responseJson(response);
-  return body.detail;
+  return body.result;
 }
 
 export async function testNativeHermesMcp(input: {
@@ -116,14 +122,19 @@ export async function testNativeHermesMcp(input: {
   error: string | null;
 }> {
   const response = await fetch(
-    `/api/hermes-profile/cards/${encodeURIComponent(input.cardId)}/mcp/${encodeURIComponent(input.serverName)}/test`,
+    `/api/hermes-profile/cards/${encodeURIComponent(input.cardId)}/native`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId: input.projectId, deckId: input.deckId }),
+      body: JSON.stringify({
+        projectId: input.projectId,
+        deckId: input.deckId,
+        method: 'mcp.servers.test',
+        params: { name: input.serverName },
+      }),
     },
   );
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(String(body?.error || `hermes_mcp_test_failed:${response.status}`));
-  return body;
+  return { server: input.serverName, ...body.result };
 }

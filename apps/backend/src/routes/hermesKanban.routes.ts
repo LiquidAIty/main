@@ -510,6 +510,36 @@ export async function rejoinNativeHermesKanbanTask(args: {
   };
 }
 
+export async function reclaimNativeHermesKanbanTask(
+  taskId: string,
+  reason = 'LiquidAIty operator reclaim',
+  requestExtension: typeof requestHermesExtension = requestHermesExtension,
+): Promise<HermesKanbanTaskSnapshot> {
+  if (!/^t_[A-Za-z0-9_-]+$/.test(taskId)) throw new Error('hermes_kanban_card_task_id_invalid');
+  return requireNativeTaskSnapshot(
+    taskId,
+    JSON.stringify(await requestExtension('_kanban/reclaim', { taskId, reason })),
+  );
+}
+
+export async function terminateNativeHermesKanbanRun(
+  runId: string | number,
+  reason = 'LiquidAIty operator terminate',
+  requestExtension: typeof requestHermesExtension = requestHermesExtension,
+): Promise<HermesKanbanTaskSnapshot> {
+  const nativeRunId = Number(runId);
+  if (!Number.isSafeInteger(nativeRunId) || nativeRunId <= 0) {
+    throw new Error('hermes_kanban_native_run_id_invalid');
+  }
+  const snapshot = await requestExtension('_kanban/terminate', {
+    runId: nativeRunId,
+    reason,
+  });
+  const taskId = String(snapshot?.task?.id || '').trim();
+  if (!taskId) throw new Error('hermes_kanban_card_snapshot_invalid');
+  return requireNativeTaskSnapshot(taskId, JSON.stringify(snapshot));
+}
+
 async function requireNativeKanbanConfig(runner: typeof runHermes): Promise<void> {
   const config = await runner(['config', 'get', 'kanban']);
   if (config.exitCode !== 0) throw new Error('hermes_kanban_config_unavailable');
@@ -633,15 +663,9 @@ export async function startNativeHermesKanbanTurn(
     return {
       answer: () => undefined,
       cancel: () => {
-        throw new Error('hermes_kanban_native_reclaim_not_wired');
+        throw new Error('hermes_kanban_stop_requires_native_task_control');
       },
       done,
-      resolved: {
-        cardId: args.cardId,
-        provider: args.provider,
-        modelKey: args.modelKey,
-        providerModelId: args.providerModelId,
-      },
       runtime: {
         executable: HERMES_BIN,
         pid: null,
@@ -1034,6 +1058,36 @@ router.post('/create', async (req, res) => {
       502,
       error instanceof Error ? error.message : 'hermes_kanban_create_failed',
     );
+  }
+});
+
+router.post('/tasks/:id/reclaim', async (req, res) => {
+  try {
+    const data = await reclaimNativeHermesKanbanTask(
+      String(req.params.id || ''),
+      String(req.body?.reason || 'LiquidAIty operator reclaim'),
+    );
+    return res.json({ ok: true, data });
+  } catch (error) {
+    return res.status(409).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'hermes_kanban_reclaim_failed',
+    });
+  }
+});
+
+router.post('/runs/:runId/terminate', async (req, res) => {
+  try {
+    const data = await terminateNativeHermesKanbanRun(
+      String(req.params.runId || ''),
+      String(req.body?.reason || 'LiquidAIty operator terminate'),
+    );
+    return res.json({ ok: true, data });
+  } catch (error) {
+    return res.status(409).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'hermes_kanban_terminate_failed',
+    });
   }
 });
 

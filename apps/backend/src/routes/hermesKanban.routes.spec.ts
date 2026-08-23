@@ -22,8 +22,10 @@ import {
   isHermesGatewayRunning,
   deriveHermesKanbanProgress,
   readHermesKanbanSessionUsage,
+  reclaimNativeHermesKanbanTask,
   resolveHermesKanbanCardExecutionContext,
   startNativeHermesKanbanTurn,
+  terminateNativeHermesKanbanRun,
   waitForHermesKanbanCardTask,
 } from './hermesKanban.routes';
 
@@ -292,6 +294,32 @@ describe('hermesKanban helpers', () => {
     expect(show).toHaveBeenCalledTimes(2);
   });
 
+  it('uses the native reclaim and terminate operations and returns authoritative task snapshots', async () => {
+    const requestExtension = vi.fn(async (method: string, params: Record<string, unknown>) => ({
+      task: { id: method === '_kanban/reclaim' ? params.taskId : 't_running', status: 'todo' },
+      latest_summary: null,
+      parents: [],
+      children: [],
+      events: [{ kind: 'reclaimed' }],
+      runs: [{ id: 41, ended_at: 1785988028, status: 'reclaimed' }],
+    }));
+
+    await expect(reclaimNativeHermesKanbanTask(
+      't_running',
+      'operator reclaim',
+      requestExtension as never,
+    )).resolves.toMatchObject({ task: { id: 't_running', status: 'todo' } });
+    await expect(terminateNativeHermesKanbanRun(
+      41,
+      'operator terminate',
+      requestExtension as never,
+    )).resolves.toMatchObject({ task: { id: 't_running', status: 'todo' } });
+    expect(requestExtension.mock.calls).toEqual([
+      ['_kanban/reclaim', { taskId: 't_running', reason: 'operator reclaim' }],
+      ['_kanban/terminate', { runId: 41, reason: 'operator terminate' }],
+    ]);
+  });
+
   it('creates a native root through its bound profile without Card model or skill overrides', async () => {
     const runner = vi.fn(async (args: readonly string[]) => {
       if (args.join(' ') === 'config get kanban') {
@@ -348,9 +376,6 @@ describe('hermesKanban helpers', () => {
       providerModelId: 'card-model-id',
       accessMode: 'chatgpt-account',
       tools: [],
-      nativeTools: ['delegate_task'],
-      skills: ['card-skill-must-not-be-pushed'],
-      toolsets: ['memory'],
       mcpConnectionIds: [],
       message: 'The dynamic input',
       nativeMission: 'Inspect the current repository.',
@@ -432,9 +457,6 @@ describe('hermesKanban helpers', () => {
       providerModelId: 'saved-model-id',
       accessMode: 'chatgpt-account',
       tools: ['knowgraph.search'],
-      nativeTools: ['delegate_task'],
-      skills: ['research'],
-      toolsets: ['memory'],
       mcpConnectionIds: [],
       message: 'The dynamic input',
       nativeMission: 'Saved instructions\n\nMission\n\nThinkGraph:root-1',

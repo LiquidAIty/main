@@ -390,8 +390,22 @@ export default function HermesKanbanWorkspace({
           await reloadTask(id);
         }),
       onOpenWorker: handleOpenWorker,
+      onReclaim: () =>
+        void runAction('reclaim', async () => {
+          if (!id) return;
+          await hermesKanbanApi.reclaim(id, 'LiquidAIty operator reclaim');
+          await reloadTask(id);
+          if (currentBoard) await reloadTasks(currentBoard);
+        }),
+      onTerminateRun: (runId) =>
+        void runAction(`terminate:${runId}`, async () => {
+          if (!id || !runId) return;
+          await hermesKanbanApi.terminateRun(runId, 'LiquidAIty operator terminate');
+          await reloadTask(id);
+          if (currentBoard) await reloadTasks(currentBoard);
+        }),
     };
-  }, [busy, handleOpenWorker, reloadTask, runAction, selectedTaskId]);
+  }, [busy, currentBoard, handleOpenWorker, reloadTask, reloadTasks, runAction, selectedTaskId]);
 
   const assignees = useMemo(() => {
     const names = new Set<string>(['default']);

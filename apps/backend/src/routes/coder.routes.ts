@@ -6,7 +6,11 @@ import {
   type HermesCoderTerminalSession,
 } from '../hermes/coderTerminal';
 import {
+  answerHermesSession,
+  cancelHermesRun,
+  cancelHermesSession,
   deriveHermesSessionKey,
+  dispatchHermesLearnCommand,
   readHermesHistory,
   startHermesTurn,
   type HermesSessionEvent,
@@ -243,9 +247,6 @@ function resolveHermesTurnArgs(
     providerModelId: String(provider?.providerModelId || ''),
     accessMode: provider?.accessMode,
     tools: Array.isArray(idf.enabledTools) ? idf.enabledTools : [],
-    nativeTools: Array.isArray(idf.nativeTools) ? idf.nativeTools : [],
-    skills: Array.isArray(idf.skills) ? idf.skills : [],
-    toolsets: Array.isArray(idf.toolsets) ? idf.toolsets : [],
     mcpConnectionIds: Array.isArray(idf.mcpConnectionIds) ? idf.mcpConnectionIds : [],
     sessionKey: deriveHermesSessionKey(
       args.projectId,
@@ -293,9 +294,6 @@ function resolveHermesHistoryArgs(
     providerModelId: String(provider.providerModelId || ''),
     accessMode: provider.accessMode,
     tools: Array.isArray(profile.enabledTools) ? profile.enabledTools : [],
-    nativeTools: Array.isArray(profile.nativeTools) ? profile.nativeTools : [],
-    skills: Array.isArray(profile.skills) ? profile.skills : [],
-    toolsets: Array.isArray(profile.toolsets) ? profile.toolsets : [],
     mcpConnectionIds: Array.isArray(profile.mcpConnectionIds) ? profile.mcpConnectionIds : [],
     sessionKey: deriveHermesSessionKey(args.projectId, args.conversationId, String(identity.cardId || '')),
     projectId: args.projectId,
@@ -311,6 +309,18 @@ async function startPreparedHermesTransport(
   args: PreparedHermesTransportArgs,
 ): Promise<HermesTurnHandle> {
   const turnArgs = resolvePreparedHermesTurnArgs(args);
+  const idf = args.prepared?.hermesTransport?.idf || {};
+  const transientTask = String(idf.message || '').trim();
+  if (transientTask === '/learn' || transientTask.startsWith('/learn ')) {
+    if (turnArgs.runtime.mode === 'kanban') throw new Error('hermes_learn_requires_acp_mode');
+    const learnedPrompt = await dispatchHermesLearnCommand(
+      turnArgs.runtime.profile,
+      transientTask.slice('/learn'.length).trim(),
+    );
+    turnArgs.message = [String(idf.graphSeed || '').trim(), learnedPrompt]
+      .filter(Boolean)
+      .join('\n\n');
+  }
   if (turnArgs.runtime.mode === 'kanban') {
     const anchors = (Array.isArray(args.prepared?.resolvedNativeReads)
       ? args.prepared.resolvedNativeReads
@@ -369,15 +379,6 @@ type ConfiguredCardRunStatus = {
   errorCode: string | null;
   errorSummary: string | null;
 };
-
-type ActiveConfiguredCardRun = {
-  projectId: string;
-  deckId: string;
-  cardId: string;
-  cancel: () => void | Promise<void>;
-};
-
-const activeConfiguredCardRuns = new Map<string, ActiveConfiguredCardRun>();
 
 function nonNegativeNumber(value: unknown): number {
   const number = Number(value);
@@ -552,17 +553,12 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         return res.json({ ok: true, result: status });
       }
       if (status.runtimeKind === 'hermes' && status.runtimeMode === 'kanban') {
-        return res.status(409).json({ ok: false, error: 'hermes_kanban_native_reclaim_not_wired' });
+        return res.status(409).json({ ok: false, error: 'hermes_kanban_stop_requires_native_task_control' });
       }
-      const active = activeConfiguredCardRuns.get(runId);
-      if (active) {
-        if (active.projectId !== projectId || active.deckId !== deckId || active.cardId !== cardId) {
-          return res.status(409).json({ ok: false, error: 'card_run_stop_identity_mismatch' });
-        }
-        await active.cancel();
-      } else {
-        return res.status(409).json({ ok: false, error: 'configured_card_run_not_locally_cancellable' });
+      if (status.runtimeKind !== 'hermes') {
+        return res.status(409).json({ ok: false, error: 'configured_card_stop_not_supported' });
       }
+      cancelHermesRun(status.runtimeProfile, runId);
       return res.status(202).json({ ok: true, result: { ...status, status: 'stopping' } });
     } catch (error) {
       return res.status(502).json({
@@ -767,7 +763,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     }
 
     let hermesHandle: HermesTurnHandle | null = null;
-    let activeRun: ActiveConfiguredCardRun | null = null;
     let runFinalized = false;
     const finishRun = async (
       state: 'completed' | 'failed' | 'cancelled',
@@ -804,13 +799,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
             }
           },
         });
-        activeRun = {
-          projectId,
-          deckId,
-          cardId,
-          cancel: () => hermesHandle?.cancel(),
-        };
-        activeConfiguredCardRuns.set(runId, activeRun);
         const response = await hermesHandle.done;
         output = response.finalText;
         transport = response.transport;
@@ -868,10 +856,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         errorSummary: message,
       }).catch(() => undefined);
       throw error;
-    } finally {
-      if (activeRun && activeConfiguredCardRuns.get(runId) === activeRun) {
-        activeConfiguredCardRuns.delete(runId);
-      }
     }
   } catch (error) {
     if (res.destroyed || res.writableEnded) return;
@@ -882,12 +866,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
 // ── Persistent repo-owned Hermes Main bridge (BuilderChat -> ACP) ───────────
 // One stable native Hermes conversation per saved Main card and product
 // conversation. The saved Coder Card remains a separate Hermes profile.
-type ActiveHermesTurn = {
-  handle: HermesTurnHandle;
-  runId: string;
-};
-
-const activeHermesTurns = new Map<string, ActiveHermesTurn>();
 
 type NativeAttentionEvent = {
   eventId: string;
@@ -1041,7 +1019,6 @@ router.post('/main/session/chat', async (req, res) => {
   writeSse('session', { sessionId });
   logHarnessTrace(`[hermes] request received ${`corr=${correlationId}`} project=${projectId} profile=${prepared.hermesTransport.idf.runtime.profile}`);
   let turnFinished = false;
-  let activeTurn: ActiveHermesTurn | null = null;
   let terminalDoneEvent: Extract<HermesSessionEvent, { kind: 'done' }> | null = null;
   const emittedAttentionIds = new Set<string>();
   let attentionReadQueue = Promise.resolve();
@@ -1089,8 +1066,6 @@ router.post('/main/session/chat', async (req, res) => {
         }
       },
     });
-    activeTurn = { handle, runId: correlationId };
-    activeHermesTurns.set(sessionId, activeTurn);
     const { finalText, usage, transport } = await handle.done;
     await attentionReadQueue;
     try {
@@ -1156,9 +1131,6 @@ router.post('/main/session/chat', async (req, res) => {
     });
   } finally {
     turnFinished = true;
-    if (activeTurn && activeHermesTurns.get(sessionId) === activeTurn) {
-      activeHermesTurns.delete(sessionId);
-    }
     writeSse('end', {});
     if (!res.destroyed && !res.writableEnded) res.end();
   }
@@ -1181,12 +1153,13 @@ router.post('/main/session/stop', async (req, res) => {
     conversationId,
     runtimeConfig.cardIdentity.cardId,
   );
-  const active = activeHermesTurns.get(sessionId);
-  if (!active) return res.status(404).json({ ok: false, error: 'no_active_turn' });
   try {
-    await active.handle.cancel();
-    return res.status(202).json({ ok: true, runId: active.runId, state: 'stopping' });
+    const runId = cancelHermesSession(runtimeConfig.runtime.profile, sessionId);
+    return res.status(202).json({ ok: true, runId, state: 'stopping' });
   } catch (error) {
+    if (error instanceof Error && error.message === 'hermes_session_turn_not_running') {
+      return res.status(404).json({ ok: false, error: 'no_active_turn' });
+    }
     return res.status(502).json({
       ok: false,
       error: error instanceof Error ? error.message : 'main_run_stop_failed',
@@ -1208,10 +1181,23 @@ router.post('/main/session/answer', async (req, res) => {
     String(req.body?.conversationId || 'default'),
     runtimeConfig.cardIdentity.cardId,
   );
-  const active = activeHermesTurns.get(sessionId);
-  if (!active) return res.status(404).json({ ok: false, error: 'no_active_turn' });
-  active.handle.answer(String(req.body?.promptId || ''), String(req.body?.reply || ''));
-  return res.json({ ok: true });
+  try {
+    answerHermesSession(
+      runtimeConfig.runtime.profile,
+      sessionId,
+      String(req.body?.promptId || ''),
+      String(req.body?.reply || ''),
+    );
+    return res.json({ ok: true });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'hermes_session_turn_not_running') {
+      return res.status(404).json({ ok: false, error: 'no_active_turn' });
+    }
+    return res.status(409).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'main_permission_answer_failed',
+    });
+  }
 });
 
 // Load the durable project-scoped transcript for a conversation so a reload

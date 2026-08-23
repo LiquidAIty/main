@@ -31,9 +31,6 @@ function providerFreeTurnArgs(toolCount = 57) {
     providerModelId: 'gpt-5.6-sol',
     accessMode: 'chatgpt-account' as const,
     tools: Array.from({ length: toolCount }, (_, index) => `test.tool_${index + 1}`),
-    nativeTools: ['delegate_task'],
-    skills: [],
-    toolsets: ['delegation'],
     mcpConnectionIds: [],
     sessionKey: 'hermes:project-1:provider-free:card_main_chat',
     projectId: 'project-1',
@@ -64,7 +61,7 @@ rl.on('line', (line) => {
   if (method === '_session/configure_host') {
     return send({ jsonrpc: '2.0', id: message.id, result: {} });
   }
-  if (method === '_profile/read' || method === '_learning/detail' || method === '_native/apply' || method === '_mcp/test') {
+  if (method === '_native/call') {
     return send({ jsonrpc: '2.0', id: message.id, result: { method } });
   }
   if (method === 'session/prompt') {
@@ -76,7 +73,7 @@ rl.on('line', (line) => {
 }
 
 describe('Hermes ACP transport identity', () => {
-  it('permits only the bounded native profile and MCP manager extensions', async () => {
+  it('permits only the one bounded native manager pass-through', async () => {
     const root = path.join(tmpdir(), `liquidaity-acp-${randomUUID()}`);
     const hermesHome = path.join(root, '.hermes');
     mkdirSync(hermesHome, { recursive: true });
@@ -85,14 +82,11 @@ describe('Hermes ACP transport identity', () => {
       hermesHome,
     });
     try {
-      await expect(processOwner.requestExtension('_profile/read', { name: 'coder' }))
-        .resolves.toEqual({ method: '_profile/read' });
-      await expect(processOwner.requestExtension('_mcp/test', { profile: 'coder', name: 'liquidaity' }))
-        .resolves.toEqual({ method: '_mcp/test' });
-      await expect(processOwner.requestExtension('_native/apply', { profile: 'coder', operation: 'profile.soul.set', value: 'Soul' }))
-        .resolves.toEqual({ method: '_native/apply' });
-      await expect(processOwner.requestExtension('_learning/detail', { profile: 'coder', nodeId: 'skill' }))
-        .resolves.toEqual({ method: '_learning/detail' });
+      await expect(processOwner.requestExtension('_native/call', {
+        method: 'profiles.describe', params: { name: 'coder' },
+      })).resolves.toEqual({ method: '_native/call' });
+      await expect(processOwner.requestExtension('_native/apply', {}))
+        .rejects.toThrow('hermes_acp_extension_method_invalid');
       await expect(processOwner.requestExtension('_profile/apply', { name: 'coder' }))
         .rejects.toThrow('hermes_acp_extension_method_invalid');
       await expect(processOwner.requestExtension('_secrets/read', {}))
@@ -118,9 +112,17 @@ describe('Hermes ACP transport identity', () => {
         hermesHome,
       });
       processes.push(premature);
-      await expect(premature.startTurn(providerFreeTurnArgs(), () => undefined)).rejects.toThrow(
+      let prematureError: unknown;
+      try {
+        await premature.startTurn(providerFreeTurnArgs(), () => undefined);
+      } catch (error) {
+        prematureError = error;
+      }
+      expect(prematureError).toBeInstanceOf(Error);
+      expect((prematureError as Error).message).toMatch(
         /hermes_acp_exited:0:none:explicit=no:last=request:session\/new:write/,
       );
+      expect((prematureError as Error).message).not.toContain('registered 57 tool(s)');
       const unexpectedExit = await premature.closed;
       expect(unexpectedExit.stderrTail.join('\n')).toContain('registered 57 tool(s)');
       expect(unexpectedExit.stdoutTail).toBe('');
@@ -144,6 +146,11 @@ describe('Hermes ACP transport identity', () => {
           if (!next) throw new Error('unexpected_third_acp_attempt');
           return next;
         },
+        async () => ({
+          name: 'liquidaity-main',
+          toolsets: [],
+          mcp_servers: [],
+        }),
       );
       const result = await handle.done;
       expect(queue).toHaveLength(0);
@@ -166,23 +173,22 @@ describe('Hermes ACP transport identity', () => {
     }
   });
 
-  it('uses one repo-owned Hermes home for every stable native session', () => {
+  it('derives the repo-owned base home while named Hermes profiles remain independent homes', async () => {
     const root = 'C:\\Projects\\LiquidAIty\\main\\Hermes';
     expect(resolveHermesRuntimeHome(root)).toBe(path.join(root, '.hermes'));
-  });
-
-  it('does not push Card provider/model fields into a native Hermes session', async () => {
-    const root = path.join(tmpdir(), `liquidaity-acp-native-model-${randomUUID()}`);
-    const hermesHome = path.join(root, '.hermes');
-    mkdirSync(hermesHome, { recursive: true });
+    const fakeRoot = path.join(tmpdir(), `liquidaity-acp-profile-home-${randomUUID()}`);
+    const hermesHome = path.join(fakeRoot, '.hermes');
+    mkdirSync(path.join(hermesHome, 'profiles', 'coder'), { recursive: true });
     const owner = new AcpProcess(() => undefined, {
-      install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(false)] },
+      install: { root: fakeRoot, executable: process.execPath, args: ['-e', fakeAcpScript(false)] },
       hermesHome,
+      profile: 'coder',
     });
     try {
-      await expect(owner.prepareSession(providerFreeTurnArgs(0))).resolves.toMatchObject({
-        sessionId: 'provider-free-session',
-      });
+      expect(owner.hermesHome).toBe(path.join(hermesHome, 'profiles', 'coder'));
+      await expect(owner.requestExtension('_native/call', {
+        method: 'profiles.describe', params: { name: 'coder' },
+      })).resolves.toEqual({ method: '_native/call' });
     } finally {
       owner.close();
       await owner.closed;
@@ -307,6 +313,7 @@ describe('Hermes ACP transport identity', () => {
     } finally {
       await finishHermesExecutionContext({ contextId: context.contextId, state: 'cancelled' });
       if (owner.alive) owner.close();
+      await owner.closed;
       if (previousSecret === undefined) delete process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
       else process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = previousSecret;
       if (previousUrl === undefined) delete process.env.LIQUIDAITY_INTERNAL_MCP_URL;
@@ -330,9 +337,6 @@ describe('Hermes ACP transport identity', () => {
       providerModelId: 'gpt-5.6-luna',
       accessMode: 'chatgpt-account',
       tools: ['canvas.inspect'],
-      nativeTools: ['delegate_task'],
-      skills: [],
-      toolsets: ['memory', 'delegation'],
       mcpConnectionIds: [],
       message: 'Inspect the repository.',
     }, {
@@ -367,7 +371,7 @@ describe('Hermes ACP transport identity', () => {
     }));
   });
 
-  it('keeps Coder on Hermes native ACP capabilities regardless of Card-side native lists', () => {
+  it('keeps Coder on Hermes native ACP capabilities without Card-side native lists', () => {
     const projection = buildHermesHostSessionProjection({
       sessionKey: 'coder-session-1',
       projectId: 'project-1',
@@ -383,9 +387,6 @@ describe('Hermes ACP transport identity', () => {
       providerModelId: 'gpt-5.6-luna',
       accessMode: 'chatgpt-account',
       tools: ['cbm.search_graph', 'cbm.trace_path'],
-      nativeTools: ['delegate_task', 'terminal', 'read_file', 'python'],
-      skills: ['software-development/test-driven-development'],
-      toolsets: ['memory', 'delegation', 'skills', 'terminal', 'file', 'code_execution'],
       mcpConnectionIds: [],
       message: 'Inspect one symbol.',
     }, {

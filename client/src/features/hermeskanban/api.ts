@@ -101,6 +101,10 @@ export const hermesKanbanApi = {
     mutate(`/api/hermes-kanban/tasks/${encodeURIComponent(id)}/promote`, {}),
   complete: (id: string, result?: string): Promise<unknown> =>
     mutate(`/api/hermes-kanban/tasks/${encodeURIComponent(id)}/complete`, { result }),
+  reclaim: (id: string, reason?: string): Promise<KanbanShow> =>
+    mutate(`/api/hermes-kanban/tasks/${encodeURIComponent(id)}/reclaim`, { reason }),
+  terminateRun: (runId: string, reason?: string): Promise<KanbanShow> =>
+    mutate(`/api/hermes-kanban/runs/${encodeURIComponent(runId)}/terminate`, { reason }),
   edit: (id: string, p: { result: string; summary?: string; metadata?: string }): Promise<unknown> =>
     mutate(`/api/hermes-kanban/tasks/${encodeURIComponent(id)}/edit`, p),
   assign: (id: string, assignee: string): Promise<unknown> =>

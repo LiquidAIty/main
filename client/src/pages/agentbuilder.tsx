@@ -1066,6 +1066,26 @@ export default function AgentBuilder(): React.ReactElement {
     standaloneTestUnavailableReason,
   ]);
 
+  const learnFromStandaloneCardInput = useCallback(async () => {
+    if (
+      !selectedCard ||
+      selectedCard.runtime.kind !== 'hermes' ||
+      selectedCard.runtime.mode === 'kanban' ||
+      standaloneTestBusy ||
+      standaloneTestUnavailableReason ||
+      !standaloneTestPrompt.trim()
+    ) {
+      return;
+    }
+    await executeStandaloneInvocation(`/learn ${standaloneTestPrompt.trim()}`);
+  }, [
+    executeStandaloneInvocation,
+    selectedCard,
+    standaloneTestBusy,
+    standaloneTestPrompt,
+    standaloneTestUnavailableReason,
+  ]);
+
   const stopStandaloneCardTest = useCallback(async () => {
     const active = standaloneActiveRunRef.current;
     if (!active || !canvasProjectId) return;
@@ -1452,6 +1472,9 @@ export default function AgentBuilder(): React.ReactElement {
                     onRunCard={() => {
                       void runStandaloneCardTest();
                     }}
+                    onLearnCard={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.mode !== 'kanban'
+                      ? () => { void learnFromStandaloneCardInput(); }
+                      : undefined}
                     onStopCard={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'kanban'
                       ? undefined
                       : stopStandaloneCardTest}
@@ -1480,7 +1503,6 @@ export default function AgentBuilder(): React.ReactElement {
                     }
                     runResult={standaloneTestResult}
                     loadedGraphContext={transientCardGraphContext[selectedCard.id] || []}
-                    magOneWorkers={selectedMagOneWorkers}
                     saveDeckStatusMessage={deckStatusMessage}
                     openDeckRevision={deckRevision}
                     onSaveLocalConfig={handleSaveSelectedCardConfig}

@@ -62,6 +62,12 @@ const SHOW = {
   runs: [],
 };
 
+const RUNNING_SHOW = {
+  ...SHOW,
+  task: TASKS[1],
+  runs: [{ id: 41, run_id: 41, task_id: 't_two', started_at: 1785914095, ended_at: null, profile: 'research' }],
+};
+
 type FetchCall = { url: string; init?: RequestInit };
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -81,6 +87,9 @@ function installFetch() {
     calls.push({ url, init });
     const method = (init?.method || 'GET').toUpperCase();
     if (url.startsWith('/api/hermes-kanban/boards')) return jsonResponse({ ok: true, data: BOARDS });
+    if (url === '/api/hermes-kanban/tasks/t_two') {
+      return jsonResponse({ ok: true, data: RUNNING_SHOW });
+    }
     if (url.startsWith('/api/hermes-kanban/tasks/')) {
       return jsonResponse({ ok: true, data: SHOW });
     }
@@ -330,6 +339,22 @@ describe('HermesKanbanWorkspace — mutations through the bridge', () => {
     const commentCall = calls.find((c) => c.url === '/api/hermes-kanban/tasks/t_one/comment');
     expect(commentCall).toBeTruthy();
     expect(JSON.parse(String(commentCall?.init?.body || '{}')).text).toBe('a comment');
+  });
+
+  it('uses native task/run recovery controls for an active Hermes worker', async () => {
+    renderWorkspace();
+    await flush();
+    const host = container as HTMLDivElement;
+    click(host, 'hermes-kanban-task-card-t_two');
+    await flush();
+    click(host, 'hermes-kanban-task-inspector-tab-activity');
+    await flush();
+
+    expect(host.querySelector('[data-testid="hermes-kanban-terminate-run-41"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="hermes-kanban-reclaim-task"]')).not.toBeNull();
+    click(host, 'hermes-kanban-terminate-run-41');
+    await flush();
+    expect(calls.some((call) => call.url === '/api/hermes-kanban/runs/41/terminate' && call.init?.method === 'POST')).toBe(true);
   });
 
   it('board-mode tabs (Board/Orchestration/Profiles/System) exist without a task selected', async () => {

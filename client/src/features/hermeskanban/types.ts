@@ -64,6 +64,7 @@ export type KanbanRun = {
   task_id?: string;
   status?: string;
   started_at?: number | null;
+  ended_at?: number | string | null;
   completed_at?: number | null;
   outcome?: string | null;
   exit_code?: number | null;

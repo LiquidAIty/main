@@ -40,32 +40,18 @@ const chatSessionMocks = vi.hoisted(() => {
     getConversationMessages: vi.fn(async () => []),
     listConversations: vi.fn(async () => []),
     lastCancel: vi.fn(),
-    prepareHermesSession: vi.fn(),
+    cancelHermesRun: vi.fn(),
+    cancelHermesSession: vi.fn(),
+    answerHermesSession: vi.fn(),
+    dispatchHermesLearnCommand: vi.fn(async (_profile: string, request: string) => `NATIVE LEARN PROMPT: ${request}`),
     readHermesHistory: vi.fn(async () => ({ sessionId: null, messages: [] })),
     startHermesTurn: vi.fn(),
     usage,
   };
-  mocks.prepareHermesSession.mockResolvedValue({
-    cardId: 'card_local_coder',
-    provider: 'openai',
-    modelKey: 'gpt-5.6-luna',
-    providerModelId: 'gpt-5.6-luna',
-    executable: 'C:/Projects/LiquidAIty/main/Hermes/venv/Scripts/hermes-acp.exe',
-    pid: 42,
-    hermesHome: 'C:/Projects/LiquidAIty/main/Hermes/.hermes',
-    sessionId: 'native-coder-session',
-    transport: 'acp-stdio',
-  });
   mocks.startHermesTurn.mockImplementation(async (_params: unknown, _onEvent: (event: any) => void) => ({
     done: Promise.resolve({ finalText: 'Real assistant reply.', usage }),
     cancel: mocks.lastCancel,
     answer: vi.fn(),
-    resolved: {
-      cardId: 'card_main_chat',
-      provider: 'openai',
-      modelKey: 'gpt-5.6-luna',
-      providerModelId: 'gpt-5.6-luna',
-    },
   }));
   return mocks;
 });
@@ -387,7 +373,10 @@ vi.mock('../hermes/mainAdapter', () => ({
       ? 'openai-codex'
       : provider
   ),
-  prepareHermesSession: chatSessionMocks.prepareHermesSession,
+  cancelHermesRun: chatSessionMocks.cancelHermesRun,
+  cancelHermesSession: chatSessionMocks.cancelHermesSession,
+  answerHermesSession: chatSessionMocks.answerHermesSession,
+  dispatchHermesLearnCommand: chatSessionMocks.dispatchHermesLearnCommand,
   readHermesHistory: chatSessionMocks.readHermesHistory,
   startHermesTurn: chatSessionMocks.startHermesTurn,
 }));
@@ -702,7 +691,6 @@ describe('coder routes', () => {
         runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
         provider: 'openai',
         providerModelId: 'gpt-5.6-luna',
-        skills: ['documentation'],
         nativeMission: [
           'Saved Card system instructions:',
           'Saved prompt',
@@ -1011,9 +999,10 @@ describe('coder routes', () => {
         cardId: 'card_local_coder',
         runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
         tools: ['cbm.search_graph'],
-        toolsets: ['file', 'terminal'],
         message: '## Resolved CodeGraph\n- pkg.materialize_idf\n\nInspect the bounded code slice.',
       });
+      expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).not.toHaveProperty('skills');
+      expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).not.toHaveProperty('toolsets');
       expect(orchestratorMocks.dispatchConfiguredRuntime).not.toHaveBeenCalled();
       const payload = await response.json();
       expect(payload).toMatchObject({
@@ -1030,6 +1019,49 @@ describe('coder routes', () => {
           },
         },
       });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('runs native Hermes /learn through the same materialized Coder Card turn', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.runRecords.clear();
+    orchestratorMocks.requestFingerprints.clear();
+    chatSessionMocks.dispatchHermesLearnCommand.mockClear();
+    chatSessionMocks.startHermesTurn.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'execute',
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'card_local_coder',
+          correlationId: 'corr-coder-learn',
+          conversationId: 'main',
+          input: '/learn study the bounded repository context',
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(chatSessionMocks.dispatchHermesLearnCommand).toHaveBeenCalledTimes(1);
+      expect(chatSessionMocks.dispatchHermesLearnCommand).toHaveBeenCalledWith(
+        'coder',
+        'study the bounded repository context',
+      );
+      expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1);
+      expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).toMatchObject({
+        cardId: 'card_local_coder',
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
+        message: '## Resolved CodeGraph\n- pkg.materialize_idf\n\nNATIVE LEARN PROMPT: study the bounded repository context',
+      });
+      const beginCalls = orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+        ([endpoint]) => endpoint === '/domain/runs/begin',
+      );
+      expect(beginCalls).toHaveLength(1);
     } finally {
       await closeServer(server);
     }
@@ -1104,15 +1136,11 @@ describe('coder routes', () => {
     const done = new Promise<any>((_resolve, reject) => {
       rejectTurn = reject;
     });
-    const cancel = vi.fn(() => rejectTurn(new Error('native_turn_cancelled')));
+    chatSessionMocks.cancelHermesRun.mockImplementationOnce(() => rejectTurn(new Error('hermes_turn_cancelled')));
     chatSessionMocks.startHermesTurn.mockResolvedValueOnce({
       done,
-      cancel,
+      cancel: vi.fn(),
       answer: vi.fn(),
-      resolved: {
-        cardId: 'card_local_coder', provider: 'openai',
-        modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
-      },
     });
     const { server, baseUrl } = await createApiServer();
     try {
@@ -1135,12 +1163,12 @@ describe('coder routes', () => {
         }),
       });
       const stopped = await stoppedResponse.json() as any;
-      expect(stoppedResponse.status, JSON.stringify(stopped)).toBe(200);
+      expect(stoppedResponse.status, JSON.stringify(stopped)).toBe(202);
       expect(stopped.result).toMatchObject({
         runId: 'corr-coder-stopped', cardId: 'card_local_coder',
-        state: 'cancelled', status: 'cancelled',
+        state: 'running', status: 'stopping',
       });
-      expect(cancel).toHaveBeenCalledOnce();
+      expect(chatSessionMocks.cancelHermesRun).toHaveBeenCalledWith('coder', 'corr-coder-stopped');
       await request;
       const finishCalls = orchestratorMocks.requestPythonRailsJson.mock.calls
         .filter(([endpoint]) => endpoint === '/domain/runs/finish')
@@ -1756,15 +1784,14 @@ describe('coder routes', () => {
       const done = new Promise<any>((_resolve, reject) => {
         rejectTurn = reject;
       });
-      const cancel = vi.fn(() => rejectTurn(new Error('native_turn_cancelled')));
+      chatSessionMocks.cancelHermesSession.mockImplementationOnce(() => {
+        rejectTurn(new Error('hermes_turn_cancelled'));
+        return 'run-main-stop';
+      });
       chatSessionMocks.startHermesTurn.mockResolvedValueOnce({
         done,
-        cancel,
+        cancel: vi.fn(),
         answer: vi.fn(),
-        resolved: {
-          cardId: 'card_main_chat', provider: 'openai',
-          modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
-        },
       });
       const { server, baseUrl } = await createApiServer();
       try {
@@ -1780,9 +1807,12 @@ describe('coder routes', () => {
           body: JSON.stringify({ projectId: 'project-1', deckId: 'deck_builder', conversationId: 'stop-main' }),
         });
         const stopped = await stopResponse.json() as any;
-        expect(stopResponse.status, JSON.stringify(stopped)).toBe(200);
-        expect(stopped).toMatchObject({ ok: true, state: 'cancelled' });
-        expect(cancel).toHaveBeenCalledOnce();
+        expect(stopResponse.status, JSON.stringify(stopped)).toBe(202);
+        expect(stopped).toMatchObject({ ok: true, runId: 'run-main-stop', state: 'stopping' });
+        expect(chatSessionMocks.cancelHermesSession).toHaveBeenCalledWith(
+          'default',
+          'project-1:stop-main:card_main_chat',
+        );
         const stream = await chatResponse.text();
         expect(stream).toContain('harness_turn_cancelled');
         expect(stream).toContain('event: end');

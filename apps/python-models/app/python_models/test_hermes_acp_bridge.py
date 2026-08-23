@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 import importlib
 import inspect
+import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+
+def _bridge(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent))
+    return importlib.import_module("hermes_acp_bridge")
+
 
 def test_native_kanban_extensions_create_rejoin_and_read_back(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
     monkeypatch.setenv("HERMES_KANBAN_BOARD", "default")
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent))
-    bridge = importlib.import_module("hermes_acp_bridge")
-    agent = bridge.LiquidAItyHermesACPAgent.__new__(
-        bridge.LiquidAItyHermesACPAgent
-    )
+    bridge = _bridge(monkeypatch)
+    agent = bridge.LiquidAItyHermesACPAgent.__new__(bridge.LiquidAItyHermesACPAgent)
     params = {
         "title": "Bounded operating map",
         "body": "Exact project-scoped mission",
@@ -26,19 +32,12 @@ def test_native_kanban_extensions_create_rejoin_and_read_back(monkeypatch, tmp_p
         second = await agent.ext_method("kanban/create", params)
         found = await agent.ext_method(
             "kanban/find",
-            {
-                "title": params["title"],
-                "body": params["body"],
-                "createdBy": params["createdBy"],
-            },
+            {"title": params["title"], "body": params["body"], "createdBy": params["createdBy"]},
         )
-        snapshot = await agent.ext_method(
-            "kanban/show", {"taskId": first["id"]}
-        )
+        snapshot = await agent.ext_method("kanban/show", {"taskId": first["id"]})
         return first, second, found, snapshot
 
     first, second, found, snapshot = asyncio.run(exercise())
-
     assert first["id"].startswith("t_")
     assert first["rejoined"] is False
     assert second["id"] == first["id"]
@@ -52,112 +51,146 @@ def test_native_kanban_extensions_create_rejoin_and_read_back(monkeypatch, tmp_p
     assert [event["kind"] for event in snapshot["events"]] == ["created"]
 
 
-def test_native_profile_and_mcp_extensions_use_managers_and_redact_transport_values(monkeypatch):
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent))
-    bridge = importlib.import_module("hermes_acp_bridge")
-    calls = []
+def test_native_manager_extension_is_an_exact_allowlisted_pass_through(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    manager_calls = []
     profile_calls = []
 
     def native_call(method, params):
-        calls.append((method, params))
-        if method == "profiles.describe":
-            return {
-                "name": "liquidaity-main",
-                "description": "Planner",
-                "soul": "Instructions",
-                "model": {"provider": "openai-codex", "default": "gpt-test"},
-                "skills": [{"name": "research", "enabled": True}],
-                "toolsets": [{"name": "web", "enabled": True}],
-                "toolsets_pinned": True,
-                "mcp_servers": [{"name": "liquidaity", "enabled": True}],
-            }
-        if method == "mcp.servers.list":
-            return {
-                "servers": [{
-                    "name": "liquidaity",
-                    "transport": "http",
-                    "url": "https://private.example/mcp",
-                    "headers": {"Authorization": "Bearer secret"},
-                    "env": ["SECRET_NAME"],
-                    "auth": "header",
-                    "enabled": True,
-                    "tools": {"include": ["main.context"]},
-                }]
-            }
-        if method == "mcp.servers.test":
-            return {
-                "ok": False,
-                "error": "Authorization: Bearer super-secret access_token=also-secret",
-                "tools": [],
-                "oauth_needed": False,
-            }
-        raise AssertionError(method)
+        manager_calls.append((method, params))
+        return {"native_method": method, "native_params": params}
 
-    def native_profile_call(profile, method, params):
+    def profile_call(profile, method, params):
         profile_calls.append((profile, method, params))
-        if method == "learning.frames":
-            return {
-                "count": 2,
-                "summary": "One memory and one skill",
-                "buckets": [{
-                    "label": "Today",
-                    "date": "2026-08-23",
-                    "nodes": [{
-                        "id": "skill:research",
-                        "label": "research",
-                        "fullLabel": "Research skill",
-                        "meta": "used 2 times",
-                    }],
-                }],
-            }
-        raise AssertionError(method)
+        return {"native_method": method, "native_params": params, "profile": profile}
 
     monkeypatch.setattr(bridge, "_native_manager_call", native_call)
-    monkeypatch.setattr(bridge, "_native_profile_scope_call", native_profile_call)
+    monkeypatch.setattr(bridge, "_native_profile_scope_call", profile_call)
     agent = bridge.LiquidAItyHermesACPAgent.__new__(bridge.LiquidAItyHermesACPAgent)
 
     async def exercise():
-        read = await agent.ext_method("profile/read", {"name": "liquidaity-main"})
-        tested = await agent.ext_method(
-            "mcp/test", {"profile": "liquidaity-main", "name": "liquidaity"}
+        described = await agent.ext_method(
+            "native/call",
+            {"method": "profiles.describe", "params": {"name": "liquidaity-main"}},
         )
-        return read, tested
+        learning = await agent.ext_method(
+            "native/call",
+            {
+                "method": "learning.frames",
+                "profile": "liquidaity-main",
+                "params": {"cols": 60, "rows": 18, "frames": 2},
+            },
+        )
+        learn = await agent.ext_method(
+            "native/call",
+            {
+                "method": "command.dispatch",
+                "profile": "liquidaity-main",
+                "params": {"name": "learn", "arg": "this repository"},
+            },
+        )
+        return described, learning, learn
 
-    read, tested = asyncio.run(exercise())
-    server = read["profile"]["mcpServers"][0]
-    assert server == {
-        "name": "liquidaity",
-        "transport": "http",
-        "enabled": True,
-        "auth": "header",
-        "credentialStatus": "configured",
-        "toolFilter": ["main.context"],
-    }
-    assert tested["ok"] is False
-    assert read["profile"]["learning"]["buckets"][0]["nodes"][0]["id"] == "skill:research"
-    assert "super-secret" not in tested["error"]
-    assert "also-secret" not in tested["error"]
-    assert calls == [
-        ("profiles.describe", {"name": "liquidaity-main"}),
-        ("mcp.servers.list", {"profile": "liquidaity-main"}),
-        ("mcp.servers.test", {"profile": "liquidaity-main", "name": "liquidaity"}),
-    ]
+    described, learning, learn = asyncio.run(exercise())
+    assert described["native_method"] == "profiles.describe"
+    assert learning["profile"] == "liquidaity-main"
+    assert learn["native_params"] == {"name": "learn", "arg": "this repository"}
+    assert manager_calls == [("profiles.describe", {"name": "liquidaity-main"})]
     assert profile_calls == [
         ("liquidaity-main", "learning.frames", {"cols": 60, "rows": 18, "frames": 2}),
+        ("liquidaity-main", "command.dispatch", {"name": "learn", "arg": "this repository"}),
     ]
 
 
-def test_native_profile_extension_has_no_card_to_profile_write_method(monkeypatch):
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent))
-    bridge = importlib.import_module("hermes_acp_bridge")
+def test_native_kanban_stop_controls_use_hermes_reclaim_lifecycle(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    from hermes_cli import kanban_db as kb
+
+    calls = []
+    conn = object()
+    monkeypatch.setattr(kb, "connect_closing", lambda: nullcontext(conn))
+    monkeypatch.setattr(
+        kb,
+        "reclaim_task",
+        lambda actual_conn, task_id, reason=None: calls.append(
+            ("reclaim", actual_conn, task_id, reason)
+        ) or True,
+    )
+    monkeypatch.setattr(
+        kb,
+        "get_run",
+        lambda actual_conn, run_id: calls.append(("get_run", actual_conn, run_id))
+        or SimpleNamespace(task_id="t_running", ended_at=None),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_task_snapshot",
+        lambda task_id: {"task": {"id": task_id, "status": "todo"}},
+    )
+    agent = bridge.LiquidAItyHermesACPAgent.__new__(bridge.LiquidAItyHermesACPAgent)
+
+    async def exercise():
+        reclaimed = await agent.ext_method(
+            "kanban/reclaim", {"taskId": "t_running", "reason": "operator reclaim"}
+        )
+        terminated = await agent.ext_method(
+            "kanban/terminate", {"runId": 41, "reason": "operator terminate"}
+        )
+        return reclaimed, terminated
+
+    reclaimed, terminated = asyncio.run(exercise())
+    assert reclaimed["task"]["id"] == "t_running"
+    assert terminated["task"]["id"] == "t_running"
+    assert calls == [
+        ("reclaim", conn, "t_running", "operator reclaim"),
+        ("get_run", conn, 41),
+        ("reclaim", conn, "t_running", "operator terminate"),
+    ]
+
+
+def test_native_manager_extension_rejects_non_native_or_non_learn_commands(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    agent = bridge.LiquidAItyHermesACPAgent.__new__(bridge.LiquidAItyHermesACPAgent)
+
+    async def unsupported_method():
+        await agent.ext_method("native/call", {"method": "profile/apply", "params": {}})
+
+    async def unsupported_command():
+        await agent.ext_method(
+            "native/call",
+            {
+                "method": "command.dispatch",
+                "profile": "liquidaity-main",
+                "params": {"name": "queue", "arg": "not exposed"},
+            },
+        )
+
+    for operation, error in (
+        (unsupported_method, "hermes_native_method_unsupported:profile/apply"),
+        (unsupported_command, "hermes_native_command_unsupported"),
+    ):
+        try:
+            asyncio.run(operation())
+        except ValueError as exc:
+            assert str(exc) == error
+        else:
+            raise AssertionError("unsupported native call unexpectedly succeeded")
+
+
+def test_bridge_has_no_card_profile_projection_or_manager_reimplementation(monkeypatch):
+    bridge = _bridge(monkeypatch)
     source = inspect.getsource(bridge.LiquidAItyHermesACPAgent.ext_method)
+    module_source = inspect.getsource(bridge)
 
-    assert 'method == "profile/apply"' not in source
-    assert 'method == "native/apply"' in source
-    assert '"profiles.configure"' in source
+    assert 'method == "native/call"' in source
+    assert 'method == "profile/read"' not in source
+    assert 'method == "native/apply"' not in source
+    assert "def _read_native_profile" not in module_source
+    assert "def _safe_learning" not in module_source
+    assert "profiles.configure" in module_source
 
 
-def test_native_profile_readback_through_real_managers_is_read_only(monkeypatch, tmp_path):
+def test_real_native_profile_reads_are_read_only(monkeypatch, tmp_path):
     root = tmp_path / "hermes-root"
     profile = root / "profiles" / "liquidaity-roundtrip"
     (profile / "skills" / "research").mkdir(parents=True)
@@ -165,10 +198,7 @@ def test_native_profile_readback_through_real_managers_is_read_only(monkeypatch,
         "---\nname: research\ndescription: Temporary round-trip skill\n---\n",
         encoding="utf-8",
     )
-    (profile / "profile.yaml").write_text(
-        "description: Before\ndescription_auto: false\n",
-        encoding="utf-8",
-    )
+    (profile / "profile.yaml").write_text("description: Before\ndescription_auto: false\n", encoding="utf-8")
     (profile / "SOUL.md").write_text("Before instructions", encoding="utf-8")
     config = """\
 model:
@@ -180,7 +210,7 @@ tools:
 mcp_servers:
   demo:
     command: python
-    args: [\"-c\", \"print('unused')\"]
+    args: ["-c", "print('unused')"]
     disabled: true
 """
     (profile / "config.yaml").write_text(config, encoding="utf-8")
@@ -188,32 +218,43 @@ mcp_servers:
     (root / "config.yaml").write_text(config, encoding="utf-8")
 
     monkeypatch.setenv("HERMES_HOME", str(root))
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent))
-    bridge = importlib.import_module("hermes_acp_bridge")
+    bridge = _bridge(monkeypatch)
     agent = bridge.LiquidAItyHermesACPAgent.__new__(bridge.LiquidAItyHermesACPAgent)
-
-    soul_before = (profile / "SOUL.md").read_bytes()
-    profile_meta_before = (profile / "profile.yaml").read_bytes()
-    config_before = (profile / "config.yaml").read_bytes()
-    skill_before = (profile / "skills" / "research" / "SKILL.md").read_bytes()
-
-    async def read_profile():
-        return await agent.ext_method(
-            "profile/read", {"name": "liquidaity-roundtrip"}
+    before = {
+        path: path.read_bytes()
+        for path in (
+            profile / "SOUL.md",
+            profile / "profile.yaml",
+            profile / "config.yaml",
+            profile / "skills" / "research" / "SKILL.md",
         )
+    }
+    acp_stdout = sys.stdout
 
-    readback = asyncio.run(read_profile())
-    assert readback["profile"]["description"] == "Before"
-    assert readback["profile"]["soul"] == "Before instructions"
-    assert readback["profile"]["mcpServers"] == [{
-        "name": "demo",
-        "transport": "stdio",
-        "enabled": False,
-        "auth": None,
-        "credentialStatus": "not_required",
-        "toolFilter": [],
-    }]
-    assert (profile / "SOUL.md").read_bytes() == soul_before
-    assert (profile / "profile.yaml").read_bytes() == profile_meta_before
-    assert (profile / "config.yaml").read_bytes() == config_before
-    assert (profile / "skills" / "research" / "SKILL.md").read_bytes() == skill_before
+    async def read_native():
+        described = await agent.ext_method(
+            "native/call",
+            {"method": "profiles.describe", "params": {"name": "liquidaity-roundtrip"}},
+        )
+        mcp = await agent.ext_method(
+            "native/call",
+            {"method": "mcp.servers.list", "params": {"profile": "liquidaity-roundtrip"}},
+        )
+        learning = await agent.ext_method(
+            "native/call",
+            {
+                "method": "learning.frames",
+                "profile": "liquidaity-roundtrip",
+                "params": {"cols": 60, "rows": 18, "frames": 2},
+            },
+        )
+        return described, mcp, learning
+
+    described, mcp, learning = asyncio.run(read_native())
+    assert described["description"] == "Before"
+    assert described["soul"] == "Before instructions"
+    assert mcp["servers"][0]["name"] == "demo"
+    assert isinstance(learning["buckets"], list)
+    assert sys.stdout is acp_stdout
+    for path, content in before.items():
+        assert path.read_bytes() == content
