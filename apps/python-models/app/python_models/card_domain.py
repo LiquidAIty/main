@@ -58,6 +58,24 @@ KNOWN_CARD_FIELDS = {
     "_cardRevisionId", "_cardRevision", "_cardRevisionSha256",
 }
 
+PROTECTED_CARD_IDS = frozenset({
+    "card_main_chat",
+    "card_local_coder",
+    "card_hermes_steward",
+    "card_magentic",
+    "card_trading_workbench",
+    "card_worldsignals_agent",
+})
+
+CARD_TELEMETRY_CARD_EDGE_PATTERNS = (
+    "(run:Run)-[edge:EXECUTED_BY]->(card)",
+    "(card)-[edge:EXECUTED_BY]->(run:Run)",
+    "(card)-[edge:ASSIGNED_TO]->(target:Card)",
+    "(source:Card)-[edge:ASSIGNED_TO]->(card)",
+    "(card)-[edge:DELEGATED_TO]->(target:Card)",
+    "(source:Card)-[edge:DELEGATED_TO]->(card)",
+)
+
 
 def _edge_labels() -> dict[str, str]:
     """Read the one literal IDD relationship vocabulary mechanically."""
@@ -335,6 +353,45 @@ def _delete_age_edge(cursor: Any, project_id: str, deck_id: str, edge: dict[str,
     )
     if len(rows) != 1:
         raise CardDomainError(f"age_edge_delete_failed:{core['id']}")
+
+
+def _delete_age_card(cursor: Any, project_id: str, deck_id: str, card_id: str) -> None:
+    rows = _age_rows(
+        cursor,
+        """
+        MATCH (card:Card {projectId: $projectId, deckId: $deckId, cardId: $cardId})
+        DELETE card
+        RETURN $cardId
+        """,
+        {"projectId": project_id, "deckId": deck_id, "cardId": card_id},
+        "value agtype",
+    )
+    if len(rows) != 1:
+        raise CardDomainError(f"age_card_delete_failed:{card_id}")
+
+
+def _card_has_telemetry_edges(
+    cursor: Any,
+    project_id: str,
+    deck_id: str,
+    card_id: str,
+) -> bool:
+    params = {"projectId": project_id, "deckId": deck_id, "cardId": card_id}
+    for pattern in CARD_TELEMETRY_CARD_EDGE_PATTERNS:
+        rows = _age_rows(
+            cursor,
+            f"""
+            MATCH (card:Card {{projectId: $projectId, deckId: $deckId, cardId: $cardId}})
+            MATCH {pattern}
+            RETURN properties(edge)
+            LIMIT 1
+            """,
+            params,
+            "value agtype",
+        )
+        if rows:
+            return True
+    return False
 
 
 def _load_age_edges(cursor: Any, project_id: str, deck_id: str) -> list[dict[str, Any]]:
@@ -1252,6 +1309,170 @@ def save_deck(
                     int(document.get("version") or 1), revision, saved_at, saved_at,
                     project_id, deck_id,
                 ),
+            )
+        connection.commit()
+    return load_deck(project_id, deck_id)
+
+
+def delete_card(
+    project_ref: str,
+    deck_id: str,
+    card_id: str,
+    *,
+    expected_deck_revision: str,
+    expected_card_revision_id: str,
+    deletion_intent: str,
+) -> dict[str, Any]:
+    """Delete one exact saved Card after explicit optimistic-lock confirmation."""
+    project_ref = _required_text(project_ref, "project_id")
+    deck_id = _required_text(deck_id, "deck_id")
+    card_id = _required_text(card_id, "card_id")
+    expected_deck_revision = _required_text(expected_deck_revision, "expected_deck_revision")
+    expected_card_revision_id = _required_text(
+        expected_card_revision_id,
+        "expected_card_revision_id",
+    )
+    if deletion_intent != "delete-card":
+        raise CardDomainError("card_deletion_intent_invalid")
+    if card_id in PROTECTED_CARD_IDS:
+        raise CardDomainError(f"card_deletion_protected:{card_id}")
+
+    with connect_postgres(autocommit=False) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            project = _resolve_project(cursor, project_ref)
+            project_id = str(project["id"])
+            cursor.execute(
+                """
+                SELECT revision
+                FROM ag_catalog.agent_decks
+                WHERE project_id=%s AND deck_id=%s
+                FOR UPDATE
+                """,
+                (project_id, deck_id),
+            )
+            deck_row = cursor.fetchone()
+            if deck_row is None:
+                raise CardDomainError("deck_not_found")
+            if str(deck_row["revision"]) != expected_deck_revision:
+                raise CardDomainError("deck_conflict")
+
+            cursor.execute(
+                """
+                SELECT current_revision_id
+                FROM ag_catalog.agent_cards
+                WHERE project_id=%s AND deck_id=%s AND card_id=%s
+                FOR UPDATE
+                """,
+                (project_id, deck_id, card_id),
+            )
+            card_row = cursor.fetchone()
+            if card_row is None:
+                raise CardDomainError("card_not_found")
+            if str(card_row["current_revision_id"] or "") != expected_card_revision_id:
+                raise CardDomainError("card_revision_conflict")
+
+            current = _load_deck_with_cursor(cursor, project_id, deck_id, include_internal=True)
+            target = next(
+                (node for node in current["deck"]["nodes"] if node["id"] == card_id),
+                None,
+            )
+            if target is None or str(target.get("_cardRevisionId") or "") != expected_card_revision_id:
+                raise CardDomainError("card_revision_conflict")
+
+            cursor.execute(
+                """
+                SELECT 1
+                FROM ag_catalog.agent_runs AS run
+                JOIN ag_catalog.agent_card_revisions AS revision
+                  ON revision.revision_id=run.target_card_revision_id
+                WHERE revision.project_id=%s AND revision.deck_id=%s AND revision.card_id=%s
+                LIMIT 1
+                """,
+                (project_id, deck_id, card_id),
+            )
+            if cursor.fetchone() is not None:
+                raise CardDomainError("card_deletion_references_present:runs")
+
+            cursor.execute(
+                """
+                SELECT 1 FROM ag_catalog.card_run_traces
+                WHERE project_id=%s AND deck_id=%s AND card_id=%s
+                LIMIT 1
+                """,
+                (project_id, deck_id, card_id),
+            )
+            if cursor.fetchone() is not None:
+                raise CardDomainError("card_deletion_references_present:run_traces")
+
+            cursor.execute(
+                """
+                SELECT 1 FROM ag_catalog.agent_assignments
+                WHERE project_id=%s AND deck_id=%s
+                  AND (sender_card_id=%s OR receiver_card_id=%s)
+                LIMIT 1
+                """,
+                (project_id, deck_id, card_id, card_id),
+            )
+            if cursor.fetchone() is not None:
+                raise CardDomainError("card_deletion_references_present:assignments")
+            if _card_has_telemetry_edges(cursor, project_id, deck_id, card_id):
+                raise CardDomainError("card_deletion_references_present:agentgraph")
+
+            connected_edges = [
+                edge for edge in current["deck"]["edges"]
+                if edge["source"] == card_id or edge["target"] == card_id
+            ]
+            for edge in connected_edges:
+                _delete_age_edge(cursor, project_id, deck_id, edge)
+            _delete_age_card(cursor, project_id, deck_id, card_id)
+
+            cursor.execute(
+                """
+                SELECT ordinal FROM ag_catalog.deck_card_memberships
+                WHERE project_id=%s AND deck_id=%s AND card_id=%s
+                """,
+                (project_id, deck_id, card_id),
+            )
+            membership = cursor.fetchone()
+            if membership is None:
+                raise CardDomainError("deck_integrity_membership_missing")
+            cursor.execute(
+                """
+                UPDATE ag_catalog.agent_cards SET current_revision_id=NULL
+                WHERE project_id=%s AND deck_id=%s AND card_id=%s
+                """,
+                (project_id, deck_id, card_id),
+            )
+            cursor.execute(
+                """
+                DELETE FROM ag_catalog.deck_card_memberships
+                WHERE project_id=%s AND deck_id=%s AND card_id=%s
+                """,
+                (project_id, deck_id, card_id),
+            )
+            cursor.execute(
+                """
+                DELETE FROM ag_catalog.agent_card_revisions
+                WHERE project_id=%s AND deck_id=%s AND card_id=%s
+                """,
+                (project_id, deck_id, card_id),
+            )
+            cursor.execute(
+                """
+                DELETE FROM ag_catalog.agent_cards
+                WHERE project_id=%s AND deck_id=%s AND card_id=%s
+                """,
+                (project_id, deck_id, card_id),
+            )
+            revision = str(uuid4())
+            saved_at = _now()
+            cursor.execute(
+                """
+                UPDATE ag_catalog.agent_decks
+                SET revision=%s, saved_at=%s, updated_at=%s
+                WHERE project_id=%s AND deck_id=%s
+                """,
+                (revision, saved_at, saved_at, project_id, deck_id),
             )
         connection.commit()
     return load_deck(project_id, deck_id)
@@ -2727,6 +2948,21 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
     reconcile_native_terminal = payload.get("reconcileNativeTerminal", False)
     if not isinstance(reconcile_native_terminal, bool):
         raise CardDomainError("run_terminal_reconciliation_invalid")
+    reconcile_persisted_result = payload.get("reconcilePersistedResult", False)
+    if not isinstance(reconcile_persisted_result, bool):
+        raise CardDomainError("run_result_reconciliation_invalid")
+    if reconcile_native_terminal and reconcile_persisted_result:
+        raise CardDomainError("run_reconciliation_mode_conflict")
+    if reconcile_persisted_result:
+        final_result = str(payload.get("finalResult") or "")
+        expected_sha256 = _required_text(
+            payload.get("expectedResultSha256"),
+            "expected_result_sha256",
+        )
+        if state != "completed" or not final_result:
+            raise CardDomainError("run_result_reconciliation_invalid")
+        if not re.fullmatch(r"[a-f0-9]{64}", expected_sha256) or _sha(final_result) != expected_sha256:
+            raise CardDomainError("run_result_reconciliation_hash_mismatch")
     if reconcile_native_terminal:
         native_root_id = _required_text(payload.get("providerThreadRef"), "native_root_id")
         if not re.fullmatch(r"t_[A-Za-z0-9_-]+", native_root_id):
@@ -2742,33 +2978,42 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
         else "state IN ('pending','running')"
     )
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        cursor.execute(
-            f"""
-            UPDATE ag_catalog.agent_runs SET state=%s, finished_at=NOW(),
-              provider_thread_ref=%s, provider_turn_ref=%s::text,
-              error_code=%s, error_summary=%s,
-              provider_input_tokens=%s, provider_output_tokens=%s,
-              provider_cached_tokens=%s, provider_reasoning_tokens=%s,
-              tool_call_count=%s, total_cost_usd=%s,
-              native_phase=%s,
-              native_task_completed_count=%s,
-              native_task_total_count=%s,
-              native_active_worker_count=%s,
-              final_result=%s
-            WHERE run_id=%s AND {terminal_condition}
-            """,
-            (
-                state, payload.get("providerThreadRef"), payload.get("providerTurnRef"),
-                payload.get("errorCode"), payload.get("errorSummary"),
-                payload.get("providerInputTokens"), payload.get("providerOutputTokens"),
-                payload.get("providerCachedTokens"), payload.get("providerReasoningTokens"),
-                payload.get("toolCallCount"), payload.get("totalCostUsd"),
-                payload.get("nativePhase"), payload.get("tasksCompleted"),
-                payload.get("tasksTotal"), payload.get("activeWorkers"),
-                payload.get("finalResult"), run_id,
-                *((payload.get("providerThreadRef"),) if reconcile_native_terminal else ()),
-            ),
-        )
+        if reconcile_persisted_result:
+            cursor.execute(
+                """
+                UPDATE ag_catalog.agent_runs SET final_result=%s
+                WHERE run_id=%s AND state='completed' AND final_result IS NULL
+                """,
+                (payload.get("finalResult"), run_id),
+            )
+        else:
+            cursor.execute(
+                f"""
+                UPDATE ag_catalog.agent_runs SET state=%s, finished_at=NOW(),
+                  provider_thread_ref=%s, provider_turn_ref=%s::text,
+                  error_code=%s, error_summary=%s,
+                  provider_input_tokens=%s, provider_output_tokens=%s,
+                  provider_cached_tokens=%s, provider_reasoning_tokens=%s,
+                  tool_call_count=%s, total_cost_usd=%s,
+                  native_phase=%s,
+                  native_task_completed_count=%s,
+                  native_task_total_count=%s,
+                  native_active_worker_count=%s,
+                  final_result=%s
+                WHERE run_id=%s AND {terminal_condition}
+                """,
+                (
+                    state, payload.get("providerThreadRef"), payload.get("providerTurnRef"),
+                    payload.get("errorCode"), payload.get("errorSummary"),
+                    payload.get("providerInputTokens"), payload.get("providerOutputTokens"),
+                    payload.get("providerCachedTokens"), payload.get("providerReasoningTokens"),
+                    payload.get("toolCallCount"), payload.get("totalCostUsd"),
+                    payload.get("nativePhase"), payload.get("tasksCompleted"),
+                    payload.get("tasksTotal"), payload.get("activeWorkers"),
+                    payload.get("finalResult"), run_id,
+                    *((payload.get("providerThreadRef"),) if reconcile_native_terminal else ()),
+                ),
+            )
         updated = cursor.rowcount == 1
         cursor.execute(
             """
@@ -2790,7 +3035,14 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
         if existing is None:
             raise CardDomainError("run_not_found")
         receipt = dict(existing)
-    telemetry_written = _observe_run_finish(run_id, state, payload) if updated else False
+        if reconcile_persisted_result and str(receipt.get("final_result") or "") != str(payload.get("finalResult")):
+            raise CardDomainError("run_result_conflict")
+    telemetry_written = (
+        _observe_run_result_ready(run_id)
+        if updated and reconcile_persisted_result
+        else _observe_run_finish(run_id, state, payload) if updated
+        else False
+    )
     return {
         "ok": True,
         "runId": run_id,
@@ -2802,6 +3054,24 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
             for key, value in receipt.items()
         },
     }
+
+
+def _observe_run_result_ready(run_id: str) -> bool:
+    try:
+        with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            _age_rows(
+                cursor,
+                """
+                MATCH (run:Run {runId: $runId})
+                SET run.resultReady=true
+                RETURN properties(run)
+                """,
+                {"runId": run_id},
+                "value agtype",
+            )
+        return True
+    except Exception:
+        return False
 
 
 def _observe_run_finish(

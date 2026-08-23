@@ -818,6 +818,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         providerInputTokens,
         providerOutputTokens,
         totalCostUsd,
+        finalResult: output,
       }) as any;
       if (res.destroyed || res.writableEnded) return undefined;
       return res.json({

@@ -20,18 +20,17 @@ function fakeClient(existingChecksum?: string) {
 }
 
 describe('canonical backend migrations', () => {
-  it('applies migration 025 transactionally and records its checksum once', async () => {
+  it('applies every required migration transactionally and records its checksum once', async () => {
     const client = fakeClient();
     const result = await applyBackendMigrations({
       client: client as any,
-      readMigration: async (filename) => {
-        expect(filename).toBe('025_async_kanban_card_runs.sql');
-        return migration;
-      },
+      readMigration: async () => migration,
     });
 
     expect(result).toEqual([
       expect.objectContaining({ filename: '025_async_kanban_card_runs.sql', applied: true }),
+      expect.objectContaining({ filename: '026_explicit_card_deletion.sql', applied: true }),
+      expect.objectContaining({ filename: '027_verify_explicit_card_deletion_grants.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -66,7 +65,7 @@ describe('canonical backend migrations', () => {
       readMigration: async () => migration,
     });
 
-    expect(second).toEqual([{ ...first[0], applied: false }]);
+    expect(second).toEqual(first.map((entry) => ({ ...entry, applied: false })));
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).not.toContain('BEGIN');
     expect(statements.some((sql) => sql.includes('ALTER TABLE ag_catalog.agent_runs'))).toBe(false);

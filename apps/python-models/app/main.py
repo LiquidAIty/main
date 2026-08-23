@@ -18,6 +18,7 @@ from app.python_models.card_domain import (
     begin_run,
     begin_native_hermes_child_run,
     describe_magentic_agents,
+    delete_card,
     finish_run,
     inspect_agentgraph,
     list_active_kanban_runs,
@@ -148,6 +149,34 @@ def domain_deck_write(project_id: str, deck_id: str, payload: dict[str, Any]):
     except CardDomainError as err:
         status = 409 if str(err) == "deck_conflict" else 400
         raise HTTPException(status_code=status, detail=str(err)) from err
+
+
+@app.delete("/domain/decks/{project_id}/{deck_id}/cards/{card_id}")
+def domain_card_delete(
+    project_id: str,
+    deck_id: str,
+    card_id: str,
+    payload: dict[str, Any],
+):
+    try:
+        return {"ok": True, **delete_card(
+            project_id,
+            deck_id,
+            card_id,
+            expected_deck_revision=str(payload.get("expectedDeckRevision") or "").strip(),
+            expected_card_revision_id=str(payload.get("expectedCardRevisionId") or "").strip(),
+            deletion_intent=str(payload.get("deletionIntent") or ""),
+        )}
+    except CardDomainError as err:
+        message = str(err)
+        status = (
+            404 if message in {"project_not_found", "deck_not_found", "card_not_found"}
+            else 403 if message.startswith("card_deletion_protected:")
+            else 409 if message in {"deck_conflict", "card_revision_conflict"}
+                or message.startswith("card_deletion_references_present:")
+            else 400
+        )
+        raise HTTPException(status_code=status, detail=message) from err
 
 
 @app.post("/domain/cards/preview")

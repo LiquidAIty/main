@@ -72,6 +72,138 @@ def test_deck_validation_rejects_duplicate_identities_and_missing_endpoints() ->
         card_domain._validated_deck_collections(missing, "deck-two")
 
 
+def test_explicit_card_deletion_requires_intent_and_rejects_protected_cards() -> None:
+    with pytest.raises(card_domain.CardDomainError, match="card_deletion_intent_invalid"):
+        card_domain.delete_card(
+            "project-one", "deck-one", "accidental",
+            expected_deck_revision="deck-revision",
+            expected_card_revision_id="card-revision",
+            deletion_intent="",
+        )
+    with pytest.raises(card_domain.CardDomainError, match="card_deletion_protected:card_main_chat"):
+        card_domain.delete_card(
+            "project-one", "deck-one", "card_main_chat",
+            expected_deck_revision="deck-revision",
+            expected_card_revision_id="card-revision",
+            deletion_intent="delete-card",
+        )
+
+
+def test_explicit_card_deletion_removes_only_exact_card_and_endpoint_edges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[tuple[str, object]] = []
+    deleted_edges: list[str] = []
+    deleted_cards: list[str] = []
+
+    class Cursor:
+        last_query = ""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, params=None):
+            self.last_query = str(query)
+            statements.append((self.last_query, params))
+
+        def fetchone(self):
+            if "SELECT revision" in self.last_query:
+                return {"revision": "deck-revision"}
+            if "SELECT current_revision_id" in self.last_query:
+                return {"current_revision_id": "card-revision"}
+            if "SELECT ordinal" in self.last_query:
+                return {"ordinal": 6}
+            return None
+
+    class Connection:
+        committed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+        def commit(self):
+            self.committed = True
+
+    connection = Connection()
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: connection)
+    monkeypatch.setattr(card_domain, "_resolve_project", lambda *_args: {"id": "project-one"})
+    monkeypatch.setattr(card_domain, "_load_deck_with_cursor", lambda *_args, **_kwargs: {
+        "deck": {
+            "nodes": [
+                {"id": "keep-one", "_cardRevisionId": "keep-revision"},
+                {"id": "accidental", "_cardRevisionId": "card-revision"},
+                {"id": "keep-two", "_cardRevisionId": "keep-revision-two"},
+            ],
+            "edges": [
+                {"id": "edge-in", "source": "keep-one", "target": "accidental"},
+                {"id": "edge-out", "source": "accidental", "target": "keep-two"},
+                {"id": "edge-keep", "source": "keep-one", "target": "keep-two"},
+            ],
+        },
+    })
+    monkeypatch.setattr(card_domain, "_card_has_telemetry_edges", lambda *_args: False)
+    monkeypatch.setattr(
+        card_domain,
+        "_delete_age_edge",
+        lambda _cursor, _project, _deck, edge: deleted_edges.append(edge["id"]),
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "_delete_age_card",
+        lambda _cursor, _project, _deck, card: deleted_cards.append(card),
+    )
+    monkeypatch.setattr(card_domain, "load_deck", lambda *_args: {
+        "deck": {"nodes": [{"id": "keep-one"}, {"id": "keep-two"}], "edges": [{"id": "edge-keep"}]},
+        "meta": {"deckRevision": "new-revision"},
+    })
+
+    result = card_domain.delete_card(
+        "project-one", "deck-one", "accidental",
+        expected_deck_revision="deck-revision",
+        expected_card_revision_id="card-revision",
+        deletion_intent="delete-card",
+    )
+
+    assert deleted_edges == ["edge-in", "edge-out"]
+    assert deleted_cards == ["accidental"]
+    assert connection.committed is True
+    assert result["meta"]["deckRevision"] == "new-revision"
+    mutation_params = [params for query, params in statements if "DELETE FROM" in query]
+    assert mutation_params == [
+        ("project-one", "deck-one", "accidental"),
+        ("project-one", "deck-one", "accidental"),
+        ("project-one", "deck-one", "accidental"),
+    ]
+
+
+def test_card_deletion_telemetry_check_uses_typed_agentgraph_endpoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[str] = []
+
+    def no_rows(_cursor, query, _params, _column):
+        statements.append(query)
+        return []
+
+    monkeypatch.setattr(card_domain, "_age_rows", no_rows)
+
+    assert card_domain._card_has_telemetry_edges(
+        object(), "project-one", "deck-one", "card-one"
+    ) is False
+    assert len(statements) == len(card_domain.CARD_TELEMETRY_CARD_EDGE_PATTERNS)
+    assert all("->()" not in statement and "MATCH ()-" not in statement for statement in statements)
+    assert all(":Run" in statement or ":Card" in statement for statement in statements)
+
+
 def test_direct_card_targets_keep_only_enabled_top_level_flow_targets() -> None:
     cards = {
         "parent": _agent("parent"),
@@ -706,6 +838,86 @@ def test_finish_run_reconciliation_requires_a_stored_native_result() -> None:
             "state": "completed",
             "providerThreadRef": "t_retained_root",
             "reconcileNativeTerminal": True,
+        })
+
+
+def test_finish_run_reconciles_one_hash_verified_result_without_rewriting_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[tuple[str, object]] = []
+    final_result = "Exact native assistant result."
+    receipt = {
+        "run_id": "run-one",
+        "state": "completed",
+        "finished_at": "original-finished-at",
+        "provider_input_tokens": 123,
+        "final_result": final_result,
+    }
+
+    class Cursor:
+        rowcount = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, params=None):
+            statements.append((str(query), params))
+            if "UPDATE ag_catalog.agent_runs SET final_result" in str(query):
+                self.rowcount = 1
+
+        def fetchone(self):
+            return receipt
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_observe_run_result_ready", lambda *_args: True)
+    monkeypatch.setattr(
+        card_domain,
+        "_observe_run_finish",
+        lambda *_args, **_kwargs: pytest.fail("result recovery rewrote terminal Run telemetry"),
+    )
+
+    result = card_domain.finish_run({
+        "runId": "run-one",
+        "state": "completed",
+        "finalResult": final_result,
+        "expectedResultSha256": card_domain._sha(final_result),
+        "reconcilePersistedResult": True,
+    })
+
+    update_query, update_params = statements[0]
+    assert "SET final_result=%s" in update_query
+    assert "state='completed' AND final_result IS NULL" in update_query
+    assert "finished_at" not in update_query
+    assert "provider_input_tokens" not in update_query
+    assert update_params == (final_result, "run-one")
+    assert result["updated"] is True
+    assert result["telemetryWritten"] is True
+
+
+def test_finish_run_result_reconciliation_rejects_wrong_hash() -> None:
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="run_result_reconciliation_hash_mismatch",
+    ):
+        card_domain.finish_run({
+            "runId": "run-one",
+            "state": "completed",
+            "finalResult": "Exact native result.",
+            "expectedResultSha256": "0" * 64,
+            "reconcilePersistedResult": True,
         })
 
 

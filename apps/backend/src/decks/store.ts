@@ -136,3 +136,27 @@ export async function saveDeckDocument(
   );
   return parseDeckResponse(response);
 }
+
+export async function deleteCardFromDeck(
+  projectId: string,
+  deckId: string,
+  cardId: string,
+  options: {
+    expectedDeckRevision: string;
+    expectedCardRevisionId: string;
+    deletionIntent: 'delete-card';
+  },
+): Promise<{
+  deck: DeckDocument;
+  meta: { deckRevision: string | null; deckSavedAt: string | null };
+}> {
+  const response = await requestPythonRailsJson(
+    `/domain/decks/${encodeURIComponent(projectId)}/${encodeURIComponent(deckId)}/cards/${encodeURIComponent(cardId)}`,
+    {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(options),
+    },
+  );
+  return parseDeckResponse(response);
+}

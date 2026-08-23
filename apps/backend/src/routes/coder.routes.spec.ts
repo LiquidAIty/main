@@ -638,6 +638,14 @@ describe('coder routes', () => {
       expect(JSON.parse(String(beginCall?.[1]?.body || '{}'))).toMatchObject({
         assignment: 'Use saved Main.',
       });
+      const finishCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+        ([endpoint]) => endpoint === '/domain/runs/finish',
+      );
+      expect(JSON.parse(String(finishCall?.[1]?.body || '{}'))).toMatchObject({
+        runId: 'corr-main-1',
+        state: 'completed',
+        finalResult: 'Real assistant reply.',
+      });
     } finally {
       await closeServer(server);
     }
@@ -1019,6 +1027,58 @@ describe('coder routes', () => {
           },
         },
       });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('hydrates one stored Coder result by Card identity without another Run or ACP turn', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.runRecords.clear();
+    chatSessionMocks.startHermesTurn.mockClear();
+    orchestratorMocks.runRecords.set('coder-graph-smoke-20260823-0736', {
+      runId: 'coder-graph-smoke-20260823-0736',
+      correlationId: 'coder-graph-smoke-20260823-0736',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      cardId: 'card_local_coder',
+      runtimeKind: 'hermes',
+      runtimeMode: 'delegate',
+      runtimeProfile: 'coder',
+      state: 'completed',
+      finalResult: 'Exact stored native Coder result.',
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'status',
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'card_local_coder',
+        }),
+      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        result: {
+          runId: 'coder-graph-smoke-20260823-0736',
+          correlationId: 'coder-graph-smoke-20260823-0736',
+          cardId: 'card_local_coder',
+          state: 'completed',
+          resultReady: true,
+          output: 'Exact stored native Coder result.',
+        },
+      });
+      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
+      expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(
+        ([endpoint]) => endpoint === '/domain/runs/begin',
+      )).toBe(false);
+      expect(orchestratorMocks.runRecords).toHaveLength(1);
     } finally {
       await closeServer(server);
     }

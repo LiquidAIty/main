@@ -4,7 +4,11 @@ import path from 'node:path';
 import type { PoolClient } from 'pg';
 import { pool } from './pool';
 
-const REQUIRED_MIGRATIONS = ['025_async_kanban_card_runs.sql'] as const;
+const REQUIRED_MIGRATIONS = [
+  '025_async_kanban_card_runs.sql',
+  '026_explicit_card_deletion.sql',
+  '027_verify_explicit_card_deletion_grants.sql',
+] as const;
 const MIGRATION_LOCK = 'liquidaity-backend-migrations';
 
 type MigrationClient = Pick<PoolClient, 'query' | 'release'>;
