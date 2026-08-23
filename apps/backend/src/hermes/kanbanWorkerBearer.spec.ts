@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { verifyInternalMcpBearerForTest } from '../services/mcp/internalMcpAuth';
+import {
+  verifyInternalMcpBearerForTest,
+  type InternalMcpPrincipal,
+} from '../services/mcp/internalMcpAuth';
 import {
   HermesKanbanWorkerNotCorrelatedError,
   issueHermesKanbanWorkerBearer,
@@ -56,7 +59,7 @@ function resolvedContext(runId = 'card-run-one') {
 describe('native Kanban worker Card bearer', () => {
   it('mints from the existing root-to-Card Run correlation and exact grants', async () => {
     const graph = snapshots();
-    const mint = vi.fn(() => 'b'.repeat(96));
+    const mint = vi.fn((_principal: InternalMcpPrincipal) => 'b'.repeat(96));
     const result = await issueHermesKanbanWorkerBearer({
       identity,
       show: async (taskId) => graph[taskId],
