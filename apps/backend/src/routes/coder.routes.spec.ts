@@ -243,9 +243,12 @@ const orchestratorMocks = vi.hoisted(() => {
         runRecords.set(resolvedRunId, {
           runId: resolvedRunId,
           correlationId: body.correlationId,
-          cardId,
-          state: 'running',
-          startedAt: new Date().toISOString(),
+           cardId,
+           state: 'running',
+           runtimeKind: 'hermes',
+           runtimeMode: mainChat ? 'main' : autoKanban ? 'kanban' : 'delegate',
+           runtimeProfile: mainChat ? 'default' : autoKanban ? 'liquidaity-hermes-steward' : 'coder',
+           startedAt: new Date().toISOString(),
         });
       }
       return {
@@ -268,7 +271,9 @@ const orchestratorMocks = vi.hoisted(() => {
         hermesTransport: {
           idf: {
             systemPrompt: coderCard ? 'Saved Coder prompt' : 'Saved prompt',
-            graphSeed: coderCard ? '## Resolved CodeGraph\n- pkg.materialize_idf' : '',
+            graphSeed: autoKanban
+              ? '## Resolved ThinkGraph\nNative bounded context for think-root-1.'
+              : coderCard ? '## Resolved CodeGraph\n- pkg.materialize_idf' : '',
             message: String(mainChat ? body.message || '' : body.assignment || ''),
             runtime: cardId === 'card_main_chat'
               ? { kind: 'hermes', mode: 'main', profile: 'default' }
@@ -702,7 +707,10 @@ describe('coder routes', () => {
           'Saved Card system instructions:',
           'Saved prompt',
           '',
-          'Mission:',
+          'Transient Card task and resolved graph context:',
+          '## Resolved ThinkGraph',
+          'Native bounded context for think-root-1.',
+          '',
           'Prepare one bounded documentation result.',
           '',
           'Ordered native references:',
@@ -1027,35 +1035,22 @@ describe('coder routes', () => {
     }
   });
 
-  it('cancels only the disconnected configured Hermes turn, finalizes once, and ignores late completion', async () => {
+  it('keeps a configured Hermes turn durable after request disconnect and records late native completion', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.runRecords.clear();
+    orchestratorMocks.requestFingerprints.clear();
+    chatSessionMocks.startHermesTurn.mockClear();
     let resolveTurn: (value: any) => void = () => undefined;
     const done = new Promise<any>((resolve) => {
       resolveTurn = resolve;
     });
     const cancel = vi.fn();
-    const otherCancel = vi.fn();
     chatSessionMocks.startHermesTurn.mockResolvedValueOnce({
       done,
       cancel,
       answer: vi.fn(),
       resolved: {
         cardId: 'card_local_coder',
-        provider: 'openai',
-        modelKey: 'gpt-5.6-luna',
-        providerModelId: 'gpt-5.6-luna',
-      },
-    });
-    chatSessionMocks.startHermesTurn.mockResolvedValueOnce({
-      done: Promise.resolve({
-        finalText: 'other card completed',
-        usage: chatSessionMocks.usage,
-        transport: {},
-      }),
-      cancel: otherCancel,
-      answer: vi.fn(),
-      resolved: {
-        cardId: 'card_hermes_steward',
         provider: 'openai',
         modelKey: 'gpt-5.6-luna',
         providerModelId: 'gpt-5.6-luna',
@@ -1079,34 +1074,9 @@ describe('coder routes', () => {
         }),
       }).catch((error) => error);
       await vi.waitFor(() => expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1));
-      const otherResponse = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: 'project-1',
-          deckId: 'deck_builder',
-          cardId: 'card_local_coder',
-          correlationId: 'corr-helper-completed',
-          conversationId: 'helper',
-          input: 'Prepare one bounded note.',
-          action: 'execute',
-        }),
-      });
-      expect(otherResponse.status).toBe(200);
       controller.abort();
       await request;
-      await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
-      expect(otherCancel).not.toHaveBeenCalled();
-      await vi.waitFor(() => {
-        const finishCalls = orchestratorMocks.requestPythonRailsJson.mock.calls
-          .filter(([endpoint]) => endpoint === '/domain/runs/finish')
-          .map(([, init]) => JSON.parse(String(init?.body || '{}')))
-          .filter((body) => body.runId === 'corr-coder-cancelled');
-        expect(finishCalls).toEqual([{
-          runId: 'corr-coder-cancelled',
-          state: 'cancelled',
-        }]);
-      });
+      expect(cancel).not.toHaveBeenCalled();
       resolveTurn({
         finalText: 'late coder completion',
         usage: chatSessionMocks.usage,
@@ -1118,7 +1088,67 @@ describe('coder routes', () => {
           .map(([, init]) => JSON.parse(String(init?.body || '{}')))
           .filter((body) => body.runId === 'corr-coder-cancelled');
         expect(finishCalls).toHaveLength(1);
-        expect(finishCalls[0]?.state).toBe('cancelled');
+        expect(finishCalls[0]?.state).toBe('completed');
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('explicitly stops only the exact configured Hermes Run and rereads cancelled state', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.runRecords.clear();
+    orchestratorMocks.requestFingerprints.clear();
+    chatSessionMocks.startHermesTurn.mockClear();
+    let rejectTurn: (error: Error) => void = () => undefined;
+    const done = new Promise<any>((_resolve, reject) => {
+      rejectTurn = reject;
+    });
+    const cancel = vi.fn(() => rejectTurn(new Error('native_turn_cancelled')));
+    chatSessionMocks.startHermesTurn.mockResolvedValueOnce({
+      done,
+      cancel,
+      answer: vi.fn(),
+      resolved: {
+        cardId: 'card_local_coder', provider: 'openai',
+        modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
+      },
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const request = fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'execute', projectId: 'project-1', deckId: 'deck_builder',
+          cardId: 'card_local_coder', correlationId: 'corr-coder-stopped',
+          conversationId: 'main', input: 'Inspect one symbol.',
+        }),
+      });
+      await vi.waitFor(() => expect(chatSessionMocks.startHermesTurn).toHaveBeenCalled());
+      const stoppedResponse = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'stop', projectId: 'project-1', deckId: 'deck_builder',
+          cardId: 'card_local_coder', runId: 'corr-coder-stopped',
+        }),
+      });
+      const stopped = await stoppedResponse.json() as any;
+      expect(stoppedResponse.status, JSON.stringify(stopped)).toBe(200);
+      expect(stopped.result).toMatchObject({
+        runId: 'corr-coder-stopped', cardId: 'card_local_coder',
+        state: 'cancelled', status: 'cancelled',
+      });
+      expect(cancel).toHaveBeenCalledOnce();
+      await request;
+      const finishCalls = orchestratorMocks.requestPythonRailsJson.mock.calls
+        .filter(([endpoint]) => endpoint === '/domain/runs/finish')
+        .map(([, init]) => JSON.parse(String(init?.body || '{}')))
+        .filter((body) => body.runId === 'corr-coder-stopped');
+      expect(finishCalls).toHaveLength(1);
+      expect(finishCalls[0]).toMatchObject({
+        state: 'cancelled', nativePhase: 'cancelled', errorCode: 'configured_card_run_stopped',
       });
     } finally {
       await closeServer(server);
@@ -1673,6 +1703,94 @@ describe('coder routes', () => {
         expect(body).toContain('event: end');
         expect(body).not.toContain('late grpc reset');
         expect(chatSessionMocks.lastCancel).not.toHaveBeenCalled();
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('keeps Main running after the browser disconnects and persists native completion', async () => {
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      let resolveTurn: (value: any) => void = () => undefined;
+      const done = new Promise<any>((resolve) => {
+        resolveTurn = resolve;
+      });
+      const cancel = vi.fn();
+      chatSessionMocks.startHermesTurn.mockResolvedValueOnce({
+        done,
+        cancel,
+        answer: vi.fn(),
+        resolved: {
+          cardId: 'card_main_chat', provider: 'openai',
+          modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
+        },
+      });
+      const controller = new AbortController();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'durable', message: 'hello' }),
+        });
+        await vi.waitFor(() => expect(chatSessionMocks.startHermesTurn).toHaveBeenCalled());
+        controller.abort();
+        resolveTurn({ finalText: 'Completed after disconnect.', usage: chatSessionMocks.usage, transport: {} });
+        await vi.waitFor(() => {
+          const finish = orchestratorMocks.requestPythonRailsJson.mock.calls
+            .filter(([endpoint]) => endpoint === '/domain/runs/finish')
+            .map(([, init]) => JSON.parse(String(init?.body || '{}')))
+            .find((body) => body.state === 'completed');
+          expect(finish).toBeTruthy();
+        });
+        expect(response.status).toBe(200);
+        expect(cancel).not.toHaveBeenCalled();
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('stops the exact active Main turn only through the explicit Stop route', async () => {
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      let rejectTurn: (error: Error) => void = () => undefined;
+      const done = new Promise<any>((_resolve, reject) => {
+        rejectTurn = reject;
+      });
+      const cancel = vi.fn(() => rejectTurn(new Error('native_turn_cancelled')));
+      chatSessionMocks.startHermesTurn.mockResolvedValueOnce({
+        done,
+        cancel,
+        answer: vi.fn(),
+        resolved: {
+          cardId: 'card_main_chat', provider: 'openai',
+          modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
+        },
+      });
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const chatResponse = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'stop-main', message: 'hello' }),
+        });
+        await vi.waitFor(() => expect(chatSessionMocks.startHermesTurn).toHaveBeenCalled());
+        const stopResponse = await fetch(`${baseUrl}/main/session/stop`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', deckId: 'deck_builder', conversationId: 'stop-main' }),
+        });
+        const stopped = await stopResponse.json() as any;
+        expect(stopResponse.status, JSON.stringify(stopped)).toBe(200);
+        expect(stopped).toMatchObject({ ok: true, state: 'cancelled' });
+        expect(cancel).toHaveBeenCalledOnce();
+        const stream = await chatResponse.text();
+        expect(stream).toContain('harness_turn_cancelled');
+        expect(stream).toContain('event: end');
+        const cancelledFinishes = orchestratorMocks.requestPythonRailsJson.mock.calls
+          .filter(([endpoint]) => endpoint === '/domain/runs/finish')
+          .map(([, init]) => JSON.parse(String(init?.body || '{}')))
+          .filter((body) => body.state === 'cancelled');
+        expect(cancelledFinishes).toHaveLength(1);
       } finally {
         await closeServer(server);
       }

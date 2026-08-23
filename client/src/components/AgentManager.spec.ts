@@ -142,14 +142,14 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain("data-testid=\"agent-manager-run\"");
     expect(source).toContain('Save Card Version');
     expect(source).toContain("data-testid=\"agent-manager-clear-invocation\"");
-    expect(source).toContain('Prepare / Refresh');
+    expect(source).not.toContain('Prepare / Refresh');
     expect(source).toContain("{runBusy ? 'Running…' : 'Run'}");
     expect(source).not.toContain('agent-manager-save-idf');
     expect(source).not.toContain('agent-manager-export-idf');
     expect(source).not.toContain('Run Test');
   });
 
-  it('previews the exact Python materialization without assembling it in TypeScript', () => {
+  it('prepares the exact Python materialization without dumping raw transport on the Card', () => {
     const filePath = path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx');
     const source = readFileSync(filePath, 'utf8');
     const pageSource = readFileSync(
@@ -159,9 +159,28 @@ describe('AgentManager active builder config', () => {
 
     expect(source).toContain('Dynamic context / input');
     expect(source).toContain('Python combines this input with the saved Card');
-    expect(source).toContain('value={JSON.stringify(runResult.invocation.idf, null, 2)}');
-    expect(source).toContain('readOnly');
+    expect(source).not.toContain('Exact in-memory IDF');
+    expect(source).not.toContain('Run telemetry receipt');
+    expect(source).not.toContain('aria-label="Exact temporary IDF"');
     expect(pageSource).toContain('invocation: result.invocation || null');
+  });
+
+  it('uses native learning and tool controls instead of passive or Card-side projections', () => {
+    const source = readFileSync(
+      path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
+      'utf8',
+    );
+    const nativeClient = readFileSync(
+      path.resolve(process.cwd(), 'client/src/features/agentbuilder/nativeHermesCard.ts'),
+      'utf8',
+    );
+
+    expect(source).toContain('native-learning-graph');
+    expect(source).toContain('openNativeLearningNode(node.id)');
+    expect(source).toContain('applyNativeLearningEdit()');
+    expect(nativeClient).toContain('/learning/detail');
+    expect(source).not.toContain('Built-in tools: {nativeHermesState.binding.nativeTools');
+    expect(source).not.toContain('Detailed graph, Learn, and mutation controls are intentionally deferred');
   });
 
   it('places one staged Coder or Mag One mission and exact graph data in transient Card state', () => {
@@ -266,7 +285,8 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain('Apply Skills');
     expect(source).toContain('Apply Toolsets');
     expect(source).toContain('Apply Connections');
-    expect(source).toContain('Detailed graph, Learn, and mutation controls are intentionally deferred');
+    expect(source).toContain('native-learning-graph');
+    expect(source).not.toContain('Detailed graph, Learn, and mutation controls are intentionally deferred');
     expect(source).not.toContain('Profile selector');
     expect(source).not.toContain('HERMES_HOME');
   });

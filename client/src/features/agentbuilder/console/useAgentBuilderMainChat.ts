@@ -7,6 +7,7 @@ import {
   loadSessionHistory,
   type NativeSessionEvent,
   SessionStreamError,
+  stopSession,
   streamSession,
 } from './mainSessionClient';
 
@@ -89,7 +90,7 @@ export type MainChatTurnFinished = {
   projectId: string;
   conversationId: string;
   runId: string;
-  status: 'completed' | 'failed';
+  status: 'completed' | 'failed' | 'cancelled';
   observedAt: string;
 };
 
@@ -430,14 +431,19 @@ export default function useAgentBuilderMainChat({
         });
         return completedText || assistantText.trim();
       } catch (error: unknown) {
+        const cancelled = error instanceof SessionStreamError && error.code === 'harness_turn_cancelled';
         notifyObserver(onTurnFinished, {
           projectId: canvasProjectId,
           conversationId,
           runId,
-          status: 'failed',
+          status: cancelled ? 'cancelled' : 'failed',
           observedAt: new Date().toISOString(),
         });
         if (error instanceof SessionStreamError) {
+          if (cancelled) {
+            appendAssistantText('Chat run stopped.');
+            throw error;
+          }
           const correlation = error.correlationId
             ? ` Correlation: ${error.correlationId}.`
             : '';
@@ -476,11 +482,17 @@ export default function useAgentBuilderMainChat({
     [requestMainText],
   );
 
+  const stopMainTurn = useCallback(async () => {
+    if (!nativeSessionBusy || !canvasProjectId) return;
+    await stopSession({ projectId: canvasProjectId, deckId, conversationId });
+  }, [canvasProjectId, conversationId, deckId, nativeSessionBusy]);
+
   return {
     handleNativeSend,
     messages,
     nativeSessionBusy,
     requestMainText,
     setMessages,
+    stopMainTurn,
   };
 }

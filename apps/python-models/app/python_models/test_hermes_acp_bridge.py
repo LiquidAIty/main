@@ -19,9 +19,6 @@ def test_native_kanban_extensions_create_rejoin_and_read_back(monkeypatch, tmp_p
         "assignee": "liquidaity-hermes-steward",
         "createdBy": "card_hermes_steward",
         "idempotencyKey": "mission-identity",
-        "model": "gpt-5.6-luna",
-        "provider": "openai-codex",
-        "skills": [],
     }
 
     async def exercise():
@@ -48,8 +45,8 @@ def test_native_kanban_extensions_create_rejoin_and_read_back(monkeypatch, tmp_p
     assert second["rejoined"] is True
     assert found == {"id": first["id"], "duplicateIds": []}
     assert snapshot["task"]["status"] == "triage"
-    assert snapshot["task"]["model_override"] == "gpt-5.6-luna"
-    assert snapshot["task"]["provider_override"] == "openai-codex"
+    assert snapshot["task"]["model_override"] is None
+    assert snapshot["task"]["provider_override"] is None
     assert snapshot["children"] == []
     assert snapshot["runs"] == []
     assert [event["kind"] for event in snapshot["events"]] == ["created"]
@@ -59,6 +56,7 @@ def test_native_profile_and_mcp_extensions_use_managers_and_redact_transport_val
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent))
     bridge = importlib.import_module("hermes_acp_bridge")
     calls = []
+    profile_calls = []
 
     def native_call(method, params):
         calls.append((method, params))
@@ -95,7 +93,27 @@ def test_native_profile_and_mcp_extensions_use_managers_and_redact_transport_val
             }
         raise AssertionError(method)
 
+    def native_profile_call(profile, method, params):
+        profile_calls.append((profile, method, params))
+        if method == "learning.frames":
+            return {
+                "count": 2,
+                "summary": "One memory and one skill",
+                "buckets": [{
+                    "label": "Today",
+                    "date": "2026-08-23",
+                    "nodes": [{
+                        "id": "skill:research",
+                        "label": "research",
+                        "fullLabel": "Research skill",
+                        "meta": "used 2 times",
+                    }],
+                }],
+            }
+        raise AssertionError(method)
+
     monkeypatch.setattr(bridge, "_native_manager_call", native_call)
+    monkeypatch.setattr(bridge, "_native_profile_scope_call", native_profile_call)
     agent = bridge.LiquidAItyHermesACPAgent.__new__(bridge.LiquidAItyHermesACPAgent)
 
     async def exercise():
@@ -116,12 +134,16 @@ def test_native_profile_and_mcp_extensions_use_managers_and_redact_transport_val
         "toolFilter": ["main.context"],
     }
     assert tested["ok"] is False
+    assert read["profile"]["learning"]["buckets"][0]["nodes"][0]["id"] == "skill:research"
     assert "super-secret" not in tested["error"]
     assert "also-secret" not in tested["error"]
     assert calls == [
         ("profiles.describe", {"name": "liquidaity-main"}),
         ("mcp.servers.list", {"profile": "liquidaity-main"}),
         ("mcp.servers.test", {"profile": "liquidaity-main", "name": "liquidaity"}),
+    ]
+    assert profile_calls == [
+        ("liquidaity-main", "learning.frames", {"cols": 60, "rows": 18, "frames": 2}),
     ]
 
 
@@ -131,7 +153,8 @@ def test_native_profile_extension_has_no_card_to_profile_write_method(monkeypatc
     source = inspect.getsource(bridge.LiquidAItyHermesACPAgent.ext_method)
 
     assert 'method == "profile/apply"' not in source
-    assert '"profiles.configure"' not in source
+    assert 'method == "native/apply"' in source
+    assert '"profiles.configure"' in source
 
 
 def test_native_profile_readback_through_real_managers_is_read_only(monkeypatch, tmp_path):

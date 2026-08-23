@@ -2,8 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentCardInstance, DeckDocument } from '../types';
 import {
-  filterEffectiveHermesTools,
-  HERMES_CARD_FIELD_MAP,
   applyHermesNativeOperation,
   hydrateHermesCardProfile,
   projectHermesCardBinding,
@@ -62,33 +60,11 @@ function native() {
 }
 
 describe('Hermes Card native profile binding', () => {
-  it('classifies Card-owned and native-owned fields without synchronization', () => {
-    expect(HERMES_CARD_FIELD_MAP.find((row) => row.field === 'runtime.profile')).toMatchObject({
-      classification: 'binding',
-      nativeTarget: 'existing profile name',
-    });
-    for (const field of ['Card Prompt', 'skills', 'toolsets', 'mcpConnectionIds']) {
-      expect(HERMES_CARD_FIELD_MAP.find((row) => row.field === field)).toMatchObject({
-        classification: 'liquidaity-owned',
-        nativeTarget: null,
-      });
-    }
-    for (const field of ['profile Role/description', 'Soul', 'profile provider/model']) {
-      expect(HERMES_CARD_FIELD_MAP.find((row) => row.field === field)).toMatchObject({
-        classification: 'native-editable',
-        owner: 'native-hermes-profile',
-      });
-    }
-  });
-
-  it('projects only the existing profile binding and Card grant ceiling', () => {
+  it('projects only the existing profile binding', () => {
     const binding = projectHermesCardBinding(card, deck);
     expect(binding).toEqual({
       profile: 'liquidaity-main',
       mode: 'main',
-      cardGrants: ['knowgraph.search', 'main.context'],
-      nativeTools: ['Agent'],
-      workspace: 'C:/Projects/LiquidAIty/main',
     });
     expect(JSON.stringify(binding)).not.toMatch(/prompt|role|soul|description|model|skills|toolsets|mcpConnectionIds/i);
   });
@@ -146,10 +122,4 @@ describe('Hermes Card native profile binding', () => {
     expect(result.native.soul).toBe('Native SOUL instructions');
   });
 
-  it('lets native discovery and the Card grant ceiling only reduce effective tools', () => {
-    expect(filterEffectiveHermesTools(
-      ['main.context', 'knowgraph.search', 'dangerous.write'],
-      ['main.context', 'not.discovered'],
-    )).toEqual(['main.context']);
-  });
 });

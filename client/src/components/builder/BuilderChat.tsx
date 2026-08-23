@@ -30,6 +30,7 @@ export default function BuilderChat({
   knowledgeProjectId,
   colors,
   busy = false,
+  onStop,
 }: {
   messages: { role: "assistant" | "user"; text: string }[];
   onSend: (t: string) => void;
@@ -37,6 +38,7 @@ export default function BuilderChat({
   colors: BuilderChatColors;
   /** The real SSE turn is still open; prevent a second send and state it plainly. */
   busy?: boolean;
+  onStop?: () => void;
 }) {
   const [v, setV] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
@@ -57,7 +59,7 @@ export default function BuilderChat({
   };
 
   return (
-    <div className="h-full flex flex-col" style={{ gap: 12 }}>
+    <div data-testid="builder-chat-panel" className="h-full flex flex-col" style={{ gap: 12 }}>
       <style>
         {`
           .builder-chat-scroll {
@@ -157,6 +159,7 @@ export default function BuilderChat({
             appearance="chat-inline"
           />
           <input
+            data-testid="builder-chat-input"
             value={v}
             onChange={(e) => setV(e.target.value)}
             disabled={busy}
@@ -176,19 +179,21 @@ export default function BuilderChat({
             }}
           />
           {busy ? (
-            <span
-              data-testid="builder-chat-working"
-              role="status"
-              aria-live="polite"
-              style={{
-                color: colors.neutral,
-                fontSize: 12,
-                padding: "0 4px",
-                whiteSpace: "nowrap",
-              }}
-            >
-              Working…
-            </span>
+            <>
+              <span
+                data-testid="builder-chat-working"
+                role="status"
+                aria-live="polite"
+                style={{ color: colors.neutral, fontSize: 12, padding: "0 4px", whiteSpace: "nowrap" }}
+              >
+                Working…
+              </span>
+              {onStop ? (
+                <button type="button" data-testid="builder-chat-stop" onClick={onStop}>
+                  Stop
+                </button>
+              ) : null}
+            </>
           ) : null}
           <button
             onClick={send}

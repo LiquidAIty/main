@@ -1,49 +1,6 @@
 import type { AgentCardInstance, DeckDocument } from '../types';
 import { requestHermesExtension } from './mainAdapter';
 
-export type HermesCardFieldOwner =
-  | 'native-hermes-profile'
-  | 'native-hermes-runtime'
-  | 'liquidaity-card'
-  | 'liquidaity-run';
-
-export type HermesCardFieldClassification = {
-  field: string;
-  classification: 'binding' | 'liquidaity-owned' | 'native-editable' | 'native-read-only' | 'run-only';
-  owner: HermesCardFieldOwner;
-  nativeTarget: string | null;
-  note: string;
-};
-
-export const HERMES_CARD_FIELD_MAP: readonly HermesCardFieldClassification[] = [
-  { field: 'cardId/revision', classification: 'liquidaity-owned', owner: 'liquidaity-card', nativeTarget: null, note: 'Durable Card identity never derives from a profile.' },
-  { field: 'title/subtitle', classification: 'liquidaity-owned', owner: 'liquidaity-card', nativeTarget: null, note: 'LiquidAIty presentation only.' },
-  { field: 'runtime.profile', classification: 'binding', owner: 'liquidaity-card', nativeTarget: 'existing profile name', note: 'Binds the Card to one existing profile without configuring it.' },
-  { field: 'runtime.mode', classification: 'binding', owner: 'liquidaity-card', nativeTarget: 'native invocation entrance', note: 'Selects main, delegate, or kanban for this Card.' },
-  { field: 'Card Prompt', classification: 'liquidaity-owned', owner: 'liquidaity-card', nativeTarget: null, note: 'Reusable Card-to-Card contract only; never SOUL.md.' },
-  { field: 'profile Role/description', classification: 'native-editable', owner: 'native-hermes-profile', nativeTarget: 'profiles.configure(description)', note: 'Explicit native Apply only; never saved in the Card.' },
-  { field: 'Soul', classification: 'native-editable', owner: 'native-hermes-profile', nativeTarget: 'profiles.configure(soul)', note: 'Explicit native Apply replaces the profile SOUL.md through Hermes.' },
-  { field: 'dynamicInput', classification: 'run-only', owner: 'liquidaity-run', nativeTarget: 'ACP prompt', note: 'One transient Task; never persisted into native profile state.' },
-  { field: 'outputContract', classification: 'liquidaity-owned', owner: 'liquidaity-card', nativeTarget: null, note: 'LiquidAIty result and presentation contract.' },
-  { field: 'profile provider/model', classification: 'native-editable', owner: 'native-hermes-profile', nativeTarget: 'profiles.configure(provider, model)', note: 'Explicit native Apply only; Card save never writes native model state.' },
-  { field: 'provider authentication', classification: 'native-read-only', owner: 'native-hermes-profile', nativeTarget: 'native credential managers', note: 'Status only; credentials never enter Card JSON.' },
-  { field: 'reasoning/temperature/token/turn limits', classification: 'run-only', owner: 'liquidaity-run', nativeTarget: 'transient invocation options', note: 'Never written to profile files.' },
-  { field: 'skills', classification: 'liquidaity-owned', owner: 'liquidaity-card', nativeTarget: null, note: 'Card invocation grant IDs only; native skill state remains read-only.' },
-  { field: 'toolsets', classification: 'liquidaity-owned', owner: 'liquidaity-card', nativeTarget: null, note: 'Card invocation grant IDs only; native toolsets remain read-only.' },
-  { field: 'nativeTools', classification: 'liquidaity-owned', owner: 'liquidaity-card', nativeTarget: null, note: 'Card grant ceiling only.' },
-  { field: 'mcpConnectionIds', classification: 'liquidaity-owned', owner: 'liquidaity-card', nativeTarget: null, note: 'Card authorization references only; native MCP configuration remains read-only.' },
-  { field: 'tools/Card grants', classification: 'liquidaity-owned', owner: 'liquidaity-card', nativeTarget: null, note: 'Authorization ceiling; native discovery may only reduce it.' },
-  { field: 'knowledge/parentGraphId/data anchors', classification: 'run-only', owner: 'liquidaity-run', nativeTarget: 'bounded invocation context', note: 'Native IDs are resolved for one Task and never copied into Hermes memory.' },
-  { field: 'native memory/learned skill content', classification: 'native-editable', owner: 'native-hermes-profile', nativeTarget: 'learning.detail/edit', note: 'Explicit native node edit through Hermes; never copied into Card state.' },
-  { field: 'native skill enablement', classification: 'native-editable', owner: 'native-hermes-profile', nativeTarget: 'profiles.configure(disabled_skills)', note: 'Replace the native disabled set through one explicit Apply.' },
-  { field: 'native toolset enablement', classification: 'native-editable', owner: 'native-hermes-profile', nativeTarget: 'profiles.configure(enabled_toolsets)', note: 'Replace the native enabled set through one explicit Apply.' },
-  { field: 'native MCP enablement', classification: 'native-editable', owner: 'native-hermes-profile', nativeTarget: 'profiles.configure(enabled_mcp_servers)', note: 'Replace native connection enablement through one explicit Apply; filters and secrets remain native read-only.' },
-  { field: 'workspace', classification: 'run-only', owner: 'native-hermes-runtime', nativeTarget: 'launch cwd', note: 'Supplied at launch; not profile identity.' },
-  { field: 'wires', classification: 'liquidaity-owned', owner: 'liquidaity-card', nativeTarget: null, note: 'Saved Card invocation authority.' },
-  { field: 'Card Run', classification: 'liquidaity-owned', owner: 'liquidaity-run', nativeTarget: 'native execution correlation', note: 'One durable product Run correlated to one native execution.' },
-  { field: 'Kanban children/workers', classification: 'native-read-only', owner: 'native-hermes-runtime', nativeTarget: 'native Kanban task graph', note: 'Native runtime state; never permanent Card identity.' },
-] as const;
-
 export type NativeHermesMcpServer = {
   name: string;
   transport: string;
@@ -76,13 +33,9 @@ export type NativeHermesProfileState = {
 export type HermesCardProfileBinding = {
   profile: string;
   mode: 'main' | 'delegate' | 'kanban';
-  cardGrants: string[];
-  nativeTools: string[];
-  workspace: string | null;
 };
 
 export type HermesCardProfileReadback = {
-  fieldMap: readonly HermesCardFieldClassification[];
   binding: HermesCardProfileBinding;
   native: NativeHermesProfileState;
   nativeApply: 'explicit';
@@ -108,15 +61,12 @@ function strings(value: unknown): string[] {
 
 export function projectHermesCardBinding(
   card: AgentCardInstance,
-  deck: Pick<DeckDocument, 'workspaceRoot'>,
+  _deck: Pick<DeckDocument, 'workspaceRoot'>,
 ): HermesCardProfileBinding {
   if (card.runtime.kind !== 'hermes') throw new Error('card_runtime_not_hermes');
   return {
     profile: String(card.runtime.profile || '').trim(),
     mode: card.runtime.mode,
-    cardGrants: strings(card.runtimeOptions?.tools || card.tools),
-    nativeTools: strings(card.runtimeOptions?.nativeTools),
-    workspace: String(deck.workspaceRoot || '').trim() || null,
   };
 }
 
@@ -171,7 +121,6 @@ function readback(
   value: unknown,
 ): HermesCardProfileReadback {
   return {
-    fieldMap: HERMES_CARD_FIELD_MAP,
     binding,
     native: normalizeNative(value),
     nativeApply: 'explicit',
@@ -202,9 +151,4 @@ export async function applyHermesNativeOperation(
     ...operation,
   });
   return readback(binding, native);
-}
-
-export function filterEffectiveHermesTools(discovered: string[], cardGrants: string[]): string[] {
-  const granted = new Set(strings(cardGrants));
-  return strings(discovered).filter((name) => granted.has(name));
 }

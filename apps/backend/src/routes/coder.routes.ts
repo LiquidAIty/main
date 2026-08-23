@@ -324,8 +324,8 @@ async function startPreparedHermesTransport(
       'Saved Card system instructions:',
       String(args.prepared?.hermesTransport?.idf?.systemPrompt || '').trim(),
       '',
-      'Mission:',
-      String(args.prepared?.hermesTransport?.idf?.message || '').trim(),
+      'Transient Card task and resolved graph context:',
+      turnArgs.message,
       ...(anchors.length > 0
         ? ['', 'Ordered native references:', ...anchors.map((reference: { authority: string; nativeId: string }) => (
             `- ${reference.authority}:${reference.nativeId}`
@@ -345,6 +345,9 @@ type ConfiguredCardRunStatus = {
   runId: string;
   correlationId: string;
   cardId: string;
+  runtimeKind: string;
+  runtimeMode: string;
+  runtimeProfile: string;
   state: string;
   status: string;
   nativeRootId: string | null;
@@ -366,6 +369,15 @@ type ConfiguredCardRunStatus = {
   errorCode: string | null;
   errorSummary: string | null;
 };
+
+type ActiveConfiguredCardRun = {
+  projectId: string;
+  deckId: string;
+  cardId: string;
+  cancel: () => void | Promise<void>;
+};
+
+const activeConfiguredCardRuns = new Map<string, ActiveConfiguredCardRun>();
 
 function nonNegativeNumber(value: unknown): number {
   const number = Number(value);
@@ -441,11 +453,16 @@ async function readConfiguredCardRunStatus(args: {
     runId,
     correlationId: String(run.correlationId || ''),
     cardId: String(run.cardId || ''),
+    runtimeKind: String(run.runtimeKind || ''),
+    runtimeMode: String(run.runtimeMode || ''),
+    runtimeProfile: String(run.runtimeProfile || ''),
     state,
     status: nativeStatus || (state === 'completed'
       ? 'complete'
-      : state === 'cancelled' || state === 'failed'
-        ? 'failed'
+      : state === 'cancelled'
+        ? 'cancelled'
+        : state === 'failed'
+          ? 'failed'
         : state === 'blocked'
           ? 'blocked'
           : state === 'pending'
@@ -480,7 +497,7 @@ async function readConfiguredCardRunStatus(args: {
 router.post('/mcp-bridge/run_configured_card', async (req, res) => {
   const body = req.body || {};
   const action = body.action;
-  if (action !== 'materialize' && action !== 'execute' && action !== 'status') {
+  if (action !== 'materialize' && action !== 'execute' && action !== 'status' && action !== 'stop') {
     return res.status(400).json({ ok: false, error: 'configured_card_action_invalid' });
   }
   const projectId = String(body.projectId || '').trim();
@@ -516,6 +533,41 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       return res.status(502).json({
         ok: false,
         error: error instanceof Error ? error.message : 'card_run_status_failed',
+      });
+    }
+  }
+
+  if (action === 'stop') {
+    const runId = String(body.runId || '').trim();
+    if (!runId || !cardId) {
+      return res.status(400).json({ ok: false, error: 'card_run_stop_args_incomplete' });
+    }
+    try {
+      const status = await readConfiguredCardRunStatus({ projectId, deckId, runId });
+      if (!status) return res.status(404).json({ ok: false, error: 'card_run_not_found' });
+      if (status.cardId !== cardId) {
+        return res.status(409).json({ ok: false, error: 'card_run_stop_identity_mismatch' });
+      }
+      if (['completed', 'failed', 'cancelled', 'blocked'].includes(status.state)) {
+        return res.json({ ok: true, result: status });
+      }
+      if (status.runtimeKind === 'hermes' && status.runtimeMode === 'kanban') {
+        return res.status(409).json({ ok: false, error: 'hermes_kanban_native_reclaim_not_wired' });
+      }
+      const active = activeConfiguredCardRuns.get(runId);
+      if (active) {
+        if (active.projectId !== projectId || active.deckId !== deckId || active.cardId !== cardId) {
+          return res.status(409).json({ ok: false, error: 'card_run_stop_identity_mismatch' });
+        }
+        await active.cancel();
+      } else {
+        return res.status(409).json({ ok: false, error: 'configured_card_run_not_locally_cancellable' });
+      }
+      return res.status(202).json({ ok: true, result: { ...status, status: 'stopping' } });
+    } catch (error) {
+      return res.status(502).json({
+        ok: false,
+        error: error instanceof Error ? error.message : 'card_run_stop_failed',
       });
     }
   }
@@ -715,7 +767,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     }
 
     let hermesHandle: HermesTurnHandle | null = null;
-    let clientDisconnected = false;
+    let activeRun: ActiveConfiguredCardRun | null = null;
     let runFinalized = false;
     const finishRun = async (
       state: 'completed' | 'failed' | 'cancelled',
@@ -729,25 +781,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         body: JSON.stringify({ runId, state, ...fields }),
       });
     };
-    const cancelDisconnectedHermesTurn = (): void => {
-      if (clientDisconnected || res.writableEnded) return;
-      clientDisconnected = true;
-      hermesHandle?.cancel();
-      void finishRun('cancelled').catch((error) => {
-        logHarnessTrace(
-          `[harness] configured-card cancellation persistence failed corr=${correlationId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
-        );
-      });
-    };
-    // A configured-card response has not written headers while Hermes is
-    // running, so an aborted fetch is not guaranteed to emit `close` on the
-    // ServerResponse immediately. The request socket is the authoritative
-    // transport lifecycle in that interval. All three signals share the same
-    // scoped, idempotent cancellation path and are removed before returning.
-    req.once('aborted', cancelDisconnectedHermesTurn);
-    req.socket.once('close', cancelDisconnectedHermesTurn);
-    res.once('close', cancelDisconnectedHermesTurn);
-
     let output = '';
     let transport: Record<string, unknown> | null = null;
     const nativeEvents: HermesSessionEvent[] = [];
@@ -771,12 +804,14 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
             }
           },
         });
-        if (clientDisconnected) {
-          hermesHandle.cancel();
-          throw new Error('configured_card_request_cancelled');
-        }
+        activeRun = {
+          projectId,
+          deckId,
+          cardId,
+          cancel: () => hermesHandle?.cancel(),
+        };
+        activeConfiguredCardRuns.set(runId, activeRun);
         const response = await hermesHandle.done;
-        if (clientDisconnected) throw new Error('configured_card_request_cancelled');
         output = response.finalText;
         transport = response.transport;
         providerInputTokens = response.usage.providerInputTokens;
@@ -796,10 +831,13 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         providerOutputTokens,
         totalCostUsd,
       }) as any;
+      if (res.destroyed || res.writableEnded) return undefined;
       return res.json({
         ok: true,
         result: {
           status: 'completed',
+          state: 'completed',
+          runId,
           correlationId: String(prepared.correlationId || correlationId),
           cardId,
           runtimeOwner: prepared.runtimeOwner,
@@ -823,15 +861,17 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'configured_card_transport_failed';
-      await finishRun(clientDisconnected ? 'cancelled' : 'failed', {
-        errorCode: 'configured_card_transport_failed',
+      const cancelled = message === 'hermes_turn_cancelled';
+      await finishRun(cancelled ? 'cancelled' : 'failed', {
+        nativePhase: cancelled ? 'cancelled' : 'failed',
+        errorCode: cancelled ? 'configured_card_run_stopped' : 'configured_card_transport_failed',
         errorSummary: message,
       }).catch(() => undefined);
       throw error;
     } finally {
-      req.off('aborted', cancelDisconnectedHermesTurn);
-      req.socket.off('close', cancelDisconnectedHermesTurn);
-      res.off('close', cancelDisconnectedHermesTurn);
+      if (activeRun && activeConfiguredCardRuns.get(runId) === activeRun) {
+        activeConfiguredCardRuns.delete(runId);
+      }
     }
   } catch (error) {
     if (res.destroyed || res.writableEnded) return;
@@ -842,7 +882,12 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
 // ── Persistent repo-owned Hermes Main bridge (BuilderChat -> ACP) ───────────
 // One stable native Hermes conversation per saved Main card and product
 // conversation. The saved Coder Card remains a separate Hermes profile.
-const activeHermesTurns = new Map<string, HermesTurnHandle>();
+type ActiveHermesTurn = {
+  handle: HermesTurnHandle;
+  runId: string;
+};
+
+const activeHermesTurns = new Map<string, ActiveHermesTurn>();
 
 type NativeAttentionEvent = {
   eventId: string;
@@ -996,7 +1041,7 @@ router.post('/main/session/chat', async (req, res) => {
   writeSse('session', { sessionId });
   logHarnessTrace(`[hermes] request received ${`corr=${correlationId}`} project=${projectId} profile=${prepared.hermesTransport.idf.runtime.profile}`);
   let turnFinished = false;
-  let runCancelled = false;
+  let activeTurn: ActiveHermesTurn | null = null;
   let terminalDoneEvent: Extract<HermesSessionEvent, { kind: 'done' }> | null = null;
   const emittedAttentionIds = new Set<string>();
   let attentionReadQueue = Promise.resolve();
@@ -1044,22 +1089,8 @@ router.post('/main/session/chat', async (req, res) => {
         }
       },
     });
-    activeHermesTurns.set(sessionId, handle);
-    req.on('close', () => {
-      if (turnFinished) return;
-      runCancelled = true;
-      handle.cancel();
-      activeHermesTurns.delete(sessionId);
-      void requestPythonRailsJson('/domain/runs/finish', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ runId: correlationId, state: 'cancelled' }),
-      }).catch((error) => {
-        logHarnessTrace(
-          `[harness] run cancellation persistence failed corr=${correlationId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
-        );
-      });
-    });
+    activeTurn = { handle, runId: correlationId };
+    activeHermesTurns.set(sessionId, activeTurn);
     const { finalText, usage, transport } = await handle.done;
     await attentionReadQueue;
     try {
@@ -1095,26 +1126,28 @@ router.post('/main/session/chat', async (req, res) => {
     const errorCode = reason.startsWith('harness_run_persistence_failed')
       ? 'harness_run_persistence_failed'
       : 'harness_turn_failed';
-    if (!runCancelled) {
-      await requestPythonRailsJson('/domain/runs/finish', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          runId: correlationId,
-          state: 'failed',
-          errorCode,
-          errorSummary: reason,
-        }),
-      }).catch((persistenceError) => {
-        logHarnessTrace(
-          `[harness] failure persistence failed corr=${correlationId} reason=${redactTrace(persistenceError instanceof Error ? persistenceError.message : String(persistenceError))}`,
-        );
-      });
-    }
+    const runCancelled = reason === 'hermes_turn_cancelled';
+    await requestPythonRailsJson('/domain/runs/finish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        runId: correlationId,
+        state: runCancelled ? 'cancelled' : 'failed',
+        nativePhase: runCancelled ? 'cancelled' : 'failed',
+        errorCode: runCancelled ? 'main_run_stopped' : errorCode,
+        errorSummary: reason,
+      }),
+    }).catch((persistenceError) => {
+      logHarnessTrace(
+        `[harness] failure persistence failed corr=${correlationId} reason=${redactTrace(persistenceError instanceof Error ? persistenceError.message : String(persistenceError))}`,
+      );
+    });
     logHarnessTrace(`[harness] request failed corr=${correlationId} reason=${redactTrace(reason)}`);
     writeSse('error', {
-      code: errorCode,
-      message: errorCode === 'harness_run_persistence_failed'
+      code: runCancelled ? 'harness_turn_cancelled' : errorCode,
+      message: runCancelled
+        ? 'The chat run was stopped.'
+        : errorCode === 'harness_run_persistence_failed'
         ? 'The model finished, but its durable run record could not be completed.'
         : 'The chat run failed. Check the correlation ID in the backend logs.',
       correlationId,
@@ -1123,11 +1156,42 @@ router.post('/main/session/chat', async (req, res) => {
     });
   } finally {
     turnFinished = true;
-    activeHermesTurns.delete(sessionId);
+    if (activeTurn && activeHermesTurns.get(sessionId) === activeTurn) {
+      activeHermesTurns.delete(sessionId);
+    }
     writeSse('end', {});
     if (!res.destroyed && !res.writableEnded) res.end();
   }
   return undefined;
+});
+
+router.post('/main/session/stop', async (req, res) => {
+  const projectId = String(req.body?.projectId || '').trim();
+  const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
+  const conversationId = String(req.body?.conversationId || 'default');
+  if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
+  let runtimeConfig: Record<string, any>;
+  try {
+    runtimeConfig = await readPreparedMainSessionProfile(projectId, deckId);
+  } catch {
+    return res.status(404).json({ ok: false, error: 'main_hermes_card_not_runnable' });
+  }
+  const sessionId = deriveHermesSessionKey(
+    projectId,
+    conversationId,
+    runtimeConfig.cardIdentity.cardId,
+  );
+  const active = activeHermesTurns.get(sessionId);
+  if (!active) return res.status(404).json({ ok: false, error: 'no_active_turn' });
+  try {
+    await active.handle.cancel();
+    return res.status(202).json({ ok: true, runId: active.runId, state: 'stopping' });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'main_run_stop_failed',
+    });
+  }
 });
 
 router.post('/main/session/answer', async (req, res) => {
@@ -1144,9 +1208,9 @@ router.post('/main/session/answer', async (req, res) => {
     String(req.body?.conversationId || 'default'),
     runtimeConfig.cardIdentity.cardId,
   );
-  const handle = activeHermesTurns.get(sessionId);
-  if (!handle) return res.status(404).json({ ok: false, error: 'no_active_turn' });
-  handle.answer(String(req.body?.promptId || ''), String(req.body?.reply || ''));
+  const active = activeHermesTurns.get(sessionId);
+  if (!active) return res.status(404).json({ ok: false, error: 'no_active_turn' });
+  active.handle.answer(String(req.body?.promptId || ''), String(req.body?.reply || ''));
   return res.json({ ok: true });
 });
 

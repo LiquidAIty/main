@@ -3,7 +3,6 @@ import { Router } from 'express';
 import { getDeckDocument } from '../decks/store';
 import {
   applyHermesNativeOperation,
-  filterEffectiveHermesTools,
   hydrateHermesCardProfile,
   type HermesNativeApplyOperation,
 } from '../hermes/cardProfileProjection';
@@ -186,9 +185,6 @@ export function createHermesProfileRouter(deps: Dependencies = {
         profile: projection.binding.profile,
         name: serverName,
       }) as Record<string, unknown>;
-      const discovered = Array.isArray(tested.tools)
-        ? tested.tools.map((tool: any) => String(tool?.name || '')).filter(Boolean)
-        : [];
       return res.json({
         ok: tested.ok === true,
         server: serverName,
@@ -196,7 +192,6 @@ export function createHermesProfileRouter(deps: Dependencies = {
         prompts: tested.prompts || 0,
         resources: tested.resources || 0,
         credentialStatus: tested.credentialStatus || 'not_configured',
-        effectiveTools: filterEffectiveHermesTools(discovered, projection.binding.cardGrants),
         error: tested.error || null,
       });
     } catch (error) {

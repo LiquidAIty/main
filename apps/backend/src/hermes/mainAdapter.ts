@@ -8,9 +8,7 @@ import {
 } from '../services/mcp/pythonAgentMcpClient';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { resolveSavedMcpConnections } from './mcpConnections';
-import {
-  ensureHermesHolographicMemoryHome,
-} from './profileMemory';
+import { resolveHermesRuntimeHome } from './profileMemory';
 import {
   createHermesChildExecutionContext,
   bindHermesRootExecutionSession,
@@ -19,7 +17,7 @@ import {
   registerHermesRootExecutionContext,
 } from './childExecutionContext';
 
-export { resolveHermesRuntimeHome } from './profileMemory';
+export { resolveHermesRuntimeHome };
 
 export type HermesTurnUsage = {
   providerInputTokens: number | null;
@@ -53,6 +51,8 @@ export type HermesRuntimeConfig = {
   skills: string[];
   toolsets: string[];
   mcpConnectionIds: string[];
+  nativeProfileToolsets?: string[];
+  nativeProfileMcpServerNames?: string[];
 };
 
 export type CardAccessMode = 'chatgpt-account' | 'openai-api' | 'openrouter-api';
@@ -95,7 +95,7 @@ export type HermesTurnArgs = HermesRuntimeConfig & {
 
 export type HermesTurnHandle = {
   answer(promptId: string, reply: string): void;
-  cancel(): void;
+  cancel(): void | Promise<void>;
   done: Promise<{
     finalText: string;
     usage: HermesTurnUsage;
@@ -222,6 +222,7 @@ export function buildHermesOfficialMcpServer(
   executionContextId = '',
 ): Record<string, unknown> | null {
   const granted = args.tools.filter((name) => name !== 'web_search');
+  if (granted.length === 0) return null;
   const shared = resolvePythonAgentMcpServerSpec({
     kind: 'card-runtime',
     projectId: args.projectId,
@@ -271,13 +272,13 @@ export function buildHermesHostSessionProjection(
       hermes: {
         sessionConfig: {
           enabledToolsets: uniqueStrings([
-            ...args.toolsets,
+            // Preserve Hermes' native ACP surface. LiquidAIty Card grants add
+            // scoped MCP capability; they do not replace native memory,
+            // skills, tools, terminal, delegation, or learning behavior.
+            'hermes-acp',
+            ...(args.nativeProfileToolsets || []),
+            ...(args.nativeProfileMcpServerNames || []).map((name) => `mcp-${name}`),
             ...mcpToolsetNames(rootServers),
-          ]),
-          enabledTools: uniqueStrings([
-            // Exact native Hermes registry names only. Card-assigned MCP tools
-            // are exposed by the scoped mcp-main-runtime-* toolset above.
-            ...args.nativeTools,
           ]),
           hostSessionKey: args.sessionKey,
           systemPrompt: args.prompt,
@@ -312,12 +313,19 @@ export class AcpProcess {
 
   constructor(
     private readonly onClosed: (owner: AcpProcess) => void,
-    options: { install?: HermesAcpInstall; hermesHome?: string } = {},
+    options: { install?: HermesAcpInstall; hermesHome?: string; profile?: string } = {},
   ) {
     const install = options.install ?? resolveHermesInstall();
     this.executable = install.executable;
-    this.hermesHome = options.hermesHome
-      ?? ensureHermesHolographicMemoryHome(install.root);
+    const rootHome = options.hermesHome ?? resolveHermesRuntimeHome(install.root);
+    const profile = String(options.profile || '').trim().toLowerCase();
+    if (profile && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile)) {
+      throw new Error('hermes_runtime_profile_invalid');
+    }
+    this.hermesHome = profile ? path.join(rootHome, 'profiles', profile) : rootHome;
+    if (profile && !existsSync(this.hermesHome)) {
+      throw new Error(`hermes_native_profile_not_found:${profile}`);
+    }
     this.exitPromise = new Promise((resolve) => {
       this.resolveExit = resolve;
     });
@@ -327,7 +335,6 @@ export class AcpProcess {
       env: {
         ...childEnv,
         HERMES_HOME: this.hermesHome,
-        HERMES_ACP_SKIP_CONFIGURED_MCP: '1',
       },
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -851,14 +858,17 @@ function isRetryablePrePromptCleanExit(error: unknown): error is HermesAcpExited
     && !lastProtocolEvent.startsWith('notification:session/update');
 }
 
-let processOwner: AcpProcess | null = null;
+const processOwners = new Map<string, AcpProcess>();
 
-function sharedHermesProcess(): AcpProcess {
-  if (processOwner?.alive) return processOwner;
-  processOwner = new AcpProcess((closed) => {
-    if (processOwner === closed) processOwner = null;
-  });
-  return processOwner;
+function sharedHermesProcess(profile = ''): AcpProcess {
+  const key = String(profile || '').trim().toLowerCase();
+  const existing = processOwners.get(key);
+  if (existing?.alive) return existing;
+  const owner = new AcpProcess((closed) => {
+    if (processOwners.get(key) === closed) processOwners.delete(key);
+  }, key ? { profile: key } : {});
+  processOwners.set(key, owner);
+  return owner;
 }
 
 export function deriveHermesSessionKey(projectId: string, conversationId: string, cardId: string): string {
@@ -875,17 +885,38 @@ export async function startHermesTurn(
 export async function startHermesTurnWithOnePrePromptRecovery(
   args: HermesTurnArgs,
   onEvent: (event: HermesSessionEvent) => void,
-  acquireProcess: () => AcpProcess = sharedHermesProcess,
+  acquireProcess: (profile?: string) => AcpProcess = sharedHermesProcess,
 ): Promise<HermesTurnHandle> {
+  const profile = String(args.runtime.profile || '').trim();
+  const readback = await requestHermesExtension('_profile/read', { name: profile });
+  const native = readback?.profile;
+  if (!native || String(native.name || '').trim().toLowerCase() !== profile.toLowerCase()) {
+    throw new Error(`hermes_native_profile_readback_mismatch:${profile}`);
+  }
+  const nativeArgs: HermesTurnArgs = {
+    ...args,
+    nativeProfileToolsets: Array.isArray(native.toolsets)
+      ? native.toolsets
+        .filter((item: any) => item?.enabled === true)
+        .map((item: any) => String(item.name || '').trim())
+        .filter(Boolean)
+      : [],
+    nativeProfileMcpServerNames: Array.isArray(native.mcpServers)
+      ? native.mcpServers
+        .filter((item: any) => item?.enabled === true)
+        .map((item: any) => String(item.name || '').trim())
+        .filter(Boolean)
+      : [],
+  };
   try {
-    return await acquireProcess().startTurn(args, onEvent);
+    return await acquireProcess(profile).startTurn(nativeArgs, onEvent);
   } catch (error) {
     if (!isRetryablePrePromptCleanExit(error)) throw error;
     // A clean EOF before session/prompt cannot have reached inference or
     // created delegated native work. Re-establish this one failed transport
     // boundary once; never retry after prompt dispatch.
     console.warn(`[hermes] ACP closed before prompt dispatch; re-establishing once: ${(error as Error).message}`);
-    return acquireProcess().startTurn(args, onEvent);
+    return acquireProcess(profile).startTurn(nativeArgs, onEvent);
   }
 }
 
@@ -912,10 +943,10 @@ export async function prepareHermesSession(
 export async function readHermesHistory(
   args: HermesTurnArgs,
 ): Promise<{ sessionId: string | null; messages: HermesHistoryMessage[] }> {
-  return sharedHermesProcess().readHistory(args);
+  return sharedHermesProcess(args.runtime.profile).readHistory(args);
 }
 
 export function closeHermesRuntimes(): void {
-  processOwner?.close();
-  processOwner = null;
+  for (const owner of processOwners.values()) owner.close();
+  processOwners.clear();
 }

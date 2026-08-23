@@ -180,7 +180,7 @@ describe('Hermes ACP transport identity', () => {
       hermesHome,
     });
     try {
-      await expect(owner.prepareSession(providerFreeTurnArgs())).resolves.toMatchObject({
+      await expect(owner.prepareSession(providerFreeTurnArgs(0))).resolves.toMatchObject({
         sessionId: 'provider-free-session',
       });
     } finally {
@@ -262,6 +262,19 @@ describe('Hermes ACP transport identity', () => {
     expect(JSON.stringify(server)).not.toContain('0123456789abcdef0123456789abcdef');
   });
 
+  it('preserves the native Hermes catalog when no LiquidAIty MCP tools are granted', () => {
+    expect(buildHermesOfficialMcpServer({
+      sessionKey: 'session-1',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'conversation-1',
+      parentRunId: 'main-run-1',
+      cardId: 'card_main_chat',
+      runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
+      tools: ['web_search'],
+    }, {})).toBeNull();
+  });
+
   it('configures a signed Card MCP projection on one ACP session without prompting a model', async () => {
     const previousSecret = process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
     const previousUrl = process.env.LIQUIDAITY_INTERNAL_MCP_URL;
@@ -301,7 +314,7 @@ describe('Hermes ACP transport identity', () => {
     }
   });
 
-  it('projects one Card-owned native and MCP surface without creating subagent Cards', () => {
+  it('adds one Card-owned MCP surface without replacing native Hermes capabilities', () => {
     const projection = buildHermesHostSessionProjection({
       sessionKey: 'session-1',
       projectId: 'project-1',
@@ -329,12 +342,11 @@ describe('Hermes ACP transport identity', () => {
 
     expect(projection.mcpServers).toHaveLength(1);
     const sessionConfig = (projection.sessionMeta.hermes as any).sessionConfig;
-    expect(sessionConfig.enabledToolsets).toEqual(expect.arrayContaining([
-      'memory',
-      'delegation',
+    expect(sessionConfig.enabledToolsets).toEqual([
+      'hermes-acp',
       expect.stringMatching(/^mcp-main-runtime-/),
-    ]));
-    expect(sessionConfig.enabledTools).toEqual(['delegate_task']);
+    ]);
+    expect(sessionConfig).not.toHaveProperty('enabledTools');
     expect(sessionConfig).not.toHaveProperty('delegateProfiles');
     expect(sessionConfig.hostSessionKey).toBe('session-1');
     expect(sessionConfig.executionContextId).toBe('root-context');
@@ -355,7 +367,7 @@ describe('Hermes ACP transport identity', () => {
     }));
   });
 
-  it('keeps Coder native tools, memory, skills, code execution, and delegation', () => {
+  it('keeps Coder on Hermes native ACP capabilities regardless of Card-side native lists', () => {
     const projection = buildHermesHostSessionProjection({
       sessionKey: 'coder-session-1',
       projectId: 'project-1',
@@ -382,21 +394,11 @@ describe('Hermes ACP transport identity', () => {
     }, 'coder-context');
 
     const sessionConfig = (projection.sessionMeta.hermes as any).sessionConfig;
-    expect(sessionConfig.enabledTools).toEqual([
-      'delegate_task',
-      'terminal',
-      'read_file',
-      'python',
-    ]);
-    expect(sessionConfig.enabledToolsets).toEqual(expect.arrayContaining([
-      'memory',
-      'delegation',
-      'skills',
-      'terminal',
-      'file',
-      'code_execution',
+    expect(sessionConfig.enabledToolsets).toEqual([
+      'hermes-acp',
       expect.stringMatching(/^mcp-main-runtime-/),
-    ]));
+    ]);
+    expect(sessionConfig).not.toHaveProperty('enabledTools');
     expect(sessionConfig.executionContextId).toBe('coder-context');
   });
 });

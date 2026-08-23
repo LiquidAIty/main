@@ -20,7 +20,7 @@ import { KANBAN_STATUSES } from './types';
 
 export type HermesKanbanWorkspaceProps = {
   onClose: () => void;
-  focusedCardId?: string | null;
+  focusedTaskId?: string | null;
 };
 
 const DEFAULT_FILTERS: BoardFilters = {
@@ -114,6 +114,7 @@ function AddTaskForm({
 
 export default function HermesKanbanWorkspace({
   onClose,
+  focusedTaskId = null,
 }: HermesKanbanWorkspaceProps) {
   const [boards, setBoards] = useState<KanbanBoardInfo[]>([]);
   const [currentBoard, setCurrentBoard] = useState<string>('');
@@ -201,6 +202,15 @@ export default function HermesKanbanWorkspace({
       setTaskLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    const taskId = String(focusedTaskId || '').trim();
+    if (!/^t_[A-Za-z0-9_-]+$/.test(taskId)) return;
+    setSelectedTaskId(taskId);
+    setInspectorMode('task');
+    setInspectorOpen(true);
+    void reloadTask(taskId);
+  }, [focusedTaskId, reloadTask]);
 
   const loadAll = useCallback(async () => {
     setBoardError(null);

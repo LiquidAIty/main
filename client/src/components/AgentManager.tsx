@@ -12,6 +12,7 @@ import type {
 import {
   applyNativeHermesOperation,
   loadNativeHermesCard,
+  loadNativeHermesLearningDetail,
   testNativeHermesMcp,
   type NativeHermesApplyOperation,
   type NativeHermesCardView,
@@ -193,8 +194,12 @@ interface AgentManagerProps {
   promptTestInput?: string;
   onChangePromptTestInput?: (value: string) => void;
   onRunCard?: () => void;
-  onMaterializeCard?: () => void;
+  onStopCard?: () => void;
+  onRejoinCard?: () => void;
   onClearInvocation?: () => void;
+  onOpenCoderTerminal?: () => void;
+  onOpenHermesKanban?: () => void;
+  onOpenMainChat?: () => void;
   onRemoveGraphReference?: (authority: string, nativeId: string) => void;
   onMoveGraphReference?: (
     authority: string,
@@ -263,6 +268,16 @@ export type AgentManagerLocalConfig = {
 
 export type StandaloneCardTestResult = {
   status: string;
+  state?: string | null;
+  runId?: string | null;
+  correlationId?: string | null;
+  cardId?: string | null;
+  nativeRootId?: string | null;
+  nativeRunId?: string | number | null;
+  tasksCompleted?: number;
+  tasksTotal?: number;
+  activeWorkers?: number;
+  resultReady?: boolean;
   output: string;
   error: string | null;
   toolCallCount?: number | null;
@@ -466,8 +481,12 @@ export function AgentManager({
   promptTestInput,
   onChangePromptTestInput,
   onRunCard,
-  onMaterializeCard,
+  onStopCard,
+  onRejoinCard,
   onClearInvocation,
+  onOpenCoderTerminal,
+  onOpenHermesKanban,
+  onOpenMainChat,
   onRemoveGraphReference,
   onMoveGraphReference,
   runBusy = false,
@@ -547,10 +566,18 @@ export function AgentManager({
   const [nativeDisabledSkills, setNativeDisabledSkills] = useState<string[]>([]);
   const [nativeEnabledToolsets, setNativeEnabledToolsets] = useState<string[]>([]);
   const [nativeEnabledMcpServers, setNativeEnabledMcpServers] = useState<string[]>([]);
+  const [nativeLearningDetail, setNativeLearningDetail] = useState<{
+    kind: 'memory' | 'skill';
+    id: string;
+    label: string;
+    content: string;
+  } | null>(null);
+  const [nativeLearningDraft, setNativeLearningDraft] = useState('');
+  const [nativeLearningStatus, setNativeLearningStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  const [nativeLearningError, setNativeLearningError] = useState<string | null>(null);
   const [nativeMcpChecks, setNativeMcpChecks] = useState<Record<string, {
     status: 'checking' | 'connected' | 'failed';
     toolCount: number;
-    effectiveTools: string[];
     error: string | null;
   }>>({});
   const draftDirtyRef = useRef(false);
@@ -680,8 +707,13 @@ export function AgentManager({
       return;
     }
     const controller = new AbortController();
+    setNativeHermesState(null);
     setNativeHermesStatus('loading');
     setNativeHermesError(null);
+    setNativeLearningDetail(null);
+    setNativeLearningDraft('');
+    setNativeLearningStatus('idle');
+    setNativeLearningError(null);
     void loadNativeHermesCard({ projectId, deckId, cardId, signal: controller.signal })
       .then((state) => {
         if (controller.signal.aborted) return;
@@ -708,6 +740,10 @@ export function AgentManager({
       setNativeDisabledSkills([]);
       setNativeEnabledToolsets([]);
       setNativeEnabledMcpServers([]);
+      setNativeLearningDetail(null);
+      setNativeLearningDraft('');
+      setNativeLearningStatus('idle');
+      setNativeLearningError(null);
       return;
     }
     setNativeDescriptionDraft(nativeHermesState.native.description);
@@ -842,11 +878,59 @@ export function AgentManager({
     }
   }, [projectId, deckId, cardId, nativeApplyStatus]);
 
+  const openNativeLearningNode = useCallback(async (nodeId: string) => {
+    if (!projectId || !deckId || !cardId) return;
+    setNativeLearningStatus('loading');
+    setNativeLearningError(null);
+    try {
+      const detail = await loadNativeHermesLearningDetail({ projectId, deckId, cardId, nodeId });
+      setNativeLearningDetail(detail);
+      setNativeLearningDraft(detail.content);
+      setNativeLearningStatus('ready');
+    } catch (error) {
+      setNativeLearningStatus('failed');
+      setNativeLearningError(error instanceof Error ? error.message : 'Native learning node unavailable.');
+    }
+  }, [projectId, deckId, cardId]);
+
+  const applyNativeLearningEdit = useCallback(async () => {
+    if (!projectId || !deckId || !cardId || !nativeLearningDetail || nativeApplyStatus === 'applying') return;
+    setNativeApplyStatus('applying');
+    setNativeApplyError(null);
+    try {
+      const readback = await applyNativeHermesOperation({
+        projectId,
+        deckId,
+        cardId,
+        change: {
+          operation: 'learning.edit',
+          nodeId: nativeLearningDetail.id,
+          content: nativeLearningDraft,
+        },
+      });
+      const detail = await loadNativeHermesLearningDetail({
+        projectId,
+        deckId,
+        cardId,
+        nodeId: nativeLearningDetail.id,
+      });
+      setNativeHermesState(readback);
+      setNativeHermesStatus('ready');
+      setNativeLearningDetail(detail);
+      setNativeLearningDraft(detail.content);
+      setNativeLearningStatus('ready');
+      setNativeApplyStatus('applied');
+    } catch (error) {
+      setNativeApplyStatus('failed');
+      setNativeApplyError(error instanceof Error ? error.message : 'Native learning edit failed.');
+    }
+  }, [projectId, deckId, cardId, nativeLearningDetail, nativeLearningDraft, nativeApplyStatus]);
+
   const checkNativeMcpServer = useCallback(async (serverName: string) => {
     if (!projectId || !deckId || !cardId) return;
     setNativeMcpChecks((current) => ({
       ...current,
-      [serverName]: { status: 'checking', toolCount: 0, effectiveTools: [], error: null },
+      [serverName]: { status: 'checking', toolCount: 0, error: null },
     }));
     try {
       const result = await testNativeHermesMcp({ projectId, deckId, cardId, serverName });
@@ -855,7 +939,6 @@ export function AgentManager({
         [serverName]: {
           status: result.ok ? 'connected' : 'failed',
           toolCount: result.tools.length,
-          effectiveTools: result.effectiveTools,
           error: result.error,
         },
       }));
@@ -865,7 +948,6 @@ export function AgentManager({
         [serverName]: {
           status: 'failed',
           toolCount: 0,
-          effectiveTools: [],
           error: error instanceof Error ? error.message : 'Connection check failed.',
         },
       }));
@@ -1066,28 +1148,14 @@ export function AgentManager({
 
   const sectionBody = (() => {
     if (activeTab === 'Task') {
-      return (
-        <div data-testid="agent-manager-invocation" style={{ display: 'grid', gap: 10 }}>
-          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-            Complete Card invocation
-          </div>
-          <div style={{ color: '#9FB2B8', fontSize: 11.5, lineHeight: 1.5 }}>
-            <div>Card: {cardId} · {cardName || 'Untitled'}</div>
-            <div>
-              Runtime: {localConfig?.runtime.kind || 'unconfigured'} · {localConfig?.runtime.mode || 'unconfigured'}
-            </div>
-            <div>Provider: {localConfig?.provider || 'unconfigured'} · {localConfig?.model_key || 'unconfigured'} · {localConfig?.access_mode || 'unconfigured'}</div>
-            <div>Skills: {Array.isArray(localConfig?.skills) && localConfig.skills.length ? localConfig.skills.map(String).join(', ') : 'none'}</div>
-            <div>Tools: {Array.isArray(localConfig?.tools) && localConfig.tools.length ? localConfig.tools.map(String).join(', ') : 'none'}</div>
-          </div>
-          <details>
-            <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>Stable Card prompt</summary>
-            <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#B8C8CD', fontSize: 11 }}>
-              {String(localConfig?.prompt_template || '')}
-            </pre>
-          </details>
-        </div>
-      );
+      if (localConfig?.runtime.kind === 'hermes' && localConfig.runtime.mode === 'main' && onOpenMainChat) {
+        return (
+          <button type="button" data-testid="open-main-chat" onClick={onOpenMainChat}>
+            Open Main chat
+          </button>
+        );
+      }
+      return null;
     }
     if (activeTab === 'Prompt') {
       return (
@@ -1252,7 +1320,7 @@ export function AgentManager({
 
           <div>
             <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-              {runtimeKind === 'hermes' ? 'Output and retention expectations' : 'Memory Policy'}
+              {runtimeKind === 'hermes' ? 'Output expectations' : 'Memory Policy'}
             </label>
             <textarea
               value={promptParts.memoryPolicy}
@@ -1333,13 +1401,49 @@ export function AgentManager({
               </details>
               <details>
                 <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
-                  Memory and learning · {nativeHermesState.native.learning.count} native item{nativeHermesState.native.learning.count === 1 ? '' : 's'}
+                  Memory, skills, and learning graph
                 </summary>
-                <div style={{ display: 'grid', gap: 6, marginTop: 8, color: '#9FB2B8', fontSize: 10.5 }}>
-                  <div>{nativeHermesState.native.learning.summary || 'Native learning state is empty.'}</div>
-                  <div>
-                    Holographic/SQLite memory, learned skills, automatic skill creation, and /learn remain native. Detailed graph, Learn, and mutation controls are intentionally deferred from this pass.
-                  </div>
+                <div data-testid="native-learning-graph" style={{ display: 'grid', gap: 8, marginTop: 8, color: '#9FB2B8', fontSize: 10.5 }}>
+                  {nativeHermesState.native.learning.buckets.flatMap((bucket) => (
+                    bucket.nodes.map((node) => (
+                      <button
+                        type="button"
+                        key={node.id}
+                        data-testid={`native-learning-node-${node.id}`}
+                        onClick={() => void openNativeLearningNode(node.id)}
+                        style={{ textAlign: 'left', display: 'grid', gap: 2 }}
+                      >
+                        <span>{node.fullLabel || node.label || node.id}</span>
+                        <span style={{ opacity: 0.72 }}>{bucket.label}{node.meta ? ` · ${node.meta}` : ''}</span>
+                      </button>
+                    ))
+                  ))}
+                  {nativeHermesState.native.learning.buckets.every((bucket) => bucket.nodes.length === 0) ? (
+                    <div>No editable native memory or learned-skill nodes are available.</div>
+                  ) : null}
+                  {nativeLearningStatus === 'loading' ? <div>Opening native node…</div> : null}
+                  {nativeLearningStatus === 'failed' ? (
+                    <div role="alert" style={{ color: '#FFA2A2' }}>{nativeLearningError}</div>
+                  ) : null}
+                  {nativeLearningDetail ? (
+                    <section style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #42565C', borderRadius: 6 }}>
+                      <strong>{nativeLearningDetail.kind}: {nativeLearningDetail.label}</strong>
+                      <textarea
+                        aria-label="Native learning node content"
+                        value={nativeLearningDraft}
+                        onChange={(event) => setNativeLearningDraft(event.target.value)}
+                        rows={10}
+                        style={{ fontFamily: 'monospace', resize: 'vertical' }}
+                      />
+                      <button
+                        type="button"
+                        disabled={nativeApplyStatus === 'applying'}
+                        onClick={() => void applyNativeLearningEdit()}
+                      >
+                        Apply native learning edit
+                      </button>
+                    </section>
+                  ) : null}
                 </div>
               </details>
               {nativeApplyStatus === 'applying' ? (
@@ -1576,7 +1680,7 @@ export function AgentManager({
               </>
             ) : null}
 
-            <div>
+            {runtimeKind !== 'hermes' ? <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
                 {reasoningEffortField?.label}
               </label>
@@ -1602,13 +1706,14 @@ export function AgentManager({
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
+            </div> : null}
+          </div>
+          {runtimeKind !== 'hermes' ? <>
+            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
+              Advanced runtime
             </div>
-          </div>
-          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-            Advanced runtime
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-            <div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+              <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
                 {temperatureField?.label}
               </label>
@@ -1624,8 +1729,8 @@ export function AgentManager({
                   markDraftDirty();
                 }}
               />
-            </div>
-            <div>
+              </div>
+              <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
                 {maxTokensField?.label}
               </label>
@@ -1641,8 +1746,8 @@ export function AgentManager({
                   markDraftDirty();
                 }}
               />
-            </div>
-            <div>
+              </div>
+              <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
                 {maxTurnsField?.label}
               </label>
@@ -1658,8 +1763,9 @@ export function AgentManager({
                   markDraftDirty();
                 }}
               />
+              </div>
             </div>
-          </div>
+          </> : null}
           {runtimeKind === 'hermes' ? (
             <section
               data-testid="agent-native-profile-status"
@@ -1689,13 +1795,10 @@ export function AgentManager({
               ) : nativeHermesState ? (
                 <>
                   <div style={{ color: '#9FB2B8', fontSize: 11.5, lineHeight: 1.5 }}>
-                    <div>Binding: {nativeHermesState.native.name}</div>
-                    <div>Launch: {runtimeMode}</div>
+                    <div>Profile: {nativeHermesState.native.name}</div>
                     <div>
                       Model: {nativeHermesState.native.model.provider || 'unset'} / {nativeHermesState.native.model.default || 'unset'}
                     </div>
-                    <div>Workspace: {nativeHermesState.binding.workspace || 'current launch workspace'}</div>
-                    <div>Memory: native profile-owned</div>
                   </div>
                   <div style={{ color: '#72D7C7', fontSize: 11.5 }}>
                     Saving this Card cannot change the profile. Model changes below require their own native Apply.
@@ -1732,13 +1835,16 @@ export function AgentManager({
                   {nativeApplyStatus === 'failed' ? (
                     <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>{nativeApplyError || 'Native Apply failed.'}</div>
                   ) : null}
-                  <details>
-                    <summary style={{ cursor: 'pointer', color: '#B8C8CD', fontSize: 11 }}>Technical readback</summary>
-                    <div style={{ color: '#80969F', fontSize: 10.5, overflowWrap: 'anywhere' }}>
-                      Profile binding: {nativeHermesState.binding.profile}<br />
-                      Card ID remains {cardId}; no Card field is synchronized into native state.
-                    </div>
-                  </details>
+                  {localConfig?.runtime.kind === 'hermes' && localConfig.runtime.mode === 'delegate' && onOpenCoderTerminal ? (
+                    <button type="button" data-testid="open-coder-terminal" onClick={onOpenCoderTerminal}>
+                      Open Coder terminal
+                    </button>
+                  ) : null}
+                  {localConfig?.runtime.kind === 'hermes' && localConfig.runtime.mode === 'kanban' && onOpenHermesKanban ? (
+                    <button type="button" data-testid="open-hermes-kanban" onClick={onOpenHermesKanban}>
+                      Open native Kanban
+                    </button>
+                  ) : null}
                 </>
               ) : (
                 <div style={{ color: '#80969F', fontSize: 11 }}>Profile state has not been read yet.</div>
@@ -1753,7 +1859,7 @@ export function AgentManager({
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-            Input Data Definition · Tools
+            Input Data Dictionary · Tools
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
             <input
@@ -1917,7 +2023,7 @@ export function AgentManager({
               </button>
             </div>
           ) : null}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
+          {runtimeKind !== 'hermes' ? <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
             <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
                 Card skill grants
@@ -1948,7 +2054,7 @@ export function AgentManager({
                 rows={4}
               />
             </div>
-          </div>
+          </div> : null}
           <div>
             <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
               Card connection references
@@ -1964,7 +2070,7 @@ export function AgentManager({
               rows={4}
             />
             <div style={{ color: '#80969F', fontSize: 10, marginTop: 4 }}>
-              Connection references only. Credentials and tokens remain in the profile's native secret scope.
+              References existing LiquidAIty connections by ID; the Card does not copy their credentials.
             </div>
           </div>
           {runtimeKind === 'hermes' && nativeHermesState ? (
@@ -1982,11 +2088,8 @@ export function AgentManager({
               <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
                 Native capabilities
               </div>
-              <div style={{ color: '#9FB2B8', fontSize: 11 }}>
-                Card grant ceiling: {nativeHermesState.binding.cardGrants.join(', ') || 'none'}
-              </div>
               <div style={{ color: '#80969F', fontSize: 10.5 }}>
-                Native availability may reduce this ceiling; it can never expand Card authority. Every Apply below performs one native operation and exact readback.
+                Card grants authorize LiquidAIty-supplied tools. Every control below changes Hermes-owned profile state through one native operation and exact readback.
               </div>
               <details>
                 <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
@@ -2050,9 +2153,6 @@ export function AgentManager({
                   </button>
                 </div>
               </details>
-              <div style={{ color: '#9FB2B8', fontSize: 11 }}>
-                Built-in tools: {nativeHermesState.binding.nativeTools.join(', ') || 'none reported'}
-              </div>
               {nativeHermesState.native.mcpServers.length ? nativeHermesState.native.mcpServers.map((server) => {
                 const checked = nativeMcpChecks[server.name];
                 return (
@@ -2094,7 +2194,7 @@ export function AgentManager({
                     {checked ? (
                       <div style={{ color: checked.status === 'connected' ? '#72D7C7' : checked.status === 'failed' ? '#FFA2A2' : '#80969F', fontSize: 10.5 }}>
                         {checked.status === 'connected'
-                          ? `Connected · ${checked.toolCount} discovered · ${checked.effectiveTools.length} allowed by this Card`
+                          ? `Connected · ${checked.toolCount} native tools discovered`
                           : checked.status === 'failed'
                             ? checked.error || 'Connection failed.'
                             : 'Checking connection…'}
@@ -2224,7 +2324,7 @@ export function AgentManager({
             }}
           />
           <div style={{ color: '#80969F', fontSize: 10.5 }}>
-            Python combines this input with the saved Card into the one exact model call shown below.
+            Python materializes this input with the saved Card and selected graph references once when Run starts.
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
             <button
@@ -2234,14 +2334,6 @@ export function AgentManager({
               data-testid="agent-manager-clear-invocation"
             >
               Clear
-            </button>
-            <button
-              type="button"
-              onClick={onMaterializeCard}
-              disabled={runDisabled || runBusy || !String(promptTestInput || '').trim()}
-              data-testid="agent-manager-materialize"
-            >
-              {runBusy ? 'Working…' : 'Prepare / Refresh'}
             </button>
             <button
               type="button"
@@ -2265,6 +2357,16 @@ export function AgentManager({
             >
               {runBusy ? 'Running…' : 'Run'}
             </button>
+            {runBusy && onStopCard ? (
+              <button type="button" onClick={onStopCard} data-testid="agent-manager-stop">
+                Stop
+              </button>
+            ) : null}
+            {!runBusy && runResult?.runId && onRejoinCard ? (
+              <button type="button" onClick={onRejoinCard} data-testid="agent-manager-rejoin">
+                Rejoin
+              </button>
+            ) : null}
           </div>
         </div> : null}
 
@@ -2275,57 +2377,17 @@ export function AgentManager({
           >
             <div style={{ color: '#D5E4E8' }}>
               Status: {runResult.status || 'completed'}
-              {runResult.provider || runResult.model || runResult.runtimeLabel
-                ? ` · ${[runResult.provider, runResult.model, runResult.runtimeLabel]
-                    .filter(Boolean)
-                    .join(' · ')}`
-                : ''}
             </div>
-            {runResult.tools.length > 0 ? (
+            {runResult.runId ? (
               <div style={{ color: '#80969F' }}>
-                Tools granted: {runResult.tools.join(', ')}
+                Run: {runResult.runId}
+                {runResult.nativeRootId ? ` · Native root: ${runResult.nativeRootId}` : ''}
               </div>
             ) : null}
-            {runResult.invocation ? (
-              <>
-                <div style={{ color: '#8FC8D1' }}>
-                  Transient IDF · Card revision {runResult.invocation.cardRevision} · {runResult.invocation.runtimeOwner}
-                </div>
-                <details open>
-                  <summary style={{ cursor: 'pointer', color: '#D5E4E8' }}>Exact in-memory IDF</summary>
-                  <textarea
-                    aria-label="Exact temporary IDF"
-                    value={JSON.stringify(runResult.invocation.idf, null, 2)}
-                    readOnly
-                    rows={18}
-                    style={{
-                      width: '100%',
-                      margin: 0,
-                      padding: 8,
-                      background: '#1B1B1B',
-                      color: '#D9E4E8',
-                      border: '1px solid #3A4A4F',
-                      borderRadius: 6,
-                      whiteSpace: 'pre-wrap',
-                      overflowWrap: 'anywhere',
-                      fontFamily: 'monospace',
-                      fontSize: 11,
-                      resize: 'vertical',
-                    }}
-                  />
-                </details>
-              </>
-            ) : null}
-            {runResult.receipt ? (
-              <details>
-                <summary style={{ cursor: 'pointer', color: '#D5E4E8' }}>Run telemetry receipt</summary>
-                <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#B8C8CD' }}>
-                  {JSON.stringify(runResult.receipt, null, 2)}
-                </pre>
-              </details>
-            ) : null}
-            {runResult.toolCallCount !== undefined && runResult.toolCallCount !== null ? (
-              <div style={{ color: '#80969F' }}>Tool calls: {runResult.toolCallCount}</div>
+            {typeof runResult.tasksTotal === 'number' && runResult.tasksTotal > 0 ? (
+              <div style={{ color: '#80969F' }}>
+                Progress: {runResult.tasksCompleted || 0}/{runResult.tasksTotal} · {runResult.activeWorkers || 0} active
+              </div>
             ) : null}
             {runResult.output ? (
               <pre

@@ -5,7 +5,6 @@ import path from 'node:path';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 import {
   configureHermesHostSession,
-  providerForHermes,
   requestHermesExtension,
   type HermesSessionEvent,
   type HermesTurnArgs,
@@ -547,8 +546,7 @@ export async function startNativeHermesKanbanTurn(
     runtimeMode: 'kanban',
     grantedTools: args.tools,
   });
-  let contextState: 'completed' | 'failed' | 'cancelled' = 'failed';
-  let cancelled = false;
+  let contextState: 'completed' | 'failed' = 'failed';
   const releaseContext = (): Promise<void> => finishHermesExecutionContext({
     contextId: context.contextId,
     state: contextState,
@@ -578,9 +576,6 @@ export async function startNativeHermesKanbanTurn(
           ...rootIdentity,
           assignee: profile,
           idempotencyKey,
-          model: args.providerModelId,
-          provider: providerForHermes(args.provider, args.accessMode),
-          skills: args.skills,
         });
       } catch {
         throw new Error('hermes_kanban_card_create_failed');
@@ -602,7 +597,6 @@ export async function startNativeHermesKanbanTurn(
       acpRequest('_kanban/show', { taskId: nativeTaskId }) as Promise<HermesKanbanTaskSnapshot>
     );
     const done: HermesTurnHandle['done'] = waitForHermesKanbanCardTask(profile, taskId, {
-      cancelled: () => cancelled,
       show,
       onSnapshot: async (rootSnapshot) => {
         if (!options.onProgress) return;
@@ -630,7 +624,7 @@ export async function startNativeHermesKanbanTurn(
         };
       })
       .catch((error) => {
-        contextState = cancelled ? 'cancelled' : 'failed';
+        contextState = 'failed';
         const message = error instanceof Error ? error.message : String(error);
         onEvent({ kind: 'error', message, code: 'hermes_kanban_turn_failed' });
         throw error;
@@ -638,7 +632,9 @@ export async function startNativeHermesKanbanTurn(
       .finally(releaseContext);
     return {
       answer: () => undefined,
-      cancel: () => { cancelled = true; },
+      cancel: () => {
+        throw new Error('hermes_kanban_native_reclaim_not_wired');
+      },
       done,
       resolved: {
         cardId: args.cardId,

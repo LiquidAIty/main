@@ -194,6 +194,7 @@ function CoderTerminalPanelInner({
     <section
       data-testid={`${testIdPrefix}-panel`}
       aria-label={title}
+      tabIndex={-1}
       style={{
         position: placement === 'overlay' ? 'absolute' : 'relative',
         right: placement === 'overlay' ? 0 : undefined,

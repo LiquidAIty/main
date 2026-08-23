@@ -32,9 +32,6 @@ export type NativeHermesCardView = {
   binding: {
     profile: string;
     mode: 'main' | 'delegate' | 'kanban';
-    workspace: string | null;
-    cardGrants: string[];
-    nativeTools: string[];
   };
 };
 
@@ -113,7 +110,6 @@ export async function testNativeHermesMcp(input: {
   ok: boolean;
   server: string;
   tools: Array<{ name: string; description?: string }>;
-  effectiveTools: string[];
   prompts: number;
   resources: number;
   credentialStatus: string;

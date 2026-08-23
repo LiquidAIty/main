@@ -292,6 +292,88 @@ describe('hermesKanban helpers', () => {
     expect(show).toHaveBeenCalledTimes(2);
   });
 
+  it('creates a native root through its bound profile without Card model or skill overrides', async () => {
+    const runner = vi.fn(async (args: readonly string[]) => {
+      if (args.join(' ') === 'config get kanban') {
+        return {
+          exitCode: 0,
+          stdout: 'dispatch_in_gateway: true\nauto_decompose: true\n',
+          stderr: '',
+        };
+      }
+      throw new Error(`unexpected command: ${args.join(' ')}`);
+    });
+    const requestExtension = vi.fn(async (
+      method: string,
+      _params?: Record<string, unknown>,
+    ) => {
+      if (method === '_kanban/find') return { id: null, duplicateIds: [] };
+      if (method === '_kanban/create') return { id: 't_created' };
+      if (method === '_kanban/show') {
+        return {
+          task: { id: 't_created', status: 'done', result: 'Native profile result' },
+          latest_summary: 'Native profile result',
+          parents: [],
+          children: [],
+          events: [{ kind: 'completed' }],
+          runs: [{ id: 24, profile: 'orchestrator', status: 'done' }],
+        };
+      }
+      throw new Error(`unexpected ACP method: ${method}`);
+    });
+    const configureHostSession = vi.fn(async () => ({
+      cardId: 'card_kanban',
+      provider: 'openai',
+      modelKey: 'card-model-key',
+      providerModelId: 'card-model-id',
+      executable: 'hermes-acp',
+      pid: 41,
+      hermesHome: 'C:/repo/Hermes/.hermes',
+      sessionId: 'kanban-card-session',
+      transport: 'acp-stdio' as const,
+    }));
+
+    const handle = await startNativeHermesKanbanTurn({
+      sessionKey: 'kanban-card-session',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'conversation-1',
+      parentRunId: 'run-native-kanban-2',
+      cardId: 'card_kanban',
+      title: 'Saved Kanban Card',
+      runtime: { kind: 'hermes', mode: 'kanban', profile: 'orchestrator' },
+      prompt: 'Saved Card instructions',
+      provider: 'openai',
+      modelKey: 'card-model-key',
+      providerModelId: 'card-model-id',
+      accessMode: 'chatgpt-account',
+      tools: [],
+      nativeTools: ['delegate_task'],
+      skills: ['card-skill-must-not-be-pushed'],
+      toolsets: ['memory'],
+      mcpConnectionIds: [],
+      message: 'The dynamic input',
+      nativeMission: 'Inspect the current repository.',
+    }, () => undefined, {
+      runner,
+      requestExtension,
+      configureHostSession,
+    });
+
+    await expect(handle.done).resolves.toMatchObject({ finalText: 'Native profile result' });
+    const createCall = requestExtension.mock.calls.find(([method]) => method === '_kanban/create');
+    expect(createCall?.[1]).toEqual({
+      title: 'Saved Kanban Card',
+      body: 'Inspect the current repository.',
+      createdBy: 'card_kanban',
+      assignee: 'orchestrator',
+      idempotencyKey: expect.stringMatching(/^liquidaity-[0-9a-f]{64}$/),
+    });
+    expect(createCall?.[1]).not.toHaveProperty('provider');
+    expect(createCall?.[1]).not.toHaveProperty('model');
+    expect(createCall?.[1]).not.toHaveProperty('skills');
+  });
+
   it('uses ACP exact lookup to rejoin and join one native Triage root', async () => {
     const runner = vi.fn(async (
       args: readonly string[],

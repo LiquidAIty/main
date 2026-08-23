@@ -120,6 +120,34 @@ export async function streamSession(args: {
   return { finalText };
 }
 
+export async function stopSession(args: {
+  projectId: string;
+  deckId?: string;
+  conversationId: string;
+}): Promise<{ runId: string; state: string }> {
+  const res = await fetch(`${BASE}/stop`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+  });
+  const payload = await res.json().catch(() => null) as {
+    ok?: boolean;
+    runId?: unknown;
+    state?: unknown;
+    error?: unknown;
+  } | null;
+  if (!res.ok || payload?.ok !== true) {
+    throw new SessionStreamError({
+      code: typeof payload?.error === 'string' ? payload.error : 'main_run_stop_failed',
+      message: `Main run stop failed with status ${res.status}.`,
+      route: `${BASE}/stop`,
+      status: res.status,
+    });
+  }
+  return { runId: String(payload.runId || ''), state: String(payload.state || 'stopping') };
+}
+
 /**
  * Reload the saved Main Card's native Hermes session history. A fresh native
  * conversation resolves to an empty array; transport and malformed-response

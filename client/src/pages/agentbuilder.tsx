@@ -231,6 +231,7 @@ export default function AgentBuilder(): React.ReactElement {
     if (params.get('workspace') === 'knowledge') return 'knowledge';
     return params.get('projectId') ? 'canvas' : 'chat';
   });
+  const [hermesKanbanFocusedTaskId, setHermesKanbanFocusedTaskId] = useState<string | null>(null);
   // Left-rail camera focus: carries a requested pan/zoom-to-fit to BuilderCanvas;
   // bumping nonce re-triggers the camera fit without swapping node sets.
   const [canvasFocusZone, setCanvasFocusZone] = useState<
@@ -636,6 +637,7 @@ export default function AgentBuilder(): React.ReactElement {
     messages,
     nativeSessionBusy,
     setMessages,
+    stopMainTurn,
   } = useAgentBuilderMainChat({
     canvasProjectId,
     deckId: BUILDER_DECK_ID,
@@ -843,6 +845,11 @@ export default function AgentBuilder(): React.ReactElement {
   }, [deck.edges, deck.nodes, selectedCard]);
   const [standaloneTestBusy, setStandaloneTestBusy] = useState(false);
   const standaloneTestRequestRef = useRef<string | null>(null);
+  const standaloneActiveRunRef = useRef<{
+    runId: string;
+    correlationId: string;
+    cardId: string;
+  } | null>(null);
   const standaloneTestUnavailableReason = useMemo(
     () => getStandaloneCardUnavailableReason(selectedCard),
     [selectedCard],
@@ -852,13 +859,93 @@ export default function AgentBuilder(): React.ReactElement {
   const showStandaloneTestControls =
     Boolean(selectedCard)
     && !(selectedCard?.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'main');
-  useEffect(() => {
-    standaloneTestRequestRef.current = null;
-    setStandaloneTestBusy(false);
-    setStandaloneTestResult((current) => (
-      current?.invocation?.cardIdentity.cardId === selectedCardId ? current : null
-    ));
-  }, [selectedCardId]);
+  const toStandaloneRunResult = useCallback((result: any): StandaloneCardTestResult => ({
+    status: String(result?.status || result?.state || 'unknown'),
+    state: result?.state ? String(result.state) : null,
+    runId: result?.runId ? String(result.runId) : null,
+    correlationId: result?.correlationId ? String(result.correlationId) : null,
+    cardId: result?.cardId ? String(result.cardId) : selectedCard?.id || null,
+    nativeRootId: result?.nativeRootId ? String(result.nativeRootId) : null,
+    nativeRunId: typeof result?.nativeRunId === 'number' || typeof result?.nativeRunId === 'string'
+      ? result.nativeRunId
+      : null,
+    tasksCompleted: typeof result?.tasksCompleted === 'number' ? result.tasksCompleted : undefined,
+    tasksTotal: typeof result?.tasksTotal === 'number' ? result.tasksTotal : undefined,
+    activeWorkers: typeof result?.activeWorkers === 'number' ? result.activeWorkers : undefined,
+    resultReady: result?.resultReady === true,
+    output: String(result?.output || ''),
+    error: result?.errorSummary
+      ? String(result.errorSummary)
+      : result?.error ? String(result.error) : null,
+    toolCallCount: typeof result?.toolCallCount === 'number' ? result.toolCallCount : null,
+    tools: Array.isArray(result?.invocation?.idf?.enabledTools)
+      ? result.invocation.idf.enabledTools.map((tool: unknown) => String(tool))
+      : [],
+    provider: selectedCard?.runtimeOptions?.provider || null,
+    model: selectedCard?.runtimeOptions?.modelKey || null,
+    runtimeLabel: selectedCard ? `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}` : null,
+    invocation: result?.invocation || null,
+    receipt: result?.receipt || null,
+  }), [selectedCard]);
+
+  const readStandaloneRunStatus = useCallback(async (selector: { runId?: string; cardId?: string }) => {
+    if (!canvasProjectId) throw new Error('card_run_project_required');
+    const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'status',
+        projectId: canvasProjectId,
+        deckId: BUILDER_DECK_ID,
+        ...selector,
+      }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (response.ok && payload?.ok === true && payload?.result == null) {
+      throw new Error('card_run_not_found');
+    }
+    if (!response.ok || !payload?.result) {
+      throw new Error(String(payload?.error || `card_run_status_http_${response.status}`));
+    }
+    return payload.result;
+  }, [canvasProjectId]);
+
+  const pollStandaloneRun = useCallback(async (
+    runId: string,
+    requestToken: string,
+    clearOnComplete: boolean,
+  ): Promise<void> => {
+    while (standaloneTestRequestRef.current === requestToken) {
+      const result = await readStandaloneRunStatus({ runId });
+      if (standaloneTestRequestRef.current !== requestToken) return;
+      const mapped = toStandaloneRunResult(result);
+      setStandaloneTestResult(mapped);
+      const state = String(result.state || '');
+      if (!['pending', 'running'].includes(state)) {
+        standaloneActiveRunRef.current = null;
+        standaloneTestRequestRef.current = null;
+        setStandaloneTestBusy(false);
+        setDeckStatusMessage(
+          mapped.error || `${selectedCard?.title || 'Card'} run ${mapped.status}.`,
+        );
+        if (clearOnComplete && state === 'completed' && selectedCard) {
+          setTransientCardInputs((current) => {
+            const next = { ...current };
+            delete next[selectedCard.id];
+            return next;
+          });
+          setTransientCardGraphContext((current) => {
+            const next = { ...current };
+            delete next[selectedCard.id];
+            return next;
+          });
+        }
+        return;
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
+    }
+  }, [readStandaloneRunStatus, selectedCard, setDeckStatusMessage, toStandaloneRunResult]);
 
   const executeStandaloneInvocation = useCallback(async (
     input: string,
@@ -866,6 +953,7 @@ export default function AgentBuilder(): React.ReactElement {
     if (!selectedCard || !canvasProjectId || standaloneTestBusy || standaloneTestUnavailableReason) return;
     const correlationId = `card-run-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
     standaloneTestRequestRef.current = correlationId;
+    standaloneActiveRunRef.current = { runId: correlationId, correlationId, cardId: selectedCard.id };
     setStandaloneTestBusy(true);
     setStandaloneTestResult(null);
     try {
@@ -898,27 +986,19 @@ export default function AgentBuilder(): React.ReactElement {
         throw new Error(String(payload?.error || `standalone_card_test_http_${response.status}`));
       }
       if (standaloneTestRequestRef.current === correlationId) {
-        const status = String(result.status || (response.ok ? 'completed' : 'failed'));
-        setStandaloneTestResult({
-          status,
-          output: String(result.output || ''),
-          error: result.error ? String(result.error) : null,
-          toolCallCount: typeof result.toolCallCount === 'number' ? result.toolCallCount : null,
-          tools: Array.isArray(result.invocation?.idf?.enabledTools)
-            ? result.invocation.idf.enabledTools.map((tool: unknown) => String(tool))
-            : [],
-          provider: selectedCard.runtimeOptions?.provider || null,
-          model: selectedCard.runtimeOptions?.modelKey || null,
-          runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
-          invocation: result.invocation || null,
-          receipt: result.receipt || null,
-        });
+        const mapped = toStandaloneRunResult(result);
+        setStandaloneTestResult(mapped);
+        const runId = String(result.runId || correlationId);
+        standaloneActiveRunRef.current = { runId, correlationId, cardId: selectedCard.id };
+        const state = String(result.state || (result.status === 'completed' ? 'completed' : ''));
+        if (['pending', 'running'].includes(state)) {
+          await pollStandaloneRun(runId, correlationId, true);
+          return;
+        }
         setDeckStatusMessage(
-          result.error
-            ? String(result.error)
-            : `${selectedCard.title} run ${String(result.status || 'completed')}.`,
+          mapped.error || `${selectedCard.title} run ${mapped.status}.`,
         );
-        if (!result.error && status === 'completed') {
+        if (!mapped.error && state === 'completed') {
           setTransientCardInputs((current) => {
             const next = { ...current };
             delete next[selectedCard.id];
@@ -930,20 +1010,29 @@ export default function AgentBuilder(): React.ReactElement {
             return next;
           });
         }
+        standaloneActiveRunRef.current = null;
       }
     } catch (error) {
       if (standaloneTestRequestRef.current === correlationId) {
-        setStandaloneTestResult({
-          status: 'failed', output: '', error: error instanceof Error ? error.message : 'Standalone card test failed.',
-          toolCallCount: null, tools: [], provider: selectedCard.runtimeOptions?.provider || null,
-          model: selectedCard.runtimeOptions?.modelKey || null,
-          runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
-        });
-        setDeckStatusMessage(error instanceof Error ? error.message : 'Standalone card test failed.');
+        try {
+          await pollStandaloneRun(correlationId, correlationId, true);
+          return;
+        } catch {
+          const message = error instanceof Error ? error.message : 'Standalone card run failed.';
+          setStandaloneTestResult({
+            status: 'failed', output: '', error: message,
+            runId: correlationId, correlationId,
+            toolCallCount: null, tools: [], provider: selectedCard.runtimeOptions?.provider || null,
+            model: selectedCard.runtimeOptions?.modelKey || null,
+            runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
+          });
+          setDeckStatusMessage(message);
+        }
       }
     } finally {
       if (standaloneTestRequestRef.current === correlationId) {
         standaloneTestRequestRef.current = null;
+        standaloneActiveRunRef.current = null;
         setStandaloneTestBusy(false);
       }
     }
@@ -954,6 +1043,8 @@ export default function AgentBuilder(): React.ReactElement {
     standaloneTestBusy,
     standaloneTestUnavailableReason,
     transientCardGraphContext,
+    pollStandaloneRun,
+    toStandaloneRunResult,
   ]);
 
   const runStandaloneCardTest = useCallback(async () => {
@@ -975,79 +1066,94 @@ export default function AgentBuilder(): React.ReactElement {
     standaloneTestUnavailableReason,
   ]);
 
-  const materializeStandaloneCard = useCallback(async () => {
-    if (!selectedCard || !canvasProjectId || standaloneTestBusy || standaloneTestUnavailableReason) return;
-    const input = standaloneTestPrompt.trim();
-    if (!input) return;
-    const correlationId = `card-invocation-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-    standaloneTestRequestRef.current = correlationId;
-    setStandaloneTestBusy(true);
-    setStandaloneTestResult(null);
+  const stopStandaloneCardTest = useCallback(async () => {
+    const active = standaloneActiveRunRef.current;
+    if (!active || !canvasProjectId) return;
     try {
       const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'materialize',
+          action: 'stop',
           projectId: canvasProjectId,
           deckId: BUILDER_DECK_ID,
-          cardId: selectedCard.id,
-          correlationId,
-          input,
-          conversationId,
-          dataAnchors: (transientCardGraphContext[selectedCard.id] || []).map((item) => ({
-            authority: item.reference.authority,
-            nativeId: item.reference.nativeId,
-            reason: item.reference.reason,
-            priority: -item.reference.order,
-            boundedExpansion: item.reference.boundedExpansion,
-            resultLimit: item.reference.resultLimit,
-            required: item.reference.required,
-          })),
+          cardId: active.cardId,
+          runId: active.runId,
         }),
       });
       const payload = await response.json().catch(() => null);
-      const result = payload?.result;
-      if (!response.ok || !result?.invocation) {
-        throw new Error(String(payload?.error || result?.error || `card_materialize_http_${response.status}`));
+      if (!response.ok || !payload?.result) {
+        throw new Error(String(payload?.error || `card_run_stop_http_${response.status}`));
       }
-      if (standaloneTestRequestRef.current === correlationId) {
-        setStandaloneTestResult({
-          status: String(result.status || 'previewed'),
-          output: String(result.output || ''),
-          error: result.error ? String(result.error) : null,
-          toolCallCount: typeof result.toolCallCount === 'number' ? result.toolCallCount : null,
-          tools: Array.isArray(result.invocation.idf?.enabledTools)
-            ? result.invocation.idf.enabledTools.map(String)
-            : [],
-          provider: result.invocation.idf?.provider?.provider
-            ? String(result.invocation.idf.provider.provider)
-            : selectedCard.runtimeOptions?.provider || null,
-          model: result.invocation.idf?.provider?.providerModelId
-            ? String(result.invocation.idf.provider.providerModelId)
-            : selectedCard.runtimeOptions?.modelKey || null,
-          runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
-          invocation: result.invocation,
-        });
-        setDeckStatusMessage(`${selectedCard.title} IDF previewed in memory. Nothing was persisted or executed.`);
-      }
+      setStandaloneTestResult(toStandaloneRunResult(payload.result));
+      const token = `card-stop-${active.runId}-${crypto.randomUUID().slice(0, 8)}`;
+      standaloneTestRequestRef.current = token;
+      standaloneActiveRunRef.current = active;
+      setStandaloneTestBusy(true);
+      setDeckStatusMessage(`${selectedCard?.title || 'Card'} native stop requested.`);
+      await pollStandaloneRun(active.runId, token, false);
     } catch (error) {
-      if (standaloneTestRequestRef.current === correlationId) {
-        setStandaloneTestResult({
-          status: 'failed', output: '', error: error instanceof Error ? error.message : String(error),
-          toolCallCount: null, tools: [], provider: selectedCard.runtimeOptions?.provider || null,
-          model: selectedCard.runtimeOptions?.modelKey || null,
-          runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
-        });
-      }
-    } finally {
-      if (standaloneTestRequestRef.current === correlationId) {
-        standaloneTestRequestRef.current = null;
+      setDeckStatusMessage(error instanceof Error ? error.message : 'Card run stop failed.');
+    }
+  }, [canvasProjectId, pollStandaloneRun, selectedCard, setDeckStatusMessage, toStandaloneRunResult]);
+
+  const rejoinStandaloneCardRun = useCallback(async () => {
+    const runId = String(standaloneTestResult?.runId || standaloneActiveRunRef.current?.runId || '').trim();
+    if (!runId || !selectedCard) return;
+    const token = `card-rejoin-${runId}-${crypto.randomUUID().slice(0, 8)}`;
+    standaloneTestRequestRef.current = token;
+    standaloneActiveRunRef.current = {
+      runId,
+      correlationId: String(standaloneTestResult?.correlationId || runId),
+      cardId: selectedCard.id,
+    };
+    setStandaloneTestBusy(true);
+    try {
+      await pollStandaloneRun(runId, token, false);
+    } catch (error) {
+      if (standaloneTestRequestRef.current === token) {
         setStandaloneTestBusy(false);
+        setDeckStatusMessage(error instanceof Error ? error.message : 'Card run rejoin failed.');
       }
     }
-  }, [canvasProjectId, conversationId, selectedCard, standaloneTestBusy, standaloneTestPrompt, standaloneTestUnavailableReason, transientCardGraphContext]);
+  }, [pollStandaloneRun, selectedCard, setDeckStatusMessage, standaloneTestResult]);
+
+  useEffect(() => {
+    standaloneTestRequestRef.current = null;
+    standaloneActiveRunRef.current = null;
+    setStandaloneTestBusy(false);
+    setStandaloneTestResult(null);
+    if (!selectedCard || !canvasProjectId || !showStandaloneTestControls) return;
+    const token = `card-hydrate-${selectedCard.id}-${crypto.randomUUID().slice(0, 8)}`;
+    let cancelled = false;
+    void readStandaloneRunStatus({ cardId: selectedCard.id })
+      .then(async (result) => {
+        if (cancelled) return;
+        const mapped = toStandaloneRunResult(result);
+        setStandaloneTestResult(mapped);
+        const state = String(result.state || '');
+        const runId = String(result.runId || '').trim();
+        if (runId && ['pending', 'running'].includes(state)) {
+          standaloneTestRequestRef.current = token;
+          standaloneActiveRunRef.current = {
+            runId,
+            correlationId: String(result.correlationId || runId),
+            cardId: selectedCard.id,
+          };
+          setStandaloneTestBusy(true);
+          await pollStandaloneRun(runId, token, false);
+        }
+      })
+      .catch((error) => {
+        if (cancelled || String(error instanceof Error ? error.message : error).includes('card_run_not_found')) return;
+        setDeckStatusMessage(error instanceof Error ? error.message : 'Card run hydration failed.');
+      });
+    return () => {
+      cancelled = true;
+      if (standaloneTestRequestRef.current === token) standaloneTestRequestRef.current = null;
+    };
+  }, [canvasProjectId, pollStandaloneRun, readStandaloneRunStatus, selectedCard, selectedCardId, setDeckStatusMessage, showStandaloneTestControls, toStandaloneRunResult]);
 
   const builderTabs = useMemo(() => {
     if (selectedCard) return [...BUILDER_NODE_TABS];
@@ -1181,6 +1287,11 @@ export default function AgentBuilder(): React.ReactElement {
   const openHermesKanban = useCallback(() => {
     const hermesCard = deck.nodes.find(isHermesStewardCard);
     if (!hermesCard) return;
+    setHermesKanbanFocusedTaskId(
+      standaloneTestResult?.cardId === hermesCard.id
+        ? standaloneTestResult.nativeRootId || null
+        : null,
+    );
     // Keep the chat panel on the left; the Kanban board renders in the canvas
     // region to its right, exactly like the Agent Canvas. The canvas pane stays
     // mounted beneath it (hidden), so closing Hermes restores the exact prior
@@ -1191,7 +1302,14 @@ export default function AgentBuilder(): React.ReactElement {
     setInspectorDrawerOpen(false);
     setWorldSignalInspectorSection(null);
     setWorkspaceView('hermes');
-  }, [deck.nodes, workspaceView]);
+  }, [deck.nodes, standaloneTestResult, workspaceView]);
+
+  const openMainChat = useCallback(() => {
+    setWorkspaceView('chat');
+    window.setTimeout(() => {
+      document.querySelector<HTMLInputElement>('[data-testid="builder-chat-input"]')?.focus();
+    }, 0);
+  }, []);
 
   const closeHermesKanban = useCallback(() => {
     setWorkspaceView(priorWorkspaceViewRef.current);
@@ -1316,12 +1434,15 @@ export default function AgentBuilder(): React.ReactElement {
                       setStandaloneTestPrompt(value);
                       setStandaloneTestResult(null);
                     }}
-                    onMaterializeCard={() => {
-                      void materializeStandaloneCard();
-                    }}
                     onClearInvocation={() => {
                       clearTransientCardInvocation(selectedCard.id);
                     }}
+                    onOpenCoderTerminal={() => {
+                      document.querySelector<HTMLElement>('[data-testid="coder-console-panel"]')?.scrollIntoView({ block: 'nearest' });
+                      document.querySelector<HTMLElement>('[data-testid="coder-console-panel"]')?.focus();
+                    }}
+                    onOpenHermesKanban={openHermesKanban}
+                    onOpenMainChat={openMainChat}
                     onRemoveGraphReference={(authority, nativeId) => {
                       removeTransientGraphReference(selectedCard.id, authority, nativeId);
                     }}
@@ -1331,6 +1452,10 @@ export default function AgentBuilder(): React.ReactElement {
                     onRunCard={() => {
                       void runStandaloneCardTest();
                     }}
+                    onStopCard={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'kanban'
+                      ? undefined
+                      : stopStandaloneCardTest}
+                    onRejoinCard={rejoinStandaloneCardRun}
                     runBusy={standaloneTestBusy}
                     showTaskComposer={showStandaloneTestControls}
                     runDisabled={
@@ -1491,6 +1616,11 @@ export default function AgentBuilder(): React.ReactElement {
           knowledgeProjectId={projectId}
           colors={C}
           busy={nativeSessionBusy}
+          onStop={() => {
+            void stopMainTurn().catch((error) => {
+              setDeckStatusMessage(error instanceof Error ? error.message : 'Main run stop failed.');
+            });
+          }}
         />
       </div>
     );
@@ -1588,6 +1718,7 @@ export default function AgentBuilder(): React.ReactElement {
           >
             <HermesKanbanWorkspace
               onClose={closeHermesKanban}
+              focusedTaskId={hermesKanbanFocusedTaskId}
             />
           </div>
         ) : null}

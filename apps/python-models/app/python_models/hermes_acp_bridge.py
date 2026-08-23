@@ -204,19 +204,6 @@ def _require_native_applied(value: dict[str, Any], section: str) -> None:
         raise ValueError(f"hermes_native_apply_failed:{section}")
 
 
-def _skills(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        raise ValueError("hermes_kanban_skills_must_be_list")
-    result: list[str] = []
-    for raw in value:
-        name = str(raw or "").strip()
-        if name and name not in result:
-            result.append(name)
-    return result
-
-
 def _exact_roots(conn: Any, *, title: str, body: str, created_by: str) -> list[Any]:
     from hermes_cli import kanban_db as kb
 
@@ -411,16 +398,7 @@ class LiquidAItyHermesACPAgent(HermesACPAgent):
         if method == "kanban/create":
             if not isinstance(params, dict):
                 raise ValueError("hermes_kanban_create_params_must_be_object")
-            allowed = {
-                "title",
-                "body",
-                "assignee",
-                "createdBy",
-                "idempotencyKey",
-                "model",
-                "provider",
-                "skills",
-            }
+            allowed = {"title", "body", "assignee", "createdBy", "idempotencyKey"}
             unknown = sorted(set(params) - allowed)
             if unknown:
                 raise ValueError(f"hermes_kanban_create_unknown_field:{unknown[0]}")
@@ -429,10 +407,6 @@ class LiquidAItyHermesACPAgent(HermesACPAgent):
             assignee = _required_text(params, "assignee")
             created_by = _required_text(params, "createdBy")
             idempotency_key = _required_text(params, "idempotencyKey")
-            model = str(params.get("model") or "").strip() or None
-            provider = str(params.get("provider") or "").strip() or None
-            if provider and not model:
-                raise ValueError("hermes_kanban_provider_requires_model")
             from hermes_cli import kanban_db as kb
 
             with kb.connect_closing() as conn:
@@ -452,9 +426,6 @@ class LiquidAItyHermesACPAgent(HermesACPAgent):
                         created_by=created_by,
                         triage=True,
                         idempotency_key=idempotency_key,
-                        model_override=model,
-                        provider_override=provider,
-                        skills=_skills(params.get("skills")),
                     )
                     rejoined = False
                     duplicate_ids = []
