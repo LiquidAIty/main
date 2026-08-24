@@ -21,7 +21,26 @@ from app.python_models.orchestration_contracts import (
 MODEL = "gpt-5.6"
 
 
-def _runtime_request(runtime_mode: str) -> RuntimeRequest:
+def _runtime_request(runtime_mode: str, *, graph_grounded: bool = False) -> RuntimeRequest:
+    references = ([{
+        "authority": "CodeGraph",
+        "nativeId": "project.module.materialize_input_pair",
+        "nativeKind": "node",
+        "label": "materialize_input_pair",
+        "reason": "Use the canonical input owner.",
+        "asOf": "2026-08-23T12:00:00Z",
+        "required": True,
+        "readOperation": "cbm.get_code_snippet",
+        "provenance": {"repository": "C-Projects-LiquidAIty-main"},
+        "sourcePath": "apps/python-models/app/python_models/icf.py",
+        "selectionScope": {"boundedExpansion": 0, "resultLimit": 1},
+        "materializedContentBytes": 36,
+        "truncated": False,
+    }] if graph_grounded else [])
+    graph_context = (
+        "### CodeGraph\nVerified native content:\ndef materialize_input_pair(...): ..."
+        if graph_grounded else ""
+    )
     pair = materialize_input_pair(
         owner={"kind": "test"},
         stable={
@@ -32,14 +51,28 @@ def _runtime_request(runtime_mode: str) -> RuntimeRequest:
                 "modelKey": MODEL, "providerModelId": MODEL,
             },
         },
-        variable={"task": "exact outer assignment", "selectedNativeReferences": [], "images": []},
+        variable={"task": "exact outer assignment", "selectedNativeReferences": references, "images": []},
         capabilities={
             "enabledTools": [], "toolDefinitions": [], "nativeTools": [],
             "skills": [], "toolsets": [], "mcpConnectionIds": [],
         },
         allocation={"runtimeOptions": {}},
-        graph_context="", native_references=[],
-        graph_projection={"authority": "", "nodes": [], "edges": []},
+        graph_context=graph_context, native_references=references,
+        graph_projection={
+            "authority": "codegraph" if graph_grounded else "",
+            "nodes": ([{
+                "id": "project.module.materialize_input_pair",
+                "authority": "CodeGraph",
+                "type": "Function",
+                "label": "materialize_input_pair",
+                "properties": {
+                    "file": "apps/python-models/app/python_models/icf.py",
+                    "source": "def materialize_input_pair(...): ...",
+                },
+                "provenance": {"repository": "C-Projects-LiquidAIty-main"},
+            }] if graph_grounded else []),
+            "edges": [],
+        },
     )
     return RuntimeRequest(
         session=ProjectSession(
@@ -85,7 +118,7 @@ def test_mag_one_boundary_loads_the_exact_retained_pair_provider_free(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("LIQUIDAITY_RUN_INPUT_ROOT", str(tmp_path))
-    source = _runtime_request("magentic_one")
+    source = _runtime_request("magentic_one", graph_grounded=True)
     pair = rematerialize_input_pair(
         source.icf.model_dump(), source.igf.model_dump(),
         owner={
@@ -106,3 +139,9 @@ def test_mag_one_boundary_loads_the_exact_retained_pair_provider_free(
     assert loaded.igf.model_dump() == pair.igf.model_dump()
     assert loaded.inputFiles.icfSha256 == pair.icf_sha256
     assert loaded.inputFiles.igfSha256 == pair.igf_sha256
+    assert loaded.igf.header.recordCounts["selection"] == 1
+    assert loaded.igf.header.recordCounts["node"] == 1
+    assert loaded.igf.header.recordCounts["materialized-context"] == 1
+    assert loaded.icf.variable["selectedNativeReferences"][0]["nativeId"] == (
+        "project.module.materialize_input_pair"
+    )

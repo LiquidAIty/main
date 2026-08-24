@@ -1952,6 +1952,11 @@ def test_native_engraphis_missing_local_model_is_a_precise_tool_error(monkeypatc
     monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
     monkeypatch.setattr(
         mcp_host,
+        "_prepare_native_engraphis_semantic_write",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        mcp_host,
         "_NATIVE_ENGRAPHIS_NAMES",
         frozenset({"engraphis_remember"}),
     )
@@ -2651,6 +2656,11 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
 
     monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialize_engraphis)
     monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
+    monkeypatch.setattr(
+        mcp_host,
+        "_prepare_native_engraphis_semantic_write",
+        lambda: None,
+    )
 
     def call_native_cbm(name, arguments):
         calls.append((name, arguments))

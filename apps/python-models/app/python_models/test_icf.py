@@ -9,6 +9,7 @@ from app.python_models.icf import (
     ICF_FILENAME,
     IGF_FILENAME,
     InputMaterializationError,
+    input_pair_public,
     load_input_pair,
     load_input_pair_bytes,
     materialize_input_pair,
@@ -27,6 +28,11 @@ def _pair(*, graph_context: str = "", secret: bool = False):
         "required": True,
         "readOperation": "get_code_snippet",
         "provenance": {"repository": "C-Projects-LiquidAIty-main"},
+        "label": "materialize_input_pair",
+        "sourcePath": "apps/example.py",
+        "sourceUrl": "https://example.test/source",
+        "selectionScope": {"boundedExpansion": 1, "resultLimit": 4},
+        "materializedContentBytes": 18,
         "truncated": False,
     }
     references = [reference] if graph_context else []
@@ -106,6 +112,13 @@ def test_graph_igf_preserves_native_identity_content_path_and_provenance() -> No
     pair = _pair(graph_context="### CodeGraph\nVerified native content.")
     records = {record.kind: record for record in pair.igf.records}
     assert records["selection"].nativeId == "project.module.symbol"
+    assert records["selection"].content["label"] == "materialize_input_pair"
+    assert records["selection"].content["selectionScope"] == {
+        "boundedExpansion": 1, "resultLimit": 4,
+    }
+    assert records["selection"].content["materializedContentBytes"] == 18
+    assert records["selection"].content["sourceUrl"] == "https://example.test/source"
+    assert records["selection"].sourcePath == "apps/example.py"
     assert records["node"].content["properties"]["source"] == "def symbol(): pass"
     assert records["node"].sourcePath == "apps/example.py"
     assert records["node"].provenance["repository"] == "C-Projects-LiquidAIty-main"
@@ -114,6 +127,10 @@ def test_graph_igf_preserves_native_identity_content_path_and_provenance() -> No
     assert projected["task"] == "Inspect the exact bounded slice."
     assert projected["graphContext"] == "### CodeGraph\nVerified native content."
     assert projected["enabledTools"] == ["codegraph.search_graph"]
+    summary = input_pair_public(pair)["inputSummary"]
+    assert summary["estimatedIcfFileTokens"] > 0
+    assert summary["estimatedIgfFileTokens"] > 0
+    assert summary["estimatedGraphContextTokens"] == pair.icf.estimates["graphContextTokens"]
 
 
 def test_concurrent_runs_write_isolated_workspaces_with_exactly_two_files(

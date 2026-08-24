@@ -194,13 +194,26 @@ def _graph_records(
             nativeId=native_id,
             type=str(reference.get("nativeKind") or "native-reference"),
             content={
+                "label": str(reference.get("label") or native_id),
                 "reason": str(reference.get("reason") or ""),
                 "required": reference.get("required") is True,
                 "readOperation": str(reference.get("readOperation") or "exact_read"),
+                "selectionScope": dict(reference.get("selectionScope") or {}),
+                "materializedContentBytes": int(
+                    reference.get("materializedContentBytes") or 0
+                ),
+                **(
+                    {"sourceUrl": str(reference["sourceUrl"])}
+                    if str(reference.get("sourceUrl") or "").strip()
+                    else {}
+                ),
                 "truncated": reference.get("truncated") is True,
             },
             provenance=dict(reference.get("provenance") or {}),
             retrievedAt=str(reference.get("asOf") or materialized_at),
+            sourcePath=(
+                str(reference.get("sourcePath") or "").strip() or None
+            ),
         ))
     projection_authority = str(graph_projection.get("authority") or "").strip()
     for node in graph_projection.get("nodes") or []:
@@ -298,8 +311,17 @@ def _provenance_summary(references: list[dict[str, Any]]) -> list[dict[str, Any]
         operation = str(reference.get("readOperation") or "exact_read")
         if operation not in unique[authority]["readOperations"]:
             unique[authority]["readOperations"].append(operation)
-        for key in ("source", "project", "database", "repository", "path"):
+        for key in (
+            "source", "project", "database", "repository", "repositoryRoot",
+            "path", "sourcePath", "url", "sourceUrl",
+        ):
             value = str(provenance.get(key) or "").strip()
+            if value and value not in unique[authority]["sources"]:
+                unique[authority]["sources"].append(value)
+        for value in (
+            str(reference.get("sourcePath") or "").strip(),
+            str(reference.get("sourceUrl") or "").strip(),
+        ):
             if value and value not in unique[authority]["sources"]:
                 unique[authority]["sources"].append(value)
     return [unique[key] for key in sorted(unique)]
@@ -639,6 +661,15 @@ def input_pair_public(pair: MaterializedInputPair) -> dict[str, Any]:
             "igfSha256": pair.igf_sha256,
             "recordCounts": dict(pair.igf.header.recordCounts),
             "authorities": list(pair.igf.header.authorities),
+            "estimatedIcfFileTokens": _token_estimate(
+                pair.icf_bytes.decode("utf-8")
+            ),
+            "estimatedIgfFileTokens": _token_estimate(
+                pair.igf_bytes.decode("utf-8")
+            ),
+            "estimatedGraphContextTokens": pair.icf.estimates.get(
+                "graphContextTokens", 0
+            ),
             "estimatedModelVisibleTokens": pair.icf.estimates.get("totalModelVisibleTokens", 0),
             "estimateMethod": pair.icf.estimates.get("method"),
         },

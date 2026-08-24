@@ -90,6 +90,11 @@ def test_required_anchor_materializes_real_data_and_stable_reference(tmp_path) -
     assert "Verified native content" in seed
     assert references[0]["nativeId"] == "fact:one"
     assert references[0]["authority"] == "ThinkGraph"
+    assert references[0]["label"] == "Current fact"
+    assert references[0]["selectionScope"] == {"boundedExpansion": 0}
+    assert references[0]["materializedContentBytes"] == len(
+        "Current native graph content".encode("utf-8")
+    )
 
 
 class _FakeNeo4jResult:

@@ -720,6 +720,82 @@ def _render_anchor(anchor: dict[str, Any], record: dict[str, Any]) -> str:
     ]).strip()
 
 
+def _materialized_reference(
+    anchor: dict[str, Any],
+    record: dict[str, Any],
+    *,
+    truncated: bool,
+) -> dict[str, Any]:
+    """Expose one truthful selection projection from the native read result."""
+
+    properties = record.get("properties")
+    properties = properties if isinstance(properties, dict) else {}
+    metadata = record.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    provenance = record.get("provenance")
+    provenance = provenance if isinstance(provenance, dict) else {}
+
+    def first_text(keys: tuple[str, ...], *sources: dict[str, Any]) -> str:
+        for source in sources:
+            for key in keys:
+                value = str(source.get(key) or "").strip()
+                if value:
+                    return value
+        return ""
+
+    source_path = first_text(
+        ("file", "filePath", "file_path", "sourcePath", "path"),
+        properties,
+        metadata,
+        provenance,
+    )
+    source_url = first_text(
+        ("url", "sourceUrl", "source_url", "sourceUri", "source_uri"),
+        properties,
+        metadata,
+        provenance,
+    )
+    content = record.get("content")
+    content_text = (
+        content
+        if isinstance(content, str)
+        else json.dumps(content, ensure_ascii=False, separators=(",", ":"), default=str)
+    )
+    selection_scope = {
+        "boundedExpansion": int(anchor.get("boundedExpansion", 0)),
+        **(
+            {"resultLimit": int(anchor["resultLimit"])}
+            if anchor.get("resultLimit") is not None
+            else {}
+        ),
+        **(
+            {
+                "searchDynamicInput": True,
+                "maxNodes": int(anchor.get("maxNodes", 8)),
+                "maxFacts": int(anchor.get("maxFacts", 8)),
+            }
+            if anchor.get("searchDynamicInput") is True
+            else {}
+        ),
+    }
+    return {
+        "authority": record["authority"],
+        "nativeId": record["nativeId"],
+        "nativeKind": record.get("nativeKind", "node"),
+        "label": str(record.get("title") or record["nativeId"]),
+        "reason": anchor["reason"],
+        "asOf": record["asOf"],
+        "required": anchor.get("required") is True,
+        "readOperation": record.get("readOperation") or "exact_read",
+        "provenance": provenance,
+        "selectionScope": selection_scope,
+        "materializedContentBytes": len(content_text.encode("utf-8")),
+        **({"sourcePath": source_path} if source_path else {}),
+        **({"sourceUrl": source_url} if source_url else {}),
+        "truncated": truncated,
+    }
+
+
 def empty_graph_projection(project_id: str) -> dict[str, Any]:
     return {
         "schemaVersion": "native-card-context.v1",
@@ -942,17 +1018,11 @@ def resolve_data_anchors(
                 graph_projection,
                 _record_graph_projection(project_id, record),
             )
-        references.append({
-            "authority": record["authority"],
-            "nativeId": record["nativeId"],
-            "nativeKind": record.get("nativeKind", "node"),
-            "reason": anchor["reason"],
-            "asOf": record["asOf"],
-            "required": anchor["required"],
-            "readOperation": record.get("readOperation") or "exact_read",
-            "provenance": record.get("provenance") or {},
-            "truncated": record.get("truncated") is True,
-        })
+        references.append(_materialized_reference(
+            anchor,
+            record,
+            truncated=record.get("truncated") is True,
+        ))
         if authority == "KnowGraph":
             exact_record = dict(record)
             exact_record["_selectionReason"] = anchor["reason"]
@@ -1000,17 +1070,11 @@ def resolve_data_anchors(
                 {"reason": f"{hook['reason']} — {record['selectionReason']}"},
                 record,
             ))
-            references.append({
-                "authority": record["authority"],
-                "nativeId": record["nativeId"],
-                "nativeKind": record.get("nativeKind", "node"),
-                "reason": record["selectionReason"],
-                "asOf": record["asOf"],
-                "required": hook.get("required") is True,
-                "readOperation": record.get("readOperation") or "exact_read",
-                "provenance": record.get("provenance") or {},
-                "truncated": result["truncated"],
-            })
+            references.append(_materialized_reference(
+                {**hook, "reason": record["selectionReason"]},
+                record,
+                truncated=result["truncated"],
+            ))
             if graph_projection is not None:
                 _merge_graph_projection(
                     graph_projection,
