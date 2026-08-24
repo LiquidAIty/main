@@ -126,220 +126,28 @@ experiment recommendation; the agent should record the tradeoff rather than cove
 
 ---
 
-## Codebase Memory is mandatory first navigation
+## Codebase Memory binding
 
-Codebase Memory / CodeGraph is the repository structure authority. The canonical project is:
+The canonical project is `C-Projects-LiquidAIty-main` at `C:/Projects/LiquidAIty/main`. Before code or
+architecture work, read [skills/codebasedmemory.md](./skills/codebasedmemory.md) completely and follow its
+ordered discovery recipe. That skill is the sole detailed authority for CBM discovery, coverage fallback, and
+the mandatory inverse deletion/rename audit.
 
-```text
-project: C-Projects-LiquidAIty-main
-root:    C:/Projects/LiquidAIty/main
-```
+The tracked repository hooks own the serialized lifecycle. `Stop` acquires one repository mutex, deletes and
+fully rebuilds only the canonical project, verifies it once, and releases the mutex. `UserPromptSubmit` waits
+on that same mutex, verifies the exact ready project once, and performs one recovery rebuild only when the
+project is authoritatively absent or unready. The mutex is the only lifecycle state and synchronization;
+native hook order is authoritative. Native CBM MCP owns graph discovery, and the active model never invokes
+lifecycle mutation during its response.
 
-Use the native `codebase-memory-mcp` server. Do not launch CBM through PowerShell, CLI wrappers, Python,
-Node, or another MCP host. Do not open its SQLite files. Do not write a replacement search façade.
+Begin with `search_graph`; retain real native IDs/provenance supplied by Main or `in.igf`; never fabricate
+symbols or graph seeds; and read complete current source before changing behavior. Any production deletion or
+rename must resolve actual qualified identities, traverse inverse relationships, repair surviving neighbors,
+and prove residue absence according to the skill.
 
-The full native catalog may expose:
-
-```text
-index_repository
-index_status
-list_projects
-delete_project
-search_graph
-trace_path
-query_graph
-ingest_traces
-detect_changes
-get_graph_schema
-get_architecture
-get_code_snippet
-search_code
-manage_adr
-```
-
-The live profile is authoritative. Restricted profiles may intentionally expose fewer tools. Report
-the missing project/status capability; do not invent results or start another CBM process.
-
-### Keep discovery inside the active repository ownership boundary
-
-The canonical project is the unified tracked-source graph:
-
-| Active ownership boundary | CBM project | Root | Normal use |
-| --- | --- | --- | --- |
-| LiquidAIty product | `C-Projects-LiquidAIty-main` | `C:\Projects\LiquidAIty\main` | LiquidAIty and checked-in AutoGen source |
-
-The normal core graph includes the checked-in first-party `autogen-main` fork. Hermes is too large for
-routine core rebuilds and remains excluded by `.cbmignore`; a controlling task may explicitly authorize
-one temporary unified projection for bounded cross-runtime design work. Runtime homes, credentials,
-virtual environments, caches, builds, downloaded models, and independently versioned applications
-such as WorldSignals remain excluded.
-
-Temporary unified indexing does not transfer ownership. Hermes remains an upstream-managed controlled vendor;
-AutoGen is a first-party maintained fork; LiquidAIty adapters remain product code. Use path-scoped
-queries to control noise and direct-read the owning current source after discovery. Do not create an
-index swarm or a second Hermes graph for ordinary work. Direct source and focused tests remain
-authoritative after graph discovery.
-
-### The correct discovery order
-
-For code and architecture work:
-
-```text
-search_graph for exact symbols, routes, types, files, or concepts until the structural owners are found
-→ trace_path for callers, callees, data flow, and impact
-→ get_code_snippet for the exact qualified symbols
-→ direct-read complete relevant current source bodies
-→ focused rg for literals, configs, comments, non-code, missing coverage, and exhaustive residue
-→ edit
-→ focused tests and compile/build
-→ direct reread and diff
-→ post-edit CBM impact/coverage when available
-```
-
-Do not begin with broad `rg`, random file opening, or recursive directory tours when the task concerns
-code structure. Do not use CBM ranking as semantic truth.
-
-### Tool selection
-
-- `search_graph` — default first call; find functions, methods, classes, routes, fields, modules, and
-  structural concepts.
-- `trace_path` — call next only when caller/callee or impact relationships matter. Use simple symbol
-  names unless the live schema says otherwise.
-- `get_code_snippet` — call only after `search_graph` gives an exact qualified name and only when its
-  bounded source is useful before the complete direct read.
-- `search_code` — graph-augmented text search after CBM has bounded the subsystem.
-- `query_graph` — use read-only Cypher for a specific bounded multi-hop question not answered by the
-  four normal tools.
-- `get_architecture` — obtain selected broad structure, dependencies, routes, boundaries, layers, or
-  clusters only when broad orientation is actually needed.
-- `detect_changes` — map tracked changes to symbols; it is not a replacement for Git status.
-- `index_repository` — run one full rebuild after the fixed Main entry deletion, or once for another
-  explicitly authorized maintenance reason. Never reindex before individual queries or run it concurrently.
-- `delete_project`, `ingest_traces`, and `manage_adr` are state-changing. The owner has granted the
-  scoped standing maintenance authorization below for `delete_project`; trace ingestion and ADR
-  mutation still require an explicit task.
-
-Do not treat this catalog as a checklist. There is no arbitrary CBM call-count limit: continue making
-useful, result-informed structural searches until the source boundary is actually resolved. Prefer:
-
-```text
-search_graph
-→ trace_path only if relationships matter
-→ get_code_snippet only if the bounded snippet adds value
-→ direct source
-```
-
-Use `query_graph`, `get_architecture`, and indexing/status operations only when the task actually
-requires them. Stop when CBM has bounded the files and symbols. Several useful searches are not a
-swarm; speculative or redundant searches disconnected from prior results are.
-
-### Keep one calm lifecycle
-
-- Choose one native CBM doorway for the run.
-- Independent bounded read operations may run concurrently through the same already-connected native
-  MCP owner and the same canonical project/database. Do not impose an arbitrary concurrency count.
-  Dependent calls still wait for their prerequisites; all state changes, initialization, indexing,
-  deletion, and lifecycle recovery remain sequential.
-- Check project/readiness once, not in a polling loop.
-- On timeout or closed transport, stop equivalent retries, report the doorway/error once, and retry at
-  most once after a specific lifecycle repair.
-- Never start several CLI/indexer processes to make CBM “faster.”
-- Never delete/rebuild an index as generic process recovery.
-
-### Standing CBM maintenance authorization
-
-Codex has unrestricted technical access to the native CBM catalog. Do not "ground" Git or CBM by
-disabling tools, adding an `enabled_tools` allowlist, switching the project to untrusted, or changing
-the global approval policy merely because one run behaved badly. Fix the bounded misuse instead.
-
-`C-Projects-LiquidAIty-main` is disposable derived projection state. Repository source and tests are authoritative.
-The owner authorizes exact-project deletion and immediate canonical rebuilding without another
-permission round-trip once at the start of each Codex task whose active repository is
-`C:/Projects/LiquidAIty/main`. This fixed task-entry checkpoint replaces freshness deliberation, delayed markers,
-and the proposed post-commit checkpoint. Immediately before deletion:
-
-1. use the native doorway only;
-2. verify the exact project name and root are `C-Projects-LiquidAIty-main` and `C:/Projects/LiquidAIty/main`;
-3. record the current index status/counts or the checkpoint reason;
-4. verify `.cbmignore` contains the intended current exclusions;
-5. ensure no index/delete/recovery operation is already running.
-
-Then perform exactly one delete, exactly one full `index_repository` rebuild of `C:/Projects/LiquidAIty/main`, and
-one readiness/count/exclusion verification phase. Reindexing alone does not replace deletion because
-SQLite-backed incremental refresh can retain deleted or newly excluded fragments. Never delete
-another project, repository source, or CBM storage files
-under this authorization. Never use delete/rebuild for an ordinary timeout or connector failure.
-
-`UserPromptSubmit` injects this maintenance and discovery SOP, but the active agent executes maintenance
-only if the current Main task has not already completed its clean entry. Use the one already-connected
-native MCP owner; the hook itself must not launch a CLI, server, indexer, or direct database process.
-Record completion in task context and never repeat delete/rebuild for an interruption, follow-up,
-clarification, compaction, or another message in the same task. An explicit controlling task may move
-this single delete/rebuild checkpoint to the final stable-source stage; it still occurs only once.
-After the clean rebuild, verify the exact project/root, ready status, live node/edge/file counts,
-`.cbmignore` exclusions, presence of intended tracked AutoGen source, and absence of excluded
-runtime/vendor-application paths once. If the active task explicitly authorized a temporary Hermes
-projection, report that it becomes structurally divergent once the normal `/Hermes/` exclusion is restored.
-Then begin discovery with the four normal tools: `search_graph`, `trace_path` when relationships matter,
-`get_code_snippet` for exact qualified-symbol snapshots, and `search_code` for bounded concept/literal/
-residue discovery when useful. Outside `C:/Projects/LiquidAIty/main`, do not perform this Main maintenance.
-
-The Git post-commit hook remains Git LFS only. Do not install a second CBM mutation frontend, kill the
-normal Codex owner, or reintroduce a delayed marker system.
-
-### Freshness proof
-
-A useful CBM report contains:
-
-```text
-project name
-canonical root
-index status or exact reason unavailable
-node count
-edge count
-indexed file count when exposed
-index head/base revision when exposed
-current Git HEAD when available
-dirty/untracked state from Git
-known exclusions or missing files
-fresh | stale | divergent | unknown | blocked
-```
-
-Never copy old counts from this document, a wiki manifest, memory, or another run. Obtain live values.
-
-The committed graph can remain useful when the working tree is dirty. Use it for structural anchors,
-then inspect the active diff and direct source. Do not call ordinary dirty-worktree divergence a CBM
-defect. Refresh after commit, or when the owner explicitly requires a working-tree refresh.
-
-If `head_sha` and `base_sha` differ, or if CBM cannot be tied to current Git HEAD, call the index
-structural-only/divergent. Do not block all work automatically; use bounded direct-source verification
-and report the limitation.
-
-### Evidence tiers
-
-**Scout** — a few narrow searches for provisional positive discovery. Never make exhaustive absence,
-dead-code, or deletion claims from Scout evidence.
-
-**Verify** — project/status, exact search, relevant traces, qualified snippets, complete direct source,
-focused residue search, focused tests. Required for normal implementation.
-
-**Auditor** — paginate every relevant result set, inspect inbound/outbound impact, verify skipped or
-missing paths directly, and state coverage limits. Required for safe deletion, duplicate-authority,
-dead-code, and exhaustive claims.
-
-### Direct-source fallback
-
-If CBM omits a known current file or symbol:
-
-1. verify the exact path exists and is in the requested scope;
-2. verify project/root identity and record why index coverage is insufficient;
-3. read the exact current file directly;
-4. use focused `rg` for imports, callers, contracts, and tests;
-5. continue the task without pretending CBM supplied the missing evidence;
-6. do not repair/rebuild CBM unless that is the requested task.
-
-CBM is structural navigation, not a fake proof engine. Direct source, compile output, focused tests,
-persistence readback, and real runtime evidence win when they disagree with graph memory.
+The current derived projection intentionally excludes `autogen-main` through `.cbmignore`; AutoGen remains
+first-party runtime source. Never open or manipulate CBM SQLite/cache files, create backups, launch another
+daemon, change global Codex configuration, or substitute LiquidAIty's Docker CodeGraph service.
 
 ---
 

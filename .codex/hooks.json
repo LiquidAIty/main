@@ -1,5 +1,5 @@
 {
-  "description": "Repository-owned native CBM graph handoff.",
+  "description": "Deterministic LiquidAIty CBM lifecycle: rebuild on completion, verify or recover on prompt.",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -7,10 +7,10 @@
           {
             "type": "command",
             "command": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$(git rev-parse --show-toplevel)/.codex/hooks/cbm_graph_handoff.ps1\"",
-            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\\Projects\\main\\.codex\\hooks\\cbm_graph_handoff.ps1",
-            "timeout": 5,
-            "statusMessage": "Loading repository CBM graph handoff",
-            "additionalContextLimit": 2500
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$repoRoot = git rev-parse --show-toplevel; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; & (Join-Path $repoRoot '.codex\\hooks\\cbm_graph_handoff.ps1')\"",
+            "timeout": 180,
+            "statusMessage": "Waiting for repository CodeGraph",
+            "additionalContextLimit": 1600
           }
         ]
       }
@@ -21,9 +21,9 @@
           {
             "type": "command",
             "command": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$(git rev-parse --show-toplevel)/.codex/hooks/cbm_graph_handoff.ps1\"",
-            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\\Projects\\main\\.codex\\hooks\\cbm_graph_handoff.ps1",
-            "timeout": 10,
-            "statusMessage": "Checking repository CBM graph handoff"
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$repoRoot = git rev-parse --show-toplevel; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; & (Join-Path $repoRoot '.codex\\hooks\\cbm_graph_handoff.ps1')\"",
+            "timeout": 120,
+            "statusMessage": "Rebuilding repository CodeGraph"
           }
         ]
       }
