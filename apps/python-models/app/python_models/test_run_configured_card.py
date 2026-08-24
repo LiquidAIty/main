@@ -4,12 +4,13 @@ import asyncio
 from types import SimpleNamespace
 
 from app.python_models import magentic_agentchat as mac
-from app.python_models.icf import materialize_input_pair
+from app.python_models.idf import materialize_idf
 from app.python_models.orchestration_contracts import (
     ProjectSession,
-    RuntimeInputFiles,
+    RuntimeInputFile,
     RuntimeRequest,
 )
+
 
 MODEL = "gpt-5.6"
 
@@ -22,7 +23,7 @@ def _context(
     enabled_tools: list[str] | None = None,
 ) -> RuntimeRequest:
     tools = ["calculator"] if enabled_tools is None else enabled_tools
-    pair = materialize_input_pair(
+    materialized = materialize_idf(
         owner={"kind": "test", "runId": "run:one"},
         stable={
             "instructions": "saved system",
@@ -33,7 +34,7 @@ def _context(
                 "modelKey": MODEL, "providerModelId": MODEL,
             },
         },
-        variable={"task": user_text, "selectedNativeReferences": [], "images": []},
+        variable={"task": user_text, "images": []},
         capabilities={
             "enabledTools": tools,
             "toolDefinitions": [{"name": name} for name in tools],
@@ -50,12 +51,11 @@ def _context(
             conversationId="c", turnId="turn:one", runId="run:one",
             route="single_card", orchestrator=orchestrator, startedAt="now",
         ),
-        icf=pair.icf,
-        igf=pair.igf,
-        inputFiles=RuntimeInputFiles(
-            workspace="test", icfPath="test/in.icf", igfPath="test/in.igf",
-            icfSha256=pair.icf_sha256, igfSha256=pair.igf_sha256,
-            icfBytes=len(pair.icf_bytes), igfBytes=len(pair.igf_bytes),
+        idf=materialized.idf,
+        inputFile=RuntimeInputFile(
+            workspace="test", idfPath="test/in.idf",
+            idfSha256=materialized.idf_sha256,
+            idfBytes=len(materialized.idf_bytes),
         ),
     )
 
@@ -69,7 +69,7 @@ def test_structural_guard_rejects_invalid_runtime_without_model() -> None:
     )
 
 
-def test_single_card_consumes_one_python_materialization(monkeypatch) -> None:
+def test_single_card_consumes_graph_first_idf(monkeypatch) -> None:
     observed: list[dict] = []
 
     class Agent:
@@ -91,18 +91,15 @@ def test_single_card_consumes_one_python_materialization(monkeypatch) -> None:
 
     assert result.ok is True
     assert result.runId == "run:one"
-    assert observed[0]["system_message"] == context.icf.stable["instructions"]
+    assert observed[0]["system_message"] == context.idf.icf.instructions
     attached_names = {tool.name for tool in observed[0]["tools"]}
     assert "web_search" in attached_names
     assert "calculator" in attached_names
     assert observed[1] == {"task": "current native graph data\n\nrun"}
-    assert context.icf.variable["task"] == "run"
-    assert "card:one" not in context.icf.variable["task"]
+    assert context.idf.icf.task == "run"
 
 
-def test_single_card_gets_idd_reads_without_copying_them_into_card_tools(
-    monkeypatch,
-) -> None:
+def test_single_card_gets_idd_reads_without_copying_them_into_card_tools(monkeypatch) -> None:
     observed: list[dict] = []
 
     class Agent:
@@ -119,13 +116,12 @@ def test_single_card_gets_idd_reads_without_copying_them_into_card_tools(
     context = _context(enabled_tools=[])
     monkeypatch.setattr(mac, "_build_model_client", lambda _config: Client())
     monkeypatch.setattr(mac, "AssistantAgent", Agent)
-
     result = asyncio.run(mac.run_configured_card(context))
 
     assert result.ok is True
     attached_names = {tool.name for tool in observed[0]["tools"]}
     assert "web_search" in attached_names
-    assert context.icf.capabilities["enabledTools"] == []
+    assert context.idf.execution.enabledTools == []
 
 
 def test_single_card_error_never_echoes_dynamic_input(monkeypatch) -> None:

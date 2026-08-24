@@ -16,7 +16,7 @@ const AUTOGEN_DISPATCH_ENDPOINT = '/autogen/dispatch';
 
 export type ConfiguredRuntimeRequest = {
   session: ConfiguredRuntimeSession;
-  inputFiles: import('../../contracts/runtimeContracts').CanonicalInputFiles;
+  inputFile: import('../../contracts/runtimeContracts').CanonicalInputFile;
   participants?: Array<Record<string, unknown>>;
 };
 

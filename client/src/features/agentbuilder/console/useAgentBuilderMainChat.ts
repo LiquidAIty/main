@@ -157,8 +157,7 @@ export function parseStagedCardInvocationLoaded(
         && value.required === true;
     })
     && invocation != null
-    && invocation.icf != null
-    && invocation.igf != null
+    && invocation.idf != null
     && projection != null
     && Array.isArray(projection.nodes)
     && Array.isArray(projection.edges)

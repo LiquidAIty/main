@@ -1,10 +1,7 @@
-/** Transport reference to the exact Python-materialized runtime input bytes. */
-export type CanonicalInputFiles = {
+/** Transport reference to the exact Python-materialized IDF bytes. */
+export type CanonicalInputFile = {
   workspace: string;
-  icfPath: string;
-  igfPath: string;
-  icfSha256: string;
-  igfSha256: string;
-  icfBytes: number;
-  igfBytes: number;
+  idfPath: string;
+  idfSha256: string;
+  idfBytes: number;
 };

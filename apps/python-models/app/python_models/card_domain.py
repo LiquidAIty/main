@@ -2,7 +2,7 @@
 
 PostgreSQL owns stable Project, Deck, Card revision, runtime, grants, layout, and
 Run identities. AGE owns Card relationships. Each execution retains one
-validated ``in.icf``/``in.igf`` pair through the existing Run artifact owner.
+validated ``in.idf`` through the existing Run artifact owner.
 """
 
 from __future__ import annotations
@@ -24,14 +24,13 @@ from app.python_models.idd import (
     tool_access,
     validate_record,
 )
-from app.python_models.icf import (
+from app.python_models.idf import (
     InputMaterializationError,
-    input_pair_public,
-    load_input_pair,
-    materialize_input_pair,
-    rematerialize_input_pair,
+    idf_public,
+    load_idf,
+    materialize_idf,
     runtime_projection,
-    write_input_pair,
+    write_idf,
 )
 from app.python_models.data_anchor import (
     DataAnchorError,
@@ -2008,12 +2007,16 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(images, list) or any(not isinstance(item, dict) for item in images):
         raise CardDomainError("images_invalid")
     try:
-        pair = materialize_input_pair(
+        run_id = str(payload.get("runId") or "").strip()
+        correlation_id = str(payload.get("correlationId") or "").strip()
+        materialized = materialize_idf(
             owner={
-                "kind": "preview",
+                "kind": "card-run" if run_id else "preview",
                 "projectId": prepared["projectId"],
                 "deckId": prepared["deckId"],
                 "cardId": prepared["cardIdentity"]["cardId"],
+                **({"runId": run_id} if run_id else {}),
+                **({"correlationId": correlation_id} if correlation_id else {}),
             },
             stable={
                 "projectId": prepared["projectId"],
@@ -2055,7 +2058,8 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         **prepared,
         "resolvedNativeReads": anchor_references,
         "resolvedGraphProjection": graph_projection,
-        **input_pair_public(pair),
+        **idf_public(materialized),
+        **({"_materializedIdf": materialized} if run_id else {}),
     }
 
 
@@ -2209,7 +2213,7 @@ def assert_grounded_invocation(
     execution-ready without creating a Run or contacting a provider.
     """
 
-    runtime = prepared.get("icf", {}).get("stable", {}).get("runtime", {})
+    runtime = prepared.get("idf", {}).get("execution", {}).get("runtime", {})
     requires_grounding = (
         isinstance(runtime, dict)
         and (
@@ -2252,9 +2256,9 @@ def _insert_run(
     correlation_id: str,
     request_fingerprint: str | None = None,
 ) -> tuple[str, str, bool]:
-    icf = prepared["icf"]
-    runtime = icf["stable"]["runtime"]
-    provider = icf["stable"]["provider"]
+    idf = prepared["idf"]
+    runtime = idf["execution"]["runtime"]
+    provider = idf["execution"]["provider"]
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """
@@ -2308,25 +2312,15 @@ def _insert_run(
         return str(existing["run_id"]), str(existing["correlation_id"]), False
 
 
-def _record_run_input_artifacts(run_id: str, input_files: dict[str, Any]) -> None:
-    rows = [
-        (
-            f"input:{_sha(run_id)[:24]}:icf",
-            "input-context-file",
-            input_files["icfPath"],
-            "application/vnd.liquidaity.icf+json",
-            input_files["icfSha256"],
-            input_files["icfBytes"],
-        ),
-        (
-            f"input:{_sha(run_id)[:24]}:igf",
-            "input-graph-file",
-            input_files["igfPath"],
-            "application/vnd.liquidaity.igf+jsonl",
-            input_files["igfSha256"],
-            input_files["igfBytes"],
-        ),
-    ]
+def _record_run_input_artifact(run_id: str, input_file: dict[str, Any]) -> None:
+    rows = [(
+        f"input:{_sha(run_id)[:24]}:idf",
+        "input-data-file",
+        input_file["idfPath"],
+        "application/vnd.liquidaity.idf+json",
+        input_file["idfSha256"],
+        input_file["idfBytes"],
+    )]
     with connect_postgres() as connection, connection.cursor() as cursor:
         for artifact_id, kind, locator, media_type, content_hash, size_bytes in rows:
             cursor.execute(
@@ -2354,28 +2348,24 @@ def _input_file_descriptor_for_run(run_id: str) -> dict[str, Any] | None:
                 SELECT artifact_kind, locator, content_sha256, size_bytes
                 FROM ag_catalog.run_artifacts
                 WHERE producing_run_id=%s
-                  AND artifact_kind IN ('input-context-file','input-graph-file')
+                  AND artifact_kind='input-data-file'
                 ORDER BY artifact_kind
                 """,
                 (run_id,),
             )
             rows = {str(row["artifact_kind"]): dict(row) for row in cursor.fetchall()}
-    icf = rows.get("input-context-file")
-    igf = rows.get("input-graph-file")
-    if icf is None or igf is None:
+    idf = rows.get("input-data-file")
+    if idf is None:
         return None
     return {
-        "workspace": str(icf["locator"]).rsplit("\\", 1)[0].rsplit("/", 1)[0],
-        "icfPath": str(icf["locator"]),
-        "igfPath": str(igf["locator"]),
-        "icfSha256": str(icf.get("content_sha256") or ""),
-        "igfSha256": str(igf.get("content_sha256") or ""),
-        "icfBytes": int(icf.get("size_bytes") or 0),
-        "igfBytes": int(igf.get("size_bytes") or 0),
+        "workspace": str(idf["locator"]).rsplit("\\", 1)[0].rsplit("/", 1)[0],
+        "idfPath": str(idf["locator"]),
+        "idfSha256": str(idf.get("content_sha256") or ""),
+        "idfBytes": int(idf.get("size_bytes") or 0),
     }
 
 
-def _retain_run_input_pair(
+def _retain_run_idf(
     prepared: dict[str, Any],
     *,
     run_id: str,
@@ -2384,43 +2374,36 @@ def _retain_run_input_pair(
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     try:
         if created:
-            pair = rematerialize_input_pair(
-                prepared["icf"],
-                prepared["igf"],
-                owner={
-                    "kind": "card-run",
-                    "projectId": prepared["projectId"],
-                    "deckId": prepared["deckId"],
-                    "cardId": prepared["cardIdentity"]["cardId"],
-                    "runId": run_id,
-                    "correlationId": correlation_id,
-                },
-            )
-            input_files = write_input_pair(
-                pair,
+            materialized = prepared.pop("_materializedIdf", None)
+            if materialized is None:
+                raise InputMaterializationError("input_materialization_unavailable")
+            input_file = write_idf(
+                materialized,
                 project_id=prepared["projectId"],
                 deck_id=prepared["deckId"],
                 run_id=run_id,
             )
-            _record_run_input_artifacts(run_id, input_files)
+            _record_run_input_artifact(run_id, input_file)
         else:
-            input_files = _input_file_descriptor_for_run(run_id)
-            if input_files is None:
-                raise InputMaterializationError("input_files_unavailable")
-            pair = load_input_pair(
-                input_files,
-                project_id=prepared["projectId"],
-                deck_id=prepared["deckId"],
-                run_id=run_id,
-                card_id=prepared["cardIdentity"]["cardId"],
-            )
-        public = input_pair_public(pair)
-        return public, input_files, runtime_projection(pair)
+            prepared.pop("_materializedIdf", None)
+            input_file = _input_file_descriptor_for_run(run_id)
+            if input_file is None:
+                raise InputMaterializationError("input_file_unavailable")
+        # The model/runtime request is projected only from the retained bytes.
+        loaded = load_idf(
+            input_file,
+            project_id=prepared["projectId"],
+            deck_id=prepared["deckId"],
+            run_id=run_id,
+            card_id=prepared["cardIdentity"]["cardId"],
+        )
+        public = idf_public(loaded)
+        return public, input_file, runtime_projection(loaded)
     except InputMaterializationError as error:
         raise CardDomainError(str(error)) from error
 
 
-def _retain_required_run_input_pair(
+def _retain_required_run_idf(
     prepared: dict[str, Any],
     *,
     run_id: str,
@@ -2430,7 +2413,7 @@ def _retain_required_run_input_pair(
     """Fail a newly created Run closed when its canonical inputs cannot persist."""
 
     try:
-        return _retain_run_input_pair(
+        return _retain_run_idf(
             prepared,
             run_id=run_id,
             correlation_id=correlation_id,
@@ -2486,7 +2469,7 @@ def read_run_input_files(payload: dict[str, Any]) -> dict[str, Any]:
             "message": "Input files unavailable for this Run",
         }
     try:
-        pair = load_input_pair(
+        materialized = load_idf(
             input_files,
             project_id=project_id,
             deck_id=deck_id,
@@ -2499,14 +2482,13 @@ def read_run_input_files(payload: dict[str, Any]) -> dict[str, Any]:
         "ok": True,
         "available": True,
         "runId": run_id,
-        **input_pair_public(pair),
-        "icfText": pair.icf_bytes.decode("utf-8"),
-        "igfText": pair.igf_bytes.decode("utf-8"),
+        **idf_public(materialized),
+        "idfText": materialized.idf_bytes.decode("utf-8"),
     }
 
 
 def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
-    """Begin Main only after its canonical input pair is retained and reloaded."""
+    """Begin Main only after its canonical IDF is retained and reloaded."""
     message = _required_text(payload.get("message"), "message")
     prepared = prepare_main_chat({**payload, "message": message})
     expected_revision = str(payload.get("cardRevisionId") or "").strip()
@@ -2521,7 +2503,7 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if not created:
         raise CardDomainError("main_run_identity_conflict")
-    public, input_files, runtime_input = _retain_required_run_input_pair(
+    public, input_files, runtime_input = _retain_required_run_idf(
         prepared,
         run_id=resolved_run_id,
         correlation_id=resolved_correlation_id,
@@ -2544,11 +2526,11 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
         "correlationId": resolved_correlation_id,
         "telemetryWritten": telemetry_written,
         "anchorTelemetryWritten": anchor_telemetry_written,
-        "inputFiles": input_files,
+        "inputFile": input_files,
         "nativeRuntimeRequest": None,
         "hermesTransport": {
             "request": runtime_input,
-            "inputFiles": input_files,
+            "inputFile": input_files,
             "cardIdentity": prepared["cardIdentity"],
             "delegationTargets": prepared.get("delegationTargets") or [],
         },
@@ -2556,14 +2538,14 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
-    """Create one Run, retain its input pair, then expose one native request."""
+    """Create one Run, retain its one IDF, then expose one native request."""
 
     prepared = prepare_run_invocation(payload)
     run_id = _required_text(payload.get("runId"), "run_id")
     correlation_id = _required_text(payload.get("correlationId"), "correlation_id")
     card_identity = prepared["cardIdentity"]
     owner = prepared["runtimeOwner"]
-    runtime = prepared["icf"]["stable"]["runtime"]
+    runtime = prepared["idf"]["execution"]["runtime"]
     durable_kanban = (
         owner == "hermes"
         and runtime.get("kind") == "hermes"
@@ -2610,7 +2592,7 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if not created and not durable_kanban:
         raise CardDomainError("run_identity_conflict")
-    public, input_files, runtime_input = _retain_required_run_input_pair(
+    public, input_files, runtime_input = _retain_required_run_idf(
         prepared,
         run_id=resolved_run_id,
         correlation_id=resolved_correlation_id,
@@ -2637,7 +2619,7 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
                 "orchestrator": "magentic_one" if owner == "mag_one" else "assistant_agent",
                 "startedAt": _now().isoformat(),
             },
-            "inputFiles": input_files,
+            "inputFile": input_files,
             "participants": participants,
         }
     telemetry_written = False
@@ -2661,11 +2643,11 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
         "requestFingerprint": request_fingerprint,
         "telemetryWritten": telemetry_written,
         "anchorTelemetryWritten": anchor_telemetry_written,
-        "inputFiles": input_files,
+        "inputFile": input_files,
         "nativeRuntimeRequest": native_runtime_request,
         "hermesTransport": {
             "request": runtime_input,
-            "inputFiles": input_files,
+            "inputFile": input_files,
             "cardIdentity": card_identity,
             "delegationTargets": prepared.get("delegationTargets") or [],
         } if owner == "hermes" else None,
@@ -3030,7 +3012,7 @@ def _observe_run_start(
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
             identity = prepared["cardIdentity"]
             runtime = (
-                ((prepared.get("icf") or {}).get("stable") or {}).get("runtime")
+                ((prepared.get("idf") or {}).get("execution") or {}).get("runtime")
                 or {}
             )
             _age_rows(

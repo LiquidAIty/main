@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
-from app.python_models.icf import Icf, IgfDocument
+from app.python_models.idf import Idf
 
 
 RequiredRuntimeString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -85,31 +85,27 @@ class NativeReference(BaseModel):
     required: bool = False
 
 
-class RuntimeInputFiles(BaseModel):
+class RuntimeInputFile(BaseModel):
     workspace: str
-    icfPath: str
-    igfPath: str
-    icfSha256: str
-    igfSha256: str
-    icfBytes: int
-    igfBytes: int
+    idfPath: str
+    idfSha256: str
+    idfBytes: int
 
 
 class StoredRuntimeRequest(BaseModel):
     """External request that names the already-retained canonical bytes."""
 
     session: ProjectSession
-    inputFiles: RuntimeInputFiles
+    inputFile: RuntimeInputFile
     participants: list[RuntimeParticipant] = Field(default_factory=list)
 
 
 class RuntimeRequest(BaseModel):
-    """Internal request loaded and validated from the retained file pair."""
+    """Internal request loaded and validated from the one retained IDF."""
 
     session: ProjectSession
-    icf: Icf
-    igf: IgfDocument
-    inputFiles: RuntimeInputFiles
+    idf: Idf
+    inputFile: RuntimeInputFile
     participants: list[RuntimeParticipant] = Field(default_factory=list)
 
 

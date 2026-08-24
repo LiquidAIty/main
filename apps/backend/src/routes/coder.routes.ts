@@ -252,15 +252,7 @@ function resolveHermesTurnArgs(
     deckId: args.deckId,
     conversationId: args.conversationId,
     parentRunId: args.parentRunId || args.conversationId,
-    message: [
-      String(input.graphContext || '').trim(),
-      String(input.task || '').trim(),
-      String(input.outputRequirements || '').trim()
-        ? `Output requirements:\n${String(input.outputRequirements).trim()}`
-        : '',
-    ]
-      .filter(Boolean)
-      .join('\n\n'),
+    message: String(input.message || ''),
     ...(args.workingDirectory ? { workingDirectory: args.workingDirectory } : {}),
   };
 }
@@ -494,7 +486,7 @@ async function readConfiguredCardRunStatus(args: {
 }
 
 // Thin configured-Card transport. Python owns Card/AGE/IDD validation, the one
-// canonical ICF/IGF materializer, runtime-owner selection, and separate Run
+// canonical IDF materializer, runtime-owner selection, and separate Run
 // persistence. This route never rebuilds the model call.
 router.post('/mcp-bridge/run_configured_card', async (req, res) => {
   const body = req.body || {};
@@ -866,10 +858,9 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
             runtimeOwner: prepared.runtimeOwner,
             resolvedNativeReads: prepared.resolvedNativeReads,
             resolvedGraphProjection: prepared.resolvedGraphProjection,
-            icf: prepared.icf,
-            igf: prepared.igf,
+            idf: prepared.idf,
             inputSummary: prepared.inputSummary,
-            inputFiles: prepared.inputFiles,
+            inputFile: prepared.inputFile,
             cardIdentity: prepared.cardIdentity,
           },
           output,

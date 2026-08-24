@@ -303,10 +303,15 @@ export type StandaloneCardTestResult = {
     runtimeOwner: string;
     resolvedNativeReads?: Array<Record<string, unknown>>;
     resolvedGraphProjection?: GraphProjectionV1;
-    icf: Record<string, any>;
-    igf: { header: Record<string, any>; records: Array<Record<string, any>> };
+    idf: {
+      igf: Record<string, any>;
+      icf: Record<string, any>;
+      execution: Record<string, any>;
+      output: Record<string, any>;
+      estimates: Record<string, any>;
+    };
     inputSummary?: Record<string, any>;
-    inputFiles?: Record<string, any>;
+    inputFile?: Record<string, any>;
     cardIdentity: { cardId: string; title?: string };
   } | null;
   receipt?: Record<string, unknown> | null;
@@ -316,11 +321,15 @@ export type RetainedRunInputs = {
   available: boolean;
   runId: string;
   message?: string;
-  icf?: Record<string, any>;
-  igf?: { header: Record<string, any>; records: Array<Record<string, any>> };
+  idf?: {
+    igf: Record<string, any>;
+    icf: Record<string, any>;
+    execution: Record<string, any>;
+    output: Record<string, any>;
+    estimates: Record<string, any>;
+  };
   inputSummary?: Record<string, any>;
-  icfText?: string;
-  igfText?: string;
+  idfText?: string;
 };
 
 export type NamedRuntimeInputInspection = {
@@ -683,7 +692,7 @@ export function AgentManager({
   const knowledgeProjectionIsMaterialized = selectedKnowledgeProjection.modelBound;
 
   const exportRuntimeInput = useCallback(async (
-    extension: '.icf' | '.igf',
+    extension: '.idf' | '.icf' | '.igf',
     contents: string,
   ) => {
     setInputFileTransferError(null);
@@ -713,7 +722,9 @@ export function AgentManager({
       const handle = await picker({
         suggestedName: filename,
         types: [{
-          description: extension === '.icf' ? 'Input Context File' : 'Input Graph File',
+          description: extension === '.idf'
+            ? 'Input Data File'
+            : extension === '.icf' ? 'Input Context File' : 'Input Graph File',
           accept: { 'application/json': [extension] },
         }],
       });
@@ -1553,52 +1564,46 @@ export function AgentManager({
             {inputFileTransferError ? <div role="alert" style={{ color: '#FFA2A2', fontSize: 10.5 }}>{inputFileTransferError}</div> : null}
           </section>
           {!runInputs && runResult?.invocation ? (
-            <section data-testid="next-igf-preview" style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #3A4A4F', borderRadius: 8 }}>
-              <strong style={{ color: '#D5E4E8', fontSize: 12 }}>Next IGF preview</strong>
+            <section data-testid="next-idf-graph-preview" style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #3A4A4F', borderRadius: 8 }}>
+              <strong style={{ color: '#D5E4E8', fontSize: 12 }}>Next IDF graph-evidence preview</strong>
               <div style={{ color: '#80969F', fontSize: 10.5 }}>
-                {Number(runResult.invocation.igf.header?.recordCounts?.total || 0)} records · provider-free preview only · no retained file yet
+                {Number(runResult.invocation.idf.igf?.recordCounts?.total || 0)} records · provider-free preview only · no retained file yet
               </div>
               <details>
                 <summary style={{ cursor: 'pointer', color: '#B8C8CD', fontSize: 11 }}>Inspect structured preview</summary>
                 <pre style={{ margin: '8px 0 0', padding: 8, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#161A1B', color: '#C7D7DC', fontSize: 10 }}>
-                  {JSON.stringify(runResult.invocation.igf, null, 2)}
+                  {JSON.stringify(runResult.invocation.idf.igf, null, 2)}
                 </pre>
               </details>
             </section>
           ) : null}
           {runInputs ? (
             <section
-              data-testid="selected-run-igf"
+              data-testid="selected-run-idf-graph"
               style={{ display: 'grid', gap: 8, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#1D2526' }}
             >
               <strong style={{ color: '#D5E4E8', fontSize: 12 }}>
-                Selected Run · in.igf
+                Selected Run · IDF graph evidence
               </strong>
-              {runInputs.available && runInputs.igf && runInputs.igfText != null ? (
+              {runInputs.available && runInputs.idf ? (
                 <>
                   <div style={{ color: '#80969F', fontSize: 10.5 }}>
-                    {Number(runInputs.inputSummary?.igfBytes || 0).toLocaleString()} UTF-8 bytes · {' '}
-                    {Number(runInputs.igf.header?.recordCounts?.total || 0)} records · {' '}
-                    {Array.isArray(runInputs.igf.header?.authorities) && runInputs.igf.header.authorities.length > 0
-                      ? runInputs.igf.header.authorities.join(', ')
+                    {Number(runInputs.idf.igf?.recordCounts?.total || 0)} records · {' '}
+                    {Array.isArray(runInputs.idf.igf?.authorities) && runInputs.idf.igf.authorities.length > 0
+                      ? runInputs.idf.igf.authorities.join(', ')
                       : 'no graph authority selected'}
                   </div>
-                  <div data-testid="selected-run-igf-token-estimate" style={{ color: '#9FB2B8', fontSize: 10.5 }}>
+                  <div data-testid="selected-run-idf-graph-token-estimate" style={{ color: '#9FB2B8', fontSize: 10.5 }}>
                     Estimated model-visible graph context: {' '}
-                    {Number(runInputs.icf?.estimates?.graphContextTokens || 0).toLocaleString()} tokens. {' '}
-                    This is the model-agnostic UTF-8 bytes ÷ 4 estimate for the materialized graph text, not the IGF metadata records or native provider usage.
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    <button type="button" onClick={() => void exportRuntimeInput('.igf', runInputs.igfText || '')}>
-                      Export IGF…
-                    </button>
+                    {Number(runInputs.idf.estimates?.graphContextTokens || 0).toLocaleString()} tokens. {' '}
+                    This bounded evidence remains inside the one retained IDF; native graphs remain authoritative.
                   </div>
                   <details>
                     <summary style={{ cursor: 'pointer', color: '#B8C8CD', fontSize: 11 }}>
-                      Inspect exact retained IGF JSONL
+                      Inspect graph section inside retained IDF
                     </summary>
                     <pre style={{ margin: '8px 0 0', padding: 8, maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#161A1B', color: '#C7D7DC', fontSize: 10 }}>
-                      {runInputs.igfText}
+                      {JSON.stringify(runInputs.idf.igf, null, 2)}
                     </pre>
                   </details>
                 </>
@@ -2701,50 +2706,50 @@ export function AgentManager({
         ) : null}
 
         {activeTab === 'Task' && !runInputs && runResult?.invocation ? (
-          <section data-testid="next-icf-preview" style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #3A4A4F', borderRadius: 8 }}>
-            <strong style={{ color: '#D5E4E8', fontSize: 12 }}>Next ICF preview</strong>
+          <section data-testid="next-idf-preview" style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #3A4A4F', borderRadius: 8 }}>
+            <strong style={{ color: '#D5E4E8', fontSize: 12 }}>Next IDF preview</strong>
             <div style={{ color: '#80969F', fontSize: 10.5 }}>
               Provider-free preview only. No Run exists and no file has been retained yet.
             </div>
             <pre style={{ margin: 0, padding: 8, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#161A1B', color: '#C7D7DC', fontSize: 10 }}>
-              {JSON.stringify(runResult.invocation.icf, null, 2)}
+              {JSON.stringify(runResult.invocation.idf, null, 2)}
             </pre>
           </section>
         ) : null}
 
         {activeTab === 'Task' && runInputs ? (
           <section
-            data-testid="selected-run-icf"
+            data-testid="selected-run-idf"
             style={{ display: 'grid', gap: 8, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#1D2526' }}
           >
             <strong style={{ color: '#D5E4E8', fontSize: 12 }}>
-              Selected Run · in.icf
+              Selected Run · in.idf
             </strong>
-            {runInputs.available && runInputs.icf && runInputs.icfText != null ? (
+            {runInputs.available && runInputs.idf && runInputs.idfText != null ? (
               <>
                 <div style={{ color: '#80969F', fontSize: 10.5 }}>
-                  {Number(runInputs.inputSummary?.icfBytes || 0).toLocaleString()} UTF-8 bytes · estimated {' '}
-                  {Number(runInputs.icf.estimates?.totalModelVisibleTokens || 0).toLocaleString()} LiquidAIty-supplied text tokens
+                  {Number(runInputs.inputSummary?.idfBytes || 0).toLocaleString()} UTF-8 bytes · estimated {' '}
+                  {Number(runInputs.idf.estimates?.totalModelVisibleTokens || 0).toLocaleString()} LiquidAIty-supplied text tokens
                 </div>
                 <div data-testid="selected-run-token-estimate" style={{ color: '#9FB2B8', fontSize: 10.5, lineHeight: 1.5 }}>
-                  system {Number(runInputs.icf.estimates?.systemContextTokens || 0).toLocaleString()} · {' '}
-                  task {Number(runInputs.icf.estimates?.taskTokens || 0).toLocaleString()} · {' '}
-                  output {Number(runInputs.icf.estimates?.outputContractTokens || 0).toLocaleString()} · {' '}
-                  graph {Number(runInputs.icf.estimates?.graphContextTokens || 0).toLocaleString()}
+                  system {Number(runInputs.idf.estimates?.systemContextTokens || 0).toLocaleString()} · {' '}
+                  task {Number(runInputs.idf.estimates?.taskTokens || 0).toLocaleString()} · {' '}
+                  output {Number(runInputs.idf.estimates?.outputContractTokens || 0).toLocaleString()} · {' '}
+                  graph {Number(runInputs.idf.estimates?.graphContextTokens || 0).toLocaleString()}
                   <br />
-                  Estimate: UTF-8 bytes ÷ 4, rounded up. This is a pre-run, model-agnostic estimate of the four LiquidAIty text sections only. Hermes SOUL/memory/native prompt assembly, provider tokenization, and tool-schema overhead are excluded; native provider usage remains authoritative after execution.
+                  Estimate: UTF-8 bytes ÷ 4, rounded up. The retained IDF contains the exact LiquidAIty input fields; native provider usage remains authoritative after execution.
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <button type="button" onClick={() => void exportRuntimeInput('.icf', runInputs.icfText || '')}>
-                    Export ICF…
+                  <button type="button" onClick={() => void exportRuntimeInput('.idf', runInputs.idfText || '')}>
+                    Export IDF…
                   </button>
                 </div>
                 <details>
                   <summary style={{ cursor: 'pointer', color: '#B8C8CD', fontSize: 11 }}>
-                    Inspect exact retained ICF JSON
+                    Inspect exact retained IDF JSON
                   </summary>
                   <pre style={{ margin: '8px 0 0', padding: 8, maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#161A1B', color: '#C7D7DC', fontSize: 10 }}>
-                    {runInputs.icfText}
+                    {runInputs.idfText}
                   </pre>
                 </details>
               </>
@@ -2788,7 +2793,7 @@ export function AgentManager({
                 {Number(runResult.costUsd || 0) > 0
                   ? ` · $${Number(runResult.costUsd).toFixed(6)}`
                   : ''}
-                . This is separate from the pre-run ICF/IGF estimate.
+                . This is separate from the pre-run IDF estimate.
               </div>
             ) : null}
             {runResult.output ? (

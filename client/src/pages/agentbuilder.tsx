@@ -505,11 +505,11 @@ export default function AgentBuilder(): React.ReactElement {
       output: '',
       error: null,
       toolCallCount: 0,
-      tools: Array.isArray(loaded.invocation.icf.capabilities?.enabledTools)
-        ? loaded.invocation.icf.capabilities.enabledTools.map((tool: unknown) => String(tool))
+      tools: Array.isArray(loaded.invocation.idf.execution?.enabledTools)
+        ? loaded.invocation.idf.execution.enabledTools.map((tool: unknown) => String(tool))
         : [],
-      provider: String(loaded.invocation.icf.stable?.provider?.provider || ''),
-      model: String(loaded.invocation.icf.stable?.provider?.providerModelId || ''),
+      provider: String(loaded.invocation.idf.execution?.provider?.provider || ''),
+      model: String(loaded.invocation.idf.execution?.provider?.providerModelId || ''),
       runtimeLabel: `${target.runtime.kind}/${target.runtime.mode}`,
       invocation: loaded.invocation,
     });
@@ -902,8 +902,8 @@ export default function AgentBuilder(): React.ReactElement {
       ? String(result.errorSummary)
       : result?.error ? String(result.error) : null,
     toolCallCount: typeof result?.toolCallCount === 'number' ? result.toolCallCount : null,
-    tools: Array.isArray(result?.invocation?.icf?.capabilities?.enabledTools)
-      ? result.invocation.icf.capabilities.enabledTools.map((tool: unknown) => String(tool))
+    tools: Array.isArray(result?.invocation?.idf?.execution?.enabledTools)
+      ? result.invocation.idf.execution.enabledTools.map((tool: unknown) => String(tool))
       : [],
     provider: selectedCard?.runtimeOptions?.provider || null,
     model: selectedCard?.runtimeOptions?.modelKey || null,
@@ -1004,7 +1004,7 @@ export default function AgentBuilder(): React.ReactElement {
         reference: { ...selection, order },
         resolvedReferences: resolvedReads,
         resolvedContextMarkdown: String(
-          invocation.igf?.records?.find((record: any) => record?.kind === 'materialized-context')?.content?.text
+          invocation.idf?.igf?.modelText
           || '',
         ),
         graphProjection,
@@ -1023,11 +1023,11 @@ export default function AgentBuilder(): React.ReactElement {
       output: '',
       error: null,
       toolCallCount: 0,
-      tools: Array.isArray(invocation.icf?.capabilities?.enabledTools)
-        ? invocation.icf.capabilities.enabledTools.map((tool: unknown) => String(tool))
+      tools: Array.isArray(invocation.idf?.execution?.enabledTools)
+        ? invocation.idf.execution.enabledTools.map((tool: unknown) => String(tool))
         : [],
-      provider: String(invocation.icf?.stable?.provider?.provider || ''),
-      model: String(invocation.icf?.stable?.provider?.providerModelId || ''),
+      provider: String(invocation.idf?.execution?.provider?.provider || ''),
+      model: String(invocation.idf?.execution?.provider?.providerModelId || ''),
       runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
       invocation,
     });
