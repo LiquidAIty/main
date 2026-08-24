@@ -30,6 +30,7 @@ export default function BuilderChat({
   knowledgeProjectId,
   colors,
   busy = false,
+  historyLoading = false,
   onStop,
   draft,
   onDraftChange,
@@ -40,11 +41,14 @@ export default function BuilderChat({
   colors: BuilderChatColors;
   /** The real SSE turn is still open; prevent a second send and state it plainly. */
   busy?: boolean;
+  /** Native conversation history is rejoining; prevent a send that could be overwritten by readback. */
+  historyLoading?: boolean;
   onStop?: () => void;
   draft?: string;
   onDraftChange?: (value: string) => void;
 }) {
   const [localDraft, setLocalDraft] = useState("");
+  const interactionDisabled = busy || historyLoading;
   const value = draft === undefined ? localDraft : draft;
   const setValue = (next: string) => {
     if (draft === undefined) setLocalDraft(next);
@@ -62,7 +66,7 @@ export default function BuilderChat({
 
   const send = () => {
     const trimmed = value.trim();
-    if (!trimmed || busy) return;
+    if (!trimmed || interactionDisabled) return;
     onSend(trimmed);
     setValue("");
   };
@@ -106,6 +110,16 @@ export default function BuilderChat({
             gap: 14,
           }}
         >
+        {historyLoading ? (
+          <div
+            data-testid="builder-chat-history-loading"
+            role="status"
+            aria-live="polite"
+            style={{ color: colors.neutral, fontSize: 13, justifySelf: "start" }}
+          >
+            Loading conversation…
+          </div>
+        ) : null}
         {messages.map((m, i) => {
           const isUser = m.role !== "assistant";
           // Never render an empty/whitespace assistant bubble — only real assistant
@@ -171,11 +185,11 @@ export default function BuilderChat({
             data-testid="builder-chat-input"
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            disabled={busy}
+            disabled={interactionDisabled}
             onKeyDown={(e) => {
               if (e.key === "Enter") send();
             }}
-            placeholder={busy ? "Chat is working…" : "Type a message…"}
+            placeholder={busy ? "Chat is working…" : historyLoading ? "Loading conversation…" : "Type a message…"}
             className="flex-1"
             style={{
               background: "transparent",
@@ -206,16 +220,16 @@ export default function BuilderChat({
           ) : null}
           <button
             onClick={send}
-            disabled={busy}
-            aria-label={busy ? "Chat is working" : "Send"}
+            disabled={interactionDisabled}
+            aria-label={busy ? "Chat is working" : historyLoading ? "Conversation is loading" : "Send"}
             className="rounded-full flex items-center justify-center"
             style={{
               width: 40,
               height: 40,
-              background: busy ? colors.neutral : colors.primary,
+              background: interactionDisabled ? colors.neutral : colors.primary,
               border: "1px solid rgba(79,162,173,0.36)",
               boxShadow: "0 8px 18px rgba(79,162,173,0.10), inset 0 1px 0 rgba(255,255,255,0.14)",
-              cursor: busy ? "not-allowed" : "pointer",
+              cursor: interactionDisabled ? "not-allowed" : "pointer",
             }}
           >
             <svg

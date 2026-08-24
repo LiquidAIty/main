@@ -133,12 +133,18 @@ architecture work, read [skills/codebasedmemory.md](./skills/codebasedmemory.md)
 ordered discovery recipe. That skill is the sole detailed authority for CBM discovery, coverage fallback, and
 the mandatory inverse deletion/rename audit.
 
-The tracked repository hooks own the serialized lifecycle. `Stop` acquires one repository mutex, deletes and
-fully rebuilds only the canonical project, verifies it once, and releases the mutex. `UserPromptSubmit` waits
-on that same mutex, verifies the exact ready project once, and performs one recovery rebuild only when the
-project is authoritatively absent or unready. The mutex is the only lifecycle state and synchronization;
-native hook order is authoritative. Native CBM MCP owns graph discovery, and the active model never invokes
-lifecycle mutation during its response.
+The tracked repository hooks keep one simple event recipe. `UserPromptSubmit` opens the already-connected native
+MCP `search_graph` exactly once against the canonical project using the real submitted GPT/PromptSpec prompt and
+injects its native first result page before inference; `has_more` controls useful continuation rather than an
+arbitrary task-wide result maximum. A companion command hook injects the bounded CBM navigation
+recipe. Explicit `CODEGRAPH_SEARCH:` criteria and real graph pointers supplied by GPT/Main remain leading prompt
+context rather than a deterministic router. Empty and failed searches remain visible and fail open without
+fabricated symbols.
+`Stop` asks that same native MCP owner for exactly one native-default incremental `index_repository` refresh.
+Neither event launches a CLI or second daemon, deletes a project, lists or polls projects, checks readiness,
+recovers lifecycle state, retries, or writes a lease, mutex, handoff, receipt, or cache. The active model uses
+the already-connected native MCP owner for result-informed discovery and never invokes lifecycle mutation
+during its response.
 
 Begin with `search_graph`; retain real native IDs/provenance supplied by Main or `in.igf`; never fabricate
 symbols or graph seeds; and read complete current source before changing behavior. Any production deletion or

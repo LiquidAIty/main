@@ -12,6 +12,7 @@ import {
   buildInputDictionarySelectedRows,
   buildDisplayedToolRows,
   AgentManager,
+  hasHermesModelDrift,
   parseNamedRuntimeInput,
   parseCardEditorInputDataDictionary,
   selectKnowledgeGraphProjection,
@@ -25,6 +26,12 @@ afterEach(() => {
 });
 
 describe('AgentManager active builder config', () => {
+  it('reports only an exact saved Card to native profile model mismatch', () => {
+    expect(hasHermesModelDrift('gpt-5.6-terra', 'gpt-5.6-luna')).toBe(true);
+    expect(hasHermesModelDrift('gpt-5.6-luna', 'gpt-5.6-luna')).toBe(false);
+    expect(hasHermesModelDrift('', 'gpt-5.6-luna')).toBe(false);
+  });
+
   it('builds the exact active local configuration payload', () => {
     const payload = buildActiveAgentManagerLocalConfig({
       runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },

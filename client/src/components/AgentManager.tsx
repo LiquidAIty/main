@@ -533,6 +533,15 @@ export function buildActiveAgentManagerLocalConfig(input: {
   };
 }
 
+export function hasHermesModelDrift(
+  savedCardModel: unknown,
+  nativeProfileModel: unknown,
+): boolean {
+  const saved = String(savedCardModel || '').trim();
+  const native = String(nativeProfileModel || '').trim();
+  return Boolean(saved && native && saved !== native);
+}
+
 export function AgentManager({
   cardId = '',
   projectId = '',
@@ -2042,9 +2051,22 @@ export function AgentManager({
                   <div style={{ color: '#9FB2B8', fontSize: 11.5, lineHeight: 1.5 }}>
                     <div>Profile: {nativeHermesState.native.name}</div>
                     <div>
-                      Model: {nativeHermesState.native.model.provider || 'unset'} / {nativeHermesState.native.model.default || 'unset'}
+                      Saved model: {localConfig?.provider || 'unset'}
+                      {localConfig?.access_mode ? ` (${localConfig.access_mode})` : ''}
+                      {' / '}{localConfig?.model_key || 'unset'}
+                    </div>
+                    <div>
+                      Native profile model: {nativeHermesState.native.model.provider || 'unset'} / {nativeHermesState.native.model.default || 'unset'}
                     </div>
                   </div>
+                  {hasHermesModelDrift(
+                    localConfig?.model_key,
+                    nativeHermesState.native.model.default,
+                  ) ? (
+                    <div role="status" style={{ color: '#F2C879', fontSize: 11.5, lineHeight: 1.45 }}>
+                      Saved Card and native profile models differ. Nothing was synchronized automatically.
+                    </div>
+                  ) : null}
                   <div style={{ color: '#72D7C7', fontSize: 11.5 }}>
                     Saving this Card cannot change the profile. Model changes below require their own native Apply.
                   </div>

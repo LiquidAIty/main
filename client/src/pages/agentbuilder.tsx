@@ -654,6 +654,7 @@ export default function AgentBuilder(): React.ReactElement {
     handleNativeSend,
     messages,
     nativeSessionBusy,
+    sessionHistoryLoading,
     setMessages,
     stopMainTurn,
   } = useAgentBuilderMainChat({
@@ -1870,6 +1871,7 @@ export default function AgentBuilder(): React.ReactElement {
           knowledgeProjectId={projectId}
           colors={C}
           busy={nativeSessionBusy}
+          historyLoading={sessionHistoryLoading}
           onStop={() => {
             void stopMainTurn().catch((error) => {
               setDeckStatusMessage(error instanceof Error ? error.message : 'Main run stop failed.');

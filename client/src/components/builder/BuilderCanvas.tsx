@@ -84,6 +84,16 @@ export type BuilderCanvasFocusRequest = {
   nonce: number;
 };
 
+export function fitBuilderCanvasView(
+  reactFlowInstance: Pick<ReactFlowInstance, 'fitView'>,
+): void {
+  void reactFlowInstance.fitView({
+    duration: GRAPH_THEME.nav.fitDurationMs,
+    maxZoom: GRAPH_WORKSPACE.fitMaxZoom,
+    padding: GRAPH_WORKSPACE.fitPadding,
+  });
+}
+
 export function buildCanvasDocumentRecoveryKey(document: DeckDocument): string {
   return JSON.stringify({
     version: document.version,
@@ -1030,15 +1040,7 @@ export default function BuilderCanvas({
           aria-label="Fit view"
           onClick={() => {
             if (!reactFlowInstance) return;
-            const landingViewport = buildPresentationLandingViewport(
-              document,
-              canvasRef.current,
-              GRAPH_WORKSPACE.landingBaselineZoom,
-            );
-            if (!landingViewport) return;
-            reactFlowInstance.setViewport(landingViewport, {
-              duration: GRAPH_THEME.nav.fitDurationMs,
-            });
+            fitBuilderCanvasView(reactFlowInstance);
           }}
           style={graphControlButtonStyle({
             borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,

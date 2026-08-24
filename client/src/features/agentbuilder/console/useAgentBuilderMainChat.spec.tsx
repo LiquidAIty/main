@@ -31,6 +31,36 @@ beforeEach(() => {
 });
 
 describe('Main chat live observation callbacks', () => {
+  it('keeps rejoin visible until native history replaces the empty transcript', async () => {
+    let resolveHistory!: (messages: Array<{ role: 'assistant' | 'user'; text: string }>) => void;
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockReturnValue(new Promise((resolve) => {
+      resolveHistory = resolve;
+    }));
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'main',
+      initialMessages: [],
+      workspaceView: 'chat',
+    }));
+
+    expect(result.current.sessionHistoryLoading).toBe(true);
+    await act(async () => {
+      resolveHistory([
+        { role: 'user', text: 'Run Coder.' },
+        { role: 'assistant', text: 'Coder completed.' },
+      ]);
+      await Promise.resolve();
+    });
+
+    expect(result.current.sessionHistoryLoading).toBe(false);
+    expect(result.current.messages).toEqual([
+      { role: 'user', text: 'Run Coder.' },
+      { role: 'assistant', text: 'Coder completed.' },
+    ]);
+  });
+
   it('starts locally, forwards native reasoning separately, and settles after completion', async () => {
     const order: string[] = [];
     const onUserTurnStarted = vi.fn(() => order.push('user'));

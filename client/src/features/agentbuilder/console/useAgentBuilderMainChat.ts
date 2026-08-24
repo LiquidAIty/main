@@ -273,6 +273,7 @@ export default function useAgentBuilderMainChat({
   onTurnFinished,
 }: UseAgentBuilderMainChatArgs) {
   const [nativeSessionBusy, setNativeSessionBusy] = useState(false);
+  const [sessionHistoryLoading, setSessionHistoryLoading] = useState(Boolean(canvasProjectId));
   const [messages, setMessages] =
     useState<AgentBuilderChatMessage[]>(initialMessages);
 
@@ -280,11 +281,13 @@ export default function useAgentBuilderMainChat({
     const projectId = canvasProjectId;
     if (!projectId) {
       setMessages([]);
+      setSessionHistoryLoading(false);
       return;
     }
 
     const controller = new AbortController();
     let cancelled = false;
+    setSessionHistoryLoading(true);
     waitForBackendReady({ signal: controller.signal })
       .then((ready) => {
         if (cancelled || !ready) return;
@@ -307,6 +310,9 @@ export default function useAgentBuilderMainChat({
             text: `Conversation history failed to load: ${detail}`,
           },
         ]);
+      })
+      .finally(() => {
+        if (!cancelled) setSessionHistoryLoading(false);
       });
 
     return () => {
@@ -492,6 +498,7 @@ export default function useAgentBuilderMainChat({
     handleNativeSend,
     messages,
     nativeSessionBusy,
+    sessionHistoryLoading,
     requestMainText,
     setMessages,
     stopMainTurn,

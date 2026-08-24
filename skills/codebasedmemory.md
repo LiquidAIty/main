@@ -1,7 +1,7 @@
 ---
 name: codebasedmemory
 description: Canonical operating guide for Code-Based Memory (CBM) inside LiquidAIty. Use it for repository analysis, cleanup, architecture, refactoring, deletion-impact, and code changes.
-version: 4.0.0
+version: 5.1.0
 cbm_version: 0.10.8
 project: C-Projects-LiquidAIty-main
 ---
@@ -83,8 +83,9 @@ returns. Never invent graph records, qualified names, or placeholder search seed
 Use `trace_path` only when relationships or impact matter. Use `get_code_snippet` only with an actual qualified
 name returned by CBM. Optional graph and text-search stages are not a checklist: select the smallest useful
 subset and say why an omission matters when it limits proof. Use `get_architecture` only when broad orientation
-is genuinely necessary. Always read the complete relevant current source before changing behavior. After the
-prompt hook reports a ready graph, do not repeat lifecycle mutation during the response.
+is genuinely necessary. Always read the complete relevant current source before changing behavior. The prompt
+hook's bounded native result is a discovery seed, never proof or freshness evidence. Do not invoke lifecycle
+mutation during the response.
 
 Exceptions: pure prose edits, spelling fixes, emergency repair when CBM itself is broken. State why CBM was skipped.
 
@@ -111,13 +112,19 @@ count; do not copy an old example count into a current report.
 
 **index_status** — Current index state.
 Parameter: `{"project":"C-Projects-LiquidAIty-main"}`
-The repository hook verifies ready state and live counts. The active agent may call native status once only
-when current graph state is itself material to the task; do not poll it.
+The normal hooks do not call it. The active agent may call native status once only when current graph state is
+itself material to the task; do not poll it.
 
-**index_repository** — Lifecycle maintenance, never discovery. The tracked completion hook owns the normal
-exact-project delete/full rebuild, and the prompt hook owns one recovery rebuild only when readiness or the
-unique-project check proves the canonical project is absent or unready. The active agent does not call this
-tool during the response.
+**check_index_coverage** — Exact path/scope coverage and filesystem-freshness evidence.
+Parameters: `{"project":"C-Projects-LiquidAIty-main","paths":["<repo-relative-path>"]}` or bounded
+`scopes`. Use it for every source file relied upon in a strong report and for the scope behind an exhaustive
+or negative claim. Distinguish `no_recorded_issue`, parse-partial, skipped, and deliberately excluded status
+from filesystem freshness such as `metadata_changed`. Every result is best-effort; read current source and do
+not treat absence of a recorded issue as completeness proof.
+
+**index_repository** — Lifecycle maintenance, never discovery. The tracked completion hook owns one normal
+native-default incremental refresh. The prompt hook never indexes or recovers the project. The active agent
+does not call this tool during the response.
 
 **detect_changes** — Maps working-tree changes to affected symbols.
 Parameter: `{"project":"C-Projects-LiquidAIty-main"}`
@@ -125,10 +132,9 @@ Use once when ordinary synchronization/change impact must be evaluated. Reports 
 uncommitted modifications and does not report untracked files. Do not call it ritualistically before
 and after every edit; combine it with `git status --short` when untracked state matters.
 
-**delete_project** — `C-Projects-LiquidAIty-main` is disposable derived projection state. The tracked completion
-hook and the prompt hook's bounded recovery path own exact-project deletion through the installed CLI. The
-active agent never applies that lifecycle authorization to another project, source, vendor state, or direct
-CBM storage.
+**delete_project** — Destructive derived-state maintenance, never part of the normal prompt or completion hook.
+Use only for an explicitly authorized exact-project repair. Never apply that authorization to another project,
+repository source, vendor state, or direct CBM storage.
 
 ### Structural & Architectural
 
@@ -179,7 +185,7 @@ Use `rg` for files outside CBM coverage, configs, docs, comments, and exhaustive
 ### Knowledge & Evidence
 
 **manage_adr** — Architecture Decision Records.
-Parameters: `{"project":"C-Projects-LiquidAIty-main","action":"list|update","content":"..."}`
+Parameters: `{"project":"C-Projects-LiquidAIty-main","mode":"get|sections|update","content":"..."}`
 Use for durable architecture decisions only. Not for temporary notes, cleanup findings, or unapproved decisions. Current repo: no ADRs exist.
 
 **ingest_traces** — Runtime trace ingestion.
@@ -210,16 +216,21 @@ Note: Route nodes have empty `file_path`. Route→handler mapping requires readi
 ## Working-Tree Visibility
 
 The canonical `C-Projects-LiquidAIty-main` index is a rebuildable projection of repository source. Source and
-tests are authoritative. `Stop` serially deletes that exact project, performs one full installed-CLI rebuild,
-then calls `index_status` once and `list_projects` once to verify exact root, ready state, live counts, and one
-canonical project. `UserPromptSubmit` waits on the same named mutex, calls those two verifiers once, and performs
-one exact delete/full-index recovery only when the project is authoritatively absent or unready. A transport
-failure, wrong root, or duplicate identity fails without deletion.
+tests are authoritative. `Stop` asks the already-connected native MCP owner for one `index_repository` with
+native default incremental mode against the existing exact project/root. `UserPromptSubmit` asks that same
+owner for exactly one `search_graph` using the real GPT/PromptSpec prompt. It injects the native first page;
+`has_more` controls useful pagination rather than an arbitrary task-wide result maximum. Neither
+event launches a CLI or second daemon, and neither deletes, lists, polls, verifies, retries, or recovers.
+A companion command hook injects the bounded recipe. Explicit `CODEGRAPH_SEARCH:`
+criteria and real graph pointers from GPT/Main remain leading prompt context rather than deterministic routing.
+They answer what structural neighborhood to search next, not the final coding conclusion. The original prompt
+remains Codex input; the hooks add only live graph output and the narrow discovery recipe.
 
-The repository-scoped named mutex is the lifecycle's only state and synchronization mechanism. There is no turn
-claim, lease, generation, worktree fingerprint, state file, database, receipt, journal, or retry loop. Native
-hook event order is authoritative. The Git post-commit hook remains Git LFS only. The active agent uses native
-MCP for graph reads and never repairs this lifecycle during its response.
+Empty and failed search outcomes are injected truthfully and fail open. There is no CLI lifecycle doorway,
+second daemon, mutex, turn claim, lease,
+generation, worktree fingerprint, state file, database, receipt, journal, retry loop, static graph handoff, or
+prompt-time lifecycle recovery. The Git post-commit hook remains Git LFS only. The active agent uses native MCP
+for result-informed graph navigation and never repairs or mutates the index during its response.
 
 The current projection intentionally excludes `autogen-main` through `.cbmignore` for the measured lifecycle
 boundary. AutoGen remains first-party source and runtime infrastructure; exclusion from this derived projection
@@ -291,6 +302,239 @@ delete or reindex.
 6. Focused rg only for configs, non-code, graph gaps, literals, and exhaustive residue
 7. Edit and test
 8. Proportional source/CBM/residue verification, including inverse deletion audit when triggered
+```
+
+## Role-Scoped CodeGraph Tool Profiles
+
+**Design status:** proposed repository recipe and tool-exposure profile. It does not change saved Card grants,
+claim current runtime exposure, or create an authorization layer. Saved Card grants remain the permanent
+capability ceiling; a named recipe introduces only the smaller useful corridor for the current graph context.
+The model still chooses semantically within that corridor.
+
+| Role or owner | Exposed by default | Introduced only by a named recipe | Hook-owned or administrative boundary |
+|---|---|---|---|
+| Main / GPT planner | `search_graph`, `get_architecture`, `trace_path` | An explicit architecture/Cypher recipe may add `get_graph_schema` and bounded `query_graph`; source-level reading remains a Coder responsibility | The submit hook performs its own first `search_graph`; ordinary lifecycle and project-state tools stay absent |
+| Coder | `search_graph`, `trace_path`, `get_code_snippet`, `check_index_coverage`, `detect_changes` | `search_code` for literals/config/JSX/coverage gaps; `query_graph` for a bounded multi-hop question; `get_architecture` for orientation; `get_graph_schema` before custom Cypher | The Stop hook, not the active Coder, owns normal `index_repository` refresh |
+| Explicit diagnostics / administration | None | `list_projects`, `index_status`, and read-safe `manage_adr(get|sections)` only in a named diagnostic or architecture recipe | `manage_adr(update)` requires an explicit durable architecture decision; these tools do not occupy normal Main/Coder context |
+| Runtime observation / maintenance | None | None | `ingest_traces` requires real approved runtime trace evidence; `index_repository` is hook-owned during normal work; both are unavailable to ordinary discovery models |
+| Destructive recovery | None | None | `delete_project` is destructive and unavailable without explicit owner authorization for an exact verified maintenance target |
+
+Classification rules:
+
+- `UserPromptSubmit` hook-owned `search_graph` and model-exposed `search_graph` are distinct calls: the first
+  seeds leading context once; later calls must refine, narrow, or paginate from real results.
+- `index_repository`, `ingest_traces`, and `delete_project` are mutation-capable. Their schemas may be audited
+  read-only, but ordinary models must not receive or call them merely to prove catalog coverage.
+- `list_projects`, `index_status`, and read-safe ADR inspection are non-destructive but administrative. Keep
+  them out of the default choice set unless project identity, freshness, coverage state, or a durable decision
+  is the actual question.
+- This profile is directional context, not a hidden allowlist, classifier, regex router, prompt rewriter, or
+  second permission system.
+
+## Graph-Authority Recipe Catalog
+
+Every recipe below keeps native authority, IDs, bounds, and provenance attached. A selection tells the next
+model where to begin and what relationship to inspect; it never predetermines the coding or research conclusion.
+Use only tool names present in the current native catalog and current saved grant. Do not invent a convenient
+wrapper name when an authority's live schema differs.
+
+### CodeGraph — Main / GPT planner
+
+- **Graph authority:** native Codebase Memory MCP; the CBM indexer is the sole writer.
+- **Role:** establish repository direction and send Coder exact qualified names, paths, relationships, project
+  identity, revision/freshness context, and provenance.
+- **Trigger:** the request concerns code ownership, architecture, dependencies, impact, or a bounded coding
+  handoff.
+- **Leading graph context:** the real prompt or PromptSpec, supplied `CODEGRAPH_SEARCH` criteria, native
+  qualified names/paths/IDs, first-page metadata, and `has_more`.
+- **Default tool corridor:** `search_graph → get_architecture` when boundary orientation is needed
+  `→ trace_path` when ownership or consumers matter.
+- **Optional specialist tools:** only a named architecture/Cypher recipe may add `get_graph_schema` and one
+  bounded `query_graph` question.
+- **Proof required:** exact project, returned qualified names and paths, result totals/truncation, and any
+  relationship claimed from `trace_path`.
+- **Stop condition:** a real implementation owner and bounded handoff criteria are identified, or the graph
+  returns an explicit gap/failure that must be handed off for source fallback.
+- **Forbidden mutation:** no lifecycle tools, trace ingestion, project deletion, fabricated symbol, copied
+  subgraph, source-level wandering, or claim that graph orientation is runtime proof.
+
+### CodeGraph — Coder
+
+- **Graph authority:** native Codebase Memory MCP; current source and tests remain authoritative when they
+  disagree with the derived projection.
+- **Role:** land on exact code, understand callers/callees, read returned symbols, qualify coverage, and prove
+  the working-tree blast radius.
+- **Trigger:** a bounded implementation, diagnosis, review, deletion/rename, or proof task has real CodeGraph
+  anchors or a task-derived structural query.
+- **Leading graph context:** Main/GPT pointers when supplied; otherwise the real task query plus canonical
+  project/root. Preserve upstream IDs, paths, revision/freshness, selection reason, and provenance.
+- **Default tool corridor:** `search_graph → trace_path` when relationships matter
+  `→ get_code_snippet → check_index_coverage → complete source → detect_changes` when a meaningful diff exists.
+- **Optional specialist tools:** recipe-loaded `search_code`, bounded `query_graph`, `get_architecture`, and
+  `get_graph_schema` only for the evidence needs listed in the role matrix.
+- **Proof required:** exact symbols/files, source confirmation, coverage/freshness limits, focused tests or
+  build for changed behavior, current diff inspection, and inverse-neighbor proof for deletion/rename.
+- **Stop condition:** requested behavior and preservation checks are proven, or a named gap is reported without
+  speculative lifecycle recovery.
+- **Forbidden mutation:** no manual index refresh during the response, no delete/recovery/trace ingestion, no
+  CLI/second daemon, no fabricated graph pointer, and no graph-only completeness claim.
+
+### ThinkGraph — Main / Kanban project reasoning
+
+- **Graph authority:** SQLite/Engraphis project reasoning and operational knowledge; its native owner remains
+  the sole graph writer.
+- **Role:** select bounded project reasoning records and relationships for the next model without converting
+  them into CodeGraph or KnowGraph records.
+- **Trigger:** the task needs existing project decisions, operational state, hypotheses, or a deliberate
+  ThinkGraph traversal.
+- **Leading graph context:** native ThinkGraph IDs, project identity, selection reason, bounded returned records,
+  relationship direction, pagination/bounds, and provenance.
+- **Default tool corridor:** use the live granted native catalog for bounded search/read, then inspect the exact
+  selected record, then traverse only the relationship needed by the task.
+- **Optional specialist tools:** recipe-loaded read-only native query/traversal operations whose current schemas
+  and grants are visible; a write operation requires an explicit approved graph change.
+- **Proof required:** returned native IDs, project, query/traversal bounds, provenance, and an honest empty,
+  partial, or failed result when applicable.
+- **Stop condition:** enough native reasoning evidence is selected for the handoff, or the authority reports a
+  specific unresolved gap.
+- **Forbidden mutation:** no TypeScript ranking/semantic merge, copied subgraph, invented record, silent fallback
+  to another graph, or unapproved graph write/lifecycle action.
+
+### KnowGraph — Main / Kanban sourced knowledge
+
+- **Graph authority:** Neo4j/Graphiti sourced knowledge and provenance; its native owner and research pipeline
+  remain the only writers.
+- **Role:** select bounded entities, claims, evidence, sources, temporal context, and relationships while keeping
+  source and provenance attached.
+- **Trigger:** the task needs factual evidence, source context, freshness, contradiction inspection, or a
+  deliberate KnowGraph traversal.
+- **Leading graph context:** native KnowGraph IDs, canonical entity identity, claim/evidence/source references,
+  dates/freshness, confidence/status, selection reason, bounds, and provenance.
+- **Default tool corridor:** use the live granted native catalog for bounded search/read, inspect the selected
+  evidence and source context, then traverse only the required neighborhood or temporal relationship.
+- **Optional specialist tools:** recipe-loaded read-only contradiction, freshness, source, or bounded traversal
+  operations that exist in the current native catalog; research ingestion/write stays outside ordinary reads.
+- **Proof required:** native entity/claim/source IDs, source and time provenance, result bounds/truncation, and
+  explicit contradictions, gaps, or failures.
+- **Stop condition:** sufficient source-backed evidence is selected for the handoff, or the authority exposes a
+  specific missing/contradictory evidence gap.
+- **Forbidden mutation:** no copied evidence graph, hidden fusion with ThinkGraph/CodeGraph, prose-derived access
+  claim, TypeScript semantic merge, fabricated provenance, or ordinary-model write/ingestion.
+
+### Run-scoped combined graph transport
+
+Deliberately selected CodeGraph, ThinkGraph, and KnowGraph records may travel together through the canonical
+Run-scoped `in.igf` boundary. Each record keeps its authority, native ID, bounds, and provenance. Python rails
+mechanically materializes and reloads that selected view through the one canonical input materializer. The IGF
+is temporary transport, not a fourth graph, writer, cache, merged authority, or permission source.
+
+## Task Recipes
+
+Recipes are useful graph-navigation corridors, not tool allowlists. Select the smallest recipe that matches the
+task, follow real results, and use any additional CBM tool whose evidence is actually needed.
+
+### Feature owner discovery
+
+```text
+search_graph(user outcome, supplied graph anchors, and likely subsystem)
+→ trace_path both directions only when ownership crosses symbols
+→ get_code_snippet for returned qualified owners
+→ complete current source and focused tests
+Proof: current implementation owner, callers/consumers when material, and affected tests are identified.
+```
+
+### Main or IGF to Coder validation
+
+```text
+retain supplied native IDs, qualified symbols, paths, project/revision, and provenance
+→ search_graph using the supplied structural neighborhood
+→ check exact path coverage when that tool is exposed
+→ get_code_snippet for current returned identities
+→ complete current source
+Proof: transported context answers what to search next; current CodeGraph/source confirms or rejects it.
+```
+
+### Working-tree blast radius
+
+```text
+detect_changes once after a meaningful diff exists
+→ inspect changed-symbol impact rows
+→ trace_path only for the highest-risk or ambiguous relationships
+→ reread affected source and run focused tests
+Proof: changed files, impacted symbols/modules, truncation, and tested preservation boundary are reported.
+```
+
+### Deletion or rename
+
+```text
+search_graph exact old identity
+→ trace_path inbound and outbound
+→ get_code_snippet plus complete current source
+→ search_code/focused rg for dynamic and unindexed residue
+→ repair every surviving neighbor and run the Mandatory Inverse Deletion Audit
+Proof: old identity/residue is absent, new identity exists when applicable, and former neighbors remain valid.
+```
+
+### Route to runtime
+
+```text
+search_graph route, handler, transport method, or runtime entry
+→ trace_path calls or data_flow across the relevant direction
+→ get_code_snippet for returned handlers/adapters
+→ read both transport and runtime source
+→ focused rg for route/config literals
+Proof: route-to-handler-to-runtime ownership is source-confirmed; graph gaps and dynamic dispatch are explicit.
+```
+
+### Cross-service flow
+
+```text
+search_graph client, Route, Channel, or service operation
+→ trace_path mode=cross_service when exposed
+→ inspect evidence/confidence only when the edge must support a strong claim
+→ read both service endpoints and run a focused contract test
+Proof: protocol, source endpoint, destination endpoint, and unresolved dynamic boundaries are identified.
+```
+
+### Index coverage fallback
+
+```text
+search_graph expected identity
+→ check_index_coverage for exact paths/scopes when exposed, or index_status once when state is material
+→ direct-read skipped or parse-partial files and ranges
+→ focused rg for missing definitions/imports/callers
+Proof: indexed evidence and direct-source fallback are distinguished; absence claims state their coverage limit.
+```
+
+### Architecture boundary
+
+```text
+get_architecture with only needed aspects/path
+→ search_graph representative boundary symbols
+→ trace_path across the suspected seam
+→ get_code_snippet and complete source for the real owners
+Proof: graph clusters/folders remain orientation evidence; source confirms the actual authority boundary.
+```
+
+### Implementation and tests
+
+```text
+search_graph implementation identity
+→ trace_path inbound with tests included when supported, or bounded query_graph over TESTS
+→ get_code_snippet for implementation and exact tests
+→ run the smallest focused test command
+Proof: the exercised contract and missing coverage are reported separately from test success.
+```
+
+### Complexity or hot path
+
+```text
+get_architecture hotspots or bounded query_graph over complexity properties
+→ search_graph the returned candidates
+→ trace_path inbound to establish whether the path is live
+→ get_code_snippet and complete source
+→ benchmark/profile when a performance claim matters
+Proof: graph complexity is a candidate signal; live-path source and measurement decide the claim.
 ```
 
 ## Pre-Grep Targeting (the user's pattern)

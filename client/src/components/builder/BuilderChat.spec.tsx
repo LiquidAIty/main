@@ -40,6 +40,26 @@ describe('BuilderChat', () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
+  it('shows native history rejoin and prevents a send until it completes', () => {
+    const onSend = vi.fn();
+    render(
+      <BuilderChat
+        historyLoading
+        messages={[]}
+        onSend={onSend}
+        knowledgeProjectId="project-1"
+        colors={colors}
+      />,
+    );
+
+    expect(screen.getByTestId('builder-chat-history-loading').textContent).toContain('Loading conversation…');
+    expect((screen.getByPlaceholderText('Loading conversation…') as HTMLInputElement).disabled).toBe(true);
+    const send = screen.getByRole('button', { name: 'Conversation is loading' });
+    expect((send as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(send);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it('keeps delegation and preview controls out of the chat composer', () => {
     render(
       <BuilderChat

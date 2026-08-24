@@ -1,16 +1,29 @@
 {
-  "description": "Deterministic LiquidAIty CBM lifecycle: rebuild on completion, verify or recover on prompt.",
+  "description": "Anchor Codex on one live CodeGraph search, then incrementally refresh the canonical graph on completion.",
   "hooks": {
     "UserPromptSubmit": [
       {
         "hooks": [
           {
+            "type": "mcp_tool",
+            "server": "codebase-memory-mcp",
+            "tool": "search_graph",
+            "input": {
+              "project": "C-Projects-LiquidAIty-main",
+              "query": "${prompt}",
+              "offset": 0,
+              "format": "tree"
+            },
+            "timeout": 30,
+            "statusMessage": "Opening the live CodeGraph neighborhood"
+          },
+          {
             "type": "command",
             "command": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$(git rev-parse --show-toplevel)/.codex/hooks/cbm_graph_handoff.ps1\"",
             "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$repoRoot = git rev-parse --show-toplevel; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; & (Join-Path $repoRoot '.codex\\hooks\\cbm_graph_handoff.ps1')\"",
-            "timeout": 180,
-            "statusMessage": "Waiting for repository CodeGraph",
-            "additionalContextLimit": 1600
+            "timeout": 10,
+            "statusMessage": "Loading the CodeGraph navigation recipe",
+            "additionalContextLimit": 1400
           }
         ]
       }
@@ -19,11 +32,16 @@
       {
         "hooks": [
           {
-            "type": "command",
-            "command": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$(git rev-parse --show-toplevel)/.codex/hooks/cbm_graph_handoff.ps1\"",
-            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$repoRoot = git rev-parse --show-toplevel; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; & (Join-Path $repoRoot '.codex\\hooks\\cbm_graph_handoff.ps1')\"",
+            "type": "mcp_tool",
+            "server": "codebase-memory-mcp",
+            "tool": "index_repository",
+            "input": {
+              "repo_path": "C:/Projects/LiquidAIty/main",
+              "name": "C-Projects-LiquidAIty-main",
+              "persistence": false
+            },
             "timeout": 120,
-            "statusMessage": "Rebuilding repository CodeGraph"
+            "statusMessage": "Incrementally refreshing the live CodeGraph"
           }
         ]
       }

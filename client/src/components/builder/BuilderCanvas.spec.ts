@@ -1,13 +1,14 @@
 import React from 'react';
 import { Handle } from '@xyflow/react';
 import type { Edge, EdgeChange, Node, NodeChange } from '@xyflow/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentCardInstance, DeckDocument, DeckEdge } from '../../types/agentgraph';
 import {
   buildCanvasDocumentRecoveryKey,
   buildDeckEdgeFromConnection,
   buildDeckEdgeVisualStates,
+  fitBuilderCanvasView,
   isPlainConnectionAllowedForDocument,
   isAnyCanvasNodeVisible,
   isCanvasRectVisible,
@@ -33,6 +34,18 @@ import { buildDeckEdgeIdentityKey, sanitizeDeckEdges } from './deckValidation';
 import MagenticBusNode from './nodes/MagenticBusNode';
 
 describe('BuilderCanvas runtime-truth helpers', () => {
+  it('fits every rendered Card when the Fit view control is used', () => {
+    const fitView = vi.fn();
+
+    fitBuilderCanvasView({ fitView });
+
+    expect(fitView).toHaveBeenCalledWith({
+      duration: 220,
+      maxZoom: 1.35,
+      padding: 0.2,
+    });
+  });
+
   it('builds seam viewport math from the bus center rather than the bus left edge', () => {
     expect(
       buildInitialBusSeamViewport({
