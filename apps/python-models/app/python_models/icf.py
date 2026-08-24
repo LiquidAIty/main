@@ -553,7 +553,14 @@ def write_input_pair(
     }
 
 
-def load_input_pair(input_files: dict[str, Any]) -> MaterializedInputPair:
+def load_input_pair(
+    input_files: dict[str, Any],
+    *,
+    project_id: str | None = None,
+    deck_id: str | None = None,
+    run_id: str | None = None,
+    card_id: str | None = None,
+) -> MaterializedInputPair:
     try:
         icf_path = Path(str(input_files.get("icfPath") or "")).resolve(strict=True)
         igf_path = Path(str(input_files.get("igfPath") or "")).resolve(strict=True)
@@ -570,6 +577,22 @@ def load_input_pair(input_files: dict[str, Any]) -> MaterializedInputPair:
         or str(input_files.get("igfSha256") or "") != pair.igf_sha256
     ):
         raise InputMaterializationError("input_file_hash_mismatch")
+    required_identity = (project_id, deck_id, run_id)
+    if any(value is not None for value in (*required_identity, card_id)):
+        if not all(isinstance(value, str) and value for value in required_identity):
+            raise InputMaterializationError("input_file_expected_identity_invalid")
+        assert project_id is not None and deck_id is not None and run_id is not None
+        expected_workspace = invocation_workspace(project_id, deck_id, run_id)
+        owner = pair.igf.header.owner
+        if (
+            icf_path.parent != expected_workspace
+            or owner.get("kind") != "card-run"
+            or owner.get("projectId") != project_id
+            or owner.get("deckId") != deck_id
+            or owner.get("runId") != run_id
+            or (card_id is not None and owner.get("cardId") != card_id)
+        ):
+            raise InputMaterializationError("input_files_run_identity_mismatch")
     return pair
 
 

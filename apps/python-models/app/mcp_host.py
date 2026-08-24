@@ -1506,11 +1506,17 @@ def _normalize_native_cbm_index_arguments(
 
 
 def _is_native_cbm_bootstrap_race(error: Exception) -> bool:
-    """Recognize the native 0.10.2 daemon handoff race and nothing broader."""
+    """Recognize the native CBM daemon handoff race and nothing broader."""
     detail = str(error)
     return (
         "native_cbm_process_exited:" in detail
-        and "CBM daemon could not start within 30000 ms" in detail
+        and (
+            "CBM daemon could not start within 30000 ms" in detail
+            or (
+                "CBM daemon is active or starting" in detail
+                and "could not accept this client within 30000 ms" in detail
+            )
+        )
     )
 
 

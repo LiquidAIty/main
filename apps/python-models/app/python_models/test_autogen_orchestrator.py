@@ -44,7 +44,7 @@ def _runtime_request(runtime_mode: str) -> RuntimeRequest:
     return RuntimeRequest(
         session=ProjectSession(
             sessionId="s", projectId="p", deckId="d", cardId="card:one",
-            conversationId="c", turnId="t", route="r",
+            conversationId="c", turnId="t", runId="mag-root", route="r",
             orchestrator=(
                 "magentic_one" if runtime_mode == "magentic_one"
                 else "assistant_agent"
@@ -88,7 +88,10 @@ def test_mag_one_boundary_loads_the_exact_retained_pair_provider_free(
     source = _runtime_request("magentic_one")
     pair = rematerialize_input_pair(
         source.icf.model_dump(), source.igf.model_dump(),
-        owner={"kind": "card-run", "runId": "mag-root"},
+        owner={
+            "kind": "card-run", "projectId": "p", "deckId": "d",
+            "cardId": "card:one", "runId": "mag-root",
+        },
     )
     descriptor = write_input_pair(
         pair, project_id="p", deck_id="d", run_id="mag-root",

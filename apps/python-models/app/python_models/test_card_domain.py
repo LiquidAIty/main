@@ -524,6 +524,69 @@ def test_new_run_fails_closed_when_root_input_files_cannot_persist(
     }]
 
 
+def test_read_run_input_files_resolves_card_through_saved_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[str] = []
+    loaded_identity: dict[str, str] = {}
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, _params=None):
+            statements.append(str(query))
+
+        def fetchone(self):
+            return {"card_id": "card_local_coder"}
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    class Pair:
+        icf_bytes = b'{"schema":"liquidaity.icf.v1"}\n'
+        igf_bytes = b'{"record":"header"}\n'
+
+    def load_pair(_descriptor, **identity):
+        loaded_identity.update(identity)
+        return Pair()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_resolve_project", lambda *_args: {"id": "project-one"})
+    monkeypatch.setattr(card_domain, "_input_file_descriptor_for_run", lambda _run_id: {"icfPath": "in.icf"})
+    monkeypatch.setattr(card_domain, "load_input_pair", load_pair)
+    monkeypatch.setattr(card_domain, "input_pair_public", lambda _pair: {"inputSummary": {}})
+
+    result = card_domain.read_run_input_files({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "runId": "run-one",
+    })
+
+    query = "\n".join(statements)
+    assert "JOIN ag_catalog.agent_card_revisions AS revision" in query
+    assert "SELECT revision.card_id" in query
+    assert "SELECT card_id FROM ag_catalog.agent_runs" not in query
+    assert loaded_identity == {
+        "project_id": "project-one",
+        "deck_id": "deck-one",
+        "run_id": "run-one",
+        "card_id": "card_local_coder",
+    }
+    assert result["icfText"].startswith('{"schema"')
+    assert result["igfText"] == '{"record":"header"}\n'
+
+
 def test_mag_one_participant_validation_still_fails_before_run_creation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

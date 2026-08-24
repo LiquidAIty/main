@@ -91,8 +91,8 @@ const identityProps = {
 };
 
 describe('CoderTerminalPanel', () => {
-  it('starts the repository Hermes CLI only after the operator clicks Start', async () => {
-    const terminalClient = client();
+  it('attaches only to the startup-owned terminal without lifecycle controls', async () => {
+    const terminalClient = client({ listSessions: vi.fn(async () => [session()]) });
     await render(
       <CoderTerminalPanel
         open
@@ -101,21 +101,25 @@ describe('CoderTerminalPanel', () => {
         {...identityProps}
       />,
     );
+    await act(async () => Promise.resolve());
     expect(terminalClient.startSession).not.toHaveBeenCalled();
-    const start = host?.querySelector('[data-testid="coder-terminal-start"]') as HTMLButtonElement;
-    await act(async () => start.click());
-    expect(terminalClient.startSession).toHaveBeenCalledWith({
-      projectId: 'project-1',
-      deckId: 'deck_builder',
-      conversationId: 'main',
-      targetRoot: 'C:/Projects/LiquidAIty/main',
-      mode: 'interactive',
-    });
     expect(host?.querySelector('[data-testid="coder-terminal-status"]')).toBeNull();
     expect(host?.querySelector('[data-testid="coder-terminal-xterm"]')).not.toBeNull();
+    expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
   });
 
-  it('reattaches only to an already-live repository Hermes process without replay or auto-start', async () => {
+  it('reports a missing startup-owned terminal without trying to create one from the UI', async () => {
+    const terminalClient = client();
+    await render(<CoderTerminalPanel open client={terminalClient} {...identityProps} />);
+    await act(async () => Promise.resolve());
+    expect(terminalClient.startSession).not.toHaveBeenCalled();
+    expect(host?.textContent).toContain('coder_terminal_startup_session_unavailable');
+    expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
+  });
+
+  it('reattaches to the same already-live repository Hermes process without replay', async () => {
     const live = session();
     const terminalClient = client({ listSessions: vi.fn(async () => [live]) });
     await render(
@@ -128,7 +132,7 @@ describe('CoderTerminalPanel', () => {
     await act(async () => Promise.resolve());
     expect(terminalClient.startSession).not.toHaveBeenCalled();
     expect(host?.querySelector('[data-testid="coder-terminal-process"]')).toBeNull();
-    expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).not.toBeNull();
+    expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
   });
 
   it('does not expose the removed shell, root, transport, or transcript controls', async () => {
@@ -152,11 +156,11 @@ describe('CoderTerminalPanel', () => {
     expect(host?.textContent).not.toContain('PID 42');
   });
 
-  it('shows Stop only while the real Hermes process is active', async () => {
+  it('never exposes Start or Stop while the real Hermes process is active', async () => {
     await render(
       <CoderTerminalPanel open client={client()} initialSession={session('running')} {...identityProps} />,
     );
-    expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).not.toBeNull();
+    expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
     expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
   });
 
@@ -179,40 +183,32 @@ describe('CoderTerminalPanel', () => {
     expect(xtermProps.current?.onResize).toBeUndefined();
   });
 
-  it('shows Restart only after a stopped or failed session', async () => {
+  it('does not turn a stopped or failed native session into a user lifecycle control', async () => {
     await render(
       <CoderTerminalPanel open client={client()} initialSession={session('stopped')} {...identityProps} />,
     );
-    expect(host?.querySelector('[data-testid="coder-terminal-start"]')?.getAttribute('aria-label')).toBe(
-      'Restart Hermes terminal',
-    );
+    expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
     expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
   });
 
-  it('renders the exact native startup failure in xterm without the generic 502 label', async () => {
+  it('renders the exact native failure in xterm without lifecycle controls', async () => {
     const failed = session('failed');
     failed.error = 'hermes_acp_rpc_error:native_startup_failed';
     await render(
       <CoderTerminalPanel
         open
-        client={client({
-          startSession: vi.fn(async () => ({
-            ok: false as const,
-            error: failed.error!,
-            missing: [],
-            session: failed,
-          })),
-        })}
+        client={client()}
+        initialSession={failed}
         {...identityProps}
       />,
     );
-    const start = host?.querySelector('[data-testid="coder-terminal-start"]') as HTMLButtonElement;
-    await act(async () => start.click());
+    await act(async () => Promise.resolve());
     expect(host?.querySelector('[data-testid="coder-terminal-xterm"]')?.textContent).toBe(
       'hermes_acp_rpc_error:native_startup_failed',
     );
     expect(host?.textContent).not.toContain('console_start_failed_502');
     expect(host?.querySelector('[data-testid="coder-terminal-error"]')).toBeNull();
-    expect(host?.querySelector('[data-testid="coder-terminal-start"]')).not.toBeNull();
+    expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
   });
 });

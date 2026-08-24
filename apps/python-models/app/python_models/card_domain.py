@@ -2407,7 +2407,13 @@ def _retain_run_input_pair(
             input_files = _input_file_descriptor_for_run(run_id)
             if input_files is None:
                 raise InputMaterializationError("input_files_unavailable")
-            pair = load_input_pair(input_files)
+            pair = load_input_pair(
+                input_files,
+                project_id=prepared["projectId"],
+                deck_id=prepared["deckId"],
+                run_id=run_id,
+                card_id=prepared["cardIdentity"]["cardId"],
+            )
         public = input_pair_public(pair)
         return public, input_files, runtime_projection(pair)
     except InputMaterializationError as error:
@@ -2460,12 +2466,16 @@ def read_run_input_files(payload: dict[str, Any]) -> dict[str, Any]:
             project_id = str(_resolve_project(cursor, project_ref)["id"])
             cursor.execute(
                 """
-                SELECT 1 FROM ag_catalog.agent_runs
-                WHERE run_id=%s AND project_id=%s AND deck_id=%s
+                SELECT revision.card_id
+                FROM ag_catalog.agent_runs AS run
+                JOIN ag_catalog.agent_card_revisions AS revision
+                  ON revision.revision_id=run.target_card_revision_id
+                WHERE run.run_id=%s AND run.project_id=%s AND run.deck_id=%s
                 """,
                 (run_id, project_id, deck_id),
             )
-            if cursor.fetchone() is None:
+            run_row = cursor.fetchone()
+            if run_row is None:
                 raise CardDomainError("run_not_found")
     input_files = _input_file_descriptor_for_run(run_id)
     if input_files is None:
@@ -2476,7 +2486,13 @@ def read_run_input_files(payload: dict[str, Any]) -> dict[str, Any]:
             "message": "Input files unavailable for this Run",
         }
     try:
-        pair = load_input_pair(input_files)
+        pair = load_input_pair(
+            input_files,
+            project_id=project_id,
+            deck_id=deck_id,
+            run_id=run_id,
+            card_id=str(run_row["card_id"]),
+        )
     except InputMaterializationError as error:
         raise CardDomainError(str(error)) from error
     return {

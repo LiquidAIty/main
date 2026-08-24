@@ -26,98 +26,48 @@ type CoderTerminalPanelProps = {
 
 function CoderTerminalPanelInner({
   open,
-  targetRoot = '',
   title = 'Coder',
   placement = 'overlay',
   testIdPrefix = 'coder-terminal',
-  projectId,
-  deckId,
-  conversationId,
   onClose,
   client = coderTerminalClient,
   initialSession = null,
 }: CoderTerminalPanelProps) {
   const [session, setSession] = useState<ConsoleSessionInfo | null>(initialSession);
-  const [startError, setStartError] = useState<string | null>(null);
   const [terminalError, setTerminalError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const inputQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const sessionRef = useRef<ConsoleSessionInfo | null>(initialSession);
   const lastResizeRef = useRef('');
 
   const status = session?.state ?? 'idle';
   sessionRef.current = session;
-  const controlStyle = {
-    position: 'absolute' as const,
-    right: 8,
-    top: 8,
-    zIndex: 2,
-    width: 24,
-    height: 24,
-    padding: 0,
-    border: '1px solid rgba(143,166,188,0.45)',
-    borderRadius: 4,
-    background: 'rgba(11,15,20,0.82)',
-    color: '#8fa6bc',
-    lineHeight: 1,
-  };
-
   useEffect(() => {
-    if (!open || session || !projectId || !deckId || !conversationId) return;
+    if (!open || session) return;
     let cancelled = false;
-    void client.listSessions().then((sessions) => {
-      if (cancelled) return;
-      const live = sessions.find((candidate) => (
-        candidate.projectId === projectId
-        && candidate.deckId === deckId
-        && candidate.conversationId === conversationId
-        && candidate.ownerCardId === 'card_local_coder'
-        && candidate.runtimeSource === 'repository_hermes_cli'
-        && ['starting', 'running'].includes(candidate.state)
-        && Boolean(candidate.pid)
-      ));
-      if (live) setSession(live);
-    }).catch(() => undefined);
+    void client.listSessions()
+      .then((sessions) => {
+        if (cancelled) return;
+        const live = sessions.find((candidate) => (
+          candidate.ownerCardId === 'card_local_coder'
+          && candidate.runtimeSource === 'repository_hermes_cli'
+          && ['starting', 'running'].includes(candidate.state)
+          && Boolean(candidate.pid)
+        ));
+        if (live) {
+          setSession(live);
+          return;
+        }
+        setTerminalError('coder_terminal_startup_session_unavailable');
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setTerminalError(error instanceof Error ? error.message : String(error));
+        }
+      })
     return () => {
       cancelled = true;
     };
-  }, [client, conversationId, deckId, open, projectId, session]);
-
-  const startSession = useCallback(
-    async () => {
-      if (!projectId || !deckId || !conversationId) {
-        setStartError('coder_terminal_identity_required');
-        return;
-      }
-      setBusy(true);
-      setStartError(null);
-      setTerminalError(null);
-      try {
-        const result = await client.startSession({
-          projectId,
-          deckId,
-          conversationId,
-          ...(targetRoot.trim() ? { targetRoot } : {}),
-          mode: 'interactive',
-        });
-        if (result.ok) {
-          setSession(result.session);
-        } else if (result.session) {
-          setSession(result.session);
-          setStartError(result.error);
-        } else {
-          setStartError(`${result.error}${result.missing.length ? `: ${result.missing.join(', ')}` : ''}`);
-        }
-      } catch (error) {
-        setStartError(
-          `console_start_failed:${error instanceof Error ? error.message : String(error)}`,
-        );
-      } finally {
-        setBusy(false);
-      }
-    },
-    [client, conversationId, deckId, projectId, targetRoot],
-  );
+  }, [client, open, session]);
 
   const connectOutput = useCallback(
     async (onData: (data: string) => void, signal: AbortSignal) => {
@@ -177,17 +127,6 @@ function CoderTerminalPanelInner({
     lastResizeRef.current = '';
   }, [session?.id]);
 
-  const stopSession = useCallback(async () => {
-    if (!session?.id) return;
-    setTerminalError(null);
-    try {
-      await client.stopSession(session.id);
-      setSession((current) => current ? { ...current, state: 'stopping' } : current);
-    } catch (error) {
-      setTerminalError(error instanceof Error ? error.message : String(error));
-    }
-  }, [client, session?.id]);
-
   if (!open) return null;
 
   return (
@@ -237,47 +176,14 @@ function CoderTerminalPanelInner({
             if (message === 'The operation was aborted.') return;
             setTerminalError(message);
           }}
-          launchError={session.error || startError || terminalError}
+          launchError={session.error || terminalError}
         />
       ) : null}
 
-      {!session ? <div style={{ flex: 1 }} /> : null}
-
       {!session ? (
-        <button
-          type="button"
-          aria-label="Start Hermes terminal"
-          title="Start Hermes terminal"
-          data-testid={`${testIdPrefix}-start`}
-          disabled={busy}
-          onClick={() => void startSession()}
-          style={controlStyle}
-        >
-          ▶
-        </button>
-      ) : session && (status === 'failed' || status === 'stopped') ? (
-        <button
-          type="button"
-          aria-label="Restart Hermes terminal"
-          title="Restart Hermes terminal"
-          data-testid={`${testIdPrefix}-start`}
-          disabled={busy}
-          onClick={() => void startSession()}
-          style={controlStyle}
-        >
-          ↻
-        </button>
-      ) : session && (status === 'starting' || status === 'running') ? (
-        <button
-          type="button"
-          aria-label="Stop Hermes terminal"
-          title="Stop Hermes terminal"
-          data-testid={`${testIdPrefix}-stop`}
-          onClick={() => void stopSession()}
-          style={controlStyle}
-        >
-          ■
-        </button>
+        <div style={{ flex: 1, padding: 8, color: '#8fa6bc' }} role={terminalError ? 'alert' : 'status'}>
+          {terminalError || 'Coder terminal connecting'}
+        </div>
       ) : null}
     </section>
   );

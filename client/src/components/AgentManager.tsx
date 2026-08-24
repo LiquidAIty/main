@@ -283,6 +283,11 @@ export type StandaloneCardTestResult = {
   tasksTotal?: number;
   activeWorkers?: number;
   resultReady?: boolean;
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedTokens?: number;
+  reasoningTokens?: number;
+  costUsd?: number;
   output: string;
   error: string | null;
   toolCallCount?: number | null;
@@ -1569,6 +1574,11 @@ export function AgentManager({
                       ? runInputs.igf.header.authorities.join(', ')
                       : 'no graph authority selected'}
                   </div>
+                  <div data-testid="selected-run-igf-token-estimate" style={{ color: '#9FB2B8', fontSize: 10.5 }}>
+                    Estimated model-visible graph context: {' '}
+                    {Number(runInputs.icf?.estimates?.graphContextTokens || 0).toLocaleString()} tokens. {' '}
+                    This is the model-agnostic UTF-8 bytes ÷ 4 estimate for the materialized graph text, not the IGF metadata records or native provider usage.
+                  </div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <button type="button" onClick={() => void exportRuntimeInput('.igf', runInputs.igfText || '')}>
                       Export IGF…
@@ -2741,6 +2751,22 @@ export function AgentManager({
             {typeof runResult.tasksTotal === 'number' && runResult.tasksTotal > 0 ? (
               <div style={{ color: '#80969F' }}>
                 Progress: {runResult.tasksCompleted || 0}/{runResult.tasksTotal} · {runResult.activeWorkers || 0} active
+              </div>
+            ) : null}
+            {(Number(runResult.inputTokens || 0) > 0 || Number(runResult.outputTokens || 0) > 0) ? (
+              <div data-testid="selected-run-provider-usage" style={{ color: '#80969F' }}>
+                Native provider usage: {Number(runResult.inputTokens || 0).toLocaleString()} input · {' '}
+                {Number(runResult.outputTokens || 0).toLocaleString()} output
+                {Number(runResult.cachedTokens || 0) > 0
+                  ? ` · ${Number(runResult.cachedTokens).toLocaleString()} cached`
+                  : ''}
+                {Number(runResult.reasoningTokens || 0) > 0
+                  ? ` · ${Number(runResult.reasoningTokens).toLocaleString()} reasoning`
+                  : ''}
+                {Number(runResult.costUsd || 0) > 0
+                  ? ` · $${Number(runResult.costUsd).toFixed(6)}`
+                  : ''}
+                . This is separate from the pre-run ICF/IGF estimate.
               </div>
             ) : null}
             {runResult.output ? (

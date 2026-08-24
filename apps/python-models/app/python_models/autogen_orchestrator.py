@@ -21,7 +21,13 @@ from app.python_models.icf import load_input_pair
 def load_stored_runtime_request(context: StoredRuntimeRequest) -> RuntimeRequest:
     """Load AutoGen input only from the exact retained ICF/IGF bytes."""
 
-    pair = load_input_pair(context.inputFiles.model_dump())
+    pair = load_input_pair(
+        context.inputFiles.model_dump(),
+        project_id=context.session.projectId,
+        deck_id=context.session.deckId,
+        run_id=context.session.runId,
+        card_id=context.session.cardId,
+    )
     return RuntimeRequest(
         session=context.session,
         icf=pair.icf,

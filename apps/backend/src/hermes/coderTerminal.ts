@@ -4,6 +4,8 @@ import path from 'node:path';
 import { spawn as spawnPty, type IPty, type IWindowsPtyForkOptions } from 'node-pty';
 
 import { resolveRepoRoot } from '../coder/workspaceRoot';
+import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
+import { resolveHermesRuntimeHome } from './profileMemory';
 
 export type ConsoleMode = 'interactive';
 export type ConsoleSessionState = 'starting' | 'running' | 'stopping' | 'stopped' | 'failed';
@@ -277,3 +279,50 @@ export class HermesCoderTerminalManager {
 }
 
 export const coderTerminalSessionManager = new HermesCoderTerminalManager();
+
+const PERSISTENT_CODER_TERMINAL_IDENTITY = {
+  projectId: 'liquidaity',
+  deckId: 'deck_builder',
+  conversationId: 'main',
+  ownerCardId: 'card_local_coder',
+  profile: 'coder',
+} as const;
+
+export function startCoderTerminalSession(session: HermesCoderTerminalSession): void {
+  const install = resolveHermesCliInstall();
+  const hermesHome = resolveHermesRuntimeHome(install.root);
+  const profile = session.info.profile || 'coder';
+  session.start({
+    executable: install.executable,
+    args: ['-p', profile, 'chat', '--cli', '--in', session.info.targetRoot],
+    env: {
+      ...withoutInternalMcpSecret(process.env),
+      HERMES_HOME: hermesHome,
+    },
+    profile,
+    hermesHome,
+  });
+}
+
+export function ensurePersistentCoderTerminal(
+  manager: HermesCoderTerminalManager = coderTerminalSessionManager,
+  launch: (session: HermesCoderTerminalSession) => void = startCoderTerminalSession,
+): ConsoleSessionInfo {
+  const acquired = manager.acquire(PERSISTENT_CODER_TERMINAL_IDENTITY);
+  if (!acquired.ok) throw new Error(acquired.error);
+  if (acquired.created) {
+    try {
+      launch(acquired.session);
+    } catch (error) {
+      const reason = error instanceof Error
+        ? error.message
+        : 'hermes_coder_terminal_prepare_failed';
+      acquired.session.markFailed(reason);
+      throw new Error(reason);
+    }
+  }
+  if (!acquired.session.isLive()) {
+    throw new Error(acquired.session.info.error || 'hermes_coder_terminal_startup_failed');
+  }
+  return acquired.session.info;
+}

@@ -2136,9 +2136,16 @@ def test_native_cbm_bootstrap_race_retries_within_budget_on_the_same_authority(m
         def __init__(self, command, args, cwd):
             attempts.append((command, list(args), cwd))
             if len(attempts) < 3:
-                raise RuntimeError(
-                    "native_cbm_process_exited:1:codebase-memory-mcp: "
+                detail = (
                     "CBM daemon could not start within 30000 ms"
+                    if len(attempts) == 1
+                    else (
+                        "CBM daemon is active or starting but could not accept "
+                        "this client within 30000 ms"
+                    )
+                )
+                raise RuntimeError(
+                    f"native_cbm_process_exited:1:codebase-memory-mcp: {detail}"
                 )
 
         def list_tools(self):

@@ -44,7 +44,13 @@ def _pair(*, graph_context: str = "", secret: bool = False):
         "edges": [],
     }
     return materialize_input_pair(
-        owner={"kind": "card-run", "runId": "run-one"},
+        owner={
+            "kind": "card-run",
+            "projectId": "project-one",
+            "deckId": "deck-one",
+            "cardId": "card-one",
+            "runId": "run-one",
+        },
         stable={
             "projectId": "project-one",
             "deckId": "deck-one",
@@ -125,6 +131,37 @@ def test_concurrent_runs_write_isolated_workspaces_with_exactly_two_files(
         loaded = load_input_pair(descriptor)
         assert loaded.icf_bytes == pair.icf_bytes
         assert loaded.igf_bytes == pair.igf_bytes
+
+
+def test_run_identity_rejects_cross_run_file_reuse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LIQUIDAITY_RUN_INPUT_ROOT", str(tmp_path))
+    pair = _pair()
+    descriptor = write_input_pair(
+        pair,
+        project_id="project-one",
+        deck_id="deck-one",
+        run_id="run-one",
+    )
+    assert load_input_pair(
+        descriptor,
+        project_id="project-one",
+        deck_id="deck-one",
+        run_id="run-one",
+        card_id="card-one",
+    ) == pair
+    with pytest.raises(
+        InputMaterializationError,
+        match="input_files_run_identity_mismatch",
+    ):
+        load_input_pair(
+            descriptor,
+            project_id="project-one",
+            deck_id="deck-one",
+            run_id="two",
+        )
 
 
 def test_corrupt_or_secret_bearing_input_fails_closed() -> None:

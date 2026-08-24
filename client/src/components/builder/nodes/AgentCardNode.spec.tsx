@@ -22,36 +22,35 @@ const baseCard = {
   position: { x: 0, y: 0 },
 };
 
-describe('AgentCardNode runtime shape', () => {
-  it('renders Hermes Cards as rounded squares', () => {
+describe('AgentCardNode shared Card geometry', () => {
+  it('renders Hermes Cards as the shared compact rectangle', () => {
     const { container } = render(
       <AgentCardNode
         data={{ ...baseCard, runtime: { kind: 'hermes', mode: 'main', profile: 'main' } }}
       />,
     );
 
-    const card = container.querySelector<HTMLElement>('[data-runtime-kind="hermes"]');
-    expect(card).not.toBeNull();
-    expect(card?.style.width).toBe('112px');
-    expect(card?.style.minHeight).toBe('112px');
-    expect(card?.style.aspectRatio).toBe('1 / 1');
-    expect(card?.style.borderRadius).toBe('28px');
-  });
-
-  it('preserves the existing AutoGen card proportions', () => {
-    const { container } = render(
-      <AgentCardNode data={{ ...baseCard, runtime: { kind: 'autogen', mode: 'assistant' } }} />,
-    );
-
-    const card = container.querySelector<HTMLElement>('[data-runtime-kind="autogen"]');
+    const card = container.firstElementChild as HTMLElement | null;
     expect(card).not.toBeNull();
     expect(card?.style.width).toBe('124px');
     expect(card?.style.minHeight).toBe('90px');
     expect(card?.style.aspectRatio).toBe('');
-    expect(card?.style.borderRadius).toBe('12px');
+    expect(card?.className).toContain('rounded-xl');
   });
 
-  it('keeps a Kanban Card on the shared Hermes square without a special status panel', () => {
+  it('renders AutoGen Cards with the exact same geometry', () => {
+    const { container } = render(
+      <AgentCardNode data={{ ...baseCard, runtime: { kind: 'autogen', mode: 'assistant' } }} />,
+    );
+
+    const card = container.firstElementChild as HTMLElement | null;
+    expect(card).not.toBeNull();
+    expect(card?.style.width).toBe('124px');
+    expect(card?.style.minHeight).toBe('90px');
+    expect(card?.style.aspectRatio).toBe('');
+  });
+
+  it('keeps a Kanban Card on the shared rectangle without a special status panel', () => {
     const { container } = render(
       <AgentCardNode
         data={{
@@ -61,10 +60,10 @@ describe('AgentCardNode runtime shape', () => {
       />,
     );
 
-    const card = container.querySelector<HTMLElement>('[data-runtime-kind="hermes"]');
-    expect(card?.style.width).toBe('112px');
-    expect(card?.style.minHeight).toBe('112px');
-    expect(card?.style.aspectRatio).toBe('1 / 1');
+    const card = container.firstElementChild as HTMLElement | null;
+    expect(card?.style.width).toBe('124px');
+    expect(card?.style.minHeight).toBe('90px');
+    expect(card?.style.aspectRatio).toBe('');
     expect(container.querySelector('[data-testid="kanban-card-run-status"]')).toBeNull();
   });
 });

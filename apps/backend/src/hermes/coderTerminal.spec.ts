@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   HermesCoderTerminalManager,
   HermesCoderTerminalSession,
+  ensurePersistentCoderTerminal,
   type ConsoleSessionInfo,
   type HermesCoderPtyLaunch,
   type PtyFactory,
@@ -79,6 +80,24 @@ const identity = {
 };
 
 describe('Hermes Coder real PTY boundary', () => {
+  it('starts one idle persistent Coder terminal from the backend startup owner', () => {
+    const child = new FakePty();
+    const manager = new HermesCoderTerminalManager((() => child) as unknown as PtyFactory);
+    const launchPersistent = vi.fn((session: HermesCoderTerminalSession) => session.start(launch()));
+
+    const first = ensurePersistentCoderTerminal(manager, launchPersistent);
+    const second = ensurePersistentCoderTerminal(manager, launchPersistent);
+
+    expect(first).toMatchObject({
+      ownerCardId: 'card_local_coder',
+      profile: 'coder',
+      state: 'running',
+      pid: 42,
+    });
+    expect(second.id).toBe(first.id);
+    expect(launchPersistent).toHaveBeenCalledOnce();
+  });
+
   it('requires server-owned project, deck, and conversation identity', () => {
     const result = new HermesCoderTerminalManager().acquire({
       projectId: '',

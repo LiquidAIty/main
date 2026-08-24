@@ -10,6 +10,10 @@ import { closePythonAgentMcpClient } from "./services/mcp/pythonAgentMcpClient";
 import { closeHermesRuntimes } from "./hermes/mainAdapter";
 import { listenAfterRequiredMigrations } from "./db/migrations";
 import { recoverActiveKanbanRunMonitors } from "./hermes/kanbanRunRecovery";
+import {
+  coderTerminalSessionManager,
+  ensurePersistentCoderTerminal,
+} from "./hermes/coderTerminal";
 
 const app = express();
 app.set('etag', false);
@@ -163,6 +167,7 @@ function installShutdownHooks() {
         await closeServer(activeServer);
       }
       closeHermesRuntimes();
+      coderTerminalSessionManager.stopAll();
       await closePythonAgentMcpClient();
     } catch {
       // ignore shutdown close errors
@@ -218,6 +223,15 @@ async function startServer() {
   });
   globalThis.__liquidaityBackendServer__ = server;
   installShutdownHooks();
+  try {
+    const terminal = ensurePersistentCoderTerminal();
+    console.log(`[BOOT] Coder terminal ready profile=${terminal.profile} pid=${terminal.pid}`);
+  } catch (error) {
+    console.error(`[BOOT] Coder terminal failed: ${error instanceof Error ? error.message : String(error)}`);
+    await closeServer(server).catch(() => undefined);
+    process.exitCode = 1;
+    return;
+  }
   void recoverActiveKanbanRunMonitors()
     .then(({ discovered, started }) => {
       console.log(`[BOOT] Kanban Run recovery discovered=${discovered} started=${started}`);

@@ -323,7 +323,7 @@ describe('AgentManager active builder config', () => {
         icfText: '{}\n',
         igfText: '{"kind":"header","format":"liquidaity.input-graph"}\n',
         inputSummary: { icfBytes: 10, igfBytes: 180 },
-        icf: { estimates: {} },
+        icf: { estimates: { graphContextTokens: 42 } },
         igf: {
           header: { recordCounts: { total: 3 }, authorities: ['ThinkGraph', 'KnowGraph'] },
           records: [],
@@ -333,6 +333,8 @@ describe('AgentManager active builder config', () => {
 
     expect(screen.getByTestId('selected-run-igf').textContent).toContain('3 records');
     expect(screen.getByTestId('selected-run-igf').textContent).toContain('ThinkGraph, KnowGraph');
+    expect(screen.getByTestId('selected-run-igf-token-estimate').textContent).toContain('42 tokens');
+    expect(screen.getByTestId('selected-run-igf-token-estimate').textContent).toContain('model-agnostic');
     expect(screen.queryByText(/sub-worker input/i)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Export IGF…' }));
     await waitFor(() => expect(write).toHaveBeenCalledWith('{"kind":"header","format":"liquidaity.input-graph"}\n'));

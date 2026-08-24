@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 const HANDLE_HEIGHT = 12;
 const MIN_OPEN_HEIGHT = 160;
-const MIN_CHAT_HEIGHT = 160;
-const DEFAULT_OPEN_HEIGHT = 300;
+const DEFAULT_PEEK_HEIGHT = 240;
+const COLLAPSE_THRESHOLD = 72;
 
 type HarnessChatPanelProps = {
   chat: ReactNode;
@@ -18,13 +18,21 @@ export default function HarnessChatPanel({ chat, terminal }: HarnessChatPanelPro
     move: (event: MouseEvent) => void;
     up: () => void;
   } | null>(null);
-  const [height, setHeight] = useState(DEFAULT_OPEN_HEIGHT);
+  const heightRef = useRef(0);
+  const lastOpenHeightRef = useRef(DEFAULT_PEEK_HEIGHT);
+  const dragMovedRef = useRef(false);
+  const [height, setHeightState] = useState(0);
   const [dragging, setDragging] = useState(false);
+
+  const setHeight = useCallback((next: number) => {
+    heightRef.current = next;
+    setHeightState(next);
+  }, []);
 
   const clampHeight = useCallback((next: number) => {
     const total = containerRef.current?.getBoundingClientRect().height ?? 0;
-    const maximum = Math.max(MIN_OPEN_HEIGHT, total - HANDLE_HEIGHT - MIN_CHAT_HEIGHT);
-    return Math.min(maximum, Math.max(MIN_OPEN_HEIGHT, next));
+    const maximum = Math.max(MIN_OPEN_HEIGHT, total - HANDLE_HEIGHT);
+    return Math.min(maximum, Math.max(0, next));
   }, []);
 
   const removeDragListeners = useCallback(() => {
@@ -42,15 +50,24 @@ export default function HarnessChatPanel({ chat, terminal }: HarnessChatPanelPro
     event.preventDefault();
     removeDragListeners();
     dragRef.current = true;
+    dragMovedRef.current = false;
     setDragging(true);
     const move = (nextEvent: MouseEvent) => {
       if (!dragRef.current || !containerRef.current) return;
       nextEvent.preventDefault();
       const rect = containerRef.current.getBoundingClientRect();
       const nextHeight = clampHeight(rect.bottom - nextEvent.clientY);
+      dragMovedRef.current = true;
       setHeight(nextHeight);
     };
     const up = () => {
+      const total = containerRef.current?.getBoundingClientRect().height ?? 0;
+      const maximum = Math.max(MIN_OPEN_HEIGHT, total - HANDLE_HEIGHT);
+      const settledHeight = heightRef.current < COLLAPSE_THRESHOLD
+        ? 0
+        : Math.min(maximum, Math.max(MIN_OPEN_HEIGHT, heightRef.current));
+      if (settledHeight > 0) lastOpenHeightRef.current = settledHeight;
+      setHeight(settledHeight);
       removeDragListeners();
       setDragging(false);
       window.requestAnimationFrame(() => {
@@ -60,27 +77,54 @@ export default function HarnessChatPanel({ chat, terminal }: HarnessChatPanelPro
     listenersRef.current = { move, up };
     window.addEventListener('mousemove', move, true);
     window.addEventListener('mouseup', up, true);
-  }, [clampHeight, removeDragListeners]);
+  }, [clampHeight, removeDragListeners, setHeight]);
+
+  const toggleTerminal = useCallback(() => {
+    if (dragMovedRef.current) {
+      dragMovedRef.current = false;
+      return;
+    }
+    if (heightRef.current > 0) {
+      lastOpenHeightRef.current = heightRef.current;
+      setHeight(0);
+    } else {
+      setHeight(clampHeight(lastOpenHeightRef.current));
+    }
+    window.requestAnimationFrame(() => {
+      window.dispatchEvent(new Event('liquidaity:terminal-layout-settled'));
+    });
+  }, [clampHeight, setHeight]);
+
+  const containerHeight = containerRef.current?.getBoundingClientRect().height ?? 0;
+  const terminalMode = height === 0
+    ? 'collapsed'
+    : containerHeight > 0 && height >= Math.max(MIN_OPEN_HEIGHT, containerHeight - HANDLE_HEIGHT) - 1
+      ? 'expanded'
+      : 'peek';
 
   return (
     <div
       ref={containerRef}
       data-testid="harness-chat-panel"
-      data-main-mode="native"
+      data-main-mode={terminalMode === 'expanded' ? 'chatgpt' : 'native'}
+      data-terminal-mode={terminalMode}
       style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}
     >
-      <div data-testid="harness-chat" style={{ flex: 1, minHeight: MIN_CHAT_HEIGHT, overflow: 'hidden' }}>
-        {chat}
-      </div>
+      {terminalMode !== 'expanded' ? (
+        <div data-testid="harness-chat" style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          {chat}
+        </div>
+      ) : null}
 
       <button
         type="button"
         data-testid="chat-coder-terminal-handle"
-        aria-expanded="true"
+        aria-expanded={height > 0}
         aria-controls="chat-coder-terminal-region"
         aria-label="Resize Chat and Coder terminal"
         title="Resize Chat and Coder terminal"
         onMouseDown={onDragStart}
+        onClick={toggleTerminal}
         style={{
           flex: '0 0 auto',
           height: HANDLE_HEIGHT,
@@ -101,13 +145,13 @@ export default function HarnessChatPanel({ chat, terminal }: HarnessChatPanelPro
       <div
         id="chat-coder-terminal-region"
         data-testid="chat-coder-terminal-region"
-        aria-hidden="false"
+        aria-hidden={height === 0}
         style={{
           flex: '0 0 auto',
           height,
           minHeight: 0,
           overflow: 'hidden',
-          visibility: 'visible',
+          visibility: height === 0 ? 'hidden' : 'visible',
           userSelect: dragging ? 'none' : 'auto',
         }}
       >

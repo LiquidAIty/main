@@ -891,6 +891,11 @@ export default function AgentBuilder(): React.ReactElement {
     tasksTotal: typeof result?.tasksTotal === 'number' ? result.tasksTotal : undefined,
     activeWorkers: typeof result?.activeWorkers === 'number' ? result.activeWorkers : undefined,
     resultReady: result?.resultReady === true,
+    inputTokens: typeof result?.inputTokens === 'number' ? result.inputTokens : undefined,
+    outputTokens: typeof result?.outputTokens === 'number' ? result.outputTokens : undefined,
+    cachedTokens: typeof result?.cachedTokens === 'number' ? result.cachedTokens : undefined,
+    reasoningTokens: typeof result?.reasoningTokens === 'number' ? result.reasoningTokens : undefined,
+    costUsd: typeof result?.costUsd === 'number' ? result.costUsd : undefined,
     output: String(result?.output || ''),
     error: result?.errorSummary
       ? String(result.errorSummary)

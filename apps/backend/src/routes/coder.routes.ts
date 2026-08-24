@@ -2,8 +2,7 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import {
   coderTerminalSessionManager,
-  resolveHermesCliInstall,
-  type HermesCoderTerminalSession,
+  startCoderTerminalSession,
 } from '../hermes/coderTerminal';
 import {
   answerHermesSession,
@@ -29,10 +28,6 @@ import {
   requestPythonRailsJson,
 } from '../services/autogen/pythonRailsClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
-import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
-import {
-  resolveHermesRuntimeHome,
-} from '../hermes/profileMemory';
 import {
   indexToolCatalogReferences,
   searchToolCatalogReferences,
@@ -1300,30 +1295,9 @@ router.get('/main/session/conversations', async (req, res) => {
   }
 });
 
-function startCoderTerminalSession(session: HermesCoderTerminalSession): void {
-  const install = resolveHermesCliInstall();
-  const hermesHome = resolveHermesRuntimeHome(install.root);
-  const profile = session.info.profile || 'coder';
-  session.start({
-    executable: install.executable,
-    args: [
-      '-p', profile,
-      'chat',
-      '--cli',
-      '--in', session.info.targetRoot,
-    ],
-    env: {
-      ...withoutInternalMcpSecret(process.env),
-      HERMES_HOME: hermesHome,
-    },
-    profile,
-    hermesHome,
-  });
-}
-
 // ── Repository Hermes control center ───────────────────────────────────────
-// xterm forwards bytes to and from one real Hermes CLI ConPTY. Card/ACP model
-// execution is separate and is never materialized or replayed into this shell.
+// xterm forwards bytes to and from the startup-owned Hermes Coder ConPTY.
+// Opening or closing the dock never owns this process lifecycle.
 function mountConsoleSessionRoutes(
   prefix: string,
   manager: typeof coderTerminalSessionManager,
