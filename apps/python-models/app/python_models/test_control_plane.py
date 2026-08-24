@@ -116,31 +116,32 @@ def test_one_grounded_staging_path_loads_coder_or_mag_one_without_running(
         return {"ok": True, "deck": copy.deepcopy(deck), "meta": {"deckRevision": "rev-mag"}}
 
     monkeypatch.setattr(cp, "_backend_json", backend)
-    materializations = []
+    reviews = []
 
-    def materialize(request):
-        materializations.append(copy.deepcopy(request))
+    def prepare_review(request):
+        reviews.append(copy.deepcopy(request))
+        has_graph_data = bool(request.get("dataAnchors"))
         return {
             "projectId": "p", "deckId": "deck_builder", "ephemeral": True,
             "cardRevisionId": f"revision-{target_id}", "cardRevision": 1,
             "cardRevisionSha256": "sha", "runtimeOwner": runtime["kind"],
             "cardIdentity": {"cardId": target_id, "title": target_id},
-            "resolvedNativeReads": [{
+            "resolvedNativeReads": ([{
                 "authority": "KnowGraph", "nativeId": "episode-1",
-            }],
+            }] if has_graph_data else []),
             "resolvedGraphProjection": {
                 "schemaVersion": "native-card-context.v1", "authority": "knowgraph",
-                "projectId": "p", "nodes": [{"id": "episode-1"}], "edges": [],
-                "counts": {"nodes": 1, "edges": 0},
+                "projectId": "p",
+                "nodes": ([{"id": "episode-1"}] if has_graph_data else []),
+                "edges": [],
+                "counts": {"nodes": 1 if has_graph_data else 0, "edges": 0},
             },
-            "icf": {
-                "stable": {"runtime": runtime, "provider": {}},
-                "capabilities": {"enabledTools": []},
-            },
-            "igf": {"header": {"recordCounts": {"total": 1}}, "records": []},
         }
 
-    monkeypatch.setattr("app.python_models.card_domain.materialize_invocation", materialize)
+    monkeypatch.setattr(
+        "app.python_models.card_domain.prepare_card_review_context",
+        prepare_review,
+    )
     result = asyncio.run(cp.write_mag_one_instructions({
         "projectId": "p",
         "deckId": "deck_builder",
@@ -158,11 +159,12 @@ def test_one_grounded_staging_path_loads_coder_or_mag_one_without_running(
     assert result["sourceCardId"] == "helper"
     assert result["mission"] == "Research one bounded public question.\nKeep citations."
     assert result["dataAnchors"][0]["required"] is True
-    assert result["invocation"]["resolvedGraphProjection"]["nodes"] == [{"id": "episode-1"}]
+    assert result["reviewContext"]["resolvedGraphProjection"]["nodes"] == [{"id": "episode-1"}]
+    assert "idf" not in result["reviewContext"]
     assert result["ready"] is True
     assert result["persisted"] is False
     assert result["started"] is False
-    assert materializations == [{
+    assert reviews == [{
         "projectId": "p", "deckId": "deck_builder", "cardId": target_id,
         "assignment": "Research one bounded public question.\nKeep citations.",
         "dataAnchors": [{
@@ -172,6 +174,18 @@ def test_one_grounded_staging_path_loads_coder_or_mag_one_without_running(
         }],
     }]
     assert [method for method, _payload in calls] == ["GET"]
+
+    without_graph = asyncio.run(cp.write_mag_one_instructions({
+        "projectId": "p",
+        "deckId": "deck_builder",
+        "targetCardId": target_id,
+        "mission": "Review a mission with no selected graph data.",
+        "_sourceCardId": "helper",
+    }))
+    assert without_graph["dataAnchors"] == []
+    assert without_graph["reviewContext"]["resolvedGraphProjection"]["nodes"] == []
+    assert reviews[-1]["dataAnchors"] == []
+    assert "idf" not in without_graph["reviewContext"]
 
 
 def test_grounded_staging_requires_source_card_write_grant(monkeypatch, fake_backend) -> None:

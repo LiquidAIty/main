@@ -1,13 +1,9 @@
 """The one canonical retained LiquidAIty Input Data File.
 
-An IDF contains the bounded native graph evidence first, followed by the saved
-Card and current task, the effective execution configuration, and the output
-requirements for one invocation.  Python rails serializes exactly one UTF-8
-``in.idf`` file, retains it through the existing Run artifact catalog, reloads
-those exact bytes, and only then mechanically projects the native runtime call.
-
-The nested context and graph record shapes are useful internal schemas.  They
-are not separate files or competing runtime-input authorities.
+The serialized product contract is exactly four ordered sections: actual
+bounded graph data, stable saved-Card context, selected tools/grants, then the
+current dynamic context. Python rails writes one UTF-8 ``in.idf`` for a Run,
+reloads those exact bytes, and only then mechanically projects the native call.
 """
 
 from __future__ import annotations
@@ -21,17 +17,14 @@ from math import ceil
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.python_models.idd import (
     IddValidationError,
-    load_input_data_dictionary,
     validate_record,
 )
 
 
-IDF_FORMAT = "liquidaity.input-data"
-INPUT_FORMAT_VERSION = 1
 IDF_FILENAME = "in.idf"
 _FORBIDDEN_SECRET_KEYS = frozenset({
     "apikey", "api_key", "authorization", "bearer", "bearertoken",
@@ -44,8 +37,8 @@ class InputMaterializationError(ValueError):
     """Secret-safe failure at the retained runtime-input boundary."""
 
 
-class Icf(BaseModel):
-    """Internal Card/task context schema embedded in the one IDF."""
+class StableSavedCardContext(BaseModel):
+    """Durable configuration read from the receiving PostgreSQL Card."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -57,19 +50,18 @@ class Icf(BaseModel):
     cardRevision: int | None = None
     cardRevisionSha256: str = ""
     instructions: str = ""
-    task: str
-    conversationId: str = ""
-    senderCardId: str = ""
-    originatingRunId: str = ""
-    images: list[dict[str, Any]] = Field(default_factory=list)
+    outputRequirements: str = ""
+    runtime: dict[str, Any]
+    provider: dict[str, Any]
+    runtimeOptions: dict[str, Any] = Field(default_factory=dict)
 
 
-class IgfRecord(BaseModel):
-    """One bounded native graph record embedded in the one IDF."""
+class GraphDataRecord(BaseModel):
+    """One real bounded native graph record embedded in the Run input."""
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["selection", "node", "relationship", "materialized-context"]
+    kind: Literal["selection", "node", "relationship"]
     authority: str
     nativeId: str
     type: str
@@ -80,28 +72,24 @@ class IgfRecord(BaseModel):
     relationshipIds: list[str] = Field(default_factory=list)
 
 
-class IgfDocument(BaseModel):
-    """Internal bounded graph-evidence schema embedded first in the IDF."""
+class ActualGraphData(BaseModel):
+    """Actual selected/resolved native graph data embedded first in the IDF."""
 
     model_config = ConfigDict(extra="forbid")
 
-    recipe: dict[str, Any]
     authorities: list[str] = Field(default_factory=list)
     selectedNativeReferences: list[dict[str, Any]] = Field(default_factory=list)
     recordCounts: dict[str, int]
     provenanceSummary: list[dict[str, Any]] = Field(default_factory=list)
-    records: list[IgfRecord] = Field(default_factory=list)
+    records: list[GraphDataRecord] = Field(default_factory=list)
     modelText: str = ""
 
 
-class ExecutionInput(BaseModel):
-    """Exact saved runtime configuration, grants, and tool schemas."""
+class SelectedToolsAndGrants(BaseModel):
+    """Effective saved Card tool grants and schemas, distinct from graph data."""
 
     model_config = ConfigDict(extra="forbid")
 
-    runtime: dict[str, Any]
-    provider: dict[str, Any]
-    runtimeOptions: dict[str, Any] = Field(default_factory=dict)
     enabledTools: list[str] = Field(default_factory=list)
     toolDefinitions: list[dict[str, Any]] = Field(default_factory=list)
     nativeTools: list[str] = Field(default_factory=list)
@@ -110,35 +98,25 @@ class ExecutionInput(BaseModel):
     mcpConnectionIds: list[str] = Field(default_factory=list)
 
 
-class OutputInput(BaseModel):
+class DynamicContext(BaseModel):
+    """The final, transient mission and images for this invocation."""
+
     model_config = ConfigDict(extra="forbid")
 
-    requirements: str = ""
+    task: str
+    images: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class Idf(BaseModel):
-    """One complete model-facing input, ordered graph then context then execution."""
+    """One complete model-facing input with exactly four ordered sections."""
 
     model_config = ConfigDict(extra="forbid")
 
-    # Field order is serialization order. Graph evidence is deliberately first.
-    igf: IgfDocument
-    icf: Icf
-    execution: ExecutionInput
-    output: OutputInput
-    format: Literal[IDF_FORMAT] = IDF_FORMAT
-    version: Literal[INPUT_FORMAT_VERSION] = INPUT_FORMAT_VERSION
-    owner: dict[str, Any]
-    materializedAt: str
-    idd: dict[str, Any]
-    estimates: dict[str, Any]
-
-    @field_validator("owner", "idd", "estimates")
-    @classmethod
-    def _require_object(cls, value: dict[str, Any]) -> dict[str, Any]:
-        if not isinstance(value, dict):
-            raise ValueError("input_data_object_invalid")
-        return value
+    # Pydantic preserves declaration order in JSON serialization.
+    actualGraphData: ActualGraphData
+    stableSavedCardContext: StableSavedCardContext
+    selectedToolsAndGrants: SelectedToolsAndGrants
+    dynamicContext: DynamicContext
 
 
 @dataclass(frozen=True)
@@ -152,7 +130,7 @@ class MaterializedIdf:
 
 
 def _canonical_line(value: Any) -> bytes:
-    # Pydantic field order is part of the format: graph evidence must stay first.
+    # Pydantic field order is the four-part product contract.
     return (
         json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n"
     ).encode("utf-8")
@@ -166,6 +144,26 @@ def _token_estimate(value: str) -> int:
     """Return an intentionally model-agnostic UTF-8/4 planning estimate."""
 
     return ceil(len(value.encode("utf-8")) / 4) if value else 0
+
+
+def _input_estimates(idf: Idf) -> dict[str, Any]:
+    """Derive inspection estimates without persisting them in model input."""
+
+    estimates: dict[str, Any] = {
+        "method": "utf8-bytes-divided-by-4-ceiling",
+        "graphContextTokens": _token_estimate(idf.actualGraphData.modelText),
+        "systemContextTokens": _token_estimate(
+            idf.stableSavedCardContext.instructions
+        ),
+        "taskTokens": _token_estimate(idf.dynamicContext.task),
+        "outputContractTokens": _token_estimate(
+            idf.stableSavedCardContext.outputRequirements
+        ),
+    }
+    estimates["totalModelVisibleTokens"] = sum(
+        value for key, value in estimates.items() if key.endswith("Tokens")
+    )
+    return estimates
 
 
 def _assert_secret_free(value: Any) -> None:
@@ -201,8 +199,8 @@ def _graph_records(
     native_references: list[dict[str, Any]],
     graph_projection: dict[str, Any],
     materialized_at: str,
-) -> list[IgfRecord]:
-    records: list[IgfRecord] = []
+) -> list[GraphDataRecord]:
+    records: list[GraphDataRecord] = []
     retrieved_by_identity = {
         (str(item.get("authority") or ""), str(item.get("nativeId") or "")): str(
             item.get("asOf") or materialized_at
@@ -217,7 +215,7 @@ def _graph_records(
         native_id = str(reference.get("nativeId") or "").strip()
         if not authority or not native_id:
             raise InputMaterializationError("input_graph_reference_invalid")
-        records.append(IgfRecord(
+        records.append(GraphDataRecord(
             kind="selection",
             authority=authority,
             nativeId=native_id,
@@ -251,7 +249,7 @@ def _graph_records(
         properties = dict(node.get("properties") or {})
         if not authority or not native_id:
             raise InputMaterializationError("input_graph_node_invalid")
-        records.append(IgfRecord(
+        records.append(GraphDataRecord(
             kind="node",
             authority=authority,
             nativeId=native_id,
@@ -276,7 +274,7 @@ def _graph_records(
         target = str(edge.get("target") or "").strip()
         if not authority or not native_id or not source or not target:
             raise InputMaterializationError("input_graph_relationship_invalid")
-        records.append(IgfRecord(
+        records.append(GraphDataRecord(
             kind="relationship",
             authority=authority,
             nativeId=native_id,
@@ -290,27 +288,12 @@ def _graph_records(
             retrievedAt=materialized_at,
             relationshipIds=[native_id],
         ))
-    if graph_context:
-        authorities = sorted({
-            str(reference.get("authority") or "").strip()
-            for reference in native_references
-            if isinstance(reference, dict) and str(reference.get("authority") or "").strip()
-        })
-        records.append(IgfRecord(
-            kind="materialized-context",
-            authority=authorities[0] if len(authorities) == 1 else "mixed",
-            nativeId="liquidaity:materialized-graph-context",
-            type="text/markdown",
-            content={"text": graph_context},
-            provenance={"selectedNativeReferences": len(native_references)},
-            retrievedAt=materialized_at,
-        ))
     return records
 
 
-def _record_counts(records: list[IgfRecord]) -> dict[str, int]:
+def _record_counts(records: list[GraphDataRecord]) -> dict[str, int]:
     counts = {kind: 0 for kind in (
-        "selection", "node", "relationship", "materialized-context"
+        "selection", "node", "relationship"
     )}
     for record in records:
         counts[record.kind] += 1
@@ -355,11 +338,9 @@ def _provenance_summary(references: list[dict[str, Any]]) -> list[dict[str, Any]
 
 def materialize_idf(
     *,
-    owner: dict[str, Any],
     stable: dict[str, Any],
     variable: dict[str, Any],
     capabilities: dict[str, Any],
-    allocation: dict[str, Any],
     graph_context: str,
     native_references: list[dict[str, Any]],
     graph_projection: dict[str, Any],
@@ -380,12 +361,7 @@ def materialize_idf(
     })
     for record in records:
         _validate_idd_record("input-graph-record", record.model_dump(exclude_none=True))
-    graph = IgfDocument(
-        recipe={
-            "ordering": "graph-before-card-context",
-            "scope": "bounded-selected-native-evidence",
-            "nativeAuthoritiesRemainCanonical": True,
-        },
+    graph = ActualGraphData(
         authorities=authorities,
         selectedNativeReferences=[dict(item) for item in native_references],
         recordCounts=_record_counts(records),
@@ -393,7 +369,7 @@ def materialize_idf(
         records=records,
         modelText=graph_context,
     )
-    context = Icf(
+    stable_context = StableSavedCardContext(
         projectId=str(stable.get("projectId") or ""),
         deckId=str(stable.get("deckId") or ""),
         cardId=str(stable.get("cardId") or ""),
@@ -402,16 +378,12 @@ def materialize_idf(
         cardRevision=stable.get("cardRevision"),
         cardRevisionSha256=str(stable.get("cardRevisionSha256") or ""),
         instructions=str(stable.get("instructions") or ""),
-        task=str(variable.get("task") or ""),
-        conversationId=str(variable.get("conversationId") or ""),
-        senderCardId=str(variable.get("senderCardId") or ""),
-        originatingRunId=str(variable.get("originatingRunId") or ""),
-        images=list(variable.get("images") or []),
-    )
-    execution = ExecutionInput(
+        outputRequirements=str(stable.get("outputContract") or ""),
         runtime=dict(stable.get("runtime") or {}),
         provider=dict(stable.get("provider") or {}),
-        runtimeOptions=dict(allocation.get("runtimeOptions") or {}),
+        runtimeOptions=dict(stable.get("runtimeOptions") or {}),
+    )
+    tools_and_grants = SelectedToolsAndGrants(
         enabledTools=list(capabilities.get("enabledTools") or []),
         toolDefinitions=list(capabilities.get("toolDefinitions") or []),
         nativeTools=list(capabilities.get("nativeTools") or []),
@@ -419,29 +391,18 @@ def materialize_idf(
         toolsets=list(capabilities.get("toolsets") or []),
         mcpConnectionIds=list(capabilities.get("mcpConnectionIds") or []),
     )
-    output = OutputInput(requirements=str(stable.get("outputContract") or ""))
-    estimates = {
-        "method": "utf8-bytes-divided-by-4-ceiling",
-        "graphContextTokens": _token_estimate(graph_context),
-        "systemContextTokens": _token_estimate(context.instructions),
-        "taskTokens": _token_estimate(context.task),
-        "outputContractTokens": _token_estimate(output.requirements),
-    }
-    estimates["totalModelVisibleTokens"] = sum(
-        value for key, value in estimates.items() if key.endswith("Tokens")
+    dynamic_context = DynamicContext(
+        task=str(variable.get("task") or ""),
+        images=list(variable.get("images") or []),
     )
-    dictionary = load_input_data_dictionary()["dictionary"]
     idf = Idf(
-        igf=graph,
-        icf=context,
-        execution=execution,
-        output=output,
-        owner=dict(owner),
-        materializedAt=timestamp,
-        idd={"name": str(dictionary["name"]), "version": int(dictionary["version"])},
-        estimates=estimates,
+        actualGraphData=graph,
+        stableSavedCardContext=stable_context,
+        selectedToolsAndGrants=tools_and_grants,
+        dynamicContext=dynamic_context,
     )
     _assert_secret_free(idf.model_dump())
+    _validate_idd_record("input-data-file", idf.model_dump(mode="json"))
     return load_idf_bytes(_canonical_line(idf.model_dump(mode="json")))
 
 
@@ -453,17 +414,11 @@ def load_idf_bytes(idf_bytes: bytes) -> MaterializedIdf:
         raise InputMaterializationError("input_file_invalid") from error
     if _canonical_line(idf.model_dump(mode="json")) != idf_bytes:
         raise InputMaterializationError("input_data_not_canonical")
-    if idf.igf.recordCounts != _record_counts(idf.igf.records):
+    if idf.actualGraphData.recordCounts != _record_counts(idf.actualGraphData.records):
         raise InputMaterializationError("input_graph_record_counts_mismatch")
-    if idf.igf.modelText:
-        materialized = [
-            record for record in idf.igf.records
-            if record.kind == "materialized-context"
-        ]
-        if len(materialized) != 1 or str(materialized[0].content.get("text") or "") != idf.igf.modelText:
-            raise InputMaterializationError("input_graph_model_text_mismatch")
     _assert_secret_free(idf.model_dump())
-    for record in idf.igf.records:
+    _validate_idd_record("input-data-file", idf.model_dump(mode="json"))
+    for record in idf.actualGraphData.records:
         _validate_idd_record("input-graph-record", record.model_dump(exclude_none=True))
     return MaterializedIdf(idf=idf, idf_bytes=idf_bytes)
 
@@ -534,14 +489,12 @@ def load_idf(
             raise InputMaterializationError("input_file_expected_identity_invalid")
         assert project_id is not None and deck_id is not None and run_id is not None
         expected_workspace = invocation_workspace(project_id, deck_id, run_id)
-        owner = materialized.idf.owner
+        context = materialized.idf.stableSavedCardContext
         if (
             idf_path.parent != expected_workspace
-            or owner.get("kind") != "card-run"
-            or owner.get("projectId") != project_id
-            or owner.get("deckId") != deck_id
-            or owner.get("runId") != run_id
-            or (card_id is not None and owner.get("cardId") != card_id)
+            or context.projectId != project_id
+            or context.deckId != deck_id
+            or (card_id is not None and context.cardId != card_id)
         ):
             raise InputMaterializationError("input_file_run_identity_mismatch")
     return materialized
@@ -551,58 +504,68 @@ def model_task(idf: Idf) -> str:
     """Return the exact graph-first user/task text represented by the IDF."""
 
     return "\n\n".join(value for value in (
-        idf.igf.modelText.strip(),
-        idf.icf.task.strip(),
+        idf.actualGraphData.modelText.strip(),
         (
-            f"Output requirements:\n{idf.output.requirements.strip()}"
-            if idf.output.requirements.strip()
+            f"Saved Card output requirements:\n"
+            f"{idf.stableSavedCardContext.outputRequirements.strip()}"
+            if idf.stableSavedCardContext.outputRequirements.strip()
             else ""
         ),
+        idf.dynamicContext.task.strip(),
     ) if value)
+
+
+def kanban_mission(idf: Idf) -> str:
+    """Project only the graph-first user body; saved prompt/tools travel natively."""
+
+    return model_task(idf)
 
 
 def runtime_projection(materialized: MaterializedIdf) -> dict[str, Any]:
     """Mechanically project native-runtime fields from reloaded IDF bytes."""
 
     idf = materialized.idf
+    stable = idf.stableSavedCardContext
+    grants = idf.selectedToolsAndGrants
     return {
-        "systemPrompt": idf.icf.instructions,
-        "task": idf.icf.task,
-        "graphContext": idf.igf.modelText,
-        "outputRequirements": idf.output.requirements,
+        "systemPrompt": stable.instructions,
+        "task": idf.dynamicContext.task,
+        "graphContext": idf.actualGraphData.modelText,
+        "outputRequirements": stable.outputRequirements,
         "message": model_task(idf),
-        "runtime": dict(idf.execution.runtime),
-        "provider": dict(idf.execution.provider),
-        "runtimeOptions": dict(idf.execution.runtimeOptions),
-        "enabledTools": list(idf.execution.enabledTools),
-        "toolDefinitions": list(idf.execution.toolDefinitions),
-        "nativeTools": list(idf.execution.nativeTools),
-        "skills": list(idf.execution.skills),
-        "toolsets": list(idf.execution.toolsets),
-        "mcpConnectionIds": list(idf.execution.mcpConnectionIds),
-        "nativeReferences": list(idf.igf.selectedNativeReferences),
-        "images": list(idf.icf.images),
-        "estimates": dict(idf.estimates),
+        "kanbanMission": kanban_mission(idf),
+        "runtime": dict(stable.runtime),
+        "provider": dict(stable.provider),
+        "runtimeOptions": dict(stable.runtimeOptions),
+        "enabledTools": list(grants.enabledTools),
+        "toolDefinitions": list(grants.toolDefinitions),
+        "nativeTools": list(grants.nativeTools),
+        "skills": list(grants.skills),
+        "toolsets": list(grants.toolsets),
+        "mcpConnectionIds": list(grants.mcpConnectionIds),
+        "nativeReferences": list(idf.actualGraphData.selectedNativeReferences),
+        "images": list(idf.dynamicContext.images),
+        "estimates": _input_estimates(idf),
     }
 
 
 def idf_public(materialized: MaterializedIdf) -> dict[str, Any]:
+    estimates = _input_estimates(materialized.idf)
     return {
         "idf": materialized.idf.model_dump(),
         "inputSummary": {
             "idfBytes": len(materialized.idf_bytes),
             "idfSha256": materialized.idf_sha256,
-            "recordCounts": dict(materialized.idf.igf.recordCounts),
-            "authorities": list(materialized.idf.igf.authorities),
+            "recordCounts": dict(materialized.idf.actualGraphData.recordCounts),
+            "authorities": list(materialized.idf.actualGraphData.authorities),
             "estimatedIdfFileTokens": _token_estimate(
                 materialized.idf_bytes.decode("utf-8")
             ),
-            "estimatedGraphContextTokens": materialized.idf.estimates.get(
-                "graphContextTokens", 0
-            ),
-            "estimatedModelVisibleTokens": materialized.idf.estimates.get(
-                "totalModelVisibleTokens", 0
-            ),
-            "estimateMethod": materialized.idf.estimates.get("method"),
+            "estimatedGraphContextTokens": estimates["graphContextTokens"],
+            "estimatedSystemContextTokens": estimates["systemContextTokens"],
+            "estimatedTaskTokens": estimates["taskTokens"],
+            "estimatedOutputContractTokens": estimates["outputContractTokens"],
+            "estimatedModelVisibleTokens": estimates["totalModelVisibleTokens"],
+            "estimateMethod": estimates["method"],
         },
     }

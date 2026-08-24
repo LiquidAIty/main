@@ -248,7 +248,7 @@ def _configured_card_tools(card: dict[str, Any]) -> list[str]:
 
 
 async def write_mag_one_instructions(args: dict[str, Any]) -> dict[str, Any]:
-    """Stage one grounded Coder or Mag One invocation; never save or execute."""
+    """Stage Card-editor mission/graph review state; never materialize or run."""
     _require(
         args,
         "projectId",
@@ -259,8 +259,7 @@ async def write_mag_one_instructions(args: dict[str, Any]) -> dict[str, Any]:
     )
     from app.python_models.card_domain import (
         CardDomainError,
-        assert_grounded_invocation,
-        materialize_invocation,
+        prepare_card_review_context,
     )
 
     project_id = str(args["projectId"]).strip()
@@ -283,9 +282,9 @@ async def write_mag_one_instructions(args: dict[str, Any]) -> dict[str, Any]:
         target_runtime.get("kind"), target_runtime.get("mode")
     ) not in {("hermes", "delegate"), ("autogen", "magentic_one")}:
         raise ControlPlaneError("grounded_staging_target_runtime_invalid")
-    raw_anchors = args.get("dataAnchors")
-    if not isinstance(raw_anchors, list) or not raw_anchors:
-        raise ControlPlaneError("grounded_execution_reference_required")
+    raw_anchors = args.get("dataAnchors") or []
+    if not isinstance(raw_anchors, list):
+        raise ControlPlaneError("data_anchors_must_be_array")
     data_anchors = [
         {**anchor, "required": True}
         if isinstance(anchor, dict)
@@ -300,20 +299,19 @@ async def write_mag_one_instructions(args: dict[str, Any]) -> dict[str, Any]:
         "dataAnchors": data_anchors,
     }
     try:
-        invocation = await asyncio.to_thread(materialize_invocation, request)
-        assert_grounded_invocation(request, invocation, force=True)
+        review_context = await asyncio.to_thread(prepare_card_review_context, request)
     except CardDomainError as error:
         raise ControlPlaneError(str(error)) from error
     return {
         "ok": True,
         "ready": True,
-        "projectId": invocation["projectId"],
+        "projectId": review_context["projectId"],
         "deckId": deck_id,
         "targetCardId": target_card_id,
         "targetCardTitle": str(target.get("title") or target_card_id),
         "mission": mission,
         "dataAnchors": data_anchors,
-        "invocation": invocation,
+        "reviewContext": review_context,
         "sourceCardId": source_card_id,
         "persisted": False,
         "started": False,

@@ -16,9 +16,10 @@ def test_literal_idd_is_the_only_loaded_rule_catalog() -> None:
     dictionary = load_input_data_dictionary()
 
     assert dictionary["dictionary"]["name"] == "LiquidAIty"
-    assert dictionary["dictionary"]["idfFormat"] == "card-model-call"
+    assert dictionary["dictionary"]["idfFormat"] == "input-data-file"
     assert dictionary["dictionary"]["unknownIslands"] == "inert"
     assert {item["name"] for item in dictionary["records"]} == {
+        "input-data-file", "input-graph-record",
         "card-context", "model-option", "native-reference",
         "tool-catalog-reference", "data-anchor-reference", "graph-hook",
     }

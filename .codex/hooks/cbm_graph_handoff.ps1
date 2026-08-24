@@ -83,7 +83,7 @@ try {
     $eventGitRoot = Resolve-GitRoot -Path $eventCwd
     if ([string]::IsNullOrWhiteSpace($eventGitRoot) -or $eventGitRoot -ine $repoRoot) { exit 0 }
 
-    foreach ($requiredPath in @('.cbmignore', 'AGENTS.md', 'LiquidAIty.idd', 'apps\python-models\app\python_models\icf.py')) {
+    foreach ($requiredPath in @('.cbmignore', 'AGENTS.md', 'LiquidAIty.idd', 'apps\python-models\app\python_models\idf.py')) {
         if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $requiredPath) -PathType Leaf)) {
             throw "repository identity check failed: missing $requiredPath"
         }

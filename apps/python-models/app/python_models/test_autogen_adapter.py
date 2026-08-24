@@ -8,11 +8,11 @@ import pytest
 
 from app.python_models import magentic_agentchat as mac
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
-from app.python_models.icf import materialize_input_pair
+from app.python_models.idf import materialize_idf
 from app.python_models.orchestration_contracts import (
     ProjectSession,
     RuntimeParticipant,
-    RuntimeInputFiles,
+    RuntimeInputFile,
     RuntimeRequest,
 )
 
@@ -30,25 +30,43 @@ def _context() -> RuntimeRequest:
             runtime={"kind": "autogen", "mode": "assistant"},
         ),
     ]
-    pair = materialize_input_pair(
-        owner={"kind": "test", "runId": "mag:one"},
+    reference = {
+        "authority": "CodeGraph",
+        "nativeId": "project.module.target",
+        "nativeKind": "node",
+        "reason": "Forward this exact selected symbol.",
+        "asOf": "2026-08-24T00:00:00Z",
+        "required": True,
+        "provenance": {"repository": "C-Projects-LiquidAIty-main"},
+        "selectionScope": {"boundedExpansion": 0, "resultLimit": 6},
+    }
+    materialized = materialize_idf(
         stable={
             "instructions": "saved orchestrator system", "outputContract": "",
             "runtime": {"kind": "autogen", "mode": "magentic_one"},
+            "runtimeOptions": {},
             "provider": {
                 "accessMode": "openai-api", "provider": "openai",
                 "modelKey": MODEL, "providerModelId": MODEL,
             },
         },
-        variable={"task": "approved task", "selectedNativeReferences": [], "images": []},
+        variable={"task": "approved task", "images": []},
         capabilities={
             "enabledTools": [], "toolDefinitions": [], "nativeTools": [],
             "skills": [], "toolsets": [], "mcpConnectionIds": [],
         },
-        allocation={"runtimeOptions": {}},
         graph_context="current native graph data",
-        native_references=[],
-        graph_projection={"authority": "", "nodes": [], "edges": []},
+        native_references=[reference],
+        graph_projection={
+            "authority": "CodeGraph",
+            "nodes": [{
+                "id": "project.module.target",
+                "authority": "CodeGraph",
+                "type": "Function",
+                "provenance": {"repository": "C-Projects-LiquidAIty-main"},
+            }],
+            "edges": [],
+        },
     )
     return RuntimeRequest(
         session=ProjectSession(
@@ -57,12 +75,11 @@ def _context() -> RuntimeRequest:
             runId="mag:one", route="r", orchestrator="magentic_one",
             startedAt="now",
         ),
-        icf=pair.icf,
-        igf=pair.igf,
-        inputFiles=RuntimeInputFiles(
-            workspace="test", icfPath="test/in.icf", igfPath="test/in.igf",
-            icfSha256=pair.icf_sha256, igfSha256=pair.igf_sha256,
-            icfBytes=len(pair.icf_bytes), igfBytes=len(pair.igf_bytes),
+        idf=materialized.idf,
+        inputFile=RuntimeInputFile(
+            workspace="test", idfPath="test/in.idf",
+            idfSha256=materialized.idf_sha256,
+            idfBytes=len(materialized.idf_bytes),
         ),
         participants=participants,
     )
@@ -113,7 +130,7 @@ def test_native_mag_one_consumes_canonical_card_input_and_returns_native_ids(mon
 def test_native_mag_one_failure_does_not_echo_secret(monkeypatch):
     secret = "provider-secret-must-not-escape"
     context = _context()
-    context.icf.variable["task"] = secret
+    context.idf.dynamicContext.task = secret
     monkeypatch.setattr(
         mac,
         "_build_model_client",
@@ -162,6 +179,15 @@ def test_saved_card_worker_uses_official_mcp_and_returns_native_output(monkeypat
         "caller_runtime_mode": "magentic_one",
         "target_card_id": "signals",
         "input_text": "[orchestrator]\nsubtask",
+        "data_anchors": [{
+            "authority": "CodeGraph",
+            "nativeId": "project.module.target",
+            "reason": "Forward this exact selected symbol.",
+            "priority": 0,
+            "boundedExpansion": 0,
+            "resultLimit": 6,
+            "required": True,
+        }],
     }]
 
 

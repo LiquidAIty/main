@@ -44,7 +44,7 @@ Project + Deck
 → relational Card revision and runtime facets
 → AGE Card topology
 → Card Inspector
-→ one Python transient materialization
+→ one Python graph-first `in.idf` materialization and exact-byte reload
 → Hermes, AutoGen/Mag One, Coder, or direct assistant native runtime
 → Run status and explicit artifacts
 → best-effort AGE execution telemetry
@@ -64,15 +64,16 @@ no active writer.
 4. Native Mag One remains `MagenticOneGroupChat`; private ledgers are not persisted or reconstructed.
 5. The saved Hermes Coder Card owns bounded repository/process/test behavior and is not a Mag One
    worker unless a later explicit topology/runtime decision changes that boundary.
-6. No provider/model/tool fallback and no automatic raw prompt, context, response, or transcript
-   archive. Transient Card input is not saved by default.
+6. No provider/model/tool fallback and no automatic raw conversation, response, or transcript archive.
+   Each actual Run retains exactly one `in.idf`; unsaved editor state is not a retained model input.
 
 ## Valid proof
 
 - migration 022 applies once and preserves the existing Project identity;
 - the legacy deck snapshot is recoverable and relational/AGE reconstruction is field-equivalent;
-- two transient previews differ while the stable Card and all raw legacy table counts remain unchanged;
-- Inspector preview equals the one call object while protected Card configuration changes fail closed;
+- two runs with different dynamic missions retain different `in.idf` bytes while the stable Card and all raw
+  legacy table counts remain unchanged;
+- selected-Run inspection equals the exact retained `in.idf` while protected Card configuration changes fail closed;
 - Agent Builder and Main read the same Project/Deck/Card authority;
 - focused source tests, typechecks, full supervised startup, and read-only plugin receipts pass;
 - a real provider call remains a separate proof and must never be faked or silently substituted.

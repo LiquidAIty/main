@@ -266,13 +266,13 @@ function resolvePreparedHermesTurnArgs(
 function resolveHermesHistoryArgs(
   args: PreparedHermesTransportArgs,
 ): HermesTurnArgs {
-  const preview = args.prepared || {};
-  const identity = preview.cardIdentity || {};
-  const profile = preview.sessionProfile || {};
+  const preparedSession = args.prepared || {};
+  const identity = preparedSession.cardIdentity || {};
+  const profile = preparedSession.sessionProfile || {};
   const runtime = profile.runtime;
   const provider = profile.provider || {};
   if (
-    preview.runtimeOwner !== 'hermes'
+    preparedSession.runtimeOwner !== 'hermes'
     || runtime?.kind !== 'hermes'
     || runtime?.mode !== 'main'
     || !String(runtime?.profile || '').trim()
@@ -315,26 +315,8 @@ async function startPreparedHermesTransport(
       .join('\n\n');
   }
   if (turnArgs.runtime.mode === 'kanban') {
-    const anchors = (Array.isArray(args.prepared?.resolvedNativeReads)
-      ? args.prepared.resolvedNativeReads
-      : [])
-      .map((reference: any) => ({
-        authority: String(reference?.authority || '').trim(),
-        nativeId: String(reference?.nativeId || '').trim(),
-      }))
-      .filter((reference: { authority: string; nativeId: string }) => reference.authority && reference.nativeId);
-    const mission = [
-      'Saved Card system instructions:',
-      String(args.prepared?.hermesTransport?.request?.systemPrompt || '').trim(),
-      '',
-      'Transient Card task and resolved graph context:',
-      turnArgs.message,
-      ...(anchors.length > 0
-        ? ['', 'Ordered native references:', ...anchors.map((reference: { authority: string; nativeId: string }) => (
-            `- ${reference.authority}:${reference.nativeId}`
-          ))]
-        : []),
-    ].join('\n');
+    const mission = String(input.kanbanMission || '');
+    if (!mission.trim()) throw new Error('prepared_hermes_kanban_mission_missing');
     return startNativeHermesKanbanTurn(
       { ...turnArgs, nativeMission: mission },
       args.onEvent,
@@ -492,8 +474,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
   const body = req.body || {};
   const action = body.action;
   if (
-    action !== 'materialize'
-    && action !== 'execute'
+    action !== 'execute'
     && action !== 'status'
     && action !== 'inputs'
     && action !== 'stop'
@@ -604,15 +585,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
   };
 
   try {
-    if (action === 'materialize') {
-      const preview = await requestPythonRailsJson('/domain/cards/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(transientRequest),
-      });
-      return res.json({ ok: true, result: { status: 'previewed', invocation: preview } });
-    }
-
     const cardRevisionId = String(body.cardRevisionId || '').trim();
     const prepared = await requestPythonRailsJson('/domain/runs/begin', {
       method: 'POST',
@@ -1233,7 +1205,7 @@ router.get('/main/session/history', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'projectId_required', messages: [] });
   }
   try {
-    const preview = await requestPythonRailsJson('/domain/main/prepare', {
+    const preparedSession = await requestPythonRailsJson('/domain/main/prepare', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1243,7 +1215,7 @@ router.get('/main/session/history', async (req, res) => {
       }),
     }) as any;
     const turnArgs = resolveHermesHistoryArgs({
-      prepared: preview,
+      prepared: preparedSession,
       projectId,
       deckId,
       conversationId,

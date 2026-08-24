@@ -50,13 +50,6 @@ def _idf(*, graph_context: str = "", secret: bool = False):
         "edges": [],
     }
     return materialize_idf(
-        owner={
-            "kind": "card-run",
-            "projectId": "project-one",
-            "deckId": "deck-one",
-            "cardId": "card-one",
-            "runId": "run-one",
-        },
         stable={
             "projectId": "project-one",
             "deckId": "deck-one",
@@ -65,6 +58,7 @@ def _idf(*, graph_context: str = "", secret: bool = False):
             "instructions": "Use the saved Card contract.",
             "outputContract": "Return one bounded result.",
             "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
+            "runtimeOptions": {"reasoningEffort": "high", "maxTokens": 1200},
             "provider": {
                 "provider": "openai",
                 "providerModelId": "gpt-5.6",
@@ -73,7 +67,6 @@ def _idf(*, graph_context: str = "", secret: bool = False):
         },
         variable={
             "task": "Inspect the exact bounded slice.",
-            "selectedNativeReferences": references,
             "images": [],
         },
         capabilities={
@@ -84,7 +77,6 @@ def _idf(*, graph_context: str = "", secret: bool = False):
             "toolsets": [],
             "mcpConnectionIds": ["liquidaity"],
         },
-        allocation={"runtimeOptions": {"reasoningEffort": "high", "maxTokens": 1200}},
         graph_context=graph_context,
         native_references=references,
         graph_projection=projection,
@@ -94,41 +86,49 @@ def _idf(*, graph_context: str = "", secret: bool = False):
 
 def test_empty_graph_section_is_valid_and_idf_is_graph_first() -> None:
     materialized = _idf()
-    assert materialized.idf.igf.recordCounts == {
-        "materialized-context": 0,
+    assert materialized.idf.actualGraphData.recordCounts == {
         "node": 0,
         "relationship": 0,
         "selection": 0,
         "total": 0,
     }
-    assert materialized.idf.igf.authorities == []
-    assert materialized.idf.igf.records == []
-    assert materialized.idf_bytes.index(b'"igf"') < materialized.idf_bytes.index(b'"icf"')
+    assert materialized.idf.actualGraphData.authorities == []
+    assert materialized.idf.actualGraphData.records == []
+    assert list(json.loads(materialized.idf_bytes)) == [
+        "actualGraphData",
+        "stableSavedCardContext",
+        "selectedToolsAndGrants",
+        "dynamicContext",
+    ]
     assert load_idf_bytes(materialized.idf_bytes) == materialized
 
 
 def test_bounded_graph_identity_provenance_and_model_order_survive() -> None:
     graph = "### CodeGraph\nVerified native content."
     materialized = _idf(graph_context=graph)
-    records = {record.kind: record for record in materialized.idf.igf.records}
+    records = {record.kind: record for record in materialized.idf.actualGraphData.records}
     assert records["selection"].nativeId == "project.module.materialize_idf"
     assert records["selection"].content["selectionScope"] == {
         "boundedExpansion": 1, "resultLimit": 4,
     }
     assert records["selection"].sourcePath == "apps/example.py"
     assert records["node"].provenance["repository"] == "C-Projects-LiquidAIty-main"
-    assert materialized.idf.igf.selectedNativeReferences[0]["nativeId"] == (
+    assert materialized.idf.actualGraphData.selectedNativeReferences[0]["nativeId"] == (
         "project.module.materialize_idf"
     )
     task = model_task(materialized.idf)
-    assert task.index(graph) < task.index("Inspect the exact bounded slice.")
-    assert task.index("Inspect the exact bounded slice.") < task.index("Output requirements:")
+    assert (
+        task.index(graph)
+        < task.index("Return one bounded result.")
+        < task.index("Inspect the exact bounded slice.")
+    )
     projected = runtime_projection(load_idf_bytes(materialized.idf_bytes))
     assert projected["message"] == task
+    assert projected["outputRequirements"] == "Return one bounded result."
     assert projected["enabledTools"] == ["codegraph.search_graph"]
     summary = idf_public(materialized)["inputSummary"]
     assert summary["idfBytes"] == len(materialized.idf_bytes)
-    assert summary["estimatedGraphContextTokens"] == materialized.idf.estimates["graphContextTokens"]
+    assert summary["estimatedGraphContextTokens"] > 0
 
 
 def test_each_run_writes_one_file_and_reloads_exact_bytes(

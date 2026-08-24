@@ -30,7 +30,7 @@ import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBu
 import type {
   AgentBuilderChatMessage,
   LoadedCardGraphReference,
-  StagedCardInvocationLoaded,
+  StagedCardReviewLoaded,
 } from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
 import useAgentBuilderCardEditor from '../features/agentbuilder/state/useAgentBuilderCardEditor';
@@ -466,9 +466,9 @@ export default function AgentBuilder(): React.ReactElement {
   }, [graphAttention.projections, mainCardId, setDeckStatusMessage]);
   const [standaloneTestResult, setStandaloneTestResult] = useState<StandaloneCardTestResult | null>(null);
   const [standaloneRunInputs, setStandaloneRunInputs] = useState<RetainedRunInputs | null>(null);
-  const handleCardInvocationStaged = useCallback((loaded: StagedCardInvocationLoaded) => {
+  const handleCardReviewStaged = useCallback((loaded: StagedCardReviewLoaded) => {
     const target = deck.nodes.find((card) => card.id === loaded.targetCardId);
-    const graphProjection = loaded.invocation.resolvedGraphProjection;
+    const graphProjection = loaded.reviewContext.resolvedGraphProjection;
     const supportedTarget = target && (
       (target.runtime.kind === 'hermes' && target.runtime.mode === 'delegate')
       || (target.runtime.kind === 'autogen' && target.runtime.mode === 'magentic_one')
@@ -489,7 +489,7 @@ export default function AgentBuilder(): React.ReactElement {
         resultLimit: anchor.resultLimit,
         required: true,
       },
-      resolvedReferences: loaded.invocation.resolvedNativeReads || [],
+      resolvedReferences: loaded.reviewContext.resolvedNativeReads || [],
       resolvedContextMarkdown: '',
       graphProjection,
       resolved: true,
@@ -505,17 +505,17 @@ export default function AgentBuilder(): React.ReactElement {
       output: '',
       error: null,
       toolCallCount: 0,
-      tools: Array.isArray(loaded.invocation.idf.execution?.enabledTools)
-        ? loaded.invocation.idf.execution.enabledTools.map((tool: unknown) => String(tool))
+      tools: Array.isArray(target.runtimeOptions?.tools)
+        ? target.runtimeOptions.tools.map((tool) => String(tool))
         : [],
-      provider: String(loaded.invocation.idf.execution?.provider?.provider || ''),
-      model: String(loaded.invocation.idf.execution?.provider?.providerModelId || ''),
+      provider: String(target.runtimeOptions?.provider || ''),
+      model: String(target.runtimeOptions?.modelKey || ''),
       runtimeLabel: `${target.runtime.kind}/${target.runtime.mode}`,
-      invocation: loaded.invocation,
+      invocation: null,
     });
     setSelectedCardId(target.id);
     setTab('Task');
-    setDeckStatusMessage(`${target.title} grounded invocation is ready for review. Nothing ran.`);
+    setDeckStatusMessage(`${target.title} mission and graph data are ready for review. Nothing ran.`);
   }, [deck.nodes, setDeckStatusMessage, setSelectedCardId, setTab]);
 
   const handleCardGraphReferenceLoaded = useCallback((loaded: LoadedCardGraphReference) => {
@@ -537,8 +537,8 @@ export default function AgentBuilder(): React.ReactElement {
         ].sort((left, right) => left.reference.order - right.reference.order),
       };
     });
-    // A new native reference invalidates any older materialization preview.
-    // The Knowledge tab must never label a stale projection as model-bound.
+    // A new native reference invalidates any older completed-Run projection.
+    // The Knowledge tab must never label unresolved editor state as model-bound.
     setStandaloneTestResult(null);
     setSelectedCardId(target.id);
     setTab('Knowledge');
@@ -564,18 +564,6 @@ export default function AgentBuilder(): React.ReactElement {
       current?.invocation?.cardIdentity.cardId === cardId ? null : current
     ));
     setDeckStatusMessage('Transient mission and graph context cleared. Nothing ran.');
-  }, [setDeckStatusMessage]);
-
-  const clearTransientCardGraphContext = useCallback((cardId: string) => {
-    setTransientCardGraphContext((current) => {
-      const next = { ...current };
-      delete next[cardId];
-      return next;
-    });
-    setStandaloneTestResult((current) => (
-      current?.invocation?.cardIdentity.cardId === cardId ? null : current
-    ));
-    setDeckStatusMessage('Imported graph context cleared. The transient task was preserved and nothing ran.');
   }, [setDeckStatusMessage]);
 
   const removeTransientGraphReference = useCallback((
@@ -668,7 +656,7 @@ export default function AgentBuilder(): React.ReactElement {
       : [],
     onUserTurnStarted: graphAttention.startAttentionScope,
     onNativeTurnEvent: graphAttention.observeNativeTurnEvent,
-    onCardInvocationStaged: handleCardInvocationStaged,
+    onCardReviewStaged: handleCardReviewStaged,
     onCardGraphReferenceLoaded: handleCardGraphReferenceLoaded,
     onTurnFinished: graphAttention.finishAttentionScope,
   });
@@ -902,8 +890,8 @@ export default function AgentBuilder(): React.ReactElement {
       ? String(result.errorSummary)
       : result?.error ? String(result.error) : null,
     toolCallCount: typeof result?.toolCallCount === 'number' ? result.toolCallCount : null,
-    tools: Array.isArray(result?.invocation?.idf?.execution?.enabledTools)
-      ? result.invocation.idf.execution.enabledTools.map((tool: unknown) => String(tool))
+    tools: Array.isArray(result?.invocation?.idf?.selectedToolsAndGrants?.enabledTools)
+      ? result.invocation.idf.selectedToolsAndGrants.enabledTools.map((tool: unknown) => String(tool))
       : [],
     provider: selectedCard?.runtimeOptions?.provider || null,
     model: selectedCard?.runtimeOptions?.modelKey || null,
@@ -954,95 +942,6 @@ export default function AgentBuilder(): React.ReactElement {
     }
     return payload.result as RetainedRunInputs;
   }, [canvasProjectId]);
-
-  const importNamedIgfSelections = useCallback(async (selections: Array<{
-    authority: 'ThinkGraph' | 'KnowGraph' | 'CodeGraph';
-    nativeId: string;
-    reason: string;
-    boundedExpansion: number;
-    resultLimit: number;
-    required: boolean;
-  }>) => {
-    if (!selectedCard || !canvasProjectId) throw new Error('card_graph_import_target_required');
-    const input = standaloneTestPrompt.trim();
-    if (!input) throw new Error('Enter the current dynamic task before importing IGF selections.');
-    const correlationId = `card-input-preview-${crypto.randomUUID()}`;
-    const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'materialize',
-        projectId: canvasProjectId,
-        deckId: BUILDER_DECK_ID,
-        cardId: selectedCard.id,
-        correlationId,
-        input,
-        conversationId,
-        dataAnchors: selections.map((selection, order) => ({
-          ...selection,
-          priority: -order,
-        })),
-      }),
-    });
-    const payload = await response.json().catch(() => null);
-    const invocation = payload?.result?.invocation;
-    const graphProjection = invocation?.resolvedGraphProjection;
-    if (!response.ok || payload?.ok !== true || !invocation || !graphProjection) {
-      throw new Error(String(payload?.error || `card_graph_import_http_${response.status}`));
-    }
-    const resolvedReads = Array.isArray(invocation.resolvedNativeReads)
-      ? invocation.resolvedNativeReads as Array<Record<string, unknown>>
-      : [];
-    const contexts: LoadedCardGraphReference[] = selections.map((selection, order) => {
-      const ready = resolvedReads.some((reference) => (
-        String(reference.authority || '') === selection.authority
-        && String(reference.nativeId || '') === selection.nativeId
-      ));
-      return {
-        targetCardId: selectedCard.id,
-        reference: { ...selection, order },
-        resolvedReferences: resolvedReads,
-        resolvedContextMarkdown: String(
-          invocation.idf?.igf?.modelText
-          || '',
-        ),
-        graphProjection,
-        resolved: ready,
-        ready,
-        ...(!ready ? { error: 'Imported native reference did not resolve through the current authority.' } : {}),
-      };
-    });
-    const missing = contexts.find((context) => context.reference.required && !context.ready);
-    if (missing) {
-      throw new Error(`grounded_execution_reference_stale:${missing.reference.authority}:${missing.reference.nativeId}`);
-    }
-    setTransientCardGraphContext((current) => ({ ...current, [selectedCard.id]: contexts }));
-    setStandaloneTestResult({
-      status: 'ready',
-      output: '',
-      error: null,
-      toolCallCount: 0,
-      tools: Array.isArray(invocation.idf?.execution?.enabledTools)
-        ? invocation.idf.execution.enabledTools.map((tool: unknown) => String(tool))
-        : [],
-      provider: String(invocation.idf?.execution?.provider?.provider || ''),
-      model: String(invocation.idf?.execution?.provider?.providerModelId || ''),
-      runtimeLabel: `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}`,
-      invocation,
-    });
-    setDeckStatusMessage(
-      selections.length > 0
-        ? `${selections.length} imported graph selection${selections.length === 1 ? '' : 's'} re-read through current native authorities. Nothing ran.`
-        : 'Imported empty IGF. The current invocation has no graph selections and nothing ran.',
-    );
-  }, [
-    canvasProjectId,
-    conversationId,
-    selectedCard,
-    setDeckStatusMessage,
-    standaloneTestPrompt,
-  ]);
 
   useEffect(() => {
     const runId = standaloneTestResult?.cardId === selectedCard?.id
@@ -1224,59 +1123,6 @@ export default function AgentBuilder(): React.ReactElement {
     standaloneTestBusy,
     standaloneTestPrompt,
     standaloneTestUnavailableReason,
-  ]);
-
-  const previewStandaloneCardInput = useCallback(async () => {
-    if (
-      !selectedCard || !canvasProjectId || standaloneTestBusy
-      || standaloneTestUnavailableReason || !standaloneTestPrompt.trim()
-    ) return;
-    setStandaloneTestBusy(true);
-    try {
-      const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'materialize',
-          projectId: canvasProjectId,
-          deckId: BUILDER_DECK_ID,
-          cardId: selectedCard.id,
-          correlationId: `card-input-preview-${crypto.randomUUID()}`,
-          input: standaloneTestPrompt.trim(),
-          conversationId,
-          dataAnchors: (transientCardGraphContext[selectedCard.id] || []).map((item) => ({
-            authority: item.reference.authority,
-            nativeId: item.reference.nativeId,
-            reason: item.reference.reason,
-            priority: -item.reference.order,
-            boundedExpansion: item.reference.boundedExpansion,
-            resultLimit: item.reference.resultLimit,
-            required: item.reference.required,
-          })),
-        }),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || payload?.ok !== true || !payload?.result?.invocation) {
-        throw new Error(String(payload?.error || `card_input_preview_http_${response.status}`));
-      }
-      setStandaloneTestResult(toStandaloneRunResult(payload.result));
-      setDeckStatusMessage(`${selectedCard.title} inputs materialized for provider-free preview. Nothing ran.`);
-    } catch (error) {
-      setDeckStatusMessage(error instanceof Error ? error.message : 'Card input preview failed.');
-    } finally {
-      setStandaloneTestBusy(false);
-    }
-  }, [
-    canvasProjectId,
-    conversationId,
-    selectedCard,
-    setDeckStatusMessage,
-    standaloneTestBusy,
-    standaloneTestPrompt,
-    standaloneTestUnavailableReason,
-    toStandaloneRunResult,
-    transientCardGraphContext,
   ]);
 
   const learnFromStandaloneCardInput = useCallback(async () => {
@@ -1670,9 +1516,6 @@ export default function AgentBuilder(): React.ReactElement {
                     onClearInvocation={() => {
                       clearTransientCardInvocation(selectedCard.id);
                     }}
-                    onClearGraphContext={() => {
-                      clearTransientCardGraphContext(selectedCard.id);
-                    }}
                     onOpenCoderTerminal={() => {
                       document.querySelector<HTMLElement>('[data-testid="coder-console-panel"]')?.scrollIntoView({ block: 'nearest' });
                       document.querySelector<HTMLElement>('[data-testid="coder-console-panel"]')?.focus();
@@ -1685,12 +1528,8 @@ export default function AgentBuilder(): React.ReactElement {
                     onMoveGraphReference={(authority, nativeId, direction) => {
                       moveTransientGraphReference(selectedCard.id, authority, nativeId, direction);
                     }}
-                    onImportIgfSelections={importNamedIgfSelections}
                     onRunCard={() => {
                       void runStandaloneCardTest();
-                    }}
-                    onPreviewCard={() => {
-                      void previewStandaloneCardInput();
                     }}
                     onLearnCard={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.mode !== 'kanban'
                       ? () => { void learnFromStandaloneCardInput(); }

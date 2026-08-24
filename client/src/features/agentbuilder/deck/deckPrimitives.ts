@@ -60,6 +60,7 @@ export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'run_mag_one',
 ] as const;
 export const HERMES_CARD_TOOLS = [
+  'card.run_assistant_agent',
   'graphiti.add_memory',
   'graphiti.add_triplet',
   'write_mag_one_instructions',

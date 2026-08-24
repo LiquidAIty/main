@@ -39,13 +39,11 @@ def _runtime_request(runtime_mode: str, *, graph_grounded: bool = False) -> Runt
         if graph_grounded else ""
     )
     materialized = materialize_idf(
-        owner={
-            "kind": "card-run", "projectId": "p", "deckId": "d",
-            "cardId": "card:one", "runId": "mag-root",
-        },
         stable={
+            "projectId": "p", "deckId": "d", "cardId": "card:one",
             "instructions": "Saved prompt", "outputContract": "",
             "runtime": {"kind": "autogen", "mode": runtime_mode},
+            "runtimeOptions": {},
             "provider": {
                 "accessMode": "openai-api", "provider": "openai",
                 "modelKey": MODEL, "providerModelId": MODEL,
@@ -56,7 +54,6 @@ def _runtime_request(runtime_mode: str, *, graph_grounded: bool = False) -> Runt
             "enabledTools": [], "toolDefinitions": [], "nativeTools": [],
             "skills": [], "toolsets": [], "mcpConnectionIds": [],
         },
-        allocation={"runtimeOptions": {}},
         graph_context=graph_context,
         native_references=references,
         graph_projection={
@@ -97,14 +94,14 @@ def _runtime_request(runtime_mode: str, *, graph_grounded: bool = False) -> Runt
 def test_dispatch_selects_single_assistant_inside_python() -> None:
     context = _runtime_request("assistant")
     assert autogen_orchestrator._configured_runtime_handler(
-        context.idf.execution.runtime,
+        context.idf.stableSavedCardContext.runtime,
     ) is autogen_orchestrator.run_configured_card
 
 
 def test_dispatch_selects_mag_one_inside_python() -> None:
     context = _runtime_request("magentic_one")
     assert autogen_orchestrator._configured_runtime_handler(
-        context.idf.execution.runtime,
+        context.idf.stableSavedCardContext.runtime,
     ) is autogen_orchestrator.orchestrate_runtime
 
 
@@ -121,18 +118,18 @@ def test_mag_one_boundary_reloads_exact_retained_idf_provider_free(
     source = _runtime_request("magentic_one", graph_grounded=True)
     # Use the canonical serializer owned by the materializer for the retained proof.
     materialized = materialize_idf(
-        owner=source.idf.owner,
         stable={
-            "instructions": source.idf.icf.instructions,
-            "outputContract": source.idf.output.requirements,
-            "runtime": source.idf.execution.runtime,
-            "provider": source.idf.execution.provider,
+            "projectId": "p", "deckId": "d", "cardId": "card:one",
+            "instructions": source.idf.stableSavedCardContext.instructions,
+            "outputContract": source.idf.stableSavedCardContext.outputRequirements,
+            "runtime": source.idf.stableSavedCardContext.runtime,
+            "provider": source.idf.stableSavedCardContext.provider,
+            "runtimeOptions": source.idf.stableSavedCardContext.runtimeOptions,
         },
-        variable={"task": source.idf.icf.task, "images": source.idf.icf.images},
-        capabilities=source.idf.execution.model_dump(exclude={"runtime", "provider", "runtimeOptions"}),
-        allocation={"runtimeOptions": source.idf.execution.runtimeOptions},
-        graph_context=source.idf.igf.modelText,
-        native_references=source.idf.igf.selectedNativeReferences,
+        variable={"task": source.idf.dynamicContext.task, "images": source.idf.dynamicContext.images},
+        capabilities=source.idf.selectedToolsAndGrants.model_dump(),
+        graph_context=source.idf.actualGraphData.modelText,
+        native_references=source.idf.actualGraphData.selectedNativeReferences,
         graph_projection={
             "authority": "CodeGraph",
             "nodes": [record.content | {
@@ -140,10 +137,10 @@ def test_mag_one_boundary_reloads_exact_retained_idf_provider_free(
                 "authority": record.authority,
                 "type": record.type,
                 "provenance": record.provenance,
-            } for record in source.idf.igf.records if record.kind == "node"],
+            } for record in source.idf.actualGraphData.records if record.kind == "node"],
             "edges": [],
         },
-        materialized_at=source.idf.materializedAt,
+        materialized_at="2026-08-24T00:00:00Z",
     )
     descriptor = write_idf(materialized, project_id="p", deck_id="d", run_id="mag-root")
     stored = StoredRuntimeRequest(
@@ -154,9 +151,8 @@ def test_mag_one_boundary_reloads_exact_retained_idf_provider_free(
     loaded = autogen_orchestrator.load_stored_runtime_request(stored)
     assert loaded.idf.model_dump() == materialized.idf.model_dump()
     assert loaded.inputFile.idfSha256 == materialized.idf_sha256
-    assert loaded.idf.igf.recordCounts["selection"] == 1
-    assert loaded.idf.igf.recordCounts["node"] == 1
-    assert loaded.idf.igf.recordCounts["materialized-context"] == 1
-    assert loaded.idf.igf.selectedNativeReferences[0]["nativeId"] == (
+    assert loaded.idf.actualGraphData.recordCounts["selection"] == 1
+    assert loaded.idf.actualGraphData.recordCounts["node"] == 1
+    assert loaded.idf.actualGraphData.selectedNativeReferences[0]["nativeId"] == (
         "project.module.materialize_idf"
     )

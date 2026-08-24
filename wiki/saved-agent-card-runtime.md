@@ -7,6 +7,7 @@ status: partial
 roots:
   files:
     - apps/python-models/app/python_models/card_domain.py
+    - apps/python-models/app/python_models/idf.py
     - apps/python-models/app/python_models/idd.py
     - apps/backend/src/routes/coder.routes.ts
     - client/src/components/AgentManager.tsx
@@ -27,10 +28,12 @@ Must remain true:
 - missing cards, models, tools, and runtimes fail explicitly;
 - no role inference, model substitution, tool injection, or compatibility normalization;
 - TypeScript transports typed saved configuration but does not interpret task content;
-- the Inspector previews the actual bounded transient model input; Run is transient by default;
+- the selected-Run Inspector renders the exact retained `in.idf`; the editor shows unsaved Invocation and
+  Knowledge state before execution without creating another IDF;
 - Save Card Version persists stable Card fields and never copies dynamic input into the Card;
 - AgentGraph/AGE owns saved Card relationships and may observe native references/results but cannot
   gate execution;
+- manual Card Run and automatic agent handoff enter the same canonical receiving-Card execution path;
 - standalone card execution does not silently consult canvas edges;
 - Mag One participant eligibility comes only from saved `magentic_option` edges.
 

@@ -22,7 +22,9 @@ vi.mock('./mainSessionClient', async () => {
   };
 });
 
-import useAgentBuilderMainChat from './useAgentBuilderMainChat';
+import useAgentBuilderMainChat, {
+  parseStagedCardReviewLoaded,
+} from './useAgentBuilderMainChat';
 
 beforeEach(() => {
   mocks.loadSessionHistory.mockReset();
@@ -31,6 +33,35 @@ beforeEach(() => {
 });
 
 describe('Main chat live observation callbacks', () => {
+  it('accepts optional editor review with no selected graph data and no IDF', () => {
+    expect(parseStagedCardReviewLoaded({
+      ok: true,
+      ready: true,
+      persisted: false,
+      started: false,
+      targetCardId: 'card_local_coder',
+      targetCardTitle: 'Coder',
+      sourceCardId: 'card_hermes_steward',
+      mission: 'Review this mission.',
+      dataAnchors: [],
+      reviewContext: {
+        resolvedNativeReads: [],
+        resolvedGraphProjection: {
+          schemaVersion: 'native-card-context.v1',
+          authority: '',
+          projectId: 'project-1',
+          nodes: [],
+          edges: [],
+          counts: { nodes: 0, edges: 0 },
+        },
+      },
+    })).toMatchObject({
+      targetCardId: 'card_local_coder',
+      dataAnchors: [],
+      reviewContext: { resolvedNativeReads: [] },
+    });
+  });
+
   it('keeps rejoin visible until native history replaces the empty transcript', async () => {
     let resolveHistory!: (messages: Array<{ role: 'assistant' | 'user'; text: string }>) => void;
     mocks.waitForBackendReady.mockResolvedValue(true);
@@ -69,7 +100,7 @@ describe('Main chat live observation callbacks', () => {
     mocks.streamSession.mockImplementation(async (args) => {
       order.push('stream');
       expect(args.dataAnchors).toEqual([{
-        authority: 'CodeGraph', nativeId: 'pkg.materialize_input_pair',
+        authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
         reason: 'Current production definition', priority: 0,
         boundedExpansion: 1, resultLimit: 12, required: true,
       }]);
@@ -84,7 +115,7 @@ describe('Main chat live observation callbacks', () => {
       initialMessages: [],
       workspaceView: 'chat',
       dataAnchors: [{
-        authority: 'CodeGraph', nativeId: 'pkg.materialize_input_pair',
+        authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
         reason: 'Current production definition', order: 0,
         boundedExpansion: 1, resultLimit: 12, required: true,
       }],
@@ -116,7 +147,7 @@ describe('Main chat live observation callbacks', () => {
   });
 
   it('loads one staged Coder mission and exact model-bound graph projection', async () => {
-    const onCardInvocationStaged = vi.fn();
+    const onCardReviewStaged = vi.fn();
     const onCardGraphReferenceLoaded = vi.fn();
     mocks.streamSession.mockImplementation(async (args) => {
       args.onEvent({
@@ -143,8 +174,7 @@ describe('Main chat live observation callbacks', () => {
                 authority: 'CodeGraph', nativeId: 'symbol:one', reason: 'Current owner',
                 priority: 0, boundedExpansion: 0, resultLimit: 4, required: true,
               }],
-              invocation: {
-                ephemeral: true,
+              reviewContext: {
                 cardRevisionId: 'revision-coder',
                 cardRevision: 1,
                 cardRevisionSha256: 'sha-coder',
@@ -157,13 +187,6 @@ describe('Main chat live observation callbacks', () => {
                   nodes: [{ id: 'symbol:one', label: 'Current owner', authority: 'CodeGraph', mentionCount: 1 }],
                   edges: [], counts: { nodes: 1, edges: 0 },
                 },
-                icf: {
-                  format: 'liquidaity.input-context', version: 1,
-                  stable: { instructions: 'Coder', runtime: { kind: 'hermes', mode: 'delegate' }, provider: {} },
-                  variable: { task: 'exact mission' }, capabilities: { enabledTools: [] },
-                  allocation: {}, graphInput: {}, estimates: {}, idd: {},
-                },
-                igf: { header: { recordCounts: { total: 1 } }, records: [] },
               },
               persisted: false,
               started: false,
@@ -214,7 +237,7 @@ describe('Main chat live observation callbacks', () => {
       conversationId: 'main',
       initialMessages: [],
       workspaceView: 'chat',
-      onCardInvocationStaged,
+      onCardReviewStaged,
       onCardGraphReferenceLoaded,
     }));
 
@@ -222,14 +245,13 @@ describe('Main chat live observation callbacks', () => {
       await result.current.requestMainText('Prepare the mission.');
     });
 
-    expect(onCardInvocationStaged).toHaveBeenCalledOnce();
-    expect(onCardInvocationStaged).toHaveBeenCalledWith(expect.objectContaining({
+    expect(onCardReviewStaged).toHaveBeenCalledOnce();
+    expect(onCardReviewStaged).toHaveBeenCalledWith(expect.objectContaining({
       targetCardId: 'card_local_coder',
       sourceCardId: 'card_hermes_steward',
       mission: '  exact mission\nwith formatting  ',
       dataAnchors: [expect.objectContaining({ nativeId: 'symbol:one', required: true })],
-      invocation: expect.objectContaining({
-        cardIdentity: { cardId: 'card_local_coder', title: 'Coder' },
+      reviewContext: expect.objectContaining({
         resolvedGraphProjection: expect.objectContaining({
           nodes: [expect.objectContaining({ id: 'symbol:one' })],
         }),

@@ -5,17 +5,14 @@ import {
   dispatchConfiguredRuntime,
   fetchThinkGraphNeighborhood,
 } from './pythonRailsClient';
-import type { CanonicalInputFiles } from '../../contracts/runtimeContracts';
+import type { CanonicalInputFile } from '../../contracts/runtimeContracts';
 
-function testInputFiles(): CanonicalInputFiles {
+function testInputFile(): CanonicalInputFile {
   return {
     workspace: 'C:\\runtime-inputs\\run-one',
-    icfPath: 'C:\\runtime-inputs\\run-one\\in.icf',
-    igfPath: 'C:\\runtime-inputs\\run-one\\in.igf',
-    icfSha256: 'a'.repeat(64),
-    igfSha256: 'b'.repeat(64),
-    icfBytes: 120,
-    igfBytes: 80,
+    idfPath: 'C:\\runtime-inputs\\run-one\\in.idf',
+    idfSha256: 'a'.repeat(64),
+    idfBytes: 200,
   };
 }
 
@@ -51,7 +48,7 @@ describe('pythonRailsClient', () => {
         orchestrator: 'magentic_one',
         startedAt: new Date().toISOString(),
       },
-      inputFiles: testInputFiles(),
+      inputFile: testInputFile(),
     });
 
     expect(result.finalResponseText).toBe('from Python rails');
@@ -126,7 +123,7 @@ describe('pythonRailsClient', () => {
           orchestrator: 'magentic_one',
           startedAt: new Date().toISOString(),
         },
-        inputFiles: testInputFiles(),
+        inputFile: testInputFile(),
       }),
     ).rejects.toThrow('autogen_dispatch_http_500:configured_runtime_unavailable');
   });
@@ -155,7 +152,7 @@ describe('pythonRailsClient', () => {
           orchestrator: 'magentic_one',
           startedAt: new Date().toISOString(),
         },
-        inputFiles: testInputFiles(),
+        inputFile: testInputFile(),
       }),
     ).rejects.toThrow('tool_selection_invalid: unknown_tool');
   });
@@ -179,7 +176,7 @@ describe('pythonRailsClient', () => {
           orchestrator: 'magentic_one',
           startedAt: new Date().toISOString(),
         },
-        inputFiles: testInputFiles(),
+        inputFile: testInputFile(),
       }),
     ).rejects.toThrow('PYTHON_AUTOGEN_RAILS_UNAVAILABLE');
   });

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { waitForBackendReady } from '../../../components/builder/backendReadiness';
-import type { StandaloneCardTestResult } from '../../../components/AgentManager';
 import type { GraphProjectionV1 } from '../../../components/knowledge/NativeAuthorityGraphSurface';
 import {
   loadSessionHistory,
@@ -25,7 +24,7 @@ type UseAgentBuilderMainChatArgs = {
   dataAnchors?: LoadedCardGraphReference['reference'][];
   onUserTurnStarted?: (turn: MainChatTurnStarted) => void;
   onNativeTurnEvent?: (turn: MainChatTurnEvent) => void;
-  onCardInvocationStaged?: (invocation: StagedCardInvocationLoaded) => void;
+  onCardReviewStaged?: (review: StagedCardReviewLoaded) => void;
   onCardGraphReferenceLoaded?: (context: LoadedCardGraphReference) => void;
   onTurnFinished?: (turn: MainChatTurnFinished) => void;
 };
@@ -46,7 +45,7 @@ export type MainChatTurnEvent = {
   observedAt: string;
 };
 
-export type StagedCardInvocationLoaded = {
+export type StagedCardReviewLoaded = {
   targetCardId: string;
   targetCardTitle: string;
   sourceCardId: string;
@@ -60,7 +59,10 @@ export type StagedCardInvocationLoaded = {
     resultLimit: number;
     required: true;
   }>;
-  invocation: NonNullable<StandaloneCardTestResult['invocation']>;
+  reviewContext: {
+    resolvedNativeReads?: Array<Record<string, unknown>>;
+    resolvedGraphProjection: GraphProjectionV1;
+  };
 };
 
 export type LoadedCardGraphReference = {
@@ -106,31 +108,31 @@ function notifyObserver<T>(observer: ((value: T) => void) | undefined, value: T)
   }
 }
 
-export function parseStagedCardInvocationLoaded(
+export function parseStagedCardReviewLoaded(
   output: unknown,
   depth = 0,
-): StagedCardInvocationLoaded | null {
+): StagedCardReviewLoaded | null {
   // Main can observe a configured child Card result wrapped by MCP content,
   // the backend result object, and the child's preserved native tool event.
   if (depth > 12 || output == null) return null;
   if (typeof output === 'string') {
     try {
-      return parseStagedCardInvocationLoaded(JSON.parse(output), depth + 1);
+      return parseStagedCardReviewLoaded(JSON.parse(output), depth + 1);
     } catch {
       return null;
     }
   }
   if (Array.isArray(output)) {
     for (const item of output) {
-      const loaded = parseStagedCardInvocationLoaded(item, depth + 1);
+      const loaded = parseStagedCardReviewLoaded(item, depth + 1);
       if (loaded) return loaded;
     }
     return null;
   }
   if (typeof output !== 'object') return null;
   const record = output as Record<string, unknown>;
-  const invocation = record.invocation as Record<string, unknown> | undefined;
-  const projection = invocation?.resolvedGraphProjection as Record<string, unknown> | undefined;
+  const reviewContext = record.reviewContext as Record<string, unknown> | undefined;
+  const projection = reviewContext?.resolvedGraphProjection as Record<string, unknown> | undefined;
   const anchors = Array.isArray(record.dataAnchors) ? record.dataAnchors : [];
   if (
     record.ok === true
@@ -144,7 +146,6 @@ export function parseStagedCardInvocationLoaded(
     && record.sourceCardId.length > 0
     && typeof record.mission === 'string'
     && record.mission.trim().length > 0
-    && anchors.length > 0
     && anchors.every((anchor) => {
       if (!anchor || typeof anchor !== 'object') return false;
       const value = anchor as Record<string, unknown>;
@@ -156,24 +157,22 @@ export function parseStagedCardInvocationLoaded(
         && Number.isInteger(value.resultLimit)
         && value.required === true;
     })
-    && invocation != null
-    && invocation.idf != null
+    && reviewContext != null
     && projection != null
     && Array.isArray(projection.nodes)
     && Array.isArray(projection.edges)
-    && (projection.nodes.length > 0 || projection.edges.length > 0)
   ) {
     return {
       targetCardId: record.targetCardId,
       targetCardTitle: record.targetCardTitle,
       sourceCardId: record.sourceCardId,
       mission: record.mission,
-      dataAnchors: anchors as StagedCardInvocationLoaded['dataAnchors'],
-      invocation: invocation as StagedCardInvocationLoaded['invocation'],
+      dataAnchors: anchors as StagedCardReviewLoaded['dataAnchors'],
+      reviewContext: reviewContext as StagedCardReviewLoaded['reviewContext'],
     };
   }
   for (const key of ['content', 'result', 'structuredContent', 'text', 'output', 'nativeEvents']) {
-    const loaded = parseStagedCardInvocationLoaded(record[key], depth + 1);
+    const loaded = parseStagedCardReviewLoaded(record[key], depth + 1);
     if (loaded) return loaded;
   }
   return null;
@@ -267,7 +266,7 @@ export default function useAgentBuilderMainChat({
   dataAnchors = [],
   onUserTurnStarted,
   onNativeTurnEvent,
-  onCardInvocationStaged,
+  onCardReviewStaged,
   onCardGraphReferenceLoaded,
   onTurnFinished,
 }: UseAgentBuilderMainChatArgs) {
@@ -400,8 +399,8 @@ export default function useAgentBuilderMainChat({
               && typeof event.toolName === 'string'
               && ['write_mag_one_instructions', 'card.run_assistant_agent'].includes(event.toolName)
             ) {
-              const loaded = parseStagedCardInvocationLoaded(event.output);
-              if (loaded) notifyObserver(onCardInvocationStaged, loaded);
+              const loaded = parseStagedCardReviewLoaded(event.output);
+              if (loaded) notifyObserver(onCardReviewStaged, loaded);
             }
             if (
               event.kind === 'tool_result'
@@ -472,7 +471,7 @@ export default function useAgentBuilderMainChat({
       deckId,
       nativeSessionBusy,
       onNativeTurnEvent,
-      onCardInvocationStaged,
+      onCardReviewStaged,
       onCardGraphReferenceLoaded,
       onTurnFinished,
       onUserTurnStarted,

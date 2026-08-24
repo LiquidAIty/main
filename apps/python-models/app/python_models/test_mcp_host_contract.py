@@ -791,9 +791,9 @@ def test_coder_root_context_is_active_before_native_cbm_dispatch_and_persists_ex
         structuredContent={
             "cols": ["qn", "label", "file", "lines"],
             "rows": [[
-                "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.icf.materialize_input_pair",
+                "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
                 "Function",
-                "apps/python-models/app/python_models/icf.py",
+                "apps/python-models/app/python_models/idf.py",
                 "37-78",
             ]],
         },
@@ -814,7 +814,7 @@ def test_coder_root_context_is_active_before_native_cbm_dispatch_and_persists_ex
 
     result = asyncio.run(mcp_host.call_tool(
         "cbm.search_code",
-        {"project": "C-Projects-LiquidAIty-main", "pattern": "materialize_input_pair"},
+        {"project": "C-Projects-LiquidAIty-main", "pattern": "materialize_idf"},
     ))
 
     assert dispatched_contexts == [context]
@@ -826,8 +826,8 @@ def test_coder_root_context_is_active_before_native_cbm_dispatch_and_persists_ex
     assert attention["cardId"] == "card_local_coder"
     assert attention["toolName"] == "cbm.search_code"
     assert attention["nativeNodeIds"] == [
-        "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.icf.materialize_input_pair",
-        "apps/python-models/app/python_models/icf.py",
+        "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
+        "apps/python-models/app/python_models/idf.py",
     ]
     assert observed == [attention]
 
@@ -902,9 +902,7 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
             "targetCardTitle": "Coder",
             "mission": str(args["mission"]).strip(),
             "dataAnchors": [{**anchor, "required": True} for anchor in args["dataAnchors"]],
-            "invocation": {
-                "icf": {"stable": {"runtime": {"kind": "hermes", "mode": "delegate"}}},
-                "igf": {"header": {"recordCounts": {"total": 1}}, "records": []},
+            "reviewContext": {
                 "resolvedNativeReads": [{
                     "authority": "CodeGraph", "nativeId": "symbol-one",
                 }],
@@ -936,6 +934,15 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
 
     monkeypatch.setattr(control_plane, "write_mag_one_instructions", load_instructions)
     monkeypatch.setattr(control_plane, "card_load_graph_references", load_graph)
+    monkeypatch.setattr(
+        card_domain,
+        "resolve_magentic_target_card",
+        lambda project_id, deck_id, _sender_id: {
+            "projectId": project_id,
+            "deckId": deck_id,
+            "cardId": "card_mag_one",
+        },
+    )
 
     inspected = asyncio.run(
         mcp_host._dispatch_tool("agentgraph.inspect", {"runId": "run-1", "limit": 5})
@@ -1012,6 +1019,7 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
         "action": "execute",
         "projectId": "project-1",
         "deckId": "deck_builder",
+        "cardId": "card_mag_one",
         "senderCardId": "card_main_chat",
         "correlationId": calls[-1][1]["correlationId"],
         "conversationId": "external-mcp:grant-1",
@@ -1022,6 +1030,18 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
             "boundedExpansion": 1, "resultLimit": 8, "required": True,
         }],
     }
+
+    executed_without_graph = asyncio.run(
+        mcp_host._dispatch_tool(
+            "run_mag_one",
+            {"input": "mission with no selected graph data"},
+        )
+    )
+    assert json.loads(executed_without_graph[0].text) == {"ok": True}
+    assert calls[-1][0] == "run_configured_card"
+    assert calls[-1][1]["cardId"] == "card_mag_one"
+    assert calls[-1][1]["input"] == "mission with no selected graph data"
+    assert "dataAnchors" not in calls[-1][1]
 
 
 def test_lifecycle_errors_remain_typed_and_distinct(monkeypatch):
@@ -1269,11 +1289,12 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
             not in by_name["card.run_assistant_agent"].inputSchema["properties"]
         )
         assert by_name["run_mag_one"].inputSchema["required"] == [
-            "input", "projectId", "deckId", "dataAnchors",
+            "input", "projectId", "deckId",
         ]
         assert by_name["write_mag_one_instructions"].inputSchema["required"] == [
-            "targetCardId", "mission", "dataAnchors",
+            "targetCardId", "mission",
         ]
+        assert by_name["run_mag_one"].inputSchema["properties"]["dataAnchors"]["minItems"] == 0
         assert by_name["card.load_graph_references"].inputSchema["required"] == [
             "targetCardId", "authority", "nativeId", "reason", "order", "depth",
             "resultLimit", "required",

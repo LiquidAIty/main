@@ -1799,11 +1799,11 @@ async def _bridge(path: str, payload: dict[str, Any]) -> list[TextContent]:
 
 
 def _grounded_data_anchors_schema() -> dict[str, Any]:
-    """One public native-reference shape shared by staging and execution."""
+    """One optional public native-reference list shared by review and execution."""
 
     return {
         "type": "array",
-        "minItems": 1,
+        "minItems": 0,
         "maxItems": 16,
         "items": {
             "type": "object",
@@ -1888,12 +1888,13 @@ async def _materialize_complete_catalog() -> list[Tool]:
         Tool(
             name="run_mag_one",
             description=(
-                "Main Chat only: submit one explicit mission and selected native graph anchors "
+                "Main Chat only: submit one explicit mission and any deliberately selected native graph anchors "
                 "to the AGE-connected Magentic-One "
                 "Card and invoke native MagenticOneGroupChat. Python materializes the saved "
                 "Card plus this input exactly once before execution. "
                 "The backend resolves the live worker roster from blue SIDE connections; never type "
-                "a roster. Execute only on an explicit user request — Hermes never launches Mag One."
+                "a roster. Use only for the current user-directed mission. This tool executes "
+                "immediately unless optional Card-editor review was explicitly requested first."
             ),
             inputSchema={
                 "type": "object",
@@ -1904,14 +1905,14 @@ async def _materialize_complete_catalog() -> list[Tool]:
                     "conversationId": {"type": "string"},
                     "dataAnchors": _grounded_data_anchors_schema(),
                 },
-                "required": ["input", "projectId", "deckId", "dataAnchors"],
+                "required": ["input", "projectId", "deckId"],
                 "additionalProperties": False,
             },
         ),
         Tool(
             name="write_mag_one_instructions",
             description=(
-                "Kanban only: place one exact mission and its resolved native graph projection "
+                "Optional review only: place one exact mission and its resolved native graph projection "
                 "into the saved Coder or Mag One Card's existing Invocation and Knowledge "
                 "editors for Main to review. This tool creates no proposal record, persists "
                 "nothing, and never starts either Card."
@@ -1923,7 +1924,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
                     "mission": {"type": "string", "minLength": 1},
                     "dataAnchors": _grounded_data_anchors_schema(),
                 },
-                "required": ["targetCardId", "mission", "dataAnchors"],
+                "required": ["targetCardId", "mission"],
                 "additionalProperties": False,
             },
         ),
@@ -2134,8 +2135,9 @@ async def _materialize_complete_catalog() -> list[Tool]:
                 "server injects projectId/correlationId/conversationId; the model supplies the "
                 "bound cardId, one mission, and optional selected native graph references only. "
                 "conversationId is the real live "
-                "conversation this run belongs to, when one exists. Python materializes one "
-                "transient Card input before the selected runtime receives it. A Kanban "
+                "conversation this run belongs to, when one exists. Python re-resolves that "
+                "exact bounded graph selection and the receiving Card materializes, retains, "
+                "and reloads one graph-first in.idf before its selected runtime receives it. A Kanban "
                 "submission returns its durable Run and native root promptly; use action=status "
                 "with runId or nativeRootId to rejoin that same Run."
             ),
@@ -2794,6 +2796,11 @@ async def _dispatch_tool(
             )
         ]
     if name == "run_mag_one":
+        from app.python_models.card_domain import (
+            CardDomainError,
+            resolve_magentic_target_card,
+        )
+
         raw_anchors = args.get("dataAnchors")
         data_anchors = [
             {**anchor, "required": True}
@@ -2801,17 +2808,34 @@ async def _dispatch_tool(
             else anchor
             for anchor in raw_anchors
         ] if isinstance(raw_anchors, list) else raw_anchors
+        try:
+            target = await asyncio.to_thread(
+                resolve_magentic_target_card,
+                str(args.get("projectId") or ""),
+                str(args.get("deckId") or ""),
+                caller_card_id,
+            )
+        except CardDomainError as error:
+            return [TextContent(
+                type="text",
+                text=json.dumps({"ok": False, "error": str(error)}),
+            )]
         return await _bridge(
             "run_configured_card",
             {
                 "action": "execute",
-                "projectId": str(args.get("projectId") or ""),
-                "deckId": str(args.get("deckId") or ""),
+                "projectId": target["projectId"],
+                "deckId": target["deckId"],
+                "cardId": target["cardId"],
                 "senderCardId": caller_card_id,
                 "correlationId": f"mag_one:{uuid4()}",
                 "conversationId": str(args.get("conversationId") or "main"),
                 "input": str(args.get("input") or ""),
-                "dataAnchors": data_anchors,
+                **(
+                    {"dataAnchors": data_anchors}
+                    if isinstance(data_anchors, list)
+                    else {}
+                ),
             },
         )
     if name == "main.context":

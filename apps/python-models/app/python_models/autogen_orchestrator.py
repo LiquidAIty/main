@@ -37,7 +37,7 @@ def load_stored_runtime_request(context: StoredRuntimeRequest) -> RuntimeRequest
 
 
 async def orchestrate_runtime(context: RuntimeRequest) -> OrchestratorRunResponse:
-    runtime = context.idf.execution.runtime
+    runtime = context.idf.stableSavedCardContext.runtime
     if runtime.get("kind") != "autogen" or runtime.get("mode") != "magentic_one":
         raise RuntimeError(
             "orchestrator_card_required: runtime="
@@ -62,7 +62,9 @@ def _configured_runtime_handler(runtime: dict[str, object]):
 
 async def dispatch_configured_runtime(context: RuntimeRequest) -> OrchestratorRunResponse:
     """Dispatch one transient model input through its saved Card runtime."""
-    return await _configured_runtime_handler(context.idf.execution.runtime)(context)
+    return await _configured_runtime_handler(
+        context.idf.stableSavedCardContext.runtime
+    )(context)
 
 
 async def dispatch_stored_runtime(

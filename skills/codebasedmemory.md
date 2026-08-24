@@ -75,7 +75,7 @@ search_graph
 → complete current-source read
 ```
 
-Begin coding discovery with `search_graph`. Real graph data supplied by Main or an `in.igf` may seed the
+Begin coding discovery with `search_graph`. Real graph data supplied by Main or an IDF actual-graph-data section may seed the
 search, but its native IDs, paths, qualified symbols, authority, and provenance must remain intact. When no
 upstream graph selection exists, derive a bounded query from the actual task and validate the symbols CBM
 returns. Never invent graph records, qualified names, or placeholder search seeds from prompt prose.
@@ -421,12 +421,12 @@ wrapper name when an authority's live schema differs.
 - **Forbidden mutation:** no copied evidence graph, hidden fusion with ThinkGraph/CodeGraph, prose-derived access
   claim, TypeScript semantic merge, fabricated provenance, or ordinary-model write/ingestion.
 
-### Run-scoped combined graph transport
+### Run-scoped combined graph evidence
 
 Deliberately selected CodeGraph, ThinkGraph, and KnowGraph records may travel together through the canonical
-Run-scoped `in.igf` boundary. Each record keeps its authority, native ID, bounds, and provenance. Python rails
-mechanically materializes and reloads that selected view through the one canonical input materializer. The IGF
-is temporary transport, not a fourth graph, writer, cache, merged authority, or permission source.
+Run-scoped `in.idf` actual-graph-data section. Each record keeps its authority, native ID, bounds, and provenance.
+Python rails bounds that selection before it materializes and reloads the one canonical input. The embedded
+evidence is temporary transport, not a fourth graph, writer, cache, merged authority, or permission source.
 
 ## Task Recipes
 
@@ -443,7 +443,7 @@ search_graph(user outcome, supplied graph anchors, and likely subsystem)
 Proof: current implementation owner, callers/consumers when material, and affected tests are identified.
 ```
 
-### Main or IGF to Coder validation
+### Main or IDF actual graph data to Coder validation
 
 ```text
 retain supplied native IDs, qualified symbols, paths, project/revision, and provenance

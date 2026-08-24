@@ -146,6 +146,7 @@ async def call_saved_card_via_mcp(
     caller_runtime_mode: str,
     target_card_id: str,
     input_text: str,
+    data_anchors: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Call one saved Card through the official MCP server, never directly."""
     token = create_card_runtime_token(
@@ -170,7 +171,15 @@ async def call_saved_card_via_mcp(
                 await session.initialize()
                 result = await session.call_tool(
                     "card.run_assistant_agent",
-                    {"cardId": target_card_id, "input": input_text},
+                    {
+                        "cardId": target_card_id,
+                        "input": input_text,
+                        **(
+                            {"dataAnchors": list(data_anchors)}
+                            if data_anchors
+                            else {}
+                        ),
+                    },
                 )
     return _json_result(result, "card.run_assistant_agent")
 

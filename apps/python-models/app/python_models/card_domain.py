@@ -1960,7 +1960,9 @@ def _prepare_invocation(
     }
 
 
-def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
+def _resolve_invocation_components(payload: dict[str, Any]) -> dict[str, Any]:
+    """Resolve saved authority and optional graph data without materializing IDF."""
+
     _reject_non_graph_invocation_context(payload)
     prepared = _prepare_invocation(payload)
     output_requirements = prepared.pop("_outputRequirements")
@@ -2006,18 +2008,54 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     images = payload.get("images") or []
     if not isinstance(images, list) or any(not isinstance(item, dict) for item in images):
         raise CardDomainError("images_invalid")
+    return {
+        "prepared": prepared,
+        "outputRequirements": output_requirements,
+        "callConfig": call_config,
+        "assignment": assignment,
+        "toolDefinitions": tool_definitions,
+        "graphText": graph_seed,
+        "nativeReferences": references,
+        "resolvedNativeReads": anchor_references,
+        "resolvedGraphProjection": graph_projection,
+        "images": images,
+    }
+
+
+def prepare_card_review_context(payload: dict[str, Any]) -> dict[str, Any]:
+    """Resolve editor review state without creating an IDF or Run."""
+
+    resolved = _resolve_invocation_components(payload)
+    prepared = resolved["prepared"]
+    assert_selected_graph_data_resolved(payload, resolved)
+    return {
+        "projectId": prepared["projectId"],
+        "deckId": prepared["deckId"],
+        "cardRevisionId": prepared["cardRevisionId"],
+        "cardRevision": prepared["cardRevision"],
+        "cardRevisionSha256": prepared["cardRevisionSha256"],
+        "runtimeOwner": prepared["runtimeOwner"],
+        "cardIdentity": prepared["cardIdentity"],
+        "resolvedNativeReads": resolved["resolvedNativeReads"],
+        "resolvedGraphProjection": resolved["resolvedGraphProjection"],
+    }
+
+
+def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
+    _required_text(payload.get("runId"), "run_id")
+    resolved = _resolve_invocation_components(payload)
+    prepared = resolved["prepared"]
+    output_requirements = resolved["outputRequirements"]
+    call_config = resolved["callConfig"]
+    assignment = resolved["assignment"]
+    tool_definitions = resolved["toolDefinitions"]
+    graph_seed = resolved["graphText"]
+    references = resolved["nativeReferences"]
+    anchor_references = resolved["resolvedNativeReads"]
+    graph_projection = resolved["resolvedGraphProjection"]
+    images = resolved["images"]
     try:
-        run_id = str(payload.get("runId") or "").strip()
-        correlation_id = str(payload.get("correlationId") or "").strip()
         materialized = materialize_idf(
-            owner={
-                "kind": "card-run" if run_id else "preview",
-                "projectId": prepared["projectId"],
-                "deckId": prepared["deckId"],
-                "cardId": prepared["cardIdentity"]["cardId"],
-                **({"runId": run_id} if run_id else {}),
-                **({"correlationId": correlation_id} if correlation_id else {}),
-            },
             stable={
                 "projectId": prepared["projectId"],
                 "deckId": prepared["deckId"],
@@ -2030,13 +2068,10 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
                 "outputContract": output_requirements,
                 "runtime": call_config["runtime"],
                 "provider": call_config["provider"],
+                "runtimeOptions": call_config["runtimeOptions"],
             },
             variable={
                 "task": assignment,
-                "conversationId": str(payload.get("conversationId") or ""),
-                "senderCardId": str(payload.get("senderCardId") or ""),
-                "originatingRunId": str(payload.get("originatingRunId") or ""),
-                "selectedNativeReferences": references,
                 "images": images,
             },
             capabilities={
@@ -2047,7 +2082,6 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
                 "toolsets": call_config["toolsets"],
                 "mcpConnectionIds": call_config["mcpConnectionIds"],
             },
-            allocation={"runtimeOptions": call_config["runtimeOptions"]},
             graph_context=graph_seed,
             native_references=references,
             graph_projection=graph_projection,
@@ -2059,7 +2093,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         "resolvedNativeReads": anchor_references,
         "resolvedGraphProjection": graph_projection,
         **idf_public(materialized),
-        **({"_materializedIdf": materialized} if run_id else {}),
+        "_materializedIdf": materialized,
     }
 
 
@@ -2076,14 +2110,6 @@ def prepare_main_chat(payload: dict[str, Any]) -> dict[str, Any]:
     if len(main_cards) != 1:
         raise CardDomainError("main_card_identity_ambiguous")
     message = str(payload.get("message") or "")
-    if message:
-        return materialize_invocation({
-            **payload,
-            "projectId": loaded["projectId"],
-            "deckId": deck_id,
-            "cardId": main_cards[0]["id"],
-            "assignment": message,
-        })
     prepared = _prepare_invocation({
         **payload,
         "projectId": loaded["projectId"],
@@ -2095,14 +2121,23 @@ def prepare_main_chat(payload: dict[str, Any]) -> dict[str, Any]:
     prepared.pop("assignment", None)
     call_config = prepared.pop("_callConfig")
     prepared.pop("_toolDefinitions")
-    return {**prepared, "sessionProfile": call_config}
+    return {
+        **prepared,
+        **({"message": message} if message else {}),
+        "sessionProfile": call_config,
+    }
 
 
-def materialize_magentic_invocation(payload: dict[str, Any]) -> dict[str, Any]:
-    """Resolve the one Mag One Card controlled by the explicit sender edge."""
-    project_ref = _required_text(payload.get("projectId"), "project_id")
-    deck_id = _required_text(payload.get("deckId"), "deck_id")
-    sender_id = _required_text(payload.get("senderCardId"), "sender_card_id")
+def resolve_magentic_target_card(
+    project_ref: str,
+    deck_id: str,
+    sender_id: str,
+) -> dict[str, str]:
+    """Resolve the one saved Mag One Card without materializing model input."""
+
+    project_ref = _required_text(project_ref, "project_id")
+    deck_id = _required_text(deck_id, "deck_id")
+    sender_id = _required_text(sender_id, "sender_card_id")
     loaded = _load_deck_internal(project_ref, deck_id)
     target_ids = {
         edge["target"]
@@ -2116,12 +2151,11 @@ def materialize_magentic_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     ]
     if len(targets) != 1:
         raise CardDomainError("magentic_control_target_ambiguous")
-    return materialize_invocation({
-        **payload,
+    return {
         "projectId": loaded["projectId"],
         "deckId": deck_id,
         "cardId": targets[0]["id"],
-    })
+    }
 
 
 def describe_magentic_agents(project_ref: str, deck_id: str) -> dict[str, Any]:
@@ -2195,40 +2229,21 @@ def prepare_run_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     expected_revision = str(payload.get("cardRevisionId") or "").strip()
     if expected_revision and prepared["cardRevisionId"] != expected_revision:
         raise CardDomainError("card_revision_changed")
-    assert_grounded_invocation(payload, prepared)
+    assert_selected_graph_data_resolved(payload, prepared)
     return prepared
 
 
-def assert_grounded_invocation(
+def assert_selected_graph_data_resolved(
     payload: dict[str, Any],
     prepared: dict[str, Any],
-    *,
-    force: bool = False,
 ) -> None:
-    """Fail before Run creation unless a grounded target has current graph data.
-
-    Coder and Mag One are the two explicit execution targets that require a
-    reviewed mission plus selected native graph anchors.  Staging uses the
-    same assertion with ``force=True`` so its returned projection is already
-    execution-ready without creating a Run or contacting a provider.
-    """
-
-    runtime = prepared.get("idf", {}).get("execution", {}).get("runtime", {})
-    requires_grounding = (
-        isinstance(runtime, dict)
-        and (
-            (runtime.get("kind"), runtime.get("mode"))
-            in {("hermes", "delegate"), ("autogen", "magentic_one")}
-        )
-    )
-    if not force and not requires_grounding:
-        return
+    """Validate the exact optional graph selection without making it mandatory."""
 
     requested = _normalized_data_anchors(
         payload.get("dataAnchors"), record_name="data-anchor-reference"
     )
     if not requested:
-        raise CardDomainError("grounded_execution_reference_required")
+        return
 
     resolved = {
         (str(reference.get("authority") or ""), str(reference.get("nativeId") or ""))
@@ -2239,14 +2254,14 @@ def assert_grounded_invocation(
         identity = (anchor["authority"], anchor["nativeId"])
         if identity not in resolved:
             raise CardDomainError(
-                f"grounded_execution_reference_stale:{identity[0]}:{identity[1]}"
+                f"selected_graph_data_reference_stale:{identity[0]}:{identity[1]}"
             )
 
     projection = prepared.get("resolvedGraphProjection")
     if not isinstance(projection, dict) or not (
         projection.get("nodes") or projection.get("edges")
     ):
-        raise CardDomainError("grounded_execution_projection_empty")
+        raise CardDomainError("selected_graph_data_projection_empty")
 
 
 def _insert_run(
@@ -2257,8 +2272,8 @@ def _insert_run(
     request_fingerprint: str | None = None,
 ) -> tuple[str, str, bool]:
     idf = prepared["idf"]
-    runtime = idf["execution"]["runtime"]
-    provider = idf["execution"]["provider"]
+    runtime = idf["stableSavedCardContext"]["runtime"]
+    provider = idf["stableSavedCardContext"]["provider"]
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """
@@ -2488,53 +2503,16 @@ def read_run_input_files(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
-    """Begin Main only after its canonical IDF is retained and reloaded."""
+    """Resolve Main, then use the one canonical saved-Card Run function."""
     message = _required_text(payload.get("message"), "message")
-    prepared = prepare_main_chat({**payload, "message": message})
-    expected_revision = str(payload.get("cardRevisionId") or "").strip()
-    if expected_revision and prepared["cardRevisionId"] != expected_revision:
-        raise CardDomainError("card_revision_changed")
-    run_id = _required_text(payload.get("runId"), "run_id")
-    correlation_id = _required_text(payload.get("correlationId"), "correlation_id")
-    resolved_run_id, resolved_correlation_id, created = _insert_run(
-        prepared,
-        run_id=run_id,
-        correlation_id=correlation_id,
-    )
-    if not created:
-        raise CardDomainError("main_run_identity_conflict")
-    public, input_files, runtime_input = _retain_required_run_idf(
-        prepared,
-        run_id=resolved_run_id,
-        correlation_id=resolved_correlation_id,
-        created=True,
-    )
-    prepared.update(public)
-    telemetry_written = _observe_run_start(
-        prepared,
-        payload,
-        run_id=run_id,
-        correlation_id=correlation_id,
-    )
-    anchor_telemetry_written = observe_materialized_anchor_reads(
-        prepared,
-        run_id=run_id,
-    )
-    return {
-        **prepared,
-        "runId": resolved_run_id,
-        "correlationId": resolved_correlation_id,
-        "telemetryWritten": telemetry_written,
-        "anchorTelemetryWritten": anchor_telemetry_written,
-        "inputFile": input_files,
-        "nativeRuntimeRequest": None,
-        "hermesTransport": {
-            "request": runtime_input,
-            "inputFile": input_files,
-            "cardIdentity": prepared["cardIdentity"],
-            "delegationTargets": prepared.get("delegationTargets") or [],
-        },
-    }
+    main = prepare_main_chat({**payload, "message": ""})
+    return begin_run({
+        **payload,
+        "projectId": main["projectId"],
+        "deckId": main["deckId"],
+        "cardId": main["cardIdentity"]["cardId"],
+        "assignment": message,
+    })
 
 
 def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
@@ -2545,7 +2523,7 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
     correlation_id = _required_text(payload.get("correlationId"), "correlation_id")
     card_identity = prepared["cardIdentity"]
     owner = prepared["runtimeOwner"]
-    runtime = prepared["idf"]["execution"]["runtime"]
+    runtime = prepared["idf"]["stableSavedCardContext"]["runtime"]
     durable_kanban = (
         owner == "hermes"
         and runtime.get("kind") == "hermes"

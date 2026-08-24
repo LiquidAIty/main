@@ -8,7 +8,8 @@
 [dictionary]
 name = "LiquidAIty"
 version = 3
-icfFormat = "input-context-file"
+# The only canonical retained model-facing Run input.
+idfFormat = "input-data-file"
 islandStyle = "bracketed-native-language"
 unknownIslands = "inert"
 
@@ -739,124 +740,40 @@ parameters = ["max_events", "timeout_seconds"]
 required = []
 
 [[records]]
-name = "input-context-file"
+name = "input-data-file"
 allowUnknownFields = false
-description = "One canonical concrete Card invocation paired with one Input Graph File."
+description = "The one graph-first canonical model-facing input retained and reloaded for a Run."
 
 [[records.fields]]
-name = "format"
-type = "string"
-required = true
-values = ["liquidaity.input-context"]
-
-[[records.fields]]
-name = "version"
-type = "integer"
-required = true
-
-[[records.fields]]
-name = "idd"
+name = "actualGraphData"
 type = "object"
 required = true
 
 [[records.fields]]
-name = "stable"
+name = "stableSavedCardContext"
 type = "object"
 required = true
 
 [[records.fields]]
-name = "variable"
+name = "selectedToolsAndGrants"
 type = "object"
 required = true
 
 [[records.fields]]
-name = "capabilities"
+name = "dynamicContext"
 type = "object"
 required = true
-
-[[records.fields]]
-name = "allocation"
-type = "object"
-required = true
-
-[[records.fields]]
-name = "graphInput"
-type = "object"
-required = true
-
-[[records.fields]]
-name = "estimates"
-type = "object"
-required = true
-
-[[records]]
-name = "input-graph-header"
-allowUnknownFields = false
-description = "Mandatory first JSONL record for one canonical Input Graph File."
-
-[[records.fields]]
-name = "kind"
-type = "string"
-required = true
-values = ["header"]
-
-[[records.fields]]
-name = "format"
-type = "string"
-required = true
-values = ["liquidaity.input-graph"]
-
-[[records.fields]]
-name = "version"
-type = "integer"
-required = true
-
-[[records.fields]]
-name = "owner"
-type = "object"
-required = true
-
-[[records.fields]]
-name = "materializedAt"
-type = "string"
-required = true
-
-[[records.fields]]
-name = "authorities"
-type = "string-array"
-required = true
-
-[[records.fields]]
-name = "selectedNativeReferences"
-type = "object-array"
-required = true
-
-[[records.fields]]
-name = "recordCounts"
-type = "object"
-required = true
-
-[[records.fields]]
-name = "provenanceSummary"
-type = "object-array"
-required = true
-
-[[records.fields]]
-name = "contentHashRule"
-type = "string"
-required = true
-values = ["sha256-entire-file-utf8"]
 
 [[records]]
 name = "input-graph-record"
 allowUnknownFields = false
-description = "One native selection, node, relationship, or exact model-visible graph context record."
+description = "One actual bounded native selection, node, or relationship record."
 
 [[records.fields]]
 name = "kind"
 type = "string"
 required = true
-values = ["selection", "node", "relationship", "materialized-context"]
+values = ["selection", "node", "relationship"]
 
 [[records.fields]]
 name = "authority"

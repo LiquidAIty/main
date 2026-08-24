@@ -106,7 +106,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(JSON.stringify(INITIAL_DECK.edges)).not.toContain('autoRun');
   });
 
-  it('stores only write/effect authority on Hermes Cards', () => {
+  it('stores bounded write and receiving-Card handoff authority on Hermes Cards', () => {
     const byId = new Map(INITIAL_DECK.nodes.map((node) => [node.id, node]));
     const mainTools = byId.get('card_main_chat')?.runtimeOptions?.tools ?? [];
     const hermesTools = byId.get('card_hermes_steward')?.runtimeOptions?.tools ?? [];
@@ -123,6 +123,7 @@ describe('Main / Hermes / graph authority topology', () => {
     ]));
     expect(mainTools).not.toContain('web_search');
     expect(hermesTools).toEqual([
+      'card.run_assistant_agent',
       'graphiti.add_memory',
       'graphiti.add_triplet',
       'write_mag_one_instructions',
@@ -168,9 +169,10 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(main?.runtimeOptions?.toolsets).toEqual(['file', 'terminal']);
     expect(main?.prompt).toContain('card.run_assistant_agent');
     expect(main?.prompt).toContain('A wire grants authority but never starts work');
-    expect(main?.prompt).toContain('send only one exact mission and explicitly selected native graph references');
+    expect(main?.prompt).toContain('send one exact mission and the deliberately selected native graph references');
     expect(main?.prompt).toContain('Do not copy this conversation or Main memory into another Card');
-    expect(main?.prompt).toContain('only internal role allowed to submit it to Mag One');
+    expect(main?.prompt).toContain('A normal handoff executes immediately');
+    expect(main?.prompt).toContain('existing Card Invocation and Knowledge editors');
     expect(main?.prompt).toContain('official MCP run_mag_one seam');
 
     expect(coder).toMatchObject({
@@ -194,14 +196,15 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(coder?.prompt).not.toContain('retask the saved Kanban Card');
 
     expect(steward?.runtimeOptions?.tools).not.toContain('run_mag_one');
-    expect(steward?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
+    expect(steward?.runtimeOptions?.tools).toContain('card.run_assistant_agent');
     expect(steward?.runtimeOptions?.tools).toContain('write_mag_one_instructions');
     expect(steward?.runtimeOptions?.toolsets ?? []).toEqual(['web']);
     expect(steward?.prompt).toContain('Do not use a repository-writing terminal');
-    expect(steward?.prompt).toContain('Use write_mag_one_instructions');
+    expect(steward?.prompt).toContain('Use card.run_assistant_agent for a normal automatic handoff');
+    expect(steward?.prompt).toContain('Use card.load_graph_references and write_mag_one_instructions only when');
     expect(steward?.prompt).toContain('Inspect the supplied current native graph data first');
     expect(steward?.prompt).toContain('Firecrawl backend');
-    expect(steward?.prompt).toContain('Do not delegate onward');
+    expect(steward?.prompt).toContain('Do not create recursive workers');
 
     expect(magOne).toMatchObject({
       runtime: { kind: 'autogen', mode: 'magentic_one' },

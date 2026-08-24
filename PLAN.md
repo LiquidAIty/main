@@ -11,7 +11,7 @@ Chat / GPT plugin
   → Main Chat Card (Hermes, profile liquidaity-main)
      ├─ flow → Coder Card (Hermes delegate, profile coder, terminal under Chat)
      ├─ flow → Kanban Card (Hermes, profile liquidaity-hermes-steward)
-     └─ magentic_control → reviewed transient Card input → native AutoGen Magentic-One
+     └─ magentic_control → automatic or optionally reviewed Card handoff → native AutoGen Magentic-One
 
 Direct Assistant Card
   → native AutoGen AssistantAgent
@@ -50,7 +50,7 @@ the Hermes-backed Coder; they do not identify a runtime.
 - A completed Main response through the saved Hermes profile and saved account/model.
 - Native Main-to-Coder delegation with truthful child Run, tool, native-reference, and AGE lineage.
 - Main-to-Kanban execution and separate-session memory behavior.
-- Reviewed transient-input handoff to one native Magentic-One run.
+- Automatic and optionally reviewed one-IDF handoff to one native Magentic-One run.
 - End-to-end Reveal pacing for graph consumption, traversal, handoff, and writes.
 - Engraphis semantic recall. Nonsemantic ThinkGraph operations remain the near-term boundary.
 

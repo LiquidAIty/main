@@ -137,6 +137,22 @@ class McpSavedCardAgent(BaseChatAgent):
             )
 
         self._invocation += 1
+        data_anchors = []
+        for index, reference in enumerate(
+            self._context.idf.actualGraphData.selectedNativeReferences
+        ):
+            scope = reference.get("selectionScope")
+            scope = scope if isinstance(scope, dict) else {}
+            data_anchors.append({
+                "authority": _as_text(reference.get("authority")),
+                "nativeId": _as_text(reference.get("nativeId")),
+                "reason": _as_text(reference.get("reason"))
+                or "Forward the sender's selected graph data",
+                "priority": -index,
+                "boundedExpansion": int(scope.get("boundedExpansion") or 0),
+                "resultLimit": int(scope.get("resultLimit") or 24),
+                "required": True,
+            })
         call = asyncio.create_task(
             call_saved_card_via_mcp(
                 project_id=self._context.session.projectId,
@@ -144,10 +160,15 @@ class McpSavedCardAgent(BaseChatAgent):
                 conversation_id=_as_text(self._context.session.conversationId) or "active",
                 parent_run_id=self._outer_run_id,
                 caller_card_id=self._context.session.cardId,
-                caller_runtime_kind=_as_text(self._context.idf.execution.runtime.get("kind")),
-                caller_runtime_mode=_as_text(self._context.idf.execution.runtime.get("mode")),
+                caller_runtime_kind=_as_text(
+                    self._context.idf.stableSavedCardContext.runtime.get("kind")
+                ),
+                caller_runtime_mode=_as_text(
+                    self._context.idf.stableSavedCardContext.runtime.get("mode")
+                ),
                 target_card_id=self._card_id,
                 input_text=input_text,
+                data_anchors=data_anchors,
             )
         )
         cancellation_token.link_future(call)
@@ -219,7 +240,7 @@ def _validate_single_card_context(context: RuntimeRequest) -> str | None:
     decides meaning — only shape: exactly one configured participant, the
     single-card runtime type, and a non-empty task.
     """
-    runtime = context.idf.execution.runtime
+    runtime = context.idf.stableSavedCardContext.runtime
     if runtime.get("kind") != "autogen" or runtime.get("mode") != "assistant":
         return (
             "single_card_runtime_invalid: runtime="
@@ -227,7 +248,7 @@ def _validate_single_card_context(context: RuntimeRequest) -> str | None:
         )
     if context.session.orchestrator != "assistant_agent":
         return f"single_card_orchestrator_invalid: orchestrator={context.session.orchestrator}"
-    if not _as_text(context.idf.icf.task):
+    if not _as_text(context.idf.dynamicContext.task):
         return "empty_user_message"
     return None
 
@@ -295,8 +316,8 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
 
     client = None
     try:
-        provider = context.idf.execution.provider
-        options = context.idf.execution.runtimeOptions
+        provider = context.idf.stableSavedCardContext.provider
+        options = context.idf.stableSavedCardContext.runtimeOptions
         client = _build_model_client(
             AutoGenAgentConfig(
                 provider=_as_text(provider.get("provider")),
@@ -318,13 +339,15 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
                 name for name in sorted(readable_tool_ids())
                 if name in implemented
             ),
-            *list(context.idf.execution.enabledTools),
+            *list(context.idf.selectedToolsAndGrants.enabledTools),
         ]))
         tools = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools)
         agent = AssistantAgent(
             name="Configured_Card",
             model_client=client,
-            system_message=_as_text(context.idf.icf.instructions),
+            system_message=_as_text(
+                context.idf.stableSavedCardContext.instructions
+            ),
             **({"tools": tools} if tools else {}),
         )
         result = await agent.run(task=_model_task(context))
@@ -362,7 +385,7 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
 
 
 def _read_max_turns(context: RuntimeRequest) -> int | None:
-    runtime_options = context.idf.execution.runtimeOptions
+    runtime_options = context.idf.stableSavedCardContext.runtimeOptions
     if not isinstance(runtime_options, dict) or "maxTurns" not in runtime_options:
         return None
     raw = runtime_options["maxTurns"]
@@ -388,7 +411,7 @@ async def run_native_magentic_mission(
     context: RuntimeRequest,
 ) -> OrchestratorRunResponse:
     """Run native Magentic-One with the saved roster and transient task text."""
-    runtime = context.idf.execution.runtime
+    runtime = context.idf.stableSavedCardContext.runtime
     if runtime.get("kind") != "autogen" or runtime.get("mode") != "magentic_one":
         raise RuntimeError("orchestrator_card_required")
     run_id = _as_text(context.session.runId) or context.session.turnId
@@ -397,8 +420,8 @@ async def run_native_magentic_mission(
     client = None
     participant_clients: list[Any] = []
     try:
-        runtime_options = context.idf.execution.runtimeOptions
-        provider = context.idf.execution.provider
+        runtime_options = context.idf.stableSavedCardContext.runtimeOptions
+        provider = context.idf.stableSavedCardContext.provider
         client = _build_model_client(
             AutoGenAgentConfig(
                 provider=_as_text(provider.get("provider")),

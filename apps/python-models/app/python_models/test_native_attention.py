@@ -51,9 +51,9 @@ def test_current_cbm_tabular_results_emit_exact_symbol_and_file_references() -> 
         structuredContent={
             "cols": ["qn", "label", "file", "lines"],
             "rows": [[
-                "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.icf.materialize_input_pair",
+                "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
                 "Function",
-                "apps/python-models/app/python_models/icf.py",
+                "apps/python-models/app/python_models/idf.py",
                 "37-78",
             ]],
         },
@@ -74,8 +74,8 @@ def test_current_cbm_tabular_results_emit_exact_symbol_and_file_references() -> 
 
     assert event is not None
     assert event["nativeNodeIds"] == [
-        "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.icf.materialize_input_pair",
-        "apps/python-models/app/python_models/icf.py",
+        "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
+        "apps/python-models/app/python_models/idf.py",
     ]
     assert event["runId"] == "coder-run-one"
     assert event["cardId"] == "card_local_coder"
@@ -88,9 +88,9 @@ def test_current_cbm_grouped_and_files_results_preserve_only_returned_objects() 
         structuredContent={
             "cols": ["name", "label", "lines"],
             "groups": [{
-                "prefix": "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.icf",
-                "file": "apps/python-models/app/python_models/icf.py",
-                "rows": [["materialize_input_pair", "Function", "280-350"]],
+                "prefix": "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf",
+                "file": "apps/python-models/app/python_models/idf.py",
+                "rows": [["materialize_idf", "Function", "356-446"]],
             }],
         },
     )
@@ -99,18 +99,18 @@ def test_current_cbm_grouped_and_files_results_preserve_only_returned_objects() 
     )
     assert grouped_event is not None
     assert grouped_event["nativeNodeIds"] == [
-        "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.icf.materialize_input_pair",
-        "apps/python-models/app/python_models/icf.py",
+        "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
+        "apps/python-models/app/python_models/idf.py",
     ]
 
     files_event = native_attention.build_native_attention_event(
         "cbm.search_code",
-        _result({"files": ["apps/python-models/app/python_models/icf.py"]}),
+        _result({"files": ["apps/python-models/app/python_models/idf.py"]}),
         None,
     )
     assert files_event is not None
     assert files_event["nativeNodeIds"] == [
-        "apps/python-models/app/python_models/icf.py",
+        "apps/python-models/app/python_models/idf.py",
     ]
 
 

@@ -23,8 +23,8 @@ LiquidAIty composes specialized open-source systems behind narrow contracts. Cod
 repository structure; ThinkGraph retains project reasoning; KnowGraph retains sourced knowledge and
 provenance; and AgentGraph retains execution and delegation lineage. Hermes is the primary agent runtime,
 while a pinned AutoGen runtime supplies selected multi-agent patterns. LiquidAIty Cards and its user
-interface remain the user-owned composition surface. Exact graph references are selected into inspectable
-`in.icf` and `in.igf` runtime inputs without merging graph databases or transferring their authority.
+interface remain the user-owned composition surface. Exact graph references are selected into one inspectable
+graph-first `in.idf` runtime input without merging graph databases or transferring their authority.
 
 The scientific question is whether this composition improves coding outcomes cumulatively without causing
 cumulative prompt growth. The engineering question is whether components remain replaceable while verified
@@ -161,7 +161,7 @@ The repository contains concrete anchors for testing the proposal, including:
 - ThinkGraph storage through the project's SQLite/Engraphis boundary;
 - KnowGraph storage through Graphiti/Neo4j boundaries;
 - AgentGraph relationships and execution observations through Apache AGE/PostgreSQL;
-- `apps/python-models/app/python_models/icf.py::materialize_input_pair` for canonical `in.icf` and `in.igf`
+- `apps/python-models/app/python_models/idf.py::materialize_idf` for canonical graph-first `in.idf`
   materialization;
 - `card_domain.py::load_card_graph_reference` for bounded graph-reference loading;
 - `data_anchor.py::read_codegraph_exact` for exact CodeGraph reads;
@@ -278,7 +278,7 @@ The next task retrieves native pointers based on its actual scope. If the system
 fraction of relevant verified context rises while total model-visible context stays bounded. This is the
 central hypothesis to test.
 
-## 7. Bounded Context Through Graph Pointers and `in.icf` / `in.igf`
+## 7. Bounded Context Through Graph Pointers and `in.idf`
 
 ### 7.1 Pointers before payloads
 
@@ -288,14 +288,12 @@ run. Hydration resolves only those records under capability and size constraints
 
 ### 7.2 Exact runtime materialization
 
-LiquidAIty defines two canonical UTF-8 runtime artifacts:
+LiquidAIty defines one canonical graph-first UTF-8 runtime input, `in.idf`. It contains bounded selected native
+graph records, references, provenance, and model-visible graph text first; stable receiving-Card context from
+PostgreSQL; selected tools and effective saved grants; and finally the current dynamic mission and images.
 
-- `in.icf`: saved Card/revision contract, dynamic task, allocation, effective capabilities, and the hash of
-  the graph input;
-- `in.igf`: bounded selected native graph records, provenance, and model-visible graph text.
-
-These files are run-scoped inputs, not permanent graph authorities. They make the delivered context
-inspectable and hashable. Adapters project native runtime requests mechanically from the reloaded bytes rather
+This file is a run-scoped input, not a permanent graph authority. It makes the delivered context inspectable
+and hashable. Adapters project native runtime requests mechanically from the reloaded bytes rather
 than reconstructing competing payloads. The design target is byte-level identity from inspection through
 dispatch and runtime consumption; this must be demonstrated by tests before it becomes a publication claim.
 
@@ -312,7 +310,7 @@ For each evaluated run, the system should be able to reconstruct:
 
 - which native references were selected;
 - which revisions or validity windows applied;
-- the exact `in.icf` and `in.igf` hashes and byte sizes;
+- the exact `in.idf` hash and byte size;
 - which runtime and saved Card consumed them;
 - which tools and capabilities were effective;
 - which proof artifacts and failures resulted.
@@ -373,7 +371,7 @@ operating systems. The CBM preprint's broader repository evaluation does not eli
 - missing provenance or temporal invalidation;
 - pointers resolving to deleted or unauthorized records;
 - duplicated writers across graph authorities;
-- `in.icf` / `in.igf` reconstruction by competing adapters;
+- `in.idf` reconstruction by competing adapters;
 - unbounded pointer expansion;
 - visual telemetry implying graph activity that did not occur.
 
@@ -434,7 +432,7 @@ timeout policy within each comparison cohort.
    selection.
 2. **CodeGraph condition:** CBM structural discovery plus mandatory direct source verification.
 3. **Composed-graph condition:** CodeGraph plus bounded ThinkGraph, KnowGraph, and AgentGraph pointers
-   materialized through exact `in.icf` / `in.igf` inputs.
+   materialized through one exact graph-first `in.idf` input.
 
 Transcript history and task specification must be held as constant as practical. The baseline must remain a
 competent workflow, not an intentionally weakened control.
@@ -464,7 +462,7 @@ competent workflow, not an intentionally weakened control.
 ### 10.7 Instrumentation
 
 Measurements should come from stable event timestamps, tool receipts, model usage records, Git revisions,
-test artifacts, `in.icf` / `in.igf` hashes, native graph identifiers, and independent review. Do not infer graph
+test artifacts, the `in.idf` hash, native graph identifiers, and independent review. Do not infer graph
 use from answer prose or animation. Record provider caching separately. Preserve raw measurement artifacts
 under access controls and publish an anonymized data dictionary with the eventual paper.
 

@@ -24,7 +24,6 @@ from app.python_models.card_domain import (
     list_active_kanban_runs,
     list_decks,
     load_deck,
-    materialize_invocation,
     prepare_main_chat,
     read_run,
     read_run_input_files,
@@ -178,14 +177,6 @@ def domain_card_delete(
             else 400
         )
         raise HTTPException(status_code=status, detail=message) from err
-
-
-@app.post("/domain/cards/preview")
-def domain_card_preview(payload: dict[str, Any]):
-    try:
-        return materialize_invocation(payload)
-    except (CardDomainError, IddValidationError) as err:
-        raise HTTPException(status_code=400, detail=str(err)) from err
 
 
 @app.post("/domain/main/prepare")

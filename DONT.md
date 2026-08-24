@@ -108,15 +108,16 @@ major build/remove cycles that matter to launch readiness:
 - **Duplicate context and orchestration authorities:** the July assignment/context layers accumulated
   competing runtime state. `d93edbc5` removed 789 lines and `24f4ed1b` removed another 1,402 while collapsing
   their callers and routes. Current production source has no `ContextPack`, `DeliveredContextManifest`,
-  `routingManifest`, `cardRuntime`, or `cardContext` owner. Do not recreate them under new names.
+  `routingManifest`, `cardRuntime`, or alternate TypeScript runtime-input owner. Do not recreate them under
+  new names.
 - **Main context manifest:** `f536a284` added a five-file, 451-line manifest checkpoint. `cd7017cc` replaced
   that direction with the exact transient Card runtime-input boundary and deleted 1,935 lines. Current production
   has no Main-context-manifest symbol or caller. This former path was actually removed.
 - **Competing runtime-input materializers:** the August sequence repeatedly interpreted runtime input as a saved object,
   envelope, receipt, or runtime packet. `4269f747` collapsed that surface by deleting 2,899 lines across
-  42 files. The surviving owner is Python `materialize_input_pair`, called by the Card domain to retain
-  one canonical `in.icf` and `in.igf` per Card/root Run; old packet fields are rejected at the boundary
-  and have no producer or router.
+  42 files. The surviving owner is Python `materialize_idf`, called by the Card domain to retain and reload
+  one canonical graph-first `in.idf` per Card/root Run; old packet fields and the later two-file split are
+  rejected at the boundary and have no producer or router.
 
 The surviving keeper authorities are saved Cards/PostgreSQL, one Python materializer, native graph owners,
 the official MCP seam, AGE observation, repo-owned Hermes profiles/sessions, and the maintained AutoGen
@@ -127,9 +128,9 @@ rewrite Hermes.
 **Direct verdict:** the surviving launch path improved structurally this month because duplicate runtimes,
 manifests, and OpenClaude were removed and the six saved Cards now converge on Hermes plus one maintained
 AutoGen rail. It did not improve enough operationally: the complete user loop is still not proven until
-Main explicitly hands a graph-anchored mission to Kanban, Kanban loads the existing Mag One Card, Main
-reviews it, and one later controlled Mag One execution completes. Until that proof, do not start another
-replacement architecture.
+Main hands a graph-anchored mission through the canonical Card-run path and one native Mag One execution
+completes, either automatically or after optional review in the existing Card editor. Until that proof, do
+not start another replacement architecture.
 
 **Repo-wide tally (298 commits, from initial commit to 2026-07-09):**
 - 4,894,078 lines inserted — total code ever written
@@ -168,7 +169,7 @@ The items below are the major deletion events. Every one "worked" before it was 
     `buildSemanticSeedRecords`, `runKnowGraphSemanticSeed` (`MERGE :SemanticRecord`), the EDGAR TS→Neo4j
     bridge. (KnowGraph writes are Python pipeline operations only — rule 9.)
   - **Dead TS-brain** — `evoselector.ts`, `embedding.ts`, `ontology.ts`, `modelCascadePlan.ts`,
-    `contractMaker.ts`, `timeseries.ts`, `knowGraphEvidenceRetrieval.ts`, `agentCardRegistry.ts`
+    `contractMaker.ts`, `timeseries.ts`, the deleted KnowGraph evidence-retrieval path, `agentCardRegistry.ts`
     (orphaned card catalog/classifier), and Python `autogen_research.py` (banned-AgentChat stub).
   - **EDGAR ontology extractor** — `edgar_graph_extraction.py` (hardcoded `EDGAR_ALLOWED_CLASSES`/
     `RELATIONS`/`PATTERNS`), a dev CLI that only existed to feed a hardcoded ontology to the model.

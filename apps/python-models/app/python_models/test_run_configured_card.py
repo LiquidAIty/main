@@ -24,11 +24,11 @@ def _context(
 ) -> RuntimeRequest:
     tools = ["calculator"] if enabled_tools is None else enabled_tools
     materialized = materialize_idf(
-        owner={"kind": "test", "runId": "run:one"},
         stable={
             "instructions": "saved system",
             "outputContract": "",
             "runtime": {"kind": "autogen", "mode": runtime_mode},
+            "runtimeOptions": {},
             "provider": {
                 "accessMode": "openai-api", "provider": "openai",
                 "modelKey": MODEL, "providerModelId": MODEL,
@@ -40,7 +40,6 @@ def _context(
             "toolDefinitions": [{"name": name} for name in tools],
             "nativeTools": [], "skills": [], "toolsets": [], "mcpConnectionIds": [],
         },
-        allocation={"runtimeOptions": {}},
         graph_context="current native graph data",
         native_references=[],
         graph_projection={"authority": "", "nodes": [], "edges": []},
@@ -91,12 +90,12 @@ def test_single_card_consumes_graph_first_idf(monkeypatch) -> None:
 
     assert result.ok is True
     assert result.runId == "run:one"
-    assert observed[0]["system_message"] == context.idf.icf.instructions
+    assert observed[0]["system_message"] == context.idf.stableSavedCardContext.instructions
     attached_names = {tool.name for tool in observed[0]["tools"]}
     assert "web_search" in attached_names
     assert "calculator" in attached_names
     assert observed[1] == {"task": "current native graph data\n\nrun"}
-    assert context.idf.icf.task == "run"
+    assert context.idf.dynamicContext.task == "run"
 
 
 def test_single_card_gets_idd_reads_without_copying_them_into_card_tools(monkeypatch) -> None:
@@ -121,7 +120,7 @@ def test_single_card_gets_idd_reads_without_copying_them_into_card_tools(monkeyp
     assert result.ok is True
     attached_names = {tool.name for tool in observed[0]["tools"]}
     assert "web_search" in attached_names
-    assert context.idf.execution.enabledTools == []
+    assert context.idf.selectedToolsAndGrants.enabledTools == []
 
 
 def test_single_card_error_never_echoes_dynamic_input(monkeypatch) -> None:

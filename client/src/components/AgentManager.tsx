@@ -194,12 +194,10 @@ interface AgentManagerProps {
   promptTestInput?: string;
   onChangePromptTestInput?: (value: string) => void;
   onRunCard?: () => void;
-  onPreviewCard?: () => void;
   onLearnCard?: () => void;
   onStopCard?: () => void;
   onRejoinCard?: () => void;
   onClearInvocation?: () => void;
-  onClearGraphContext?: () => void;
   onOpenCoderTerminal?: () => void;
   onOpenHermesKanban?: () => void;
   onOpenMainChat?: () => void;
@@ -209,14 +207,6 @@ interface AgentManagerProps {
     nativeId: string,
     direction: -1 | 1,
   ) => void;
-  onImportIgfSelections?: (selections: Array<{
-    authority: 'ThinkGraph' | 'KnowGraph' | 'CodeGraph';
-    nativeId: string;
-    reason: string;
-    boundedExpansion: number;
-    resultLimit: number;
-    required: boolean;
-  }>) => void | Promise<void>;
   runBusy?: boolean;
   runDisabled?: boolean;
   showTaskComposer?: boolean;
@@ -304,11 +294,10 @@ export type StandaloneCardTestResult = {
     resolvedNativeReads?: Array<Record<string, unknown>>;
     resolvedGraphProjection?: GraphProjectionV1;
     idf: {
-      igf: Record<string, any>;
-      icf: Record<string, any>;
-      execution: Record<string, any>;
-      output: Record<string, any>;
-      estimates: Record<string, any>;
+      actualGraphData: Record<string, any>;
+      stableSavedCardContext: Record<string, any>;
+      selectedToolsAndGrants: Record<string, any>;
+      dynamicContext: Record<string, any>;
     };
     inputSummary?: Record<string, any>;
     inputFile?: Record<string, any>;
@@ -322,65 +311,14 @@ export type RetainedRunInputs = {
   runId: string;
   message?: string;
   idf?: {
-    igf: Record<string, any>;
-    icf: Record<string, any>;
-    execution: Record<string, any>;
-    output: Record<string, any>;
-    estimates: Record<string, any>;
+    actualGraphData: Record<string, any>;
+    stableSavedCardContext: Record<string, any>;
+    selectedToolsAndGrants: Record<string, any>;
+    dynamicContext: Record<string, any>;
   };
   inputSummary?: Record<string, any>;
   idfText?: string;
 };
-
-export type NamedRuntimeInputInspection = {
-  filename: string;
-  kind: 'icf' | 'igf';
-  text: string;
-  parsed: Record<string, any> | { header: Record<string, any>; records: Array<Record<string, any>> };
-};
-
-const FORBIDDEN_RUNTIME_INPUT_KEYS = new Set([
-  'apikey', 'api_key', 'authorization', 'bearer', 'bearertoken',
-  'access_token', 'refreshtoken', 'refresh_token', 'clientsecret',
-  'client_secret', 'oauthstate', 'oauth_state',
-]);
-
-function assertImportedInputSecretFree(value: unknown): void {
-  if (Array.isArray(value)) {
-    value.forEach(assertImportedInputSecretFree);
-    return;
-  }
-  if (!value || typeof value !== 'object') return;
-  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-    if (FORBIDDEN_RUNTIME_INPUT_KEYS.has(key.replaceAll('-', '_').toLowerCase())) {
-      throw new Error('input_file_secret_field_forbidden');
-    }
-    assertImportedInputSecretFree(nested);
-  }
-}
-
-export function parseNamedRuntimeInput(filename: string, text: string): NamedRuntimeInputInspection {
-  const normalizedName = filename.trim().toLowerCase();
-  if (normalizedName.endsWith('.icf')) {
-    const parsed = JSON.parse(text) as Record<string, any>;
-    if (!parsed || typeof parsed !== 'object' || parsed.format !== 'liquidaity.input-context') {
-      throw new Error('input_context_file_invalid');
-    }
-    assertImportedInputSecretFree(parsed);
-    return { filename, kind: 'icf', text, parsed };
-  }
-  if (normalizedName.endsWith('.igf')) {
-    const lines = text.split(/\r?\n/).filter((line) => line.length > 0);
-    const header = JSON.parse(lines[0] || '{}') as Record<string, any>;
-    const records = lines.slice(1).map((line) => JSON.parse(line) as Record<string, any>);
-    if (header.kind !== 'header' || header.format !== 'liquidaity.input-graph') {
-      throw new Error('input_graph_file_invalid');
-    }
-    assertImportedInputSecretFree({ header, records });
-    return { filename, kind: 'igf', text, parsed: { header, records } };
-  }
-  throw new Error('runtime_input_extension_invalid');
-}
 
 export function selectKnowledgeGraphProjection(
   loaded: GraphProjectionV1,
@@ -559,18 +497,15 @@ export function AgentManager({
   promptTestInput,
   onChangePromptTestInput,
   onRunCard,
-  onPreviewCard,
   onLearnCard,
   onStopCard,
   onRejoinCard,
   onClearInvocation,
-  onClearGraphContext,
   onOpenCoderTerminal,
   onOpenHermesKanban,
   onOpenMainChat,
   onRemoveGraphReference,
   onMoveGraphReference,
-  onImportIgfSelections,
   runBusy = false,
   runDisabled = false,
   showTaskComposer = true,
@@ -662,7 +597,6 @@ export function AgentManager({
     toolCount: number;
     error: string | null;
   }>>({});
-  const [namedInputInspection, setNamedInputInspection] = useState<NamedRuntimeInputInspection | null>(null);
   const [inputFileTransferError, setInputFileTransferError] = useState<string | null>(null);
   const draftDirtyRef = useRef(false);
   const loadedGraphProjection = useMemo<GraphProjectionV1>(() => {
@@ -692,7 +626,7 @@ export function AgentManager({
   const knowledgeProjectionIsMaterialized = selectedKnowledgeProjection.modelBound;
 
   const exportRuntimeInput = useCallback(async (
-    extension: '.idf' | '.icf' | '.igf',
+    extension: '.idf',
     contents: string,
   ) => {
     setInputFileTransferError(null);
@@ -722,9 +656,7 @@ export function AgentManager({
       const handle = await picker({
         suggestedName: filename,
         types: [{
-          description: extension === '.idf'
-            ? 'Input Data File'
-            : extension === '.icf' ? 'Input Context File' : 'Input Graph File',
+          description: 'Input Data File',
           accept: { 'application/json': [extension] },
         }],
       });
@@ -738,63 +670,9 @@ export function AgentManager({
     }
   }, []);
 
-  const loadNamedRuntimeInput = useCallback(async (file: File | undefined) => {
-    if (!file) return;
-    setInputFileTransferError(null);
-    try {
-      const loaded = parseNamedRuntimeInput(file.name, await file.text());
-      if (loaded.kind === 'icf') {
-        const parsed = loaded.parsed as Record<string, any>;
-        const task = parsed.variable?.task;
-        if (typeof task !== 'string') throw new Error('input_context_task_missing');
-        onChangePromptTestInput?.(task);
-      } else {
-        const parsed = loaded.parsed as {
-          header: Record<string, any>;
-          records: Array<Record<string, any>>;
-        };
-        const selections = parsed.records
-          .filter((record) => record.kind === 'selection')
-          .map((record) => {
-            const authority = String(record.authority || '');
-            const nativeId = String(record.nativeId || '').trim();
-            const content = record.content && typeof record.content === 'object'
-              ? record.content as Record<string, any>
-              : {};
-            if (!['ThinkGraph', 'KnowGraph', 'CodeGraph'].includes(authority) || !nativeId) {
-              throw new Error('input_graph_selection_invalid');
-            }
-            return {
-              authority: authority as 'ThinkGraph' | 'KnowGraph' | 'CodeGraph',
-              nativeId,
-              reason: String(content.reason || 'Imported native graph selection'),
-              boundedExpansion: 1,
-              resultLimit: 12,
-              required: content.required !== false,
-            };
-          });
-        if (!onImportIgfSelections) throw new Error('input_graph_import_unavailable');
-        await Promise.resolve(onImportIgfSelections(selections));
-      }
-      setNamedInputInspection(loaded);
-    } catch (error) {
-      setNamedInputInspection(null);
-      setInputFileTransferError(error instanceof Error ? error.message : 'Named input inspection failed.');
-    }
-  }, [onChangePromptTestInput, onImportIgfSelections]);
-
-  const clearNamedRuntimeInput = useCallback(() => {
-    const kind = namedInputInspection?.kind;
-    setNamedInputInspection(null);
-    setInputFileTransferError(null);
-    if (kind === 'icf') onChangePromptTestInput?.('');
-    if (kind === 'igf') onClearGraphContext?.();
-  }, [namedInputInspection?.kind, onChangePromptTestInput, onClearGraphContext]);
-
   useEffect(() => {
     setCardNameDraft(cardName);
     setCardSubtextDraft(cardSubtext);
-    setNamedInputInspection(null);
     setInputFileTransferError(null);
   }, [cardId, cardName, cardSubtext]);
 
@@ -1539,71 +1417,33 @@ export function AgentManager({
     if (activeTab === 'Knowledge') {
       return (
         <div data-testid="agent-manager-knowledge" style={{ display: 'grid', gap: 10 }}>
-          <section style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #3A4A4F', borderRadius: 8 }}>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-              Import named .igf
-              <input
-                type="file"
-                accept=".igf"
-                style={{ maxWidth: 190 }}
-                onChange={(event) => {
-                  void loadNamedRuntimeInput(event.currentTarget.files?.[0]);
-                  event.currentTarget.value = '';
-                }}
-              />
-            </label>
-            <div style={{ color: '#80969F', fontSize: 10.5 }}>
-              Imported selections are re-read through current native authorities. Loading never writes a graph or runs the Card.
-            </div>
-            {namedInputInspection?.kind === 'igf' ? (
-              <div data-testid="named-igf-inspection" style={{ color: '#8FD1B8', fontSize: 10.5 }}>
-                Loaded selections from {namedInputInspection.filename} through current native reread. No graph was written and nothing executed.
-                <button type="button" onClick={clearNamedRuntimeInput} style={{ marginLeft: 8 }}>Clear imported IGF</button>
-              </div>
-            ) : null}
-            {inputFileTransferError ? <div role="alert" style={{ color: '#FFA2A2', fontSize: 10.5 }}>{inputFileTransferError}</div> : null}
-          </section>
-          {!runInputs && runResult?.invocation ? (
-            <section data-testid="next-idf-graph-preview" style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #3A4A4F', borderRadius: 8 }}>
-              <strong style={{ color: '#D5E4E8', fontSize: 12 }}>Next IDF graph-evidence preview</strong>
-              <div style={{ color: '#80969F', fontSize: 10.5 }}>
-                {Number(runResult.invocation.idf.igf?.recordCounts?.total || 0)} records · provider-free preview only · no retained file yet
-              </div>
-              <details>
-                <summary style={{ cursor: 'pointer', color: '#B8C8CD', fontSize: 11 }}>Inspect structured preview</summary>
-                <pre style={{ margin: '8px 0 0', padding: 8, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#161A1B', color: '#C7D7DC', fontSize: 10 }}>
-                  {JSON.stringify(runResult.invocation.idf.igf, null, 2)}
-                </pre>
-              </details>
-            </section>
-          ) : null}
           {runInputs ? (
             <section
               data-testid="selected-run-idf-graph"
               style={{ display: 'grid', gap: 8, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#1D2526' }}
             >
               <strong style={{ color: '#D5E4E8', fontSize: 12 }}>
-                Selected Run · IDF graph evidence
+                Selected Run · actual graph data
               </strong>
               {runInputs.available && runInputs.idf ? (
                 <>
                   <div style={{ color: '#80969F', fontSize: 10.5 }}>
-                    {Number(runInputs.idf.igf?.recordCounts?.total || 0)} records · {' '}
-                    {Array.isArray(runInputs.idf.igf?.authorities) && runInputs.idf.igf.authorities.length > 0
-                      ? runInputs.idf.igf.authorities.join(', ')
+                    {Number(runInputs.idf.actualGraphData?.recordCounts?.total || 0)} records · {' '}
+                    {Array.isArray(runInputs.idf.actualGraphData?.authorities) && runInputs.idf.actualGraphData.authorities.length > 0
+                      ? runInputs.idf.actualGraphData.authorities.join(', ')
                       : 'no graph authority selected'}
                   </div>
                   <div data-testid="selected-run-idf-graph-token-estimate" style={{ color: '#9FB2B8', fontSize: 10.5 }}>
                     Estimated model-visible graph context: {' '}
-                    {Number(runInputs.idf.estimates?.graphContextTokens || 0).toLocaleString()} tokens. {' '}
-                    This bounded evidence remains inside the one retained IDF; native graphs remain authoritative.
+                    {Number(runInputs.inputSummary?.estimatedGraphContextTokens || 0).toLocaleString()} tokens. {' '}
+                    This bounded data remains inside the one retained IDF; native graphs remain authoritative.
                   </div>
                   <details>
                     <summary style={{ cursor: 'pointer', color: '#B8C8CD', fontSize: 11 }}>
-                      Inspect graph section inside retained IDF
+                      Inspect actual graph data inside retained IDF
                     </summary>
                     <pre style={{ margin: '8px 0 0', padding: 8, maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#161A1B', color: '#C7D7DC', fontSize: 10 }}>
-                      {JSON.stringify(runInputs.idf.igf, null, 2)}
+                      {JSON.stringify(runInputs.idf.actualGraphData, null, 2)}
                     </pre>
                   </details>
                 </>
@@ -2617,14 +2457,6 @@ export function AgentManager({
             </button>
             <button
               type="button"
-              onClick={onPreviewCard}
-              disabled={runDisabled || runBusy || !String(promptTestInput || '').trim()}
-              data-testid="agent-manager-preview-inputs"
-            >
-              Preview inputs
-            </button>
-            <button
-              type="button"
               onClick={onRunCard}
               disabled={runDisabled || runBusy || !String(promptTestInput || '').trim()}
               aria-busy={runBusy}
@@ -2668,55 +2500,6 @@ export function AgentManager({
           </div>
         </div> : null}
 
-        {activeTab === 'Task' ? (
-          <section style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #3A4A4F', borderRadius: 8 }}>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-              Import named .icf
-              <input
-                type="file"
-                accept=".icf"
-                style={{ maxWidth: 190 }}
-                onChange={(event) => {
-                  void loadNamedRuntimeInput(event.currentTarget.files?.[0]);
-                  event.currentTarget.value = '';
-                }}
-              />
-            </label>
-            <div style={{ color: '#80969F', fontSize: 10.5 }}>
-              Import loads only the transient task. Saved Card grants, profile, provider, and model remain authoritative; loading never runs the Card.
-            </div>
-            {!showTaskComposer && onPreviewCard ? (
-              <button
-                type="button"
-                onClick={onPreviewCard}
-                disabled={runBusy || !String(promptTestInput || '').trim()}
-                data-testid="agent-manager-preview-main-inputs"
-              >
-                Preview imported/Main chat input
-              </button>
-            ) : null}
-            {namedInputInspection?.kind === 'icf' ? (
-              <div data-testid="named-icf-inspection" style={{ color: '#8FD1B8', fontSize: 10.5 }}>
-                Loaded the transient task from {namedInputInspection.filename}. Saved Card grants, profile, provider, and model were ignored; nothing executed.
-                <button type="button" onClick={clearNamedRuntimeInput} style={{ marginLeft: 8 }}>Clear imported ICF</button>
-              </div>
-            ) : null}
-            {inputFileTransferError ? <div role="alert" style={{ color: '#FFA2A2', fontSize: 10.5 }}>{inputFileTransferError}</div> : null}
-          </section>
-        ) : null}
-
-        {activeTab === 'Task' && !runInputs && runResult?.invocation ? (
-          <section data-testid="next-idf-preview" style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #3A4A4F', borderRadius: 8 }}>
-            <strong style={{ color: '#D5E4E8', fontSize: 12 }}>Next IDF preview</strong>
-            <div style={{ color: '#80969F', fontSize: 10.5 }}>
-              Provider-free preview only. No Run exists and no file has been retained yet.
-            </div>
-            <pre style={{ margin: 0, padding: 8, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#161A1B', color: '#C7D7DC', fontSize: 10 }}>
-              {JSON.stringify(runResult.invocation.idf, null, 2)}
-            </pre>
-          </section>
-        ) : null}
-
         {activeTab === 'Task' && runInputs ? (
           <section
             data-testid="selected-run-idf"
@@ -2729,13 +2512,13 @@ export function AgentManager({
               <>
                 <div style={{ color: '#80969F', fontSize: 10.5 }}>
                   {Number(runInputs.inputSummary?.idfBytes || 0).toLocaleString()} UTF-8 bytes · estimated {' '}
-                  {Number(runInputs.idf.estimates?.totalModelVisibleTokens || 0).toLocaleString()} LiquidAIty-supplied text tokens
+                  {Number(runInputs.inputSummary?.estimatedModelVisibleTokens || 0).toLocaleString()} LiquidAIty-supplied text tokens
                 </div>
                 <div data-testid="selected-run-token-estimate" style={{ color: '#9FB2B8', fontSize: 10.5, lineHeight: 1.5 }}>
-                  system {Number(runInputs.idf.estimates?.systemContextTokens || 0).toLocaleString()} · {' '}
-                  task {Number(runInputs.idf.estimates?.taskTokens || 0).toLocaleString()} · {' '}
-                  output {Number(runInputs.idf.estimates?.outputContractTokens || 0).toLocaleString()} · {' '}
-                  graph {Number(runInputs.idf.estimates?.graphContextTokens || 0).toLocaleString()}
+                  system {Number(runInputs.inputSummary?.estimatedSystemContextTokens || 0).toLocaleString()} · {' '}
+                  task {Number(runInputs.inputSummary?.estimatedTaskTokens || 0).toLocaleString()} · {' '}
+                  output {Number(runInputs.inputSummary?.estimatedOutputContractTokens || 0).toLocaleString()} · {' '}
+                  graph {Number(runInputs.inputSummary?.estimatedGraphContextTokens || 0).toLocaleString()}
                   <br />
                   Estimate: UTF-8 bytes ÷ 4, rounded up. The retained IDF contains the exact LiquidAIty input fields; native provider usage remains authoritative after execution.
                 </div>
@@ -2744,6 +2527,11 @@ export function AgentManager({
                     Export IDF…
                   </button>
                 </div>
+                {inputFileTransferError ? (
+                  <div role="alert" style={{ color: '#FFA2A2', fontSize: 10.5 }}>
+                    {inputFileTransferError}
+                  </div>
+                ) : null}
                 <details>
                   <summary style={{ cursor: 'pointer', color: '#B8C8CD', fontSize: 11 }}>
                     Inspect exact retained IDF JSON

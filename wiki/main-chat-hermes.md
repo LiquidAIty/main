@@ -36,7 +36,7 @@ persistence ID only; no LocalCoder/OpenClaude runtime exists.
 - backend Main adapter/session/profile/memory tests;
 - Coder terminal lifecycle tests;
 - saved topology and runtime-binding tests;
-- exact transient-input preview/transport tests;
+- exact retained-`in.idf` inspection/reload/transport tests;
 - one separately approved live Main → Coder proof with child Run and AGE lineage.
 
 ## Limitations

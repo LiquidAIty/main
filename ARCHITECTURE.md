@@ -128,8 +128,8 @@ defined only in `AGENTS.md`; this file maps component ownership without defining
 capability = Card grants ∩ IDD requirements ∩ current input selections ∩ AGE relationship ∩ approval
 ```
 
-Routing IDs and telemetry remain outside the transient call. PostgreSQL does not save transient call
-input by default.
+Routing IDs and telemetry remain outside `in.idf`. PostgreSQL retains the existing Run artifact metadata;
+the artifact path identifies the one exact retained input file.
 
 `write_mag_one_instructions` loads exact text directly into the saved Mag One Card's transient
 Invocation editor. It is not a proposal document, materializer, or store. It resolves the one saved
@@ -137,23 +137,32 @@ Mag One Card read-only and returns that Card identity with the exact mission. In
 session, the existing Hermes tool-result/SSE path places the text in unsaved per-Card React state.
 It creates no Run, revision, hash, approval object, or saved prompt and never starts AutoGen.
 
-`card.load_graph_references` is the single Card handoff for native graph pointers. The MCP host injects
+`card.load_graph_references` is the review-only Card-editor loader for native graph pointers. The MCP host injects
 the trusted source Card/Run/project/deck identity; the caller supplies one target Card, native identity,
 reason, order, and bounds. Python rereads the current native authority, returns actual transient context
 to the target Card's existing Knowledge tab, and records the proven read/handoff on the source Run in
-AGE. The outer Mag One Card is materialized only when Main runs it; each saved worker Card then
-materializes its own task through the same receiving-Card path.
+AGE. It never materializes an IDF or starts a Card. The outer Mag One Card is materialized only when an
+automatic handoff or reviewed manual submission runs it; each saved worker Card then materializes its own
+task through the same receiving-Card path.
 
 Saved Hermes Cards remain three distinct persistent agents: Main, Coder, and Kanban. A saved `flow`
 edge grants an explicit Card-to-Card call; it never starts a profile, queued task, or model. Main may
 call Coder or Kanban, and Coder may call Kanban, through `card.run_assistant_agent`. Kanban has no
 outgoing saved-Card delegation grant. Each such call uses the receiving Card's saved Hermes profile and
-one explicit mission plus selected native graph references. Python rejects copied parent context,
+one explicit mission plus selected native graph references. This is the normal automatic handoff and it
+executes immediately through the canonical receiving-Card Run path. Python rejects copied parent context,
 message windows, prior-result packets, and caller-authored native-reference bodies; it rereads each
-selected native identity and resolves current graph data before the one ICF/IGF materialization. Main's
-Hermes memory remains private to Main. The root Run retains only its two exact runtime-input files through
-the existing artifact catalog. Native Hermes subagents remain an
+selected native identity and resolves current graph data before the one graph-first IDF materialization.
+Main's Hermes memory remains private to Main. The root Run retains only its one exact `in.idf` runtime-input
+file through the existing artifact catalog. Native Hermes subagents remain an
 optional per-Card/profile capability; they do not replace these saved Cards or become AutoGen Assistants.
+When the user requests review first, `write_mag_one_instructions` and `card.load_graph_references` load the
+mission and bounded selection into the existing target Card editors. One later manual Run uses the same
+canonical receiving-Card path; review never creates a second input or executes twice.
+
+The serialized `in.idf` order is fixed: actual bounded native graph data and provenance; stable receiving-
+Card context from PostgreSQL; selected tools and effective saved grants; then the current dynamic mission
+and images. `apps/python-models/app/python_models/idf.py::materialize_idf` is the sole materializer.
 
 ## Graph owners
 
