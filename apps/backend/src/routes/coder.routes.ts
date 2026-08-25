@@ -2,7 +2,6 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import {
   coderTerminalSessionManager,
-  startCoderTerminalSession,
 } from '../hermes/coderTerminal';
 import {
   answerHermesSession,
@@ -1248,37 +1247,6 @@ function mountConsoleSessionRoutes(
   prefix: string,
   manager: typeof coderTerminalSessionManager,
 ): void {
-  router.post(`${prefix}/sessions`, async (req, res) => {
-    if (req.body?.mode && req.body.mode !== 'interactive') {
-      return res.status(400).json({ ok: false, error: 'hermes_coder_terminal_interactive_only', missing: [] });
-    }
-    const started = manager.acquire({
-      projectId: String(req.body?.projectId || '').trim(),
-      deckId: String(req.body?.deckId || BUILDER_DECK_ID).trim(),
-      conversationId: String(req.body?.conversationId || 'main').trim(),
-      targetRoot: typeof req.body?.targetRoot === 'string' ? req.body.targetRoot : undefined,
-      mode: 'interactive',
-    });
-    if (!started.ok) {
-      return res.status(424).json({ ok: false, error: started.error, missing: started.missing });
-    }
-    const session = started.session;
-    if (started.created) {
-      try {
-        startCoderTerminalSession(session);
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : 'hermes_coder_terminal_prepare_failed';
-        session.markFailed(reason);
-      }
-    }
-    const failed = session.info.state === 'failed';
-    return res.status(failed ? 502 : 200).json({
-      ok: !failed,
-      session: session.info,
-      ...(failed ? { error: session.info.error || 'hermes_coder_terminal_prepare_failed', missing: [] } : {}),
-    });
-  });
-
   router.get(`${prefix}/sessions`, (_req, res) => {
     return res.json({ ok: true, sessions: manager.list() });
   });
@@ -1349,12 +1317,6 @@ function mountConsoleSessionRoutes(
     });
   });
 
-  router.post(`${prefix}/sessions/:id/stop`, (req, res) => {
-    const session = manager.get(req.params.id);
-    if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
-    const stopped = session.stop();
-    return res.json({ ok: true, stopped, session: session.info });
-  });
 }
 
 mountConsoleSessionRoutes('/hermes/coder-terminal', coderTerminalSessionManager);

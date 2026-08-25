@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 // Static imports: NodeNext ESM rejects extensionless dynamic import('./coder.routes')
 // after the '.routes' infix strip. vitest hoists vi.mock() above these.
 import router from './coder.routes';
+import {
+  ensurePersistentCoderTerminal,
+} from '../hermes/coderTerminal';
 
 const deckMocks = vi.hoisted(() => ({
   getDeckDocument: vi.fn(async () => ({
@@ -1338,28 +1341,21 @@ describe('coder routes', () => {
     }
   });
 
-  it('starts the saved Coder Card as a real Hermes CLI ConPTY', async () => {
+  it('exposes only the startup-owned saved Coder Hermes CLI ConPTY', async () => {
     ptyMocks.spawn.mockClear();
     mcpClientMocks.resolvePythonAgentMcpServerSpec.mockClear();
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.startHermesTurn.mockClear();
+    const startupSession = ensurePersistentCoderTerminal();
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/hermes/coder-terminal/sessions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: 'terminal-project-ready',
-          deckId: 'deck_builder',
-          conversationId: 'terminal-conversation-ready',
-          mode: 'interactive',
-        }),
-      });
+      const response = await fetch(`${baseUrl}/hermes/coder-terminal/sessions`);
       const payload = await response.json();
       expect(response.status, JSON.stringify(payload)).toBe(200);
-      expect(payload).toMatchObject({
-        ok: true,
-        session: {
+      expect(payload.ok).toBe(true);
+      expect(payload.sessions).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: startupSession.id,
           ownerCardId: 'card_local_coder',
           state: 'running',
           transportMode: 'pty',
@@ -1368,8 +1364,8 @@ describe('coder routes', () => {
           executable: expect.stringMatching(/Hermes[\\/]venv[\\/]Scripts[\\/]hermes\.exe$/),
           hermesHome: expect.stringMatching(/Hermes[\\/]\.hermes$/),
           pid: expect.any(Number),
-        },
-      });
+        }),
+      ]));
       expect(ptyMocks.spawn).toHaveBeenCalledTimes(1);
       expect(ptyMocks.spawn.mock.calls[0]?.[0]).toMatch(/Hermes[\\/]venv[\\/]Scripts[\\/]hermes\.exe$/);
       expect(ptyMocks.spawn.mock.calls[0]?.[1]).toEqual([
@@ -1388,35 +1384,12 @@ describe('coder routes', () => {
       expect(mcpClientMocks.resolvePythonAgentMcpServerSpec).not.toHaveBeenCalled();
       expect(orchestratorMocks.requestPythonRailsJson).not.toHaveBeenCalled();
       expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  it('returns the exact native terminal startup failure instead of a generic 502 label', async () => {
-    ptyMocks.spawn.mockImplementationOnce(() => {
-      throw new Error('native_conpty_start_failed');
-    });
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/hermes/coder-terminal/sessions`, {
+      const createResponse = await fetch(`${baseUrl}/hermes/coder-terminal/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: 'terminal-project-failure',
-          deckId: 'deck_builder',
-          conversationId: 'terminal-conversation-failure',
-          mode: 'interactive',
-        }),
+        body: '{}',
       });
-      const payload = await response.json();
-      expect(response.status).toBe(502);
-      expect(payload).toMatchObject({
-        ok: false,
-        error: 'native_conpty_start_failed',
-        session: { state: 'failed' },
-      });
-      expect(JSON.stringify(payload)).not.toContain('console_start_failed_502');
+      expect(createResponse.status).toBe(404);
     } finally {
       await closeServer(server);
     }
@@ -1439,25 +1412,16 @@ describe('coder routes', () => {
       },
     }));
     chatSessionMocks.startHermesTurn.mockClear();
-    const childIndex = ptyMocks.children.length;
+    const spawnCount = ptyMocks.spawn.mock.calls.length;
+    const startupSession = ensurePersistentCoderTerminal();
+    expect(ptyMocks.spawn).toHaveBeenCalledTimes(spawnCount);
+    const child = ptyMocks.children.find((candidate) => candidate.pid === startupSession.pid);
+    if (!child) throw new Error('startup_terminal_child_missing');
     const { server, baseUrl } = await createApiServer();
     try {
-      const startResponse = await fetch(`${baseUrl}/hermes/coder-terminal/sessions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: 'terminal-project-shared',
-          deckId: 'deck_builder',
-          conversationId: 'main',
-          mode: 'interactive',
-        }),
-      });
-      const started = await startResponse.json();
-      expect(startResponse.status, JSON.stringify(started)).toBe(200);
-      const child = ptyMocks.children[childIndex];
       const outputController = new AbortController();
       const outputResponse = await fetch(
-        `${baseUrl}/hermes/coder-terminal/sessions/${started.session.id}/pty`,
+        `${baseUrl}/hermes/coder-terminal/sessions/${startupSession.id}/pty`,
         { signal: outputController.signal },
       );
       expect(outputResponse.status).toBe(200);
@@ -1471,7 +1435,7 @@ describe('coder routes', () => {
       );
 
       const directResponse = await fetch(
-        `${baseUrl}/hermes/coder-terminal/sessions/${started.session.id}/input`,
+        `${baseUrl}/hermes/coder-terminal/sessions/${startupSession.id}/input`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1482,7 +1446,7 @@ describe('coder routes', () => {
       expect(child.write).toHaveBeenCalledWith('Inspect one bounded symbol.\r');
 
       const resizeResponse = await fetch(
-        `${baseUrl}/hermes/coder-terminal/sessions/${started.session.id}/resize`,
+        `${baseUrl}/hermes/coder-terminal/sessions/${startupSession.id}/resize`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1516,18 +1480,16 @@ describe('coder routes', () => {
       });
       expect(child.write).toHaveBeenCalledTimes(1);
       const terminalSession = await fetch(
-        `${baseUrl}/hermes/coder-terminal/sessions/${started.session.id}`,
+        `${baseUrl}/hermes/coder-terminal/sessions/${startupSession.id}`,
       ).then((response) => response.json());
       expect(terminalSession.session.state).toBe('running');
       expect(terminalSession).not.toHaveProperty('transcript');
-
       const stopResponse = await fetch(
-        `${baseUrl}/hermes/coder-terminal/sessions/${started.session.id}/stop`,
+        `${baseUrl}/hermes/coder-terminal/sessions/${startupSession.id}/stop`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
       );
-      expect(stopResponse.status).toBe(200);
-      expect(child.kill).toHaveBeenCalledOnce();
-      child.emitExit(0);
+      expect(stopResponse.status).toBe(404);
+      expect(child.kill).not.toHaveBeenCalled();
       outputController.abort();
     } finally {
       await closeServer(server);

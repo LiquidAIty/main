@@ -8,7 +8,6 @@ import {
 } from '../services/mcp/pythonAgentMcpClient';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { resolveSavedMcpConnections } from './mcpConnections';
-import { resolveHermesRuntimeHome } from './profileMemory';
 import {
   createHermesChildExecutionContext,
   bindHermesRootExecutionSession,
@@ -16,8 +15,6 @@ import {
   finishHermesExecutionContext,
   registerHermesRootExecutionContext,
 } from './childExecutionContext';
-
-export { resolveHermesRuntimeHome };
 
 export type HermesTurnUsage = {
   providerInputTokens: number | null;
@@ -320,7 +317,7 @@ export class AcpProcess {
   ) {
     const install = options.install ?? resolveHermesInstall();
     this.executable = install.executable;
-    const rootHome = options.hermesHome ?? resolveHermesRuntimeHome(install.root);
+    const rootHome = options.hermesHome ?? path.join(install.root, '.hermes');
     const profile = String(options.profile || '').trim().toLowerCase();
     if (profile && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile)) {
       throw new Error('hermes_runtime_profile_invalid');

@@ -1749,9 +1749,6 @@ export default function AgentBuilder(): React.ReactElement {
                 placement="docked"
                 title="Coder"
                 testIdPrefix="coder-console"
-                projectId={typeof activeProject === 'string' ? activeProject : undefined}
-                deckId={BUILDER_DECK_ID}
-                conversationId={conversationId}
               />
             }
           />

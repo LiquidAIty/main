@@ -10,13 +10,9 @@ import XtermView from './XtermView';
 
 type CoderTerminalPanelProps = {
   open: boolean;
-  targetRoot?: string;
   title?: string;
   placement?: 'overlay' | 'docked';
   testIdPrefix?: string;
-  projectId?: string;
-  deckId?: string;
-  conversationId?: string;
   onClose?: () => void;
   /** Injectable for tests. Defaults to the real backend client. */
   client?: CoderTerminalClient;
@@ -190,9 +186,8 @@ function CoderTerminalPanelInner({
 }
 
 /**
- * Isolation boundary so a fault in the console panel can NEVER blank the
- * AgentBuilder canvas. On error it renders nothing (the panel simply does not
- * appear); the rest of the workspace keeps working.
+ * Isolation boundary so a terminal-rendering fault cannot blank the AgentBuilder
+ * canvas. The failure remains visible when the terminal region is opened.
  */
 class ConsolePanelErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -200,11 +195,14 @@ class ConsolePanelErrorBoundary extends Component<{ children: ReactNode }, { fai
     return { failed: true };
   }
   componentDidCatch(error: unknown) {
-    // Surface for debugging without taking down the canvas.
     console.error('[CoderTerminalPanel] isolated render error:', error);
   }
   render() {
-    return this.state.failed ? null : this.props.children;
+    return this.state.failed ? (
+      <div data-testid="coder-terminal-unavailable" role="alert" style={{ padding: 8 }}>
+        coder_terminal_surface_unavailable
+      </div>
+    ) : this.props.children;
   }
 }
 

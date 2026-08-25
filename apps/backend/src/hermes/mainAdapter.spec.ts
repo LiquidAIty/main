@@ -12,7 +12,6 @@ import {
   requireHermesCompletionText,
   requireHermesEffectSuccess,
   resolveHermesEffectToolName,
-  resolveHermesRuntimeHome,
   startHermesTurnWithOnePrePromptRecovery,
 } from './mainAdapter';
 import {
@@ -272,9 +271,7 @@ describe('Hermes ACP transport identity', () => {
     }
   });
 
-  it('derives the repo-owned base home while named Hermes profiles remain independent homes', async () => {
-    const root = 'C:\\Projects\\LiquidAIty\\main\\Hermes';
-    expect(resolveHermesRuntimeHome(root)).toBe(path.join(root, '.hermes'));
+  it('keeps named Hermes profiles in independent homes', async () => {
     const fakeRoot = path.join(tmpdir(), `liquidaity-acp-profile-home-${randomUUID()}`);
     const hermesHome = path.join(fakeRoot, '.hermes');
     mkdirSync(path.join(hermesHome, 'profiles', 'coder'), { recursive: true });

@@ -5,11 +5,9 @@ import { spawn as spawnPty, type IPty, type IWindowsPtyForkOptions } from 'node-
 
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
-import { resolveHermesRuntimeHome } from './profileMemory';
 
-export type ConsoleMode = 'interactive';
-export type ConsoleSessionState = 'starting' | 'running' | 'stopping' | 'stopped' | 'failed';
-export type ConsoleTransportMode = 'pty';
+type ConsoleSessionState = 'starting' | 'running' | 'stopping' | 'stopped' | 'failed';
+type ConsoleTransportMode = 'pty';
 
 export type ConsoleSessionInfo = {
   id: string;
@@ -34,13 +32,12 @@ export type ConsoleSessionInfo = {
   error: string | null;
 };
 
-export type StartConsoleSessionRequest = {
+type StartConsoleSessionRequest = {
   projectId: string;
   deckId: string;
   conversationId: string;
   ownerCardId?: string;
   targetRoot?: string;
-  mode?: ConsoleMode;
   profile?: string;
 };
 
@@ -62,7 +59,7 @@ export type PtyFactory = (
   options: IWindowsPtyForkOptions,
 ) => PtyLike;
 
-export function resolveHermesCliInstall(): { root: string; executable: string } {
+function resolveHermesCliInstall(): { root: string; executable: string } {
   const root = path.join(resolveRepoRoot(), 'Hermes');
   const executable = path.join(root, 'venv', 'Scripts', 'hermes.exe');
   if (!existsSync(executable)) throw new Error(`hermes_repo_cli_missing:${executable}`);
@@ -260,15 +257,6 @@ export class HermesCoderTerminalManager {
     return this.sessionsById.get(id);
   }
 
-  find(args: {
-    projectId: string;
-    deckId: string;
-    conversationId: string;
-    ownerCardId?: string;
-  }): HermesCoderTerminalSession | undefined {
-    return this.sessionsByIdentity.get(terminalIdentity({ ...args }));
-  }
-
   list(): ConsoleSessionInfo[] {
     return [...this.sessionsById.values()].map((session) => session.info);
   }
@@ -288,9 +276,9 @@ const PERSISTENT_CODER_TERMINAL_IDENTITY = {
   profile: 'coder',
 } as const;
 
-export function startCoderTerminalSession(session: HermesCoderTerminalSession): void {
+function startCoderTerminalSession(session: HermesCoderTerminalSession): void {
   const install = resolveHermesCliInstall();
-  const hermesHome = resolveHermesRuntimeHome(install.root);
+  const hermesHome = path.join(install.root, '.hermes');
   const profile = session.info.profile || 'coder';
   session.start({
     executable: install.executable,
