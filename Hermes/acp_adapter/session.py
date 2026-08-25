@@ -274,9 +274,52 @@ class SessionManager:
         # Attempt to restore from database.
         return self._restore(session_id)
 
+    def read_session_history(
+        self,
+        session_id: str,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Read one ACP transcript without restoring an executable agent.
+
+        LIQUIDAITY VENDOR PATCH: browser/history consumers need Hermes'
+        persisted messages, not ``session/load`` and its runtime/MCP setup.
+        This method is intentionally non-mutating and never calls
+        ``_make_agent`` or repairs the stored conversation for execution.
+        """
+        with self._lock:
+            state = self._sessions.get(session_id)
+            if state is not None:
+                return copy.deepcopy(state.history)
+
+        db = self._get_db()
+        if db is None:
+            return None
+        try:
+            row = db.get_session(session_id)
+        except Exception:
+            logger.debug(
+                "Failed to query DB for ACP history %s",
+                session_id,
+                exc_info=True,
+            )
+            return None
+        if row is None or row.get("source") != "acp":
+            return None
+        try:
+            return copy.deepcopy(db.get_messages_as_conversation(session_id))
+        except Exception:
+            logger.warning(
+                "Failed to read messages for ACP history %s",
+                session_id,
+                exc_info=True,
+            )
+            return None
+
     def remove_session(self, session_id: str) -> bool:
         """Remove a session from memory and database. Returns True if it existed."""
         with self._lock:
+            current = self._sessions.get(session_id)
+            if current is not None and current.is_running:
+                raise RuntimeError("hermes_session_turn_already_running")
             existed = self._sessions.pop(session_id, None) is not None
         db_existed = self._delete_persisted(session_id)
         if existed or db_existed:

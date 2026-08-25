@@ -72,6 +72,72 @@ Rollback: remove this module and the marked hooks, then stop sending `hermes.ses
 delegation; LiquidAIty must fail closed rather than claim that a saved Card's prompt or grants bound
 the native session in that state.
 
+## Patch: bounded ACP transcript read and delete
+
+Purpose: let an ACP host display one persisted native transcript without crossing standard
+`session/load`, which necessarily restores an executable `AIAgent`, registers MCP servers, applies
+host runtime configuration, and updates persistence state. The generic `_session/read_history`
+extension accepts only `sessionId`, reads either the in-memory history snapshot or
+`SessionDB.get_messages_as_conversation()` in its non-repairing inspection mode, and replays the
+existing ACP message updates. It never creates or restores an agent, registers MCP, selects a model,
+applies a tool surface, calls a provider, or mutates the session.
+
+The companion `_session/delete_history` extension also accepts only `sessionId` and delegates to
+Hermes' existing `SessionManager.remove_session`. Deletion refuses an active native turn. This gives
+the owning UI one exact native lifecycle operation without direct database access or a second
+conversation store.
+
+Files and symbols:
+
+- `acp_adapter/session.py`: `SessionManager.read_session_history` performs the non-mutating native
+  transcript read; `remove_session` rejects active turns before using its existing native deletion.
+- `acp_adapter/server.py`: `_session/read_history`, `_session/delete_history`, and `_replay_history`
+  reuse native session identity without invoking executable session load/resume.
+- `tests/acp_adapter/test_host_profiles.py`: proves cold persisted reads do not construct an agent and
+  both extensions reject execution-configuration fields; active deletion fails closed.
+
+Upstream behavior preserved: standard ACP `session/list`, `session/load`, `session/resume`,
+`session/new`, and `session/prompt` are unchanged. The existing load/resume history replay delegates
+to the same extracted notification helper. Hosts that do not call the extension retain stock Hermes
+behavior.
+
+Contribution plan: propose generic ACP transcript-inspection and deletion extensions, or adopt
+upstream ACP lifecycle methods if they become available. Include cold-session proof that no provider,
+agent, MCP registration, or persistence repair occurs, plus active-turn deletion refusal.
+
+Rollback: remove the extensions and the read method, and restore `remove_session` only after an
+equivalent native active-turn guard exists. LiquidAIty history must then fail closed until equivalent
+native lifecycle contracts exist; it must not return to `session/load` or direct database access.
+
+## Patch: model-authored ACP transcript identity
+
+Purpose: distinguish actual native model text from deterministic ACP command, queue, redirect, error,
+and status prose without inspecting or rewriting content. Native model stream chunks carry
+`_meta.hermes.messageSource=model`. The standard `session/prompt` response carries the exact final
+native assistant message in `_meta.hermes.finalAssistantText`. A host can therefore stream real model
+deltas immediately, then reconcile the completed bubble to the same native text Hermes persisted.
+Untagged command/status messages remain available to ordinary ACP clients but are not model output.
+Agent execution exceptions propagate as failures instead of being converted into `Error: ...`
+assistant prose.
+
+Files and symbols:
+
+- `acp_adapter/events.py`: `model_message_update` and `make_message_cb` tag native model deltas.
+- `acp_adapter/server.py`: returns exact final native model text in prompt metadata, leaves locally
+  generated command/status updates untagged, and propagates execution exceptions.
+- `tests/acp/test_events.py`: proves the native model update carries the exact source metadata.
+
+Upstream behavior preserved: ACP text chunks and prompt responses retain their standard shapes and
+use ACP's reserved `_meta` extension point. Hosts that ignore the metadata render upstream behavior.
+Slash commands, queue/redirect notices, and transformed plugin output remain available but are never
+misrepresented as raw model text to a source-aware host.
+
+Contribution plan: propose a generic ACP content-origin marker and exact final assistant message in
+the prompt response metadata. Remove this patch when upstream offers equivalent source identity.
+
+Rollback: remove the metadata and source-aware host filtering together. LiquidAIty Main must then
+fail closed for transcript authoring; it must not guess model origin from prose or event timing.
+
 ## Patch: generic host-issued child execution context
 
 Purpose: let an ACP host allocate and close an opaque execution context before a native Hermes child

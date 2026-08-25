@@ -3,7 +3,6 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 
 import { waitForBackendReady } from '../../../components/builder/backendReadiness';
 import { guardedRequest, safeJson } from '../../../components/builder/requestGuards';
-import type { AgentBuilderChatMessage } from '../console/useAgentBuilderMainChat';
 import type {
   DeckDocument,
 } from '../../../types/agentgraph';
@@ -16,7 +15,6 @@ type UseAgentBuilderDeckLoadArgs = {
   canvasProjectId: string;
   projectsApi: string;
   builderDeckId: string;
-  emptyMessages: AgentBuilderChatMessage[];
   resolveProjectDeckLoadResult: (
     persistedDeck: DeckDocument | null,
   ) => LoadResult;
@@ -32,7 +30,6 @@ type UseAgentBuilderDeckLoadArgs = {
   setDeckRevision: Dispatch<SetStateAction<string | null>>;
   setDeckLoadBusy: Dispatch<SetStateAction<boolean>>;
   setDeckLoadError: Dispatch<SetStateAction<string | null>>;
-  setMessages: Dispatch<SetStateAction<AgentBuilderChatMessage[]>>;
   setStateLoaded: Dispatch<SetStateAction<boolean>>;
   setDeckStatusMessage: Dispatch<SetStateAction<string | null>>;
 };
@@ -41,7 +38,6 @@ export default function useAgentBuilderDeckLoad({
   canvasProjectId,
   projectsApi,
   builderDeckId,
-  emptyMessages,
   resolveProjectDeckLoadResult,
   formatBuilderStatusMessage,
   recordDeckWriteReason,
@@ -52,7 +48,6 @@ export default function useAgentBuilderDeckLoad({
   setDeckRevision,
   setDeckLoadBusy,
   setDeckLoadError,
-  setMessages,
   setStateLoaded,
   setDeckStatusMessage,
 }: UseAgentBuilderDeckLoadArgs) {
@@ -61,7 +56,6 @@ export default function useAgentBuilderDeckLoad({
       recordDeckWriteReason('builder-await-project');
       setDeckRevision(null);
       setDeckLoadError(null);
-      setMessages([...emptyMessages]);
       setStateLoaded(false);
       setDeckStatusMessage(null);
       return;
@@ -144,7 +138,6 @@ export default function useAgentBuilderDeckLoad({
         if (controller.signal.aborted) return;
         recordDeckWriteReason('deck-load-error');
         setDeckRevision(null);
-        setMessages([...emptyMessages]);
         // A failed or incomplete request never promotes the in-memory bootstrap
         // document (or any unsaved quick-add mutation) to a loaded canvas.
         setStateLoaded(false);
@@ -171,7 +164,6 @@ export default function useAgentBuilderDeckLoad({
   }, [
     builderDeckId,
     canvasProjectId,
-    emptyMessages,
     formatBuilderStatusMessage,
     lastPersistedBoardFingerprintRef,
     lastPersistedBoardSnapshotRef,
@@ -183,7 +175,6 @@ export default function useAgentBuilderDeckLoad({
     setDeckLoadError,
     setDeckRevision,
     setDeckStatusMessage,
-    setMessages,
     setStateLoaded,
     snapshotDeckBoard,
   ]);

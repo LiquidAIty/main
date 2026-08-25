@@ -20,7 +20,7 @@ describe('BuilderChat', () => {
     vi.unstubAllGlobals();
   });
 
-  it('states and enforces the real in-flight chat state', () => {
+  it('shows only a visual indicator for the real active turn', () => {
     const onSend = vi.fn();
     render(
       <BuilderChat
@@ -32,12 +32,31 @@ describe('BuilderChat', () => {
       />,
     );
 
-    expect(screen.getByTestId('builder-chat-working').textContent).toContain('Working…');
-    expect((screen.getByPlaceholderText('Chat is working…') as HTMLInputElement).disabled).toBe(true);
-    const send = screen.getByRole('button', { name: 'Chat is working' });
+    expect(screen.getByTestId('builder-chat-active-indicator').textContent).toBe('');
+    expect(screen.queryByText('Working…')).toBeNull();
+    expect((screen.getByPlaceholderText('Type a message…') as HTMLInputElement).disabled).toBe(true);
+    const send = screen.getByRole('button', { name: 'Send' });
     expect((send as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(send);
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('shows no activity indicator or status prose before a native turn exists', () => {
+    render(
+      <BuilderChat
+        connecting
+        messages={[]}
+        onSend={vi.fn()}
+        knowledgeProjectId="project-1"
+        colors={colors}
+      />,
+    );
+
+    expect(screen.queryByText('Connecting…')).toBeNull();
+    expect(screen.queryByTestId('builder-chat-active-indicator')).toBeNull();
+    expect(screen.queryByText('Working…')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled)
+      .toBe(true);
   });
 
   it('shows native history rejoin and prevents a send until it completes', () => {
@@ -52,12 +71,31 @@ describe('BuilderChat', () => {
       />,
     );
 
-    expect(screen.getByTestId('builder-chat-history-loading').textContent).toContain('Loading conversation…');
-    expect((screen.getByPlaceholderText('Loading conversation…') as HTMLInputElement).disabled).toBe(true);
-    const send = screen.getByRole('button', { name: 'Conversation is loading' });
+    expect(screen.queryByText('Loading conversation…')).toBeNull();
+    expect(screen.queryByTestId('builder-chat-active-indicator')).toBeNull();
+    expect((screen.getByPlaceholderText('Type a message…') as HTMLInputElement).disabled).toBe(true);
+    const send = screen.getByRole('button', { name: 'Send' });
     expect((send as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(send);
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('starts a new selected conversation through UI chrome', () => {
+    const onNewConversation = vi.fn();
+    render(
+      <BuilderChat
+        conversationId="conversation-a"
+        onNewConversation={onNewConversation}
+        messages={[]}
+        onSend={vi.fn()}
+        knowledgeProjectId="project-1"
+        colors={colors}
+      />,
+    );
+
+    expect(screen.getByTitle('conversation-a')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+    expect(onNewConversation).toHaveBeenCalledOnce();
   });
 
   it('keeps delegation and preview controls out of the chat composer', () => {
@@ -95,5 +133,23 @@ describe('BuilderChat', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(onSend).toHaveBeenCalledWith('Imported Main task.');
     expect((screen.getByTestId('builder-chat-input') as HTMLInputElement).value).toBe('');
+  });
+
+  it('sends the exact non-empty user text without trimming it', () => {
+    const onSend = vi.fn();
+    render(
+      <BuilderChat
+        messages={[]}
+        onSend={onSend}
+        knowledgeProjectId="project-1"
+        colors={colors}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId('builder-chat-input'), {
+      target: { value: '  Exact user text.  ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(onSend).toHaveBeenCalledWith('  Exact user text.  ');
   });
 });

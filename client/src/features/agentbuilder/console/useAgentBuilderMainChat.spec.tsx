@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
-import { act, renderHook } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   loadSessionHistory: vi.fn(),
+  stopSession: vi.fn(),
   streamSession: vi.fn(),
   waitForBackendReady: vi.fn(),
 }));
@@ -18,6 +19,7 @@ vi.mock('./mainSessionClient', async () => {
   return {
     ...actual,
     loadSessionHistory: mocks.loadSessionHistory,
+    stopSession: mocks.stopSession,
     streamSession: mocks.streamSession,
   };
 });
@@ -25,9 +27,11 @@ vi.mock('./mainSessionClient', async () => {
 import useAgentBuilderMainChat, {
   parseStagedCardReviewLoaded,
 } from './useAgentBuilderMainChat';
+import { SessionStreamError } from './mainSessionClient';
 
 beforeEach(() => {
   mocks.loadSessionHistory.mockReset();
+  mocks.stopSession.mockReset();
   mocks.streamSession.mockReset();
   mocks.waitForBackendReady.mockReset().mockResolvedValue(false);
 });
@@ -72,8 +76,6 @@ describe('Main chat live observation callbacks', () => {
       canvasProjectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'main',
-      initialMessages: [],
-      workspaceView: 'chat',
     }));
 
     expect(result.current.sessionHistoryLoading).toBe(true);
@@ -92,6 +94,24 @@ describe('Main chat live observation callbacks', () => {
     ]);
   });
 
+  it('keeps a history failure out of the transcript and clears the loading state', async () => {
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockRejectedValue(new Error('native history unavailable'));
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'main',
+    }));
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.sessionHistoryLoading).toBe(false);
+    expect(result.current.messages).toEqual([]);
+  });
+
   it('starts locally, forwards native reasoning separately, and settles after completion', async () => {
     const order: string[] = [];
     const onUserTurnStarted = vi.fn(() => order.push('user'));
@@ -105,6 +125,8 @@ describe('Main chat live observation callbacks', () => {
         boundedExpansion: 1, resultLimit: 12, required: true,
       }]);
       args.onEvent({ kind: 'reasoning', text: 'private provider reasoning' });
+      args.onEvent({ kind: 'tool_result', toolName: 'main.context', output: 'tool status text' });
+      args.onEvent({ kind: 'native_attention', label: 'graph status text' });
       args.onEvent({ kind: 'text', text: 'Visible answer.' });
       return { finalText: 'Visible answer.' };
     });
@@ -112,8 +134,6 @@ describe('Main chat live observation callbacks', () => {
       canvasProjectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'main',
-      initialMessages: [],
-      workspaceView: 'chat',
       dataAnchors: [{
         authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
         reason: 'Current production definition', order: 0,
@@ -128,7 +148,9 @@ describe('Main chat live observation callbacks', () => {
       await result.current.requestMainText('Fix the build.');
     });
 
-    expect(order).toEqual(['user', 'stream', 'reasoning', 'text', 'completed']);
+    expect(order).toEqual([
+      'user', 'stream', 'reasoning', 'tool_result', 'native_attention', 'text', 'completed',
+    ]);
     expect(onUserTurnStarted).toHaveBeenCalledWith(expect.objectContaining({
       projectId: 'project-1',
       conversationId: 'main',
@@ -144,6 +166,32 @@ describe('Main chat live observation callbacks', () => {
       { role: 'assistant', text: 'Visible answer.' },
     ]);
     expect(JSON.stringify(result.current.messages)).not.toContain('private provider reasoning');
+    expect(JSON.stringify(result.current.messages)).not.toContain('tool status text');
+    expect(JSON.stringify(result.current.messages)).not.toContain('graph status text');
+  });
+
+  it('keeps exact user bytes and replaces stream framing with the persisted native completion', async () => {
+    mocks.streamSession.mockImplementation(async (args) => {
+      expect(args.message).toBe('  Normal human message.  ');
+      args.onEvent({ kind: 'session', sessionId: 'native-session' });
+      args.onEvent({ kind: 'text', text: '\n\nNative answer.' });
+      return { finalText: 'Native answer.' };
+    });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'conversation-exact',
+    }));
+
+    await act(async () => {
+      await expect(result.current.requestMainText('  Normal human message.  '))
+        .resolves.toBe('Native answer.');
+    });
+
+    expect(result.current.messages).toEqual([
+      { role: 'user', text: '  Normal human message.  ' },
+      { role: 'assistant', text: 'Native answer.' },
+    ]);
   });
 
   it('loads one staged Coder mission and exact model-bound graph projection', async () => {
@@ -235,8 +283,6 @@ describe('Main chat live observation callbacks', () => {
       canvasProjectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'main',
-      initialMessages: [],
-      workspaceView: 'chat',
       onCardReviewStaged,
       onCardGraphReferenceLoaded,
     }));
@@ -269,5 +315,132 @@ describe('Main chat live observation callbacks', () => {
       }),
       reference: expect.objectContaining({ authority: 'KnowGraph', nativeId: 'episode:one' }),
     }));
+  });
+
+  it('keys transcript state by conversation and never shows A while B loads', async () => {
+    let resolveA!: (messages: Array<{ role: 'assistant' | 'user'; text: string }>) => void;
+    let resolveB!: (messages: Array<{ role: 'assistant' | 'user'; text: string }>) => void;
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockImplementation(({ conversationId }) => new Promise((resolve) => {
+      if (conversationId === 'conversation-a') resolveA = resolve;
+      if (conversationId === 'conversation-b') resolveB = resolve;
+    }));
+    const { result, rerender } = renderHook(
+      ({ conversationId }) => useAgentBuilderMainChat({
+        canvasProjectId: 'project-1',
+        deckId: 'deck_builder',
+        conversationId,
+      }),
+      { initialProps: { conversationId: 'conversation-a' } },
+    );
+
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: 'conversation-a' }),
+    ));
+    await act(async () => {
+      resolveA([
+        { role: 'user', text: 'A user' },
+        { role: 'assistant', text: 'A model' },
+      ]);
+      await Promise.resolve();
+    });
+    expect(result.current.messages).toEqual([
+      { role: 'user', text: 'A user' },
+      { role: 'assistant', text: 'A model' },
+    ]);
+
+    rerender({ conversationId: 'conversation-b' });
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.sessionHistoryLoading).toBe(true);
+
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: 'conversation-b' }),
+    ));
+    await act(async () => {
+      resolveB([{ role: 'user', text: 'B user' }]);
+      await Promise.resolve();
+    });
+    expect(result.current.messages).toEqual([{ role: 'user', text: 'B user' }]);
+  });
+
+  it('keeps native failures outside the transcript', async () => {
+    mocks.streamSession.mockRejectedValue(new SessionStreamError({
+      code: 'harness_turn_failed',
+      message: 'provider failed',
+      correlationId: 'req_failure',
+    }));
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'conversation-failure',
+    }));
+
+    await act(async () => {
+      await expect(result.current.requestMainText('Normal user message.')).rejects.toThrow();
+    });
+
+    expect(result.current.messages).toEqual([
+      { role: 'user', text: 'Normal user message.' },
+    ]);
+    expect(result.current.nativeSessionActive).toBe(false);
+  });
+
+  it('removes an unfinished assistant stream when the native turn fails', async () => {
+    mocks.streamSession.mockImplementation(async ({ onEvent }) => {
+      onEvent({ kind: 'session', sessionId: 'native-session' });
+      onEvent({ kind: 'text', text: 'Unfinished native text' });
+      throw new SessionStreamError({
+        code: 'harness_turn_failed',
+        message: 'provider failed',
+        correlationId: 'req_partial_failure',
+      });
+    });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'conversation-partial-failure',
+    }));
+
+    await act(async () => {
+      await expect(result.current.requestMainText('Normal user message.')).rejects.toThrow();
+    });
+
+    expect(result.current.messages).toEqual([
+      { role: 'user', text: 'Normal user message.' },
+    ]);
+  });
+
+  it('clears the native active state when the backend reports no active turn', async () => {
+    mocks.streamSession.mockImplementation(({ signal, onEvent }) => new Promise((_resolve, reject) => {
+      onEvent({ kind: 'session', sessionId: 'native-session' });
+      signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
+        once: true,
+      });
+    }));
+    mocks.stopSession.mockRejectedValue(new SessionStreamError({
+      code: 'no_active_turn',
+      message: 'no active turn',
+    }));
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'conversation-stale-working',
+    }));
+
+    let request!: Promise<string>;
+    await act(async () => {
+      request = result.current.requestMainText('Normal user message.');
+      await Promise.resolve();
+    });
+    expect(result.current.nativeSessionActive).toBe(true);
+
+    await act(async () => {
+      await result.current.stopMainTurn();
+      await request.catch(() => undefined);
+    });
+    expect(result.current.nativeSessionActive).toBe(false);
+    expect(result.current.messages).toEqual([
+      { role: 'user', text: 'Normal user message.' },
+    ]);
   });
 });

@@ -30,7 +30,10 @@ export default function BuilderChat({
   knowledgeProjectId,
   colors,
   busy = false,
+  connecting = false,
   historyLoading = false,
+  conversationId,
+  onNewConversation,
   onStop,
   draft,
   onDraftChange,
@@ -41,14 +44,18 @@ export default function BuilderChat({
   colors: BuilderChatColors;
   /** The real SSE turn is still open; prevent a second send and state it plainly. */
   busy?: boolean;
+  /** The send request is opening; no native Hermes turn has been announced yet. */
+  connecting?: boolean;
   /** Native conversation history is rejoining; prevent a send that could be overwritten by readback. */
   historyLoading?: boolean;
+  conversationId?: string;
+  onNewConversation?: () => void;
   onStop?: () => void;
   draft?: string;
   onDraftChange?: (value: string) => void;
 }) {
   const [localDraft, setLocalDraft] = useState("");
-  const interactionDisabled = busy || historyLoading;
+  const interactionDisabled = busy || connecting || historyLoading;
   const value = draft === undefined ? localDraft : draft;
   const setValue = (next: string) => {
     if (draft === undefined) setLocalDraft(next);
@@ -56,8 +63,7 @@ export default function BuilderChat({
   };
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Keep the latest message (and the active turn's inline work) in view — scroll
-  // on new messages and as the active assistant reply streams in.
+  // Keep the latest message in view as native assistant text streams in.
   const lastTextLen = messages.length ? messages[messages.length - 1]?.text?.length ?? 0 : 0;
   useEffect(() => {
     const el = listRef.current;
@@ -65,9 +71,8 @@ export default function BuilderChat({
   }, [messages.length, lastTextLen]);
 
   const send = () => {
-    const trimmed = value.trim();
-    if (!trimmed || interactionDisabled) return;
-    onSend(trimmed);
+    if (!value.trim() || interactionDisabled) return;
+    onSend(value);
     setValue("");
   };
 
@@ -89,8 +94,29 @@ export default function BuilderChat({
           .builder-chat-scroll::-webkit-scrollbar-thumb:hover {
             background: #616161;
           }
+          @keyframes builder-chat-active-pulse {
+            0%, 100% { opacity: 0.3; transform: scale(0.82); }
+            50% { opacity: 1; transform: scale(1); }
+          }
         `}
       </style>
+      <div
+        data-testid="builder-chat-conversation-bar"
+        className="flex items-center justify-between px-4 pt-3"
+        style={{ gap: 10, color: colors.neutral, fontSize: 12 }}
+      >
+        <span title={conversationId}>{conversationId || "Main chat"}</span>
+        {onNewConversation ? (
+          <button
+            type="button"
+            data-testid="builder-chat-new-conversation"
+            disabled={busy || connecting}
+            onClick={onNewConversation}
+          >
+            New chat
+          </button>
+        ) : null}
+      </div>
       <div
         ref={listRef}
         className="flex-1 builder-chat-scroll"
@@ -110,16 +136,6 @@ export default function BuilderChat({
             gap: 14,
           }}
         >
-        {historyLoading ? (
-          <div
-            data-testid="builder-chat-history-loading"
-            role="status"
-            aria-live="polite"
-            style={{ color: colors.neutral, fontSize: 13, justifySelf: "start" }}
-          >
-            Loading conversation…
-          </div>
-        ) : null}
         {messages.map((m, i) => {
           const isUser = m.role !== "assistant";
           // Never render an empty/whitespace assistant bubble — only real assistant
@@ -189,7 +205,7 @@ export default function BuilderChat({
             onKeyDown={(e) => {
               if (e.key === "Enter") send();
             }}
-            placeholder={busy ? "Chat is working…" : historyLoading ? "Loading conversation…" : "Type a message…"}
+            placeholder="Type a message…"
             className="flex-1"
             style={{
               background: "transparent",
@@ -202,26 +218,27 @@ export default function BuilderChat({
             }}
           />
           {busy ? (
-            <>
-              <span
-                data-testid="builder-chat-working"
-                role="status"
-                aria-live="polite"
-                style={{ color: colors.neutral, fontSize: 12, padding: "0 4px", whiteSpace: "nowrap" }}
-              >
-                Working…
-              </span>
-              {onStop ? (
-                <button type="button" data-testid="builder-chat-stop" onClick={onStop}>
-                  Stop
-                </button>
-              ) : null}
-            </>
+            <span
+              data-testid="builder-chat-active-indicator"
+              aria-hidden="true"
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: colors.primary,
+                animation: "builder-chat-active-pulse 1.1s ease-in-out infinite",
+              }}
+            />
+          ) : null}
+          {busy && onStop ? (
+            <button type="button" data-testid="builder-chat-stop" onClick={onStop}>
+              Stop
+            </button>
           ) : null}
           <button
             onClick={send}
             disabled={interactionDisabled}
-            aria-label={busy ? "Chat is working" : historyLoading ? "Conversation is loading" : "Send"}
+            aria-label="Send"
             className="rounded-full flex items-center justify-center"
             style={{
               width: 40,

@@ -25,6 +25,15 @@ from .tools import (
 logger = logging.getLogger(__name__)
 
 
+def model_message_update(text: str) -> Any:
+    """Tag only native model text as transcript-authoring ACP output."""
+    # LIQUIDAITY VENDOR PATCH: the host must distinguish model-authored text
+    # from deterministic ACP command/status prose without inspecting content.
+    update = acp.update_agent_message_text(text)
+    update.field_meta = {"hermes": {"messageSource": "model"}}
+    return update
+
+
 def _json_loads_maybe_prefix(value: str) -> Any:
     """Parse a JSON object even when Hermes appended a human hint after it."""
     text = value.strip()
@@ -273,7 +282,7 @@ def make_message_cb(
     def _message(text: str) -> None:
         if not text:
             return
-        update = acp.update_agent_message_text(text)
+        update = model_message_update(text)
         _send_update(conn, session_id, loop, update)
 
     return _message

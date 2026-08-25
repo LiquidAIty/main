@@ -25,10 +25,10 @@ import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFrame
 import type { GraphProjectionNode } from '../components/knowledge/NativeAuthorityGraphSurface';
 import CoderTerminalPanel from '../features/agentbuilder/console/CoderTerminalPanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
+import { selectedConversationId } from '../features/agentbuilder/console/mainSessionClient';
 import HermesKanbanWorkspace from '../features/hermeskanban/HermesKanbanWorkspace';
 import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import type {
-  AgentBuilderChatMessage,
   LoadedCardGraphReference,
   StagedCardReviewLoaded,
 } from '../features/agentbuilder/console/useAgentBuilderMainChat';
@@ -206,7 +206,6 @@ const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // reasoning, external evidence, or repository reality from that canvas.
 type KnowledgeSurfaceKind = KnowledgeGraphKind;
 const PROJECTS_API = '/api/projects';
-const EMPTY_PROJECT_MESSAGES: AgentBuilderChatMessage[] = [];
 
 export function getStandaloneCardUnavailableReason(
   card: AgentCardInstance | null,
@@ -371,7 +370,23 @@ export default function AgentBuilder(): React.ReactElement {
   );
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
     useState<KnowledgeSurfaceKind>('knowgraph');
-  const conversationId = 'main';
+  const [conversationId, setConversationId] = useState(() => (
+    selectedConversationId(window.location.search)
+  ));
+  useEffect(() => {
+    const syncConversationFromUrl = () => {
+      setConversationId(selectedConversationId(window.location.search));
+    };
+    window.addEventListener('popstate', syncConversationFromUrl);
+    return () => window.removeEventListener('popstate', syncConversationFromUrl);
+  }, []);
+  const startNewConversation = useCallback(() => {
+    const nextConversationId = `chat-${crypto.randomUUID()}`;
+    const params = new URLSearchParams(window.location.search);
+    params.set('conversationId', nextConversationId);
+    window.history.pushState(null, '', `${window.location.pathname}?${params.toString()}`);
+    setConversationId(nextConversationId);
+  }, []);
   const graphAttention = useAgentBuilderGraphAttention({ projectId: activeProject });
   useEffect(() => {
     if (!activeProject) return undefined;
@@ -641,16 +656,14 @@ export default function AgentBuilder(): React.ReactElement {
   const {
     handleNativeSend,
     messages,
-    nativeSessionBusy,
+    nativeSessionActive,
+    nativeSessionConnecting,
     sessionHistoryLoading,
-    setMessages,
     stopMainTurn,
   } = useAgentBuilderMainChat({
     canvasProjectId,
     deckId: BUILDER_DECK_ID,
     conversationId,
-    initialMessages: EMPTY_PROJECT_MESSAGES,
-    workspaceView,
     dataAnchors: mainCardId
       ? (transientCardGraphContext[mainCardId] || []).map((item) => item.reference)
       : [],
@@ -772,7 +785,6 @@ export default function AgentBuilder(): React.ReactElement {
     canvasProjectId,
     projectsApi: PROJECTS_API,
     builderDeckId: BUILDER_DECK_ID,
-    emptyMessages: EMPTY_PROJECT_MESSAGES,
     resolveProjectDeckLoadResult,
     formatBuilderStatusMessage,
     recordDeckWriteReason,
@@ -783,7 +795,6 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckRevision,
     setDeckLoadBusy,
     setDeckLoadError,
-    setMessages,
     setStateLoaded,
     setDeckStatusMessage,
   });
@@ -1709,8 +1720,11 @@ export default function AgentBuilder(): React.ReactElement {
           }}
           knowledgeProjectId={projectId}
           colors={C}
-          busy={nativeSessionBusy}
+          busy={nativeSessionActive}
+          connecting={nativeSessionConnecting}
           historyLoading={sessionHistoryLoading}
+          conversationId={conversationId}
+          onNewConversation={startNewConversation}
           onStop={() => {
             void stopMainTurn().catch((error) => {
               setDeckStatusMessage(error instanceof Error ? error.message : 'Main run stop failed.');

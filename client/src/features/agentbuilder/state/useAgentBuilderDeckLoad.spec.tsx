@@ -41,7 +41,6 @@ function loadArgs(overrides: Record<string, unknown> = {}) {
     canvasProjectId: 'project-canonical',
     projectsApi: '/api/projects',
     builderDeckId: 'deck_builder',
-    emptyMessages: [],
     resolveProjectDeckLoadResult,
     formatBuilderStatusMessage: (value: unknown, fallback: string) =>
       typeof value === 'string' && value ? value : fallback,
@@ -56,7 +55,6 @@ function loadArgs(overrides: Record<string, unknown> = {}) {
     setDeckRevision: vi.fn(),
     setDeckLoadBusy: vi.fn(),
     setDeckLoadError: vi.fn(),
-    setMessages: vi.fn(),
     setStateLoaded: vi.fn(),
     setDeckStatusMessage: vi.fn(),
     ...overrides,

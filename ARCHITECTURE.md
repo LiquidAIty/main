@@ -274,6 +274,24 @@ upstream-contribution plan is owned by `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. On
 remove a divergence if upstream supplies the equivalent public hook; otherwise reapply only its marked
 symbols and rerun the registered tests.
 
+ACP also has no read-only persisted-transcript or host-owned deletion method: standard `session/load` restores executable
+runtime state and registers supplied MCP servers before replaying history. The contained generic
+`_session/read_history` extension accepts only a native `sessionId`; it reads native persisted
+messages and emits the existing ACP replay updates without constructing an agent, configuring a
+model/tool/MCP surface, minting authority, or mutating persistence. LiquidAIty's browser history route
+uses only the saved Main Card's Hermes profile and opaque session key to locate that transcript.
+The companion `_session/delete_history` accepts that exact resolved native session ID, refuses an
+active turn, and uses Hermes' existing session manager deletion; the UI/backend never opens the
+native database directly or creates another transcript authority.
+ACP also does not distinguish streamed model text from deterministic command/status prose. The
+contained model-origin patch tags only native model chunks and returns the exact final persisted
+assistant text through ACP `_meta`; the backend ignores untagged prose for transcript authoring and
+the browser reconciles the completed streamed bubble to those exact native bytes. Provider-exposed
+reasoning and tool events may appear only as transient UI activity outside the transcript.
+Actual Main/Coder/Kanban execution continues through standard session creation/load followed by the
+trusted `_session/configure_host` boundary with a real per-Run execution context. The exact patch,
+test, upstream-contribution, and rollback records live in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
+
 A one-call Windows process-lifecycle correction in `Hermes/tools/environments/local.py` routes the
 pre-search Git Bash health probe through Hermes' existing bounded process-tree helper. It changes no
 tool, shell, workspace, or provider policy; it prevents an MSYS descendant holding a captured pipe

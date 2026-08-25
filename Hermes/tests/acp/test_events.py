@@ -210,6 +210,18 @@ class TestStepCallback:
 # ---------------------------------------------------------------------------
 
 
+class TestMessageCallback:
+    def test_tags_only_native_model_text_as_transcript_output(self, mock_conn, event_loop_fixture):
+        with patch("acp_adapter.events._send_update") as mock_send:
+            callback = make_message_cb(mock_conn, "session-1", event_loop_fixture)
+            callback("Native model text.")
+
+        update = mock_send.call_args.args[3]
+        assert update.session_update == "agent_message_chunk"
+        assert update.content.text == "Native model text."
+        assert update.field_meta == {"hermes": {"messageSource": "model"}}
+
+
 
 
 # ---------------------------------------------------------------------------

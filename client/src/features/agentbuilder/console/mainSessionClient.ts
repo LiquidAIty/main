@@ -12,6 +12,11 @@ export type NativeSessionEvent = {
 
 const BASE = '/api/coder/main/session';
 
+export function selectedConversationId(search: string): string {
+  const selected = new URLSearchParams(search).get('conversationId')?.trim();
+  return selected || 'main';
+}
+
 type SessionStreamFailure = {
   code: string;
   message: string;
@@ -67,7 +72,19 @@ export async function streamSession(args: {
     signal: args.signal,
   });
   if (!res.ok || !res.body) {
-    throw new Error(`session_chat_failed_${res.status}`);
+    const payload = await res.json().catch(() => null) as {
+      error?: unknown;
+      correlationId?: unknown;
+    } | null;
+    throw new SessionStreamError({
+      code: typeof payload?.error === 'string' ? payload.error : 'session_chat_failed',
+      message: `Main chat request failed with status ${res.status}.`,
+      correlationId: typeof payload?.correlationId === 'string'
+        ? payload.correlationId
+        : undefined,
+      route: `${BASE}/chat`,
+      status: res.status,
+    });
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -157,16 +174,41 @@ export async function loadSessionHistory(args: {
   projectId: string;
   conversationId: string;
   signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<{ role: 'assistant' | 'user'; text: string }[]> {
   const params = new URLSearchParams({
     projectId: args.projectId,
     conversationId: args.conversationId,
   });
-  const res = await fetch(`${BASE}/history?${params.toString()}`, {
-    method: 'GET',
-    credentials: 'include',
-    signal: args.signal,
-  });
+  const requestController = new AbortController();
+  let timedOut = false;
+  const abortFromCaller = () => requestController.abort();
+  if (args.signal?.aborted) abortFromCaller();
+  else args.signal?.addEventListener('abort', abortFromCaller, { once: true });
+  const timeout = globalThis.setTimeout(() => {
+    timedOut = true;
+    requestController.abort();
+  }, args.timeoutMs ?? 15_000);
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/history?${params.toString()}`, {
+      method: 'GET',
+      credentials: 'include',
+      signal: requestController.signal,
+    });
+  } catch (error) {
+    if (timedOut) {
+      throw new SessionStreamError({
+        code: 'conversation_history_timeout',
+        message: 'Conversation history read timed out.',
+        route: `${BASE}/history`,
+      });
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeout);
+    args.signal?.removeEventListener('abort', abortFromCaller);
+  }
   const payload = (await res.json().catch(() => null)) as {
     error?: unknown;
     messages?: { role?: unknown; text?: unknown }[];
@@ -188,6 +230,7 @@ export async function loadSessionHistory(args: {
     });
   }
   return payload.messages
+    .filter((message) => message.role === 'assistant' || message.role === 'user')
     .map((m) => ({
       role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
       text: typeof m.text === 'string' ? m.text : '',

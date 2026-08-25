@@ -67,6 +67,7 @@ from acp_adapter.auth import TERMINAL_SETUP_AUTH_METHOD_ID, build_auth_methods, 
 from acp_adapter.events import (
     _build_plan_update_from_todo_result,
     make_message_cb,
+    model_message_update,
     make_step_cb,
     make_thinking_cb,
     make_tool_progress_cb,
@@ -1479,14 +1480,54 @@ class HermesACPAgent(acp.Agent):
         return None
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle the contained generic ACP host-session extension.
+        """Handle the contained generic ACP host-session extensions.
 
         LIQUIDAITY VENDOR PATCH: ACP PromptRequest has no MCP-server field, and
         calling session/load for every turn replays the full transcript.  This
         extension refreshes one already-created native session while it is
         idle.  It carries only standard ACP MCP server records plus the same
         bounded ``_meta.hermes.sessionConfig`` accepted by session/new/load.
+
+        A separate read-only extension replays persisted history without
+        restoring an AIAgent or configuring MCP, tools, models, or host state.
         """
+
+        if method == "session/read_history":
+            if not isinstance(params, dict):
+                raise ValueError("hermes_history_extension_params_must_be_object")
+            unknown = sorted(set(params) - {"sessionId"})
+            if unknown:
+                raise ValueError(
+                    f"hermes_history_extension_unknown_field:{unknown[0]}"
+                )
+            session_id = str(params.get("sessionId") or "").strip()
+            if not session_id:
+                raise ValueError("hermes_history_extension_session_id_required")
+            history = self.session_manager.read_session_history(session_id)
+            if history is None:
+                raise ValueError("hermes_history_extension_session_not_found")
+            await self._replay_history(session_id, history)
+            return {
+                "replayed": True,
+                "sessionId": session_id,
+                "messageCount": len(history),
+            }
+
+        if method == "session/delete_history":
+            if not isinstance(params, dict):
+                raise ValueError("hermes_history_delete_params_must_be_object")
+            unknown = sorted(set(params) - {"sessionId"})
+            if unknown:
+                raise ValueError(
+                    f"hermes_history_delete_unknown_field:{unknown[0]}"
+                )
+            session_id = str(params.get("sessionId") or "").strip()
+            if not session_id:
+                raise ValueError("hermes_history_delete_session_id_required")
+            return {
+                "deleted": self.session_manager.remove_session(session_id),
+                "sessionId": session_id,
+            }
 
         if method != "session/configure_host":
             raise RequestError.method_not_found(f"_{method}")
@@ -1584,37 +1625,36 @@ class HermesACPAgent(acp.Agent):
             or ""
         ).strip()
 
-    async def _replay_session_history(self, state: SessionState) -> None:
-        """Replay persisted user/assistant history during session/load or session/resume.
+    async def _replay_history(
+        self,
+        session_id: str,
+        history: list[dict[str, Any]],
+    ) -> None:
+        """Replay a supplied persisted transcript through ACP notifications.
 
-        Invoked inline (``await``) from both ``load_session`` and
-        ``resume_session`` so that spec-compliant ACP clients receive the
-        full transcript within the request's lifetime — see the comment at
-        the call sites for the rationale and prior-art citations.
-
-        Replays the conversation as user/assistant chunks, thinking-mode
+        Replays user/assistant chunks, thinking-mode
         thought chunks, plus reconstructed tool-call start/completion
-        notifications. Merely restoring server-side state makes Hermes
-        remember context, but leaves the editor looking like a clean thread.
+        notifications. The caller owns whether this is a standard executable
+        session load or the vendor's read-only history extension.
         """
-        if not self._conn or not state.history:
+        if not self._conn or not history:
             return
 
         active_tool_calls: dict[str, tuple[str, dict[str, Any]]] = {}
 
         async def _send(update: Any) -> bool:
             try:
-                await self._conn.session_update(session_id=state.session_id, update=update)
+                await self._conn.session_update(session_id=session_id, update=update)
                 return True
             except Exception:
                 logger.warning(
                     "Failed to replay ACP history for session %s",
-                    state.session_id,
+                    session_id,
                     exc_info=True,
                 )
                 return False
 
-        for message in state.history:
+        for message in history:
             role = str(message.get("role") or "")
 
             if role == "user":
@@ -1681,6 +1721,10 @@ class HermesACPAgent(acp.Agent):
                     plan_update = _build_plan_update_from_todo_result(result_text)
                     if plan_update is not None and not await _send(plan_update):
                         return
+
+    async def _replay_session_history(self, state: SessionState) -> None:
+        """Replay history for standard ``session/load`` and ``session/resume``."""
+        await self._replay_history(state.session_id, state.history)
 
     async def new_session(
         self,
@@ -2203,9 +2247,11 @@ class HermesACPAgent(acp.Agent):
                         persist_user_message=user_text or "[Image attachment]",
                     )
                 return result
-            except Exception as e:
+            except Exception:
+                # LIQUIDAITY VENDOR PATCH: execution failures are transport
+                # failures, never locally authored assistant messages.
                 logger.exception("Agent error in session %s", session_id)
-                return {"final_response": f"Error: {e}", "messages": state.history}
+                raise
             finally:
                 # Restore the interactive contextvar for this context.
                 if interactive_token is not None:
@@ -2297,7 +2343,11 @@ class HermesACPAgent(acp.Agent):
             # or when a plugin hook transformed the response after streaming
             # finished (e.g. transform_llm_output) — otherwise the appended /
             # rewritten text never reaches the client.
-            update = acp.update_agent_message_text(final_response)
+            update = (
+                acp.update_agent_message_text(final_response)
+                if result.get("response_transformed")
+                else model_message_update(final_response)
+            )
             await conn.session_update(session_id, update)
 
         # Mark this turn idle before draining queued work so recursive prompt()
@@ -2335,7 +2385,28 @@ class HermesACPAgent(acp.Agent):
         await self._send_usage_update(state)
 
         stop_reason = "cancelled" if cancelled else "end_turn"
-        return PromptResponse(stop_reason=stop_reason, usage=usage)
+        # LIQUIDAITY VENDOR PATCH: return the exact persisted native model
+        # message through ACP metadata so hosts can reconcile streamed deltas
+        # without accepting command/status prose as an assistant message.
+        final_model_text = (
+            final_response
+            if final_response
+            and not interrupted
+            and not result.get("response_transformed")
+            else ""
+        )
+        return PromptResponse(
+            stop_reason=stop_reason,
+            usage=usage,
+            field_meta={
+                "hermes": {
+                    "messageSource": "model",
+                    "finalAssistantText": final_model_text,
+                }
+            }
+            if final_model_text
+            else None,
+        )
 
     # ---- Slash commands (headless) -------------------------------------------
 

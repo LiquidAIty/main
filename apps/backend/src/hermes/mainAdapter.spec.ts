@@ -65,14 +65,110 @@ rl.on('line', (line) => {
     return send({ jsonrpc: '2.0', id: message.id, result: { method } });
   }
   if (method === 'session/prompt') {
-    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'provider-free-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'provider-free terminal result' } } } });
-    return send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn', usage: { inputTokens: 11, outputTokens: 4 } } });
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'provider-free-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'deterministic local status' } } } });
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'provider-free-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'provider-free terminal result' }, _meta: { hermes: { messageSource: 'model' } } } } });
+    return send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn', usage: { inputTokens: 11, outputTokens: 4 }, _meta: { hermes: { messageSource: 'model', finalAssistantText: 'provider-free terminal result' } } } });
+  }
+});
+`;
+}
+
+function fakeHistoryAcpScript(): string {
+  return `
+const readline = require('node:readline');
+const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+let deleted = false;
+function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }
+rl.on('line', (line) => {
+  const message = JSON.parse(line);
+  const method = message.method;
+  if (method === 'initialize') return send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  if (method === 'session/list') {
+    const config = message.params?._meta?.hermes?.sessionConfig || {};
+    const keys = Object.keys(config).sort();
+    if (JSON.stringify(keys) !== JSON.stringify(['hostSessionKey'])) {
+      return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'history_list_runtime_config_forbidden' } });
+    }
+    if ('mcpServers' in (message.params || {})) {
+      return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'history_list_mcp_forbidden' } });
+    }
+    return send({ jsonrpc: '2.0', id: message.id, result: { sessions: deleted ? [] : [{ sessionId: 'persisted-session' }] } });
+  }
+  if (method === '_session/read_history') {
+    if (JSON.stringify(Object.keys(message.params || {}).sort()) !== JSON.stringify(['sessionId'])) {
+      return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'history_read_extra_fields_forbidden' } });
+    }
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'persisted-session', update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'Earlier question.' } } } });
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'persisted-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Earlier answer.' } } } });
+    return send({ jsonrpc: '2.0', id: message.id, result: { replayed: true, sessionId: 'persisted-session', messageCount: 2 } });
+  }
+  if (method === '_session/delete_history') {
+    if (JSON.stringify(Object.keys(message.params || {}).sort()) !== JSON.stringify(['sessionId'])) {
+      return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'history_delete_extra_fields_forbidden' } });
+    }
+    deleted = true;
+    return send({ jsonrpc: '2.0', id: message.id, result: { deleted: true, sessionId: 'persisted-session' } });
+  }
+  if (method === 'session/load') {
+    return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'history_must_not_load_execution_session' } });
   }
 });
 `;
 }
 
 describe('Hermes ACP transport identity', () => {
+  it('reads native history without loading or configuring an execution session', async () => {
+    const root = path.join(tmpdir(), `liquidaity-acp-history-${randomUUID()}`);
+    const hermesHome = path.join(root, '.hermes');
+    mkdirSync(hermesHome, { recursive: true });
+    const owner = new AcpProcess(() => undefined, {
+      install: { root, executable: process.execPath, args: ['-e', fakeHistoryAcpScript()] },
+      hermesHome,
+    });
+    try {
+      await expect(owner.readHistory({
+        sessionKey: 'hermes:project-1:main:card_main_chat',
+        profile: '',
+      })).resolves.toEqual({
+        sessionId: 'persisted-session',
+        messages: [
+          { role: 'user', text: 'Earlier question.' },
+          { role: 'assistant', text: 'Earlier answer.' },
+        ],
+      });
+    } finally {
+      owner.close();
+      await owner.closed;
+    }
+  });
+
+  it('deletes the exact native history selected by the host session key', async () => {
+    const root = path.join(tmpdir(), `liquidaity-acp-history-delete-${randomUUID()}`);
+    const hermesHome = path.join(root, '.hermes');
+    mkdirSync(hermesHome, { recursive: true });
+    const owner = new AcpProcess(() => undefined, {
+      install: { root, executable: process.execPath, args: ['-e', fakeHistoryAcpScript()] },
+      hermesHome,
+    });
+    const args = {
+      sessionKey: 'hermes:project-1:main:card_main_chat',
+      profile: '',
+    };
+    try {
+      await expect(owner.deleteHistory(args)).resolves.toEqual({
+        sessionId: 'persisted-session',
+        deleted: true,
+      });
+      await expect(owner.readHistory(args)).resolves.toEqual({
+        sessionId: null,
+        messages: [],
+      });
+    } finally {
+      owner.close();
+      await owner.closed;
+    }
+  });
+
   it('permits only the one bounded native manager pass-through', async () => {
     const root = path.join(tmpdir(), `liquidaity-acp-${randomUUID()}`);
     const hermesHome = path.join(root, '.hermes');
@@ -137,10 +233,10 @@ describe('Hermes ACP transport identity', () => {
       });
       processes.push(recoveryFirst, recoverySecond);
       const queue = [recoveryFirst, recoverySecond];
-      const events: string[] = [];
+      const events: Array<{ kind: string; text?: string }> = [];
       const handle = await startHermesTurnWithOnePrePromptRecovery(
         providerFreeTurnArgs(),
-        (event) => events.push(event.kind),
+        (event) => events.push(event),
         () => {
           const next = queue.shift();
           if (!next) throw new Error('unexpected_third_acp_attempt');
@@ -156,7 +252,10 @@ describe('Hermes ACP transport identity', () => {
       expect(queue).toHaveLength(0);
       expect(result.finalText).toBe('provider-free terminal result');
       expect(result.usage).toMatchObject({ providerInputTokens: 11, providerOutputTokens: 4 });
-      expect(events).toContain('done');
+      expect(events.map((event) => event.kind)).toContain('done');
+      expect(events.filter((event) => event.kind === 'text').map((event) => event.text)).toEqual([
+        'provider-free terminal result',
+      ]);
       expect(recoverySecond.alive).toBe(true);
       recoverySecond.close();
       const explicitExit = await recoverySecond.closed;

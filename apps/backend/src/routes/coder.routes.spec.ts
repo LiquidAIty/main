@@ -44,6 +44,7 @@ const chatSessionMocks = vi.hoisted(() => {
     cancelHermesSession: vi.fn(),
     answerHermesSession: vi.fn(),
     dispatchHermesLearnCommand: vi.fn(async (_profile: string, request: string) => `NATIVE LEARN PROMPT: ${request}`),
+    deleteHermesHistory: vi.fn(async () => ({ sessionId: 'persisted-session', deleted: true })),
     readHermesHistory: vi.fn(async () => ({ sessionId: null, messages: [] })),
     startHermesTurn: vi.fn(),
     usage,
@@ -451,6 +452,7 @@ vi.mock('../hermes/mainAdapter', () => ({
   cancelHermesSession: chatSessionMocks.cancelHermesSession,
   answerHermesSession: chatSessionMocks.answerHermesSession,
   dispatchHermesLearnCommand: chatSessionMocks.dispatchHermesLearnCommand,
+  deleteHermesHistory: chatSessionMocks.deleteHermesHistory,
   readHermesHistory: chatSessionMocks.readHermesHistory,
   startHermesTurn: chatSessionMocks.startHermesTurn,
 }));
@@ -601,6 +603,8 @@ describe('coder routes', () => {
   });
 
   it('returns an empty history only for a successful empty read', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    chatSessionMocks.readHermesHistory.mockClear();
     chatSessionMocks.readHermesHistory.mockResolvedValueOnce({ sessionId: null, messages: [] });
     const { server, baseUrl } = await createApiServer();
     try {
@@ -609,6 +613,11 @@ describe('coder routes', () => {
       );
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toEqual({ ok: true, sessionId: null, messages: [] });
+      expect(orchestratorMocks.requestPythonRailsJson).not.toHaveBeenCalled();
+      expect(chatSessionMocks.readHermesHistory).toHaveBeenCalledWith({
+        sessionKey: 'project-1:main:card_main_chat',
+        profile: 'default',
+      });
     } finally {
       await closeServer(server);
     }
@@ -628,6 +637,29 @@ describe('coder routes', () => {
         ok: false,
         error: 'conversation_history_read_failed',
         messages: [],
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('deletes only the exact selected native Main conversation', async () => {
+    chatSessionMocks.deleteHermesHistory.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(
+        `${baseUrl}/main/session/history?projectId=project-1&conversationId=main`,
+        { method: 'DELETE' },
+      );
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        ok: true,
+        sessionId: 'persisted-session',
+        deleted: true,
+      });
+      expect(chatSessionMocks.deleteHermesHistory).toHaveBeenCalledWith({
+        sessionKey: 'project-1:main:card_main_chat',
+        profile: 'default',
       });
     } finally {
       await closeServer(server);

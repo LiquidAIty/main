@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { waitForBackendReady } from '../../../components/builder/backendReadiness';
 import type { GraphProjectionV1 } from '../../../components/knowledge/NativeAuthorityGraphSurface';
@@ -19,8 +19,6 @@ type UseAgentBuilderMainChatArgs = {
   canvasProjectId: string;
   deckId: string;
   conversationId: string;
-  initialMessages: AgentBuilderChatMessage[];
-  workspaceView: string;
   dataAnchors?: LoadedCardGraphReference['reference'][];
   onUserTurnStarted?: (turn: MainChatTurnStarted) => void;
   onNativeTurnEvent?: (turn: MainChatTurnEvent) => void;
@@ -92,7 +90,7 @@ export type MainChatTurnFinished = {
   projectId: string;
   conversationId: string;
   runId: string;
-  status: 'completed' | 'failed' | 'cancelled';
+  status: 'completed' | 'failed' | 'cancelled' | 'disconnected';
   observedAt: string;
 };
 
@@ -262,7 +260,6 @@ export default function useAgentBuilderMainChat({
   canvasProjectId,
   deckId,
   conversationId,
-  initialMessages,
   dataAnchors = [],
   onUserTurnStarted,
   onNativeTurnEvent,
@@ -270,25 +267,58 @@ export default function useAgentBuilderMainChat({
   onCardGraphReferenceLoaded,
   onTurnFinished,
 }: UseAgentBuilderMainChatArgs) {
-  const [nativeSessionBusy, setNativeSessionBusy] = useState(false);
-  const [sessionHistoryLoading, setSessionHistoryLoading] = useState(Boolean(canvasProjectId));
-  const [messages, setMessages] =
-    useState<AgentBuilderChatMessage[]>(initialMessages);
+  const conversationKey = `${canvasProjectId}\u0000${conversationId}`;
+  const [transcript, setTranscript] = useState<{
+    key: string;
+    messages: AgentBuilderChatMessage[];
+  }>({ key: conversationKey, messages: [] });
+  const [historyState, setHistoryState] = useState<{
+    key: string;
+    loading: boolean;
+  }>({ key: conversationKey, loading: Boolean(canvasProjectId) });
+  const [turnState, setTurnState] = useState<{
+    key: string;
+    phase: 'idle' | 'connecting' | 'active';
+  }>({ key: conversationKey, phase: 'idle' });
+  const activeStreamRef = useRef<{
+    key: string;
+    controller: AbortController;
+  } | null>(null);
+
+  const messages = transcript.key === conversationKey ? transcript.messages : [];
+  const nativeSessionActive = turnState.key === conversationKey && turnState.phase === 'active';
+  const nativeSessionConnecting = turnState.key === conversationKey
+    && turnState.phase === 'connecting';
+  const nativeSessionPending = nativeSessionActive || nativeSessionConnecting;
+  const sessionHistoryLoading = historyState.key === conversationKey && historyState.loading;
 
   useEffect(() => {
     const projectId = canvasProjectId;
+    const priorStream = activeStreamRef.current;
+    if (priorStream && priorStream.key !== conversationKey) {
+      priorStream.controller.abort();
+      activeStreamRef.current = null;
+    }
+    setTranscript({ key: conversationKey, messages: [] });
+    setTurnState({ key: conversationKey, phase: 'idle' });
     if (!projectId) {
-      setMessages([]);
-      setSessionHistoryLoading(false);
+      setHistoryState({ key: conversationKey, loading: false });
       return;
     }
 
     const controller = new AbortController();
     let cancelled = false;
-    setSessionHistoryLoading(true);
+    setHistoryState({ key: conversationKey, loading: true });
     waitForBackendReady({ signal: controller.signal })
       .then((ready) => {
-        if (cancelled || !ready) return;
+        if (cancelled) return;
+        if (!ready) {
+          throw new SessionStreamError({
+            code: 'backend_not_ready',
+            message: 'LiquidAIty backend did not become ready in time.',
+            route: '/api/health',
+          });
+        }
         return loadSessionHistory({
           projectId,
           conversationId,
@@ -297,66 +327,55 @@ export default function useAgentBuilderMainChat({
       })
       .then((history) => {
         if (cancelled || !history) return;
-        setMessages(history);
+        setTranscript({ key: conversationKey, messages: history });
+        setHistoryState({ key: conversationKey, loading: false });
       })
-      .catch((error: unknown) => {
+      .catch(() => {
         if (cancelled || controller.signal.aborted) return;
-        const detail = error instanceof Error ? error.message : String(error);
-        setMessages([
-          {
-            role: 'assistant',
-            text: `Conversation history failed to load: ${detail}`,
-          },
-        ]);
+        setHistoryState({ key: conversationKey, loading: false });
       })
-      .finally(() => {
-        if (!cancelled) setSessionHistoryLoading(false);
-      });
 
     return () => {
       cancelled = true;
       controller.abort();
     };
-  }, [canvasProjectId, conversationId]);
+  }, [canvasProjectId, conversationId, conversationKey]);
 
   const requestMainText = useCallback(
     async (text: string): Promise<string> => {
-      const trimmed = text.trim();
-      if (!trimmed) throw new Error('main_prompt_empty');
+      if (!text.trim()) throw new Error('main_prompt_empty');
       if (!canvasProjectId) {
-        setMessages((current) => [
-          ...current,
-          {
-            role: 'assistant',
-            text: 'Select or create a project before chatting.',
-          },
-        ]);
+        setTurnState({ key: conversationKey, phase: 'idle' });
         throw new Error('main_project_required');
       }
-      if (nativeSessionBusy) throw new Error('main_session_busy');
+      if (nativeSessionPending) throw new Error('main_session_busy');
 
-      setMessages((current) => [
-        ...current,
-        { role: 'user', text: trimmed },
-      ]);
+      setTranscript((current) => ({
+        key: conversationKey,
+        messages: [
+          ...(current.key === conversationKey ? current.messages : []),
+          { role: 'user', text },
+        ],
+      }));
       const runId = createRunId();
       notifyObserver(onUserTurnStarted, {
         projectId: canvasProjectId,
         conversationId,
         runId,
-        text: trimmed,
+        text,
         observedAt: new Date().toISOString(),
       });
-      setNativeSessionBusy(true);
+      const streamController = new AbortController();
+      activeStreamRef.current = { key: conversationKey, controller: streamController };
+      setTurnState({ key: conversationKey, phase: 'connecting' });
 
       let assistantStarted = false;
-      let assistantText = '';
-      const appendAssistantText = (chunk: string) => {
+      const appendModelText = (chunk: string) => {
         if (!chunk) return;
         assistantStarted = true;
-        assistantText += chunk;
-        setMessages((current) => {
-          const copy = [...current];
+        setTranscript((current) => {
+          if (current.key !== conversationKey) return current;
+          const copy = [...current.messages];
           const last = copy[copy.length - 1];
           if (last?.role === 'assistant') {
             copy[copy.length - 1] = {
@@ -366,7 +385,21 @@ export default function useAgentBuilderMainChat({
           } else {
             copy.push({ role: 'assistant', text: chunk });
           }
-          return copy;
+          return { key: conversationKey, messages: copy };
+        });
+      };
+      const finalizeModelText = (nativeFinalText: string) => {
+        assistantStarted = true;
+        setTranscript((current) => {
+          if (current.key !== conversationKey) return current;
+          const copy = [...current.messages];
+          const last = copy[copy.length - 1];
+          if (last?.role === 'assistant') {
+            copy[copy.length - 1] = { role: 'assistant', text: nativeFinalText };
+          } else {
+            copy.push({ role: 'assistant', text: nativeFinalText });
+          }
+          return { key: conversationKey, messages: copy };
         });
       };
 
@@ -375,7 +408,7 @@ export default function useAgentBuilderMainChat({
           projectId: canvasProjectId,
           deckId,
           conversationId,
-          message: trimmed,
+          message: text,
           dataAnchors: dataAnchors.map((anchor) => ({
             authority: anchor.authority,
             nativeId: anchor.nativeId,
@@ -385,7 +418,13 @@ export default function useAgentBuilderMainChat({
             resultLimit: anchor.resultLimit,
             required: anchor.required,
           })),
+          signal: streamController.signal,
           onEvent: (event) => {
+            if (event.kind === 'session' || event.kind === 'text') {
+              setTurnState((current) => current.key === conversationKey
+                ? { ...current, phase: 'active' }
+                : current);
+            }
             notifyObserver(onNativeTurnEvent, {
               projectId: canvasProjectId,
               conversationId,
@@ -412,21 +451,21 @@ export default function useAgentBuilderMainChat({
               if (loaded) notifyObserver(onCardGraphReferenceLoaded, loaded);
             }
             if (event.kind === 'text') {
-              appendAssistantText(
+              appendModelText(
                 String((event as { text?: unknown }).text || ''),
               );
             }
           },
         });
-        const completedText = finalText.trim();
-        if (!assistantStarted && completedText) {
-          appendAssistantText(completedText);
-        } else if (!assistantStarted) {
-          const emptyMessage =
-            'The chat completed without an assistant response. Please try again.';
-          appendAssistantText(emptyMessage);
+        const completedText = finalText;
+        if (!completedText.trim()) {
+          setTurnState({ key: conversationKey, phase: 'idle' });
           throw new Error('main_empty_response');
         }
+        // The native completion text is the exact persisted Hermes assistant
+        // message. Replace the in-progress streamed bubble with those bytes so
+        // the completed UI and a later history read are identical.
+        finalizeModelText(completedText);
         notifyObserver(onTurnFinished, {
           projectId: canvasProjectId,
           conversationId,
@@ -434,42 +473,42 @@ export default function useAgentBuilderMainChat({
           status: 'completed',
           observedAt: new Date().toISOString(),
         });
-        return completedText || assistantText.trim();
+        return completedText;
       } catch (error: unknown) {
+        const disconnected = streamController.signal.aborted;
         const cancelled = error instanceof SessionStreamError && error.code === 'harness_turn_cancelled';
         notifyObserver(onTurnFinished, {
           projectId: canvasProjectId,
           conversationId,
           runId,
-          status: cancelled ? 'cancelled' : 'failed',
+          status: disconnected ? 'disconnected' : cancelled ? 'cancelled' : 'failed',
           observedAt: new Date().toISOString(),
         });
-        if (error instanceof SessionStreamError) {
-          if (cancelled) {
-            appendAssistantText('Chat run stopped.');
-            throw error;
-          }
-          const correlation = error.correlationId
-            ? ` Correlation: ${error.correlationId}.`
-            : '';
-          appendAssistantText(
-            `Chat failed (${error.code}).${correlation}`,
-          );
-        } else if (!(error instanceof Error && error.message === 'main_empty_response')) {
-          const detail = error instanceof Error ? error.message : String(error);
-          appendAssistantText(`Chat request failed before the stream opened: ${detail}`);
+        if (assistantStarted) {
+          setTranscript((current) => {
+            if (current.key !== conversationKey) return current;
+            const copy = [...current.messages];
+            if (copy[copy.length - 1]?.role === 'assistant') copy.pop();
+            return { key: conversationKey, messages: copy };
+          });
         }
         throw error;
       } finally {
-        setNativeSessionBusy(false);
+        if (activeStreamRef.current?.controller === streamController) {
+          activeStreamRef.current = null;
+          setTurnState((current) => current.key === conversationKey
+            ? { ...current, phase: 'idle' }
+            : current);
+        }
       }
     },
     [
       canvasProjectId,
       conversationId,
+      conversationKey,
       dataAnchors,
       deckId,
-      nativeSessionBusy,
+      nativeSessionPending,
       onNativeTurnEvent,
       onCardReviewStaged,
       onCardGraphReferenceLoaded,
@@ -481,24 +520,35 @@ export default function useAgentBuilderMainChat({
   const handleNativeSend = useCallback(
     (text: string) => {
       void requestMainText(text).catch(() => {
-        // requestMainText already renders the canonical chat error.
+        // Native failure remains transport telemetry and never transcript text.
       });
     },
     [requestMainText],
   );
 
   const stopMainTurn = useCallback(async () => {
-    if (!nativeSessionBusy || !canvasProjectId) return;
-    await stopSession({ projectId: canvasProjectId, deckId, conversationId });
-  }, [canvasProjectId, conversationId, deckId, nativeSessionBusy]);
+    if (!nativeSessionPending || !canvasProjectId) return;
+    try {
+      await stopSession({ projectId: canvasProjectId, deckId, conversationId });
+    } catch (error) {
+      if (error instanceof SessionStreamError && error.code === 'no_active_turn') {
+        activeStreamRef.current?.controller.abort();
+        activeStreamRef.current = null;
+        setTurnState({ key: conversationKey, phase: 'idle' });
+        return;
+      }
+      setTurnState({ key: conversationKey, phase: 'idle' });
+      throw error;
+    }
+  }, [canvasProjectId, conversationId, conversationKey, deckId, nativeSessionPending]);
 
   return {
     handleNativeSend,
     messages,
-    nativeSessionBusy,
+    nativeSessionActive,
+    nativeSessionConnecting,
     sessionHistoryLoading,
     requestMainText,
-    setMessages,
     stopMainTurn,
   };
 }

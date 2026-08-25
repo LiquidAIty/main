@@ -90,6 +90,12 @@ export type HermesTurnArgs = HermesRuntimeConfig & {
   workingDirectory?: string;
 };
 
+export type HermesHistoryArgs = {
+  sessionKey: string;
+  profile: string;
+  workingDirectory?: string;
+};
+
 export type HermesTurnHandle = {
   answer(promptId: string, reply: string): void;
   cancel(): void | Promise<void>;
@@ -501,19 +507,23 @@ export class AcpProcess {
     const update = params?.update || {};
     const kind = String(update.sessionUpdate || '');
     const history = this.historyCollectors.get(sessionId);
-    if (history && (kind === 'user_message_chunk' || kind === 'agent_message_chunk')) {
-      const text = textContent(update);
-      if (text) {
-        history.push({
-          role: kind === 'user_message_chunk' ? 'user' : 'assistant',
-          text,
-        });
+    if (history) {
+      if (kind === 'user_message_chunk' || kind === 'agent_message_chunk') {
+        const text = textContent(update);
+        if (text) {
+          history.push({
+            role: kind === 'user_message_chunk' ? 'user' : 'assistant',
+            text,
+          });
+        }
       }
       return;
     }
     const turn = this.turns.get(sessionId);
     if (!turn) return;
     if (kind === 'agent_message_chunk') {
+      const messageSource = String(update?._meta?.hermes?.messageSource || '');
+      if (messageSource !== 'model') return;
       const text = textContent(update);
       if (text) {
         turn.fullText += text;
@@ -666,13 +676,19 @@ export class AcpProcess {
     };
   }
 
-  async readHistory(args: HermesTurnArgs): Promise<{
+  async readHistory(args: HermesHistoryArgs): Promise<{
     sessionId: string | null;
     messages: HermesHistoryMessage[];
   }> {
     await this.ready;
     const cwd = this.sessionCwd(args.sessionKey, args.workingDirectory);
-    const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(args, process.env, '');
+    const sessionMeta = {
+      hermes: {
+        sessionConfig: {
+          hostSessionKey: args.sessionKey,
+        },
+      },
+    };
     const listed = await this.request('session/list', { cwd, _meta: sessionMeta });
     const sessionId = String(
       Array.isArray(listed?.sessions) ? listed.sessions[0]?.sessionId || '' : '',
@@ -683,17 +699,38 @@ export class AcpProcess {
     const messages: HermesHistoryMessage[] = [];
     this.historyCollectors.set(sessionId, messages);
     try {
-      await this.request('session/load', {
-        cwd,
-        sessionId,
-        mcpServers,
-        _meta: sessionMeta,
-      });
+      await this.request('_session/read_history', { sessionId });
       this.sessionByKey.set(args.sessionKey, sessionId);
       return { sessionId, messages };
     } finally {
       this.historyCollectors.delete(sessionId);
     }
+  }
+
+  async deleteHistory(args: HermesHistoryArgs): Promise<{
+    sessionId: string | null;
+    deleted: boolean;
+  }> {
+    await this.ready;
+    const cwd = this.sessionCwd(args.sessionKey, args.workingDirectory);
+    const listed = await this.request('session/list', {
+      cwd,
+      _meta: {
+        hermes: {
+          sessionConfig: {
+            hostSessionKey: args.sessionKey,
+          },
+        },
+      },
+    });
+    const sessionId = String(
+      Array.isArray(listed?.sessions) ? listed.sessions[0]?.sessionId || '' : '',
+    );
+    if (!sessionId) return { sessionId: null, deleted: false };
+    if (this.turns.has(sessionId)) throw new Error('hermes_session_turn_already_running');
+    const result = await this.request('_session/delete_history', { sessionId });
+    if (result?.deleted === true) this.sessionByKey.delete(args.sessionKey);
+    return { sessionId, deleted: result?.deleted === true };
   }
 
   async requestExtension(method: string, params: Record<string, unknown>): Promise<any> {
@@ -808,7 +845,9 @@ export class AcpProcess {
       if (result?.stopReason === 'cancelled') throw new Error('hermes_turn_cancelled');
       if (result?.stopReason === 'refusal') throw new Error('hermes_turn_refused');
       requireHermesEffectSuccess([...active.effectToolNames], active.effectOutcomes);
-      const finalText = requireHermesCompletionText(active.fullText);
+      const finalText = requireHermesCompletionText(
+        result?._meta?.hermes?.finalAssistantText,
+      );
       rootTerminalState = 'completed';
       onEvent({ kind: 'done', fullText: finalText, usage });
       return {
@@ -999,9 +1038,15 @@ export async function configureHermesHostSession(
 }
 
 export async function readHermesHistory(
-  args: HermesTurnArgs,
+  args: HermesHistoryArgs,
 ): Promise<{ sessionId: string | null; messages: HermesHistoryMessage[] }> {
-  return sharedHermesProcess(args.runtime.profile).readHistory(args);
+  return sharedHermesProcess(args.profile).readHistory(args);
+}
+
+export async function deleteHermesHistory(
+  args: HermesHistoryArgs,
+): Promise<{ sessionId: string | null; deleted: boolean }> {
+  return sharedHermesProcess(args.profile).deleteHistory(args);
 }
 
 export function closeHermesRuntimes(): void {

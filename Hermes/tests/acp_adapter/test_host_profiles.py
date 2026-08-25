@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import sys
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -196,6 +196,109 @@ class _NoopSessionDb:
 
     def update_session(self, *_args, **_kwargs):
         return None
+
+
+class _HistorySessionDb:
+    def __init__(self) -> None:
+        self.messages = [
+            {"role": "user", "content": "Earlier question."},
+            {"role": "assistant", "content": "Earlier answer."},
+        ]
+        self.read_calls: list[tuple[tuple, dict]] = []
+
+    def get_session(self, session_id):
+        return {"id": session_id, "source": "acp"}
+
+    def get_messages_as_conversation(self, *args, **kwargs):
+        self.read_calls.append((args, kwargs))
+        return self.messages
+
+
+def test_read_session_history_does_not_restore_an_executable_agent() -> None:
+    db = _HistorySessionDb()
+
+    def forbidden_agent_factory(**_kwargs):
+        raise AssertionError("history read must not construct an AIAgent")
+
+    manager = SessionManager(agent_factory=forbidden_agent_factory, db=db)
+    history = manager.read_session_history("persisted-session")
+
+    assert history == db.messages
+    assert history is not db.messages
+    assert db.read_calls == [(('persisted-session',), {})]
+
+
+@pytest.mark.asyncio
+async def test_read_history_extension_has_no_execution_configuration_fields() -> None:
+    manager = SessionManager(agent_factory=lambda: MagicMock(), db=_NoopSessionDb())
+    manager.read_session_history = MagicMock(return_value=[
+        {"role": "user", "content": "Earlier question."},
+    ])
+    acp_agent = HermesACPAgent(session_manager=manager)
+    acp_agent._replay_history = AsyncMock()
+    acp_agent._register_session_mcp_servers = AsyncMock()
+    manager.configure_host_session = MagicMock()
+
+    result = await acp_agent.ext_method("session/read_history", {
+        "sessionId": "persisted-session",
+    })
+
+    assert result == {
+        "replayed": True,
+        "sessionId": "persisted-session",
+        "messageCount": 1,
+    }
+    acp_agent._replay_history.assert_awaited_once_with(
+        "persisted-session",
+        [{"role": "user", "content": "Earlier question."}],
+    )
+    acp_agent._register_session_mcp_servers.assert_not_awaited()
+    manager.configure_host_session.assert_not_called()
+
+    with pytest.raises(
+        ValueError,
+        match="hermes_history_extension_unknown_field:mcpServers",
+    ):
+        await acp_agent.ext_method("session/read_history", {
+            "sessionId": "persisted-session",
+            "mcpServers": [],
+        })
+
+
+@pytest.mark.asyncio
+async def test_delete_history_extension_uses_only_native_session_identity() -> None:
+    manager = SessionManager(agent_factory=lambda: MagicMock(), db=_NoopSessionDb())
+    manager.remove_session = MagicMock(return_value=True)
+    acp_agent = HermesACPAgent(session_manager=manager)
+
+    result = await acp_agent.ext_method("session/delete_history", {
+        "sessionId": "persisted-session",
+    })
+
+    assert result == {
+        "deleted": True,
+        "sessionId": "persisted-session",
+    }
+    manager.remove_session.assert_called_once_with("persisted-session")
+
+    with pytest.raises(
+        ValueError,
+        match="hermes_history_delete_unknown_field:mcpServers",
+    ):
+        await acp_agent.ext_method("session/delete_history", {
+            "sessionId": "persisted-session",
+            "mcpServers": [],
+        })
+
+
+def test_remove_session_refuses_an_active_native_turn() -> None:
+    agent = SimpleNamespace(model="model", tools=[], enabled_toolsets=[], disabled_toolsets=[])
+    manager = SessionManager(agent_factory=lambda: agent, db=_NoopSessionDb())
+    state = manager.create_session(cwd=".")
+    state.is_running = True
+
+    with pytest.raises(RuntimeError, match="hermes_session_turn_already_running"):
+        manager.remove_session(state.session_id)
 
 
 @pytest.mark.asyncio

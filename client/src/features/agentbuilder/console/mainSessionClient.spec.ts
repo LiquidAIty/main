@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   loadSessionHistory,
+  selectedConversationId,
   SessionStreamError,
   streamSession,
 } from './mainSessionClient';
@@ -21,7 +22,36 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('selectedConversationId', () => {
+  it('preserves an exact supplied conversation identity', () => {
+    expect(selectedConversationId('?projectId=project-1&conversationId=conversation-b'))
+      .toBe('conversation-b');
+  });
+
+  it('uses main only when no selected conversation exists', () => {
+    expect(selectedConversationId('?projectId=project-1')).toBe('main');
+  });
+});
+
 describe('streamSession', () => {
+  it('surfaces a rejected native start as typed status instead of model text', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ error: 'main_domain_preparation_failed', correlationId: 'req_start' }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } },
+    )));
+
+    await expect(streamSession({
+      projectId: 'project-1',
+      conversationId: 'conversation-start-failure',
+      message: 'Normal user message.',
+      onEvent: vi.fn(),
+    })).rejects.toMatchObject({
+      code: 'main_domain_preparation_failed',
+      correlationId: 'req_start',
+      status: 503,
+    });
+  });
+
   it('preserves UTF-8 prompt and response bytes when an em dash is split across stream chunks', async () => {
     const text = 'Harness — Hermes — café 漢字';
     const encoded = new TextEncoder().encode(
@@ -134,6 +164,29 @@ describe('streamSession', () => {
 });
 
 describe('loadSessionHistory', () => {
+  it('ignores persisted non-chat events instead of turning them into bubbles', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({
+        ok: true,
+        messages: [
+          { role: 'user', text: 'Exact user text' },
+          { role: 'tool', text: 'tool event text' },
+          { role: 'status', text: 'Working' },
+          { role: 'assistant', text: 'Exact model text' },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )));
+
+    await expect(loadSessionHistory({
+      projectId: 'project-1',
+      conversationId: 'conversation-history-roles',
+    })).resolves.toEqual([
+      { role: 'user', text: 'Exact user text' },
+      { role: 'assistant', text: 'Exact model text' },
+    ]);
+  });
+
   it('keeps a valid fresh conversation as an empty transcript', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
       JSON.stringify({ ok: true, messages: [] }),
@@ -158,6 +211,23 @@ describe('loadSessionHistory', () => {
     })).rejects.toMatchObject({
       code: 'conversation_history_read_failed',
       status: 500,
+      route: '/api/coder/main/session/history',
+    });
+  });
+
+  it('bounds a stuck history request with a typed timeout', async () => {
+    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(new DOMException('Aborted', 'AbortError'));
+      }, { once: true });
+    })));
+
+    await expect(loadSessionHistory({
+      projectId: 'project-1',
+      conversationId: 'main',
+      timeoutMs: 5,
+    })).rejects.toMatchObject({
+      code: 'conversation_history_timeout',
       route: '/api/coder/main/session/history',
     });
   });

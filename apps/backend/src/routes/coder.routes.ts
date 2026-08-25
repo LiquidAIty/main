@@ -8,10 +8,12 @@ import {
   answerHermesSession,
   cancelHermesRun,
   cancelHermesSession,
+  deleteHermesHistory,
   deriveHermesSessionKey,
   dispatchHermesLearnCommand,
   readHermesHistory,
   startHermesTurn,
+  type HermesHistoryArgs,
   type HermesSessionEvent,
   type HermesTurnArgs,
   type HermesTurnHandle,
@@ -152,8 +154,8 @@ router.post('/mcp-bridge/external_main_context', async (req, res) => {
 
     const conversationId = `external-mcp:${grant.grantId}`;
     const parentRunId = `external-main:${grant.grantId}`;
-    const mainCardId = await resolveMainChatCardId(grant.projectId, BUILDER_DECK_ID);
-    if (!mainCardId) {
+    const mainIdentity = await resolveMainChatHermesIdentity(grant.projectId, BUILDER_DECK_ID);
+    if (!mainIdentity) {
       return res.status(409).json({ ok: false, error: 'persisted_main_chat_unavailable' });
     }
     return res.json({
@@ -164,7 +166,7 @@ router.post('/mcp-bridge/external_main_context', async (req, res) => {
         deckId: BUILDER_DECK_ID,
         conversationId,
         parentRunId,
-        mainCardId,
+        mainCardId: mainIdentity.cardId,
       },
     });
   } catch (error) {
@@ -261,41 +263,6 @@ function resolvePreparedHermesTurnArgs(
   args: PreparedHermesTransportArgs,
 ): HermesTurnArgs {
   return resolveHermesTurnArgs(args, args.prepared?.hermesTransport);
-}
-
-function resolveHermesHistoryArgs(
-  args: PreparedHermesTransportArgs,
-): HermesTurnArgs {
-  const preparedSession = args.prepared || {};
-  const identity = preparedSession.cardIdentity || {};
-  const profile = preparedSession.sessionProfile || {};
-  const runtime = profile.runtime;
-  const provider = profile.provider || {};
-  if (
-    preparedSession.runtimeOwner !== 'hermes'
-    || runtime?.kind !== 'hermes'
-    || runtime?.mode !== 'main'
-    || !String(runtime?.profile || '').trim()
-  ) throw new Error('prepared_hermes_history_invalid');
-  return {
-    cardId: String(identity.cardId || ''),
-    title: String(identity.title || ''),
-    runtime,
-    prompt: String(profile.systemPrompt || ''),
-    provider: String(provider.provider || ''),
-    modelKey: String(provider.modelKey || ''),
-    providerModelId: String(provider.providerModelId || ''),
-    accessMode: provider.accessMode,
-    tools: Array.isArray(profile.enabledTools) ? profile.enabledTools : [],
-    mcpConnectionIds: Array.isArray(profile.mcpConnectionIds) ? profile.mcpConnectionIds : [],
-    sessionKey: deriveHermesSessionKey(args.projectId, args.conversationId, String(identity.cardId || '')),
-    projectId: args.projectId,
-    deckId: args.deckId,
-    conversationId: args.conversationId,
-    parentRunId: args.parentRunId || args.conversationId,
-    message: '',
-    ...(args.workingDirectory ? { workingDirectory: args.workingDirectory } : {}),
-  };
 }
 
 async function startPreparedHermesTransport(
@@ -1010,7 +977,6 @@ router.post('/main/session/chat', async (req, res) => {
       return false;
     }
   };
-  writeSse('session', { sessionId });
   logHarnessTrace(`[hermes] request received ${`corr=${correlationId}`} project=${projectId} profile=${prepared.hermesTransport.request.runtime.profile}`);
   let turnFinished = false;
   let terminalDoneEvent: Extract<HermesSessionEvent, { kind: 'done' }> | null = null;
@@ -1060,6 +1026,10 @@ router.post('/main/session/chat', async (req, res) => {
         }
       },
     });
+    // Announce an active stream only after the native Hermes adapter has
+    // returned a real turn handle. Before this event the browser renders
+    // Connecting, never Working.
+    writeSse('session', { sessionId });
     const { finalText, usage, transport } = await handle.done;
     await attentionReadQueue;
     try {
@@ -1205,27 +1175,13 @@ router.get('/main/session/history', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'projectId_required', messages: [] });
   }
   try {
-    const preparedSession = await requestPythonRailsJson('/domain/main/prepare', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId,
-        deckId,
-        conversationId,
-      }),
-    }) as any;
-    const turnArgs = resolveHermesHistoryArgs({
-      prepared: preparedSession,
-      projectId,
-      deckId,
-      conversationId,
-      parentRunId: `history:${conversationId}`,
-      onEvent: () => undefined,
-    });
-    if (turnArgs.cardId !== 'card_main_chat' || turnArgs.runtime.mode !== 'main') {
-      throw new Error('main_hermes_card_not_runnable');
-    }
-    const history = await readHermesHistory(turnArgs);
+    const mainIdentity = await resolveMainChatHermesIdentity(projectId, deckId);
+    if (!mainIdentity) throw new Error('main_hermes_card_not_runnable');
+    const historyArgs: HermesHistoryArgs = {
+      sessionKey: deriveHermesSessionKey(projectId, conversationId, mainIdentity.cardId),
+      profile: mainIdentity.profile,
+    };
+    const history = await readHermesHistory(historyArgs);
     return res.json({ ok: true, sessionId: history.sessionId, messages: history.messages });
   } catch (error) {
     logHarnessTrace(
@@ -1235,6 +1191,33 @@ router.get('/main/session/history', async (req, res) => {
       ok: false,
       error: 'conversation_history_read_failed',
       messages: [],
+    });
+  }
+});
+
+router.delete('/main/session/history', async (req, res) => {
+  const projectId = String(req.query?.projectId || '').trim();
+  const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
+  const conversationId = String(req.query?.conversationId || '').trim();
+  if (!projectId || !conversationId) {
+    return res.status(400).json({
+      ok: false,
+      error: 'projectId_and_conversationId_required',
+    });
+  }
+  try {
+    const mainIdentity = await resolveMainChatHermesIdentity(projectId, deckId);
+    if (!mainIdentity) throw new Error('main_hermes_card_not_runnable');
+    const result = await deleteHermesHistory({
+      sessionKey: deriveHermesSessionKey(projectId, conversationId, mainIdentity.cardId),
+      profile: mainIdentity.profile,
+    });
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'conversation_history_delete_failed';
+    return res.status(code === 'hermes_session_turn_already_running' ? 409 : 500).json({
+      ok: false,
+      error: code,
     });
   }
 });
@@ -1377,14 +1360,21 @@ function mountConsoleSessionRoutes(
 mountConsoleSessionRoutes('/hermes/coder-terminal', coderTerminalSessionManager);
 
 
-/** Resolve the saved Main Chat card from explicit runtime identity, never title. */
-async function resolveMainChatCardId(projectId: string, deckId: string): Promise<string | null> {
+/** Resolve the saved Main Card's durable Hermes identity, never its title or grants. */
+async function resolveMainChatHermesIdentity(
+  projectId: string,
+  deckId: string,
+): Promise<{ cardId: string; profile: string } | null> {
   const { deck } = await getDeckDocument(projectId, deckId);
   const card = (deck?.nodes || []).find(
     (node: any) =>
       node?.runtime?.kind === 'hermes' && node?.runtime?.mode === 'main',
   );
-  return card ? String(card.id) : null;
+  const runtime = card?.runtime;
+  if (!card || runtime?.kind !== 'hermes' || runtime.mode !== 'main') return null;
+  const cardId = String(card?.id || '').trim();
+  const profile = String(runtime.profile || '').trim();
+  return cardId && profile ? { cardId, profile } : null;
 }
 
 export default router;
