@@ -346,6 +346,20 @@ def required_tool_caller_runtime(name: str) -> dict[str, str] | None:
     return {"kind": kind, "mode": mode}
 
 
+def external_mcp_tool_ids() -> frozenset[str]:
+    """Return the literal IDD identities published through the external MCP."""
+    groups = load_input_data_dictionary().get("toolGroups")
+    if not isinstance(groups, list):
+        raise IddValidationError("idd_tool_groups_invalid")
+    return frozenset(
+        str(group["namePrefix"]) + str(tool["name"])
+        for group in groups
+        if isinstance(group, dict) and group.get("publication") == "external-mcp"
+        for tool in group.get("tools", [])
+        if isinstance(tool, dict)
+    )
+
+
 def tool_access(name: str) -> str | None:
     """Return explicit IDD access metadata; never infer it from prose or names."""
     reference = _declared_tool_references().get(name)

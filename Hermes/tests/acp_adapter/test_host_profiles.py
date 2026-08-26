@@ -42,7 +42,7 @@ def _metadata() -> dict:
                 "executionContextId": "root-context",
                 "hostSessionKey": "project:conversation:card",
                 "systemPrompt": "Saved Card system prompt",
-                "toolCallMeta": {"liquidaity/execution": "root-context"},
+                "toolCallMeta": {"host/execution-context": "root-context"},
             }
         }
     }
@@ -56,7 +56,7 @@ def test_parser_accepts_only_namespaced_bounded_noncredential_configuration() ->
     assert parsed["enabledTools"] == ["delegate_task"]
     assert parsed["hostSessionKey"] == "project:conversation:card"
     assert parsed["systemPrompt"] == "Saved Card system prompt"
-    assert parsed["toolCallMeta"] == {"liquidaity/execution": "root-context"}
+    assert parsed["toolCallMeta"] == {"host/execution-context": "root-context"}
 
     generic = _metadata()
     generic["hermes"]["sessionConfig"]["toolCallMeta"] = {
@@ -151,7 +151,7 @@ def test_generic_child_execution_uses_only_host_issued_context_metadata() -> Non
             return {
                 "executionContextId": "child-context",
                 "runId": "child-run",
-                "toolCallMeta": {"liquidaity/execution": "child-context"},
+                "toolCallMeta": {"host/execution-context": "child-context"},
             }
         return {"closed": True}
 
@@ -172,7 +172,7 @@ def test_generic_child_execution_uses_only_host_issued_context_metadata() -> Non
     )
     with host_execution_scope(child):
         assert current_host_tool_call_meta() == {
-            "liquidaity/execution": "child-context"
+            "host/execution-context": "child-context"
         }
     assert current_host_tool_call_meta() is None
     finish_host_child_execution(child, "completed")

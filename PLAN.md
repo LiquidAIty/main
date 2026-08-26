@@ -103,6 +103,9 @@ the transient Card call. The call carries task meaning and selected context, not
   base is frozen; LiquidAIty maintains it instead of adopting later Microsoft versions.
 - `AssistantAgent` is the direct single-Card rail.
 - `MagenticOneGroupChat` is the native team rail.
+- A saved Magentic-One Card with `openai` + `chatgpt-account` uses the official Codex app-server only
+  as its `ChatCompletionClient`: one owned process per Run, one ephemeral tool-free thread per model
+  completion, exact saved-model preflight, and no OAuth-token handling or provider fallback.
 - Task and Progress Ledgers remain private AutoGen state.
 - Saved `magentic_control` and `magentic_option` edges define control and worker eligibility.
 

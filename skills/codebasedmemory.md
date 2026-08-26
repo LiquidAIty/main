@@ -83,8 +83,8 @@ returns. Never invent graph records, qualified names, or placeholder search seed
 Use `trace_path` only when relationships or impact matter. Use `get_code_snippet` only with an actual qualified
 name returned by CBM. Optional graph and text-search stages are not a checklist: select the smallest useful
 subset and say why an omission matters when it limits proof. Use `get_architecture` only when broad orientation
-is genuinely necessary. Always read the complete relevant current source before changing behavior. The prompt
-hook's bounded native result is a discovery seed, never proof or freshness evidence. Do not invoke lifecycle
+is genuinely necessary. Always read the complete relevant current source before changing behavior. Any bounded
+native result supplied by Main is a discovery seed, never proof or freshness evidence. Do not invoke lifecycle
 mutation during the response.
 
 Exceptions: pure prose edits, spelling fixes, emergency repair when CBM itself is broken. State why CBM was skipped.
@@ -112,8 +112,8 @@ count; do not copy an old example count into a current report.
 
 **index_status** — Current index state.
 Parameter: `{"project":"C-Projects-LiquidAIty-main"}`
-The normal hooks do not call it. The active agent may call native status once only when current graph state is
-itself material to the task; do not poll it.
+The active agent may call application-published status once only when current graph state is itself material to
+the task; do not poll it.
 
 **check_index_coverage** — Exact path/scope coverage and filesystem-freshness evidence.
 Parameters: `{"project":"C-Projects-LiquidAIty-main","paths":["<repo-relative-path>"]}` or bounded
@@ -122,9 +122,9 @@ or negative claim. Distinguish `no_recorded_issue`, parse-partial, skipped, and 
 from filesystem freshness such as `metadata_changed`. Every result is best-effort; read current source and do
 not treat absence of a recorded issue as completeness proof.
 
-**index_repository** — Lifecycle maintenance, never discovery. The tracked completion hook owns one normal
-native-default incremental refresh. The prompt hook never indexes or recovers the project. The active agent
-does not call this tool during the response.
+**index_repository** — Lifecycle maintenance, never discovery. Initial projection creation is an explicit
+application-MCP administrative operation. Normal freshness belongs to the upstream Docker watcher. The active
+agent does not call this tool during an ordinary coding response.
 
 **detect_changes** — Maps working-tree changes to affected symbols.
 Parameter: `{"project":"C-Projects-LiquidAIty-main"}`
@@ -132,7 +132,7 @@ Use once when ordinary synchronization/change impact must be evaluated. Reports 
 uncommitted modifications and does not report untracked files. Do not call it ritualistically before
 and after every edit; combine it with `git status --short` when untracked state matters.
 
-**delete_project** — Destructive derived-state maintenance, never part of the normal prompt or completion hook.
+**delete_project** — Destructive derived-state maintenance, never part of a normal prompt or completion path.
 Use only for an explicitly authorized exact-project repair. Never apply that authorization to another project,
 repository source, vendor state, or direct CBM storage.
 
@@ -216,20 +216,16 @@ Note: Route nodes have empty `file_path`. Route→handler mapping requires readi
 ## Working-Tree Visibility
 
 The canonical `C-Projects-LiquidAIty-main` index is a rebuildable projection of repository source. Source and
-tests are authoritative. `Stop` asks the already-connected native MCP owner for one `index_repository` with
-native default incremental mode against the existing exact project/root. `UserPromptSubmit` asks that same
-owner for exactly one `search_graph` using the real GPT/PromptSpec prompt. It injects the native first page;
-`has_more` controls useful pagination rather than an arbitrary task-wide result maximum. Neither
-event launches a CLI or second daemon, and neither deletes, lists, polls, verifies, retries, or recovers.
-A companion command hook injects the bounded recipe. Explicit `CODEGRAPH_SEARCH:`
-criteria and real graph pointers from GPT/Main remain leading prompt context rather than deterministic routing.
-They answer what structural neighborhood to search next, not the final coding conclusion. The original prompt
-remains Codex input; the hooks add only live graph output and the narrow discovery recipe.
+tests are authoritative. LiquidAIty mounts that source read-only at `/C/Projects/LiquidAIty/main`; no second
+root or alias exists. The official Python MCP host owns one long-lived native frontend into the Compose-owned
+Docker service. Codex, Hermes, Cards, plugins, and connectors use only its application-published `cbm.*`
+catalog. They never install a native binary, register a direct server, launch a frontend or daemon, or own an
+index lifecycle.
 
-Empty and failed search outcomes are injected truthfully and fail open. There is no CLI lifecycle doorway,
-second daemon, mutex, turn claim, lease,
-generation, worktree fingerprint, state file, database, receipt, journal, retry loop, static graph handoff, or
-prompt-time lifecycle recovery. The Git post-commit hook remains Git LFS only. The active agent uses native MCP
+The upstream watcher owns ordinary incremental freshness. Empty and failed searches remain visible and fail
+open to bounded source inspection. There is no Codex lifecycle hook, host CLI doorway, second daemon, mutex,
+turn claim, lease, generation file, worktree fingerprint, state file, database wrapper, receipt, journal,
+retry loop, static graph handoff, or prompt-time lifecycle recovery. The active agent uses the application MCP
 for result-informed graph navigation and never repairs or mutates the index during its response.
 
 The current projection intentionally excludes `autogen-main` through `.cbmignore` for the measured lifecycle
@@ -268,25 +264,24 @@ authority proves it remains required, and document that contract. Never leave an
    IDs. Prove every remaining hit intentional or remove it.
 3. For renames, prove the old identity is absent and the new identity exists.
 4. Run focused proof for the surviving boundary and report deleted symbols plus every repaired relationship.
-5. After the completion rebuild, use native graph queries to prove deleted paths/qualified symbols and former
-   edges are absent when the hook/client contract makes that result observable. Do not infer graph absence from
+5. After watcher synchronization, use application-published graph queries to prove deleted paths/qualified
+   symbols and former edges are absent when the client contract makes that result observable. Do not infer graph absence from
    text search alone.
 
 ## Cold Start & Performance
 
-Every CLI call starts a process, while the connected MCP service can keep its own graph state warm.
-Neither lifecycle depends on Hermes.
+The connected application MCP keeps one native frontend warm; the upstream Docker coordination daemon owns its
+watcher and embedded UI. Neither lifecycle depends on Hermes.
 
-Use one doorway per run. Prefer the already-connected native MCP service. Main/GPT may use the
-transparent `cbm.*` federation because it preserves native schemas and owns one persistent native
-child; do not mix that doorway with a separate direct connection after either is proven healthy.
-When a Coder session requires direct native CBM tools but they are not exposed, record that boundary as
-unproven and use verified direct-source fallback; do not substitute the LiquidAIty application facade.
+Use one doorway per run: LiquidAIty's application-published `cbm.*` federation. It mechanically preserves
+native schemas and uses one persistent native child. A Coder never substitutes a direct native connection,
+host CLI, or alternate facade. If the application doorway is unavailable, record the boundary as unproven and
+use verified direct-source fallback.
 
-Independent bounded read operations may run concurrently through the same already-connected native
-MCP owner, canonical cache, and project; do not impose an arbitrary concurrency count. Dependent calls
-wait for their prerequisites, and every mutation, initialization, indexing, deletion, and recovery
-operation remains sequential. Never launch several CLI processes for discovery or concurrency.
+Independent bounded read operations may run concurrently through that same application-owned frontend,
+canonical Docker cache, and project; do not impose an arbitrary concurrency count. Dependent calls wait for
+their prerequisites, and every mutation, initialization, indexing, deletion, and recovery operation remains
+sequential. Never launch a native process for discovery or concurrency.
 
 Process lifecycle and index lifecycle are separate. A transport error does not authorize an index
 delete or reindex.
@@ -311,18 +306,16 @@ claim current runtime exposure, or create an authorization layer. Saved Card gra
 capability ceiling; a named recipe introduces only the smaller useful corridor for the current graph context.
 The model still chooses semantically within that corridor.
 
-| Role or owner | Exposed by default | Introduced only by a named recipe | Hook-owned or administrative boundary |
+| Role or owner | Exposed by default | Introduced only by a named recipe | Application or administrative boundary |
 |---|---|---|---|
-| Main / GPT planner | `search_graph`, `get_architecture`, `trace_path` | An explicit architecture/Cypher recipe may add `get_graph_schema` and bounded `query_graph`; source-level reading remains a Coder responsibility | The submit hook performs its own first `search_graph`; ordinary lifecycle and project-state tools stay absent |
-| Coder | `search_graph`, `trace_path`, `get_code_snippet`, `check_index_coverage`, `detect_changes` | `search_code` for literals/config/JSX/coverage gaps; `query_graph` for a bounded multi-hop question; `get_architecture` for orientation; `get_graph_schema` before custom Cypher | The Stop hook, not the active Coder, owns normal `index_repository` refresh |
+| Main / GPT planner | `search_graph`, `get_architecture`, `trace_path` | An explicit architecture/Cypher recipe may add `get_graph_schema` and bounded `query_graph`; source-level reading remains a Coder responsibility | Ordinary lifecycle and project-state tools stay absent |
+| Coder | `search_graph`, `trace_path`, `get_code_snippet`, `check_index_coverage`, `detect_changes` | `search_code` for literals/config/JSX/coverage gaps; `query_graph` for a bounded multi-hop question; `get_architecture` for orientation; `get_graph_schema` before custom Cypher | The upstream watcher owns normal refresh; the active Coder does not index |
 | Explicit diagnostics / administration | None | `list_projects`, `index_status`, and read-safe `manage_adr(get|sections)` only in a named diagnostic or architecture recipe | `manage_adr(update)` requires an explicit durable architecture decision; these tools do not occupy normal Main/Coder context |
-| Runtime observation / maintenance | None | None | `ingest_traces` requires real approved runtime trace evidence; `index_repository` is hook-owned during normal work; both are unavailable to ordinary discovery models |
+| Runtime observation / maintenance | None | None | `ingest_traces` requires real approved runtime trace evidence; initial `index_repository` is an explicit application-MCP administrative action; both are unavailable to ordinary discovery models |
 | Destructive recovery | None | None | `delete_project` is destructive and unavailable without explicit owner authorization for an exact verified maintenance target |
 
 Classification rules:
 
-- `UserPromptSubmit` hook-owned `search_graph` and model-exposed `search_graph` are distinct calls: the first
-  seeds leading context once; later calls must refine, narrow, or paginate from real results.
 - `index_repository`, `ingest_traces`, and `delete_project` are mutation-capable. Their schemas may be audited
   read-only, but ordinary models must not receive or call them merely to prove catalog coverage.
 - `list_projects`, `index_status`, and read-safe ADR inspection are non-destructive but administrative. Keep

@@ -1117,9 +1117,20 @@ def test_long_running_native_tools_use_their_owned_timeouts(monkeypatch):
 
     assert mcp_host._mcp_tool_timeout_seconds("cbm.index_repository") == 300.0
     assert mcp_host._mcp_tool_timeout_seconds("card.run_assistant_agent") == 300.0
+    assert mcp_host._mcp_tool_timeout_seconds("run_mag_one") == 300.0
     assert mcp_host._mcp_tool_timeout_seconds("engraphis.remember") == 240.0
     assert mcp_host._mcp_tool_timeout_seconds("cbm.index_status") == 30.0
     assert mcp_host._mcp_tool_timeout_seconds("graphiti.get_status") == 30.0
+
+
+def test_saved_card_backend_bridge_uses_the_long_running_timeout(monkeypatch):
+    import mcp_host
+
+    monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 30.0)
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_REQUEST_TIMEOUT_SECONDS", 300.0)
+
+    assert mcp_host._backend_bridge_timeout_seconds("run_configured_card") == 300.0
+    assert mcp_host._backend_bridge_timeout_seconds("external_main_context") == 30.0
 
 
 def test_cold_engraphis_timeout_cannot_enter_write_and_retry_is_safe(monkeypatch):
@@ -1310,6 +1321,10 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
             "model",
         ]
         assert by_name["card.create"].inputSchema["additionalProperties"] is False
+        assert by_name["card.create"].inputSchema["properties"]["runtime"]["properties"]["mode"] == {
+            "type": "string",
+            "enum": ["main", "delegate", "kanban", "assistant", "magentic_one"],
+        }
         assert "minProperties" not in str(
             by_name["card.update_configuration"].inputSchema
         )
@@ -1319,6 +1334,13 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
         assert reasoning_schema == {
             "type": "string",
             "enum": ["low", "medium", "high", "xhigh"],
+        }
+        access_mode_schema = by_name["card.update_configuration"].inputSchema[
+            "properties"
+        ]["updates"]["properties"]["accessMode"]
+        assert access_mode_schema == {
+            "type": "string",
+            "enum": ["chatgpt-account", "openai-api", "openrouter-api"],
         }
         assert "main.context" in by_name
         assert "agentgraph.inspect" in by_name
@@ -1338,6 +1360,134 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
 
     catalog = asyncio.run(check())
     assert len(catalog) == len(set(catalog))
+
+
+def test_gpt_tools_list_projects_the_unchanged_idd_catalog_without_rewriting_metadata(
+    monkeypatch,
+):
+    import asyncio
+    import importlib
+    import subprocess
+
+    if "mcp_host" not in sys.modules:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *_args, **_kwargs: SimpleNamespace(stdout=""),
+        )
+    mcp_host = importlib.import_module("mcp_host")
+    from app.python_models.idd import load_input_data_dictionary, tool_access
+
+    groups = load_input_data_dictionary()["toolGroups"]
+    external_ids = {
+        group["namePrefix"] + tool["name"]
+        for group in groups
+        if group["publication"] == "external-mcp"
+        for tool in group["tools"]
+    }
+    private_ids = {
+        group["namePrefix"] + tool["name"]
+        for group in groups
+        if group["publication"] == "private-runtime"
+        for tool in group["tools"]
+    }
+
+    def native_tool(canonical_name, native_name):
+        read_only = tool_access(canonical_name) == "read"
+        return mcp_host.Tool.model_validate({
+            "name": native_name,
+            "title": f"Canonical {canonical_name}",
+            "description": f"Canonical description for {canonical_name}.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"probe": {"type": "string"}},
+                "required": [],
+                "additionalProperties": False,
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {"ok": {"type": "boolean"}},
+                "required": ["ok"],
+                "additionalProperties": False,
+            },
+            "annotations": {
+                "readOnlyHint": read_only,
+                "destructiveHint": False,
+                "idempotentHint": read_only,
+                "openWorldHint": False,
+            },
+            "_meta": {"canonicalFixture": canonical_name},
+        })
+
+    by_namespace = {
+        "cbm": [],
+        "engraphis": [],
+        "graphiti": [],
+    }
+    for group in groups:
+        namespace = group["namespace"]
+        if group["publication"] != "external-mcp" or namespace not in by_namespace:
+            continue
+        for declaration in group["tools"]:
+            canonical_name = group["namePrefix"] + declaration["name"]
+            native_name = declaration["name"]
+            if namespace == "engraphis":
+                native_name = "engraphis_" + native_name
+            by_namespace[namespace].append(native_tool(canonical_name, native_name))
+
+    async def cbm_tools():
+        return by_namespace["cbm"]
+
+    async def engraphis_tools():
+        return by_namespace["engraphis"]
+
+    async def graphiti_tools():
+        return by_namespace["graphiti"]
+
+    monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", True)
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
+    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: None)
+    monkeypatch.setattr(mcp_host, "_native_cbm_tools", cbm_tools)
+    monkeypatch.setattr(mcp_host, "_native_engraphis_tools", engraphis_tools)
+    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", graphiti_tools)
+
+    canonical = asyncio.run(mcp_host._materialize_complete_catalog())
+    canonical_by_name = {tool.name: tool for tool in canonical}
+    assert set(canonical_by_name) == external_ids
+
+    private_only = private_ids - external_ids
+    private_tools = [
+        mcp_host._bind_authenticated_catalog([
+            mcp_host._bind_idd_access(
+                native_tool(name, name)
+            )
+        ])[0]
+        for name in sorted(private_only)
+    ]
+    complete_internal = [*canonical, *private_tools]
+    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", tuple(complete_internal))
+    monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
+
+    published = asyncio.run(mcp_host.list_tools())
+    published_names = [tool.name for tool in published]
+    assert set(published_names) == external_ids
+    assert len(published_names) == len(set(published_names))
+    assert private_only.isdisjoint(published_names)
+    assert len(mcp_host._http_catalog_or_error()) == len(complete_internal)
+    assert all(canonical_by_name[tool.name] is tool for tool in published)
+    assert canonical_by_name["web_search"].meta["liquidaitySource"]["sourceId"] == "main_mcp"
+    assert {
+        "cbm.delete_project",
+        "cbm.detect_changes",
+        "cbm.index_repository",
+        "cbm.ingest_traces",
+        "cbm.manage_adr",
+        "engraphis.check_update",
+        "engraphis.index_repo",
+        "engraphis.ingest_postgres_schema",
+        "graphiti.clear_graph",
+    }.issubset(published_names)
 
 
 def test_catalog_identity_covers_the_complete_frozen_tool_descriptor():
@@ -1734,6 +1884,11 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
     monkeypatch.setattr(mcp_host, "_materialize_complete_catalog", slow_complete_catalog)
     monkeypatch.setattr(mcp_host, "_close_native_graphiti", closed_graphiti)
     monkeypatch.setattr(mcp_host, "_close_native_cbm", lambda: None)
+    monkeypatch.setattr(
+        mcp_host,
+        "_codegraph_diagnostics",
+        lambda: {"codeGraphReady": True},
+    )
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
     monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", None)
@@ -2066,6 +2221,218 @@ def test_http_mcp_targets_compose_owned_codegraph():
     ]
 
 
+def test_codegraph_readiness_uses_the_existing_frontend_and_native_project_state(monkeypatch):
+    import mcp_host
+    from mcp.types import CallToolResult, TextContent
+
+    class ReadyClient:
+        server_info = {"name": "codebase-memory-mcp", "version": "0.10.8"}
+
+        def is_running(self):
+            return True
+
+        def call_tool(self, name, arguments, *, timeout_seconds):
+            assert timeout_seconds == mcp_host._NATIVE_CBM_HEALTH_TIMEOUT_SECONDS
+            if name == "list_projects":
+                payload = {
+                    "projects": [{
+                        "name": "C-Projects-LiquidAIty-main",
+                        "root_path": "/C/Projects/LiquidAIty/main",
+                        "node_count": 4459,
+                        "edge_count": 16773,
+                    }],
+                }
+            else:
+                assert name == "index_status"
+                assert arguments == {"project": "C-Projects-LiquidAIty-main"}
+                payload = {
+                    "status": "ready",
+                    "nodes": 4459,
+                    "edges": 16773,
+                    "generation": "generation-1",
+                    "revision": "revision-1",
+                }
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps(payload))]
+            )
+
+    inspected = [{
+        "Id": "container-1",
+        "Config": {"Image": "liquidaity-codegraph:0.10.8"},
+        "State": {"Running": True, "Health": {"Status": "healthy"}},
+        "Mounts": [{
+            "Type": "volume",
+            "Name": "liquidaity-cbm-cache",
+            "Destination": "/root/.cache/codebase-memory-mcp",
+        }],
+    }]
+
+    def run(command, **_kwargs):
+        if command[:2] == ["docker", "inspect"]:
+            return SimpleNamespace(returncode=0, stdout=json.dumps(inspected), stderr="")
+        assert command[:4] == ["docker", "exec", "codegraph", "tail"]
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "level=info msg=watcher.start interval_ms=multi-sec\n"
+                "level=info msg=watcher.watch project=C-Projects-LiquidAIty-main "
+                "path=/C/Projects/LiquidAIty/main\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_CLIENT", ReadyClient())
+    monkeypatch.setattr(mcp_host.subprocess, "run", run)
+
+    diagnostics = mcp_host._codegraph_diagnostics()
+    assert diagnostics["containerReady"] is True
+    assert diagnostics["binaryReady"] is True
+    assert diagnostics["daemonAttached"] is True
+    assert diagnostics["nativeFrontendAttached"] is True
+    assert diagnostics["canonicalProjectRegistered"] is True
+    assert diagnostics["indexReady"] is True
+    assert diagnostics["watcherActive"] is True
+    assert diagnostics["watcherState"] == "active"
+    assert diagnostics["codeGraphReady"] is True
+    assert diagnostics["indexGeneration"] == "generation-1"
+
+
+def test_codegraph_readiness_fails_closed_when_native_watcher_reports_git_failure(monkeypatch):
+    import mcp_host
+
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_HEALTH_TIMEOUT_SECONDS", 1)
+
+    def run(command, **_kwargs):
+        assert command[:4] == ["docker", "exec", "codegraph", "tail"]
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "level=info msg=watcher.start interval_ms=multi-sec\n"
+                "level=info msg=watcher.watch project=C-Projects-LiquidAIty-main "
+                "path=/C/Projects/LiquidAIty/main\n"
+                "level=error msg=watcher.git.failed project=C-Projects-LiquidAIty-main "
+                "reason=deadline\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(mcp_host.subprocess, "run", run)
+
+    status = mcp_host._docker_codegraph_watcher_status()
+    assert status == {
+        "watcherActive": False,
+        "watcherState": "failed",
+        "watcherFailure": "deadline",
+    }
+
+
+def test_codegraph_readiness_rejects_a_ready_catalog_with_no_project(monkeypatch):
+    import mcp_host
+    from mcp.types import CallToolResult, TextContent
+
+    class EmptyClient:
+        server_info = {"name": "codebase-memory-mcp", "version": "0.10.8"}
+
+        def is_running(self):
+            return True
+
+        def call_tool(self, name, _arguments, *, timeout_seconds):
+            assert name == "list_projects"
+            assert timeout_seconds == mcp_host._NATIVE_CBM_HEALTH_TIMEOUT_SECONDS
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps({"projects": []}))]
+            )
+
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_CLIENT", EmptyClient())
+    monkeypatch.setattr(
+        mcp_host,
+        "_docker_codegraph_runtime",
+        lambda: {
+            "containerReady": True,
+            "containerImageReady": True,
+            "cacheVolumeReady": True,
+        },
+    )
+
+    diagnostics = mcp_host._codegraph_diagnostics()
+    assert diagnostics["daemonAttached"] is True
+    assert diagnostics["canonicalProjectRegistered"] is False
+    assert diagnostics["indexReady"] is False
+    assert diagnostics["codeGraphReady"] is False
+
+
+def test_dev_fresh_owns_the_exact_codegraph_container_preflight():
+    script = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
+        "scripts",
+        "start-dev-services.ps1",
+    )
+    source = open(script, encoding="utf-8").read()
+    assert "docker info" in source
+    assert "docker compose up --detach --build --no-deps codegraph" in source
+    assert "liquidaity-codegraph:0.10.8" in source
+    assert "codebase-memory-mcp 0.10.8" in source
+    assert "liquidaity-cbm-cache" in source
+    assert "AddSeconds(60)" in source
+
+
+def test_repository_has_no_direct_native_cbm_hook_or_host_installer():
+    repo_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    )
+    forbidden_paths = [
+        os.path.join(repo_root, ".codex", "hooks.json"),
+        os.path.join(repo_root, ".codex", "hooks", "cbm_" + "graph_handoff.ps1"),
+        os.path.join(repo_root, "scripts", "setup-" + "codebase-memory-mcp.ps1"),
+        os.path.join(repo_root, "scripts", "check-" + "codebase-memory-mcp.ps1"),
+        os.path.join(repo_root, ".tools", "codebase-memory-mcp"),
+    ]
+    assert all(not os.path.exists(path) for path in forbidden_paths)
+
+    package = json.loads(open(os.path.join(repo_root, "package.json"), encoding="utf-8").read())
+    assert "mcp:" + "setup" not in package["scripts"]
+    assert "mcp:" + "check" not in package["scripts"]
+    assert "CBM_UI_ENABLED" not in package["scripts"]["dev:mcp"]
+    assert "9749" not in package["scripts"]["dev:mcp"]
+
+    installer = open(os.path.join(repo_root, "install.ps1"), encoding="utf-8").read()
+    assert "docker build" in installer
+    assert "codebase-memory-mcp.exe" not in installer
+    assert "config.toml" not in installer
+
+    vite = open(os.path.join(repo_root, "client", "vite.config.ts"), encoding="utf-8").read()
+    assert "127.0.0.1:9749" not in vite
+
+    codegraph_surface = open(
+        os.path.join(
+            repo_root,
+            "client",
+            "src",
+            "components",
+            "knowledge",
+            "NativeAuthorityGraphSurface.tsx",
+        ),
+        encoding="utf-8",
+    ).read()
+    assert "vendor/codebase-memory-ui/src/components/GraphTab" in codegraph_surface
+    assert "attentionData={attentionData}" in codegraph_surface
+
+
+def test_codegraph_container_root_derives_the_canonical_project_identity():
+    repo_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    )
+    paths = [
+        os.path.join(repo_root, "Dockerfile.codegraph"),
+        os.path.join(repo_root, "docker-compose.yml"),
+        os.path.join(repo_root, "apps", "python-models", "app", "mcp_host.py"),
+    ]
+    sources = [open(path, encoding="utf-8").read() for path in paths]
+    removed_root = "/" + "workspace" + "/main"
+    assert all("/C/Projects/LiquidAIty/main" in source for source in sources)
+    assert all(removed_root not in source for source in sources)
+
+
 def test_native_cbm_index_maps_the_canonical_checkout_into_the_container():
     import mcp_host
 
@@ -2077,7 +2444,7 @@ def test_native_cbm_index_maps_the_canonical_checkout_into_the_container():
     })
 
     assert normalized == {
-        "repo_path": "/workspace/main",
+        "repo_path": "/C/Projects/LiquidAIty/main",
         "name": "C-Projects-LiquidAIty-main",
         "mode": "full",
         "persistence": False,
@@ -2148,49 +2515,31 @@ def test_native_cbm_client_failure_is_strict(monkeypatch):
         )
 
 
-def test_native_cbm_bootstrap_race_retries_within_budget_on_the_same_authority(monkeypatch):
+def test_native_cbm_bootstrap_failure_does_not_spawn_a_second_frontend(monkeypatch):
     import mcp_host
 
     attempts = []
-    native_tool = mcp_host.Tool(
-        name="search_graph",
-        description="Native project search.",
-        inputSchema={"type": "object", "properties": {}},
-    )
-
     class NativeClient:
         def __init__(self, command, args, cwd):
             attempts.append((command, list(args), cwd))
-            if len(attempts) < 3:
-                detail = (
-                    "CBM daemon could not start within 30000 ms"
-                    if len(attempts) == 1
-                    else (
-                        "CBM daemon is active or starting but could not accept "
-                        "this client within 30000 ms"
-                    )
-                )
-                raise RuntimeError(
-                    f"native_cbm_process_exited:1:codebase-memory-mcp: {detail}"
-                )
-
-        def list_tools(self):
-            return [native_tool]
-
-        def close(self):
-            pass
+            raise RuntimeError(
+                "native_cbm_process_exited:1:codebase-memory-mcp: "
+                "CBM daemon could not start within 30000 ms"
+            )
 
     monkeypatch.setattr(mcp_host, "_NativeStdioMcpClient", NativeClient)
-    monkeypatch.setattr(mcp_host.time, "sleep", lambda _seconds: None)
-    client, tools, names = mcp_host._open_native_cbm_client(
-        "docker", ["exec", "-i", "codegraph", "/opt/cbm/codebase-memory-mcp"], "repo"
-    )
+    with pytest.raises(RuntimeError, match="CBM daemon could not start within 30000 ms"):
+        mcp_host._open_native_cbm_client(
+            "docker", ["exec", "-i", "codegraph", "/opt/cbm/codebase-memory-mcp"], "repo"
+        )
 
-    assert isinstance(client, NativeClient)
-    assert tools == (native_tool,)
-    assert names == ["search_graph"]
-    assert len(attempts) == 3
-    assert attempts[0] == attempts[1] == attempts[2]
+    assert attempts == [
+        (
+            "docker",
+            ["exec", "-i", "codegraph", "/opt/cbm/codebase-memory-mcp"],
+            "repo",
+        )
+    ]
 
 
 def test_native_cbm_bootstrap_does_not_retry_other_failures(monkeypatch):
@@ -2210,26 +2559,34 @@ def test_native_cbm_bootstrap_does_not_retry_other_failures(monkeypatch):
     assert attempts == 1
 
 
-def test_native_cbm_second_bootstrap_race_fails_strictly(monkeypatch):
+def test_native_cbm_duplicate_catalog_closes_the_only_frontend(monkeypatch):
     import mcp_host
 
     attempts = 0
+    closed = False
+    native_tool = mcp_host.Tool(
+        name="search_graph",
+        description="Native project search.",
+        inputSchema={"type": "object", "properties": {}},
+    )
 
     class NativeClient:
         def __init__(self, _command, _args, _cwd):
             nonlocal attempts
             attempts += 1
-            raise RuntimeError(
-                "native_cbm_process_exited:1:codebase-memory-mcp: "
-                "CBM daemon could not start within 30000 ms"
-            )
+
+        def list_tools(self):
+            return [native_tool, native_tool]
+
+        def close(self):
+            nonlocal closed
+            closed = True
 
     monkeypatch.setattr(mcp_host, "_NativeStdioMcpClient", NativeClient)
-    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_REQUEST_TIMEOUT_SECONDS", 60.0)
-    monkeypatch.setattr(mcp_host.time, "sleep", lambda _seconds: None)
-    with pytest.raises(RuntimeError, match="native_cbm_daemon_start_timeout"):
+    with pytest.raises(RuntimeError, match="native_cbm_duplicate_tool_name"):
         mcp_host._open_native_cbm_client("docker", [], "repo")
-    assert attempts == 2
+    assert attempts == 1
+    assert closed is True
 
 
 def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_clients(
@@ -2279,6 +2636,11 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
     monkeypatch.setattr(mcp_host, "AUTH0_REQUIRED_SCOPE", "liquidaity.main")
     monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", True)
     monkeypatch.setattr(mcp_host, "Auth0TokenVerifier", lambda _config: VerifiedToken())
+    monkeypatch.setattr(
+        mcp_host,
+        "_codegraph_diagnostics",
+        lambda: {"codeGraphReady": True},
+    )
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
     monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", None)
@@ -2311,6 +2673,26 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                     await asyncio.sleep(0.1)
                 else:
                     raise RuntimeError("http_mcp_catalog_not_ready")
+
+            async with httpx.AsyncClient(
+                headers={"Authorization": "Bearer request-scoped-test-token"},
+                timeout=2,
+            ) as security_client:
+                invalid_host = await security_client.post(
+                    f"http://127.0.0.1:{port}/mcp",
+                    headers={"host": "untrusted.example"},
+                    json={},
+                )
+                assert invalid_host.status_code == 421
+                assert invalid_host.text == "Invalid Host header"
+
+                invalid_origin = await security_client.post(
+                    f"http://127.0.0.1:{port}/mcp",
+                    headers={"origin": "https://untrusted.example"},
+                    json={},
+                )
+                assert invalid_origin.status_code == 403
+                assert invalid_origin.text == "Invalid Origin header"
 
             async def fresh_client():
                 response_session_ids = []
@@ -2874,19 +3256,25 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
     }
 
 
-def test_tunnel_waits_for_complete_catalog_without_default_timeout():
+def test_tunnel_waits_for_complete_application_readiness_with_a_bounded_timeout():
     script = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
         "scripts",
         "start-mcp-tunnel.ps1",
     )
     source = open(script, encoding="utf-8").read()
-    assert "[int]$TimeoutSeconds = 0" in source
+    assert "[int]$TimeoutSeconds = 60" in source
     assert '$readinessUrl = "$localBaseUrl/health/ready"' in source
     assert "$catalogCount -eq 71" in source
     assert "$catalogReady" in source
-    loop_start = source.index("    while ($null -eq $deadline")
-    loop_end = source.index("\n    if (-not $catalogReady)", loop_start)
+    assert "$containerReady" in source
+    assert "$daemonAttached" in source
+    assert "$frontendAttached" in source
+    assert "$projectReady" in source
+    assert "$indexReady" in source
+    assert "$watcherActive" in source
+    loop_start = source.index("    while ([DateTimeOffset]::UtcNow -lt $deadline)")
+    loop_end = source.index("\n    if (-not $applicationReady)", loop_start)
     readiness_loop = source[loop_start:loop_end]
     assert "$http.GetAsync($readinessUrl)" in readiness_loop
     assert "$metadataUrl" not in readiness_loop

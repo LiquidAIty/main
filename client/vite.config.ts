@@ -98,14 +98,8 @@ export default defineConfig(() => {
       port: 5173,
       strictPort: false,
       proxy: {
-        // Codebase-memory UI endpoints (dev): forward to local CBM UI server
-        '/rpc': {
-          target: 'http://127.0.0.1:9749',
-          changeOrigin: true,
-          secure: false,
-        },
         // Read-only Alpaca paper market data from the Python rails (port 8003),
-        // consumed by the /tradingui surface. Same direct-to-service pattern as /rpc.
+        // consumed by the /tradingui surface.
         '/market': {
           target: 'http://127.0.0.1:8003',
           changeOrigin: true,

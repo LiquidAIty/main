@@ -271,23 +271,46 @@ describe('Hermes ACP transport identity', () => {
     }
   });
 
-  it('keeps named Hermes profiles in independent homes', async () => {
+  it('uses the same profile home and memory DB for direct/team runs while isolating other Cards', async () => {
     const fakeRoot = path.join(tmpdir(), `liquidaity-acp-profile-home-${randomUUID()}`);
     const hermesHome = path.join(fakeRoot, '.hermes');
     mkdirSync(path.join(hermesHome, 'profiles', 'coder'), { recursive: true });
-    const owner = new AcpProcess(() => undefined, {
-      install: { root: fakeRoot, executable: process.execPath, args: ['-e', fakeAcpScript(false)] },
-      hermesHome,
-      profile: 'coder',
+    mkdirSync(path.join(hermesHome, 'profiles', 'research'), { recursive: true });
+    const install = {
+      root: fakeRoot,
+      executable: process.execPath,
+      args: ['-e', fakeAcpScript(false)],
+    };
+    const directOwner = new AcpProcess(() => undefined, { install, hermesHome, profile: 'coder' });
+    const teamOwner = new AcpProcess(() => undefined, { install, hermesHome, profile: 'coder' });
+    const otherCardOwner = new AcpProcess(() => undefined, {
+      install, hermesHome, profile: 'research',
     });
+    const owners = [directOwner, teamOwner, otherCardOwner];
     try {
-      expect(owner.hermesHome).toBe(path.join(hermesHome, 'profiles', 'coder'));
-      await expect(owner.requestExtension('_native/call', {
+      expect(directOwner.hermesHome).toBe(path.join(hermesHome, 'profiles', 'coder'));
+      expect(teamOwner.hermesHome).toBe(directOwner.hermesHome);
+      expect(path.join(teamOwner.hermesHome, 'memory_store.db')).toBe(
+        path.join(directOwner.hermesHome, 'memory_store.db'),
+      );
+      expect(otherCardOwner.hermesHome).toBe(path.join(hermesHome, 'profiles', 'research'));
+      expect(path.join(otherCardOwner.hermesHome, 'memory_store.db')).not.toBe(
+        path.join(directOwner.hermesHome, 'memory_store.db'),
+      );
+      await expect(directOwner.requestExtension('_native/call', {
         method: 'profiles.describe', params: { name: 'coder' },
       })).resolves.toEqual({ method: '_native/call' });
+      await expect(teamOwner.requestExtension('_native/call', {
+        method: 'profiles.describe', params: { name: 'coder' },
+      })).resolves.toEqual({ method: '_native/call' });
+      await expect(otherCardOwner.requestExtension('_native/call', {
+        method: 'profiles.describe', params: { name: 'research' },
+      })).resolves.toEqual({ method: '_native/call' });
     } finally {
-      owner.close();
-      await owner.closed;
+      for (const owner of owners) {
+        owner.close();
+        await owner.closed;
+      }
     }
   });
 

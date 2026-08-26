@@ -16,7 +16,7 @@ Use this procedure only for the real Python-rails `MagenticOneGroupChat` boundar
 
 ## Discovery
 
-Use native CBM on `C-Projects-LiquidAIty-main` to resolve `run_mag_one`, the configured Card runner,
+Use the application-published `cbm.*` doorway on `C-Projects-LiquidAIty-main` to resolve `run_mag_one`, the configured Card runner,
 roster composition, and AGE relationship checks. Direct-read the Python implementations and focused
 tests after CBM bounds the slice.
 

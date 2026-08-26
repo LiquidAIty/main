@@ -2148,7 +2148,7 @@ class HermesACPAgent(acp.Agent):
         if conn:
             # LIQUIDAITY VENDOR PATCH: expose one generic, synchronous ACP
             # extension requester to Hermes' native child lifecycle. Product
-            # Card/Run/AGE policy remains entirely in the ACP host.
+            # Product identity and authorization remain entirely in the ACP host.
             from acp_adapter.host_profiles import attach_host_execution_requester
 
             def _host_execution_requester(method: str, params: dict[str, Any]) -> Any:
@@ -2779,7 +2779,7 @@ class HermesACPAgent(acp.Agent):
         if state:
             # LIQUIDAITY VENDOR PATCH: a trusted ACP host may pin the public
             # Hermes API mode for this saved session. This is generic runtime
-            # selection only; Card/Run/graph policy remains outside Hermes.
+            # selection only; product policy remains outside Hermes.
             # Omission preserves exact upstream behavior.
             requested_api_mode = kwargs.get("apiMode") or kwargs.get("api_mode")
             if requested_api_mode is not None:

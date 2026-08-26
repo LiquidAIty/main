@@ -1,22 +1,28 @@
 # LiquidAIty Windows dependency bootstrap.
-# Third-party runtimes are installed beneath this repository; this script does
-# not add tools to PATH, edit global agent registrations, or modify ACLs.
+# Codebase Memory is installed only in the Docker image. This script never
+# installs a host binary, edits PATH, or registers CBM with an agent.
 
 $ErrorActionPreference = "Stop"
 
 $repoPath = (Resolve-Path $PSScriptRoot).Path
-$setupScript = Join-Path $repoPath "scripts\setup-codebase-memory-mcp.ps1"
-$checkScript = Join-Path $repoPath "scripts\check-codebase-memory-mcp.ps1"
+$expectedImage = "liquidaity-codegraph:0.10.8"
+$expectedVersion = "codebase-memory-mcp 0.10.8"
 
-Write-Host "[install] Bootstrapping LiquidAIty repository dependencies."
-& $setupScript
+Write-Host "[install] Building the checksum-pinned Docker CodeGraph image."
+& docker info --format '{{.ServerVersion}}' | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    throw "Repo-owned CBM setup failed with exit code $LASTEXITCODE."
+    throw "Docker is unavailable."
 }
 
-& $checkScript
+& docker build --tag $expectedImage --file (Join-Path $repoPath "Dockerfile.codegraph") $repoPath
 if ($LASTEXITCODE -ne 0) {
-    throw "Repo-owned CBM ownership check failed with exit code $LASTEXITCODE."
+    throw "CodeGraph image build failed with exit code $LASTEXITCODE."
 }
 
-Write-Host "[install] PASS: repo-owned dependencies are installed and verified."
+$version = ((& docker run --rm --entrypoint /opt/cbm/codebase-memory-mcp $expectedImage --version 2>&1) | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $version -ne $expectedVersion) {
+    throw "Docker CBM version verification failed. Expected '$expectedVersion', got '$version'."
+}
+
+Write-Host "[install] PASS: $expectedImage contains $version."
+Write-Host "[install] CBM remains unregistered and uninstalled on the Windows host."

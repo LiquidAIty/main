@@ -27,8 +27,9 @@ NOT another TypeScript planner/context-packet subsystem.
 
 No `graphContextBuilder`, no `CoderContextPacket` planner maze, no PlanFlow prepare
 endpoint, no Task Ledger grounding, no ThinkGraph-derived code packet, no duplicate
-TypeScript code-reasoning engine, and no TypeScript CBM carrier. The coding runtime
-connects to the native codebase-memory MCP server through its ordinary MCP configuration.
+TypeScript code-reasoning engine, and no TypeScript CBM carrier. The coding runtime uses LiquidAIty's
+application-published `cbm.*` catalog. The application MCP owns the only native stdio frontend into the
+Docker service; coding clients never configure or launch native CBM directly.
 
 ## Rules
 

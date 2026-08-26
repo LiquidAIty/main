@@ -28,7 +28,7 @@ React/Vite Agent Builder and Chat
            ├─ AutoGen MagenticOneGroupChat
            ├─ ThinkGraph/Engraphis
            ├─ KnowGraph/Graphiti
-           └─ CodeGraph/native CBM
+           └─ CodeGraph/native CBM through one app-owned Docker frontend
 ```
 
 ngrok is a readiness-gated child of the canonical service tree and forwards only to the official MCP
@@ -206,7 +206,8 @@ writes, and run completion/failure. Answer prose and hidden reasoning are never 
 - AGE on PostgreSQL: saved Card relationships and execution/reference observations.
 - Neo4j: KnowGraph.
 - Engraphis SQLite: ThinkGraph.
-- Native CBM owner: CodeGraph.
+- Native CBM in the Compose-owned `codegraph` container: CodeGraph. Its official daemon, watcher, embedded UI,
+  and disposable named cache remain inside Docker; the Python MCP host owns the only stdio frontend.
 
 No cleanup task may reset or reseed these stores.
 
@@ -228,19 +229,19 @@ Python dependency owners remain:
 - `services/knowgraph/requirements.txt` for Graphiti/Neo4j;
 - `services/esn_rls/requirements.txt` for the separately retained ESN service boundary.
 
-The canonical `C-Projects-LiquidAIty-main` Codebase Memory project normally indexes tracked LiquidAIty
-source plus the checked-in AutoGen fork. Hermes is excluded from routine rebuilds because of its size.
-An explicitly bounded architecture task may create one temporary unified projection containing tracked
-Hermes source/plugins/extensions/tests; that projection is discovery-only and becomes intentionally
-divergent after the normal exclusion is restored. Runtime homes, credentials, virtual environments,
-caches, builds, models, and independently versioned applications such as WorldSignals remain excluded.
-Indexing never transfers Hermes ownership or relaxes the controlled-vendor patch law.
+The canonical `C-Projects-LiquidAIty-main` Codebase Memory project indexes the exact source allowed by the
+root `.cbmignore`. The repository is mounted read-only at `/C/Projects/LiquidAIty/main`; no alias or second root
+exists. Runtime homes, credentials, virtual environments, caches, builds, and excluded vendor/imported trees
+remain outside the derived projection. Indexing never transfers vendor ownership or relaxes the controlled-
+vendor patch law.
 
 ## Canonical startup
 
-`npm run dev:fresh` is the only supported full-product start. It stops the six product ports, creates
-one ephemeral internal MCP secret, and supervises frontend `5173`, backend `4000`, AutoGen rails `8003`,
-KnowGraph `8001`, official MCP `8765`, and ngrok inspector `4040`.
+`npm run dev:fresh` is the only supported full-product start. It installs the LiquidAIty-owned Hermes
+entry-point plugin into the preserved Hermes environment, stops the six product ports, creates one
+ephemeral internal MCP secret, and supervises frontend `5173`, backend `4000`, AutoGen rails `8003`,
+KnowGraph `8001`, official MCP `8765`, ngrok inspector `4040`, and the Hermes gateway. The gateway and
+every backend-launched Hermes child receive an environment with the host-only signing secret removed.
 
 Component commands remain private children of that tree. A partial service start is diagnostic only and
 is not product readiness proof.
@@ -251,10 +252,10 @@ Hermes is the only vendor boundary required by the three internal Cards. LiquidA
 stays in the backend adapter whenever possible. Any Hermes edit must remain narrowly recorded, tested,
 and justified against an unavailable upstream adapter/configuration hook.
 
-The current contained divergence tracks
-[`NousResearch/hermes-agent`](https://github.com/NousResearch/hermes-agent) release `v2026.8.18`
-(package version `0.20.4`) at upstream commit
-`e624e9fde561e1add9388384012b295fde669ade`. ACP has no native host contract for publishing a bounded
+The current contained divergence tracks the default `main` branch of
+[`NousResearch/hermes-agent`](https://github.com/NousResearch/hermes-agent) (package version `0.20.5`)
+at upstream commit `6ce7ab8bfb3fce3ba116f52a11a438d6c7e4c03d`, verified 2026-08-25. That
+commit is newer than the latest tagged release at the time of refresh. ACP has no native host contract for publishing a bounded
 session tool surface or allocating an execution context before a native child starts, so
 `Hermes/acp_adapter/host_profiles.py` plus marked hooks in `acp_adapter/session.py`,
 `acp_adapter/server.py`, and `tools/delegate_tool.py` accept only trusted
@@ -269,10 +270,13 @@ Hermes behavior. Focused no-provider tests live in
 child execution-context extension additionally touches `Hermes/tools/mcp_tool.py` so official MCP 2
 per-call `meta=` carries only an opaque host-issued context ID. A separate one-condition correction in
 `Hermes/acp_adapter/tools.py` preserves Hermes' generic structured `tool_error()` status across ACP;
-its focused proof is `Hermes/tests/acp/test_tools.py`. The complete rebase, rollback, and
-upstream-contribution plan is owned by `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. On each Hermes refresh,
-remove a divergence if upstream supplies the equivalent public hook; otherwise reapply only its marked
-symbols and rerun the registered tests.
+its focused proof is `Hermes/tests/acp/test_tools.py`. The complete rollback and upstream-contribution
+plan is owned by `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. Hermes is pinned. Updating, refreshing,
+downloading, replacing, rebasing, or reinstalling Hermes is prohibited unless Jeremiah explicitly
+requests a manual Hermes upgrade in the current message. Git save, Git checkpoint, commit, startup,
+testing, and general maintenance never imply that request. Only during a separately requested manual
+Hermes upgrade, remove a divergence if upstream supplies the equivalent public hook; otherwise reapply
+only its marked symbols and rerun the registered tests.
 
 ACP also has no read-only persisted-transcript or host-owned deletion method: standard `session/load` restores executable
 runtime state and registers supplied MCP servers before replaying history. The contained generic
@@ -313,11 +317,13 @@ OAuth storage. The registered files, proof, contribution plan, and rollback live
 The default native Kanban worker lane also exposes one generic registered pre-spawn environment
 provider. The provider receives only bounded native task/run/board/profile/workspace/claim identity
 and may add new values to that child process without replacing inherited or stock Hermes values.
-LiquidAIty's bundled provider resolves the already-persisted native-root to saved-Card Run/revision/
-grant correlation over strict loopback, asks the existing signer for one short-lived Card bearer, and
-adds only `LIQUIDAITY_CARD_BEARER`; the signing secret is removed from the child environment. Hermes'
-normal MCP `${ENV_VAR}` header interpolation consumes the bearer, while model OAuth and ordinary
-workers without a registered provider remain unchanged. Focused proof and rollback are registered in
+LiquidAIty's external `apps/hermes-liquidaity-plugin` package loads through stock Hermes
+`hermes_agent.plugins` entry-point discovery. It resolves the already-persisted native-root to
+saved-Card Run/revision/grant correlation over strict loopback, asks the existing signer for one
+short-lived Card bearer, and adds only `LIQUIDAITY_CARD_BEARER`; canonical startup and every
+backend-launched Hermes boundary remove the host-only signing secret first. Hermes' normal MCP
+`${ENV_VAR}` header interpolation consumes the bearer, while model OAuth and ordinary workers without
+the enabled provider remain unchanged. Focused proof and rollback are registered in
 `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
 OpenClaude/LocalCoder is not a vendor boundary, package root, fallback, or supported runtime in Core v0.

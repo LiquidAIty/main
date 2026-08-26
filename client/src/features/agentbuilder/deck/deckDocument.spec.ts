@@ -65,3 +65,13 @@ describe('buildQuickAddAssistCard (hex-plus add agent)', () => {
     expect(Object.keys(result)).toEqual(['nextDeck', 'nextNode']);
   });
 });
+
+describe('initial Magentic-One account binding', () => {
+  it('uses the official ChatGPT account model without changing other Cards', () => {
+    const magentic = INITIAL_DECK.nodes.find((node) => node.id === 'card_magentic');
+    expect(magentic?.runtime).toEqual({ kind: 'autogen', mode: 'magentic_one' });
+    expect(magentic?.runtimeOptions?.provider).toBe('openai');
+    expect(magentic?.runtimeOptions?.accessMode).toBe('chatgpt-account');
+    expect(magentic?.runtimeOptions?.modelKey).toBe('gpt-5.6-sol');
+  });
+});

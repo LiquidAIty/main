@@ -1,6 +1,0 @@
-name: liquidaity-card-mcp
-version: 1.0.0
-description: "Inject the invoking saved Card Run bearer into correlated native Kanban worker processes."
-author: "LiquidAIty"
-kind: backend
-

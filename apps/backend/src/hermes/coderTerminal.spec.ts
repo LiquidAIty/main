@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
+import { resolveRepoRoot } from '../coder/workspaceRoot';
 import {
   HermesCoderTerminalManager,
   HermesCoderTerminalSession,
@@ -80,6 +82,21 @@ const identity = {
 };
 
 describe('Hermes Coder real PTY boundary', () => {
+  it('keeps normal workspace terminals separate from the Hermes runtime', () => {
+    const settings = JSON.parse(
+      readFileSync(path.join(resolveRepoRoot(), '.vscode', 'settings.json'), 'utf8'),
+    ) as Record<string, unknown>;
+
+    expect(settings).toMatchObject({
+      'python.defaultInterpreterPath':
+        '${workspaceFolder}\\apps\\python-models\\.venv\\Scripts\\python.exe',
+      'python.useEnvironmentsExtension': false,
+      'python.terminal.activateEnvironment': false,
+      'python.terminal.activateEnvInCurrentTerminal': false,
+    });
+    expect(String(settings['python.defaultInterpreterPath'])).not.toMatch(/Hermes[\\/]/i);
+  });
+
   it('starts one idle persistent Coder terminal from the backend startup owner', () => {
     const child = new FakePty();
     const manager = new HermesCoderTerminalManager((() => child) as unknown as PtyFactory);

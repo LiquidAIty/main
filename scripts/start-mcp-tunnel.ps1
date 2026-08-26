@@ -3,8 +3,8 @@ param(
     [string]$PublicResourceUrl,
     [ValidateRange(1, 65535)]
     [int]$McpPort = 8765,
-    [ValidateRange(0, 300)]
-    [int]$TimeoutSeconds = 0,
+    [ValidateRange(1, 300)]
+    [int]$TimeoutSeconds = 60,
     [switch]$ReadyOnly
 )
 
@@ -26,11 +26,7 @@ $localBaseUrl = "http://127.0.0.1:$McpPort"
 $metadataUrl = "$localBaseUrl/.well-known/oauth-protected-resource/mcp"
 $mcpUrl = "$localBaseUrl/mcp"
 $readinessUrl = "$localBaseUrl/health/ready"
-$deadline = if ($TimeoutSeconds -gt 0) {
-    [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
-} else {
-    $null
-}
+$deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
 $lastState = 'unreachable'
 $lastLoggedState = ''
 $pollMilliseconds = 500
@@ -44,7 +40,8 @@ try {
     $catalogCount = 0
     $catalogUniqueCount = 0
     $catalogHash = ''
-    while ($null -eq $deadline -or [DateTimeOffset]::UtcNow -lt $deadline) {
+    $applicationReady = $false
+    while ([DateTimeOffset]::UtcNow -lt $deadline) {
         $readiness = $null
         $readinessBody = ''
         $catalogState = 'unreachable'
@@ -56,15 +53,33 @@ try {
             $catalogCount = [int]$readinessPayload.publicToolCount
             $catalogUniqueCount = [int]$readinessPayload.publicToolUniqueCount
             $catalogHash = [string]$readinessPayload.catalogHash
+            $containerReady = [bool]$readinessPayload.containerReady
+            $binaryReady = [bool]$readinessPayload.binaryReady
+            $daemonAttached = [bool]$readinessPayload.daemonAttached
+            $frontendAttached = [bool]$readinessPayload.nativeFrontendAttached
+            $projectReady = [bool]$readinessPayload.canonicalProjectRegistered
+            $indexReady = [bool]$readinessPayload.indexReady
+            $watcherActive = [bool]$readinessPayload.watcherActive
             $completedFamilies = @($readinessPayload.completedCatalogFamilies) -join ','
             $initializingFamily = [string]$readinessPayload.initializingCatalogFamily
             $catalogReady = (
-                [int]$readiness.StatusCode -eq 200 -and
                 [bool]$readinessPayload.catalogReady -and
+                [bool]$readinessPayload.publicCatalogReady -and
                 $catalogState -eq 'ready' -and
                 $catalogCount -eq 71 -and
                 $catalogUniqueCount -eq 71 -and
                 -not [string]::IsNullOrWhiteSpace($catalogHash)
+            )
+            $applicationReady = (
+                [int]$readiness.StatusCode -eq 200 -and
+                $catalogReady -and
+                $containerReady -and
+                $binaryReady -and
+                $daemonAttached -and
+                $frontendAttached -and
+                $projectReady -and
+                $indexReady -and
+                $watcherActive
             )
         } catch {
             $catalogState = 'unreachable'
@@ -72,6 +87,14 @@ try {
             $catalogCount = 0
             $catalogUniqueCount = 0
             $catalogHash = ''
+            $applicationReady = $false
+            $containerReady = $false
+            $binaryReady = $false
+            $daemonAttached = $false
+            $frontendAttached = $false
+            $projectReady = $false
+            $indexReady = $false
+            $watcherActive = $false
             $completedFamilies = ''
             $initializingFamily = ''
         } finally {
@@ -82,7 +105,10 @@ try {
 
         $lastState = (
             "catalogState=$catalogState completed=$completedFamilies " +
-            "initializing=$initializingFamily catalogCount=$catalogCount"
+            "initializing=$initializingFamily catalogCount=$catalogCount " +
+            "container=$containerReady binary=$binaryReady daemon=$daemonAttached " +
+            "frontend=$frontendAttached project=$projectReady index=$indexReady " +
+            "watcher=$watcherActive"
         )
         if ($lastState -ne $lastLoggedState) {
             Write-Host "MCP readiness: $lastState"
@@ -102,7 +128,9 @@ try {
             if (-not $catalogReady) {
                 throw "MCP reported ready with an incomplete catalog: $lastState"
             }
-            break
+            if ($applicationReady) {
+                break
+            }
         }
 
         Start-Sleep -Milliseconds $pollMilliseconds
@@ -112,7 +140,7 @@ try {
         )
     }
 
-    if (-not $catalogReady) {
+    if (-not $applicationReady) {
         throw "MCP complete local readiness failed after $TimeoutSeconds seconds: $lastState"
     }
 

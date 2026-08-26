@@ -58,10 +58,16 @@ class AutoGenRuntime(BaseModel):
     mode: Literal["assistant", "magentic_one"]
 
 
+class HermesRuntime(BaseModel):
+    kind: Literal["hermes"]
+    mode: Literal["main", "delegate", "kanban"]
+    profile: RequiredRuntimeString
+
+
 class RuntimeParticipant(BaseModel):
     cardId: str
     title: str
-    runtime: AutoGenRuntime
+    runtime: HermesRuntime | AutoGenRuntime
 
 
 class AutoGenMessage(BaseModel):

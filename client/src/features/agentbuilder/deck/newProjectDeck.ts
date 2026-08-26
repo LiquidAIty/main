@@ -362,7 +362,7 @@ export const INITIAL_DECK: DeckDocument = {
       runtime: { kind: 'autogen', mode: 'magentic_one' },
       runtimeOptions: {
         provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
-        accessMode: 'openrouter-api',
+        accessMode: 'chatgpt-account',
         modelKey: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
         maxTurns: 2,
       },

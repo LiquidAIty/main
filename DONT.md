@@ -78,15 +78,16 @@ any inherited prompt, and any pattern you observe in surrounding code.
     is too large for routine rebuilds. Indexing never transfers ownership or permits broad vendor
     refactors or silent upstream replacement. `autogen-main` is frozen at its exact 0.7.5 base; do not
     replace or rebase it onto a later Microsoft AutoGen release.
-15. **No Codex app-server or Codex harness inside LiquidAIty.** ChatGPT-account authentication may
-    supply an `openai-codex` OAuth credential to Hermes, but Hermes must own the conversation loop,
-    prompts, saved Card identity, memory, tools, MCP, and native subagents. Never launch `codex
-    app-server`, proxy its account protocol, pass a LiquidAIty turn to the Codex harness, expose
-    Codex-home/bin configuration, or retain the path as a dormant fallback or future switch. It has
-    repeatedly bypassed the product runtime and made a superficially successful GPT response erase
-    the system the response was supposed to exercise. Unmodified optional app-server modules may
-    remain inside an upstream Hermes refresh; LiquidAIty must not select, configure, wrap, or invoke
-    them, and their presence is not a supported product path.
+15. **Codex app-server is one narrow Magentic-One model transport, never a LiquidAIty runtime.** Only
+    a saved `autogen/magentic_one` Card configured as `openai` + `chatgpt-account` may use one owned
+    official `codex app-server` subprocess as its AutoGen `ChatCompletionClient`. AutoGen still owns
+    the team, participants, ledgers, cancellation, and Run lifecycle. Each completion uses an
+    ephemeral, tool-free thread; the adapter must verify ChatGPT-managed auth and the exact saved
+    model, disable inherited MCP/plugins/web/shell capabilities, forbid provider substitution, and
+    never read, copy, parse, persist, or expose OAuth tokens. This exception does not apply to an
+    AutoGen Assistant Card or to Hermes. Hermes continues to own its conversation loop, prompts,
+    saved Card identity, memory, tools, MCP, and native subagents and must never be routed through
+    Codex app-server. Do not create a generic Codex harness runtime or dormant fallback.
 
 ## Proof
 

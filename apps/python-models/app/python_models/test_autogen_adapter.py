@@ -8,6 +8,11 @@ import pytest
 
 from app.python_models import magentic_agentchat as mac
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
+from app.python_models.codex_app_server_model_client import (
+    CodexAppServerChatCompletionClient,
+    CodexAppServerError,
+)
+from autogen_ext.models.openai import OpenAIChatCompletionClient
 from app.python_models.idf import materialize_idf
 from app.python_models.orchestration_contracts import (
     ProjectSession,
@@ -22,8 +27,8 @@ MODEL = "gpt-5.6"
 def _context() -> RuntimeRequest:
     participants = [
         RuntimeParticipant(
-            cardId="signals", title="WorldSignals",
-            runtime={"kind": "autogen", "mode": "assistant"},
+            cardId="coder", title="Coder",
+            runtime={"kind": "hermes", "mode": "delegate", "profile": "coder"},
         ),
         RuntimeParticipant(
             cardId="trading", title="Trading",
@@ -94,7 +99,75 @@ def test_invalid_saved_max_tokens_fails_instead_of_provider_default(max_tokens):
 
 
 def test_connected_agents_are_saved_display_names():
-    assert mac.connected_agent_names(_context()) == ["WorldSignals", "Trading"]
+    assert mac.connected_agent_names(_context()) == ["Coder", "Trading"]
+
+
+def test_mag_one_chatgpt_account_selects_only_the_app_server_client(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-be-read-for-this-path")
+    client = _build_model_client(
+        AutoGenAgentConfig(
+            provider="openai",
+            provider_model_id="gpt-5.6-sol",
+            access_mode="chatgpt-account",
+        ),
+        runtime_mode="magentic_one",
+    )
+    assert isinstance(client, CodexAppServerChatCompletionClient)
+    asyncio.run(client.close())
+
+
+def test_arbitrary_autogen_assistant_cannot_use_chatgpt_account():
+    with pytest.raises(
+        RuntimeError,
+        match="autogen_chatgpt_account_not_supported_for_assistant",
+    ):
+        _build_model_client(
+            AutoGenAgentConfig(
+                provider="openai",
+                provider_model_id="gpt-5.6-sol",
+                access_mode="chatgpt-account",
+            ),
+            runtime_mode="assistant",
+        )
+
+
+def test_existing_openai_api_and_openrouter_paths_remain_selected(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    clients = [
+        _build_model_client(AutoGenAgentConfig(
+            provider="openai",
+            provider_model_id="gpt-5.6",
+            access_mode="openai-api",
+        )),
+        _build_model_client(AutoGenAgentConfig(
+            provider="openrouter",
+            provider_model_id="openai/gpt-5.6",
+            access_mode="openrouter-api",
+        )),
+    ]
+    assert all(isinstance(client, OpenAIChatCompletionClient) for client in clients)
+    for client in clients:
+        asyncio.run(client.close())
+
+
+@pytest.mark.parametrize(
+    ("provider", "access_mode"),
+    [
+        ("openrouter", "chatgpt-account"),
+        ("openai", "openrouter-api"),
+    ],
+)
+def test_invalid_provider_access_mode_combinations_fail(provider, access_mode):
+    with pytest.raises(RuntimeError, match="autogen_provider_access_mode_invalid"):
+        _build_model_client(
+            AutoGenAgentConfig(
+                provider=provider,
+                provider_model_id="gpt-5.6-sol",
+                access_mode=access_mode,
+            ),
+            runtime_mode="magentic_one",
+        )
 
 
 def test_native_mag_one_consumes_canonical_card_input_and_returns_native_ids(monkeypatch):
@@ -116,7 +189,7 @@ def test_native_mag_one_consumes_canonical_card_input_and_returns_native_ids(mon
             )
 
     context = _context()
-    monkeypatch.setattr(mac, "_build_model_client", lambda _config: Client())
+    monkeypatch.setattr(mac, "_build_model_client", lambda _config, **_kwargs: Client())
     monkeypatch.setattr(mac, "_build_participants", lambda *_args, **_kwargs: [object(), object()])
     monkeypatch.setattr(mac, "MagenticOneGroupChat", Team)
     result = asyncio.run(mac.run_native_magentic_mission(context))
@@ -127,18 +200,44 @@ def test_native_mag_one_consumes_canonical_card_input_and_returns_native_ids(mon
     assert tasks == ["current native graph data\n\napproved task"]
 
 
-def test_native_mag_one_failure_does_not_echo_secret(monkeypatch):
+def test_native_mag_one_failure_does_not_echo_secret(monkeypatch, capsys):
     secret = "provider-secret-must-not-escape"
     context = _context()
     context.idf.dynamicContext.task = secret
     monkeypatch.setattr(
         mac,
         "_build_model_client",
-        lambda _config: (_ for _ in ()).throw(RuntimeError(secret)),
+        lambda _config, **_kwargs: (_ for _ in ()).throw(RuntimeError(secret)),
     )
     result = asyncio.run(mac.run_native_magentic_mission(context))
     assert result.error == "magentic_run_failed"
     assert secret not in result.model_dump_json()
+    captured = capsys.readouterr()
+    assert "RuntimeError" in captured.out
+    assert secret not in captured.out
+
+
+def test_native_mag_one_logs_only_stable_app_server_failure_code(monkeypatch, capsys):
+    secret = "provider-secret-must-not-escape"
+    failure_code = "codex_app_server_turn_failed"
+    context = _context()
+    context.idf.dynamicContext.task = secret
+    monkeypatch.setattr(
+        mac,
+        "_build_model_client",
+        lambda _config, **_kwargs: (_ for _ in ()).throw(
+            CodexAppServerError(failure_code)
+        ),
+    )
+
+    result = asyncio.run(mac.run_native_magentic_mission(context))
+
+    assert result.error == "magentic_run_failed"
+    assert failure_code not in result.model_dump_json()
+    captured = capsys.readouterr()
+    assert "CodexAppServerError" in captured.out
+    assert failure_code in captured.out
+    assert secret not in captured.out
 
 
 def test_saved_card_worker_uses_official_mcp_and_returns_native_output(monkeypatch):
@@ -202,3 +301,8 @@ def test_native_mag_one_wraps_every_saved_worker_without_worker_model_clients():
     source = inspect.getsource(mac.McpSavedCardAgent.on_messages)
     assert "call_saved_card_via_mcp" in source
     assert "control_plane.card_run_assistant_agent" not in source
+    participant_source = inspect.getsource(mac._build_participants)
+    assert "McpSavedCardAgent" in participant_source
+    assert "AssistantAgent" not in participant_source
+    assert "_build_model_client" not in participant_source
+    assert "memory" not in participant_source.lower()

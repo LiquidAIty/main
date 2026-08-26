@@ -54,6 +54,24 @@ describe('canonical backend migrations', () => {
     expect(listen).not.toHaveBeenCalled();
   });
 
+  it('waits through PostgreSQL crash recovery before opening backend readiness', async () => {
+    const listen = vi.fn(async () => 'listening');
+    const recoveryError = Object.assign(new Error('the database system is in recovery mode'), {
+      code: '57P03',
+    });
+    const migrate = vi.fn()
+      .mockRejectedValueOnce(recoveryError)
+      .mockRejectedValueOnce(recoveryError)
+      .mockResolvedValue(undefined);
+    const wait = vi.fn(async () => undefined);
+
+    await expect(listenAfterRequiredMigrations(listen, migrate, wait)).resolves.toBe('listening');
+    expect(migrate).toHaveBeenCalledTimes(3);
+    expect(wait).toHaveBeenNthCalledWith(1, 5_000);
+    expect(wait).toHaveBeenNthCalledWith(2, 5_000);
+    expect(listen).toHaveBeenCalledTimes(1);
+  });
+
   it('treats an already recorded migration with the same checksum as idempotent', async () => {
     const first = await applyBackendMigrations({
       client: fakeClient() as any,

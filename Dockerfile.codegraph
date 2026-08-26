@@ -1,8 +1,8 @@
 FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241 AS fetch
 
-ARG CBM_VERSION=0.10.2
-ARG CBM_RELEASE_SHA256=4EAD161715FE959EF8A0E38946D63B1728D31E5FB1762A85DBB4B8C4ABFBE481
-ARG CBM_BINARY_SHA256=F3557B891EFCA36D8DB6508BB93C9688ADEB7C0F89236C6788DE1594C097D9FE
+ARG CBM_VERSION=0.10.8
+ARG CBM_RELEASE_SHA256=6EEF49652BC0C7820F43114125044D40BF7F4D97C11B2592F6B0F6A307702325
+ARG CBM_BINARY_SHA256=1175645CB30560E7E47D78611CD1BCB509478EAF6D4E51F72FE18327EE9C1351
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
@@ -24,7 +24,7 @@ RUN set -eux; \
 
 FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
 
-ARG CBM_VERSION=0.10.2
+ARG CBM_VERSION=0.10.8
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
@@ -39,10 +39,10 @@ RUN test "$(/opt/cbm/codebase-memory-mcp --version)" = "codebase-memory-mcp ${CB
 LABEL org.opencontainers.image.title="LiquidAIty CodeGraph" \
       org.opencontainers.image.version="${CBM_VERSION}" \
       org.opencontainers.image.source="https://github.com/DeusData/codebase-memory-mcp" \
-      org.opencontainers.image.revision="b377c62a4e8b7ad64ccd295e4aa88abc8d275180" \
+      org.opencontainers.image.revision="46ae198fc11cda80e817acbc5f5908d7c2de7032" \
       org.opencontainers.image.licenses="MIT"
 
-WORKDIR /workspace/main
+WORKDIR /C/Projects/LiquidAIty/main
 
 # Keep one stable execution envelope for CLI and stdio MCP consumers. CBM's
 # own short-lived helpers remain part of the single CBM runtime lifecycle.

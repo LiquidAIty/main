@@ -1115,7 +1115,10 @@ def test_magentic_card_may_invoke_only_a_saved_magentic_option_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mag_one = _agent("mag-one", runtime={"kind": "autogen", "mode": "magentic_one"})
-    worker = _agent("worker", runtime={"kind": "autogen", "mode": "assistant"})
+    worker = _agent(
+        "worker",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "worker"},
+    )
     for number, card in enumerate((mag_one, worker), start=1):
         card["_cardRevisionId"] = f"revision-{number}"
         card["_cardRevision"] = 1
@@ -1140,10 +1143,73 @@ def test_magentic_card_may_invoke_only_a_saved_magentic_option_worker(
         "senderCardId": "mag-one",
         "assignment": "bounded worker task",
     }
-    assert card_domain.materialize_invocation(payload)["runtimeOwner"] == "autogen"
+    assert card_domain.materialize_invocation(payload)["runtimeOwner"] == "hermes"
     loaded["deck"]["edges"] = []
     with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
         card_domain.materialize_invocation(payload)
+
+
+def test_same_hermes_card_direct_and_team_materialize_the_same_saved_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mag_one = _agent("mag-one", runtime={"kind": "autogen", "mode": "magentic_one"})
+    coder = _agent(
+        "coder",
+        title="Coder",
+        prompt="Saved Coder prompt",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "coder"},
+    )
+    coder["runtimeOptions"] = {
+        **coder["runtimeOptions"],
+        "provider": "openai",
+        "modelKey": "gpt-5.6-luna",
+        "providerModelId": "gpt-5.6-luna",
+        "accessMode": "chatgpt-account",
+        "tools": ["card.create"],
+        "nativeTools": ["memory"],
+        "skills": ["codex"],
+        "toolsets": ["hermes-acp"],
+        "mcpConnectionIds": ["main-runtime"],
+    }
+    for number, card in enumerate((mag_one, coder), start=1):
+        card["_cardRevisionId"] = f"revision-{number}"
+        card["_cardRevision"] = 1
+        card["_cardRevisionSha256"] = f"sha-{number}"
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "00000000-0000-0000-0000-000000000001",
+        "deck": {
+            "nodes": [mag_one, coder],
+            "edges": [{
+                "source": "mag-one",
+                "target": "coder",
+                "edgeType": "magentic_option",
+            }],
+        },
+    })
+
+    direct = card_domain.materialize_invocation({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "runId": "run-direct",
+        "cardId": "coder",
+        "assignment": "direct mission",
+    })
+    team = card_domain.materialize_invocation({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "runId": "run-team-child",
+        "cardId": "coder",
+        "senderCardId": "mag-one",
+        "assignment": "team mission",
+    })
+
+    assert direct["cardIdentity"] == team["cardIdentity"]
+    assert direct["cardRevisionId"] == team["cardRevisionId"] == "revision-2"
+    assert direct["runtimeOwner"] == team["runtimeOwner"] == "hermes"
+    assert direct["idf"]["stableSavedCardContext"] == team["idf"]["stableSavedCardContext"]
+    assert direct["idf"]["selectedToolsAndGrants"] == team["idf"]["selectedToolsAndGrants"]
+    assert direct["idf"]["dynamicContext"]["task"] == "direct mission"
+    assert team["idf"]["dynamicContext"]["task"] == "team mission"
 
 
 def test_saved_magentic_control_edge_is_required_to_resolve_mag_one(
@@ -1261,17 +1327,87 @@ def test_runtime_owner_is_exhaustive_over_the_explicit_runtime_union() -> None:
             card_domain._runtime_owner(_agent("invalid", runtime=invalid))
 
 
-def test_only_autogen_assistant_cards_are_magentic_workers() -> None:
+def test_enabled_callable_saved_cards_are_magentic_workers() -> None:
     for mode in ("main", "delegate", "kanban"):
-        assert card_domain._is_magentic_worker_card(_agent(
+        assert card_domain._is_callable_magentic_worker_card(_agent(
             mode, runtime={"kind": "hermes", "mode": mode, "profile": mode}
-        )) is False
-    assert card_domain._is_magentic_worker_card(_agent(
-        "mag-one", runtime={"kind": "autogen", "mode": "magentic_one"}
-    )) is False
-    assert card_domain._is_magentic_worker_card(_agent(
+        )) is True
+    assert card_domain._is_callable_magentic_worker_card(_agent(
         "worker", runtime={"kind": "autogen", "mode": "assistant"}
     )) is True
+    assert card_domain._is_callable_magentic_worker_card(_agent(
+        "mag-one", runtime={"kind": "autogen", "mode": "magentic_one"}
+    )) is False
+    assert card_domain._is_callable_magentic_worker_card(_agent(
+        "disabled", enabled=False,
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "disabled"},
+    )) is False
+    assert card_domain._is_callable_magentic_worker_card(_agent(
+        "disabled-option", runtimeOptions={"enabled": False},
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "disabled-option"},
+    )) is False
+    assert card_domain._is_callable_magentic_worker_card(_agent(
+        "unsupported", runtime={"kind": "hermes", "mode": "single", "profile": "unsupported"},
+    )) is False
+
+
+def test_saved_card_participant_projects_identity_and_runtime_only() -> None:
+    card = _agent(
+        "coder",
+        title="Coder",
+        prompt="saved worker prompt",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "coder"},
+    )
+    card["runtimeOptions"]["tools"] = ["card.create"]
+
+    assert card_domain._saved_card_participant(card) == {
+        "cardId": "coder",
+        "title": "Coder",
+        "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
+    }
+    with pytest.raises(card_domain.CardDomainError, match="magentic_worker_runtime_invalid"):
+        card_domain._saved_card_participant(_agent(
+            "mag-one", runtime={"kind": "autogen", "mode": "magentic_one"}
+        ))
+
+
+def test_magentic_roster_describes_an_enabled_hermes_saved_card(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mag_one = _agent("mag-one", runtime={"kind": "autogen", "mode": "magentic_one"})
+    coder = _agent(
+        "coder",
+        title="Coder",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "coder"},
+    )
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "deck": {
+            "nodes": [mag_one, coder],
+            "edges": [{
+                "source": "mag-one",
+                "target": "coder",
+                "edgeType": "magentic_option",
+            }],
+        },
+    })
+
+    roster = card_domain.describe_magentic_agents("project-one", "deck-one")
+
+    assert roster["orchestratorCardId"] == "mag-one"
+    assert roster["connectedAgents"] == [{
+        "cardId": "coder",
+        "title": "Coder",
+        "model": {
+            "modelKey": "deepseek/deepseek-v4-flash-0731",
+            "provider": "openrouter",
+        },
+        "tools": [],
+        "connected": True,
+        "executionReady": True,
+        "readinessState": "ready",
+        "readinessReason": None,
+    }]
 
 
 def _destination_fixture(monkeypatch: pytest.MonkeyPatch) -> dict:

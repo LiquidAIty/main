@@ -16,6 +16,7 @@ import {
   registerHermesRootExecutionContext,
 } from '../hermes/childExecutionContext';
 import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
+import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 
 /*
  * Hermes Kanban proxy — thin read/persistence adapter (DONT.md rule 5).
@@ -85,7 +86,7 @@ export function runHermes(
         windowsHide: true,
         shell: false,
         env: {
-          ...process.env,
+          ...withoutInternalMcpSecret(process.env),
           ...envOverrides,
           HERMES_HOME,
         },

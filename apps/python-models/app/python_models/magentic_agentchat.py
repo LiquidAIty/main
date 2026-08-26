@@ -25,6 +25,7 @@ from autogen_core import CancellationToken
 from autogen_agentchat.teams import MagenticOneGroupChat
 
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
+from app.python_models.codex_app_server_model_client import CodexAppServerError
 from app.python_models.internal_mcp import call_saved_card_via_mcp
 from app.python_models.idf import model_task
 from app.python_models.tool_registry import DEFAULT_TOOL_REGISTRY
@@ -322,10 +323,12 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
             AutoGenAgentConfig(
                 provider=_as_text(provider.get("provider")),
                 provider_model_id=_as_text(provider.get("providerModelId")),
+                access_mode=_as_text(provider.get("accessMode")),
                 temperature=options.get("temperature"),
                 max_tokens=options.get("maxTokens"),
                 reasoning_effort=options.get("reasoningEffort"),
-            )
+            ),
+            runtime_mode="assistant",
         )
         # The IDD read plane is available to every configured Card. The saved
         # Card's enabledTools contains only its write/effect ceiling. AutoGen's
@@ -426,10 +429,12 @@ async def run_native_magentic_mission(
             AutoGenAgentConfig(
                 provider=_as_text(provider.get("provider")),
                 provider_model_id=_as_text(provider.get("providerModelId")),
+                access_mode=_as_text(provider.get("accessMode")),
                 temperature=runtime_options.get("temperature"),
                 max_tokens=runtime_options.get("maxTokens"),
                 reasoning_effort=runtime_options.get("reasoningEffort"),
-            )
+            ),
+            runtime_mode="magentic_one",
         )
         participants = _build_participants(
             context,
@@ -501,7 +506,21 @@ async def run_native_magentic_mission(
             autogenEvents=autogen_events,
             error=completion_error,
         )
-    except Exception:
+    except Exception as error:
+        # Keep provider/process detail out of the public response while leaving
+        # one secret-safe exception class in the attached service evidence. The
+        # app-server client's own error strings are stable failure codes, so
+        # those may be included without exposing raw provider/process detail.
+        diagnostic = {
+            "run_id": run_id,
+            "exception_class": error.__class__.__name__,
+        }
+        if isinstance(error, CodexAppServerError):
+            diagnostic["failure_code"] = str(error)
+        print(
+            "[magentic] run_stream failed:",
+            diagnostic,
+        )
         return OrchestratorRunResponse(
             ok=False,
             session=context.session,

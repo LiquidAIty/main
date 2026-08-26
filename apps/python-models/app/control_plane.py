@@ -30,7 +30,7 @@ _BACKEND = os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/
 
 SUPPORTED_WIRE_TYPES = ("flow", "magentic_option")
 _SUPPORTED_CARD_RUNTIME_MODES = {
-    "hermes": {"main", "delegate", "kanban", "single"},
+    "hermes": {"main", "delegate", "kanban"},
     "autogen": {"assistant", "magentic_one"},
 }
 _CARD_CREATE_KEYS = {
@@ -57,14 +57,17 @@ _CARD_CREATE_MODEL_KEYS = {
 # shell config, hidden tools, authority grants, worker selection — is rejected.
 _UPDATABLE_TOP_FIELDS = {"prompt", "title"}
 _UPDATABLE_RUNTIME_OPTION_FIELDS = {
+    "accessMode",
     "modelKey",
     "provider",
+    "providerModelId",
     "reasoningEffort",
     "temperature",
     "maxTokens",
     "tools",
 }
 _REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
+_ACCESS_MODES = {"chatgpt-account", "openai-api", "openrouter-api"}
 
 
 class ControlPlaneError(Exception):
@@ -521,6 +524,16 @@ async def card_update_configuration(args: dict[str, Any]) -> dict[str, Any]:
         and updates["reasoningEffort"] not in _REASONING_EFFORTS
     ):
         raise ControlPlaneError("card_update_reasoning_effort_invalid")
+    if (
+        "accessMode" in updates
+        and updates["accessMode"] not in _ACCESS_MODES
+    ):
+        raise ControlPlaneError("card_update_access_mode_invalid")
+    if (
+        "providerModelId" in updates
+        and not str(updates["providerModelId"] or "").strip()
+    ):
+        raise ControlPlaneError("card_update_provider_model_id_required")
 
     project_id = str(args["projectId"]).strip()
     deck_id = str(args["deckId"]).strip()

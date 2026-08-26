@@ -292,6 +292,11 @@ class TestCardCreate:
             asyncio.run(cp.card_create({**base, "tools": ["web_search"]}))
         with pytest.raises(cp.ControlPlaneError, match="card_create_default_title_rejected"):
             asyncio.run(cp.card_create({**base, "title": "Assist 1"}))
+        with pytest.raises(cp.ControlPlaneError, match="card_create_runtime_invalid"):
+            asyncio.run(cp.card_create({
+                **base,
+                "runtime": {"kind": "hermes", "mode": "single", "profile": "research"},
+            }))
         assert "deck" not in fake_backend
 
     def test_requires_current_revision_and_rejects_unknown_fields(self, fake_backend):
@@ -342,6 +347,35 @@ class TestCardUpdateConfiguration:
             asyncio.run(cp.card_update_configuration({
                 "projectId": "p", "deckId": "d", "cardId": "signals-card",
                 "updates": {"reasoningEffort": "extreme"},
+            }))
+
+    def test_complete_provider_binding_is_allowlisted_and_persisted(self, fake_backend):
+        result = asyncio.run(cp.card_update_configuration({
+            "projectId": "p", "deckId": "d", "cardId": "signals-card",
+            "updates": {
+                "provider": "openai",
+                "accessMode": "chatgpt-account",
+                "modelKey": "gpt-5.6-sol",
+                "providerModelId": "gpt-5.6-sol",
+            },
+        }))
+        assert result["ok"] is True
+        card = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
+        assert {
+            key: card["runtimeOptions"][key]
+            for key in ("provider", "accessMode", "modelKey", "providerModelId")
+        } == {
+            "provider": "openai",
+            "accessMode": "chatgpt-account",
+            "modelKey": "gpt-5.6-sol",
+            "providerModelId": "gpt-5.6-sol",
+        }
+
+    def test_access_mode_must_be_supported(self, fake_backend):
+        with pytest.raises(cp.ControlPlaneError, match="card_update_access_mode_invalid"):
+            asyncio.run(cp.card_update_configuration({
+                "projectId": "p", "deckId": "d", "cardId": "signals-card",
+                "updates": {"accessMode": "implicit-fallback"},
             }))
     def test_tools_update_must_be_string_list(self, fake_backend):
         with pytest.raises(cp.ControlPlaneError, match="card_update_tools_must_be_string_list"):

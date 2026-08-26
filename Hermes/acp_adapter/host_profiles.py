@@ -240,7 +240,7 @@ def current_host_tool_call_meta() -> dict[str, str] | None:
 
 
 def initial_toolsets(config: dict[str, Any] | None) -> list[str]:
-    """Return Card-granted native toolsets safe before MCP registration."""
+    """Return host-granted native toolsets safe before MCP registration."""
 
     if config is None:
         return ["hermes-acp"]

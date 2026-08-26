@@ -189,3 +189,4 @@ function StateIcon({ state }: { state: StageState | null }) {
 
   return null
 }
+

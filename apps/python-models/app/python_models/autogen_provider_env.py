@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+from autogen_core.models import ChatCompletionClient
 from autogen_core.models import ModelFamily
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from dotenv import load_dotenv
@@ -27,6 +28,7 @@ _load_repo_env()
 class AutoGenAgentConfig(BaseModel):
     provider: str
     provider_model_id: str
+    access_mode: str = "openai-api"
     system_prompt: str = ""
     temperature: float | None = None
     max_tokens: int | None = None
@@ -80,6 +82,7 @@ def _build_model_info(model_name: str) -> dict[str, Any]:
         "vision": False,
         "function_calling": capable,
         "json_output": capable,
+        "structured_output": capable,
         "family": _detect_model_family(model_name),
     }
 
@@ -90,9 +93,14 @@ def _requires_max_completion_tokens(provider: str, model_name: str) -> bool:
     return normalized_provider == "openai" and normalized_model.startswith("gpt-5")
 
 
-def _build_model_client(config: AutoGenAgentConfig) -> OpenAIChatCompletionClient:
+def _build_model_client(
+    config: AutoGenAgentConfig,
+    *,
+    runtime_mode: Literal["assistant", "magentic_one"] = "assistant",
+) -> ChatCompletionClient:
     provider = str(config.provider or "").strip().lower()
     model_name = str(config.provider_model_id or "").strip()
+    access_mode = str(config.access_mode or "").strip().lower()
     if not provider or not model_name:
         raise RuntimeError(
             f"card_model_config_missing: provider={provider or 'missing'} model={model_name or 'missing'}"
@@ -100,6 +108,28 @@ def _build_model_client(config: AutoGenAgentConfig) -> OpenAIChatCompletionClien
     if provider == "default" or model_name.lower() == "default":
         raise RuntimeError(
             f"card_model_config_default_forbidden: provider={provider} model={model_name}"
+        )
+    if provider == "openai" and access_mode == "chatgpt-account":
+        if runtime_mode != "magentic_one":
+            raise RuntimeError(
+                "autogen_chatgpt_account_not_supported_for_assistant"
+            )
+        from app.python_models.codex_app_server_model_client import (
+            CodexAppServerChatCompletionClient,
+        )
+
+        return CodexAppServerChatCompletionClient(
+            model=model_name,
+            reasoning_effort=config.reasoning_effort,
+        )
+    expected_access_mode = {
+        "openai": "openai-api",
+        "openrouter": "openrouter-api",
+    }.get(provider)
+    if access_mode != expected_access_mode:
+        raise RuntimeError(
+            "autogen_provider_access_mode_invalid: "
+            f"provider={provider or 'missing'} accessMode={access_mode or 'missing'}"
         )
     temperature = config.temperature if config.temperature is not None else 0.2
 

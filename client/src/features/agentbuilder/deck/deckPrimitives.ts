@@ -33,7 +33,7 @@ export function cleanOptionalText(value: unknown): string | null {
 // for a new card; it is not a role-to-model preset or a hidden runtime choice.
 export const DEFAULT_CARD_MODEL_KEY = 'gpt-5.6-luna';
 export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
-export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = DEFAULT_CARD_MODEL_KEY;
+export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = 'gpt-5.6-sol';
 export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
 // Seed default ONLY for a fresh Coder card. Once a card has a saved
 // provider/model, that saved value remains authoritative.

@@ -10734,10 +10734,6 @@ def _default_spawn(
 
     prompt = f"work kanban task {task.id}"
     env = dict(os.environ)
-    # LIQUIDAITY VENDOR PATCH: the signing secret belongs only to the host
-    # process.  A registered provider may add a scoped bearer below, but the
-    # worker can never inherit the authority to mint another bearer.
-    env.pop("LIQUIDAITY_INTERNAL_MCP_SECRET", None)
     # The dispatcher is detached from every conversation. Its worker must never
     # inherit routing mirrored by a previous gateway turn, even before the first
     # session binds ContextVars in this process.

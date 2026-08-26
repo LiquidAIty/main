@@ -133,18 +133,17 @@ architecture work, read [skills/codebasedmemory.md](./skills/codebasedmemory.md)
 ordered discovery recipe. That skill is the sole detailed authority for CBM discovery, coverage fallback, and
 the mandatory inverse deletion/rename audit.
 
-The tracked repository hooks keep one simple event recipe. `UserPromptSubmit` opens the already-connected native
-MCP `search_graph` exactly once against the canonical project using the real submitted GPT/PromptSpec prompt and
-injects its native first result page before inference; `has_more` controls useful continuation rather than an
-arbitrary task-wide result maximum. A companion command hook injects the bounded CBM navigation
-recipe. Explicit `CODEGRAPH_SEARCH:` criteria and real graph pointers supplied by GPT/Main remain leading prompt
-context rather than a deterministic router. Empty and failed searches remain visible and fail open without
-fabricated symbols.
-`Stop` asks that same native MCP owner for exactly one native-default incremental `index_repository` refresh.
-Neither event launches a CLI or second daemon, deletes a project, lists or polls projects, checks readiness,
-recovers lifecycle state, retries, or writes a lease, mutex, handoff, receipt, or cache. The active model uses
-the already-connected native MCP owner for result-informed discovery and never invokes lifecycle mutation
-during its response.
+CBM is installed only as the checksum-pinned official binary inside the Compose-owned `codegraph` image. The
+repository is mounted read-only at `/C/Projects/LiquidAIty/main`, which derives the one canonical project name
+`C-Projects-LiquidAIty-main`. One named Docker volume owns
+the disposable native cache. The official Python MCP host owns exactly one long-lived stdio frontend, and the
+unmodified upstream coordination daemon, watcher, and embedded UI remain inside that container.
+
+Codex, Hermes, Cards, plugins, and connectors use only LiquidAIty's application-published `cbm.*` tools. No
+tracked Codex prompt/Stop hook, host installer, host executable, direct client registration, connector refresh,
+or model turn may launch CBM, attach another frontend, index, retry, repair, or own lifecycle. Normal freshness
+belongs to the upstream watcher. Initial or destructive projection maintenance is an explicit application-MCP
+administrative operation, never an automatic coding-agent hook.
 
 Begin with `search_graph`; retain real native IDs/provenance supplied by Main or the IDF actual-graph-data section; never fabricate
 symbols or graph seeds; and read complete current source before changing behavior. Any production deletion or
@@ -153,7 +152,8 @@ and prove residue absence according to the skill.
 
 The current derived projection intentionally excludes `autogen-main` through `.cbmignore`; AutoGen remains
 first-party runtime source. Never open or manipulate CBM SQLite/cache files, create backups, launch another
-daemon, change global Codex configuration, or substitute LiquidAIty's Docker CodeGraph service.
+daemon/frontend, install CBM on the host, change global Codex configuration, or bypass LiquidAIty's Docker
+CodeGraph service.
 
 ---
 

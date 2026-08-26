@@ -85,7 +85,11 @@ def _startup_source_identity() -> tuple[str, str]:
     return revision, source_sha256
 
 from app.python_models.provider_config import ensure_env_loaded
-from app.python_models.idd import readable_tool_ids, tool_access
+from app.python_models.idd import (
+    external_mcp_tool_ids,
+    readable_tool_ids,
+    tool_access,
+)
 from mcp.server import Server
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
@@ -145,6 +149,8 @@ _HTTP_CATALOG_TOOLS: tuple[Tool, ...] | None = None
 _HTTP_CATALOG_INITIALIZATION_TASK: asyncio.Task[None] | None = None
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
 _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS = 300.0
+_NATIVE_CBM_STARTUP_TIMEOUT_SECONDS = 45.0
+_NATIVE_CBM_HEALTH_TIMEOUT_SECONDS = 5.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
 _LOCAL_EMBEDDING_TOOL_TIMEOUT_SECONDS = 300.0
 _PUBLIC_MCP_NAME = "LiquidAIty"
@@ -811,8 +817,12 @@ _NATIVE_CBM_NAMES: frozenset[str] = frozenset()
 _NATIVE_CBM_INIT_LOCK = threading.Lock()
 _NATIVE_CBM_INDEX_LOCK = threading.Lock()
 _NATIVE_CBM_INDEX_IN_FLIGHT: tuple[str, Future[CallToolResult]] | None = None
-_NATIVE_CBM_CONTAINER_REPO_ROOT = "/workspace/main"
+_NATIVE_CBM_CONTAINER_REPO_ROOT = "/C/Projects/LiquidAIty/main"
 _NATIVE_CBM_PROJECT = "C-Projects-LiquidAIty-main"
+_NATIVE_CBM_EXPECTED_VERSION = "0.10.8"
+_NATIVE_CBM_EXPECTED_IMAGE = "liquidaity-codegraph:0.10.8"
+_NATIVE_CBM_EXPECTED_VOLUME = "liquidaity-cbm-cache"
+_NATIVE_CBM_DAEMON_LOG = "/root/.cache/codebase-memory-mcp/logs/cbm-daemon.log"
 _NATIVE_GRAPHITI_MODULE: Any | None = None
 _NATIVE_GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_GRAPHITI_NAMES: frozenset[str] = frozenset()
@@ -893,6 +903,12 @@ def _bind_idd_access(tool: Tool) -> Tool:
     annotations["readOnlyHint"] = access == "read"
     payload["annotations"] = annotations
     return Tool.model_validate(payload)
+
+
+def _gpt_public_catalog(tools: list[Tool]) -> list[Tool]:
+    """Project the canonical catalog through the IDD external-MCP policy."""
+    published = external_mcp_tool_ids()
+    return [tool for tool in tools if tool.name in published]
 
 
 @server.list_resources()
@@ -1317,6 +1333,7 @@ class _NativeStdioMcpClient:
         self._stderr: deque[str] = deque(maxlen=12)
         self._request_lock = threading.Lock()
         self._next_id = 0
+        self.server_info: dict[str, Any] = {}
         threading.Thread(
             target=self._read_stdout,
             name="main-native-cbm-stdout",
@@ -1338,9 +1355,12 @@ class _NativeStdioMcpClient:
                         "version": "1.0.0",
                     },
                 },
+                timeout_seconds=_NATIVE_CBM_STARTUP_TIMEOUT_SECONDS,
             )
-            if not isinstance(initialized.get("serverInfo"), dict):
+            server_info = initialized.get("serverInfo")
+            if not isinstance(server_info, dict):
                 raise RuntimeError("native_cbm_initialize_invalid")
+            self.server_info = dict(server_info)
             self._notify("notifications/initialized", {})
         except Exception:
             self.close()
@@ -1387,7 +1407,13 @@ class _NativeStdioMcpClient:
     def _notify(self, method: str, params: dict[str, Any]) -> None:
         self._write({"jsonrpc": "2.0", "method": method, "params": params})
 
-    def _request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+    def _request(
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout_seconds: float = _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
         with self._request_lock:
             self._next_id += 1
             request_id = self._next_id
@@ -1399,7 +1425,7 @@ class _NativeStdioMcpClient:
                     "params": params,
                 }
             )
-            deadline = time.monotonic() + _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
+            deadline = time.monotonic() + timeout_seconds
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -1447,10 +1473,17 @@ class _NativeStdioMcpClient:
             seen_cursors.add(next_cursor)
             cursor = next_cursor
 
-    def call_tool(self, name: str, arguments: dict[str, Any]) -> CallToolResult:
+    def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        timeout_seconds: float = _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS,
+    ) -> CallToolResult:
         result = self._request(
             "tools/call",
             {"name": name, "arguments": dict(arguments or {})},
+            timeout_seconds=timeout_seconds,
         )
         return CallToolResult.model_validate(result)
 
@@ -1505,64 +1538,24 @@ def _normalize_native_cbm_index_arguments(
     return normalized
 
 
-def _is_native_cbm_bootstrap_race(error: Exception) -> bool:
-    """Recognize the native CBM daemon handoff race and nothing broader."""
-    detail = str(error)
-    return (
-        "native_cbm_process_exited:" in detail
-        and (
-            "CBM daemon could not start within 30000 ms" in detail
-            or (
-                "CBM daemon is active or starting" in detail
-                and "could not accept this client within 30000 ms" in detail
-            )
-        )
-    )
-
-
 def _open_native_cbm_client(
     command: str,
     args: list[str],
     cwd: str,
 ) -> tuple[_NativeStdioMcpClient, tuple[Tool, ...], list[str]]:
-    """Open one native CBM client within the existing request-time budget.
-
-    Native CBM 0.10.2 may leave its daemon starting after the attaching client
-    reaches the daemon's own 30-second handoff deadline. Reattach only for that
-    exact race, against the same Compose-owned authority, until the existing
-    catalog request budget is exhausted.
-    """
-    deadline = time.monotonic() + _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
-    attempt_limit = max(2, int(_NATIVE_CBM_REQUEST_TIMEOUT_SECONDS // 30))
-    for attempt in range(attempt_limit):
-        client: _NativeStdioMcpClient | None = None
-        try:
-            client = _NativeStdioMcpClient(command, args, cwd)
-            tools = tuple(client.list_tools())
-            names = [tool.name for tool in tools]
-            if len(names) != len(set(names)):
-                raise RuntimeError("native_cbm_duplicate_tool_name")
-            return client, tools, names
-        except Exception as error:
-            if client is not None:
-                client.close()
-            if _is_native_cbm_bootstrap_race(error):
-                remaining = deadline - time.monotonic()
-                if attempt + 1 >= attempt_limit or remaining <= 0:
-                    raise RuntimeError(
-                        "native_cbm_daemon_start_timeout: native daemon did not "
-                        "become attachable within the catalog request budget"
-                    ) from error
-                _trace(
-                    "native_cbm_bootstrap_retry",
-                    exception_class=error.__class__.__name__,
-                    result_category="dependency_retry",
-                    completed=False,
-                )
-                time.sleep(min(1.0, remaining))
-                continue
-            raise
-    raise RuntimeError("native_cbm_daemon_start_timeout")
+    """Open exactly one native frontend; native startup failures stay terminal."""
+    client: _NativeStdioMcpClient | None = None
+    try:
+        client = _NativeStdioMcpClient(command, args, cwd)
+        tools = tuple(client.list_tools())
+        names = [tool.name for tool in tools]
+        if len(names) != len(set(names)):
+            raise RuntimeError("native_cbm_duplicate_tool_name")
+        return client, tools, names
+    except Exception:
+        if client is not None:
+            client.close()
+        raise
 
 
 def _initialize_native_cbm_sync() -> None:
@@ -1654,7 +1647,275 @@ def _close_native_cbm() -> None:
         client.close()
 
 
+def _native_result_payload(result: CallToolResult) -> dict[str, Any]:
+    if result.isError:
+        detail = next(
+            (
+                block.text
+                for block in result.content
+                if isinstance(block, TextContent) and block.text
+            ),
+            "native_cbm_tool_error",
+        )
+        raise RuntimeError(detail)
+    structured = result.structuredContent
+    if isinstance(structured, dict):
+        payload = structured.get("result", structured)
+        if isinstance(payload, dict):
+            return payload
+    for block in result.content:
+        if not isinstance(block, TextContent) or not block.text:
+            continue
+        try:
+            payload = json.loads(block.text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    raise RuntimeError("native_cbm_health_payload_invalid")
+
+
+def _docker_codegraph_runtime() -> dict[str, Any]:
+    completed = subprocess.run(
+        ["docker", "inspect", "codegraph"],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=_NATIVE_CBM_HEALTH_TIMEOUT_SECONDS,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise RuntimeError(f"codegraph_container_inspect_failed:{detail}")
+    inspected = json.loads(completed.stdout)
+    if not isinstance(inspected, list) or len(inspected) != 1:
+        raise RuntimeError("codegraph_container_inspect_invalid")
+    container = inspected[0]
+    if not isinstance(container, dict):
+        raise RuntimeError("codegraph_container_inspect_invalid")
+    state = container.get("State") if isinstance(container.get("State"), dict) else {}
+    health = state.get("Health") if isinstance(state.get("Health"), dict) else {}
+    mounts = container.get("Mounts") if isinstance(container.get("Mounts"), list) else []
+    cache_mount = next(
+        (
+            mount
+            for mount in mounts
+            if isinstance(mount, dict)
+            and mount.get("Destination") == "/root/.cache/codebase-memory-mcp"
+        ),
+        None,
+    )
+    image = str((container.get("Config") or {}).get("Image") or "")
+    return {
+        "containerReady": bool(state.get("Running")) and health.get("Status") == "healthy",
+        "containerState": str(health.get("Status") or state.get("Status") or "unavailable"),
+        "containerId": str(container.get("Id") or ""),
+        "containerImage": image,
+        "containerImageReady": image == _NATIVE_CBM_EXPECTED_IMAGE,
+        "cacheVolume": str(cache_mount.get("Name") or "") if cache_mount else "",
+        "cacheVolumeReady": bool(
+            cache_mount
+            and cache_mount.get("Type") == "volume"
+            and cache_mount.get("Name") == _NATIVE_CBM_EXPECTED_VOLUME
+        ),
+    }
+
+
+def _docker_codegraph_watcher_status() -> dict[str, Any]:
+    completed = subprocess.run(
+        ["docker", "exec", "codegraph", "tail", "-n", "500", _NATIVE_CBM_DAEMON_LOG],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=_NATIVE_CBM_HEALTH_TIMEOUT_SECONDS,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return {
+            "watcherActive": False,
+            "watcherState": "unavailable",
+            "watcherFailure": completed.stderr.strip() or "daemon log unavailable",
+        }
+    lines = completed.stdout.splitlines()
+    latest_start = max(
+        (index for index, line in enumerate(lines) if "msg=watcher.start " in line),
+        default=-1,
+    )
+    registration = (
+        f"msg=watcher.watch project={_NATIVE_CBM_PROJECT} "
+        f"path={_NATIVE_CBM_CONTAINER_REPO_ROOT}"
+    )
+    latest_registration = max(
+        (
+            index
+            for index, line in enumerate(lines)
+            if index > latest_start and registration in line
+        ),
+        default=-1,
+    )
+    if latest_start < 0 or latest_registration < 0:
+        return {"watcherActive": False, "watcherState": "inactive"}
+
+    failure_marker = f"msg=watcher.git.failed project={_NATIVE_CBM_PROJECT} "
+    failures = [
+        line
+        for line in lines[latest_registration + 1 :]
+        if failure_marker in line
+    ]
+    if failures:
+        reason = next(
+            (
+                token.removeprefix("reason=")
+                for token in failures[-1].split()
+                if token.startswith("reason=")
+            ),
+            "unknown",
+        )
+        return {
+            "watcherActive": False,
+            "watcherState": "failed",
+            "watcherFailure": reason,
+        }
+    return {"watcherActive": True, "watcherState": "active"}
+
+
+def _project_count(payload: dict[str, Any], *keys: str) -> int:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    return 0
+
+
+def _codegraph_diagnostics() -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {
+        "containerReady": False,
+        "containerState": "unavailable",
+        "containerImageReady": False,
+        "binaryReady": False,
+        "binaryState": "unavailable",
+        "binaryVersion": "",
+        "daemonAttached": False,
+        "daemonState": "unattached",
+        "nativeFrontendAttached": False,
+        "nativeFrontendState": "unattached",
+        "canonicalProjectRegistered": False,
+        "projectState": "missing",
+        "indexReady": False,
+        "indexState": "missing",
+        "watcherActive": False,
+        "watcherState": "inactive",
+        "cacheVolumeReady": False,
+        "codeGraphReady": False,
+    }
+    try:
+        diagnostics.update(_docker_codegraph_runtime())
+    except Exception as error:
+        diagnostics["containerFailure"] = str(error)
+
+    client = _NATIVE_CBM_CLIENT
+    if client is None or not client.is_running():
+        return diagnostics
+
+    diagnostics["nativeFrontendAttached"] = True
+    diagnostics["nativeFrontendState"] = "attached"
+    server_info = dict(getattr(client, "server_info", {}) or {})
+    binary_version = str(server_info.get("version") or "")
+    diagnostics["binaryVersion"] = binary_version
+    diagnostics["binaryReady"] = binary_version == _NATIVE_CBM_EXPECTED_VERSION
+    diagnostics["binaryState"] = (
+        "ready" if diagnostics["binaryReady"] else "version_mismatch"
+    )
+    try:
+        projects = _native_result_payload(
+            client.call_tool(
+                "list_projects",
+                {},
+                timeout_seconds=_NATIVE_CBM_HEALTH_TIMEOUT_SECONDS,
+            )
+        )
+        diagnostics["daemonAttached"] = True
+        diagnostics["daemonState"] = "attached"
+        rows = projects.get("projects")
+        project = next(
+            (
+                row
+                for row in rows
+                if isinstance(row, dict) and row.get("name") == _NATIVE_CBM_PROJECT
+            ),
+            None,
+        ) if isinstance(rows, list) else None
+        if project is None:
+            return diagnostics
+        root_path = str(project.get("root_path") or project.get("rootPath") or "")
+        diagnostics["projectRoot"] = root_path
+        diagnostics["canonicalProjectRegistered"] = (
+            root_path == _NATIVE_CBM_CONTAINER_REPO_ROOT
+        )
+        diagnostics["projectState"] = (
+            "registered" if diagnostics["canonicalProjectRegistered"] else "wrong_root"
+        )
+        status = _native_result_payload(
+            client.call_tool(
+                "index_status",
+                {"project": _NATIVE_CBM_PROJECT},
+                timeout_seconds=_NATIVE_CBM_HEALTH_TIMEOUT_SECONDS,
+            )
+        )
+        status_name = str(status.get("status") or "").strip().lower()
+        nodes = _project_count(status, "nodes", "node_count", "nodeCount") or _project_count(
+            project, "nodes", "node_count", "nodeCount"
+        )
+        edges = _project_count(status, "edges", "edge_count", "edgeCount") or _project_count(
+            project, "edges", "edge_count", "edgeCount"
+        )
+        diagnostics["indexStatus"] = status_name
+        diagnostics["indexNodes"] = nodes
+        diagnostics["indexEdges"] = edges
+        for source_key, target_key in (
+            ("generation", "indexGeneration"),
+            ("revision", "indexRevision"),
+            ("indexed_at", "indexedAt"),
+            ("indexedAt", "indexedAt"),
+        ):
+            if status.get(source_key) is not None:
+                diagnostics[target_key] = status[source_key]
+        diagnostics["indexReady"] = status_name == "ready" and nodes > 0 and edges > 0
+        diagnostics["indexState"] = "ready" if diagnostics["indexReady"] else (
+            status_name or "not_ready"
+        )
+        diagnostics.update(_docker_codegraph_watcher_status())
+    except Exception as error:
+        diagnostics["nativeFailure"] = str(error)
+
+    diagnostics["codeGraphReady"] = all(
+        bool(diagnostics[key])
+        for key in (
+            "containerReady",
+            "containerImageReady",
+            "cacheVolumeReady",
+            "binaryReady",
+            "daemonAttached",
+            "nativeFrontendAttached",
+            "canonicalProjectRegistered",
+            "indexReady",
+            "watcherActive",
+        )
+    )
+    return diagnostics
+
+
 atexit.register(_close_native_cbm)
+
+
+def _backend_bridge_timeout_seconds(path: str) -> float:
+    if path == "run_configured_card":
+        return _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
+    return _MCP_CALL_TIMEOUT_SECONDS
 
 
 def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
@@ -1665,7 +1926,10 @@ def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
         method="POST",
     )
     try:
-        with urlopen(request, timeout=_MCP_CALL_TIMEOUT_SECONDS) as response:  # noqa: S310 — loopback backend only
+        with urlopen(
+            request,
+            timeout=_backend_bridge_timeout_seconds(path),
+        ) as response:  # noqa: S310 — loopback backend only
             return response.read().decode("utf-8")
     except HTTPError as err:
         try:
@@ -1993,7 +2257,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
                             "kind": {"type": "string", "enum": ["hermes", "autogen"]},
                             "mode": {
                                 "type": "string",
-                                "enum": ["main", "delegate", "kanban", "single", "assistant", "magentic_one"],
+                                "enum": ["main", "delegate", "kanban", "assistant", "magentic_one"],
                             },
                             "profile": {"type": "string", "minLength": 1},
                         },
@@ -2040,7 +2304,8 @@ async def _materialize_complete_catalog() -> list[Tool]:
             name="card.update_configuration",
             description=(
                 "User-directed strict-allowlist update of one persisted card: prompt, title, "
-                "modelKey, provider, reasoningEffort, temperature, maxTokens, tools. "
+                "modelKey, providerModelId, provider, accessMode, reasoningEffort, "
+                "temperature, maxTokens, tools. "
                 "Everything else (runtime code, "
                 "shell config, hidden tools, authority grants, worker selection) is rejected."
             ),
@@ -2056,7 +2321,14 @@ async def _materialize_complete_catalog() -> list[Tool]:
                             "prompt": {"type": "string"},
                             "title": {"type": "string"},
                             "modelKey": {"type": "string"},
+                            "providerModelId": {"type": "string", "minLength": 1},
                             "provider": {"type": "string"},
+                            "accessMode": {
+                                "type": "string",
+                                "enum": [
+                                    "chatgpt-account", "openai-api", "openrouter-api",
+                                ],
+                            },
                             "reasoningEffort": {
                                 "type": "string",
                                 "enum": ["low", "medium", "high", "xhigh"],
@@ -2421,7 +2693,7 @@ async def list_tools() -> list[Tool]:
         tools = _http_catalog_or_error()
         principal = _internal_mcp_principal()
         if principal is None or principal.get("kind") == "catalog-reader":
-            return tools
+            return _gpt_public_catalog(tools)
         if principal.get("kind") == "materializer-read":
             readable = readable_tool_ids()
             return [tool for tool in tools if tool.name in readable]
@@ -2972,7 +3244,11 @@ def _attach_execution_receipt(
 
 
 def _mcp_tool_timeout_seconds(name: str) -> float:
-    if name in {"cbm.index_repository", "card.run_assistant_agent"}:
+    if name in {
+        "cbm.index_repository",
+        "card.run_assistant_agent",
+        "run_mag_one",
+    }:
         return _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
     if name == "engraphis.remember":
         # The first explicit semantic write owns Engraphis' offline lazy model
@@ -3160,11 +3436,32 @@ async def _run_streamable_http() -> None:
 
     config_values = _oauth_config()
 
+    local_authority = f"{HTTP_MCP_HOST}:{HTTP_MCP_PORT}"
+    allowed_hosts = {
+        HTTP_MCP_HOST,
+        local_authority,
+        "localhost",
+        f"localhost:{HTTP_MCP_PORT}",
+    }
+    allowed_origins = {
+        f"http://{local_authority}",
+        f"http://localhost:{HTTP_MCP_PORT}",
+    }
+    if PUBLIC_MCP_RESOURCE_URL:
+        public_url = urlsplit(PUBLIC_MCP_RESOURCE_URL)
+        if public_url.netloc:
+            allowed_hosts.add(public_url.netloc)
+            allowed_origins.add(f"{public_url.scheme}://{public_url.netloc}")
+
     session_manager = StreamableHTTPSessionManager(
         app=server,
         json_response=True,
         stateless=True,
-        security_settings=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+        security_settings=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=sorted(allowed_hosts),
+            allowed_origins=sorted(allowed_origins),
+        ),
     )
 
     async def endpoint(scope: dict[str, Any], receive: Any, send: Any) -> None:
@@ -3190,24 +3487,34 @@ async def _run_streamable_http() -> None:
 
     async def health_endpoint(_request: Any) -> JSONResponse:
         diagnostics = _catalog_diagnostics()
+        codegraph = await asyncio.to_thread(_codegraph_diagnostics)
         return JSONResponse(
             {
                 "ok": diagnostics["catalogState"] != "failed",
                 **diagnostics,
+                "publicCatalogReady": diagnostics["catalogReady"],
+                **codegraph,
             },
             status_code=200,
         )
 
     async def readiness_endpoint(_request: Any) -> JSONResponse:
         diagnostics = _catalog_diagnostics()
+        codegraph = await asyncio.to_thread(_codegraph_diagnostics)
         ready = bool(
             diagnostics["catalogReady"]
             and int(diagnostics.get("publicToolCount") or 0) > 0
             and diagnostics.get("publicToolCount")
             == diagnostics.get("publicToolUniqueCount")
+            and codegraph["codeGraphReady"]
         )
         return JSONResponse(
-            {"ok": ready, **diagnostics},
+            {
+                "ok": ready,
+                **diagnostics,
+                "publicCatalogReady": diagnostics["catalogReady"],
+                **codegraph,
+            },
             status_code=200 if ready else 503,
         )
 

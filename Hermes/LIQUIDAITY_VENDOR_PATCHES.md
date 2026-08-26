@@ -2,7 +2,9 @@
 
 This copied Hermes tree tracks upstream
 [`NousResearch/hermes-agent`](https://github.com/NousResearch/hermes-agent). The refresh base for the
-current LiquidAIty integration is upstream release `v2026.8.18` (package version `0.20.4`), commit
+current LiquidAIty integration is upstream default branch `main` (package version `0.20.5`), commit
+`6ce7ab8bfb3fce3ba116f52a11a438d6c7e4c03d`, verified 2026-08-25. That exact commit is not a release
+tag; it advances 1,569 upstream commits (1,460 non-merge) beyond the prior recorded base
 `e624e9fde561e1add9388384012b295fde669ade`.
 
 Every local Hermes change must remain contained, carry a `LIQUIDAITY VENDOR PATCH` code comment, have
@@ -10,17 +12,13 @@ focused upstream-style tests, and include a concrete plan to contribute the capa
 local patch is not permission to fork Hermes architecture or copy LiquidAIty Card concepts into the
 vendor.
 
-## Updating Hermes while patches are pending
+The 2026-08-25 targeted refresh checked all eight registered seams against upstream `main`. Upstream
+still has no equivalent public contract for any of them, so each remains a `GENERIC PR CANDIDATE`.
+Unregistered provider-catalog and profile-display drift was not carried forward. The former bundled
+`plugins/liquidaity-card-mcp` product plugin moved to LiquidAIty-owned source outside this vendor and
+loads through Hermes' stock `hermes_agent.plugins` entry-point contract.
 
-1. Record the current upstream commit and this patch register before replacing vendor files.
-2. Refresh the unmodified upstream tree first while preserving only runtime state directories
-   (`.hermes`, `.venv`, and `venv`).
-3. Check whether upstream now supplies each registered capability. If it does, delete the local patch
-   and run its acceptance tests against the upstream implementation.
-4. Otherwise reapply only the exact registered files/symbols, resolve conflicts in favor of the new
-   upstream public contract, and rerun both the focused patch tests and the affected upstream tests.
-5. Update the upstream base, conflict notes, and contribution status below. Never carry an unexplained
-   vendor diff forward.
+> Hermes is pinned. Updating, refreshing, downloading, replacing, rebasing, or reinstalling Hermes is prohibited unless Jeremiah explicitly requests a manual Hermes upgrade in the current message. Git save, Git checkpoint, commit, startup, testing, and general maintenance never imply that request.
 
 ## Patch: trusted ACP session surface
 
@@ -64,8 +62,8 @@ Contribution plan:
    extensibility feature, using generic Hermes vocabulary and the official `_meta` contract.
 2. Submit the parser and session-scoped hooks as one focused PR with tests showing backward
    compatibility, bounded validation, exact session-key recovery, and no credential transport.
-3. Replace this patch with the accepted upstream implementation at the first Hermes refresh that
-   contains it; keep only LiquidAIty's host-side mapping.
+3. Replace this patch with the accepted upstream implementation only during a separately requested
+   manual Hermes upgrade that contains it; keep only LiquidAIty's host-side mapping.
 
 Rollback: remove this module and the marked hooks, then stop sending `hermes.sessionConfig` and
 `_session/configure_host`. Hermes returns to its upstream broad ACP surface and generic native
@@ -273,12 +271,14 @@ Files and symbols:
   `PluginContext.register_kanban_worker_environment_provider`, and
   `resolve_kanban_worker_environment` provide the generic synchronous registry.
 - `hermes_cli/kanban_db.py`: `_default_spawn` resolves additive values after stock worker identity is
-  fixed and before `Popen`; provider errors follow the existing visible spawn-failure/retry path. It
-  also removes the host-only `LIQUIDAITY_INTERNAL_MCP_SECRET` from the child.
-- `plugins/liquidaity-card-mcp/`: the product provider exchanges bounded native claim identity over
-  loopback and returns only `LIQUIDAITY_CARD_BEARER`.
-- `tests/plugins/test_kanban_worker_environment.py`: provider-free compatibility, additive merge,
-  failure, isolation, and redaction proof.
+  fixed and before `Popen`; provider errors follow the existing visible spawn-failure/retry path.
+- `tests/plugins/test_kanban_worker_environment.py`: product-free compatibility, additive merge,
+  non-overwrite, disposal, and spawn proof.
+
+The downstream LiquidAIty provider lives at `apps/hermes-liquidaity-plugin/`. It is installed into the
+existing Hermes environment as a normal `hermes_agent.plugins` entry point and returns only
+`LIQUIDAITY_CARD_BEARER`. Canonical startup removes the host-only signing secret before the Hermes
+gateway starts, so no product-specific redaction remains in vendor source.
 
 Upstream behavior preserved: no-provider dispatch retains the original command, environment, worker
 ownership, profile, OAuth, and lifecycle. The provider cannot choose a model, tool, task, or runtime.
@@ -287,7 +287,8 @@ saved Card Run receive no added value.
 
 Contribution plan: propose the generic bounded pre-spawn environment-provider registry upstream with
 tests for no-provider compatibility, non-overwrite, concurrent isolation, and visible provider
-failure. Keep the LiquidAIty loopback provider downstream.
+failure. Keep the LiquidAIty loopback provider in its external entry-point package.
 
-Rollback: remove the marked registry and `_default_spawn` call site plus the bundled LiquidAIty
-provider. Native workers then retain stock spawning but cannot use Card-scoped LiquidAIty MCP grants.
+Rollback: remove the marked registry and `_default_spawn` call site. Native workers then retain stock
+spawning; the external LiquidAIty provider becomes inactive and Card-scoped Kanban MCP grants must fail
+closed.

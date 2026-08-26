@@ -10,6 +10,8 @@ const REQUIRED_MIGRATIONS = [
   '027_verify_explicit_card_deletion_grants.sql',
 ] as const;
 const MIGRATION_LOCK = 'liquidaity-backend-migrations';
+const POSTGRES_RECOVERY_RETRY_DELAY_MS = 5_000;
+const POSTGRES_RECOVERY_RETRY_LIMIT = 18;
 
 type MigrationClient = Pick<PoolClient, 'query' | 'release'>;
 
@@ -107,7 +109,24 @@ export async function applyBackendMigrations(
 export async function listenAfterRequiredMigrations<T>(
   listen: () => Promise<T>,
   migrate: () => Promise<unknown> = applyBackendMigrations,
+  wait: (milliseconds: number) => Promise<void> = (milliseconds) => new Promise(
+    (resolve) => setTimeout(resolve, milliseconds),
+  ),
 ): Promise<T> {
-  await migrate();
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await migrate();
+      break;
+    } catch (error) {
+      const code = String((error as { code?: unknown } | null)?.code || '');
+      if (code !== '57P03' || attempt >= POSTGRES_RECOVERY_RETRY_LIMIT) {
+        throw error;
+      }
+      console.warn(
+        `[BOOT] PostgreSQL recovery in progress; migration retry ${attempt + 1}/${POSTGRES_RECOVERY_RETRY_LIMIT}`,
+      );
+      await wait(POSTGRES_RECOVERY_RETRY_DELAY_MS);
+    }
+  }
   return listen();
 }

@@ -84,7 +84,7 @@ def test_single_card_consumes_graph_first_idf(monkeypatch) -> None:
             return None
 
     context = _context()
-    monkeypatch.setattr(mac, "_build_model_client", lambda _config: Client())
+    monkeypatch.setattr(mac, "_build_model_client", lambda _config, **_kwargs: Client())
     monkeypatch.setattr(mac, "AssistantAgent", Agent)
     result = asyncio.run(mac.run_configured_card(context))
 
@@ -113,7 +113,7 @@ def test_single_card_gets_idd_reads_without_copying_them_into_card_tools(monkeyp
             return None
 
     context = _context(enabled_tools=[])
-    monkeypatch.setattr(mac, "_build_model_client", lambda _config: Client())
+    monkeypatch.setattr(mac, "_build_model_client", lambda _config, **_kwargs: Client())
     monkeypatch.setattr(mac, "AssistantAgent", Agent)
     result = asyncio.run(mac.run_configured_card(context))
 
@@ -129,7 +129,7 @@ def test_single_card_error_never_echoes_dynamic_input(monkeypatch) -> None:
     monkeypatch.setattr(
         mac,
         "_build_model_client",
-        lambda _config: (_ for _ in ()).throw(RuntimeError(secret)),
+        lambda _config, **_kwargs: (_ for _ in ()).throw(RuntimeError(secret)),
     )
     result = asyncio.run(mac.run_configured_card(context))
     assert result.error == "single_card_run_failed"
@@ -138,6 +138,6 @@ def test_single_card_error_never_echoes_dynamic_input(monkeypatch) -> None:
 
 def test_unknown_saved_tool_fails_loudly_without_provider_call(monkeypatch) -> None:
     context = _context(enabled_tools=["not-a-real-tool"])
-    monkeypatch.setattr(mac, "_build_model_client", lambda _config: object())
+    monkeypatch.setattr(mac, "_build_model_client", lambda _config, **_kwargs: object())
     result = asyncio.run(mac.run_configured_card(context))
     assert result.error == "single_card_run_failed"

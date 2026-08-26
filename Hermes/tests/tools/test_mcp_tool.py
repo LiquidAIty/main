@@ -589,7 +589,7 @@ class TestToolHandler:
         server = _make_mock_server("test_srv", session=mock_session)
         _servers["test_srv"] = server
         child = SimpleNamespace(
-            _host_tool_call_meta={"liquidaity/execution": "context-child-1"}
+            _host_tool_call_meta={"host/execution-context": "context-child-1"}
         )
 
         def run_without_caller_context(coro_or_factory, timeout=30):
@@ -607,7 +607,7 @@ class TestToolHandler:
             mock_session.call_tool.assert_called_once_with(
                 "greet",
                 arguments={"name": "world"},
-                meta={"liquidaity/execution": "context-child-1"},
+                meta={"host/execution-context": "context-child-1"},
             )
         finally:
             _servers.pop("test_srv", None)

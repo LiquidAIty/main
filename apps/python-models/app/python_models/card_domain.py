@@ -1501,10 +1501,16 @@ def _card_enabled(card: dict[str, Any]) -> bool:
     return card.get("enabled") is not False and option_enabled is not False
 
 
-def _is_magentic_worker_card(card: dict[str, Any]) -> bool:
-    """Only saved AutoGen Assistant Cards may be Mag One workers in the MVP."""
-    runtime = _card_runtime(card)
-    return runtime == {"kind": "autogen", "mode": "assistant"} and _card_enabled(card)
+def _is_callable_magentic_worker_card(card: dict[str, Any]) -> bool:
+    """Accept enabled saved Cards with a callable non-orchestrator runtime."""
+    try:
+        runtime = _card_runtime(card)
+    except CardDomainError:
+        return False
+    return (
+        runtime != {"kind": "autogen", "mode": "magentic_one"}
+        and _card_enabled(card)
+    )
 
 
 def _direct_card_targets(
@@ -2179,7 +2185,7 @@ def describe_magentic_agents(project_ref: str, deck_id: str) -> dict[str, Any]:
         card = cards.get(card_id)
         if card is None or card_id in seen or not _card_enabled(card):
             continue
-        if not _is_magentic_worker_card(card):
+        if not _is_callable_magentic_worker_card(card):
             continue
         seen.add(card_id)
         options = _json_object(card.get("runtimeOptions"), "runtime_options")
@@ -2210,15 +2216,14 @@ def describe_magentic_agents(project_ref: str, deck_id: str) -> dict[str, Any]:
     }
 
 
-def _autogen_participant(card: dict[str, Any]) -> dict[str, Any]:
+def _saved_card_participant(card: dict[str, Any]) -> dict[str, Any]:
     """Project only saved worker identity; its Card materializes when invoked."""
-    runtime = _card_runtime(card)
-    if runtime != {"kind": "autogen", "mode": "assistant"}:
+    if not _is_callable_magentic_worker_card(card):
         raise CardDomainError("magentic_worker_runtime_invalid")
     return {
         "cardId": card["id"],
         "title": card.get("title") or card["id"],
-        "runtime": runtime,
+        "runtime": _card_runtime(card),
     }
 
 
@@ -2549,10 +2554,10 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
             if (
                 worker is not None
                 and worker_id not in worker_ids
-                and _is_magentic_worker_card(worker)
+                and _is_callable_magentic_worker_card(worker)
             ):
                 worker_ids.append(worker_id)
-        participants = [_autogen_participant(cards[worker_id]) for worker_id in worker_ids]
+        participants = [_saved_card_participant(cards[worker_id]) for worker_id in worker_ids]
         if not participants:
             raise CardDomainError("magentic_runtime_no_connected_participants")
     request_fingerprint = _run_request_fingerprint({

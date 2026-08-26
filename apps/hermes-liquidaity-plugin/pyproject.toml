@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "liquidaity-hermes-plugin"
+version = "1.0.0"
+description = "LiquidAIty saved-Card authorization integration for stock Hermes"
+requires-python = ">=3.11"
+
+[project.entry-points."hermes_agent.plugins"]
+liquidaity-card-mcp = "liquidaity_hermes_plugin"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
