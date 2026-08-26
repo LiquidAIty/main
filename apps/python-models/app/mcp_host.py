@@ -149,7 +149,6 @@ _HTTP_CATALOG_TOOLS: tuple[Tool, ...] | None = None
 _HTTP_CATALOG_INITIALIZATION_TASK: asyncio.Task[None] | None = None
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
 _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS = 300.0
-_NATIVE_CBM_STARTUP_TIMEOUT_SECONDS = 45.0
 _NATIVE_CBM_HEALTH_TIMEOUT_SECONDS = 5.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
 _LOCAL_EMBEDDING_TOOL_TIMEOUT_SECONDS = 300.0
@@ -820,8 +819,8 @@ _NATIVE_CBM_INDEX_IN_FLIGHT: tuple[str, Future[CallToolResult]] | None = None
 _NATIVE_CBM_CONTAINER_REPO_ROOT = "/C/Projects/LiquidAIty/main"
 _NATIVE_CBM_PROJECT = "C-Projects-LiquidAIty-main"
 _NATIVE_CBM_EXPECTED_VERSION = "0.10.8"
-_NATIVE_CBM_EXPECTED_IMAGE = "liquidaity-codegraph:0.10.8"
-_NATIVE_CBM_EXPECTED_VOLUME = "liquidaity-cbm-cache"
+_NATIVE_CBM_EXPECTED_IMAGE = "codegraph:0.10.8"
+_NATIVE_CBM_EXPECTED_VOLUME = "codegraph-cache"
 _NATIVE_CBM_DAEMON_LOG = "/root/.cache/codebase-memory-mcp/logs/cbm-daemon.log"
 _NATIVE_GRAPHITI_MODULE: Any | None = None
 _NATIVE_GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
@@ -1355,7 +1354,7 @@ class _NativeStdioMcpClient:
                         "version": "1.0.0",
                     },
                 },
-                timeout_seconds=_NATIVE_CBM_STARTUP_TIMEOUT_SECONDS,
+                timeout_seconds=None,
             )
             server_info = initialized.get("serverInfo")
             if not isinstance(server_info, dict):
@@ -1412,7 +1411,7 @@ class _NativeStdioMcpClient:
         method: str,
         params: dict[str, Any],
         *,
-        timeout_seconds: float = _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS,
+        timeout_seconds: float | None = _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS,
     ) -> dict[str, Any]:
         with self._request_lock:
             self._next_id += 1
@@ -1425,10 +1424,14 @@ class _NativeStdioMcpClient:
                     "params": params,
                 }
             )
-            deadline = time.monotonic() + timeout_seconds
+            deadline = (
+                time.monotonic() + timeout_seconds
+                if timeout_seconds is not None
+                else None
+            )
             while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
+                remaining = deadline - time.monotonic() if deadline is not None else None
+                if remaining is not None and remaining <= 0:
                     raise RuntimeError(f"native_cbm_timeout:{method}")
                 try:
                     message = self._responses.get(timeout=remaining)
@@ -1510,7 +1513,7 @@ def _native_cbm_config() -> tuple[str, list[str], str]:
             "exec",
             "-i",
             "codegraph",
-            "/opt/cbm/codebase-memory-mcp",
+            "/usr/local/bin/codebase-memory-mcp",
         ],
         repo_root,
     )

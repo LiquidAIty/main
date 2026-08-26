@@ -2217,7 +2217,7 @@ def test_http_mcp_targets_compose_owned_codegraph():
         "exec",
         "-i",
         "codegraph",
-        "/opt/cbm/codebase-memory-mcp",
+        "/usr/local/bin/codebase-memory-mcp",
     ]
 
 
@@ -2258,11 +2258,11 @@ def test_codegraph_readiness_uses_the_existing_frontend_and_native_project_state
 
     inspected = [{
         "Id": "container-1",
-        "Config": {"Image": "liquidaity-codegraph:0.10.8"},
+        "Config": {"Image": "codegraph:0.10.8"},
         "State": {"Running": True, "Health": {"Status": "healthy"}},
         "Mounts": [{
             "Type": "volume",
-            "Name": "liquidaity-cbm-cache",
+            "Name": "codegraph-cache",
             "Destination": "/root/.cache/codebase-memory-mcp",
         }],
     }]
@@ -2369,11 +2369,13 @@ def test_dev_fresh_owns_the_exact_codegraph_container_preflight():
     )
     source = open(script, encoding="utf-8").read()
     assert "docker info" in source
-    assert "docker compose up --detach --build --no-deps codegraph" in source
-    assert "liquidaity-codegraph:0.10.8" in source
+    assert "docker compose --file $composeFile up --detach --build codegraph" in source
+    assert "codegraph:0.10.8" in source
     assert "codebase-memory-mcp 0.10.8" in source
-    assert "liquidaity-cbm-cache" in source
-    assert "AddSeconds(60)" in source
+    assert "codegraph-cache" in source
+    assert "AddSeconds(60)" not in source
+    assert "POSTGRES_PASSWORD" not in source
+    assert "NEO4J_PASSWORD" not in source
 
 
 def test_repository_has_no_direct_native_cbm_hook_or_host_installer():
@@ -2530,13 +2532,13 @@ def test_native_cbm_bootstrap_failure_does_not_spawn_a_second_frontend(monkeypat
     monkeypatch.setattr(mcp_host, "_NativeStdioMcpClient", NativeClient)
     with pytest.raises(RuntimeError, match="CBM daemon could not start within 30000 ms"):
         mcp_host._open_native_cbm_client(
-            "docker", ["exec", "-i", "codegraph", "/opt/cbm/codebase-memory-mcp"], "repo"
+            "docker", ["exec", "-i", "codegraph", "/usr/local/bin/codebase-memory-mcp"], "repo"
         )
 
     assert attempts == [
         (
             "docker",
-            ["exec", "-i", "codegraph", "/opt/cbm/codebase-memory-mcp"],
+            ["exec", "-i", "codegraph", "/usr/local/bin/codebase-memory-mcp"],
             "repo",
         )
     ]
@@ -3256,16 +3258,17 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
     }
 
 
-def test_tunnel_waits_for_complete_application_readiness_with_a_bounded_timeout():
+def test_tunnel_waits_for_complete_application_readiness_without_a_startup_deadline():
     script = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
         "scripts",
         "start-mcp-tunnel.ps1",
     )
     source = open(script, encoding="utf-8").read()
-    assert "[int]$TimeoutSeconds = 60" in source
+    assert "TimeoutSeconds" not in source
     assert '$readinessUrl = "$localBaseUrl/health/ready"' in source
-    assert "$catalogCount -eq 71" in source
+    assert "$catalogCount -gt 0" in source
+    assert "$catalogUniqueCount -eq $catalogCount" in source
     assert "$catalogReady" in source
     assert "$containerReady" in source
     assert "$daemonAttached" in source
@@ -3273,15 +3276,15 @@ def test_tunnel_waits_for_complete_application_readiness_with_a_bounded_timeout(
     assert "$projectReady" in source
     assert "$indexReady" in source
     assert "$watcherActive" in source
-    loop_start = source.index("    while ([DateTimeOffset]::UtcNow -lt $deadline)")
-    loop_end = source.index("\n    if (-not $applicationReady)", loop_start)
+    loop_start = source.index("    while ($true)")
+    loop_end = source.index("\n    $metadata = $null", loop_start)
     readiness_loop = source[loop_start:loop_end]
     assert "$http.GetAsync($readinessUrl)" in readiness_loop
     assert "$metadataUrl" not in readiness_loop
     assert "$mcpUrl" not in readiness_loop
     assert source.count("$http.GetAsync($metadataUrl)") == 1
     assert source.count("$http.SendAsync($request)") == 1
-    assert 'if ($lastState -ne $lastLoggedState)' in readiness_loop
+    assert 'Write-Host "MCP readiness: $lastState"' in readiness_loop
     assert "$maximumPollMilliseconds" in readiness_loop
 
 

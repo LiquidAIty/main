@@ -3,8 +3,6 @@ param(
     [string]$PublicResourceUrl,
     [ValidateRange(1, 65535)]
     [int]$McpPort = 8765,
-    [ValidateRange(1, 300)]
-    [int]$TimeoutSeconds = 60,
     [switch]$ReadyOnly
 )
 
@@ -26,14 +24,13 @@ $localBaseUrl = "http://127.0.0.1:$McpPort"
 $metadataUrl = "$localBaseUrl/.well-known/oauth-protected-resource/mcp"
 $mcpUrl = "$localBaseUrl/mcp"
 $readinessUrl = "$localBaseUrl/health/ready"
-$deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
 $lastState = 'unreachable'
 $lastLoggedState = ''
+$lastLoggedAt = [DateTimeOffset]::MinValue
 $pollMilliseconds = 500
 $maximumPollMilliseconds = 2000
 
 $http = [System.Net.Http.HttpClient]::new()
-$http.Timeout = [TimeSpan]::FromSeconds(2)
 
 try {
     $catalogReady = $false
@@ -41,7 +38,7 @@ try {
     $catalogUniqueCount = 0
     $catalogHash = ''
     $applicationReady = $false
-    while ([DateTimeOffset]::UtcNow -lt $deadline) {
+    while ($true) {
         $readiness = $null
         $readinessBody = ''
         $catalogState = 'unreachable'
@@ -66,8 +63,8 @@ try {
                 [bool]$readinessPayload.catalogReady -and
                 [bool]$readinessPayload.publicCatalogReady -and
                 $catalogState -eq 'ready' -and
-                $catalogCount -eq 71 -and
-                $catalogUniqueCount -eq 71 -and
+                $catalogCount -gt 0 -and
+                $catalogUniqueCount -eq $catalogCount -and
                 -not [string]::IsNullOrWhiteSpace($catalogHash)
             )
             $applicationReady = (
@@ -110,9 +107,14 @@ try {
             "frontend=$frontendAttached project=$projectReady index=$indexReady " +
             "watcher=$watcherActive"
         )
-        if ($lastState -ne $lastLoggedState) {
+        $now = [DateTimeOffset]::UtcNow
+        if (
+            $lastState -ne $lastLoggedState -or
+            ($now - $lastLoggedAt).TotalSeconds -ge 30
+        ) {
             Write-Host "MCP readiness: $lastState"
             $lastLoggedState = $lastState
+            $lastLoggedAt = $now
             $pollMilliseconds = 500
         }
 
@@ -138,10 +140,6 @@ try {
             $maximumPollMilliseconds,
             [int][Math]::Ceiling($pollMilliseconds * 1.5)
         )
-    }
-
-    if (-not $applicationReady) {
-        throw "MCP complete local readiness failed after $TimeoutSeconds seconds: $lastState"
     }
 
     $metadata = $null

@@ -1,27 +1,4 @@
 services:
-  codegraph:
-    image: liquidaity-codegraph:0.10.8
-    container_name: codegraph
-    build:
-      context: .
-      dockerfile: Dockerfile.codegraph
-      args:
-        CBM_VERSION: "0.10.8"
-        CBM_RELEASE_SHA256: 6EEF49652BC0C7820F43114125044D40BF7F4D97C11B2592F6B0F6A307702325
-        CBM_BINARY_SHA256: 1175645CB30560E7E47D78611CD1BCB509478EAF6D4E51F72FE18327EE9C1351
-    init: true
-    working_dir: /C/Projects/LiquidAIty/main
-    volumes:
-      - .:/C/Projects/LiquidAIty/main:ro
-      - codegraph_data:/root/.cache/codebase-memory-mcp
-    healthcheck:
-      test: ["CMD-SHELL", "test \"$$(/opt/cbm/codebase-memory-mcp --version)\" = \"codebase-memory-mcp 0.10.8\""]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
-    restart: unless-stopped
-
   postgres:
     image: apache/age:release_PG16_1.6.0
     container_name: postgres
@@ -67,8 +44,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  codegraph_data:
-    name: liquidaity-cbm-cache
   postgres_data:
     name: sim-pg-data
   neo4j_data:
