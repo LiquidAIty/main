@@ -41,7 +41,7 @@ import AgentBuilderProjectDrawer from '../features/agentbuilder/project/AgentBui
 import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import useAgentBuilderGraphAttention from '../features/agentbuilder/state/useAgentBuilderGraphAttention';
-import useKanbanCardRunStatus from '../features/agentbuilder/state/useKanbanCardRunStatus';
+import useCardActiveAgentCounts from '../features/agentbuilder/state/useCardActiveAgentCounts';
 import TradingUI from './tradingui';
 import {
   GRAPH_THEME,
@@ -295,7 +295,7 @@ export default function AgentBuilder(): React.ReactElement {
       && deckRevision
       && deck.id === BUILDER_DECK_ID,
   );
-  const kanbanCardRuns = useKanbanCardRunStatus({
+  const cardActivity = useCardActiveAgentCounts({
     projectId: canonicalDeckReady ? canvasProjectId : '',
     deck,
   });
@@ -392,11 +392,19 @@ export default function AgentBuilder(): React.ReactElement {
     window.history.pushState(null, '', `${window.location.pathname}?${params.toString()}`);
     setConversationId(nextConversationId);
   }, []);
-  const graphAttention = useAgentBuilderGraphAttention({ projectId: activeProject });
+  const graphAttention = useAgentBuilderGraphAttention({
+    projectId: activeProject,
+    deckId: BUILDER_DECK_ID,
+    conversationId,
+  });
   useEffect(() => {
     if (!activeProject) return undefined;
     const controller = new AbortController();
-    const params = new URLSearchParams({ projectId: activeProject, deckId: BUILDER_DECK_ID });
+    const params = new URLSearchParams({
+      projectId: activeProject,
+      deckId: BUILDER_DECK_ID,
+      conversationId,
+    });
     void fetch(`/api/coder/main/session/attention?${params.toString()}`, {
       credentials: 'include',
       signal: controller.signal,
@@ -417,7 +425,7 @@ export default function AgentBuilder(): React.ReactElement {
         }
       });
     return () => controller.abort();
-  }, [activeProject, graphAttention.restoreAttentionEvents]);
+  }, [activeProject, conversationId, graphAttention.restoreAttentionEvents]);
   const handleUseAttentionNode = useCallback((
     authority: 'thinkgraph' | 'knowgraph' | 'codegraph',
     node: GraphProjectionNode,
@@ -1774,8 +1782,8 @@ export default function AgentBuilder(): React.ReactElement {
         document={deck}
         setDocument={setDeck}
         onPersistGraphMutation={recordDeckWriteReason}
-        activeCardIds={kanbanCardRuns.activeCardIds}
-        kanbanRunStates={kanbanCardRuns.readStates}
+        activeCardIds={cardActivity.activeCardIds}
+        activeAgentCounts={cardActivity.activeAgentCounts}
         activeEdgeIds={[]}
         selectedCardId={selectedCardId}
         selectedEdgeId={selectedEdgeId}

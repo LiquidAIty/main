@@ -18,6 +18,19 @@ type AttentionContext = {
   actorCardId: string | null;
   actorColor: string;
   toolName: string;
+  operation?: 'read' | 'write';
+  eventId?: string;
+  timestamp?: string;
+  runId?: string | null;
+  resultHash?: string;
+};
+
+export type NativeAttentionEdge = {
+  id: string;
+  source: string;
+  target: string;
+  predicate: string | null;
+  provenance?: Record<string, unknown>;
 };
 
 export type NativeAttentionEvent = {
@@ -34,6 +47,7 @@ export type NativeAttentionEvent = {
   toolName: string;
   nativeNodeIds: string[];
   nativeEdgeIds: string[];
+  nativeEdges: NativeAttentionEdge[];
   resultHash: string;
   truncated: boolean;
 };
@@ -56,6 +70,7 @@ export type GraphAttentionState = {
 };
 
 const CARD_ACTIVE_COLOR = '#37ADAA';
+const WRITE_ATTENTION_COLOR = '#EE8C66';
 const UNKNOWN_ACTOR_COLOR = '#8B95A7';
 const MAX_OPERATION_NODES = 200;
 const MAX_OPERATION_EDGES = 300;
@@ -73,6 +88,11 @@ function attentionProperties(
     attentionActorCardId: context.actorCardId,
     attentionActorColor: context.actorColor,
     attentionToolName: context.toolName,
+    ...(context.operation ? { attentionOperation: context.operation } : {}),
+    ...(context.eventId ? { attentionEventId: context.eventId } : {}),
+    ...(context.timestamp ? { attentionTimestamp: context.timestamp } : {}),
+    ...(context.runId ? { attentionRunId: context.runId } : {}),
+    ...(context.resultHash ? { attentionResultHash: context.resultHash } : {}),
     attentionActive: true,
   };
 }
@@ -283,9 +303,17 @@ function decorateNativeProjection(
 export function projectNativeAttentionEvent(args: {
   event: NativeAttentionEvent;
   projectId: string;
+  deckId?: string;
+  conversationId?: string;
+  runId?: string;
 }): { authority: GraphAttentionAuthority; projection: GraphProjectionV1 } | null {
   const { event } = args;
   if (!['thinkgraph', 'knowgraph', 'codegraph'].includes(event.authority)) return null;
+  if (!event.eventId || !event.toolName || !event.resultHash || !Number.isFinite(Date.parse(event.timestamp))) return null;
+  if (event.projectId !== args.projectId) return null;
+  if (args.deckId && event.deckId !== args.deckId) return null;
+  if (args.conversationId && event.conversationId !== args.conversationId) return null;
+  if (args.runId && event.runId !== args.runId) return null;
   const authority = event.authority as GraphAttentionAuthority;
   const nodeIds = [...new Set(
     (Array.isArray(event.nativeNodeIds) ? event.nativeNodeIds : [])
@@ -295,8 +323,25 @@ export function projectNativeAttentionEvent(args: {
   if (nodeIds.length === 0) return null;
   const context = {
     actorCardId: event.cardId,
-    actorColor: event.cardId ? CARD_ACTIVE_COLOR : UNKNOWN_ACTOR_COLOR,
+    actorColor: event.cardId
+      ? event.operation === 'write' ? WRITE_ATTENTION_COLOR : CARD_ACTIVE_COLOR
+      : UNKNOWN_ACTOR_COLOR,
     toolName: event.toolName,
+    operation: event.operation,
+    eventId: event.eventId,
+    timestamp: event.timestamp,
+    runId: event.runId,
+    resultHash: event.resultHash,
+  };
+  const provenance = {
+    authority,
+    operation: event.operation,
+    nativeTool: event.toolName,
+    eventId: event.eventId,
+    timestamp: event.timestamp,
+    runId: event.runId,
+    cardId: event.cardId,
+    resultHash: event.resultHash,
   };
   const nodes = nodeIds.map((nativeId): GraphProjectionNode => ({
     id: nativeId,
@@ -313,10 +358,41 @@ export function projectNativeAttentionEvent(args: {
       attentionTruncated: event.truncated,
       attentionNativeEdgeIds: event.nativeEdgeIds,
     }, context),
+    provenance: { ...provenance, nativeId },
     codeGraphRef: authority === 'codegraph' ? nativeId : undefined,
     knowGraphRef: authority === 'knowgraph' ? nativeId : undefined,
   }));
-  return { authority, projection: projection(authority, args.projectId, nodes, []) };
+  const visibleNodeIds = new Set(nodeIds);
+  const nativeEdgeIds = new Set(
+    (Array.isArray(event.nativeEdgeIds) ? event.nativeEdgeIds : [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean),
+  );
+  const edges = (Array.isArray(event.nativeEdges) ? event.nativeEdges : [])
+    .filter((edge) => edge && typeof edge === 'object')
+    .map((edge) => ({
+      id: String(edge.id || '').trim(),
+      source: String(edge.source || '').trim(),
+      target: String(edge.target || '').trim(),
+      predicate: String(edge.predicate || '').trim(),
+      provenance: isRecord(edge.provenance)
+        ? { ...edge.provenance, ...provenance, nativeId: String(edge.id || '').trim() }
+        : { ...provenance, nativeId: String(edge.id || '').trim() },
+    }))
+    .filter((edge) => (
+      edge.id
+      && nativeEdgeIds.has(edge.id)
+      && visibleNodeIds.has(edge.source)
+      && visibleNodeIds.has(edge.target)
+    ))
+    .slice(0, MAX_OPERATION_EDGES)
+    .map((edge): GraphProjectionEdge => ({
+      ...edge,
+      mentionCount: 1,
+      properties: attentionProperties({ nativeId: edge.id }, context),
+    }));
+  if (nodes.length === 0 && edges.length === 0) return null;
+  return { authority, projection: projection(authority, args.projectId, nodes, edges) };
 }
 
 export function mergeAttentionProjection(
@@ -348,16 +424,28 @@ function emptyAttention(projectId: string): Record<GraphAttentionAuthority, Grap
   };
 }
 
-export default function useAgentBuilderGraphAttention({ projectId }: { projectId: string }): GraphAttentionState {
+export default function useAgentBuilderGraphAttention({
+  projectId,
+  deckId,
+  conversationId,
+}: {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+}): GraphAttentionState {
   const [projections, setProjections] = useState(() => emptyAttention(projectId));
   const [errors, setErrors] = useState<Partial<Record<GraphAttentionAuthority, string>>>({});
-  const activeRunRef = useRef<string | null>(null);
+  const activeScopeRef = useRef<{ clientRunId: string; serverRunId: string | null } | null>(null);
+  const seenEventIdsRef = useRef(new Set<string>());
+  const allowRestoreRef = useRef(true);
 
   useEffect(() => {
-    activeRunRef.current = null;
+    activeScopeRef.current = null;
+    seenEventIdsRef.current.clear();
+    allowRestoreRef.current = true;
     setErrors({});
     setProjections(emptyAttention(projectId));
-  }, [projectId]);
+  }, [conversationId, deckId, projectId]);
 
   const merge = useCallback((authority: GraphAttentionAuthority, incoming: GraphProjectionV1) => {
     setProjections((current) => ({
@@ -368,32 +456,82 @@ export default function useAgentBuilderGraphAttention({ projectId }: { projectId
   }, []);
 
   const startAttentionScope = useCallback((turn: MainChatTurnStarted) => {
-    activeRunRef.current = turn.runId;
+    if (turn.projectId !== projectId || turn.conversationId !== conversationId) return;
+    activeScopeRef.current = { clientRunId: turn.runId, serverRunId: null };
+    seenEventIdsRef.current.clear();
+    allowRestoreRef.current = false;
     setErrors({});
     setProjections(emptyAttention(turn.projectId));
-  }, []);
+  }, [conversationId, projectId]);
 
   const observeNativeTurnEvent = useCallback((turn: MainChatTurnEvent) => {
-    if (activeRunRef.current !== turn.runId) return;
+    const scope = activeScopeRef.current;
+    if (
+      !scope
+      || scope.clientRunId !== turn.runId
+      || turn.projectId !== projectId
+      || turn.conversationId !== conversationId
+    ) return;
+    const session = turn.event as Record<string, unknown>;
+    if (session.kind === 'session') {
+      const serverRunId = String(session.runId || '').trim();
+      if (
+        serverRunId
+        && session.projectId === projectId
+        && session.deckId === deckId
+        && session.conversationId === conversationId
+      ) {
+        scope.serverRunId = serverRunId;
+      }
+      return;
+    }
     const event = turn.event as NativeAttentionEvent;
     if (event.kind !== 'native_attention') return;
+    if (!scope.serverRunId || seenEventIdsRef.current.has(event.eventId)) return;
     const result = projectNativeAttentionEvent({
       event,
       projectId: turn.projectId,
+      deckId,
+      conversationId,
+      runId: scope.serverRunId,
     });
-    if (result) merge(result.authority, result.projection);
-  }, [merge]);
+    if (!result) return;
+    seenEventIdsRef.current.add(event.eventId);
+    merge(result.authority, result.projection);
+  }, [conversationId, deckId, merge, projectId]);
 
   const finishAttentionScope = useCallback((turn: MainChatTurnFinished) => {
-    if (activeRunRef.current === turn.runId) activeRunRef.current = null;
+    if (activeScopeRef.current?.clientRunId === turn.runId) activeScopeRef.current = null;
   }, []);
 
   const restoreAttentionEvents = useCallback((events: NativeAttentionEvent[]) => {
-    for (const event of events) {
-      const result = projectNativeAttentionEvent({ event, projectId });
-      if (result) merge(result.authority, result.projection);
+    if (!allowRestoreRef.current || activeScopeRef.current) return;
+    const scoped = events
+      .filter((event) => (
+        event.projectId === projectId
+        && event.deckId === deckId
+        && event.conversationId === conversationId
+        && event.runId
+        && Number.isFinite(Date.parse(event.timestamp))
+      ))
+      .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
+    const latestRunId = scoped.at(-1)?.runId;
+    if (!latestRunId) return;
+    for (const event of scoped) {
+      if (event.runId !== latestRunId || seenEventIdsRef.current.has(event.eventId)) continue;
+      const result = projectNativeAttentionEvent({
+        event,
+        projectId,
+        deckId,
+        conversationId,
+        runId: latestRunId,
+      });
+      if (!result) continue;
+      seenEventIdsRef.current.add(event.eventId);
+      merge(result.authority, result.projection);
     }
-  }, [merge, projectId]);
+    allowRestoreRef.current = false;
+  }, [conversationId, deckId, merge, projectId]);
 
   const expandNode = useCallback(async ({
     authority,

@@ -1,5 +1,5 @@
 import { Handle, Position } from '@xyflow/react';
-import type { AgentCardInstance, KanbanCardRunReadState } from '../../../types/agentgraph';
+import type { AgentCardInstance } from '../../../types/agentgraph';
 import { GRAPH_THEME, graphGlassCardStyle } from '../../graph/graphVisualTokens';
 import { GRAPH_TEXT } from '../../graph/graphWorkspaceContract';
 
@@ -11,19 +11,8 @@ type AgentCardNodeData = AgentCardInstance & {
   isHoverRelated?: boolean;
   isFlowLinked?: boolean;
   isInspecting?: boolean;
-  kanbanRunState?: KanbanCardRunReadState | null;
+  activeAgentCount?: number;
 };
-
-function compactCount(value: number): string {
-  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
-}
-
-function compactElapsed(elapsedMs: number): string {
-  const seconds = Math.max(0, Math.floor(elapsedMs / 1_000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
 
 export default function AgentCardNode({
   data,
@@ -35,9 +24,9 @@ export default function AgentCardNode({
   const canReceiveConnection = true;
   const canStartConnection = true;
   const shellActive = Boolean(selected || data?.isInspecting || data?.isRuntimeActive);
-  const isKanbanCard = data?.runtime?.kind === 'hermes' && data?.runtime?.mode === 'kanban';
-  const kanbanReadState = isKanbanCard ? data.kanbanRunState : null;
-  const kanban = kanbanReadState?.kind === 'ready' ? kanbanReadState.status : null;
+  const activeAgentCount = Number.isSafeInteger(data?.activeAgentCount) && Number(data.activeAgentCount) > 0
+    ? Number(data.activeAgentCount)
+    : 0;
   const name = String(data?.title || '').trim() || 'Agent';
   const subtext = String(data?.subtitle || '').replace(/\s+/g, ' ').trim() || 'Operational agent';
   const compactSubtext =
@@ -137,6 +126,27 @@ export default function AgentCardNode({
           }}
         >
           <span>{name}</span>
+          {activeAgentCount > 0 ? (
+            <span
+              data-testid="active-agent-count"
+              style={{
+                display: 'inline-grid',
+                placeItems: 'center',
+                minWidth: 15,
+                height: 15,
+                padding: '0 4px',
+                borderRadius: 999,
+                background: GRAPH_THEME.accent.primarySoft,
+                color: GRAPH_THEME.surface.text,
+                fontSize: 9,
+                fontWeight: 800,
+                lineHeight: 1,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {activeAgentCount}
+            </span>
+          ) : null}
         </div>
         <div
           style={{
@@ -154,64 +164,8 @@ export default function AgentCardNode({
             minWidth: 0,
           }}
         >
-          {kanbanReadState ? null : compactSubtext}
+          {compactSubtext}
         </div>
-        {kanbanReadState ? (
-          <div
-            data-testid="kanban-card-run-status"
-            data-state={kanbanReadState.kind}
-            data-run-id={kanban?.runId || ''}
-            data-run-state={kanban?.state || ''}
-            data-native-root-id={kanban?.nativeRootId || ''}
-            data-error={kanbanReadState.kind === 'error' ? kanbanReadState.error : kanban?.errorCode || ''}
-            data-input-tokens={kanban?.inputTokens ?? ''}
-            data-output-tokens={kanban?.outputTokens ?? ''}
-            data-cached-tokens={kanban?.cachedTokens ?? ''}
-            data-reasoning-tokens={kanban?.reasoningTokens ?? ''}
-            data-cost-usd={kanban?.costUsd ?? ''}
-            style={{
-              display: 'grid',
-              gap: 1,
-              marginTop: 1,
-              paddingTop: 3,
-              borderTop: `1px solid ${GRAPH_THEME.card.glassBorder}`,
-              color: GRAPH_THEME.surface.mutedText,
-              fontSize: 7.5,
-              lineHeight: 1.08,
-              fontVariantNumeric: 'tabular-nums',
-              overflow: 'hidden',
-            }}
-          >
-            {kanbanReadState.kind === 'loading' ? <strong>STATUS LOADING</strong> : null}
-            {kanbanReadState.kind === 'empty' ? <strong>NO RETAINED RUN</strong> : null}
-            {kanbanReadState.kind === 'error' ? (
-              <strong title={kanbanReadState.error}>STATUS UNAVAILABLE</strong>
-            ) : null}
-            {kanban ? (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 4 }}>
-                  <strong title={`Run ${kanban.state}`} style={{ color: GRAPH_THEME.accent.primary, textTransform: 'uppercase' }}>
-                    {kanban.status}
-                  </strong>
-                  <span>{compactElapsed(kanban.elapsedMs)}</span>
-                </div>
-                <span>{kanban.tasksCompleted}/{kanban.tasksTotal} tasks · {kanban.activeWorkers} active</span>
-                <span title={kanban.nativeRootId || undefined} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  Root {kanban.nativeRootId || 'pending'}
-                </span>
-                <span>Tools {compactCount(kanban.toolCallCount)} · Graph {kanban.graphReads}R/{kanban.graphWrites}W</span>
-                <span title={`Input ${kanban.inputTokens}; output ${kanban.outputTokens}; cache ${kanban.cachedTokens}; reasoning ${kanban.reasoningTokens}`}>
-                  {compactCount(kanban.inputTokens + kanban.outputTokens)} tok · ${kanban.costUsd.toFixed(4)} · {kanban.resultReady ? 'ready' : 'pending'}
-                </span>
-                {kanban.errorCode || kanban.errorSummary ? (
-                  <span title={kanban.errorSummary || kanban.errorCode || undefined} style={{ color: '#fca5a5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {kanban.errorCode || kanban.errorSummary}
-                  </span>
-                ) : null}
-              </>
-            ) : null}
-          </div>
-        ) : null}
       </div>
     </div>
   );

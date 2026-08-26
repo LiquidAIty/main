@@ -1650,17 +1650,33 @@ describe('coder routes', () => {
   });
 
   describe('/main/session/chat', () => {
-    it('reads persisted native attention through the existing AGE projection only', async () => {
+    it('reads only the latest conversation-scoped native attention Run through AGE', async () => {
       const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
       orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint: string) => {
         if (endpoint !== '/domain/agentgraph/inspect') return railsImplementation(endpoint);
         return {
           runs: [{ attentionEvents: [{
+            eventId: 'attention-old', timestamp: '2026-08-21T11:00:00Z',
+            projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+            runId: 'run-old', cardId: 'card_local_coder', authority: 'codegraph',
+            operation: 'read', toolName: 'cbm.search_graph',
+            nativeNodeIds: ['pkg.old'], nativeEdgeIds: [], nativeEdges: [],
+            resultHash: '0'.repeat(64), truncated: false,
+          }, {
             eventId: 'attention-code', timestamp: '2026-08-21T12:00:00Z',
             projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
             runId: 'run-1', cardId: 'card_local_coder', authority: 'codegraph',
             operation: 'read', toolName: 'cbm.search_graph',
-            nativeNodeIds: ['pkg.materialize_idf'], nativeEdgeIds: [],
+            nativeNodeIds: ['pkg.alpha', 'pkg.beta'], nativeEdgeIds: ['calls-one'],
+            nativeEdges: [{ id: 'calls-one', source: 'pkg.alpha', target: 'pkg.beta', predicate: 'CALLS' }],
+            resultHash: 'a'.repeat(64), truncated: false,
+          }, {
+            eventId: 'attention-code', timestamp: '2026-08-21T12:00:00Z',
+            projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+            runId: 'run-1', cardId: 'card_local_coder', authority: 'codegraph',
+            operation: 'read', toolName: 'cbm.search_graph',
+            nativeNodeIds: ['pkg.alpha', 'pkg.beta'], nativeEdgeIds: ['calls-one'],
+            nativeEdges: [{ id: 'calls-one', source: 'pkg.alpha', target: 'pkg.beta', predicate: 'CALLS' }],
             resultHash: 'a'.repeat(64), truncated: false,
           }, {
             eventId: 'attention-agent', timestamp: '2026-08-21T12:00:01Z',
@@ -1669,16 +1685,24 @@ describe('coder routes', () => {
             operation: 'read', toolName: 'agentgraph.inspect',
             nativeNodeIds: ['card_local_coder'], nativeEdgeIds: [],
             resultHash: 'b'.repeat(64), truncated: false,
+          }, {
+            eventId: 'attention-other-conversation', timestamp: '2026-08-21T13:00:00Z',
+            projectId: 'project-1', deckId: 'deck_builder', conversationId: 'other',
+            runId: 'run-other', cardId: 'card_local_coder', authority: 'codegraph',
+            operation: 'read', toolName: 'cbm.search_graph',
+            nativeNodeIds: ['pkg.other'], nativeEdgeIds: [], nativeEdges: [],
+            resultHash: 'c'.repeat(64), truncated: false,
           }] }],
         };
       });
       const { server, baseUrl } = await createApiServer();
       try {
-        const response = await fetch(`${baseUrl}/main/session/attention?projectId=project-1&deckId=deck_builder`);
+        const response = await fetch(`${baseUrl}/main/session/attention?projectId=project-1&deckId=deck_builder&conversationId=main`);
         const body = await response.json() as any;
         expect(response.status).toBe(200);
         expect(body.events).toEqual([expect.objectContaining({
-          eventId: 'attention-code', authority: 'codegraph', nativeNodeIds: ['pkg.materialize_idf'],
+          eventId: 'attention-code', authority: 'codegraph', nativeNodeIds: ['pkg.alpha', 'pkg.beta'],
+          nativeEdges: [{ id: 'calls-one', source: 'pkg.alpha', target: 'pkg.beta', predicate: 'CALLS' }],
         })]);
       } finally {
         orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);

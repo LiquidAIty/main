@@ -22,6 +22,7 @@ NATIVE_ATTENTION_EDGE_LIMIT = 256
 Authority = Literal["codegraph", "knowgraph", "thinkgraph", "agentgraph"]
 Operation = Literal["read", "write"]
 Extractor = Callable[[str, dict[str, Any]], tuple[list[str], list[str]]]
+EdgeExtractor = Callable[[str, dict[str, Any]], list[dict[str, Any]]]
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class NativeAttentionContract:
     authority: Authority
     operation: Operation
     extractor: Extractor
+    edge_extractor: EdgeExtractor | None = None
 
 
 def _text(value: Any) -> str:
@@ -64,6 +66,46 @@ def _all_values(records: list[dict[str, Any]], *keys: str) -> list[str]:
             if value:
                 result.append(value)
     return result
+
+
+def _edge_reference(record: dict[str, Any]) -> dict[str, Any] | None:
+    edge_id = _text(record.get("uuid") or record.get("id") or record.get("edge_id"))
+    source = _text(
+        record.get("source_node_uuid")
+        or record.get("source")
+        or record.get("from")
+        or record.get("a")
+    )
+    target = _text(
+        record.get("target_node_uuid")
+        or record.get("target")
+        or record.get("to")
+        or record.get("b")
+    )
+    if not edge_id or not source or not target:
+        return None
+    predicate = _text(
+        record.get("name")
+        or record.get("type")
+        or record.get("predicate")
+        or record.get("relation")
+    )
+    provenance = {
+        key: record[key]
+        for key in ("group_id", "episodes", "source", "source_description")
+        if record.get(key) is not None
+    }
+    return {
+        "id": edge_id,
+        "source": source,
+        "target": target,
+        "predicate": predicate or None,
+        **({"provenance": provenance} if provenance else {}),
+    }
+
+
+def _edge_references(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [reference for record in records if (reference := _edge_reference(record))]
 
 
 def _tabular_records(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -203,6 +245,15 @@ def _extract_knowgraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[st
     return nodes, edges
 
 
+def _extract_knowgraph_edges(tool_name: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if tool_name in {"graphiti.search_memory_facts", "graphiti.get_episode_entities", "graphiti.add_triplet"}:
+        return _edge_references(_records(payload, "facts", "edges", "relationships"))
+    if tool_name == "graphiti.get_entity_edge":
+        reference = _edge_reference(payload)
+        return [reference] if reference else []
+    return []
+
+
 def _extract_thinkgraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
     records = _records(
         payload,
@@ -234,6 +285,17 @@ def _extract_thinkgraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[s
     return nodes, []
 
 
+def _extract_thinkgraph_edges(_tool_name: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    reference = _edge_reference({
+        "edge_id": payload.get("edge_id"),
+        "source_node_uuid": payload.get("a"),
+        "target_node_uuid": payload.get("b"),
+        "relation": payload.get("relation"),
+        "source_description": payload.get("source_description"),
+    })
+    return [reference] if reference else []
+
+
 def _extract_agentgraph(_tool_name: str, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
     nodes = _values(_records(payload, "cards"), "cardId")
     nodes.extend(_values(_records(payload, "runs"), "runId"))
@@ -241,9 +303,15 @@ def _extract_agentgraph(_tool_name: str, payload: dict[str, Any]) -> tuple[list[
     return nodes, edges
 
 
+def _extract_agentgraph_edges(_tool_name: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    return _edge_references(_records(payload, "relationships"))
+
+
 def _contracts() -> dict[str, NativeAttentionContract]:
     contracts: dict[str, NativeAttentionContract] = {
-        "agentgraph.inspect": NativeAttentionContract("agentgraph", "read", _extract_agentgraph),
+        "agentgraph.inspect": NativeAttentionContract(
+            "agentgraph", "read", _extract_agentgraph, _extract_agentgraph_edges
+        ),
         "cbm.search_graph": NativeAttentionContract("codegraph", "read", _extract_codegraph),
         "cbm.trace_path": NativeAttentionContract("codegraph", "read", _extract_codegraph),
         "cbm.search_code": NativeAttentionContract("codegraph", "read", _extract_codegraph),
@@ -256,14 +324,14 @@ def _contracts() -> dict[str, NativeAttentionContract]:
         "cbm.delete_project": NativeAttentionContract("codegraph", "write", _extract_codegraph),
         "cbm.manage_adr": NativeAttentionContract("codegraph", "write", _extract_codegraph),
         "cbm.ingest_traces": NativeAttentionContract("codegraph", "write", _extract_codegraph),
-        "graphiti.search_nodes": NativeAttentionContract("knowgraph", "read", _extract_knowgraph),
-        "graphiti.search_memory_facts": NativeAttentionContract("knowgraph", "read", _extract_knowgraph),
-        "graphiti.get_entity_edge": NativeAttentionContract("knowgraph", "read", _extract_knowgraph),
-        "graphiti.get_episodes": NativeAttentionContract("knowgraph", "read", _extract_knowgraph),
-        "graphiti.get_episode_entities": NativeAttentionContract("knowgraph", "read", _extract_knowgraph),
-        "graphiti.add_triplet": NativeAttentionContract("knowgraph", "write", _extract_knowgraph),
-        "graphiti.build_communities": NativeAttentionContract("knowgraph", "write", _extract_knowgraph),
-        "graphiti.summarize_saga": NativeAttentionContract("knowgraph", "write", _extract_knowgraph),
+        "graphiti.search_nodes": NativeAttentionContract("knowgraph", "read", _extract_knowgraph, _extract_knowgraph_edges),
+        "graphiti.search_memory_facts": NativeAttentionContract("knowgraph", "read", _extract_knowgraph, _extract_knowgraph_edges),
+        "graphiti.get_entity_edge": NativeAttentionContract("knowgraph", "read", _extract_knowgraph, _extract_knowgraph_edges),
+        "graphiti.get_episodes": NativeAttentionContract("knowgraph", "read", _extract_knowgraph, _extract_knowgraph_edges),
+        "graphiti.get_episode_entities": NativeAttentionContract("knowgraph", "read", _extract_knowgraph, _extract_knowgraph_edges),
+        "graphiti.add_triplet": NativeAttentionContract("knowgraph", "write", _extract_knowgraph, _extract_knowgraph_edges),
+        "graphiti.build_communities": NativeAttentionContract("knowgraph", "write", _extract_knowgraph, _extract_knowgraph_edges),
+        "graphiti.summarize_saga": NativeAttentionContract("knowgraph", "write", _extract_knowgraph, _extract_knowgraph_edges),
     }
     for name in (
         "engraphis.recall",
@@ -279,7 +347,9 @@ def _contracts() -> dict[str, NativeAttentionContract]:
         "engraphis.code_impact",
         "engraphis.export_code_graph",
     ):
-        contracts[name] = NativeAttentionContract("thinkgraph", "read", _extract_thinkgraph)
+        contracts[name] = NativeAttentionContract(
+            "thinkgraph", "read", _extract_thinkgraph, _extract_thinkgraph_edges
+        )
     for name in (
         "engraphis.remember",
         "engraphis.forget",
@@ -291,7 +361,9 @@ def _contracts() -> dict[str, NativeAttentionContract]:
         "engraphis.ingest",
         "engraphis.consolidate",
     ):
-        contracts[name] = NativeAttentionContract("thinkgraph", "write", _extract_thinkgraph)
+        contracts[name] = NativeAttentionContract(
+            "thinkgraph", "write", _extract_thinkgraph, _extract_thinkgraph_edges
+        )
     return contracts
 
 
@@ -367,21 +439,43 @@ def build_native_attention_event(
         return None
     node_ids: list[str] = []
     edge_ids: list[str] = []
+    edge_references: list[dict[str, Any]] = []
     for payload in _result_payloads(result):
         nodes, edges = contract.extractor(canonical_name or "", payload)
         node_ids.extend(nodes)
         edge_ids.extend(edges)
+        if contract.edge_extractor is not None:
+            edge_references.extend(contract.edge_extractor(canonical_name or "", payload))
     native_node_ids, nodes_truncated = _dedupe_and_cap(
         node_ids, NATIVE_ATTENTION_NODE_LIMIT
     )
     native_edge_ids, edges_truncated = _dedupe_and_cap(
         edge_ids, NATIVE_ATTENTION_EDGE_LIMIT
     )
+    native_edges: list[dict[str, Any]] = []
+    seen_edge_ids: set[str] = set()
+    for reference in edge_references:
+        edge_id = _text(reference.get("id"))
+        source = _text(reference.get("source"))
+        target = _text(reference.get("target"))
+        if not edge_id or not source or not target or edge_id in seen_edge_ids:
+            continue
+        seen_edge_ids.add(edge_id)
+        native_edges.append(reference)
+    if len(native_edges) > NATIVE_ATTENTION_EDGE_LIMIT:
+        edges_truncated = True
+        native_edges = native_edges[:NATIVE_ATTENTION_EDGE_LIMIT]
+    native_edge_ids, edge_id_refs_truncated = _dedupe_and_cap(
+        [*native_edge_ids, *(str(edge["id"]) for edge in native_edges)],
+        NATIVE_ATTENTION_EDGE_LIMIT,
+    )
+    edges_truncated = edges_truncated or edge_id_refs_truncated
     if not native_node_ids and not native_edge_ids:
         return None
     normalized_references = {
         "nativeNodeIds": native_node_ids,
         "nativeEdgeIds": native_edge_ids,
+        "nativeEdges": native_edges,
     }
     normalized = {
         "authority": contract.authority,

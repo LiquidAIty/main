@@ -148,6 +148,8 @@ def test_declared_write_contract_extracts_graphiti_nodes_and_edge() -> None:
                 "uuid": "edge-one",
                 "source_node_uuid": "node-a",
                 "target_node_uuid": "node-b",
+                "name": "USES",
+                "group_id": "group-one",
             }],
         }),
         None,
@@ -156,6 +158,37 @@ def test_declared_write_contract_extracts_graphiti_nodes_and_edge() -> None:
     assert event["operation"] == "write"
     assert event["nativeNodeIds"] == ["node-a", "node-b"]
     assert event["nativeEdgeIds"] == ["edge-one"]
+    assert event["nativeEdges"] == [{
+        "id": "edge-one",
+        "source": "node-a",
+        "target": "node-b",
+        "predicate": "USES",
+        "provenance": {"group_id": "group-one"},
+    }]
+
+
+def test_thinkgraph_edge_uses_explicit_endpoints_not_provenance_source() -> None:
+    event = native_attention.build_native_attention_event(
+        "engraphis.link",
+        _result({
+            "edge_id": "edge-one",
+            "a": "memory-a",
+            "b": "memory-b",
+            "relation": "supports",
+            "source": "user supplied provenance",
+            "source_description": "bounded selection",
+        }),
+        None,
+    )
+
+    assert event is not None
+    assert event["nativeEdges"] == [{
+        "id": "edge-one",
+        "source": "memory-a",
+        "target": "memory-b",
+        "predicate": "supports",
+        "provenance": {"source_description": "bounded selection"},
+    }]
 
 
 def test_duplicate_ids_are_deduplicated_and_caps_are_deterministic(

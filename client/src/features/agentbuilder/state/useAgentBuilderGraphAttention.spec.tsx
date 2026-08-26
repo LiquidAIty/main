@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import useAgentBuilderGraphAttention, {
   projectNativeAttentionEvent,
+  type NativeAttentionEdge,
   type NativeAttentionEvent,
 } from './useAgentBuilderGraphAttention';
 
@@ -21,6 +22,7 @@ function attention(
   nativeNodeIds: string[],
   nativeEdgeIds: string[] = [],
   cardId: string | null = 'card_main_chat',
+  nativeEdges: NativeAttentionEdge[] = [],
 ): NativeAttentionEvent {
   return {
     kind: 'native_attention',
@@ -29,7 +31,7 @@ function attention(
     projectId: 'project-1',
     deckId: 'deck_builder',
     conversationId: 'main',
-    runId: 'req-one',
+    runId: 'server-run-1',
     cardId,
     authority,
     operation: 'read',
@@ -37,6 +39,7 @@ function attention(
       : authority === 'knowgraph' ? 'graphiti.search_nodes' : 'engraphis.why',
     nativeNodeIds,
     nativeEdgeIds,
+    nativeEdges,
     resultHash: 'a'.repeat(64),
     truncated: false,
   };
@@ -103,7 +106,9 @@ describe('attention-activated native graph projection', () => {
   });
 
   it('starts all three canvases empty, wakes exact Graphiti write data, and clears on the next scope', async () => {
-    const { result } = renderHook(() => useAgentBuilderGraphAttention({ projectId: 'project-1' }));
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
     expect(result.current.projections.thinkgraph.nodes).toEqual([]);
     expect(result.current.projections.knowgraph.nodes).toEqual([]);
     expect(result.current.projections.codegraph.nodes).toEqual([]);
@@ -111,11 +116,32 @@ describe('attention-activated native graph projection', () => {
     act(() => result.current.startAttentionScope(turn));
     act(() => result.current.observeNativeTurnEvent({
       ...turn,
-      event: { ...attention('knowgraph', ['node-a', 'node-b'], ['edge-1']), operation: 'write' },
+      event: {
+        kind: 'session', runId: 'server-run-1', projectId: 'project-1',
+        deckId: 'deck_builder', conversationId: 'main',
+      },
+    }));
+    act(() => result.current.observeNativeTurnEvent({
+      ...turn,
+      event: {
+        ...attention('knowgraph', ['node-a', 'node-b'], ['edge-1'], 'card_main_chat', [{
+          id: 'edge-1', source: 'node-a', target: 'node-b', predicate: 'USES',
+          provenance: { group_id: 'group-one' },
+        }]),
+        operation: 'write',
+      },
     }));
 
     await waitFor(() => expect(result.current.projections.knowgraph.nodes).toHaveLength(2));
-    expect(result.current.projections.knowgraph.edges).toEqual([]);
+    expect(result.current.projections.knowgraph.edges).toEqual([
+      expect.objectContaining({ id: 'edge-1', source: 'node-a', target: 'node-b', predicate: 'USES' }),
+    ]);
+    expect(result.current.projections.knowgraph.nodes[0].properties).toMatchObject({
+      attentionOperation: 'write', attentionActorColor: '#EE8C66', attentionRunId: 'server-run-1',
+    });
+    expect(result.current.projections.knowgraph.edges[0].provenance).toMatchObject({
+      authority: 'knowgraph', operation: 'write', group_id: 'group-one',
+    });
     expect(result.current.projections.thinkgraph.nodes).toEqual([]);
     expect(result.current.projections.codegraph.nodes).toEqual([]);
 
@@ -124,7 +150,9 @@ describe('attention-activated native graph projection', () => {
   });
 
   it('restores persisted native attention without inventing graph objects', async () => {
-    const { result } = renderHook(() => useAgentBuilderGraphAttention({ projectId: 'project-1' }));
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
     act(() => result.current.restoreAttentionEvents([
       attention('thinkgraph', ['mem-1']),
       attention('codegraph', ['pkg.materialize_idf']),
@@ -134,6 +162,59 @@ describe('attention-activated native graph projection', () => {
     expect(result.current.projections.thinkgraph.nodes[0].id).toBe('mem-1');
     expect(result.current.projections.codegraph.nodes[0].id).toBe('pkg.materialize_idf');
     expect(result.current.projections.knowgraph.nodes).toEqual([]);
+  });
+
+  it('rejects duplicate, wrong-project, and wrong-Run live attention', async () => {
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+    act(() => result.current.startAttentionScope(turn));
+    act(() => result.current.observeNativeTurnEvent({
+      ...turn,
+      event: {
+        kind: 'session', runId: 'server-run-1', projectId: 'project-1',
+        deckId: 'deck_builder', conversationId: 'main',
+      },
+    }));
+    const valid = attention('codegraph', ['pkg.alpha']);
+    act(() => {
+      result.current.observeNativeTurnEvent({ ...turn, event: valid });
+      result.current.observeNativeTurnEvent({ ...turn, event: valid });
+      result.current.observeNativeTurnEvent({
+        ...turn,
+        event: { ...attention('codegraph', ['pkg.wrong-project']), eventId: 'wrong-project', projectId: 'project-2' },
+      });
+      result.current.observeNativeTurnEvent({
+        ...turn,
+        event: { ...attention('codegraph', ['pkg.wrong-run']), eventId: 'wrong-run', runId: 'server-run-2' },
+      });
+    });
+
+    await waitFor(() => expect(result.current.projections.codegraph.nodes.map((node) => node.id)).toEqual(['pkg.alpha']));
+  });
+
+  it('restores only the latest scoped Run and ignores duplicate event identities', async () => {
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+    const old = {
+      ...attention('thinkgraph', ['old-memory']),
+      eventId: 'old-event', runId: 'old-run', timestamp: '2026-08-18T11:00:00Z',
+    };
+    const latest = {
+      ...attention('thinkgraph', ['current-memory']),
+      eventId: 'current-event', runId: 'current-run', timestamp: '2026-08-18T12:00:00Z',
+    };
+    act(() => result.current.restoreAttentionEvents([
+      old,
+      latest,
+      latest,
+      { ...latest, eventId: 'wrong-project', projectId: 'project-2', timestamp: '2026-08-18T13:00:00Z' },
+    ]));
+
+    await waitFor(() => expect(result.current.projections.thinkgraph.nodes.map((node) => node.id)).toEqual([
+      'current-memory',
+    ]));
   });
 
   it('expands a visible ThinkGraph memory through the native neighborhood route', async () => {
@@ -147,8 +228,17 @@ describe('attention-activated native graph projection', () => {
         edges: [{ id: 'edge-1', source: 'mem-1', target: 'mem-2', predicate: 'related' }],
       }),
     }));
-    const { result } = renderHook(() => useAgentBuilderGraphAttention({ projectId: 'project-1' }));
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
     act(() => result.current.startAttentionScope(turn));
+    act(() => result.current.observeNativeTurnEvent({
+      ...turn,
+      event: {
+        kind: 'session', runId: 'server-run-1', projectId: 'project-1',
+        deckId: 'deck_builder', conversationId: 'main',
+      },
+    }));
     act(() => result.current.observeNativeTurnEvent({
       ...turn,
       event: attention('thinkgraph', ['mem-1']),
@@ -178,8 +268,17 @@ describe('attention-activated native graph projection', () => {
         relationships: [{ id: 'edge-1', from: 'node-a', to: 'node-b', type: 'USES' }],
       }),
     }));
-    const { result } = renderHook(() => useAgentBuilderGraphAttention({ projectId: 'project-1' }));
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
     act(() => result.current.startAttentionScope(turn));
+    act(() => result.current.observeNativeTurnEvent({
+      ...turn,
+      event: {
+        kind: 'session', runId: 'server-run-1', projectId: 'project-1',
+        deckId: 'deck_builder', conversationId: 'main',
+      },
+    }));
     act(() => result.current.observeNativeTurnEvent({
       ...turn,
       event: attention('knowgraph', ['node-a']),
@@ -209,8 +308,17 @@ describe('attention-activated native graph projection', () => {
       }),
     });
     vi.stubGlobal('fetch', fetchMock);
-    const { result } = renderHook(() => useAgentBuilderGraphAttention({ projectId: 'project-1' }));
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
     act(() => result.current.startAttentionScope(turn));
+    act(() => result.current.observeNativeTurnEvent({
+      ...turn,
+      event: {
+        kind: 'session', runId: 'server-run-1', projectId: 'project-1',
+        deckId: 'deck_builder', conversationId: 'main',
+      },
+    }));
     act(() => result.current.observeNativeTurnEvent({
       ...turn,
       event: attention('codegraph', ['pkg.alpha']),

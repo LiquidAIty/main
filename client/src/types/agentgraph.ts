@@ -74,41 +74,6 @@ export type AgentCardInstance = {
   status?: 'idle' | 'ready' | 'running' | 'error';
 };
 
-export type KanbanCardRunStatus = {
-  runId: string;
-  correlationId: string;
-  cardId: string;
-  runtimeKind: string;
-  runtimeMode: string;
-  runtimeProfile: string;
-  state: string;
-  status: string;
-  nativeRootId: string | null;
-  nativeRunId: string | number | null;
-  tasksCompleted: number;
-  tasksTotal: number;
-  activeWorkers: number;
-  elapsedMs: number;
-  toolCallCount: number;
-  graphReads: number;
-  graphWrites: number;
-  inputTokens: number;
-  outputTokens: number;
-  cachedTokens: number;
-  reasoningTokens: number;
-  costUsd: number;
-  resultReady: boolean;
-  output: string | null;
-  errorCode: string | null;
-  errorSummary: string | null;
-};
-
-export type KanbanCardRunReadState =
-  | { kind: 'loading' }
-  | { kind: 'empty' }
-  | { kind: 'ready'; status: KanbanCardRunStatus }
-  | { kind: 'error'; error: string };
-
 export type DeckEdge = {
   id: string;
   source: string;

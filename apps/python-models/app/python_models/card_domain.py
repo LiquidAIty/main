@@ -670,6 +670,24 @@ def observe_native_attention(event: dict[str, Any]) -> bool:
         str(value).strip() for value in event.get("nativeEdgeIds") or []
         if str(value).strip()
     ][:256]
+    native_edges = [
+        {
+            "id": str(value.get("id") or "").strip(),
+            "source": str(value.get("source") or "").strip(),
+            "target": str(value.get("target") or "").strip(),
+            "predicate": str(value.get("predicate") or "").strip() or None,
+            **(
+                {"provenance": value["provenance"]}
+                if isinstance(value.get("provenance"), dict)
+                else {}
+            ),
+        }
+        for value in event.get("nativeEdges") or []
+        if isinstance(value, dict)
+        and str(value.get("id") or "").strip() in edge_ids
+        and str(value.get("source") or "").strip()
+        and str(value.get("target") or "").strip()
+    ][:256]
     if not all((project_id, deck_id, run_id, card_id, event_id, tool_name, authority,
                 operation, timestamp, result_hash)):
         return False
@@ -702,6 +720,7 @@ def observe_native_attention(event: dict[str, Any]) -> bool:
                     used.toolName=$toolName,
                     used.nativeNodeIds=$nativeNodeIds,
                     used.nativeEdgeIds=$nativeEdgeIds,
+                    used.nativeEdges=$nativeEdges,
                     used.resultHash=$resultHash,
                     used.truncated=$truncated
                 RETURN run.runId
@@ -719,6 +738,7 @@ def observe_native_attention(event: dict[str, Any]) -> bool:
                     "toolName": tool_name,
                     "nativeNodeIds": node_ids,
                     "nativeEdgeIds": edge_ids,
+                    "nativeEdges": native_edges,
                     "resultHash": result_hash,
                     "truncated": event.get("truncated") is True,
                 },
@@ -1026,6 +1046,10 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                                 "toolName": str(event.get("toolName") or tool_id),
                                 "nativeNodeIds": [str(value) for value in event.get("nativeNodeIds") or []],
                                 "nativeEdgeIds": [str(value) for value in event.get("nativeEdgeIds") or []],
+                                "nativeEdges": [
+                                    value for value in event.get("nativeEdges") or []
+                                    if isinstance(value, dict)
+                                ],
                                 "resultHash": str(event.get("resultHash") or ""),
                                 "truncated": event.get("truncated") is True,
                             })

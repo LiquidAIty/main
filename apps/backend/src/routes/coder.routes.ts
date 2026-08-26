@@ -843,6 +843,13 @@ type NativeAttentionEvent = {
   toolName: string;
   nativeNodeIds: string[];
   nativeEdgeIds: string[];
+  nativeEdges: Array<{
+    id: string;
+    source: string;
+    target: string;
+    predicate: string | null;
+    provenance?: Record<string, unknown>;
+  }>;
   resultHash: string;
   truncated: boolean;
 };
@@ -871,14 +878,48 @@ function nativeAttentionEvents(value: unknown): NativeAttentionEvent[] {
       toolName: String(event.toolName || ''),
       nativeNodeIds: Array.isArray(event.nativeNodeIds) ? event.nativeNodeIds.map(String).slice(0, 128) : [],
       nativeEdgeIds: Array.isArray(event.nativeEdgeIds) ? event.nativeEdgeIds.map(String).slice(0, 256) : [],
+      nativeEdges: Array.isArray(event.nativeEdges) ? event.nativeEdges
+        .filter((edge: any) => edge && typeof edge === 'object')
+        .map((edge: any) => ({
+          id: String(edge.id || ''),
+          source: String(edge.source || ''),
+          target: String(edge.target || ''),
+          predicate: String(edge.predicate || '').trim() || null,
+          ...(edge.provenance && typeof edge.provenance === 'object'
+            ? { provenance: edge.provenance as Record<string, unknown> }
+            : {}),
+        }))
+        .filter((edge: any) => edge.id && edge.source && edge.target)
+        .slice(0, 256) : [],
       resultHash: String(event.resultHash || ''),
       truncated: event.truncated === true,
     }));
 }
 
+function latestScopedNativeAttentionEvents(
+  value: unknown,
+  scope: { projectId: string; deckId: string; conversationId?: string },
+): NativeAttentionEvent[] {
+  const scoped = nativeAttentionEvents(value)
+    .filter((event) => event.projectId === scope.projectId && event.deckId === scope.deckId)
+    .filter((event) => !scope.conversationId || event.conversationId === scope.conversationId)
+    .filter((event) => event.authority !== 'agentgraph')
+    .filter((event) => event.runId && Number.isFinite(Date.parse(event.timestamp)))
+    .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
+  const latestRunId = scoped.at(-1)?.runId;
+  if (!latestRunId) return [];
+  const seen = new Set<string>();
+  return scoped.filter((event) => {
+    if (event.runId !== latestRunId || seen.has(event.eventId)) return false;
+    seen.add(event.eventId);
+    return true;
+  });
+}
+
 router.get('/main/session/attention', async (req, res) => {
   const projectId = String(req.query?.projectId || '').trim();
   const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
+  const conversationId = String(req.query?.conversationId || '').trim();
   if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
   try {
     const inspection = await requestPythonRailsJson('/domain/agentgraph/inspect', {
@@ -888,9 +929,11 @@ router.get('/main/session/attention', async (req, res) => {
     });
     return res.json({
       ok: true,
-      events: nativeAttentionEvents(inspection)
-        .filter((event) => event.projectId === projectId && event.deckId === deckId)
-        .filter((event) => event.authority !== 'agentgraph'),
+      events: latestScopedNativeAttentionEvents(inspection, {
+        projectId,
+        deckId,
+        ...(conversationId ? { conversationId } : {}),
+      }),
     });
   } catch (error) {
     return res.status(502).json({
@@ -1031,7 +1074,14 @@ router.post('/main/session/chat', async (req, res) => {
     // Announce an active stream only after the native Hermes adapter has
     // returned a real turn handle. Before this event the browser renders
     // Connecting, never Working.
-    writeSse('session', { sessionId });
+    writeSse('session', {
+      sessionId,
+      runId: correlationId,
+      projectId,
+      deckId,
+      conversationId,
+      cardId: mainCardId,
+    });
     const { finalText, usage, transport } = await handle.done;
     await attentionReadQueue;
     try {

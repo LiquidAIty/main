@@ -28,7 +28,6 @@ import type {
   DeckDocument,
   DeckEdge,
   DeckEdgeType,
-  KanbanCardRunReadState,
 } from '../../types/agentgraph';
 import {
   buildDeckEdgeIdentityKey,
@@ -197,7 +196,7 @@ export function toFlowNodes(
   hoveredCardId: string | null,
   inspectMode: boolean,
   activeCardIds: Set<string>,
-  kanbanRunStates: Record<string, KanbanCardRunReadState> = {},
+  activeAgentCounts: Record<string, number> = {},
 ): Node[] {
   const neighborsByNode = buildUndirectedNeighborMap(
     document.nodes.map((node) => node.id),
@@ -224,7 +223,7 @@ export function toFlowNodes(
       data: {
         ...node,
         isRuntimeActive: activeCardIds.has(node.id),
-        kanbanRunState: kanbanRunStates[node.id] ?? null,
+        activeAgentCount: activeAgentCounts[node.id] ?? 0,
         isInspecting: inspectMode && selectedCardId === node.id,
       },
       selected: node.id === selectedCardId,
@@ -557,7 +556,7 @@ export default function BuilderCanvas({
   onSelectEdge,
   onDeleteSelectedEdge,
   activeCardIds = [],
-  kanbanRunStates = {},
+  activeAgentCounts = {},
   activeEdgeIds = [],
   inspectMode = false,
   focusZone = null,
@@ -571,7 +570,7 @@ export default function BuilderCanvas({
   onSelectEdge: (edgeId: string | null) => void;
   onDeleteSelectedEdge?: () => void;
   activeCardIds?: string[];
-  kanbanRunStates?: Record<string, KanbanCardRunReadState>;
+  activeAgentCounts?: Record<string, number>;
   activeEdgeIds?: string[];
   inspectMode?: boolean;
   // Camera focus zone from the left rail (camera-only): pan/zoom to fit the
@@ -592,9 +591,9 @@ export default function BuilderCanvas({
         hoveredCardId,
         inspectMode,
         activeCardIdSet,
-        kanbanRunStates,
+        activeAgentCounts,
       ),
-    [activeCardIdSet, document, hoveredCardId, inspectMode, kanbanRunStates, selectedCardId],
+    [activeAgentCounts, activeCardIdSet, document, hoveredCardId, inspectMode, selectedCardId],
   );
   const flowEdges = useMemo(
     () =>

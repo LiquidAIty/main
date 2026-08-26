@@ -141,7 +141,7 @@ describe('hermesKanban helpers', () => {
       phase: 'working',
       tasksCompleted: 1,
       tasksTotal: 3,
-      activeWorkers: 2,
+      activeWorkers: 1,
       workerSessionIds: ['terra-root', 'luna-one', 'luna-two'],
     });
   });

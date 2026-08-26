@@ -2300,6 +2300,7 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
             "toolName": "cbm.search_graph",
             "nativeNodeIds": ["pkg._runtime_owner"],
             "nativeEdgeIds": [],
+            "nativeEdges": [],
             "resultHash": "a" * 64,
             "truncated": False,
         }],
@@ -2369,6 +2370,13 @@ def test_native_attention_observation_requires_existing_run_card_identity(monkey
             "apps/python-models/app/python_models/idf.py",
         ],
         "nativeEdgeIds": ["edge-one"],
+        "nativeEdges": [{
+            "id": "edge-one",
+            "source": "node-a",
+            "target": "node-b",
+            "predicate": "USES",
+            "provenance": {"group_id": "group-one"},
+        }],
         "resultHash": "a" * 64,
         "truncated": False,
     }
@@ -2386,6 +2394,13 @@ def test_native_attention_observation_requires_existing_run_card_identity(monkey
         "apps/python-models/app/python_models/idf.py",
     ]
     assert statements[0][1]["nativeEdgeIds"] == ["edge-one"]
+    assert statements[0][1]["nativeEdges"] == [{
+        "id": "edge-one",
+        "source": "node-a",
+        "target": "node-b",
+        "predicate": "USES",
+        "provenance": {"group_id": "group-one"},
+    }]
     assert statements[1][1]["references"] == [
         {
             "nativeId": "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",

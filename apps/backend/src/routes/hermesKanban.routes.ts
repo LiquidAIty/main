@@ -201,6 +201,7 @@ export function deriveHermesKanbanProgress(
   if (!root) throw new Error('hermes_kanban_card_root_snapshot_missing');
   const complete = snapshots.filter((snapshot) => nativeTaskStatus(snapshot) === 'done').length;
   const activeWorkers = snapshots.filter((snapshot) => {
+    if (snapshot === root) return false;
     const lastRun = snapshot.runs.at(-1);
     return Boolean(lastRun && lastRun.ended_at == null && nativeTaskStatus(snapshot) === 'running');
   }).length;
