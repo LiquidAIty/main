@@ -216,11 +216,11 @@ Note: Route nodes have empty `file_path`. Route→handler mapping requires readi
 ## Working-Tree Visibility
 
 The canonical `C-Projects-LiquidAIty-main` index is a rebuildable projection of repository source. Source and
-tests are authoritative. LiquidAIty mounts that source read-only at `/C/Projects/LiquidAIty/main`; no second
-root or alias exists. The official Python MCP host owns one long-lived native frontend into the Compose-owned
-Docker service. Codex, Hermes, Cards, plugins, and connectors use only its application-published `cbm.*`
-catalog. They never install a native binary, register a direct server, launch a frontend or daemon, or own an
-index lifecycle.
+tests are authoritative. It indexes the canonical host checkout `C:/Projects/LiquidAIty/main`; no second root
+or alias exists. The checksum-pinned official binary lives under LiquidAIty AppData, and the official Python
+MCP host owns its one long-lived native frontend. Codex, Hermes, Cards, plugins, and connectors use only the
+application-published `cbm.*` catalog. They never register a direct server, launch a frontend or daemon, or own
+an index lifecycle.
 
 The upstream watcher owns ordinary incremental freshness. Empty and failed searches remain visible and fail
 open to bounded source inspection. There is no Codex lifecycle hook, host CLI doorway, second daemon, mutex,

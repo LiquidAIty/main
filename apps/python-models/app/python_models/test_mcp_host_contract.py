@@ -173,6 +173,30 @@ def test_graphiti_initialization_failure_never_leaks_secrets_or_kills_mcp(monkey
     assert secret not in json.dumps(later_payload)
 
 
+def test_graphiti_catalog_discovery_does_not_open_provider_connections(monkeypatch):
+    import asyncio
+    import graphiti_mcp_server as native
+    import mcp_host
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "configured")
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_MODULE", None)
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_TOOLS", None)
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_NAMES", frozenset())
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_UNAVAILABLE", None)
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_SERVICE_READY", False)
+    monkeypatch.setattr(
+        native,
+        "GraphitiService",
+        lambda *_args, **_kwargs: pytest.fail("catalog opened Graphiti providers"),
+    )
+
+    tools = asyncio.run(mcp_host._native_graphiti_tools())
+
+    assert tools
+    assert mcp_host._NATIVE_GRAPHITI_NAMES
+    assert mcp_host._NATIVE_GRAPHITI_SERVICE_READY is False
+
+
 def test_call_tool_appends_canonical_receipt_and_typed_provider_failure(monkeypatch):
     import asyncio
     import mcp_host
@@ -1271,6 +1295,7 @@ def test_graphiti_timeout_cancels_work_and_later_dispatch_recovers(monkeypatch):
     monkeypatch.setattr(
         mcp_host, "_NATIVE_GRAPHITI_MODULE", SimpleNamespace(mcp=NativeMcp())
     )
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_SERVICE_READY", True)
     monkeypatch.setattr(mcp_host, "_NATIVE_TOOL_TIMEOUT_SECONDS", 0.01)
 
     async def run():
@@ -1705,13 +1730,14 @@ def test_http_tools_list_never_exposes_initializing_or_failed_catalog(monkeypatc
         asyncio.run(mcp_host.list_tools())
 
     catalog_size = 7
+    published_names = sorted(mcp_host.external_mcp_tool_ids())[:catalog_size]
     tools = tuple(
         Tool(
-            name=f"ready.tool_{index}",
+            name=name,
             description="ready",
             inputSchema={"type": "object", "properties": {}},
         )
-        for index in range(catalog_size)
+        for name in published_names
     )
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
@@ -1860,6 +1886,7 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
     calls = 0
 
     catalog_size = 6
+    published_names = sorted(mcp_host.external_mcp_tool_ids())[:catalog_size]
 
     async def slow_complete_catalog():
         nonlocal calls
@@ -1868,11 +1895,11 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
         await release.wait()
         return [
             Tool(
-                name=f"ready.tool_{index}",
+                name=name,
                 description="ready",
                 inputSchema={"type": "object", "properties": {}},
             )
-            for index in range(catalog_size)
+            for name in published_names
         ]
 
     async def closed_graphiti():
@@ -2208,17 +2235,13 @@ def test_native_cbm_replaces_a_stale_process_without_retrying_a_tool(monkeypatch
     assert mcp_host._NATIVE_CBM_NAMES == frozenset()
 
 
-def test_http_mcp_targets_compose_owned_codegraph():
+def test_http_mcp_targets_checksum_pinned_appdata_codegraph():
     import mcp_host
 
-    command, args, _cwd = mcp_host._native_cbm_config()
-    assert command == "docker"
-    assert args == [
-        "exec",
-        "-i",
-        "codegraph",
-        "/usr/local/bin/codebase-memory-mcp",
-    ]
+    command, args, cwd = mcp_host._native_cbm_config()
+    assert command == os.path.abspath(mcp_host._NATIVE_CBM_BINARY)
+    assert args == []
+    assert cwd == mcp_host._NATIVE_CBM_HOST_REPO_ROOT
 
 
 def test_codegraph_readiness_uses_the_existing_frontend_and_native_project_state(monkeypatch):
@@ -2237,7 +2260,7 @@ def test_codegraph_readiness_uses_the_existing_frontend_and_native_project_state
                 payload = {
                     "projects": [{
                         "name": "C-Projects-LiquidAIty-main",
-                        "root_path": "/C/Projects/LiquidAIty/main",
+                        "root_path": mcp_host._NATIVE_CBM_HOST_REPO_ROOT,
                         "node_count": 4459,
                         "edge_count": 16773,
                     }],
@@ -2256,36 +2279,25 @@ def test_codegraph_readiness_uses_the_existing_frontend_and_native_project_state
                 content=[TextContent(type="text", text=json.dumps(payload))]
             )
 
-    inspected = [{
-        "Id": "container-1",
-        "Config": {"Image": "codegraph:0.10.8"},
-        "State": {"Running": True, "Health": {"Status": "healthy"}},
-        "Mounts": [{
-            "Type": "volume",
-            "Name": "codegraph-cache",
-            "Destination": "/root/.cache/codebase-memory-mcp",
-        }],
-    }]
-
-    def run(command, **_kwargs):
-        if command[:2] == ["docker", "inspect"]:
-            return SimpleNamespace(returncode=0, stdout=json.dumps(inspected), stderr="")
-        assert command[:4] == ["docker", "exec", "codegraph", "tail"]
-        return SimpleNamespace(
-            returncode=0,
-            stdout=(
-                "level=info msg=watcher.start interval_ms=multi-sec\n"
-                "level=info msg=watcher.watch project=C-Projects-LiquidAIty-main "
-                "path=/C/Projects/LiquidAIty/main\n"
-            ),
-            stderr="",
-        )
-
     monkeypatch.setattr(mcp_host, "_NATIVE_CBM_CLIENT", ReadyClient())
-    monkeypatch.setattr(mcp_host.subprocess, "run", run)
+    monkeypatch.setattr(
+        mcp_host,
+        "_host_codegraph_runtime",
+        lambda: {
+            "runtimeReady": True,
+            "runtimeState": "ready",
+            "binaryReady": True,
+            "binaryState": "ready",
+        },
+    )
+    monkeypatch.setattr(
+        mcp_host,
+        "_native_codegraph_watcher_status",
+        lambda: {"watcherActive": True, "watcherState": "active"},
+    )
 
     diagnostics = mcp_host._codegraph_diagnostics()
-    assert diagnostics["containerReady"] is True
+    assert diagnostics["runtimeReady"] is True
     assert diagnostics["binaryReady"] is True
     assert diagnostics["daemonAttached"] is True
     assert diagnostics["nativeFrontendAttached"] is True
@@ -2297,28 +2309,23 @@ def test_codegraph_readiness_uses_the_existing_frontend_and_native_project_state
     assert diagnostics["indexGeneration"] == "generation-1"
 
 
-def test_codegraph_readiness_fails_closed_when_native_watcher_reports_git_failure(monkeypatch):
+def test_codegraph_readiness_fails_closed_when_native_watcher_reports_git_failure(
+    monkeypatch, tmp_path,
+):
     import mcp_host
 
-    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_HEALTH_TIMEOUT_SECONDS", 1)
+    daemon_log = tmp_path / "cbm-daemon.log"
+    daemon_log.write_text(
+        "level=info msg=watcher.start interval_ms=multi-sec\n"
+        "level=info msg=watcher.watch project=C-Projects-LiquidAIty-main "
+        f"path={mcp_host._NATIVE_CBM_HOST_REPO_ROOT}\n"
+        "level=error msg=watcher.git.failed project=C-Projects-LiquidAIty-main "
+        "reason=deadline\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_DAEMON_LOG", str(daemon_log))
 
-    def run(command, **_kwargs):
-        assert command[:4] == ["docker", "exec", "codegraph", "tail"]
-        return SimpleNamespace(
-            returncode=0,
-            stdout=(
-                "level=info msg=watcher.start interval_ms=multi-sec\n"
-                "level=info msg=watcher.watch project=C-Projects-LiquidAIty-main "
-                "path=/C/Projects/LiquidAIty/main\n"
-                "level=error msg=watcher.git.failed project=C-Projects-LiquidAIty-main "
-                "reason=deadline\n"
-            ),
-            stderr="",
-        )
-
-    monkeypatch.setattr(mcp_host.subprocess, "run", run)
-
-    status = mcp_host._docker_codegraph_watcher_status()
+    status = mcp_host._native_codegraph_watcher_status()
     assert status == {
         "watcherActive": False,
         "watcherState": "failed",
@@ -2346,11 +2353,12 @@ def test_codegraph_readiness_rejects_a_ready_catalog_with_no_project(monkeypatch
     monkeypatch.setattr(mcp_host, "_NATIVE_CBM_CLIENT", EmptyClient())
     monkeypatch.setattr(
         mcp_host,
-        "_docker_codegraph_runtime",
+        "_host_codegraph_runtime",
         lambda: {
-            "containerReady": True,
-            "containerImageReady": True,
-            "cacheVolumeReady": True,
+            "runtimeReady": True,
+            "runtimeState": "ready",
+            "binaryReady": True,
+            "binaryState": "ready",
         },
     )
 
@@ -2361,24 +2369,29 @@ def test_codegraph_readiness_rejects_a_ready_catalog_with_no_project(monkeypatch
     assert diagnostics["codeGraphReady"] is False
 
 
-def test_dev_fresh_owns_the_exact_codegraph_container_preflight():
+def test_dev_fresh_owns_the_checksum_pinned_appdata_codegraph_preflight():
     script = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
         "scripts",
         "start-dev-services.ps1",
     )
     source = open(script, encoding="utf-8").read()
-    assert "docker info" in source
-    assert "docker compose --file $composeFile up --detach --build codegraph" in source
-    assert "codegraph:0.10.8" in source
+    assert "MCP_CBM_BINARY" in source
+    assert "LOCALAPPDATA" in source
     assert "codebase-memory-mcp 0.10.8" in source
-    assert "codegraph-cache" in source
+    assert mcp_host_sha256() in source
+    assert "docker" not in source.lower()
+    assert "compose" not in source.lower()
     assert "AddSeconds(60)" not in source
     assert "POSTGRES_PASSWORD" not in source
     assert "NEO4J_PASSWORD" not in source
 
 
-def test_repository_has_no_direct_native_cbm_hook_or_host_installer():
+def mcp_host_sha256():
+    return "b4b403b1d7c4def3785f148b93f345ce8427858f4f5489ce28580c4387a336a6"
+
+
+def test_repository_has_one_application_owned_host_cbm_boundary():
     repo_root = os.path.dirname(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
     )
@@ -2397,10 +2410,15 @@ def test_repository_has_no_direct_native_cbm_hook_or_host_installer():
     assert "CBM_UI_ENABLED" not in package["scripts"]["dev:mcp"]
     assert "9749" not in package["scripts"]["dev:mcp"]
 
-    installer = open(os.path.join(repo_root, "install.ps1"), encoding="utf-8").read()
-    assert "docker build" in installer
-    assert "codebase-memory-mcp.exe" not in installer
-    assert "config.toml" not in installer
+    assert not os.path.exists(os.path.join(repo_root, "Dockerfile.codegraph"))
+    assert not os.path.exists(os.path.join(repo_root, "compose.codegraph.yaml"))
+
+    startup = open(
+        os.path.join(repo_root, "scripts", "start-dev-services.ps1"),
+        encoding="utf-8",
+    ).read()
+    assert "LiquidAIty\\cbm\\0.10.8\\codebase-memory-mcp.exe" in startup
+    assert "MCP_CBM_BINARY" in startup
 
     vite = open(os.path.join(repo_root, "client", "vite.config.ts"), encoding="utf-8").read()
     assert "127.0.0.1:9749" not in vite
@@ -2420,22 +2438,22 @@ def test_repository_has_no_direct_native_cbm_hook_or_host_installer():
     assert "attentionData={attentionData}" in codegraph_surface
 
 
-def test_codegraph_container_root_derives_the_canonical_project_identity():
+def test_codegraph_host_root_derives_the_canonical_project_identity():
     repo_root = os.path.dirname(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
     )
     paths = [
-        os.path.join(repo_root, "Dockerfile.codegraph"),
-        os.path.join(repo_root, "docker-compose.yml"),
         os.path.join(repo_root, "apps", "python-models", "app", "mcp_host.py"),
+        os.path.join(repo_root, "scripts", "start-dev-services.ps1"),
     ]
     sources = [open(path, encoding="utf-8").read() for path in paths]
     removed_root = "/" + "workspace" + "/main"
-    assert all("/C/Projects/LiquidAIty/main" in source for source in sources)
+    assert "_NATIVE_CBM_HOST_REPO_ROOT" in sources[0]
+    assert "MCP_CBM_BINARY" in sources[1]
     assert all(removed_root not in source for source in sources)
 
 
-def test_native_cbm_index_maps_the_canonical_checkout_into_the_container():
+def test_native_cbm_index_pins_the_canonical_host_checkout():
     import mcp_host
 
     normalized = mcp_host._normalize_native_cbm_index_arguments({
@@ -2446,7 +2464,7 @@ def test_native_cbm_index_maps_the_canonical_checkout_into_the_container():
     })
 
     assert normalized == {
-        "repo_path": "/C/Projects/LiquidAIty/main",
+        "repo_path": mcp_host._NATIVE_CBM_HOST_REPO_ROOT,
         "name": "C-Projects-LiquidAIty-main",
         "mode": "full",
         "persistence": False,
@@ -3258,7 +3276,7 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
     }
 
 
-def test_tunnel_waits_for_complete_application_readiness_without_a_startup_deadline():
+def test_tunnel_publishes_the_app_before_cbm_projection_initialization():
     script = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
         "scripts",
@@ -3270,7 +3288,8 @@ def test_tunnel_waits_for_complete_application_readiness_without_a_startup_deadl
     assert "$catalogCount -gt 0" in source
     assert "$catalogUniqueCount -eq $catalogCount" in source
     assert "$catalogReady" in source
-    assert "$containerReady" in source
+    assert "$publicationReady" in source
+    assert "$runtimeReady" in source
     assert "$daemonAttached" in source
     assert "$frontendAttached" in source
     assert "$projectReady" in source
@@ -3282,6 +3301,13 @@ def test_tunnel_waits_for_complete_application_readiness_without_a_startup_deadl
     assert "$http.GetAsync($readinessUrl)" in readiness_loop
     assert "$metadataUrl" not in readiness_loop
     assert "$mcpUrl" not in readiness_loop
+    publication_start = source.index("            $publicationReady = (", loop_start)
+    publication_end = source.index("\n            )", publication_start)
+    publication_gate = source[publication_start:publication_end]
+    assert "$catalogReady" in publication_gate
+    assert "$projectReady" not in publication_gate
+    assert "$indexReady" not in publication_gate
+    assert "$watcherActive" not in publication_gate
     assert source.count("$http.GetAsync($metadataUrl)") == 1
     assert source.count("$http.SendAsync($request)") == 1
     assert 'Write-Host "MCP readiness: $lastState"' in readiness_loop

@@ -1,78 +1,30 @@
 $ErrorActionPreference = 'Stop'
 
-$expectedImage = 'codegraph:0.10.8'
 $expectedVersion = 'codebase-memory-mcp 0.10.8'
-$expectedVolume = 'codegraph-cache'
-$cacheDestination = '/root/.cache/codebase-memory-mcp'
-$containerName = 'codegraph'
-$composeFile = (Resolve-Path (Join-Path $PSScriptRoot '..\compose.codegraph.yaml')).Path
+$expectedSha256 = 'b4b403b1d7c4def3785f148b93f345ce8427858f4f5489ce28580c4387a336a6'
+$cbmBinary = Join-Path $env:LOCALAPPDATA 'LiquidAIty\cbm\0.10.8\codebase-memory-mcp.exe'
 
-& docker info --format '{{.ServerVersion}}' | Out-Null
-if ($LASTEXITCODE -ne 0) {
-  throw 'CodeGraph startup failed: Docker is unavailable.'
+if (-not (Test-Path -LiteralPath $cbmBinary -PathType Leaf)) {
+  throw "Native CBM startup failed: AppData binary is missing at $cbmBinary"
 }
-
-& docker compose --file $composeFile up --detach --build codegraph
-if ($LASTEXITCODE -ne 0) {
-  throw "CodeGraph startup failed: docker compose exited with $LASTEXITCODE."
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+$binaryStream = [System.IO.File]::OpenRead($cbmBinary)
+try {
+  $actualSha256 = ([System.BitConverter]::ToString(
+    $sha256.ComputeHash($binaryStream)
+  ) -replace '-', '').ToLowerInvariant()
+} finally {
+  $binaryStream.Dispose()
+  $sha256.Dispose()
 }
-
-$lastCodeGraphState = 'container unavailable'
-$lastLoggedCodeGraphState = ''
-$lastReasonabilityNotice = [DateTimeOffset]::UtcNow
-$codeGraphReady = $false
-while ($true) {
-  $inspectionJson = & docker inspect $containerName 2>$null
-  if ($LASTEXITCODE -eq 0) {
-    $inspection = @($inspectionJson | ConvertFrom-Json)[0]
-    $running = [bool]$inspection.State.Running
-    $containerStatus = [string]$inspection.State.Status
-    $image = [string]$inspection.Config.Image
-    $cacheMount = @($inspection.Mounts | Where-Object {
-      [string]$_.Destination -eq $cacheDestination
-    })
-    $volumeReady = (
-      $cacheMount.Count -eq 1 -and
-      [string]$cacheMount[0].Type -eq 'volume' -and
-      [string]$cacheMount[0].Name -eq $expectedVolume
-    )
-    $binaryVersion = ''
-    if ($running) {
-      $binaryVersionOutput = & docker exec $containerName /usr/local/bin/codebase-memory-mcp --version 2>$null
-      if ($LASTEXITCODE -eq 0) {
-        $binaryVersion = ($binaryVersionOutput | Out-String).Trim()
-      }
-    }
-    $mountedVolume = if ($cacheMount.Count -eq 1) { [string]$cacheMount[0].Name } else { 'missing' }
-    $lastCodeGraphState = (
-      "status=$containerStatus image=$image volume=$mountedVolume " +
-      "binary=$binaryVersion"
-    )
-    $codeGraphReady = (
-      $running -and
-      $image -eq $expectedImage -and
-      $volumeReady -and
-      $binaryVersion -eq $expectedVersion
-    )
-    if ($codeGraphReady) {
-      break
-    }
-    if (-not $running -and $containerStatus -in @('dead', 'exited', 'removing')) {
-      throw "CodeGraph startup failed: $lastCodeGraphState"
-    }
-  }
-  if ($lastCodeGraphState -ne $lastLoggedCodeGraphState) {
-    Write-Host "CodeGraph readiness: $lastCodeGraphState"
-    $lastLoggedCodeGraphState = $lastCodeGraphState
-  }
-  $now = [DateTimeOffset]::UtcNow
-  if (($now - $lastReasonabilityNotice).TotalMinutes -ge 1) {
-    Write-Warning "CodeGraph is still starting; current state: $lastCodeGraphState"
-    $lastReasonabilityNotice = $now
-  }
-  Start-Sleep -Seconds 1
+if ($actualSha256 -ne $expectedSha256) {
+  throw "Native CBM startup failed: checksum mismatch at $cbmBinary"
 }
-Write-Host "CodeGraph container ready: $lastCodeGraphState"
+$actualVersion = (& $cbmBinary --version | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $actualVersion -ne $expectedVersion) {
+  throw "Native CBM startup failed: expected $expectedVersion, received $actualVersion"
+}
+Write-Host "Native CBM binary ready: path=$cbmBinary version=$actualVersion"
 
 $secretBytes = New-Object byte[] 32
 $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -82,6 +34,7 @@ try {
   $generator.Dispose()
 }
 
+$env:MCP_CBM_BINARY = $cbmBinary
 $env:LIQUIDAITY_INTERNAL_MCP_SECRET = [Convert]::ToBase64String($secretBytes)
 $env:LIQUIDAITY_INTERNAL_MCP_URL = 'http://127.0.0.1:8765/mcp'
 

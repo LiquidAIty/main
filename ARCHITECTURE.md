@@ -28,7 +28,7 @@ React/Vite Agent Builder and Chat
            ├─ AutoGen MagenticOneGroupChat
            ├─ ThinkGraph/Engraphis
            ├─ KnowGraph/Graphiti
-           └─ CodeGraph/native CBM through one app-owned Docker frontend
+           └─ CodeGraph/native CBM through one app-owned AppData frontend
 ```
 
 ngrok is a readiness-gated child of the canonical service tree and forwards only to the official MCP
@@ -206,8 +206,9 @@ writes, and run completion/failure. Answer prose and hidden reasoning are never 
 - AGE on PostgreSQL: saved Card relationships and execution/reference observations.
 - Neo4j: KnowGraph.
 - Engraphis SQLite: ThinkGraph.
-- Native CBM in the Compose-owned `codegraph` container: CodeGraph. Its official daemon, watcher, embedded UI,
-  and disposable named cache remain inside Docker; the Python MCP host owns the only stdio frontend.
+- The checksum-pinned native CBM binary under LiquidAIty AppData: CodeGraph. Its official daemon, watcher,
+  embedded UI, and disposable cache remain outside the repository; the Python MCP host owns the only stdio
+  frontend. Docker does not own or launch CBM.
 
 No cleanup task may reset or reseed these stores.
 
@@ -230,7 +231,7 @@ Python dependency owners remain:
 - `services/esn_rls/requirements.txt` for the separately retained ESN service boundary.
 
 The canonical `C-Projects-LiquidAIty-main` Codebase Memory project indexes the exact source allowed by the
-root `.cbmignore`. The repository is mounted read-only at `/C/Projects/LiquidAIty/main`; no alias or second root
+root `.cbmignore`. It indexes the canonical host checkout `C:/Projects/LiquidAIty/main`; no alias or second root
 exists. Runtime homes, credentials, virtual environments, caches, builds, and excluded vendor/imported trees
 remain outside the derived projection. Indexing never transfers vendor ownership or relaxes the controlled-
 vendor patch law.

@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import copy
+import functools
 import hashlib
 import inspect
 import json
@@ -816,16 +817,27 @@ _NATIVE_CBM_NAMES: frozenset[str] = frozenset()
 _NATIVE_CBM_INIT_LOCK = threading.Lock()
 _NATIVE_CBM_INDEX_LOCK = threading.Lock()
 _NATIVE_CBM_INDEX_IN_FLIGHT: tuple[str, Future[CallToolResult]] | None = None
-_NATIVE_CBM_CONTAINER_REPO_ROOT = "/C/Projects/LiquidAIty/main"
+_NATIVE_CBM_HOST_REPO_ROOT = os.path.normpath(_REPO_ROOT)
 _NATIVE_CBM_PROJECT = "C-Projects-LiquidAIty-main"
 _NATIVE_CBM_EXPECTED_VERSION = "0.10.8"
-_NATIVE_CBM_EXPECTED_IMAGE = "codegraph:0.10.8"
-_NATIVE_CBM_EXPECTED_VOLUME = "codegraph-cache"
-_NATIVE_CBM_DAEMON_LOG = "/root/.cache/codebase-memory-mcp/logs/cbm-daemon.log"
+_NATIVE_CBM_EXPECTED_SHA256 = "b4b403b1d7c4def3785f148b93f345ce8427858f4f5489ce28580c4387a336a6"
+_NATIVE_CBM_BINARY = os.environ.get("MCP_CBM_BINARY", "").strip() or os.path.join(
+    os.environ.get("LOCALAPPDATA", ""),
+    "LiquidAIty",
+    "cbm",
+    _NATIVE_CBM_EXPECTED_VERSION,
+    "codebase-memory-mcp.exe",
+)
+_NATIVE_CBM_CACHE_ROOT = os.path.join(
+    os.path.expanduser("~"), ".cache", "codebase-memory-mcp"
+)
+_NATIVE_CBM_DAEMON_LOG = os.path.join(_NATIVE_CBM_CACHE_ROOT, "logs", "cbm-daemon.log")
 _NATIVE_GRAPHITI_MODULE: Any | None = None
 _NATIVE_GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_GRAPHITI_NAMES: frozenset[str] = frozenset()
 _NATIVE_GRAPHITI_UNAVAILABLE: dict[str, Any] | None = None
+_NATIVE_GRAPHITI_SERVICE_READY = False
+_NATIVE_GRAPHITI_SERVICE_INIT_LOCK = asyncio.Lock()
 _NATIVE_PREFIXES = {
     "cbm": "cbm.",
     "engraphis": "engraphis.",
@@ -954,7 +966,12 @@ async def _initialize_native_engraphis() -> None:
     if _NATIVE_ENGRAPHIS_TOOLS is not None:
         return
     native_mcp = _load_native_engraphis_mcp()
-    tools = tuple(await native_mcp.list_tools())
+    tools = tuple(
+        await asyncio.to_thread(
+            asyncio.run,
+            native_mcp.list_tools(),
+        )
+    )
     names = [tool.name for tool in tools]
     if len(names) != len(set(names)):
         raise RuntimeError("native_engraphis_duplicate_tool_name")
@@ -1066,7 +1083,7 @@ def _graphiti_provider_settings(section: Any) -> Any:
 
 
 async def _initialize_native_graphiti() -> None:
-    """Initialize optional Graphiti once without making it an MCP boot dependency."""
+    """Discover the native Graphiti catalog without opening provider connections."""
     global _NATIVE_GRAPHITI_MODULE, _NATIVE_GRAPHITI_NAMES, _NATIVE_GRAPHITI_TOOLS
     global _NATIVE_GRAPHITI_UNAVAILABLE
     if _NATIVE_GRAPHITI_TOOLS is not None:
@@ -1089,52 +1106,12 @@ async def _initialize_native_graphiti() -> None:
         import graphiti_mcp_server as native_module
 
         native = native_module
-        native.config = _graphiti_config()
-        native.graphiti_service = native.GraphitiService(native.config, native.SEMAPHORE_LIMIT)
-        native.queue_service = native.QueueService()
-        await native.graphiti_service.initialize()
-        native.graphiti_client = await native.graphiti_service.get_client()
-        native.semaphore = native.graphiti_service.semaphore
-        await native.queue_service.initialize(native.graphiti_client)
-        llm_provider = _graphiti_provider_settings(native.config.llm)
-        embedder_provider = _graphiti_provider_settings(native.config.embedder)
-        _instrument_graphiti_provider_client(
-            native.graphiti_client.llm_client,
-            method_names=("generate_response",),
-            compute="api_llm",
-            dependency="graphiti_llm",
-            provider=_provider_identity(
-                str(native.config.llm.provider), str(llm_provider.api_url or "")
-            ),
-            model=str(native.config.llm.model),
-            base_url=str(llm_provider.api_url or ""),
-            credential_configured=bool(llm_provider.api_key),
+        tools = tuple(
+            await asyncio.to_thread(
+                asyncio.run,
+                native.mcp.list_tools(),
+            )
         )
-        _instrument_graphiti_provider_client(
-            native.graphiti_client.embedder,
-            method_names=("create", "create_batch"),
-            compute="api_embedding",
-            dependency="graphiti_embedding",
-            provider=_provider_identity(
-                str(native.config.embedder.provider), str(embedder_provider.api_url or "")
-            ),
-            model=str(native.config.embedder.model),
-            base_url=str(embedder_provider.api_url or ""),
-            credential_configured=bool(embedder_provider.api_key),
-        )
-        _instrument_graphiti_provider_client(
-            native.graphiti_client.cross_encoder,
-            method_names=("rank",),
-            compute="api_llm",
-            dependency="graphiti_reranker",
-            provider=_provider_identity(
-                str(native.config.llm.provider), str(llm_provider.api_url or "")
-            ),
-            model=str(native.config.llm.model),
-            base_url=str(llm_provider.api_url or ""),
-            credential_configured=bool(llm_provider.api_key),
-        )
-        tools = tuple(await native.mcp.list_tools())
         names = [tool.name for tool in tools]
         if len(names) != len(set(names)):
             raise RuntimeError("native_graphiti_duplicate_tool_name")
@@ -1164,12 +1141,112 @@ async def _initialize_native_graphiti() -> None:
     _NATIVE_GRAPHITI_UNAVAILABLE = None
 
 
+async def _ensure_native_graphiti_service() -> None:
+    """Open Graphiti providers lazily on the first Graphiti tool call."""
+    global _NATIVE_GRAPHITI_SERVICE_READY, _NATIVE_GRAPHITI_UNAVAILABLE
+    if _NATIVE_GRAPHITI_SERVICE_READY:
+        return
+    await _initialize_native_graphiti()
+    native = _NATIVE_GRAPHITI_MODULE
+    if native is None:
+        detail = (_NATIVE_GRAPHITI_UNAVAILABLE or {}).get(
+            "detail", "Graphiti catalog is unavailable."
+        )
+        raise RuntimeError(f"native_graphiti_unavailable:{detail}")
+    async with _NATIVE_GRAPHITI_SERVICE_INIT_LOCK:
+        if _NATIVE_GRAPHITI_SERVICE_READY:
+            return
+        try:
+            native.config = _graphiti_config()
+            native.graphiti_service = native.GraphitiService(
+                native.config, native.SEMAPHORE_LIMIT
+            )
+            native.queue_service = native.QueueService()
+            await native.graphiti_service.initialize()
+            native.graphiti_client = await native.graphiti_service.get_client()
+            native.semaphore = native.graphiti_service.semaphore
+            await native.queue_service.initialize(native.graphiti_client)
+            llm_provider = _graphiti_provider_settings(native.config.llm)
+            embedder_provider = _graphiti_provider_settings(native.config.embedder)
+            _instrument_graphiti_provider_client(
+                native.graphiti_client.llm_client,
+                method_names=("generate_response",),
+                compute="api_llm",
+                dependency="graphiti_llm",
+                provider=_provider_identity(
+                    str(native.config.llm.provider), str(llm_provider.api_url or "")
+                ),
+                model=str(native.config.llm.model),
+                base_url=str(llm_provider.api_url or ""),
+                credential_configured=bool(llm_provider.api_key),
+            )
+            _instrument_graphiti_provider_client(
+                native.graphiti_client.embedder,
+                method_names=("create", "create_batch"),
+                compute="api_embedding",
+                dependency="graphiti_embedding",
+                provider=_provider_identity(
+                    str(native.config.embedder.provider),
+                    str(embedder_provider.api_url or ""),
+                ),
+                model=str(native.config.embedder.model),
+                base_url=str(embedder_provider.api_url or ""),
+                credential_configured=bool(embedder_provider.api_key),
+            )
+            _instrument_graphiti_provider_client(
+                native.graphiti_client.cross_encoder,
+                method_names=("rank",),
+                compute="api_llm",
+                dependency="graphiti_reranker",
+                provider=_provider_identity(
+                    str(native.config.llm.provider), str(llm_provider.api_url or "")
+                ),
+                model=str(native.config.llm.model),
+                base_url=str(llm_provider.api_url or ""),
+                credential_configured=bool(llm_provider.api_key),
+            )
+        except BaseException as error:
+            client = getattr(native, "graphiti_client", None)
+            close = getattr(getattr(client, "driver", None), "close", None)
+            if callable(close):
+                close_result = close()
+                if inspect.isawaitable(close_result):
+                    await close_result
+            native.graphiti_client = None
+            _NATIVE_GRAPHITI_SERVICE_READY = False
+            _NATIVE_GRAPHITI_UNAVAILABLE = {
+                "ok": False,
+                "failureCode": "optional_capability_unavailable",
+                "errorCategory": "DEPENDENCY_UNAVAILABLE",
+                "retryable": True,
+                "dependency": "graphiti",
+                "detail": (
+                    "Graphiti provider initialization failed "
+                    f"({error.__class__.__name__})."
+                ),
+            }
+            if isinstance(error, asyncio.CancelledError):
+                raise
+            raise RuntimeError(
+                f"native_graphiti_initialization_failed:{error.__class__.__name__}"
+            ) from error
+        _NATIVE_GRAPHITI_SERVICE_READY = True
+        _NATIVE_GRAPHITI_UNAVAILABLE = None
+
+
 async def _native_graphiti_tools() -> list[Tool]:
     await _initialize_native_graphiti()
     return list(_NATIVE_GRAPHITI_TOOLS or ())
 
 
 async def _call_native_graphiti(name: str, arguments: dict[str, Any]):
+    try:
+        await asyncio.wait_for(
+            _ensure_native_graphiti_service(),
+            timeout=_NATIVE_TOOL_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as error:
+        raise RuntimeError("native_graphiti_initialization_timeout") from error
     if _NATIVE_GRAPHITI_MODULE is None:
         raise RuntimeError("native_graphiti_not_initialized")
     try:
@@ -1297,11 +1374,13 @@ def _normalize_native_tool_result(result: Any, *, dependency: str) -> Any:
 async def _close_native_graphiti() -> None:
     global _NATIVE_GRAPHITI_MODULE, _NATIVE_GRAPHITI_NAMES, _NATIVE_GRAPHITI_TOOLS
     global _NATIVE_GRAPHITI_UNAVAILABLE
+    global _NATIVE_GRAPHITI_SERVICE_READY
     native = _NATIVE_GRAPHITI_MODULE
     _NATIVE_GRAPHITI_MODULE = None
     _NATIVE_GRAPHITI_TOOLS = None
     _NATIVE_GRAPHITI_NAMES = frozenset()
     _NATIVE_GRAPHITI_UNAVAILABLE = None
+    _NATIVE_GRAPHITI_SERVICE_READY = False
     client = getattr(native, "graphiti_client", None) if native is not None else None
     driver = getattr(client, "driver", None)
     close = getattr(driver, "close", None)
@@ -1505,24 +1584,14 @@ class _NativeStdioMcpClient:
 
 
 def _native_cbm_config() -> tuple[str, list[str], str]:
-    """Connect catalog discovery to the Compose-owned CodeGraph service."""
-    repo_root = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
-    return (
-        "docker",
-        [
-            "exec",
-            "-i",
-            "codegraph",
-            "/usr/local/bin/codebase-memory-mcp",
-        ],
-        repo_root,
-    )
+    """Open the one AppData-installed native CBM frontend owned by this host."""
+    return (os.path.abspath(_NATIVE_CBM_BINARY), [], _NATIVE_CBM_HOST_REPO_ROOT)
 
 
 def _normalize_native_cbm_index_arguments(
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
-    """Translate the one mounted Main checkout into the CodeGraph container."""
+    """Pin indexing to the one canonical host checkout and project identity."""
     normalized = dict(arguments or {})
     repo_path = normalized.get("repo_path")
     if not isinstance(repo_path, str):
@@ -1530,13 +1599,9 @@ def _normalize_native_cbm_index_arguments(
 
     requested_path = repo_path.strip().rstrip("/\\")
     host_path = os.path.normcase(os.path.normpath(requested_path))
-    canonical_host_path = os.path.normcase(os.path.normpath(_REPO_ROOT))
-    container_path = requested_path.replace("\\", "/")
-    if (
-        host_path == canonical_host_path
-        or container_path == _NATIVE_CBM_CONTAINER_REPO_ROOT
-    ):
-        normalized["repo_path"] = _NATIVE_CBM_CONTAINER_REPO_ROOT
+    canonical_host_path = os.path.normcase(_NATIVE_CBM_HOST_REPO_ROOT)
+    if host_path == canonical_host_path:
+        normalized["repo_path"] = _NATIVE_CBM_HOST_REPO_ROOT
         normalized["name"] = _NATIVE_CBM_PROJECT
     return normalized
 
@@ -1678,75 +1743,52 @@ def _native_result_payload(result: CallToolResult) -> dict[str, Any]:
     raise RuntimeError("native_cbm_health_payload_invalid")
 
 
-def _docker_codegraph_runtime() -> dict[str, Any]:
-    completed = subprocess.run(
-        ["docker", "inspect", "codegraph"],
-        cwd=_REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=_NATIVE_CBM_HEALTH_TIMEOUT_SECONDS,
-        check=False,
-    )
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout).strip()
-        raise RuntimeError(f"codegraph_container_inspect_failed:{detail}")
-    inspected = json.loads(completed.stdout)
-    if not isinstance(inspected, list) or len(inspected) != 1:
-        raise RuntimeError("codegraph_container_inspect_invalid")
-    container = inspected[0]
-    if not isinstance(container, dict):
-        raise RuntimeError("codegraph_container_inspect_invalid")
-    state = container.get("State") if isinstance(container.get("State"), dict) else {}
-    health = state.get("Health") if isinstance(state.get("Health"), dict) else {}
-    mounts = container.get("Mounts") if isinstance(container.get("Mounts"), list) else []
-    cache_mount = next(
-        (
-            mount
-            for mount in mounts
-            if isinstance(mount, dict)
-            and mount.get("Destination") == "/root/.cache/codebase-memory-mcp"
-        ),
-        None,
-    )
-    image = str((container.get("Config") or {}).get("Image") or "")
+@functools.lru_cache(maxsize=1)
+def _native_cbm_binary_sha256() -> str:
+    digest = hashlib.sha256()
+    with open(_NATIVE_CBM_BINARY, "rb") as binary:
+        for chunk in iter(lambda: binary.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _host_codegraph_runtime() -> dict[str, Any]:
+    binary_path = os.path.abspath(_NATIVE_CBM_BINARY)
+    binary_exists = os.path.isfile(binary_path)
+    binary_sha256 = _native_cbm_binary_sha256() if binary_exists else ""
+    binary_ready = binary_sha256 == _NATIVE_CBM_EXPECTED_SHA256
     return {
-        "containerReady": bool(state.get("Running")) and health.get("Status") == "healthy",
-        "containerState": str(health.get("Status") or state.get("Status") or "unavailable"),
-        "containerId": str(container.get("Id") or ""),
-        "containerImage": image,
-        "containerImageReady": image == _NATIVE_CBM_EXPECTED_IMAGE,
-        "cacheVolume": str(cache_mount.get("Name") or "") if cache_mount else "",
-        "cacheVolumeReady": bool(
-            cache_mount
-            and cache_mount.get("Type") == "volume"
-            and cache_mount.get("Name") == _NATIVE_CBM_EXPECTED_VOLUME
+        "runtimeReady": binary_ready,
+        "runtimeState": "ready" if binary_ready else (
+            "checksum_mismatch" if binary_exists else "missing"
         ),
+        "binaryPath": binary_path,
+        "binaryReady": binary_ready,
+        "binaryState": "ready" if binary_ready else (
+            "checksum_mismatch" if binary_exists else "missing"
+        ),
+        "binarySha256": binary_sha256,
+        "cachePath": _NATIVE_CBM_CACHE_ROOT,
     }
 
 
-def _docker_codegraph_watcher_status() -> dict[str, Any]:
-    completed = subprocess.run(
-        ["docker", "exec", "codegraph", "tail", "-n", "500", _NATIVE_CBM_DAEMON_LOG],
-        cwd=_REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=_NATIVE_CBM_HEALTH_TIMEOUT_SECONDS,
-        check=False,
-    )
-    if completed.returncode != 0:
+def _native_codegraph_watcher_status() -> dict[str, Any]:
+    try:
+        with open(_NATIVE_CBM_DAEMON_LOG, "r", encoding="utf-8", errors="replace") as log:
+            lines = list(deque(log, maxlen=500))
+    except OSError as error:
         return {
             "watcherActive": False,
             "watcherState": "unavailable",
-            "watcherFailure": completed.stderr.strip() or "daemon log unavailable",
+            "watcherFailure": str(error),
         }
-    lines = completed.stdout.splitlines()
     latest_start = max(
         (index for index, line in enumerate(lines) if "msg=watcher.start " in line),
         default=-1,
     )
     registration = (
         f"msg=watcher.watch project={_NATIVE_CBM_PROJECT} "
-        f"path={_NATIVE_CBM_CONTAINER_REPO_ROOT}"
+        f"path={_NATIVE_CBM_HOST_REPO_ROOT}"
     )
     latest_registration = max(
         (
@@ -1796,12 +1838,14 @@ def _project_count(payload: dict[str, Any], *keys: str) -> int:
 
 def _codegraph_diagnostics() -> dict[str, Any]:
     diagnostics: dict[str, Any] = {
-        "containerReady": False,
-        "containerState": "unavailable",
-        "containerImageReady": False,
+        "runtimeReady": False,
+        "runtimeState": "unavailable",
         "binaryReady": False,
         "binaryState": "unavailable",
         "binaryVersion": "",
+        "binaryPath": os.path.abspath(_NATIVE_CBM_BINARY),
+        "binarySha256": "",
+        "cachePath": _NATIVE_CBM_CACHE_ROOT,
         "daemonAttached": False,
         "daemonState": "unattached",
         "nativeFrontendAttached": False,
@@ -1812,13 +1856,12 @@ def _codegraph_diagnostics() -> dict[str, Any]:
         "indexState": "missing",
         "watcherActive": False,
         "watcherState": "inactive",
-        "cacheVolumeReady": False,
         "codeGraphReady": False,
     }
     try:
-        diagnostics.update(_docker_codegraph_runtime())
+        diagnostics.update(_host_codegraph_runtime())
     except Exception as error:
-        diagnostics["containerFailure"] = str(error)
+        diagnostics["runtimeFailure"] = str(error)
 
     client = _NATIVE_CBM_CLIENT
     if client is None or not client.is_running():
@@ -1857,7 +1900,8 @@ def _codegraph_diagnostics() -> dict[str, Any]:
         root_path = str(project.get("root_path") or project.get("rootPath") or "")
         diagnostics["projectRoot"] = root_path
         diagnostics["canonicalProjectRegistered"] = (
-            root_path == _NATIVE_CBM_CONTAINER_REPO_ROOT
+            os.path.normcase(os.path.normpath(root_path))
+            == os.path.normcase(_NATIVE_CBM_HOST_REPO_ROOT)
         )
         diagnostics["projectState"] = (
             "registered" if diagnostics["canonicalProjectRegistered"] else "wrong_root"
@@ -1891,16 +1935,14 @@ def _codegraph_diagnostics() -> dict[str, Any]:
         diagnostics["indexState"] = "ready" if diagnostics["indexReady"] else (
             status_name or "not_ready"
         )
-        diagnostics.update(_docker_codegraph_watcher_status())
+        diagnostics.update(_native_codegraph_watcher_status())
     except Exception as error:
         diagnostics["nativeFailure"] = str(error)
 
     diagnostics["codeGraphReady"] = all(
         bool(diagnostics[key])
         for key in (
-            "containerReady",
-            "containerImageReady",
-            "cacheVolumeReady",
+            "runtimeReady",
             "binaryReady",
             "daemonAttached",
             "nativeFrontendAttached",
@@ -3363,6 +3405,13 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
 
 async def _run_stdio() -> None:
     try:
+        # Nested FastMCP registries cannot be discovered from this outer
+        # server's active tools/list request without deadlocking the stdio
+        # request lifecycle. Complete the same canonical catalog once before
+        # accepting the outer stdio session; the native CBM frontend remains
+        # process-owned and indexing is still an explicit cbm.index_repository
+        # tool call.
+        await _materialize_complete_catalog()
         async with stdio_server() as (read_stream, write_stream):
             await server.run(read_stream, write_stream, server.create_initialization_options())
     finally:
@@ -3612,12 +3661,9 @@ async def _run_streamable_http() -> None:
 
 async def main() -> None:
     if MCP_TRANSPORT == "stdio":
-        # The Harness connection deadline protects the MCP protocol handshake,
-        # not native provider startup.  Graphiti/Neo4j initialization can take
-        # longer than that deadline when the external HTTP host is starting at
-        # the same time.  Begin serving stdio immediately; the existing
-        # list_tools path discovers the complete native catalogs before it
-        # returns them to the Harness.
+        # The stdio boundary performs schema-only catalog discovery before the
+        # protocol handshake. Live Graphiti providers remain lazy, and CBM
+        # indexing remains an explicit application-MCP administrative call.
         await _run_stdio()
         return
     if MCP_TRANSPORT == "streamable-http":

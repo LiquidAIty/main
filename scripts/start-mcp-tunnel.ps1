@@ -37,7 +37,7 @@ try {
     $catalogCount = 0
     $catalogUniqueCount = 0
     $catalogHash = ''
-    $applicationReady = $false
+    $publicationReady = $false
     while ($true) {
         $readiness = $null
         $readinessBody = ''
@@ -50,7 +50,7 @@ try {
             $catalogCount = [int]$readinessPayload.publicToolCount
             $catalogUniqueCount = [int]$readinessPayload.publicToolUniqueCount
             $catalogHash = [string]$readinessPayload.catalogHash
-            $containerReady = [bool]$readinessPayload.containerReady
+            $runtimeReady = [bool]$readinessPayload.runtimeReady
             $binaryReady = [bool]$readinessPayload.binaryReady
             $daemonAttached = [bool]$readinessPayload.daemonAttached
             $frontendAttached = [bool]$readinessPayload.nativeFrontendAttached
@@ -67,16 +67,13 @@ try {
                 $catalogUniqueCount -eq $catalogCount -and
                 -not [string]::IsNullOrWhiteSpace($catalogHash)
             )
-            $applicationReady = (
-                [int]$readiness.StatusCode -eq 200 -and
-                $catalogReady -and
-                $containerReady -and
-                $binaryReady -and
-                $daemonAttached -and
-                $frontendAttached -and
-                $projectReady -and
-                $indexReady -and
-                $watcherActive
+            # The public app is the only supported CBM administrative doorway.
+            # Publish it once the complete catalog is available so a missing
+            # projection can be initialized through that app instead of
+            # deadlocking tunnel startup behind its own future connection.
+            $publicationReady = (
+                [string]$readinessPayload.state -eq 'ready' -and
+                $catalogReady
             )
         } catch {
             $catalogState = 'unreachable'
@@ -84,8 +81,8 @@ try {
             $catalogCount = 0
             $catalogUniqueCount = 0
             $catalogHash = ''
-            $applicationReady = $false
-            $containerReady = $false
+            $publicationReady = $false
+            $runtimeReady = $false
             $binaryReady = $false
             $daemonAttached = $false
             $frontendAttached = $false
@@ -103,7 +100,7 @@ try {
         $lastState = (
             "catalogState=$catalogState completed=$completedFamilies " +
             "initializing=$initializingFamily catalogCount=$catalogCount " +
-            "container=$containerReady binary=$binaryReady daemon=$daemonAttached " +
+            "runtime=$runtimeReady binary=$binaryReady daemon=$daemonAttached " +
             "frontend=$frontendAttached project=$projectReady index=$indexReady " +
             "watcher=$watcherActive"
         )
@@ -130,7 +127,7 @@ try {
             if (-not $catalogReady) {
                 throw "MCP reported ready with an incomplete catalog: $lastState"
             }
-            if ($applicationReady) {
+            if ($publicationReady) {
                 break
             }
         }

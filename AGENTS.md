@@ -133,14 +133,14 @@ architecture work, read [skills/codebasedmemory.md](./skills/codebasedmemory.md)
 ordered discovery recipe. That skill is the sole detailed authority for CBM discovery, coverage fallback, and
 the mandatory inverse deletion/rename audit.
 
-CBM is installed only as the checksum-pinned official binary inside the Compose-owned `codegraph` image. The
-repository is mounted read-only at `/C/Projects/LiquidAIty/main`, which derives the one canonical project name
-`C-Projects-LiquidAIty-main`. One named Docker volume owns
-the disposable native cache. The official Python MCP host owns exactly one long-lived stdio frontend, and the
-unmodified upstream coordination daemon, watcher, and embedded UI remain inside that container.
+CBM is installed only as the checksum-pinned official binary under the user's LiquidAIty AppData directory.
+It indexes the canonical host checkout `C:/Projects/LiquidAIty/main`, which derives the one canonical project
+name `C-Projects-LiquidAIty-main`. The official Python MCP host owns exactly one long-lived stdio frontend; the
+unmodified upstream coordination daemon, watcher, embedded UI, and disposable native cache remain outside the
+repository and are reached only through that frontend. Docker does not own or launch CBM.
 
 Codex, Hermes, Cards, plugins, and connectors use only LiquidAIty's application-published `cbm.*` tools. No
-tracked Codex prompt/Stop hook, host installer, host executable, direct client registration, connector refresh,
+tracked Codex prompt/Stop hook, direct client registration, connector refresh,
 or model turn may launch CBM, attach another frontend, index, retry, repair, or own lifecycle. Normal freshness
 belongs to the upstream watcher. Initial or destructive projection maintenance is an explicit application-MCP
 administrative operation, never an automatic coding-agent hook.
@@ -152,8 +152,7 @@ and prove residue absence according to the skill.
 
 The current derived projection intentionally excludes `autogen-main` through `.cbmignore`; AutoGen remains
 first-party runtime source. Never open or manipulate CBM SQLite/cache files, create backups, launch another
-daemon/frontend, install CBM on the host, change global Codex configuration, or bypass LiquidAIty's Docker
-CodeGraph service.
+daemon/frontend, change global Codex configuration, or bypass LiquidAIty's application MCP boundary.
 
 ---
 
