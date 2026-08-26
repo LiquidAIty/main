@@ -3,13 +3,12 @@ import express from "express";
 import type { Server } from "node:http";
 import cookieParser = require("cookie-parser");
 import routes from "./routes";
-import { logModelConfiguration } from "./startup/modelConfig";
 import { getDevTestJsonBodyLimit } from "./services/devTest";
 import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/requestAccess";
 import { closePythonAgentMcpClient } from "./services/mcp/pythonAgentMcpClient";
 import { closeHermesRuntimes } from "./hermes/mainAdapter";
 import { listenAfterRequiredMigrations } from "./db/migrations";
-import { recoverActiveKanbanRunMonitors } from "./hermes/kanbanRunRecovery";
+import { runPythonOwnedStartupTasks } from "./startup/pythonOwnedStartup";
 import {
   coderTerminalSessionManager,
   ensurePersistentCoderTerminal,
@@ -201,7 +200,6 @@ async function startServer() {
   try {
     server = await listenAfterRequiredMigrations(async () => {
       logStartupBanner();
-      void logModelConfiguration();
       return listenOnPort(PORT);
     });
   } catch (error) {
@@ -232,12 +230,17 @@ async function startServer() {
     process.exitCode = 1;
     return;
   }
-  void recoverActiveKanbanRunMonitors()
+  void runPythonOwnedStartupTasks({
+    isActive: () => globalThis.__liquidaityBackendServer__ === server,
+  })
     .then(({ discovered, started }) => {
       console.log(`[BOOT] Kanban Run recovery discovered=${discovered} started=${started}`);
     })
     .catch((error) => {
-      console.error(`[BOOT] Kanban Run recovery failed: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      if (message !== 'python_owned_startup_cancelled') {
+        console.error(`[BOOT] Python-owned startup failed: ${message}`);
+      }
     });
 }
 

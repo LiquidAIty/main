@@ -121,9 +121,14 @@ export async function dispatchConfiguredRuntime(
 export async function requestPythonRailsJson(
   endpointPath: string,
   init: RequestInit,
+  options: { timeoutMs?: number } = {},
 ): Promise<unknown> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
+  const requestedTimeout = Number(options.timeoutMs);
+  const timeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout > 0
+    ? requestedTimeout
+    : 120_000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const baseUrls = buildPythonRailsBaseUrls();
     let lastError: any = null;

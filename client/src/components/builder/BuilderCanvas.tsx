@@ -28,6 +28,7 @@ import type {
   DeckDocument,
   DeckEdge,
   DeckEdgeType,
+  KanbanCardRunStatus,
 } from '../../types/agentgraph';
 import {
   buildDeckEdgeIdentityKey,
@@ -196,6 +197,7 @@ export function toFlowNodes(
   hoveredCardId: string | null,
   inspectMode: boolean,
   activeCardIds: Set<string>,
+  kanbanRunStatuses: Record<string, KanbanCardRunStatus> = {},
 ): Node[] {
   const neighborsByNode = buildUndirectedNeighborMap(
     document.nodes.map((node) => node.id),
@@ -222,6 +224,7 @@ export function toFlowNodes(
       data: {
         ...node,
         isRuntimeActive: activeCardIds.has(node.id),
+        kanbanRunStatus: kanbanRunStatuses[node.id] ?? null,
         isInspecting: inspectMode && selectedCardId === node.id,
       },
       selected: node.id === selectedCardId,
@@ -554,6 +557,7 @@ export default function BuilderCanvas({
   onSelectEdge,
   onDeleteSelectedEdge,
   activeCardIds = [],
+  kanbanRunStatuses = {},
   activeEdgeIds = [],
   inspectMode = false,
   focusZone = null,
@@ -567,6 +571,7 @@ export default function BuilderCanvas({
   onSelectEdge: (edgeId: string | null) => void;
   onDeleteSelectedEdge?: () => void;
   activeCardIds?: string[];
+  kanbanRunStatuses?: Record<string, KanbanCardRunStatus>;
   activeEdgeIds?: string[];
   inspectMode?: boolean;
   // Camera focus zone from the left rail (camera-only): pan/zoom to fit the
@@ -587,8 +592,9 @@ export default function BuilderCanvas({
         hoveredCardId,
         inspectMode,
         activeCardIdSet,
+        kanbanRunStatuses,
       ),
-    [activeCardIdSet, document, hoveredCardId, inspectMode, selectedCardId],
+    [activeCardIdSet, document, hoveredCardId, inspectMode, kanbanRunStatuses, selectedCardId],
   );
   const flowEdges = useMemo(
     () =>

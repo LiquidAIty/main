@@ -17,50 +17,83 @@ function cardRoleTag(card: AgentCardInstance): string {
   return `${card.runtime.kind}/${card.runtime.mode}`;
 }
 
-export async function logModelConfiguration() {
-  console.log('\n╔════════════════════════════════════════════════════════════════╗');
-  console.log('║        AGENT MODELS (live saved deck — real authority)        ║');
-  console.log('╚════════════════════════════════════════════════════════════════╝\n');
+type ModelConfigDependencies = {
+  listProjects?: () => Promise<Array<{ id: string; code: string; name: string }>>;
+  readDeck?: typeof getDeckDocument;
+  write?: (message: string) => void;
+  writeError?: (message: string) => void;
+};
 
-  try {
+export async function logModelConfiguration(
+  dependencies: ModelConfigDependencies = {},
+) {
+  const write = dependencies.write ?? console.log;
+  const writeError = dependencies.writeError ?? console.error;
+  const listProjects = dependencies.listProjects ?? (async () => {
     const { rows } = await pool.query(
       `SELECT id::text AS id, COALESCE(code, '') AS code, COALESCE(name, '') AS name
          FROM ag_catalog.projects
         ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST`,
     );
+    return rows;
+  });
+  const readDeck = dependencies.readDeck ?? getDeckDocument;
+
+  write('\n╔════════════════════════════════════════════════════════════════╗');
+  write('║        AGENT MODELS (live saved deck — real authority)        ║');
+  write('╚════════════════════════════════════════════════════════════════╝\n');
+
+  try {
+    const rows = await listProjects();
 
     let printedAny = false;
+    let unavailableProjects = 0;
+    let malformedProjects = 0;
     for (const project of rows) {
+      const projectLabel = String(project.name || project.code || project.id).trim();
       let deck: Awaited<ReturnType<typeof getDeckDocument>>['deck'] = null;
       try {
-        ({ deck } = await getDeckDocument(project.id, BUILDER_DECK_ID));
-      } catch {
-        continue; // project without a readable builder deck — skip, never invent one
+        ({ deck } = await readDeck(project.id, BUILDER_DECK_ID));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message === 'python_deck_response_invalid') {
+          malformedProjects += 1;
+          writeError(`  ❌ Saved Agent Canvas deck malformed for Project ${projectLabel}: ${message}`);
+        } else {
+          unavailableProjects += 1;
+          writeError(`  ❌ Saved Agent Canvas deck unavailable for Project ${projectLabel}: ${message}`);
+        }
+        continue;
       }
       if (!deck || deck.nodes.length === 0) continue;
       printedAny = true;
 
-      const projectLabel = String(project.name || project.code || project.id).trim();
-      console.log(`  Project ${projectLabel}:`);
+      write(`  Project ${projectLabel}:`);
       for (const card of deck.nodes) {
         const label = String(card.title || card.id).trim();
         const modelKey = String(card.runtimeOptions?.modelKey || '').trim() || '(unset)';
         const provider = derivePrintableProvider(card);
-        console.log(`    ${label} [${cardRoleTag(card)}]:`);
-        console.log(`      Provider:  ${provider}`);
-        console.log(`      Model:     ${modelKey}`);
+        write(`    ${label} [${cardRoleTag(card)}]:`);
+        write(`      Provider:  ${provider}`);
+        write(`      Model:     ${modelKey}`);
       }
-      console.log('');
+      write('');
     }
 
     if (!printedAny) {
-      console.log('  (no saved Agent Canvas deck found — nothing routes yet)\n');
+      if (malformedProjects > 0) {
+        write('  (saved Agent Canvas deck response malformed — model routing not reported)\n');
+      } else if (unavailableProjects > 0) {
+        write('  (saved Agent Canvas deck state unavailable — model routing not reported)\n');
+      } else {
+        write('  (no saved Agent Canvas deck found — nothing routes yet)\n');
+      }
     }
-    console.log('════════════════════════════════════════════════════════════════\n');
+    write('════════════════════════════════════════════════════════════════\n');
   } catch (err: any) {
     const msg = err?.message || String(err);
     const code = err?.code ? ` (${err.code})` : '';
-    console.error(`  ❌ Failed to load live deck configs${code}: ${msg}`);
-    console.log('');
+    writeError(`  ❌ Failed to load live deck configs${code}: ${msg}`);
+    write('');
   }
 }
