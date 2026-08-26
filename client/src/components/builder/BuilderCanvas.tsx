@@ -28,7 +28,7 @@ import type {
   DeckDocument,
   DeckEdge,
   DeckEdgeType,
-  KanbanCardRunStatus,
+  KanbanCardRunReadState,
 } from '../../types/agentgraph';
 import {
   buildDeckEdgeIdentityKey,
@@ -197,7 +197,7 @@ export function toFlowNodes(
   hoveredCardId: string | null,
   inspectMode: boolean,
   activeCardIds: Set<string>,
-  kanbanRunStatuses: Record<string, KanbanCardRunStatus> = {},
+  kanbanRunStates: Record<string, KanbanCardRunReadState> = {},
 ): Node[] {
   const neighborsByNode = buildUndirectedNeighborMap(
     document.nodes.map((node) => node.id),
@@ -224,7 +224,7 @@ export function toFlowNodes(
       data: {
         ...node,
         isRuntimeActive: activeCardIds.has(node.id),
-        kanbanRunStatus: kanbanRunStatuses[node.id] ?? null,
+        kanbanRunState: kanbanRunStates[node.id] ?? null,
         isInspecting: inspectMode && selectedCardId === node.id,
       },
       selected: node.id === selectedCardId,
@@ -557,7 +557,7 @@ export default function BuilderCanvas({
   onSelectEdge,
   onDeleteSelectedEdge,
   activeCardIds = [],
-  kanbanRunStatuses = {},
+  kanbanRunStates = {},
   activeEdgeIds = [],
   inspectMode = false,
   focusZone = null,
@@ -571,7 +571,7 @@ export default function BuilderCanvas({
   onSelectEdge: (edgeId: string | null) => void;
   onDeleteSelectedEdge?: () => void;
   activeCardIds?: string[];
-  kanbanRunStatuses?: Record<string, KanbanCardRunStatus>;
+  kanbanRunStates?: Record<string, KanbanCardRunReadState>;
   activeEdgeIds?: string[];
   inspectMode?: boolean;
   // Camera focus zone from the left rail (camera-only): pan/zoom to fit the
@@ -592,9 +592,9 @@ export default function BuilderCanvas({
         hoveredCardId,
         inspectMode,
         activeCardIdSet,
-        kanbanRunStatuses,
+        kanbanRunStates,
       ),
-    [activeCardIdSet, document, hoveredCardId, inspectMode, kanbanRunStatuses, selectedCardId],
+    [activeCardIdSet, document, hoveredCardId, inspectMode, kanbanRunStates, selectedCardId],
   );
   const flowEdges = useMemo(
     () =>

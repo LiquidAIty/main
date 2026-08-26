@@ -1775,7 +1775,7 @@ export default function AgentBuilder(): React.ReactElement {
         setDocument={setDeck}
         onPersistGraphMutation={recordDeckWriteReason}
         activeCardIds={kanbanCardRuns.activeCardIds}
-        kanbanRunStatuses={kanbanCardRuns.statuses}
+        kanbanRunStates={kanbanCardRuns.readStates}
         activeEdgeIds={[]}
         selectedCardId={selectedCardId}
         selectedEdgeId={selectedEdgeId}

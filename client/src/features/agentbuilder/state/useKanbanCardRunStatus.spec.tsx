@@ -78,10 +78,12 @@ describe('useKanbanCardRunStatus', () => {
     }));
 
     await waitFor(() => expect(result.current.statuses.card_hermes_steward).toEqual(status));
+    expect(result.current.readStates.card_hermes_steward).toEqual({ kind: 'ready', status });
     expect(result.current.activeCardIds).toEqual(['card_hermes_steward']);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       action: 'status',
+      inspectOnly: true,
       projectId: 'project-one',
       deckId: 'deck_builder',
       cardId: 'card_hermes_steward',
@@ -96,6 +98,44 @@ describe('useKanbanCardRunStatus', () => {
     await act(async () => undefined);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(result.current.statuses).toEqual({});
+    expect(result.current.readStates).toEqual({});
     expect(result.current.activeCardIds).toEqual([]);
+  });
+
+  it('reports an honest empty state when the endpoint has no retained Run', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      result: null,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const { result, unmount } = renderHook(() => useKanbanCardRunStatus({
+      projectId: 'project-one',
+      deck,
+    }));
+
+    await waitFor(() => expect(result.current.readStates.card_hermes_steward).toEqual({ kind: 'empty' }));
+    expect(result.current.statuses).toEqual({});
+    expect(result.current.activeCardIds).toEqual([]);
+    unmount();
+  });
+
+  it('surfaces the exact endpoint error without inventing a Run status', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      ok: false,
+      error: 'python_rails_unavailable',
+    }), { status: 502, headers: { 'Content-Type': 'application/json' } }));
+
+    const { result, unmount } = renderHook(() => useKanbanCardRunStatus({
+      projectId: 'project-one',
+      deck,
+    }));
+
+    await waitFor(() => expect(result.current.readStates.card_hermes_steward).toEqual({
+      kind: 'error',
+      error: 'python_rails_unavailable',
+    }));
+    expect(result.current.statuses).toEqual({});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    unmount();
   });
 });

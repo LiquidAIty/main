@@ -333,6 +333,7 @@ async function readConfiguredCardRunStatus(args: {
   correlationId?: string;
   nativeRootId?: string;
   cardId?: string;
+  reconcileTerminal?: boolean;
 }): Promise<ConfiguredCardRunStatus | null> {
   const response = await requestPythonRailsJson('/domain/runs/read', {
     method: 'POST',
@@ -345,7 +346,8 @@ async function readConfiguredCardRunStatus(args: {
   const state = String(run.state || 'running');
   const nativeRootId = String(run.nativeRootId || '').trim();
   if (
-    (state === 'failed' || state === 'cancelled')
+    args.reconcileTerminal !== false
+    && (state === 'failed' || state === 'cancelled')
     && nativeRootId
     && !String(run.result || '').trim()
     && String(run.runtimeKind || '') === 'hermes'
@@ -474,6 +476,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         ...(correlationId ? { correlationId } : {}),
         ...(nativeRootId ? { nativeRootId } : {}),
         ...(cardId ? { cardId } : {}),
+        reconcileTerminal: body.inspectOnly !== true,
       });
       return res.json({ ok: true, result: status });
     } catch (error) {

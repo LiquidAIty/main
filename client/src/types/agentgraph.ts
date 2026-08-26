@@ -103,6 +103,12 @@ export type KanbanCardRunStatus = {
   errorSummary: string | null;
 };
 
+export type KanbanCardRunReadState =
+  | { kind: 'loading' }
+  | { kind: 'empty' }
+  | { kind: 'ready'; status: KanbanCardRunStatus }
+  | { kind: 'error'; error: string };
+
 export type DeckEdge = {
   id: string;
   source: string;

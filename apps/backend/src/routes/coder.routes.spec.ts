@@ -1044,6 +1044,54 @@ describe('coder routes', () => {
     }
   });
 
+  it('keeps passive Card-front status inspection read-only for a retained terminal root', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.runRecords.clear();
+    kanbanRecoveryMocks.reconcileTerminalKanbanRun.mockClear();
+    kanbanMocks.startNativeHermesKanbanTurn.mockClear();
+    orchestratorMocks.runRecords.set('run-failed-transport', {
+      runId: 'run-failed-transport',
+      correlationId: 'run-failed-transport',
+      projectId: 'project-rejoin',
+      deckId: 'deck_builder',
+      cardId: 'card_hermes_steward',
+      runtimeKind: 'hermes',
+      runtimeMode: 'kanban',
+      runtimeProfile: 'liquidaity-hermes-steward',
+      state: 'failed',
+      nativeRootId: 't_retained_root',
+      nativePhase: 'failed',
+      finalResult: null,
+      startedAt: new Date().toISOString(),
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'status',
+          inspectOnly: true,
+          projectId: 'project-rejoin',
+          deckId: 'deck_builder',
+          runId: 'run-failed-transport',
+        }),
+      });
+      await expect(response.json()).resolves.toMatchObject({
+        result: {
+          runId: 'run-failed-transport',
+          nativeRootId: 't_retained_root',
+          state: 'failed',
+        },
+      });
+      expect(kanbanRecoveryMocks.reconcileTerminalKanbanRun).not.toHaveBeenCalled();
+      expect(kanbanMocks.startNativeHermesKanbanTurn).not.toHaveBeenCalled();
+      expect(orchestratorMocks.runRecords).toHaveLength(1);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it('fails Kanban closed without retrying through ordinary ACP', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.startHermesTurn.mockClear();

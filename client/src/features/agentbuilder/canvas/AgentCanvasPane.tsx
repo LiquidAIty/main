@@ -1,7 +1,7 @@
 import type { CSSProperties, Dispatch, SetStateAction } from 'react';
 
 import BuilderCanvas from '../../../components/builder/BuilderCanvas';
-import type { DeckDocument, KanbanCardRunStatus } from '../../../types/agentgraph';
+import type { DeckDocument, KanbanCardRunReadState } from '../../../types/agentgraph';
 
 type AgentCanvasPaneProps = {
   surfaceRole: 'large' | 'companion';
@@ -13,7 +13,7 @@ type AgentCanvasPaneProps = {
     detail?: Record<string, unknown>,
   ) => void;
   activeCardIds: string[];
-  kanbanRunStatuses?: Record<string, KanbanCardRunStatus>;
+  kanbanRunStates?: Record<string, KanbanCardRunReadState>;
   activeEdgeIds: string[];
   selectedCardId: string | null;
   selectedEdgeId: string | null;
@@ -31,7 +31,7 @@ export default function AgentCanvasPane({
   setDocument,
   onPersistGraphMutation,
   activeCardIds,
-  kanbanRunStatuses,
+  kanbanRunStates,
   activeEdgeIds,
   selectedCardId,
   selectedEdgeId,
@@ -51,7 +51,7 @@ export default function AgentCanvasPane({
         setDocument={setDocument}
         onPersistGraphMutation={onPersistGraphMutation}
         activeCardIds={activeCardIds}
-        kanbanRunStatuses={kanbanRunStatuses}
+        kanbanRunStates={kanbanRunStates}
         activeEdgeIds={activeEdgeIds}
         selectedCardId={selectedCardId}
         selectedEdgeId={selectedEdgeId}
