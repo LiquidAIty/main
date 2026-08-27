@@ -88,6 +88,11 @@ def test_uncorrelated_stock_task_keeps_original_lane(monkeypatch):
     "payload",
     [
         b"not-json",
+        b"null",
+        b"[]",
+        b"true",
+        b"42",
+        b'"text"',
         json.dumps({"ok": True, "bearer": "too-short"}).encode(),
         json.dumps({"ok": False, "bearer": "b" * 64}).encode(),
     ],
@@ -115,3 +120,58 @@ def test_register_uses_stock_plugin_api():
 
     assert callbacks == [plugin._worker_environment]
 
+
+@pytest.mark.parametrize("status", [401, 403, 409, 503])
+def test_rejected_lookup_never_returns_an_environment(monkeypatch, status):
+    error = urllib.error.HTTPError(
+        plugin._DEFAULT_ENDPOINT, status, "private-response", {}, io.BytesIO()
+    )
+    monkeypatch.setattr(
+        plugin.urllib.request, "build_opener", lambda *_args: _Opener(error=error)
+    )
+    with pytest.raises(RuntimeError) as caught:
+        plugin._worker_environment(_context())
+    assert str(caught.value) == f"liquidaity_card_bearer_lookup_http_{status}"
+    assert "private-response" not in str(caught.value)
+
+
+def test_oversized_response_never_returns_an_environment(monkeypatch):
+    monkeypatch.setattr(
+        plugin.urllib.request,
+        "build_opener",
+        lambda *_args: _Opener(_Response(b"x" * (plugin._MAX_RESPONSE_BYTES + 1))),
+    )
+    with pytest.raises(RuntimeError, match="lookup_response_too_large"):
+        plugin._worker_environment(_context())
+
+
+def test_installed_entrypoint_load_repeat_and_unload(tmp_path, monkeypatch):
+    from hermes_cli.plugins import PluginManager, discover_entrypoint_manifests
+
+    manifests = [
+        entry for entry in discover_entrypoint_manifests()
+        if entry.name == "liquidaity-card-mcp"
+    ]
+    assert len(manifests) == 1
+    manifest = manifests[0]
+    assert manifest.path == "liquidaity_hermes_plugin"
+    manager = PluginManager(scope_key=str(tmp_path))
+    # Exercise the real installed package and native lifecycle, excluding other
+    # plugins from this provider-free test's scope.
+    monkeypatch.setattr(
+        manager, "_discover_and_load_inner", lambda: manager._load_plugin(manifest)
+    )
+    try:
+        manager.discover_and_load()
+        manager.discover_and_load()
+        loaded = manager._plugins[manifest.key]
+        assert loaded.enabled is True
+        assert loaded.error is None
+        assert len(manager._kanban_worker_environment_providers) == 1
+        assert manager.unload(manifest.key) is True
+        assert manager._kanban_worker_environment_providers == []
+        manager.discover_and_load(force=True)
+        assert len(manager._kanban_worker_environment_providers) == 1
+    finally:
+        manager.unload()
+    assert manager._kanban_worker_environment_providers == []

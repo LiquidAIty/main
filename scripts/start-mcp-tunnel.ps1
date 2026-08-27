@@ -24,6 +24,7 @@ $localBaseUrl = "http://127.0.0.1:$McpPort"
 $metadataUrl = "$localBaseUrl/.well-known/oauth-protected-resource/mcp"
 $mcpUrl = "$localBaseUrl/mcp"
 $readinessUrl = "$localBaseUrl/health/ready"
+$catalogUrl = 'http://127.0.0.1:4000/api/coder/input-data-dictionary/tools?limit=1'
 $lastState = 'unreachable'
 $lastLoggedState = ''
 $lastLoggedAt = [DateTimeOffset]::MinValue
@@ -67,11 +68,12 @@ try {
                 $catalogUniqueCount -eq $catalogCount -and
                 -not [string]::IsNullOrWhiteSpace($catalogHash)
             )
-            # The public app is the only supported CBM administrative doorway.
-            # Publish it once the complete catalog is available so a missing
-            # projection can be initialized through that app instead of
-            # deadlocking tunnel startup behind its own future connection.
+            # Catalog discovery alone does not prove the native project ready.
+            # Honor the existing readiness owner's HTTP and dependency result.
             $publicationReady = (
+                [int]$readiness.StatusCode -eq 200 -and
+                [bool]$readinessPayload.ok -and
+                [bool]$readinessPayload.codeGraphReady -and
                 [string]$readinessPayload.state -eq 'ready' -and
                 $catalogReady
             )
@@ -142,14 +144,19 @@ try {
     $metadata = $null
     try {
         $metadata = $http.GetAsync($metadataUrl).GetAwaiter().GetResult()
-        $metadataReady = [int]$metadata.StatusCode -eq 200
+        $metadataPayload = $metadata.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json
+        $metadataReady = (
+            [int]$metadata.StatusCode -eq 200 -and
+            [string]$metadataPayload.resource -ceq $PublicResourceUrl -and
+            @($metadataPayload.scopes_supported) -contains 'liquidaity.main'
+        )
     } finally {
         if ($null -ne $metadata) {
             $metadata.Dispose()
         }
     }
     if (-not $metadataReady) {
-        throw 'MCP OAuth protected-resource metadata did not return 200 after readiness.'
+        throw 'MCP OAuth protected-resource metadata does not match the canonical resource and scope.'
     }
 
     $request = $null
@@ -171,7 +178,7 @@ try {
         $challengeReady = (
             $challenge -match '^Bearer' -and
             $challenge -match 'scope="liquidaity\.main"' -and
-            $challenge -match 'resource_metadata="https://'
+            $challenge.Contains('resource_metadata="' + $resourceUri.GetLeftPart([UriPartial]::Authority) + '/.well-known/oauth-protected-resource/mcp"')
         )
     } finally {
         if ($null -ne $anonymous) {
@@ -185,8 +192,29 @@ try {
         throw 'MCP anonymous OAuth challenge was not the expected 401 after readiness.'
     }
 
+    # Reuse the backend's existing authenticated SDK client. The tunnel does
+    # not receive a credential or initialize another MCP/native process.
+    $catalog = $null
+    try {
+        $catalog = $http.GetAsync($catalogUrl).GetAwaiter().GetResult()
+        $catalogPayload = $catalog.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json
+        $authenticatedCatalogReady = (
+            [int]$catalog.StatusCode -eq 200 -and
+            $catalogPayload.ok -eq $true -and
+            @($catalogPayload.references).Count -gt 0
+        )
+    } finally {
+        if ($null -ne $catalog) {
+            $catalog.Dispose()
+        }
+    }
+    if (-not $authenticatedCatalogReady) {
+        throw 'MCP authenticated catalog read failed through the existing backend client.'
+    }
+
     $lastState = (
         "metadata=$metadataReady anonymous401=$anonymousRejected challenge=$challengeReady " +
+        "authenticatedCatalog=$authenticatedCatalogReady " +
         "catalogState=ready catalogCount=$catalogCount catalogHash=$catalogHash"
     )
     Write-Host "MCP local OAuth readiness passed: $lastState"

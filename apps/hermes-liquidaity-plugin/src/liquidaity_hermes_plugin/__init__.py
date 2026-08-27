@@ -68,7 +68,8 @@ def _worker_environment(context) -> Mapping[str, str] | None:
         raise RuntimeError("liquidaity_card_bearer_lookup_response_invalid") from error
     bearer = decoded.get("bearer") if isinstance(decoded, dict) else None
     if (
-        decoded.get("ok") is not True
+        not isinstance(decoded, dict)
+        or decoded.get("ok") is not True
         or not isinstance(bearer, str)
         or not 64 <= len(bearer) <= 8192
         or any(character.isspace() for character in bearer)
@@ -79,4 +80,3 @@ def _worker_environment(context) -> Mapping[str, str] | None:
 
 def register(ctx) -> None:
     ctx.register_kanban_worker_environment_provider(_worker_environment)
-

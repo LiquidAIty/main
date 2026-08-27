@@ -262,14 +262,22 @@ vendor patch law.
 
 ## Canonical startup
 
-`npm run dev:fresh` is the only supported full-product start. It installs the LiquidAIty-owned Hermes
-entry-point plugin into the preserved Hermes environment, stops the six product ports, creates one
+`npm run dev:fresh` is the only supported full-product start. It uses the already-installed LiquidAIty-owned
+Hermes entry-point plugin in the preserved Hermes environment, stops the six product ports, creates one
 ephemeral internal MCP secret, and supervises frontend `5173`, backend `4000`, AutoGen rails `8003`,
 KnowGraph `8001`, official MCP `8765`, ngrok inspector `4040`, and the Hermes gateway. The gateway and
 every backend-launched Hermes child receive an environment with the host-only signing secret removed.
 
 Component commands remain private children of that tree. A partial service start is diagnostic only and
 is not product readiness proof.
+
+Tunnel publication requires the existing `/health/ready` owner's successful HTTP status and complete
+CodeGraph readiness, matching public resource/scope metadata, the canonical anonymous OAuth challenge,
+and a successful catalog read through the backend's existing authenticated MCP client. The tunnel owns
+neither a credential nor an MCP/native process. These checks do not prove model execution.
+The tunnel preserves ngrok's existing request-inspection behavior and Authorization headers. The sole
+local owner accepts that the local inspector may retain request headers as a local-development risk;
+this is not a GPT plugin readiness blocker. Do not print, copy, export, or replay captured credentials.
 
 ## Controlled vendor divergence
 
@@ -348,11 +356,18 @@ and may add new values to that child process without replacing inherited or stoc
 LiquidAIty's external `apps/hermes-liquidaity-plugin` package loads through stock Hermes
 `hermes_agent.plugins` entry-point discovery. It resolves the already-persisted native-root to
 saved-Card Run/revision/grant correlation over strict loopback, asks the existing signer for one
-short-lived Card bearer, and adds only `LIQUIDAITY_CARD_BEARER`; canonical startup and every
+expiring Card bearer, and adds only `LIQUIDAITY_CARD_BEARER`; canonical startup and every
 backend-launched Hermes boundary remove the host-only signing secret first. Hermes' normal MCP
 `${ENV_VAR}` header interpolation consumes the bearer, while model OAuth and ordinary workers without
 the enabled provider remain unchanged. Focused proof and rollback are registered in
 `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
+
+Current authorization limits: internal Card tokens have a 12-hour lifetime, and the MCP host admits
+IDD-declared read operations in addition to explicit Card grants. Kanban worker tokens use the saved
+root Run identity but do not require the separate live ACP execution-context check. A native claim is
+validated when the bearer is issued; immediate per-worker revocation is not implemented. Do not describe
+this as strict assigned-tools-only access or automatic revocation at Run completion. Tightening this
+existing policy is a separate compatibility decision, not a plugin-discovery repair.
 
 OpenClaude/LocalCoder is not a vendor boundary, package root, fallback, or supported runtime in Core v0.
 WorldSignals, Engraphis, and other imported roots remain isolated owners and are not ordinary cleanup

@@ -3276,7 +3276,7 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
     }
 
 
-def test_tunnel_publishes_the_app_before_cbm_projection_initialization():
+def test_tunnel_requires_ready_canonical_projection_before_publication():
     script = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
         "scripts",
@@ -3305,13 +3305,23 @@ def test_tunnel_publishes_the_app_before_cbm_projection_initialization():
     publication_end = source.index("\n            )", publication_start)
     publication_gate = source[publication_start:publication_end]
     assert "$catalogReady" in publication_gate
-    assert "$projectReady" not in publication_gate
-    assert "$indexReady" not in publication_gate
-    assert "$watcherActive" not in publication_gate
+    assert "[int]$readiness.StatusCode -eq 200" in publication_gate
+    assert "[bool]$readinessPayload.ok" in publication_gate
+    assert "[bool]$readinessPayload.codeGraphReady" in publication_gate
     assert source.count("$http.GetAsync($metadataUrl)") == 1
     assert source.count("$http.SendAsync($request)") == 1
     assert 'Write-Host "MCP readiness: $lastState"' in readiness_loop
     assert "$maximumPollMilliseconds" in readiness_loop
+    assert "[string]$metadataPayload.resource -ceq $PublicResourceUrl" in source
+    assert "@($metadataPayload.scopes_supported) -contains 'liquidaity.main'" in source
+    assert "$challenge.Contains('resource_metadata=" in source
+    assert source.count("$http.GetAsync($catalogUrl)") == 1
+    authenticated_read = source.index("$http.GetAsync($catalogUrl)")
+    assert authenticated_read < source.index("if ($ReadyOnly)")
+    assert authenticated_read < source.index("& ngrok http")
+    assert "[int]$catalog.StatusCode -eq 200" in source
+    assert "$catalogPayload.ok -eq $true" in source
+    assert "    & ngrok http $localBaseUrl --url $tunnelUrl\n" in source
 
 
 def test_oauth_catalog_declares_security_before_main_context_resolution(monkeypatch):
