@@ -5,7 +5,10 @@
  * `streamSession` forwards the RAW native event stream (verbatim) to `onEvent`
  * and resolves with `done.full_text`. No transformation, no curation.
  */
+import type { RuntimeEvent } from '../../../../../apps/backend/src/contracts/runtimeEvents';
+
 export type NativeSessionEvent = {
+  terminalEvent?: RuntimeEvent;
   kind: 'session' | 'text' | 'reasoning' | 'tool_start' | 'tool_result' | 'permission' | 'done' | 'error' | 'end' | string;
   [key: string]: unknown;
 };
@@ -92,6 +95,7 @@ export async function streamSession(args: {
   let finalText = '';
   let streamFailure: SessionStreamError | null = null;
   let sawEnd = false;
+  const deliveredEvents = new Map<string, string>();
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -123,6 +127,13 @@ export async function streamSession(args: {
         });
       }
       if (kind === 'end') sawEnd = true;
+      const eventId = (data.terminalEvent as RuntimeEvent | undefined)?.id;
+      if (eventId) {
+        const identity = `${String(data.projectId || '')}:${String(data.deckId || '')}:${String(data.runId || '')}:${eventId}`;
+        const content = JSON.stringify(data);
+        if (deliveredEvents.get(identity) === content) continue;
+        deliveredEvents.set(identity, content);
+      }
       args.onEvent({ ...data, kind });
     }
   }

@@ -125,7 +125,7 @@ describe('AgentManager active builder config', () => {
     expect(source).not.toContain('runNativeApply(buildCurrentLocalPayload');
   });
 
-  it('uses the historical five Card tabs and exactly one Task composer', () => {
+  it('replaces Task with Terminal while retaining exactly one mission composer', () => {
     const source = readFileSync(
       path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
       'utf8',
@@ -136,9 +136,10 @@ describe('AgentManager active builder config', () => {
     );
 
     expect(pageSource).toContain(
-      "const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime', 'Task'] as const;",
+      "const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime', 'Terminal'] as const;",
     );
-    expect(source).toContain("activeTab === 'Task' && showTaskComposer");
+    expect(source).toContain("activeTab === 'Terminal' && showTaskComposer");
+    expect(source).not.toContain("activeTab === 'Task'");
     expect(source.match(/aria-label="Dynamic context \/ input"/g)).toHaveLength(1);
     expect(source.match(/data-testid="agent-manager-run"/g)).toHaveLength(1);
     expect(source).toContain('saveRevisionAtStartRef.current = openDeckRevision ?? null');
@@ -195,7 +196,7 @@ describe('AgentManager active builder config', () => {
     const idfText = '{"actualGraphData":{},"stableSavedCardContext":{},"selectedToolsAndGrants":{},"dynamicContext":{}}\n';
     render(React.createElement(AgentManager, {
       agentType: 'agent_builder',
-      activeTab: 'Task',
+      activeTab: 'Terminal',
       cardId: 'card-one',
       localConfig: { runtime: { kind: 'autogen', mode: 'assistant' } },
       onSaveLocalConfig: vi.fn(),

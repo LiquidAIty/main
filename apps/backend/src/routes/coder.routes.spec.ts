@@ -48,7 +48,8 @@ const chatSessionMocks = vi.hoisted(() => {
     answerHermesSession: vi.fn(),
     dispatchHermesLearnCommand: vi.fn(async (_profile: string, request: string) => `NATIVE LEARN PROMPT: ${request}`),
     deleteHermesHistory: vi.fn(async () => ({ sessionId: 'persisted-session', deleted: true })),
-    readHermesHistory: vi.fn(async () => ({ sessionId: null, messages: [] })),
+    readHermesHistory: vi.fn(async (): Promise<any> => ({ sessionId: null, messages: [] })),
+    readHermesRunSnapshot: vi.fn((): any => null),
     startHermesTurn: vi.fn(),
     usage,
   };
@@ -457,6 +458,7 @@ vi.mock('../hermes/mainAdapter', () => ({
   dispatchHermesLearnCommand: chatSessionMocks.dispatchHermesLearnCommand,
   deleteHermesHistory: chatSessionMocks.deleteHermesHistory,
   readHermesHistory: chatSessionMocks.readHermesHistory,
+  readHermesRunSnapshot: chatSessionMocks.readHermesRunSnapshot,
   startHermesTurn: chatSessionMocks.startHermesTurn,
 }));
 
@@ -499,6 +501,91 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 describe('coder routes', () => {
+  it('observes the same ordinary Card Run through status without executing or rejoining another root', async () => {
+    orchestratorMocks.runRecords.clear();
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    chatSessionMocks.startHermesTurn.mockClear();
+    orchestratorMocks.runRecords.set('terminal-root', {
+      runId: 'terminal-root', projectId: 'p', deckId: 'd', cardId: 'research', state: 'running',
+      runtimeKind: 'hermes', runtimeMode: 'delegate', runtimeProfile: 'research',
+      terminal: { cardName: 'Research', activeChildren: 1, children: [], parentRunIds: [],
+        transcript: { sessionId: null, unavailableReason: 'native_session_identity_unavailable' } },
+    });
+    chatSessionMocks.readHermesRunSnapshot.mockReturnValue({
+      runId: 'terminal-root', projectId: 'p', deckId: 'd', cardId: 'research', cardName: 'Research',
+      sessionId: 'native-exact', fullText: 'Actual model output', textSequence: 1, textTimestamp: null, tools: [],
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+            action: 'status', projectId: 'p', deckId: 'd', runId: 'terminal-root', includeTerminal: true, inspectOnly: true,
+          }),
+        });
+        const body = await response.json() as any;
+        expect(response.status).toBe(200);
+        expect(body.result.terminal).toMatchObject({ runId: 'terminal-root', activeAgentCount: 2,
+          events: [{ id: 'terminal-root:model', kind: 'model', text: 'Actual model output' }] });
+      }
+      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
+      expect(orchestratorMocks.requestPythonRailsJson.mock.calls.every(([route]) =>
+        route === '/domain/runs/read' || route === '/domain/agentgraph/inspect')).toBe(true);
+    } finally { chatSessionMocks.readHermesRunSnapshot.mockReturnValue(null); await closeServer(server); }
+  });
+
+  it.each(['research', 'coder'])('reads/deletes only the stored exclusive %s transcript and never changes the accepted Run result', async (profile) => {
+    orchestratorMocks.runRecords.clear();
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    const run = { runId: 'terminal-root', projectId: 'p', deckId: 'd', cardId: 'research', state: 'completed',
+      finalResult: 'Accepted result', runtimeKind: 'hermes', runtimeMode: 'delegate', runtimeProfile: profile,
+      terminal: { cardName: 'Research', parentRunIds: [], transcript: { sessionId: 'stored-session', unavailableReason: null } } };
+    orchestratorMocks.runRecords.set(run.runId, run);
+    chatSessionMocks.readHermesHistory.mockResolvedValueOnce({ sessionId: 'stored-session', messages: [], events: [{ kind: 'text', text: 'Real history' }] });
+    chatSessionMocks.deleteHermesHistory.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      for (const action of ['transcript', 'delete_transcript']) {
+        const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+            action, projectId: 'p', deckId: 'd', cardId: 'research', runId: run.runId,
+            sessionId: 'browser-must-not-select-this', profile: 'wrong-profile',
+          }),
+        });
+        expect(response.status).toBe(200);
+      }
+      expect(chatSessionMocks.deleteHermesHistory).toHaveBeenCalledWith({
+        sessionKey: '', profile, sessionId: 'stored-session', terminal: true,
+      });
+      expect(orchestratorMocks.runRecords.get(run.runId)).toBe(run);
+      expect(orchestratorMocks.requestPythonRailsJson.mock.calls.every(([route]) => route === '/domain/runs/read')).toBe(true);
+    } finally { await closeServer(server); }
+  });
+
+  it.each(['shared', 'active', 'wrong-card', 'wrong-project', 'wrong-deck', 'specialized'])(
+    'refuses %s transcript deletion before calling Hermes', async (reason) => {
+      chatSessionMocks.deleteHermesHistory.mockClear();
+      orchestratorMocks.runRecords.clear();
+      orchestratorMocks.runRecords.set('terminal-root', {
+        runId: 'terminal-root', projectId: reason === 'wrong-project' ? 'other' : 'p',
+        deckId: reason === 'wrong-deck' ? 'other' : 'd', cardId: reason === 'wrong-card' ? 'other' : 'research',
+        state: reason === 'active' ? 'running' : 'completed', runtimeKind: 'hermes', runtimeMode: reason === 'specialized' ? 'kanban' : 'delegate',
+        runtimeProfile: 'research',
+        terminal: { transcript: { sessionId: 's', unavailableReason: reason === 'shared' ? 'native_session_shared_or_unmapped_runs' : null } },
+      });
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+            action: 'delete_transcript', projectId: 'p', deckId: 'd', cardId: 'research', runId: 'terminal-root',
+          }),
+        });
+        expect(response.status).toBe(409);
+        expect(chatSessionMocks.deleteHermesHistory).not.toHaveBeenCalled();
+      } finally { await closeServer(server); }
+    },
+  );
+
   it('passes factual live contracts to the one IDD and returns its current vocabulary', async () => {
     mcpClientMocks.listPythonAgentMcpCatalog.mockResolvedValueOnce([{
       name: 'cbm.search_graph',
@@ -1721,6 +1808,7 @@ describe('coder routes', () => {
         });
         return {
           done: Promise.resolve({ finalText: 'Done.', usage: chatSessionMocks.usage }),
+          runtime: { sessionId: 'native-main-session' },
           cancel: chatSessionMocks.lastCancel,
           answer: vi.fn(),
           resolved: {
@@ -1743,6 +1831,19 @@ describe('coder routes', () => {
         expect(response.status).toBe(200);
         expect(body).toContain('event: tool_result');
         expect(body).toContain('"invokingCardId":"card_main_chat"');
+        const frames = body.split('\n\n').filter((frame) => frame.startsWith('event: tool_result'));
+        const event = JSON.parse(frames[0].split('\ndata: ')[1]);
+        expect(event.terminalEvent).toMatchObject({ projectId: 'project-1', cardId: 'card_main_chat',
+          runId: event.runId, kind: 'tool_result', toolUseId: 'tool-1', status: 'completed' });
+        const sessionFrame = body.split('\n\n').find((frame) => frame.startsWith('event: session'))!;
+        const session = JSON.parse(sessionFrame.split('\ndata: ')[1]);
+        expect(session).toMatchObject({ runId: event.runId, sessionId: 'native-main-session',
+          terminalEvent: { sessionId: 'native-main-session', runId: event.runId } });
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(([route, init]) => {
+          if (route !== '/domain/runs/finish') return false;
+          const payload = JSON.parse(String(init?.body));
+          return payload.runId === event.runId && payload.finalResult === 'Done.' && payload.providerThreadRef === 'native-main-session';
+        })).toBe(true);
       } finally {
         await closeServer(server);
       }

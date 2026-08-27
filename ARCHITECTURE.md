@@ -17,10 +17,10 @@ saved Cards and graph topology = identity and authority
 ```text
 React/Vite Agent Builder and Chat
   → Node/TypeScript HTTP, SSE, saved-state, and session transport
-     → one persistent repo-owned Hermes ACP process and native home
-        ├─ Main: stable native session, logical profile liquidaity-main
-        ├─ Coder: stable native session, logical profile coder
-        └─ Kanban: stable native session, logical profile liquidaity-hermes-steward
+     → repo-owned Hermes ACP adapter, reusing one process owner per native profile
+        ├─ Main: stable native session, home/profile liquidaity-main
+        ├─ Coder: stable native session, home/profile coder
+        └─ Kanban: stable native session, home/profile liquidaity-hermes-steward
      → official Python MCP client boundary
         → one official Python HTTP MCP host on :8765/mcp
            ├─ Card call/IDD/AGE deterministic rails
@@ -65,16 +65,16 @@ start runtimes.
 ## Hermes ownership
 
 `apps/backend/src/hermes/mainAdapter.ts` owns persistent Hermes ACP construction and sessions.
-`apps/backend/src/hermes/coderTerminal.ts` owns the Coder terminal lifecycle. Main, Coder, and Kanban
-share one genuine repo-owned Hermes process, one `Hermes/.hermes` native home, one root OAuth/provider
-configuration, one `state.db`, and one Holographic `memory_store.db`. Each saved Card maps to its own
-stable native Hermes session, working directory, saved model, system prompt, and bounded tool surface.
-The Card `profile` field is a stable logical product binding; it does not select another home or
-duplicate Hermes installation. A native `delegate_task` child is ephemeral inside its owning Card's
+`apps/backend/src/hermes/coderTerminal.ts` owns the Coder terminal lifecycle. The ACP adapter reuses
+one process owner per normalized native profile. Named profiles select
+`Hermes/.hermes/profiles/<profile>` as `HERMES_HOME`; the unprofiled extension owner uses the root home.
+Main, Coder, and Kanban retain separate profile homes, native memory, sessions, and configuration.
+They share the vendored Hermes installation and integration code, not one merged memory database.
+Native profile configuration and Hermes' auth resolver remain authoritative. A native `delegate_task` child is ephemeral inside its owning Card's
 session. It remains activity of that same saved Card, inherits a Card-bounded native and MCP ceiling
 through Hermes' native rules, and is not another saved Card or profile. Every child receives a
 distinct Run and `nativeChildId` before execution and uses an opaque host-issued MCP 2 execution
-context. Hermes may open a dedicated connection to the same shared `state.db` for a child's native
+context. Hermes may open a dedicated connection to its owning profile's `state.db` for a child's native
 transcript lifecycle; that is not independent Card memory or identity.
 
 The host derives one opaque key from Project, conversation, and Card identity. Hermes stores that key
@@ -117,6 +117,30 @@ migration.
 
 Unknown tools, missing grants, unsupported runtimes, provider failures, and missing relationships fail
 honestly. There is no alias, provider substitution, duplicate registry, or direct-database shortcut.
+
+## Card Terminal projections
+
+The Card editor has Prompt, Knowledge, Tools, Runtime, and Terminal tabs. Terminal replaces the Task
+input/output tab; it does not add a second invocation path. Main still uses chat for input and responses.
+Coder's Card invokes its existing Run path and focuses the external Code Console, where the attributed
+Card Run view is distinct from the existing interactive native CLI session. No terminal is embedded in
+Coder's Card. Kanban keeps its native board and one aggregate Run view; task actions retain their native
+command owner. Ordinary agent Cards use the shared adaptive terminal, while Mag One remains an orchestrator.
+
+`apps/backend/src/contracts/runtimeEvents.d.ts` is the shared public presentation contract.
+`hermes/cardTerminal.ts` projects existing ACP turns, native transcript replay, Kanban task/attempt records,
+and Python Run/AGE lineage. The frontend renderer does not become a runtime, transcript store, or source
+of agent capability. Native memory, tools, skills, orchestration, and grants remain with their existing owners.
+Main's graph callbacks and technical events use the backend-issued Run identity; the browser does not
+mint a competing Run. Native tool-call IDs are shared across live events, status and replay, with changed
+partial output updating in place. Transcript commands verify Project, Deck, Card and Run identity and
+serialize against native session configuration and execution inside the existing ACP owner.
+
+Current limits are explicit: some native sessions contain multiple Runs without per-Run transcript
+boundaries; exact Run transcript read/deletion is unavailable in that case. Main technical replay after a
+full refresh, public skill/autoskill events, and full Kanban worker tool output are not yet integrated.
+The AutoGen adapter returns completion output rather than a live public terminal stream. These are
+observation gaps, not restrictions on native execution. Loaded-runtime proof remains separate from tests.
 
 ## IDD and transient Card calls
 

@@ -34,6 +34,26 @@ describe('selectedConversationId', () => {
 });
 
 describe('streamSession', () => {
+  it('delivers changed partial output with the same native tool event ID', async () => {
+    const frame = (output: string) => `event: tool_progress\ndata: ${JSON.stringify({ output,
+      projectId: 'p', deckId: 'd', runId: 'r', terminalEvent: { id: 'r:tool:t:partial', detail: output } })}\n\n`;
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([frame('first'), frame('first'), frame('second'),
+      'event: done\ndata: {"fullText":"done"}\n\nevent: end\ndata: {}\n\n'])));
+    const onEvent = vi.fn();
+    await streamSession({ projectId: 'p', conversationId: 'main', message: 'input', onEvent });
+    expect(onEvent.mock.calls.filter(([event]) => event.kind === 'tool_progress').map(([event]) => event.output))
+      .toEqual(['first', 'second']);
+  });
+  it('reconciles replayed event IDs without dropping distinct equal text chunks', async () => {
+    const event = (id: string) => `event: text\ndata: ${JSON.stringify({ text: 'ha', projectId: 'p', deckId: 'd', runId: 'r', terminalEvent: { id } })}\n\n`;
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
+      event('r:1'), event('r:1'), event('r:2'),
+      'event: done\ndata: {"fullText":"haha"}\n\nevent: end\ndata: {}\n\n',
+    ])));
+    const onEvent = vi.fn();
+    await expect(streamSession({ projectId: 'p', conversationId: 'main', message: 'input', onEvent })).resolves.toEqual({ finalText: 'haha' });
+    expect(onEvent.mock.calls.filter(([event]) => event.kind === 'text')).toHaveLength(2);
+  });
   it('surfaces a rejected native start as typed status instead of model text', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
       JSON.stringify({ error: 'main_domain_preparation_failed', correlationId: 'req_start' }),

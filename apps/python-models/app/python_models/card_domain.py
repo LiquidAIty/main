@@ -2713,22 +2713,40 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
     if len(selected) != 1:
         raise CardDomainError("run_rejoin_selector_invalid")
     selector, value = selected[0]
+    include_terminal = payload.get("includeTerminal") is True
+    terminal = None
     with connect_postgres(autocommit=False) as connection:
         with connection.cursor(row_factory=dict_row) as cursor:
             cursor.execute("SET TRANSACTION READ ONLY")
             project = _resolve_project(cursor, project_ref)
             project_id = str(project["id"])
             if selector == "card_id":
+                # Native children inherit the Card revision. They are not the
+                # Card's most recent root invocation when reconnecting its UI.
+                child_ids = []
+                if include_terminal:
+                    child_ids = [str(item["run_id"]) for item in _age_rows(
+                        cursor,
+                        """
+                        MATCH (run:Run {projectId: $projectId, deckId: $deckId})
+                              -[:EXECUTED_BY]->(card:Card {cardId: $cardId})
+                        WHERE run.nativeChildId IS NOT NULL
+                        RETURN run.runId
+                        """,
+                        {"projectId": project_id, "deckId": deck_id, "cardId": value},
+                        "run_id agtype",
+                    )]
                 cursor.execute(
                     """
-                    SELECT run.*, revision.card_id, revision.runtime_profile
+                    SELECT run.*, revision.card_id, revision.runtime_profile, revision.title
                     FROM ag_catalog.agent_runs AS run
                     JOIN ag_catalog.agent_card_revisions AS revision
                       ON revision.revision_id=run.target_card_revision_id
                     WHERE run.project_id=%s AND run.deck_id=%s AND revision.card_id=%s
+                      AND NOT (run.run_id = ANY(%s::text[]))
                     ORDER BY run.created_at DESC LIMIT 1
                     """,
-                    (project_id, deck_id, value),
+                    (project_id, deck_id, value, child_ids),
                 )
             else:
                 column = {
@@ -2738,7 +2756,7 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
                 }[selector]
                 cursor.execute(
                     f"""
-                    SELECT run.*, revision.card_id, revision.runtime_profile
+                    SELECT run.*, revision.card_id, revision.runtime_profile, revision.title
                     FROM ag_catalog.agent_runs AS run
                     JOIN ag_catalog.agent_card_revisions AS revision
                       ON revision.revision_id=run.target_card_revision_id
@@ -2748,7 +2766,88 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
                     (project_id, deck_id, value),
                 )
             row = cursor.fetchone()
-    return {"ok": True, "run": _run_projection(dict(row)) if row is not None else None}
+            if row is not None and include_terminal:
+                terminal = _read_run_terminal(cursor, dict(row))
+    run = _run_projection(dict(row)) if row is not None else None
+    if run is not None and terminal is not None:
+        run["terminal"] = terminal
+    return {"ok": True, "run": run}
+
+
+def _read_run_terminal(cursor: Any, row: dict[str, Any]) -> dict[str, Any]:
+    """Read existing Run/lineage authorities; never retain a second transcript."""
+    run_id = str(row["run_id"])
+    lineage = _age_rows(
+        cursor,
+        """
+        MATCH (parent:Run {projectId: $projectId, deckId: $deckId})
+              -[:CHILD_RUN]->(child:Run {projectId: $projectId, deckId: $deckId})
+        WHERE parent.runId=$runId OR child.rootRunId=$runId OR child.runId=$runId
+        RETURN parent.runId, child.runId, child.nativeChildId
+        """,
+        {"projectId": str(row["project_id"]), "deckId": row["deck_id"], "runId": run_id},
+        "parent_id agtype, child_id agtype, native_id agtype",
+    )
+    children_by_id = {
+        str(item["child_id"]): item for item in lineage
+        if str(item.get("child_id") or "") and str(item["child_id"]) != run_id
+    }
+    children = []
+    if children_by_id:
+        cursor.execute(
+            """
+            SELECT run.*, revision.card_id, revision.runtime_profile, revision.title
+            FROM ag_catalog.agent_runs AS run
+            JOIN ag_catalog.agent_card_revisions AS revision
+              ON revision.revision_id=run.target_card_revision_id
+            WHERE run.project_id=%s AND run.deck_id=%s AND run.run_id=ANY(%s::text[])
+            ORDER BY run.started_at, run.run_id
+            """,
+            (row["project_id"], row["deck_id"], list(children_by_id)),
+        )
+        for child in cursor.fetchall():
+            item = children_by_id[str(child["run_id"])]
+            children.append({
+                **_run_projection(dict(child)),
+                "cardName": str(child.get("title") or ""),
+                "parentRunId": str(item["parent_id"]),
+                "nativeChildId": item.get("native_id"),
+            })
+    session_id = str(row.get("provider_thread_ref") or "")
+    transcript_reason = "native_session_identity_unavailable"
+    if row.get("runtime_kind") != "hermes" or row.get("runtime_mode") == "kanban":
+        transcript_reason = "runtime_transcript_not_available_on_this_surface"
+    elif session_id:
+        # A native session may contain several Runs. Unknown historical session
+        # mappings on this Card also make deletion/Run attribution unsafe.
+        cursor.execute(
+            """
+            SELECT count(*) AS count
+            FROM ag_catalog.agent_runs AS other
+            JOIN ag_catalog.agent_card_revisions AS revision
+              ON revision.revision_id=other.target_card_revision_id
+            WHERE other.runtime_kind='hermes' AND revision.runtime_profile=%s
+              AND (other.provider_thread_ref=%s OR
+                   (other.provider_thread_ref IS NULL AND other.project_id=%s
+                    AND other.deck_id=%s AND revision.card_id=%s))
+            """,
+            (row.get("runtime_profile"), session_id, row["project_id"], row["deck_id"], row["card_id"]),
+        )
+        transcript_reason = None if cursor.fetchone()["count"] == 1 else "native_session_shared_or_unmapped_runs"
+    return {
+        "cardName": str(row.get("title") or ""),
+        "configuration": {
+            "provider": row.get("provider"),
+            "model": row.get("provider_model_id") or row.get("model_key"),
+            "profile": row.get("runtime_profile"),
+            "grantedTools": None,
+            "loadedSkills": None,
+        },
+        "parentRunIds": [str(item["parent_id"]) for item in lineage if str(item["child_id"]) == run_id],
+        "children": children,
+        "activeChildren": sum(child["state"] == "running" for child in children),
+        "transcript": {"sessionId": session_id or None, "unavailableReason": transcript_reason},
+    }
 
 
 def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any]:

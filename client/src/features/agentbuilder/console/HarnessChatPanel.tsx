@@ -8,10 +8,11 @@ const COLLAPSE_THRESHOLD = 72;
 type HarnessChatPanelProps = {
   chat: ReactNode;
   terminal: ReactNode;
+  focusTerminalRequest?: number;
 };
 
 /** Main Chat with the saved Coder Card's persistent Hermes terminal beneath it. */
-export default function HarnessChatPanel({ chat, terminal }: HarnessChatPanelProps) {
+export default function HarnessChatPanel({ chat, terminal, focusTerminalRequest = 0 }: HarnessChatPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef(false);
   const listenersRef = useRef<{
@@ -43,6 +44,16 @@ export default function HarnessChatPanel({ chat, terminal }: HarnessChatPanelPro
     listenersRef.current = null;
     dragRef.current = false;
   }, []);
+
+  useEffect(() => {
+    if (!focusTerminalRequest) return;
+    setHeight(clampHeight(lastOpenHeightRef.current));
+    const frame = window.requestAnimationFrame(() => {
+      containerRef.current?.querySelector<HTMLElement>('[data-testid="coder-console-panel"]')?.focus();
+      window.dispatchEvent(new Event('liquidaity:terminal-layout-settled'));
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusTerminalRequest, clampHeight, setHeight]);
 
   useEffect(() => removeDragListeners, [removeDragListeners]);
 

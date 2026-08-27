@@ -22,12 +22,24 @@ import {
   isHermesGatewayRunning,
   deriveHermesKanbanProgress,
   readHermesKanbanSessionUsage,
+  readHermesKanbanCardSnapshots,
   reclaimNativeHermesKanbanTask,
   resolveHermesKanbanCardExecutionContext,
   startNativeHermesKanbanTurn,
   terminateNativeHermesKanbanRun,
   waitForHermesKanbanCardTask,
 } from './hermesKanban.routes';
+
+describe('retained Kanban terminal read', () => {
+  it('reads exactly the existing root/child task graph without dispatching', async () => {
+    const root = { task: { id: 't_root', created_by: 'card', project_id: 'p' }, parents: [], children: ['t_child'], events: [], runs: [] };
+    const child = { task: { id: 't_child' }, parents: ['t_root'], children: [], events: [], runs: [] };
+    const show = vi.fn(async (id: string) => id === 't_root' ? root : child);
+    for (let i = 0; i < 2; i++) expect(await readHermesKanbanCardSnapshots({ nativeRootId: 't_root', cardId: 'card', projectId: 'p' }, show)).toEqual([root, child]);
+    expect(show.mock.calls.map(([id]) => id)).toEqual(['t_root', 't_child', 't_root', 't_child']);
+    await expect(readHermesKanbanCardSnapshots({ nativeRootId: 't_root', cardId: 'other', projectId: 'p' }, show)).rejects.toThrow('identity_mismatch');
+  });
+});
 
 function echo(fixture: unknown, exitCode = 0, stderr = '') {
   return vi.fn((_bin: string, _args: string[], _opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => {

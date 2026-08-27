@@ -26,6 +26,7 @@ import type { GraphProjectionNode } from '../components/knowledge/NativeAuthorit
 import CoderTerminalPanel from '../features/agentbuilder/console/CoderTerminalPanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
 import { selectedConversationId } from '../features/agentbuilder/console/mainSessionClient';
+import { reconcileCardTerminal, RuntimeEventList } from '../features/agentbuilder/console/AdaptiveCardTerminal';
 import HermesKanbanWorkspace from '../features/hermeskanban/HermesKanbanWorkspace';
 import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import type {
@@ -200,7 +201,7 @@ class CardEditorErrorBoundary extends React.Component<
 }
 
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime', 'Task'] as const;
+const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime', 'Terminal'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
@@ -221,6 +222,7 @@ export function getStandaloneCardUnavailableReason(
 /** Mean synodic month in days (NASA/USNO convention). */
 export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
+  const [focusCoderTerminalRequest, setFocusCoderTerminalRequest] = useState(0);
   const largeSurface = 'chat' as const;
   const [workspaceView, setWorkspaceView] = useState<
     | 'chat'
@@ -542,7 +544,7 @@ export default function AgentBuilder(): React.ReactElement {
       invocation: null,
     });
     setSelectedCardId(target.id);
-    setTab('Task');
+    setTab('Terminal');
     setDeckStatusMessage(`${target.title} mission and graph data are ready for review. Nothing ran.`);
   }, [deck.nodes, setDeckStatusMessage, setSelectedCardId, setTab]);
 
@@ -672,6 +674,8 @@ export default function AgentBuilder(): React.ReactElement {
     nativeSessionActive,
     nativeSessionConnecting,
     sessionHistoryLoading,
+    technicalEvents: mainTechnicalEvents,
+    technicalError: mainTechnicalError,
     stopMainTurn,
   } = useAgentBuilderMainChat({
     canvasProjectId,
@@ -890,6 +894,7 @@ export default function AgentBuilder(): React.ReactElement {
   const showStandaloneTestControls =
     Boolean(selectedCard)
     && !(selectedCard?.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'main');
+  const observeCardTerminal = selectedCard?.kind === 'agent';
   const toStandaloneRunResult = useCallback((result: any): StandaloneCardTestResult => ({
     status: String(result?.status || result?.state || 'unknown'),
     state: result?.state ? String(result.state) : null,
@@ -910,6 +915,8 @@ export default function AgentBuilder(): React.ReactElement {
     reasoningTokens: typeof result?.reasoningTokens === 'number' ? result.reasoningTokens : undefined,
     costUsd: typeof result?.costUsd === 'number' ? result.costUsd : undefined,
     output: String(result?.output || ''),
+    terminal: result?.terminal || null,
+    observationError: result?.observationError || null,
     error: result?.errorSummary
       ? String(result.errorSummary)
       : result?.error ? String(result.error) : null,
@@ -935,6 +942,8 @@ export default function AgentBuilder(): React.ReactElement {
         projectId: canvasProjectId,
         deckId: BUILDER_DECK_ID,
         ...selector,
+        includeTerminal: selectedCard?.kind === 'agent',
+        inspectOnly: true,
       }),
     });
     const payload = await response.json().catch(() => null);
@@ -945,7 +954,7 @@ export default function AgentBuilder(): React.ReactElement {
       throw new Error(String(payload?.error || `card_run_status_http_${response.status}`));
     }
     return payload.result;
-  }, [canvasProjectId]);
+  }, [canvasProjectId, selectedCard?.kind]);
 
   const readStandaloneRunInputs = useCallback(async (runId: string): Promise<RetainedRunInputs> => {
     if (!canvasProjectId) throw new Error('card_run_project_required');
@@ -998,14 +1007,28 @@ export default function AgentBuilder(): React.ReactElement {
     runId: string,
     requestToken: string,
     clearOnComplete: boolean,
+    observeOnly = false,
+    shouldObserve: () => boolean = () => true,
   ): Promise<void> => {
-    while (standaloneTestRequestRef.current === requestToken) {
-      const result = await readStandaloneRunStatus({ runId });
-      if (standaloneTestRequestRef.current !== requestToken) return;
+    while (standaloneTestRequestRef.current === requestToken && shouldObserve()) {
+      // The execute request remains the owner. Its existing status reader is
+      // also the observer while a non-streaming HTTP response is outstanding.
+      if (observeOnly) await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
+      if (standaloneTestRequestRef.current !== requestToken || !shouldObserve()) return;
+      let result: any;
+      try { result = await readStandaloneRunStatus({ runId }); }
+      catch (error) {
+        if (observeOnly && error instanceof Error && error.message === 'card_run_not_found') continue;
+        throw error;
+      }
+      if (standaloneTestRequestRef.current !== requestToken || !shouldObserve()) return;
       const mapped = toStandaloneRunResult(result);
-      setStandaloneTestResult(mapped);
+      setStandaloneTestResult((current) => ({ ...mapped,
+        terminal: reconcileCardTerminal(current?.terminal, mapped.terminal),
+      }));
       const state = String(result.state || '');
       if (!['pending', 'running'].includes(state)) {
+        if (observeOnly) return;
         standaloneActiveRunRef.current = null;
         standaloneTestRequestRef.current = null;
         setStandaloneTestBusy(false);
@@ -1026,7 +1049,7 @@ export default function AgentBuilder(): React.ReactElement {
         }
         return;
       }
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
+      if (!observeOnly) await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
     }
   }, [readStandaloneRunStatus, selectedCard, setDeckStatusMessage, toStandaloneRunResult]);
 
@@ -1039,6 +1062,15 @@ export default function AgentBuilder(): React.ReactElement {
     standaloneActiveRunRef.current = { runId: correlationId, correlationId, cardId: selectedCard.id };
     setStandaloneTestBusy(true);
     setStandaloneTestResult(null);
+    let observingExecute = true;
+    if (observeCardTerminal) {
+      void pollStandaloneRun(correlationId, correlationId, false, true, () => observingExecute).catch((error: unknown) => {
+        if (standaloneTestRequestRef.current !== correlationId) return;
+        setStandaloneTestResult((current) => current ? { ...current,
+          observationError: error instanceof Error ? error.message : 'card_run_observation_failed',
+        } : current);
+      });
+    }
     try {
       const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
         method: 'POST',
@@ -1064,13 +1096,24 @@ export default function AgentBuilder(): React.ReactElement {
         }),
       });
       const payload = await response.json().catch(() => null);
-      const result = payload?.result;
+      observingExecute = false;
+      let result = payload?.result;
       if (!result || typeof result !== 'object') {
         throw new Error(String(payload?.error || `standalone_card_test_http_${response.status}`));
       }
+      if (observeCardTerminal && standaloneTestRequestRef.current === correlationId && result.runId) {
+        try {
+          const retained = await readStandaloneRunStatus({ runId: String(result.runId) });
+          result = { ...result, terminal: retained.terminal };
+        } catch (error) {
+          result = { ...result, observationError: error instanceof Error ? error.message : 'card_run_observation_failed' };
+        }
+      }
       if (standaloneTestRequestRef.current === correlationId) {
         const mapped = toStandaloneRunResult(result);
-        setStandaloneTestResult(mapped);
+        setStandaloneTestResult((current) => ({ ...mapped,
+          terminal: reconcileCardTerminal(current?.terminal, mapped.terminal),
+        }));
         const runId = String(result.runId || correlationId);
         standaloneActiveRunRef.current = { runId, correlationId, cardId: selectedCard.id };
         const state = String(result.state || (result.status === 'completed' ? 'completed' : ''));
@@ -1096,6 +1139,7 @@ export default function AgentBuilder(): React.ReactElement {
         standaloneActiveRunRef.current = null;
       }
     } catch (error) {
+      observingExecute = false;
       if (standaloneTestRequestRef.current === correlationId) {
         try {
           await pollStandaloneRun(correlationId, correlationId, true);
@@ -1121,6 +1165,8 @@ export default function AgentBuilder(): React.ReactElement {
     }
   }, [
     canvasProjectId,
+    observeCardTerminal,
+    readStandaloneRunStatus,
     conversationId,
     selectedCard,
     standaloneTestBusy,
@@ -1189,7 +1235,11 @@ export default function AgentBuilder(): React.ReactElement {
       if (!response.ok || !payload?.result) {
         throw new Error(String(payload?.error || `card_run_stop_http_${response.status}`));
       }
-      setStandaloneTestResult(toStandaloneRunResult(payload.result));
+      setStandaloneTestResult((current) => {
+        const mapped = toStandaloneRunResult(payload.result);
+        return { ...mapped, terminal: mapped.terminal
+          || (current?.runId === active.runId ? current.terminal : null) };
+      });
       const token = `card-stop-${active.runId}-${crypto.randomUUID().slice(0, 8)}`;
       standaloneTestRequestRef.current = token;
       standaloneActiveRunRef.current = active;
@@ -1334,7 +1384,7 @@ export default function AgentBuilder(): React.ReactElement {
     }));
     setInspectorDrawerOpen(true);
     if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) {
-      setTab('Task');
+      setTab('Terminal');
     }
     setDeckStatusMessage(
       `Added ${nextNode.title} to the canvas. Open its editor to configure it.`,
@@ -1375,7 +1425,7 @@ export default function AgentBuilder(): React.ReactElement {
           nonce: (current?.nonce || 0) + 1,
         }));
         setSelectedEdgeId(null);
-        setTab('Task');
+        setTab('Terminal');
       } else {
         setBuilderCanvasFocusRequest((current) => ({
           kind: 'deck',
@@ -1495,7 +1545,7 @@ export default function AgentBuilder(): React.ReactElement {
     const renderEditorContent = () => {
       if (selectedCard && selectedCardConfig) {
         if (
-          tab === 'Task' ||
+          tab === 'Terminal' ||
           tab === 'Prompt' ||
           tab === 'Knowledge' ||
           tab === 'Tools' ||
@@ -1521,6 +1571,7 @@ export default function AgentBuilder(): React.ReactElement {
                   }
                 >
                   <AgentManager
+                    cardKind={selectedCard.kind}
                     key={`deck-card:${selectedCard.id}:${tab}`}
                     cardId={selectedCard.id}
                     projectId={canvasProjectId}
@@ -1528,6 +1579,18 @@ export default function AgentBuilder(): React.ReactElement {
                     agentType="agent_builder"
                     activeTab={tab}
                     cardName={selectedCard.title}
+                    terminalContent={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'main'
+                      ? <div data-testid="main-card-technical">
+                          {mainTechnicalError ? <div role="alert">{mainTechnicalError}</div> : null}
+                          {mainTechnicalEvents.length ? <RuntimeEventList events={mainTechnicalEvents} main />
+                            : <div>No public runtime events observed in this conversation.</div>}
+                        </div>
+                      : selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.profile.toLowerCase() === 'coder'
+                        ? <div data-testid="coder-card-terminal-link">
+                            {standaloneTestResult?.runId ? <div>Card Run {standaloneTestResult.runId} · {standaloneTestResult.state || standaloneTestResult.status}</div> : null}
+                            <button type="button" onClick={() => setFocusCoderTerminalRequest((value) => value + 1)}>Open existing Coder terminal</button>
+                            <div>The external console shows this ACP Run separately from its native CLI session.</div>
+                          </div> : undefined}
                     cardSubtext={selectedCard.subtitle || ''}
                     onChangeCardName={handleRenameSelectedCard}
                     onChangeCardSubtext={handleUpdateSelectedCardSubtext}
@@ -1541,8 +1604,7 @@ export default function AgentBuilder(): React.ReactElement {
                       clearTransientCardInvocation(selectedCard.id);
                     }}
                     onOpenCoderTerminal={() => {
-                      document.querySelector<HTMLElement>('[data-testid="coder-console-panel"]')?.scrollIntoView({ block: 'nearest' });
-                      document.querySelector<HTMLElement>('[data-testid="coder-console-panel"]')?.focus();
+                      setFocusCoderTerminalRequest((value) => value + 1);
                     }}
                     onOpenHermesKanban={openHermesKanban}
                     onOpenMainChat={openMainChat}
@@ -1553,6 +1615,9 @@ export default function AgentBuilder(): React.ReactElement {
                       moveTransientGraphReference(selectedCard.id, authority, nativeId, direction);
                     }}
                     onRunCard={() => {
+                      if (selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.profile.toLowerCase() === 'coder') {
+                        setFocusCoderTerminalRequest((value) => value + 1);
+                      }
                       void runStandaloneCardTest();
                     }}
                     onLearnCard={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.mode !== 'kanban'
@@ -1755,6 +1820,7 @@ export default function AgentBuilder(): React.ReactElement {
           <div style={{ height: '100%' }}>{chat}</div>
         ) : (
           <HarnessChatPanel
+            focusTerminalRequest={focusCoderTerminalRequest}
             chat={chat}
             terminal={
               <CoderTerminalPanel
@@ -1762,6 +1828,13 @@ export default function AgentBuilder(): React.ReactElement {
                 placement="docked"
                 title="Coder"
                 testIdPrefix="coder-console"
+                cardIdentity={selectedCard?.runtime.kind === 'hermes' && selectedCard.runtime.profile.toLowerCase() === 'coder'
+                  ? { projectId: canvasProjectId, deckId: BUILDER_DECK_ID, cardId: selectedCard.id, profile: selectedCard.runtime.profile }
+                  : undefined}
+                cardRun={standaloneTestResult}
+                cardRunBusy={standaloneTestBusy}
+                onStopCardRun={stopStandaloneCardTest}
+                onRejoinCardRun={rejoinStandaloneCardRun}
               />
             }
           />
@@ -1839,6 +1912,15 @@ export default function AgentBuilder(): React.ReactElement {
             <HermesKanbanWorkspace
               onClose={closeHermesKanban}
               focusedTaskId={hermesKanbanFocusedTaskId}
+              observation={selectedCard?.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'kanban'
+                ? standaloneTestResult?.terminal : null}
+              onRefreshObservation={async () => {
+                const runId = standaloneTestResult?.runId;
+                if (!runId || selectedCard?.runtime.kind !== 'hermes' || selectedCard.runtime.mode !== 'kanban') return;
+                const refreshed = toStandaloneRunResult(await readStandaloneRunStatus({ runId }));
+                setStandaloneTestResult((current) => current?.runId === runId
+                  ? { ...refreshed, terminal: reconcileCardTerminal(current.terminal, refreshed.terminal) } : current);
+              }}
             />
           </div>
         ) : null}

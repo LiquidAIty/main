@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { reconcileTerminalEvents, type CardTerminalEvent } from './AdaptiveCardTerminal';
 
 import { waitForBackendReady } from '../../../components/builder/backendReadiness';
 import type { GraphProjectionV1 } from '../../../components/knowledge/NativeAuthorityGraphSurface';
@@ -93,10 +94,6 @@ export type MainChatTurnFinished = {
   status: 'completed' | 'failed' | 'cancelled' | 'disconnected';
   observedAt: string;
 };
-
-function createRunId(): string {
-  return globalThis.crypto?.randomUUID?.() || `main-turn-${Date.now()}`;
-}
 
 function notifyObserver<T>(observer: ((value: T) => void) | undefined, value: T): void {
   try {
@@ -268,6 +265,9 @@ export default function useAgentBuilderMainChat({
   onTurnFinished,
 }: UseAgentBuilderMainChatArgs) {
   const conversationKey = `${canvasProjectId}\u0000${conversationId}`;
+  const [technical, setTechnical] = useState<{ key: string; events: CardTerminalEvent[]; error: string | null }>({
+    key: conversationKey, events: [], error: null,
+  });
   const [transcript, setTranscript] = useState<{
     key: string;
     messages: AgentBuilderChatMessage[];
@@ -300,6 +300,7 @@ export default function useAgentBuilderMainChat({
       activeStreamRef.current = null;
     }
     setTranscript({ key: conversationKey, messages: [] });
+    setTechnical({ key: conversationKey, events: [], error: null });
     setTurnState({ key: conversationKey, phase: 'idle' });
     if (!projectId) {
       setHistoryState({ key: conversationKey, loading: false });
@@ -333,6 +334,8 @@ export default function useAgentBuilderMainChat({
       .catch(() => {
         if (cancelled || controller.signal.aborted) return;
         setHistoryState({ key: conversationKey, loading: false });
+        setTechnical((current) => current.key === conversationKey
+          ? { ...current, error: current.error || 'conversation_history_read_failed' } : current);
       })
 
     return () => {
@@ -357,14 +360,8 @@ export default function useAgentBuilderMainChat({
           { role: 'user', text },
         ],
       }));
-      const runId = createRunId();
-      notifyObserver(onUserTurnStarted, {
-        projectId: canvasProjectId,
-        conversationId,
-        runId,
-        text,
-        observedAt: new Date().toISOString(),
-      });
+      let runId: string | null = null;
+      setTechnical({ key: conversationKey, events: [], error: null });
       const streamController = new AbortController();
       activeStreamRef.current = { key: conversationKey, controller: streamController };
       setTurnState({ key: conversationKey, phase: 'connecting' });
@@ -420,12 +417,35 @@ export default function useAgentBuilderMainChat({
           })),
           signal: streamController.signal,
           onEvent: (event) => {
+            const publicEvent = event.terminalEvent as CardTerminalEvent | undefined;
+            const observedRunId = typeof event.runId === 'string' ? event.runId : publicEvent?.runId;
+            if ((event.projectId && event.projectId !== canvasProjectId)
+              || (event.deckId && event.deckId !== deckId)
+              || (event.conversationId && event.conversationId !== conversationId)
+              || (publicEvent && (publicEvent.projectId !== canvasProjectId || publicEvent.deckId !== deckId))
+              || (observedRunId && runId && observedRunId !== runId)
+              || (publicEvent && observedRunId && publicEvent.runId !== observedRunId)) {
+              throw new SessionStreamError({ code: 'main_run_identity_mismatch', message: 'Main stream Run identity changed.' });
+            }
+            // UI pending state is local; graph/Run identity is issued only by
+            // the canonical backend Run, never a second browser-generated ID.
+            if (observedRunId && !runId) {
+              runId = observedRunId;
+              notifyObserver(onUserTurnStarted, { projectId: canvasProjectId, conversationId,
+                runId, text, observedAt: new Date().toISOString() });
+            }
+            if (publicEvent?.projectId === canvasProjectId && publicEvent.deckId === deckId
+              && publicEvent.cardId && publicEvent.runId && publicEvent.id
+              && publicEvent.kind !== 'model' && publicEvent.kind !== 'mission') {
+              setTechnical((current) => current.key === conversationKey
+                ? { ...current, events: reconcileTerminalEvents([...current.events, publicEvent]) } : current);
+            }
             if (event.kind === 'session' || event.kind === 'text') {
               setTurnState((current) => current.key === conversationKey
                 ? { ...current, phase: 'active' }
                 : current);
             }
-            notifyObserver(onNativeTurnEvent, {
+            if (runId) notifyObserver(onNativeTurnEvent, {
               projectId: canvasProjectId,
               conversationId,
               runId,
@@ -466,7 +486,7 @@ export default function useAgentBuilderMainChat({
         // message. Replace the in-progress streamed bubble with those bytes so
         // the completed UI and a later history read are identical.
         finalizeModelText(completedText);
-        notifyObserver(onTurnFinished, {
+        if (runId) notifyObserver(onTurnFinished, {
           projectId: canvasProjectId,
           conversationId,
           runId,
@@ -475,9 +495,12 @@ export default function useAgentBuilderMainChat({
         });
         return completedText;
       } catch (error: unknown) {
+        setTechnical((current) => current.key === conversationKey ? { ...current,
+          error: error instanceof SessionStreamError ? error.code : 'main_turn_failed',
+        } : current);
         const disconnected = streamController.signal.aborted;
         const cancelled = error instanceof SessionStreamError && error.code === 'harness_turn_cancelled';
-        notifyObserver(onTurnFinished, {
+        if (runId) notifyObserver(onTurnFinished, {
           projectId: canvasProjectId,
           conversationId,
           runId,
@@ -543,6 +566,8 @@ export default function useAgentBuilderMainChat({
   }, [canvasProjectId, conversationId, conversationKey, deckId, nativeSessionPending]);
 
   return {
+    technicalEvents: technical.key === conversationKey ? technical.events : [],
+    technicalError: technical.key === conversationKey ? technical.error : null,
     handleNativeSend,
     messages,
     nativeSessionActive,

@@ -17,10 +17,13 @@ import type {
   ProfileInfo,
 } from './types';
 import { KANBAN_STATUSES } from './types';
+import { RuntimeEventList, RuntimeConfigurationHeader, type CardTerminalObservation } from '../agentbuilder/console/AdaptiveCardTerminal';
 
 export type HermesKanbanWorkspaceProps = {
   onClose: () => void;
   focusedTaskId?: string | null;
+  observation?: CardTerminalObservation | null;
+  onRefreshObservation?: () => Promise<void>;
 };
 
 const DEFAULT_FILTERS: BoardFilters = {
@@ -115,7 +118,10 @@ function AddTaskForm({
 export default function HermesKanbanWorkspace({
   onClose,
   focusedTaskId = null,
+  observation = null,
+  onRefreshObservation,
 }: HermesKanbanWorkspaceProps) {
+  const [projection, setProjection] = useState<'board' | 'terminal'>('board');
   const [boards, setBoards] = useState<KanbanBoardInfo[]>([]);
   const [currentBoard, setCurrentBoard] = useState<string>('');
   const [tasks, setTasks] = useState<KanbanTask[]>([]);
@@ -152,6 +158,10 @@ export default function HermesKanbanWorkspace({
       try {
         await fn();
         setActionMessage(`${key} done.`);
+        if (onRefreshObservation) {
+          try { await onRefreshObservation(); }
+          catch (error) { setActionMessage(`${key} done; Run refresh failed: ${error instanceof Error ? error.message : String(error)}`); }
+        }
       } catch (error) {
         setActionMessage(
           `${key} failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -164,7 +174,7 @@ export default function HermesKanbanWorkspace({
         });
       }
     },
-    [],
+    [onRefreshObservation],
   );
 
   const filtersRef = useRef(filters);
@@ -432,6 +442,12 @@ export default function HermesKanbanWorkspace({
 
   const gatewayRunning = Boolean(system?.gateway.running);
   const gatewayChecked = system !== null;
+  const displayedTasks = useMemo(() => {
+    const observed = new Map((observation?.nativeTasks || []).map((task) => [String(task.id), task]));
+    // Preserve the selected board and its filters. Refresh matching Run tasks
+    // from the same native snapshot as the terminal; never replace another board.
+    return tasks.map((task) => (observed.get(task.id) as KanbanTask | undefined) || task);
+  }, [tasks, observation?.nativeTasks]);
 
   return (
     <div
@@ -489,11 +505,18 @@ export default function HermesKanbanWorkspace({
         />
       ) : null}
 
+      {observation ? <div style={{ padding: 8, display: 'flex', gap: 8 }}>
+        <button type="button" aria-pressed={projection === 'board'} onClick={() => setProjection('board')}>Board</button>
+        <button type="button" aria-pressed={projection === 'terminal'} onClick={() => setProjection('terminal')}>Terminal</button>
+        <span>Run {observation.runId}</span>
+        {selectedTaskId ? <button type="button" onClick={handleBlankClick}>All tasks</button> : null}
+      </div> : null}
+      <div style={{ display: projection === 'board' || !observation ? 'contents' : 'none' }}>
       <HermesKanbanBoard
         boards={boards}
         currentBoard={currentBoard}
         onBoardChange={handleBoardChange}
-        tasks={tasks}
+        tasks={displayedTasks}
         search={search}
         onSearchChange={setSearch}
         gatewayRunning={gatewayRunning}
@@ -513,6 +536,14 @@ export default function HermesKanbanWorkspace({
         error={boardError}
         onRetry={handleRefresh}
       />
+      </div>
+      {observation && projection === 'terminal' ? <div data-testid="kanban-aggregate-terminal"
+        style={{ overflow: 'auto', padding: 12, minHeight: 0 }}>
+        <RuntimeConfigurationHeader configuration={observation.configuration} />
+        {observation.unavailableReason ? <div role="alert">{observation.unavailableReason}</div> : null}
+        <RuntimeEventList events={observation.events} taskId={selectedTaskId} />
+        <div>Read-only projection. Task actions remain in the existing task inspector.</div>
+      </div> : null}
 
       {actionMessage ? (
         <div

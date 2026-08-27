@@ -5,6 +5,7 @@ import {
   type CoderTerminalClient,
 } from './coderTerminalClient';
 import XtermView from './XtermView';
+import AdaptiveCardTerminal, { type TerminalRun } from './AdaptiveCardTerminal';
 
 /** The saved Coder Card's genuine Hermes CLI pseudoterminal. */
 
@@ -18,6 +19,11 @@ type CoderTerminalPanelProps = {
   client?: CoderTerminalClient;
   /** Test seam: a session already known to the host. */
   initialSession?: ConsoleSessionInfo | null;
+  cardRun?: TerminalRun | null;
+  cardRunBusy?: boolean;
+  cardIdentity?: { projectId: string; deckId: string; cardId: string; profile: string };
+  onStopCardRun?: () => void;
+  onRejoinCardRun?: () => void;
 };
 
 function CoderTerminalPanelInner({
@@ -28,7 +34,17 @@ function CoderTerminalPanelInner({
   onClose,
   client = coderTerminalClient,
   initialSession = null,
+  cardRun = null,
+  cardRunBusy = false,
+  cardIdentity,
+  onStopCardRun,
+  onRejoinCardRun,
 }: CoderTerminalPanelProps) {
+  const [projection, setProjection] = useState<'cli' | 'run'>('cli');
+  useEffect(() => {
+    if (cardIdentity && (cardRun?.runId || cardRunBusy)) setProjection('run');
+  }, [cardIdentity?.cardId, cardRun?.runId, cardRunBusy]);
+  const showingRun = Boolean(cardIdentity && projection === 'run');
   const [session, setSession] = useState<ConsoleSessionInfo | null>(initialSession);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const inputQueueRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -160,6 +176,18 @@ function CoderTerminalPanelInner({
         </button>
       ) : null}
 
+      {cardIdentity ? <div style={{ display: 'flex', gap: 8, padding: 6 }}>
+        <button type="button" aria-pressed={showingRun} onClick={() => setProjection('run')}>Card Run</button>
+        <button type="button" aria-pressed={!showingRun} onClick={() => setProjection('cli')}>Native CLI</button>
+      </div> : null}
+      {showingRun && cardIdentity ? <div data-testid="coder-console-card-run" style={{ overflow: 'auto', minHeight: 0 }}>
+        <AdaptiveCardTerminal enabled projectId={cardIdentity.projectId} deckId={cardIdentity.deckId}
+          cardId={cardIdentity.cardId} runtime={{ kind: 'hermes', mode: 'delegate', profile: cardIdentity.profile }}
+          run={cardRun} busy={cardRunBusy} onStop={onStopCardRun} onRejoin={onRejoinCardRun}>
+          <div>Supply the mission from this Card's Terminal tab.</div>
+        </AdaptiveCardTerminal>
+      </div> : null}
+      <div style={{ display: showingRun ? 'none' : 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       {session ? (
         <XtermView
           key={session.id}
@@ -181,6 +209,7 @@ function CoderTerminalPanelInner({
           {terminalError || 'Coder terminal connecting'}
         </div>
       ) : null}
+      </div>
     </section>
   );
 }

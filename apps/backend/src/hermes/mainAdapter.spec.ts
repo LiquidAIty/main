@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -40,11 +40,13 @@ function providerFreeTurnArgs(toolCount = 57) {
   };
 }
 
-function fakeAcpScript(exitAfterRegistration: boolean): string {
+function fakeAcpScript(exitAfterRegistration: boolean, holdTerminalTurn = false, holdConfiguration = false): string {
   return `
 const readline = require('node:readline');
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }
+let heldPromptId;
+let heldConfigureId;
 rl.on('line', (line) => {
   const message = JSON.parse(line);
   const method = message.method;
@@ -58,21 +60,43 @@ rl.on('line', (line) => {
     return send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Card must not override native profile model' } });
   }
   if (method === '_session/configure_host') {
+    ${holdConfiguration ? 'heldConfigureId = message.id; return;' : ''}
     return send({ jsonrpc: '2.0', id: message.id, result: {} });
   }
+  if (method === '_session/delete_history') {
+    return send({ jsonrpc: '2.0', id: message.id, result: { deleted: true } });
+  }
+  if (method === '_session/read_history') {
+    return send({ jsonrpc: '2.0', id: message.id, result: { replayed: true } });
+  }
   if (method === '_native/call') {
+    if (heldConfigureId) {
+      send({ jsonrpc: '2.0', id: heldConfigureId, ...(message.params?.failConfiguration
+        ? { error: { code: -32000, message: 'fixture_configuration_failed' } } : { result: {} }) });
+      heldConfigureId = undefined;
+    }
+    if (heldPromptId) {
+      send({ jsonrpc: '2.0', id: heldPromptId, result: { stopReason: 'end_turn', _meta: { hermes: { finalAssistantText: 'provider-free terminal result' } } } });
+      heldPromptId = undefined;
+    }
     return send({ jsonrpc: '2.0', id: message.id, result: { method } });
   }
   if (method === 'session/prompt') {
     send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'provider-free-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'deterministic local status' } } } });
     send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'provider-free-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'provider-free terminal result' }, _meta: { hermes: { messageSource: 'model' } } } } });
+    ${holdTerminalTurn ? `
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'provider-free-session', update: { sessionUpdate: 'tool_call', toolCallId: 'read-1', title: 'read_file', rawInput: { path: 'example.ts' } } } });
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'provider-free-session', update: { sessionUpdate: 'tool_call_update', toolCallId: 'read-1', status: 'failed', rawOutput: { error: 'missing_file' } } } });
+    heldPromptId = message.id;
+    return;
+    ` : ''}
     return send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn', usage: { inputTokens: 11, outputTokens: 4 }, _meta: { hermes: { messageSource: 'model', finalAssistantText: 'provider-free terminal result' } } } });
   }
 });
 `;
 }
 
-function fakeHistoryAcpScript(): string {
+function fakeHistoryAcpScript(exactSessionOnly = false): string {
   return `
 const readline = require('node:readline');
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -83,6 +107,7 @@ rl.on('line', (line) => {
   const method = message.method;
   if (method === 'initialize') return send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
   if (method === 'session/list') {
+    ${exactSessionOnly ? "return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'must_use_stored_session_id' } });" : ''}
     const config = message.params?._meta?.hermes?.sessionConfig || {};
     const keys = Object.keys(config).sort();
     if (JSON.stringify(keys) !== JSON.stringify(['hostSessionKey'])) {
@@ -99,6 +124,8 @@ rl.on('line', (line) => {
     }
     send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'persisted-session', update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'Earlier question.' } } } });
     send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'persisted-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Earlier answer.' } } } });
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'persisted-session', update: { sessionUpdate: 'tool_call', toolCallId: 'read-1', title: 'read_file', rawInput: { path: 'example.ts' } } } });
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'persisted-session', update: { sessionUpdate: 'tool_call_update', toolCallId: 'read-1', status: 'failed', rawOutput: { error: 'missing_file' } } } });
     return send({ jsonrpc: '2.0', id: message.id, result: { replayed: true, sessionId: 'persisted-session', messageCount: 2 } });
   }
   if (method === '_session/delete_history') {
@@ -116,6 +143,110 @@ rl.on('line', (line) => {
 }
 
 describe('Hermes ACP transport identity', () => {
+  it('excludes transcript deletion throughout asynchronous native session configuration', async () => {
+    const root = path.join(tmpdir(), `liquidaity-acp-configure-history-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    const owner = new AcpProcess(() => undefined, {
+      install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(false, false, true)] },
+      hermesHome: root,
+    });
+    let completing: Promise<{ finalText: string }> | undefined;
+    try {
+      await owner.requestExtension('_native/call', { method: 'fixture_ready' });
+      completing = owner.startTurn(providerFreeTurnArgs(0), () => undefined).then((handle) => handle.done);
+      void completing.catch(() => undefined);
+      await vi.waitFor(() => expect((owner as unknown as { lastProtocolEvent: string }).lastProtocolEvent)
+        .toBe('request:_session/configure_host:write'), { timeout: 5000 });
+      await expect(owner.startTurn({ ...providerFreeTurnArgs(0), parentRunId: 'another-run' }, () => undefined))
+        .rejects.toThrow('hermes_session_turn_already_running');
+      await expect(owner.readHistory({ sessionKey: '', sessionId: 'provider-free-session', profile: '' }))
+        .rejects.toThrow('hermes_session_turn_already_running');
+      await expect(owner.deleteHistory({ sessionKey: '', sessionId: 'provider-free-session', profile: '' }))
+        .rejects.toThrow('hermes_session_turn_already_running');
+      await owner.requestExtension('_native/call', { method: 'release_fixture_configuration' });
+      expect((await completing).finalText).toBe('provider-free terminal result');
+    } finally {
+      owner.close();
+      await completing?.catch(() => undefined);
+      await owner.closed;
+    }
+  }, 15000);
+
+  it.each(['host', 'turn'])('releases native configuration exclusion after a failed %s configuration', async (entry) => {
+    const root = path.join(tmpdir(), `liquidaity-acp-configure-failure-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    const owner = new AcpProcess(() => undefined, {
+      install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(false, false, true)] },
+      hermesHome: root,
+    });
+    const context = registerHermesRootExecutionContext({ sessionId: 'configuration-session',
+      runId: 'configuration-run', projectId: 'project-1', deckId: 'deck_builder',
+      conversationId: 'provider-free', cardId: 'card_main_chat', runtimeMode: 'kanban', grantedTools: [] });
+    let configuring: Promise<unknown> | undefined;
+    try {
+      await owner.requestExtension('_native/call', { method: 'fixture_ready' });
+      configuring = entry === 'host' ? owner.configureHostSession(providerFreeTurnArgs(0), context.contextId)
+        : owner.startTurn(providerFreeTurnArgs(0), () => undefined);
+      void configuring.catch(() => undefined);
+      await vi.waitFor(() => expect((owner as unknown as { lastProtocolEvent: string }).lastProtocolEvent)
+        .toBe('request:_session/configure_host:write'), { timeout: 5000 });
+      const history = { sessionKey: '', sessionId: 'provider-free-session', profile: '' };
+      await expect(owner.deleteHistory(history)).rejects.toThrow('hermes_session_turn_already_running');
+      await owner.requestExtension('_native/call', { method: 'release_fixture_configuration', failConfiguration: true });
+      await expect(configuring).rejects.toThrow('fixture_configuration_failed');
+      await expect(owner.readHistory(history)).resolves.toEqual({ sessionId: history.sessionId, messages: [] });
+    } finally {
+      owner.close();
+      await configuring?.catch(() => undefined);
+      await owner.closed;
+      await finishHermesExecutionContext({ contextId: context.contextId, state: 'cancelled' });
+    }
+  }, 15000);
+
+  it('projects the existing active turn without replay, model/status confusion or another turn', async () => {
+    const root = path.join(tmpdir(), `liquidaity-acp-terminal-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    const owner = new AcpProcess(() => undefined, {
+      install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(false, true)] },
+      hermesHome: root,
+    });
+    try {
+      const handle = await owner.startTurn(providerFreeTurnArgs(0), () => undefined);
+      await vi.waitFor(() => expect(owner.readRunSnapshot('provider-free-run')?.tools).toHaveLength(1));
+      const first = owner.readRunSnapshot('provider-free-run');
+      expect(first).toMatchObject({ runId: 'provider-free-run', cardId: 'card_main_chat',
+        fullText: 'provider-free terminal result', sessionId: 'provider-free-session',
+        tools: [{ toolName: 'read_file', toolUseId: 'read-1', isError: true }],
+      });
+      expect(owner.readRunSnapshot('provider-free-run')).toEqual(first);
+      expect(owner.readRunSnapshot('another-run')).toBeNull();
+      expect(JSON.stringify(first)).not.toContain('deterministic local status');
+      await owner.requestExtension('_native/call', { method: 'finish_fixture' });
+      expect((await handle.done).finalText).toBe('provider-free terminal result');
+      expect(owner.readRunSnapshot('provider-free-run')).toBeNull();
+    } finally { owner.close(); await owner.closed; }
+  });
+
+  it('reuses native exact-session transcript read/delete and preserves structured tool errors', async () => {
+    const root = path.join(tmpdir(), `liquidaity-acp-terminal-history-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    const owner = new AcpProcess(() => undefined, {
+      install: { root, executable: process.execPath, args: ['-e', fakeHistoryAcpScript(true)] },
+      hermesHome: root,
+    });
+    const args = { sessionKey: '', sessionId: 'persisted-session', profile: '', terminal: true };
+    try {
+      const history = await owner.readHistory(args);
+      expect(history.events).toEqual([
+        { kind: 'text', text: 'Earlier answer.' },
+        expect.objectContaining({ kind: 'tool_start', toolUseId: 'read-1' }),
+        expect.objectContaining({ kind: 'tool_result', toolUseId: 'read-1', isError: true }),
+      ]);
+      expect(JSON.stringify(history.events)).not.toContain('Earlier question');
+      await expect(owner.deleteHistory(args)).resolves.toEqual({ sessionId: 'persisted-session', deleted: true });
+    } finally { owner.close(); await owner.closed; }
+  });
+
   it('reads native history without loading or configuring an execution session', async () => {
     const root = path.join(tmpdir(), `liquidaity-acp-history-${randomUUID()}`);
     const hermesHome = path.join(root, '.hermes');

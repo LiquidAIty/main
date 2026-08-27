@@ -17,6 +17,10 @@ import {
   type NativeHermesOperation,
   type NativeHermesCardView,
 } from '../features/agentbuilder/nativeHermesCard';
+import AdaptiveCardTerminal, {
+  usesAdaptiveCardTerminal,
+  type CardTerminalObservation,
+} from '../features/agentbuilder/console/AdaptiveCardTerminal';
 
 type ModelOption = { key: string; label: string; providerModelId: string };
 export type InputDictionaryEditorOption = { value: string; label: string };
@@ -173,6 +177,7 @@ type AgentType =
 
 interface AgentManagerProps {
   cardId?: string;
+  cardKind?: string;
   projectId?: string;
   deckId?: string;
   agentType: AgentType;
@@ -201,6 +206,7 @@ interface AgentManagerProps {
   onOpenCoderTerminal?: () => void;
   onOpenHermesKanban?: () => void;
   onOpenMainChat?: () => void;
+  terminalContent?: React.ReactNode;
   onRemoveGraphReference?: (authority: string, nativeId: string) => void;
   onMoveGraphReference?: (
     authority: string,
@@ -280,6 +286,8 @@ export type StandaloneCardTestResult = {
   costUsd?: number;
   output: string;
   error: string | null;
+  terminal?: CardTerminalObservation | null;
+  observationError?: string | null;
   toolCallCount?: number | null;
   tools: string[];
   provider?: string | null;
@@ -491,6 +499,7 @@ export function hasHermesModelDrift(
 
 export function AgentManager({
   cardId = '',
+  cardKind,
   projectId = '',
   deckId = '',
   activeTab,
@@ -509,6 +518,7 @@ export function AgentManager({
   runBusy = false,
   runDisabled = false,
   showTaskComposer = true,
+  terminalContent,
   runResult = null,
   runInputs = null,
   loadedGraphContext = [],
@@ -521,6 +531,7 @@ export function AgentManager({
   localConfig,
   onSaveLocalConfig,
 }: AgentManagerProps) {
+  const adaptiveTerminal = usesAdaptiveCardTerminal(cardKind, localConfig?.runtime);
   const isLocalConfigMode = Boolean(localConfig && onSaveLocalConfig);
   const [saveCardStatus, setSaveCardStatus] = useState<SaveCardStatus>('idle');
   const [saveCardErrorMessage, setSaveCardErrorMessage] = useState<string | null>(null);
@@ -1210,18 +1221,18 @@ export function AgentManager({
   ]);
 
   const sectionBody = (() => {
-    if (activeTab === 'Task') {
+    if (activeTab === 'Terminal') {
       if (localConfig?.runtime.kind === 'hermes' && localConfig.runtime.mode === 'main' && onOpenMainChat) {
-        return (
+        return <>{terminalContent || null}
           <button type="button" data-testid="open-main-chat" onClick={onOpenMainChat}>
             Open Main chat
           </button>
-        );
+        </>;
       }
-      // The Task composer is rendered below the shared Card controls. Keep a
+      // The Terminal composer is rendered below the shared Card controls. Keep a
       // concrete section body here so non-Main Cards do not hit the legacy
       // empty-section guard before their real Run controls are mounted.
-      return <></>;
+      return <>{terminalContent || null}</>;
     }
     if (activeTab === 'Prompt') {
       return (
@@ -2424,7 +2435,11 @@ export function AgentManager({
           ) : null}
         </div>
 
-        {activeTab === 'Task' && showTaskComposer ? <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {activeTab === 'Terminal' && showTaskComposer ? <AdaptiveCardTerminal
+          enabled={adaptiveTerminal} projectId={projectId} deckId={deckId} cardId={cardId}
+          runtime={localConfig.runtime} run={runResult} busy={runBusy}
+          onStop={onStopCard} onRejoin={onRejoinCard}
+        ><div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <label style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Dynamic context / input</label>
           <textarea
             aria-label="Dynamic context / input"
@@ -2492,15 +2507,15 @@ export function AgentManager({
                 Stop
               </button>
             ) : null}
-            {!runBusy && runResult?.runId && onRejoinCard ? (
+            {!adaptiveTerminal && !runBusy && runResult?.runId && onRejoinCard ? (
               <button type="button" onClick={onRejoinCard} data-testid="agent-manager-rejoin">
                 Rejoin
               </button>
             ) : null}
           </div>
-        </div> : null}
+        </div></AdaptiveCardTerminal> : null}
 
-        {activeTab === 'Task' && runInputs ? (
+        {activeTab === 'Terminal' && runInputs ? (
           <section
             data-testid="selected-run-idf"
             style={{ display: 'grid', gap: 8, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#1D2526' }}
@@ -2549,7 +2564,7 @@ export function AgentManager({
           </section>
         ) : null}
 
-        {activeTab === 'Task' && runResult ? (
+        {activeTab === 'Terminal' && runResult && !adaptiveTerminal && cardKind !== 'agent' ? (
           <div
             data-testid="agent-manager-run-result"
             style={{ display: 'grid', gap: 6, fontSize: 11.5 }}

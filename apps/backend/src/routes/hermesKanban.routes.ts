@@ -235,6 +235,7 @@ async function readHermesKanbanTaskGraph(
   taskId: string,
   root: HermesKanbanTaskSnapshot,
   show: (taskId: string) => Promise<HermesKanbanTaskSnapshot>,
+  strict = false,
 ): Promise<HermesKanbanTaskSnapshot[]> {
   const snapshots = new Map<string, HermesKanbanTaskSnapshot>([[taskId, root]]);
   const queue = [...root.parents, ...root.children];
@@ -246,11 +247,27 @@ async function readHermesKanbanTaskGraph(
       snapshots.set(linkedId, linked);
       queue.push(...linked.parents, ...linked.children);
     } catch {
+      if (strict) throw new Error('hermes_kanban_linked_task_unavailable');
       // The root lifecycle remains authoritative. A transient linked-task read
       // can omit progress, but it must never cancel native execution.
     }
   }
+  if (strict && queue.length) throw new Error('hermes_kanban_task_projection_limit');
   return [...snapshots.values()];
+}
+
+/** Read the retained native root; this path never dispatches or rejoins workers. */
+export async function readHermesKanbanCardSnapshots(args: {
+  nativeRootId: string; cardId: string; projectId: string;
+}, show: (taskId: string) => Promise<HermesKanbanTaskSnapshot> = async (taskId) => (
+  requestHermesExtension('_kanban/show', { taskId }) as Promise<HermesKanbanTaskSnapshot>
+)): Promise<HermesKanbanTaskSnapshot[]> {
+  if (!/^t_[A-Za-z0-9_-]+$/.test(args.nativeRootId)) throw new Error('hermes_kanban_card_task_id_invalid');
+  const root = requireNativeTaskSnapshot(args.nativeRootId, JSON.stringify(await show(args.nativeRootId)));
+  if (root.task.created_by !== args.cardId || (root.task.project_id && root.task.project_id !== args.projectId)) {
+    throw new Error('hermes_kanban_terminal_identity_mismatch');
+  }
+  return readHermesKanbanTaskGraph(args.nativeRootId, root, show, true);
 }
 
 export type HermesKanbanCardExecutionContext = {

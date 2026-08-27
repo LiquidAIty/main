@@ -37,6 +37,29 @@ beforeEach(() => {
 });
 
 describe('Main chat live observation callbacks', () => {
+  it('keeps duplicate technical events under the server-issued Run and out of chat', async () => {
+    const onUserTurnStarted = vi.fn();
+    const onNativeTurnEvent = vi.fn();
+    const onTurnFinished = vi.fn();
+    const event = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'main-card', cardName: 'Main',
+      runId: 'server-run', parentRunId: null, nativeChildId: null, id: 'server-run:tool:1',
+      kind: 'tool_error', toolName: 'lookup', status: 'failed', sequence: 1, timestamp: null, detail: 'not found' };
+    mocks.streamSession.mockImplementation(async ({ onEvent }) => {
+      onEvent({ kind: 'tool_result', terminalEvent: event });
+      onEvent({ kind: 'tool_result', terminalEvent: event });
+      onEvent({ kind: 'text', text: 'Actual reply' });
+      return { finalText: 'Actual reply' };
+    });
+    const { result } = renderHook(() => useAgentBuilderMainChat({ canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      onUserTurnStarted, onNativeTurnEvent, onTurnFinished }));
+    await act(async () => { await result.current.requestMainText('Question'); });
+    expect(result.current.technicalEvents).toEqual([event]);
+    expect(onUserTurnStarted).toHaveBeenCalledOnce();
+    expect(onUserTurnStarted).toHaveBeenCalledWith(expect.objectContaining({ runId: 'server-run' }));
+    expect(onNativeTurnEvent.mock.calls.every(([turn]) => turn.runId === 'server-run')).toBe(true);
+    expect(onTurnFinished).toHaveBeenCalledWith(expect.objectContaining({ runId: 'server-run' }));
+    expect(result.current.messages).toEqual([{ role: 'user', text: 'Question' }, { role: 'assistant', text: 'Actual reply' }]);
+  });
   it('accepts optional editor review with no selected graph data and no IDF', () => {
     expect(parseStagedCardReviewLoaded({
       ok: true,
@@ -112,7 +135,7 @@ describe('Main chat live observation callbacks', () => {
     expect(result.current.messages).toEqual([]);
   });
 
-  it('starts locally, forwards native reasoning separately, and settles after completion', async () => {
+  it('uses the native Run identity, forwards native reasoning separately, and settles after completion', async () => {
     const order: string[] = [];
     const onUserTurnStarted = vi.fn(() => order.push('user'));
     const onNativeTurnEvent = vi.fn((turn) => order.push(String(turn.event.kind)));
@@ -124,7 +147,7 @@ describe('Main chat live observation callbacks', () => {
         reason: 'Current production definition', priority: 0,
         boundedExpansion: 1, resultLimit: 12, required: true,
       }]);
-      args.onEvent({ kind: 'reasoning', text: 'private provider reasoning' });
+      args.onEvent({ kind: 'reasoning', runId: 'native-run', text: 'private provider reasoning' });
       args.onEvent({ kind: 'tool_result', toolName: 'main.context', output: 'tool status text' });
       args.onEvent({ kind: 'native_attention', label: 'graph status text' });
       args.onEvent({ kind: 'text', text: 'Visible answer.' });
@@ -149,16 +172,16 @@ describe('Main chat live observation callbacks', () => {
     });
 
     expect(order).toEqual([
-      'user', 'stream', 'reasoning', 'tool_result', 'native_attention', 'text', 'completed',
+      'stream', 'user', 'reasoning', 'tool_result', 'native_attention', 'text', 'completed',
     ]);
     expect(onUserTurnStarted).toHaveBeenCalledWith(expect.objectContaining({
       projectId: 'project-1',
       conversationId: 'main',
       text: 'Fix the build.',
-      runId: expect.any(String),
+      runId: 'native-run',
     }));
     expect(onNativeTurnEvent).toHaveBeenCalledWith(expect.objectContaining({
-      event: { kind: 'reasoning', text: 'private provider reasoning' },
+      runId: 'native-run', event: { kind: 'reasoning', runId: 'native-run', text: 'private provider reasoning' },
     }));
     expect(onTurnFinished).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }));
     expect(result.current.messages).toEqual([
@@ -364,6 +387,8 @@ describe('Main chat live observation callbacks', () => {
   });
 
   it('keeps native failures outside the transcript', async () => {
+    const onUserTurnStarted = vi.fn();
+    const onTurnFinished = vi.fn();
     mocks.streamSession.mockRejectedValue(new SessionStreamError({
       code: 'harness_turn_failed',
       message: 'provider failed',
@@ -373,6 +398,7 @@ describe('Main chat live observation callbacks', () => {
       canvasProjectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'conversation-failure',
+      onUserTurnStarted, onTurnFinished,
     }));
 
     await act(async () => {
@@ -383,6 +409,23 @@ describe('Main chat live observation callbacks', () => {
       { role: 'user', text: 'Normal user message.' },
     ]);
     expect(result.current.nativeSessionActive).toBe(false);
+    expect(onUserTurnStarted).not.toHaveBeenCalled();
+    expect(onTurnFinished).not.toHaveBeenCalled();
+  });
+
+  it('rejects a different Run in the same stream instead of merging its activity', async () => {
+    const onNativeTurnEvent = vi.fn();
+    mocks.streamSession.mockImplementation(async ({ onEvent }) => {
+      onEvent({ kind: 'session', runId: 'native-run' });
+      onEvent({ kind: 'tool_result', runId: 'another-run', output: 'another Run output' });
+      return { finalText: 'must not complete' };
+    });
+    const { result } = renderHook(() => useAgentBuilderMainChat({ canvasProjectId: 'project-1',
+      deckId: 'deck_builder', conversationId: 'main', onNativeTurnEvent }));
+    await act(async () => { await expect(result.current.requestMainText('Question')).rejects.toThrow('Run identity changed'); });
+    expect(onNativeTurnEvent).toHaveBeenCalledTimes(1);
+    expect(result.current.technicalError).toBe('main_run_identity_mismatch');
+    expect(result.current.messages).toEqual([{ role: 'user', text: 'Question' }]);
   });
 
   it('removes an unfinished assistant stream when the native turn fails', async () => {

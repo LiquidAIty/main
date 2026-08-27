@@ -4,6 +4,7 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import HermesKanbanWorkspace from './HermesKanbanWorkspace';
+import type { CardTerminalObservation } from '../agentbuilder/console/AdaptiveCardTerminal';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -134,6 +135,42 @@ function renderWorkspace() {
   });
   return root;
 }
+
+it('shares the retained Run across board/terminal and filters the selected native task', async () => {
+  const identity = { projectId: 'p', deckId: 'd', cardId: 'c', cardName: 'Kanban', runId: 'retained', parentRunId: null, nativeChildId: null };
+  const observation: CardTerminalObservation = { ...identity, observation: 'live', activeAgentCount: 1,
+    unavailableReason: null, transcript: { sessionId: null, unavailableReason: 'native_task_projection' },
+    finalText: '', errorCode: null, errorSummary: '', nativeTasks: [
+      { ...TASKS[0], title: 'Updated native task', status: 'ready' },
+    ],
+    events: TASKS.slice(0, 2).map((task, i) => ({ ...identity, id: `event:${i}`, kind: 'model',
+      taskId: task.id, agentId: String(i), text: `Output ${task.id}`, sequence: i, timestamp: null })),
+  };
+  const root = createRoot(container!);
+  const refreshObservation = vi.fn(async () => undefined);
+  act(() => root.render(<HermesKanbanWorkspace onClose={() => undefined} observation={observation}
+    onRefreshObservation={refreshObservation} />));
+  await flush();
+  expect(container!.querySelector('[data-testid="kanban-lane-ready"]')?.textContent).toContain('Updated native task');
+  expect(container!.querySelector('[data-testid="hermes-kanban-task-card-t_three"]')).not.toBeNull();
+  click(container, 'hermes-kanban-task-card-t_one');
+  await flush();
+  const switchTo = (name: string) => act(() => {
+    [...container!.querySelectorAll('button')].find((button) => button.textContent === name)!.click();
+  });
+  switchTo('Terminal');
+  expect(container!.querySelector('[data-testid="kanban-aggregate-terminal"]')?.textContent).toContain('Output t_one');
+  expect(container!.querySelector('[data-testid="kanban-aggregate-terminal"]')?.textContent).not.toContain('Output t_two');
+  switchTo('Board'); switchTo('Terminal');
+  expect(container!.querySelectorAll('[data-event-id="event:0"]')).toHaveLength(1);
+  expect(calls.some((call) => call.init?.method === 'POST')).toBe(false);
+  expect(refreshObservation).not.toHaveBeenCalled();
+  setInputValue(container!, 'hermes-kanban-task-comment-input', 'new comment');
+  click(container, 'hermes-kanban-task-comment');
+  await flush();
+  expect(refreshObservation).toHaveBeenCalledOnce();
+  act(() => root.unmount());
+});
 
 async function flush() {
   await act(async () => {

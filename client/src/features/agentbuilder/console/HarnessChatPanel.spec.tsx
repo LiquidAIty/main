@@ -29,6 +29,22 @@ async function render() {
 }
 
 describe('HarnessChatPanel Coder dock', () => {
+  it('focuses the existing dock on Card invocation without mounting a second terminal', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const terminal = <div tabIndex={-1} data-testid="coder-console-panel">Existing terminal</div>;
+    await act(async () => { root.render(<HarnessChatPanel chat={<div>Chat</div>} terminal={terminal} />); });
+    const original = container.querySelector('[data-testid="coder-console-panel"]');
+    await act(async () => {
+      root.render(<HarnessChatPanel chat={<div>Chat</div>} terminal={terminal} focusTerminalRequest={1} />);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(container.querySelectorAll('[data-testid="coder-console-panel"]')).toHaveLength(1);
+    expect(container.querySelector('[data-testid="coder-console-panel"]')).toBe(original);
+    expect(container.querySelector('[data-testid="chat-coder-terminal-region"]')?.getAttribute('aria-hidden')).toBe('false');
+    await act(async () => root.unmount());
+  });
   it('starts collapsed while keeping the persistent terminal mounted', async () => {
     const host = await render();
     expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();

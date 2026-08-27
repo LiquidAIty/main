@@ -184,6 +184,23 @@ describe('CoderTerminalPanel', () => {
     expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
   });
 
+  it('shows the same ACP Card Run in the existing external console without sending it to the CLI', async () => {
+    const terminalClient = client();
+    const identity = { projectId: 'p', deckId: 'd', cardId: 'card_local_coder', cardName: 'Coder',
+      runId: 'coder-run', parentRunId: 'main-run', nativeChildId: null };
+    await render(<CoderTerminalPanel open client={terminalClient} initialSession={session()}
+      cardIdentity={{ projectId: 'p', deckId: 'd', cardId: 'card_local_coder', profile: 'coder' }}
+      cardRun={{ runId: 'coder-run', cardId: 'card_local_coder', state: 'running', status: 'running', output: '', error: null,
+        terminal: { ...identity, observation: 'live', activeAgentCount: 1, unavailableReason: null,
+          finalText: '', errorCode: null, errorSummary: '', transcript: { sessionId: 'acp-native', unavailableReason: null },
+          events: [{ ...identity, id: 'coder-run:text:1', kind: 'model', sequence: 1, timestamp: null, text: 'Actual ACP output' }],
+        } }} />);
+    expect(host?.querySelector('[data-testid="adaptive-card-terminal"]')?.getAttribute('data-run-id')).toBe('coder-run');
+    expect(host?.querySelector('[data-testid="coder-console-card-run"]')?.textContent).toContain('Actual ACP output');
+    expect(host?.querySelectorAll('[data-testid="coder-terminal-xterm"]')).toHaveLength(1);
+    expect(terminalClient.sendInput).not.toHaveBeenCalled();
+  });
+
   it('renders the exact native failure in xterm without lifecycle controls', async () => {
     const failed = session('failed');
     failed.error = 'hermes_acp_rpc_error:native_startup_failed';

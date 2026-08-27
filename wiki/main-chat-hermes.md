@@ -14,8 +14,9 @@ cbm_anchors:
 
 # Main Chat and native Hermes specialists
 
-Main, Coder, and Kanban are three saved Cards served by the one repo-owned Hermes ACP runtime. They
-have separate Card identity, profile, session, memory, prompt, model, and grant ceilings.
+Main, Coder, and Kanban are three saved Cards served by the repo-owned Hermes ACP adapter, with a
+reused process owner per native profile. They have separate homes, Card identity, sessions, memory,
+prompts, models, and grant ceilings. Do not collapse their memory into one shared home.
 
 ```text
 Main Chat (liquidaity-main)
@@ -30,6 +31,10 @@ relationships, tools, profiles, models, or credentials fail without fallback.
 
 The Coder terminal is a backend-owned Hermes terminal beneath Chat. `card_local_coder` is a stable
 persistence ID only; no LocalCoder/OpenClaude runtime exists.
+
+The Card Terminal tab holds Main's technical events without adding them to chat. Coder invocation
+focuses the existing external Code Console's attributed Card Run view; its interactive native CLI
+session remains distinct. Both views reuse existing owners and do not start a second Card Run.
 
 ## Proof
 

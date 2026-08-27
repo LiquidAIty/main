@@ -11,12 +11,14 @@ import {
   deriveHermesSessionKey,
   dispatchHermesLearnCommand,
   readHermesHistory,
+  readHermesRunSnapshot,
   startHermesTurn,
   type HermesHistoryArgs,
   type HermesSessionEvent,
   type HermesTurnArgs,
   type HermesTurnHandle,
 } from '../hermes/mainAdapter';
+import { buildCardTerminal, projectHermesEvent, projectKanbanTerminal, terminalHistoryEvents, terminalIdentity, terminalText } from '../hermes/cardTerminal';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 import { listConversations } from '../conversations/store';
 import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/harnessTrace';
@@ -42,6 +44,7 @@ import {
 } from '../hermes/kanbanRunRecovery';
 import {
   readHermesKanbanSessionUsage,
+  readHermesKanbanCardSnapshots,
   startNativeHermesKanbanTurn,
   type HermesKanbanProgress,
 } from './hermesKanban.routes';
@@ -319,6 +322,7 @@ type ConfiguredCardRunStatus = {
   output: string | null;
   errorCode: string | null;
   errorSummary: string | null;
+  terminal?: ReturnType<typeof buildCardTerminal>;
 };
 
 function nonNegativeNumber(value: unknown): number {
@@ -334,6 +338,7 @@ async function readConfiguredCardRunStatus(args: {
   nativeRootId?: string;
   cardId?: string;
   reconcileTerminal?: boolean;
+  includeTerminal?: boolean;
 }): Promise<ConfiguredCardRunStatus | null> {
   const response = await requestPythonRailsJson('/domain/runs/read', {
     method: 'POST',
@@ -393,6 +398,21 @@ async function readConfiguredCardRunStatus(args: {
   const output = typeof run.result === 'string' && run.result.length > 0
     ? run.result
     : null;
+  let terminal: ReturnType<typeof buildCardTerminal> | undefined;
+  if (args.includeTerminal) {
+    terminal = buildCardTerminal(run, run.runtimeKind === 'hermes'
+      ? readHermesRunSnapshot(String(run.runtimeProfile || ''), runId) : null);
+    if (run.runtimeKind === 'hermes' && run.runtimeMode === 'kanban' && nativeRootId) {
+      try {
+        terminal = projectKanbanTerminal(run, await readHermesKanbanCardSnapshots({
+          nativeRootId, projectId: String(run.projectId), cardId: String(run.cardId),
+        }));
+      } catch (error) {
+        terminal = { ...terminal, observation: 'unavailable',
+          unavailableReason: terminalText(error instanceof Error ? error.message : 'kanban_observation_failed') };
+      }
+    }
+  }
   return {
     runId,
     correlationId: String(run.correlationId || ''),
@@ -432,6 +452,7 @@ async function readConfiguredCardRunStatus(args: {
     output,
     errorCode: String(run.errorCode || '').trim() || null,
     errorSummary: String(run.errorSummary || '').trim() || null,
+    ...(terminal ? { terminal } : {}),
   };
 }
 
@@ -446,6 +467,8 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     && action !== 'status'
     && action !== 'inputs'
     && action !== 'stop'
+    && action !== 'transcript'
+    && action !== 'delete_transcript'
   ) {
     return res.status(400).json({ ok: false, error: 'configured_card_action_invalid' });
   }
@@ -477,6 +500,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         ...(nativeRootId ? { nativeRootId } : {}),
         ...(cardId ? { cardId } : {}),
         reconcileTerminal: body.inspectOnly !== true,
+        includeTerminal: body.includeTerminal === true,
       });
       return res.json({ ok: true, result: status });
     } catch (error) {
@@ -484,6 +508,47 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         ok: false,
         error: error instanceof Error ? error.message : 'card_run_status_failed',
       });
+    }
+  }
+
+  if (action === 'transcript' || action === 'delete_transcript') {
+    const runId = String(body.runId || '').trim();
+    if (!runId || !cardId) return res.status(400).json({ ok: false, error: 'card_transcript_identity_required' });
+    try {
+      const response = await requestPythonRailsJson('/domain/runs/read', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, deckId, runId, includeTerminal: true }),
+      }) as any;
+      const run = response?.run;
+      if (!run) return res.status(404).json({ ok: false, error: 'card_run_not_found' });
+      if (run.cardId !== cardId || run.runId !== runId || run.projectId !== projectId || run.deckId !== deckId) {
+        return res.status(409).json({ ok: false, error: 'card_transcript_identity_mismatch' });
+      }
+      if (run.runtimeKind !== 'hermes' || !['main', 'delegate'].includes(run.runtimeMode)) {
+        return res.status(409).json({ ok: false, error: 'card_transcript_specialized_or_unsupported_runtime' });
+      }
+      if (['pending', 'running'].includes(run.state)) {
+        return res.status(409).json({ ok: false, error: 'card_transcript_run_active' });
+      }
+      const transcript = run.terminal?.transcript;
+      if (!transcript?.sessionId || transcript.unavailableReason !== null) {
+        return res.status(409).json({ ok: false, error: transcript?.unavailableReason || 'native_session_identity_unavailable' });
+      }
+      const args: HermesHistoryArgs = {
+        sessionKey: '', profile: run.runtimeProfile, sessionId: transcript.sessionId, terminal: true,
+      };
+      if (action === 'delete_transcript') {
+        // Native #2 deletes only this exclusive runtime transcript. No Run,
+        // accepted result, saved Card, Deck or graph deletion is invoked.
+        const deleted = await deleteHermesHistory(args);
+        return res.json({ ok: true, result: { ...terminalIdentity(run), ...deleted } });
+      }
+      const history = await readHermesHistory(args);
+      return res.json({ ok: true, result: { ...terminalIdentity(run), sessionId: history.sessionId,
+        events: terminalHistoryEvents(run, history.events || []) } });
+    } catch (error) {
+      return res.status(502).json({ ok: false, error: 'card_transcript_failed',
+        detail: terminalText(error instanceof Error ? error.message : String(error)) });
     }
   }
 
@@ -773,7 +838,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         throw new Error(`configured_card_runtime_owner_unsupported:${String(prepared.runtimeOwner || '')}`);
       }
       const finished = await finishRun('completed', {
-        providerThreadRef: transport?.threadId || null,
+        providerThreadRef: hermesHandle?.runtime?.sessionId || transport?.threadId || null,
         providerTurnRef: transport?.turnId || null,
         providerInputTokens,
         providerOutputTokens,
@@ -814,6 +879,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       const message = error instanceof Error ? error.message : 'configured_card_transport_failed';
       const cancelled = message === 'hermes_turn_cancelled';
       await finishRun(cancelled ? 'cancelled' : 'failed', {
+        providerThreadRef: hermesHandle?.runtime?.sessionId || null,
         nativePhase: cancelled ? 'cancelled' : 'failed',
         errorCode: cancelled ? 'configured_card_run_stopped' : 'configured_card_transport_failed',
         errorSummary: message,
@@ -1004,17 +1070,24 @@ router.post('/main/session/chat', async (req, res) => {
     return res.status(424).json({ ok: false, error: 'main_hermes_card_not_runnable' });
   }
   const mainCardId = String(prepared.hermesTransport.cardIdentity.cardId || '');
-  const sessionId = deriveHermesSessionKey(projectId, conversationId, mainCardId);
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
+  let eventSequence = 0;
+  const eventIdentity = { projectId, deckId, cardId: mainCardId,
+    cardName: String(prepared.hermesTransport.cardIdentity.title || ''), runId: correlationId,
+    parentRunId: null, nativeChildId: null };
   const writeSse = (eventName: string, payload: unknown): boolean => {
     if (res.destroyed || res.writableEnded) return false;
     try {
-      res.write(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
+      const sequence = ++eventSequence;
+      const publicEvent = projectHermesEvent(eventIdentity, { ...(payload as object), kind: eventName },
+        sequence, new Date().toISOString());
+      res.write(`event: ${eventName}\ndata: ${JSON.stringify({ ...(payload as object),
+        ...eventIdentity, ...(publicEvent ? { terminalEvent: publicEvent } : {}) })}\n\n`);
       return true;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -1075,12 +1148,19 @@ router.post('/main/session/chat', async (req, res) => {
     // returned a real turn handle. Before this event the browser renders
     // Connecting, never Working.
     writeSse('session', {
-      sessionId,
+      sessionId: handle.runtime?.sessionId || null,
       runId: correlationId,
       projectId,
       deckId,
       conversationId,
       cardId: mainCardId,
+      configuration: {
+        provider: prepared.hermesTransport.request.provider?.provider || null,
+        model: prepared.hermesTransport.request.provider?.providerModelId || null,
+        profile: prepared.hermesTransport.request.runtime.profile,
+        grantedTools: prepared.hermesTransport.request.enabledTools || [],
+        loadedSkills: null,
+      },
     });
     const { finalText, usage, transport } = await handle.done;
     await attentionReadQueue;
@@ -1091,11 +1171,12 @@ router.post('/main/session/chat', async (req, res) => {
         body: JSON.stringify({
           runId: correlationId,
           state: 'completed',
-          providerThreadRef: transport?.threadId || null,
+          providerThreadRef: handle.runtime?.sessionId || transport?.threadId || null,
           providerTurnRef: transport?.turnId || null,
           providerInputTokens: usage.providerInputTokens,
           providerOutputTokens: usage.providerOutputTokens,
           totalCostUsd: usage.totalCostUsd,
+          finalResult: finalText,
         }),
       });
     } catch (error) {

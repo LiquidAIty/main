@@ -10,7 +10,10 @@ roots:
     - apps/python-models/app/python_models/idf.py
     - apps/python-models/app/python_models/idd.py
     - apps/backend/src/routes/coder.routes.ts
+    - apps/backend/src/hermes/cardTerminal.ts
+    - apps/backend/src/contracts/runtimeEvents.d.ts
     - client/src/components/AgentManager.tsx
+    - client/src/features/agentbuilder/console/AdaptiveCardTerminal.tsx
   symbols:
     - materialize_invocation
     - begin_run / finish_run
@@ -36,6 +39,12 @@ Must remain true:
 - manual Card Run and automatic agent handoff enter the same canonical receiving-Card execution path;
 - standalone card execution does not silently consult canvas edges;
 - Mag One participant eligibility comes only from saved `magentic_option` edges.
+
+The Terminal tab replaces Task/input-output, retaining one mission composer and the existing Run
+authority. Public events share one identity contract and renderer across the specialized Main, Coder,
+Kanban, ordinary agent, and Mag One surfaces. Observation never grants or removes runtime capabilities.
+Native session replay/deletion requires exact exclusive ownership; ambiguous multi-Run sessions must
+not be attributed to or deleted as one Run. See `ARCHITECTURE.md` for current observation gaps.
 
 Focused proof:
 

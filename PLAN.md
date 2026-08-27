@@ -92,9 +92,9 @@ the transient Card call. The call carries task meaning and selected context, not
 - Card: `card_hermes_steward`
 - Hermes mode/profile: `kanban` / `liquidaity-hermes-steward`
 - Owns planning, native Kanban, research, memory, and KnowGraph work within its grants.
-- Has separate saved-Card identity, prompt, model, grants, and stable native session. Main, Coder, and
-  Kanban intentionally share the one native Hermes home, root OAuth/provider configuration,
-  `state.db`, and Holographic memory database.
+- Has separate saved-Card identity, prompt, model, grants, stable native session, and native profile home.
+  Main, Coder, and Kanban keep separate native memory and sessions. The ACP adapter reuses a process
+  owner per profile; shared integration code does not imply a shared memory database.
 
 ### AutoGen
 

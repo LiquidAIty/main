@@ -30,6 +30,7 @@ export type HermesSessionEvent =
   | { kind: 'reasoning'; text: string; source: 'provider_exposed' }
   | { kind: 'tool_start'; toolName: string; argsJson: string; toolUseId: string; agentType: string; invokingCardId: string }
   | { kind: 'tool_result'; toolName: string; toolUseId: string; output: string; isError: boolean }
+  | { kind: 'tool_progress'; toolName: string; toolUseId: string; output: string }
   | { kind: 'permission'; promptId: string; question: string; promptType: string }
   | { kind: 'done'; fullText: string; usage: HermesTurnUsage }
   | { kind: 'error'; message: string; code?: string };
@@ -91,6 +92,47 @@ export type HermesHistoryArgs = {
   sessionKey: string;
   profile: string;
   workingDirectory?: string;
+  // Supplied only by the persisted Run, never selected by the browser.
+  sessionId?: string;
+  terminal?: boolean;
+};
+
+export type HermesToolObservation = {
+  toolName: string;
+  toolUseId: string;
+  argsJson: string;
+  output?: string;
+  isError?: boolean;
+  sequence: number;
+  timestamp: string;
+  completedAt?: string;
+  completedSequence?: number;
+  partialOutput?: string;
+  partialSequence?: number;
+  partialTimestamp?: string;
+};
+
+export type HermesRunSnapshot = {
+  projectId: string;
+  deckId: string;
+  cardId: string;
+  cardName: string;
+  runId: string;
+  sessionId: string;
+  fullText: string;
+  textSequence: number;
+  textTimestamp: string | null;
+  tools: HermesToolObservation[];
+  modelBlocks?: Array<{ text: string; sequence: number; timestamp: string }>;
+  configuration?: {
+    provider: string; model: string; profile: string; grantedTools: string[]; loadedSkills: null;
+  };
+};
+
+type HermesHistoryResult = {
+  sessionId: string | null;
+  messages: HermesHistoryMessage[];
+  events?: HermesSessionEvent[];
 };
 
 export type HermesTurnHandle = {
@@ -166,13 +208,20 @@ class HermesAcpExitedError extends Error {
 
 type ActiveTurn = {
   runId: string;
+  identity: Pick<HermesRunSnapshot, 'projectId' | 'deckId' | 'cardId' | 'cardName'>;
   onEvent(event: HermesSessionEvent): void;
   fullText: string;
-  toolNames: Map<string, string>;
+  sequence: number;
+  textSequence: number;
+  textTimestamp: string | null;
+  toolNames: Map<string, HermesToolObservation>;
   effectToolNames: Set<string>;
   effectOutcomes: Array<{ toolName: string; toolUseId: string; isError: boolean }>;
   permissionRequestIds: Map<string, number | string>;
   rootExecutionContextId: string;
+  configuration: NonNullable<HermesRunSnapshot['configuration']>;
+  modelBlocks: NonNullable<HermesRunSnapshot['modelBlocks']>;
+  lastPublicKind: string;
 };
 
 function resolveHermesInstall(): HermesAcpInstall {
@@ -299,8 +348,13 @@ export class AcpProcess {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly turns = new Map<string, ActiveTurn>();
+  private readonly configuringSessions = new Set<string>();
   private readonly sessionByKey = new Map<string, string>();
-  private readonly historyCollectors = new Map<string, HermesHistoryMessage[]>();
+  private readonly historyCollectors = new Map<string, {
+    messages: HermesHistoryMessage[];
+    events?: HermesSessionEvent[];
+    toolNames: Map<string, string>;
+  }>();
   private nextRequestId = 1;
   private stdoutBuffer = '';
   private stderrTail: string[] = [];
@@ -508,11 +562,32 @@ export class AcpProcess {
       if (kind === 'user_message_chunk' || kind === 'agent_message_chunk') {
         const text = textContent(update);
         if (text) {
-          history.push({
+          history.messages.push({
             role: kind === 'user_message_chunk' ? 'user' : 'assistant',
             text,
           });
+          // Native replay identifies persisted assistant messages. Its explicit
+          // compaction metadata is not model output for the Card terminal.
+          if (kind === 'agent_message_chunk'
+            && !update?._meta?.hermes?.compactionSummary
+            && !update?._meta?.hermes?.containsCompactionSummary) {
+            history.events?.push({ kind: 'text', text });
+          }
         }
+      }
+      if (history.events && kind === 'tool_call') {
+        const toolUseId = String(update.toolCallId || '');
+        const toolName = String(update.title || update.kind || 'tool');
+        history.toolNames.set(toolUseId, toolName);
+        history.events.push({ kind: 'tool_start', toolUseId, toolName,
+          argsJson: jsonText(update.rawInput), agentType: '', invokingCardId: '' });
+      }
+      if (history.events && kind === 'tool_call_update'
+        && (update.status === 'completed' || update.status === 'failed')) {
+        const toolUseId = String(update.toolCallId || '');
+        history.events.push({ kind: 'tool_result', toolUseId,
+          toolName: history.toolNames.get(toolUseId) || String(update.title || 'tool'),
+          output: jsonText(update.rawOutput), isError: update.status === 'failed' });
       }
       return;
     }
@@ -523,6 +598,12 @@ export class AcpProcess {
       if (messageSource !== 'model') return;
       const text = textContent(update);
       if (text) {
+        if (turn.lastPublicKind !== 'text') turn.modelBlocks.push({ text: '',
+          sequence: ++turn.sequence, timestamp: new Date().toISOString() });
+        turn.modelBlocks[turn.modelBlocks.length - 1].text += text;
+        turn.textSequence = turn.modelBlocks[0].sequence;
+        turn.textTimestamp = turn.modelBlocks[0].timestamp;
+        turn.lastPublicKind = 'text';
         turn.fullText += text;
         turn.onEvent({ kind: 'text', text });
       }
@@ -534,9 +615,13 @@ export class AcpProcess {
       return;
     }
     if (kind === 'tool_call') {
+      turn.lastPublicKind = 'tool_call';
       const id = String(update.toolCallId || '');
       const name = String(update.title || update.kind || 'tool');
-      turn.toolNames.set(id, name);
+      turn.toolNames.set(id, {
+        toolName: name, toolUseId: id, argsJson: jsonText(update.rawInput),
+        sequence: ++turn.sequence, timestamp: new Date().toISOString(),
+      });
       turn.onEvent({
         kind: 'tool_start',
         toolName: name,
@@ -547,10 +632,30 @@ export class AcpProcess {
       });
       return;
     }
-    if (kind === 'tool_call_update' && (update.status === 'completed' || update.status === 'failed')) {
+    if (kind === 'tool_call_update' && update.status !== 'completed' && update.status !== 'failed') {
       const id = String(update.toolCallId || '');
-      const reportedName = turn.toolNames.get(id) || String(update.title || 'tool');
+      const tool = turn.toolNames.get(id);
+      if (tool && update.rawOutput != null) {
+        turn.lastPublicKind = 'tool_progress';
+        tool.partialOutput = jsonText(update.rawOutput);
+        tool.partialSequence ??= ++turn.sequence;
+        tool.partialTimestamp ??= new Date().toISOString();
+        turn.onEvent({ kind: 'tool_progress', toolName: tool.toolName, toolUseId: id, output: tool.partialOutput });
+      }
+      return;
+    }
+    if (kind === 'tool_call_update' && (update.status === 'completed' || update.status === 'failed')) {
+      turn.lastPublicKind = 'tool_result';
+      const id = String(update.toolCallId || '');
+      const observation = turn.toolNames.get(id);
+      const reportedName = observation?.toolName || String(update.title || 'tool');
       const toolName = resolveHermesEffectToolName(turn.effectToolNames, reportedName);
+      if (observation) {
+        observation.output = jsonText(update.rawOutput);
+        observation.isError = update.status === 'failed';
+        observation.completedAt = new Date().toISOString();
+        observation.completedSequence = ++turn.sequence;
+      }
       turn.effectOutcomes.push({
         toolName,
         toolUseId: id,
@@ -649,36 +754,42 @@ export class AcpProcess {
     const contextId = String(executionContextId || '').trim();
     if (!contextId) throw new Error('hermes_execution_context_id_required');
     const { sessionId } = await this.resolveSession(args, contextId);
-    bindHermesRootExecutionSession(contextId, sessionId);
-    const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(
-      args,
-      process.env,
-      contextId,
-    );
-    await this.request('_session/configure_host', {
-      sessionId,
-      mcpServers,
-      _meta: sessionMeta,
-    });
-    return {
-      cardId: args.cardId,
-      provider: args.provider,
-      modelKey: args.modelKey,
-      providerModelId: args.providerModelId,
-      executable: this.executable,
-      pid: this.pid,
-      hermesHome: this.hermesHome,
-      sessionId,
-      transport: this.transport,
-    };
+    if (this.turns.has(sessionId) || this.configuringSessions.has(sessionId)) {
+      throw new Error('hermes_session_turn_already_running');
+    }
+    if (this.historyCollectors.has(sessionId)) throw new Error('hermes_history_read_in_progress');
+    this.configuringSessions.add(sessionId);
+    try {
+      bindHermesRootExecutionSession(contextId, sessionId);
+      const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(
+        args,
+        process.env,
+        contextId,
+      );
+      await this.request('_session/configure_host', {
+        sessionId,
+        mcpServers,
+        _meta: sessionMeta,
+      });
+      return {
+        cardId: args.cardId,
+        provider: args.provider,
+        modelKey: args.modelKey,
+        providerModelId: args.providerModelId,
+        executable: this.executable,
+        pid: this.pid,
+        hermesHome: this.hermesHome,
+        sessionId,
+        transport: this.transport,
+      };
+    } finally {
+      this.configuringSessions.delete(sessionId);
+    }
   }
 
-  async readHistory(args: HermesHistoryArgs): Promise<{
-    sessionId: string | null;
-    messages: HermesHistoryMessage[];
-  }> {
+  async readHistory(args: HermesHistoryArgs): Promise<HermesHistoryResult> {
     await this.ready;
-    const cwd = this.sessionCwd(args.sessionKey, args.workingDirectory);
+    const cwd = args.sessionId ? '' : this.sessionCwd(args.sessionKey, args.workingDirectory);
     const sessionMeta = {
       hermes: {
         sessionConfig: {
@@ -686,19 +797,21 @@ export class AcpProcess {
         },
       },
     };
-    const listed = await this.request('session/list', { cwd, _meta: sessionMeta });
-    const sessionId = String(
+    const listed = args.sessionId ? null : await this.request('session/list', { cwd, _meta: sessionMeta });
+    const sessionId = args.sessionId || String(
       Array.isArray(listed?.sessions) ? listed.sessions[0]?.sessionId || '' : '',
     );
     if (!sessionId) return { sessionId: null, messages: [] };
-    if (this.turns.has(sessionId)) throw new Error('hermes_session_turn_already_running');
+    if (this.turns.has(sessionId) || this.configuringSessions.has(sessionId)) throw new Error('hermes_session_turn_already_running');
+    if (this.historyCollectors.has(sessionId)) throw new Error('hermes_history_read_in_progress');
 
     const messages: HermesHistoryMessage[] = [];
-    this.historyCollectors.set(sessionId, messages);
+    const events: HermesSessionEvent[] | undefined = args.terminal ? [] : undefined;
+    this.historyCollectors.set(sessionId, { messages, events, toolNames: new Map() });
     try {
       await this.request('_session/read_history', { sessionId });
-      this.sessionByKey.set(args.sessionKey, sessionId);
-      return { sessionId, messages };
+      if (!args.sessionId) this.sessionByKey.set(args.sessionKey, sessionId);
+      return { sessionId, messages, ...(events ? { events } : {}) };
     } finally {
       this.historyCollectors.delete(sessionId);
     }
@@ -709,8 +822,8 @@ export class AcpProcess {
     deleted: boolean;
   }> {
     await this.ready;
-    const cwd = this.sessionCwd(args.sessionKey, args.workingDirectory);
-    const listed = await this.request('session/list', {
+    const cwd = args.sessionId ? '' : this.sessionCwd(args.sessionKey, args.workingDirectory);
+    const listed = args.sessionId ? null : await this.request('session/list', {
       cwd,
       _meta: {
         hermes: {
@@ -720,14 +833,38 @@ export class AcpProcess {
         },
       },
     });
-    const sessionId = String(
+    const sessionId = args.sessionId || String(
       Array.isArray(listed?.sessions) ? listed.sessions[0]?.sessionId || '' : '',
     );
     if (!sessionId) return { sessionId: null, deleted: false };
-    if (this.turns.has(sessionId)) throw new Error('hermes_session_turn_already_running');
-    const result = await this.request('_session/delete_history', { sessionId });
-    if (result?.deleted === true) this.sessionByKey.delete(args.sessionKey);
-    return { sessionId, deleted: result?.deleted === true };
+    if (this.turns.has(sessionId) || this.configuringSessions.has(sessionId)) throw new Error('hermes_session_turn_already_running');
+    if (this.historyCollectors.has(sessionId)) throw new Error('hermes_history_read_in_progress');
+    // The same native-session exclusion used by history reads also protects a
+    // deletion from an overlapping host turn start or second deletion.
+    this.historyCollectors.set(sessionId, { messages: [], toolNames: new Map() });
+    try {
+      const result = await this.request('_session/delete_history', { sessionId });
+      if (result?.deleted === true) {
+        for (const [key, value] of this.sessionByKey) {
+          if (value === sessionId) this.sessionByKey.delete(key);
+        }
+      }
+      return { sessionId, deleted: result?.deleted === true };
+    } finally { this.historyCollectors.delete(sessionId); }
+  }
+
+  /** Projection of the existing active turn, not a second event log or owner. */
+  readRunSnapshot(runId: string): HermesRunSnapshot | null {
+    const match = [...this.turns.entries()].find(([, turn]) => turn.runId === runId);
+    if (!match) return null;
+    const [sessionId, turn] = match;
+    return {
+      ...turn.identity, runId, sessionId, fullText: turn.fullText,
+      configuration: turn.configuration,
+      modelBlocks: turn.modelBlocks.map((block) => ({ ...block })),
+      textSequence: turn.textSequence, textTimestamp: turn.textTimestamp,
+      tools: [...turn.toolNames.values()].map((tool) => ({ ...tool })),
+    };
   }
 
   async requestExtension(method: string, params: Record<string, unknown>): Promise<any> {
@@ -795,10 +932,16 @@ export class AcpProcess {
     });
     let sessionId: string;
     let active: ActiveTurn;
+    let configuringSessionId: string | undefined;
     try {
       ({ sessionId } = await this.resolveSession(args, rootContext.contextId));
       bindHermesRootExecutionSession(rootContext.contextId, sessionId);
-      if (this.turns.has(sessionId)) throw new Error('hermes_session_turn_already_running');
+      if (this.turns.has(sessionId) || this.configuringSessions.has(sessionId)) throw new Error('hermes_session_turn_already_running');
+      if (this.historyCollectors.has(sessionId)) throw new Error('hermes_history_read_in_progress');
+      // Reserve before the asynchronous configure call. Only this invocation
+      // releases its reservation; a rejected concurrent caller must not do so.
+      this.configuringSessions.add(sessionId);
+      configuringSessionId = sessionId;
       const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(
         args,
         process.env,
@@ -811,18 +954,29 @@ export class AcpProcess {
       });
       active = {
         runId: args.parentRunId,
+        identity: { projectId: args.projectId, deckId: args.deckId,
+          cardId: args.cardId, cardName: args.title },
         onEvent,
         fullText: '',
+        sequence: 0,
+        textSequence: 0,
+        textTimestamp: null,
         toolNames: new Map(),
         effectToolNames: new Set(args.tools),
         effectOutcomes: [],
         permissionRequestIds: new Map(),
         rootExecutionContextId: rootContext.contextId,
+        configuration: { provider: args.provider, model: args.providerModelId, profile: args.runtime.profile,
+          grantedTools: [...args.tools], loadedSkills: null },
+        modelBlocks: [],
+        lastPublicKind: '',
       };
       this.turns.set(sessionId, active);
     } catch (error) {
       await finishHermesExecutionContext({ contextId: rootContext.contextId, state: 'failed' });
       throw error;
+    } finally {
+      if (configuringSessionId) this.configuringSessions.delete(configuringSessionId);
     }
     let rootTerminalState: 'completed' | 'failed' | 'cancelled' = 'failed';
     const done = this.request('session/prompt', {
@@ -1036,8 +1190,13 @@ export async function configureHermesHostSession(
 
 export async function readHermesHistory(
   args: HermesHistoryArgs,
-): Promise<{ sessionId: string | null; messages: HermesHistoryMessage[] }> {
+): Promise<HermesHistoryResult> {
   return sharedHermesProcess(args.profile).readHistory(args);
+}
+
+/** Read-only: a disconnected observer must never acquire/start a runtime. */
+export function readHermesRunSnapshot(profile: string, runId: string): HermesRunSnapshot | null {
+  return processOwners.get(profile.trim().toLowerCase())?.readRunSnapshot(runId) ?? null;
 }
 
 export async function deleteHermesHistory(
