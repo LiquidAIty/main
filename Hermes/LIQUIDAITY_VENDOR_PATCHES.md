@@ -245,6 +245,10 @@ Files and symbols:
 
 - `tools/environments/local.py`: `_bash_starts` and its optional Mandatory-ASLR diagnostic use
   `bounded_probe_run`; failed Bash probes retain a bounded visible diagnostic.
+- `hermes_cli/_subprocess_compat.py`: bounded-probe cleanup gives the shared Windows tree killer a
+  two-second `taskkill` allowance instead of inheriting its ordinary teardown allowance.
+- `agent/deadline.py`: `kill_process_tree` accepts an optional Windows `taskkill` timeout while
+  retaining the existing 15-second default for every other caller.
 - `tests/tools/test_find_shell.py`: real Windows descendant-pipe timeout proof.
 - `tests/tools/test_file_tools.py`: native search preserves the initialization diagnostic as a
   structured tool error.
@@ -252,11 +256,13 @@ Files and symbols:
 Upstream behavior preserved: successful Bash selection, the external MSYS health command, candidate
 ordering, caching, file-search behavior, shell configuration, providers, and models are unchanged.
 
-Contribution plan: submit the missed `bounded_probe_run` call-site correction with the Windows
-descendant-pipe regression. Drop this patch when upstream `_bash_starts` uses the same bounded helper.
+Contribution plan: submit the missed `bounded_probe_run` call-site correction, its bounded Windows
+cleanup allowance, and the descendant-pipe regression. Drop this patch when upstream `_bash_starts`
+uses the same bounded helper without letting cleanup exceed the probe's bounded-return contract.
 
-Rollback: restore raw `subprocess.run` in `_bash_starts`; this reopens an unbounded Windows startup
-hang and is safe only after upstream supplies equivalent process-tree timeout handling.
+Rollback: restore raw `subprocess.run` in `_bash_starts`, remove the bounded-probe timeout argument,
+and restore the original shared helper signature; this reopens an unbounded Windows startup hang and
+is safe only after upstream supplies equivalent process-tree timeout handling.
 
 ## Patch: registered pre-spawn Kanban worker environment provider
 

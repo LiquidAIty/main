@@ -446,7 +446,14 @@ def run_bounded_sync(
 # Whole-tree process termination.
 # ---------------------------------------------------------------------------
 
-def kill_process_tree(pid: int, *, sig: Optional[int] = None) -> bool:
+# LIQUIDAITY VENDOR PATCH: bounded probes need a cleanup timeout below the
+# shared helper's ordinary teardown allowance.
+def kill_process_tree(
+    pid: int,
+    *,
+    sig: Optional[int] = None,
+    windows_taskkill_timeout_s: float = 15.0,
+) -> bool:
     """Terminate ``pid`` and all its descendants, portably.
 
     Kill-on-timeout that signals only the direct child orphans process trees
@@ -455,7 +462,9 @@ def kill_process_tree(pid: int, *, sig: Optional[int] = None) -> bool:
     * Windows: ``taskkill /F /T`` terminates the tree (``sig`` ignored;
       Windows has no equivalent). Console-window flash is suppressed via
       ``windows_hide_flags`` and the exit code is checked, so a dead or
-      inaccessible PID reports ``False`` like the POSIX path.
+      inaccessible PID reports ``False`` like the POSIX path. Callers with a
+      tighter enclosing deadline may lower ``windows_taskkill_timeout_s``;
+      the default preserves the normal process-termination allowance.
     * POSIX: the descendant set is snapshotted via psutil (a hard
       dependency) BEFORE any signal — once the parent dies its children are
       reparented and can no longer be found by a parent walk. Then the
@@ -482,7 +491,7 @@ def kill_process_tree(pid: int, *, sig: Optional[int] = None) -> bool:
             proc = subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(pid)],
                 capture_output=True,
-                timeout=15,
+                timeout=max(0.1, float(windows_taskkill_timeout_s)),
                 check=False,
                 creationflags=creationflags,
             )

@@ -297,12 +297,15 @@ Actual Main/Coder/Kanban execution continues through standard session creation/l
 trusted `_session/configure_host` boundary with a real per-Run execution context. The exact patch,
 test, upstream-contribution, and rollback records live in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
-A one-call Windows process-lifecycle correction in `Hermes/tools/environments/local.py` routes the
-pre-search Git Bash health probe through Hermes' existing bounded process-tree helper. It changes no
-tool, shell, workspace, or provider policy; it prevents an MSYS descendant holding a captured pipe
-from pinning native file-tool initialization beyond the declared probe timeout. Focused proof lives in
-`Hermes/tests/tools/test_find_shell.py` and `Hermes/tests/tools/test_file_tools.py`; rebase and rollback
-details live in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
+A Windows process-lifecycle correction in `Hermes/tools/environments/local.py` routes the pre-search
+Git Bash health probe through Hermes' existing bounded process-tree helper. The bounded-probe caller
+in `Hermes/hermes_cli/_subprocess_compat.py` supplies a shorter Windows cleanup allowance through the
+optional parameter in `Hermes/agent/deadline.py`; every ordinary tree-kill caller retains the existing
+15-second default. It changes no tool, shell, workspace, or provider policy and prevents an MSYS
+descendant holding a captured pipe from pinning native file-tool initialization beyond the declared
+probe timeout. Focused proof lives in `Hermes/tests/tools/test_find_shell.py` and
+`Hermes/tests/tools/test_file_tools.py`; rebase and rollback details live in
+`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
 ACP has no standard native-Kanban task method. The LiquidAIty-owned subclass in
 `apps/python-models/app/python_models/hermes_acp_bridge.py` adds only exact native-root lookup,

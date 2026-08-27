@@ -424,7 +424,11 @@ def kill_process_tree(proc: "subprocess.Popen") -> None:
     try:
         from agent.deadline import kill_process_tree as _deadline_kill_tree
 
-        _deadline_kill_tree(proc.pid)
+        # LIQUIDAITY VENDOR PATCH: this helper promises bounded cleanup after
+        # its caller's probe deadline. Keep taskkill inside that cleanup budget;
+        # the shared process-tree API retains its longer default for ordinary
+        # teardown.
+        _deadline_kill_tree(proc.pid, windows_taskkill_timeout_s=2.0)
     except Exception:
         _legacy_kill_process_tree(proc)
         return
